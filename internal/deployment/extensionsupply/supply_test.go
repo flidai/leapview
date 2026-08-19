@@ -154,6 +154,28 @@ func TestSupplyRejectsOversizedCachedArtifact(t *testing.T) {
 	}
 }
 
+func TestSupplyCachePathUsesDuckDBLoaderBasenames(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		want string
+	}{
+		{name: "ducklake", want: "ducklake.duckdb_extension"},
+		{name: "sqlite", want: "sqlite_scanner.duckdb_extension"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			artifact := testArtifact(test.name, digestFor([]byte(test.name)), "linux-amd64")
+			supply := newSupply(t, Config{Manifest: Manifest{Version: ManifestVersion, Artifacts: []Artifact{artifact}}, VerifySignature: verifyOK})
+			path, err := supply.cachePath(artifact.Identity)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := filepath.Base(path); got != test.want {
+				t.Fatalf("cache basename = %q, want %q", got, test.want)
+			}
+		})
+	}
+}
+
 func newSupply(t *testing.T, config Config) *Supply {
 	t.Helper()
 	if config.DuckDBVersion == "" {

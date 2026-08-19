@@ -486,7 +486,13 @@ func (s *Supply) cachePath(identity extension.Identity) (string, error) {
 		return "", err
 	}
 	digest := strings.TrimPrefix(identity.Digest, "sha256:")
-	name := fmt.Sprintf("%s-%s-%s.duckdb_extension", identity.Name, identity.ExtensionVersion, identity.Platform)
+	// DuckDB derives the extension entrypoint from the artifact basename. Keep
+	// the canonical loader name (for example ducklake.duckdb_extension) while
+	// retaining the immutable identity in the digest directory.
+	name := identity.Name + ".duckdb_extension"
+	if identity.Name == "sqlite" {
+		name = "sqlite_scanner.duckdb_extension"
+	}
 	path := filepath.Join(s.config.CacheDir, digest, name)
 	absolute, err := filepath.Abs(path)
 	if err != nil {

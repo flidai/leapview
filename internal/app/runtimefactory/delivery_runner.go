@@ -25,6 +25,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -80,6 +81,7 @@ func NewCatalogObjectStore(ctx context.Context, contract *ducklake.PoolContract,
 type CandidateCatalogRunnerConfig struct {
 	PoolContract        *ducklake.PoolContract
 	StagingRoot         string
+	ExtensionAdmission  extension.Admission
 	CredentialBootstrap ducklake.CredentialBootstrap
 	Base                func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error)
 	Materialize         func(context.Context, *candidatecatalog.WorkingCatalog, deployment.DeliveryBuildInput, release.CandidateArtifactSet, string) ([]analyticsgates.SourceInput, error)
@@ -190,6 +192,9 @@ func BuildRequestFactory(config CandidateCatalogRunnerConfig) func(context.Conte
 		}
 		if strings.EqualFold(strings.TrimSpace(config.PoolContract.Tuple.StorageImplementation), "s3") && config.CredentialBootstrap == nil {
 			return deployment.DeliveryBuildRequest{}, fmt.Errorf("target-owned S3 credential bootstrap is required for candidate build")
+		}
+		if config.ExtensionAdmission == nil {
+			return deployment.DeliveryBuildRequest{}, fmt.Errorf("exact DuckDB extension admission is required for candidate build")
 		}
 		runner := &candidateCatalogRunner{config: config, input: input, artifacts: artifacts}
 		request := config.RequestTemplate
@@ -439,7 +444,7 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 			return nil, fmt.Errorf("reuse-base candidate gate evidence does not match current source, runtime, duckdb, and binding identities")
 		}
 	}
-	working, err := candidatecatalog.Build(ctx, candidatecatalog.Request{AttemptID: buildInput.Attempt.ID, StagingRoot: r.config.StagingRoot, PoolContract: r.config.PoolContract, CredentialBootstrap: r.config.CredentialBootstrap, VerifyLease: r.config.VerifyLease, Lease: candidatecatalog.WriterLease{ID: buildInput.Lease.ID, AttemptID: buildInput.Attempt.ID, PhysicalPoolID: buildInput.Lease.PhysicalPoolID, HolderID: buildInput.Lease.OwnerID, Epoch: buildInput.Lease.Epoch, ExpiresAt: buildInput.Lease.ExpiresAt, Status: candidatecatalog.LeaseActive}, Base: base}, func(ctx context.Context, catalog *candidatecatalog.WorkingCatalog) error {
+	working, err := candidatecatalog.Build(ctx, candidatecatalog.Request{AttemptID: buildInput.Attempt.ID, StagingRoot: r.config.StagingRoot, PoolContract: r.config.PoolContract, ExtensionAdmission: r.config.ExtensionAdmission, CredentialBootstrap: r.config.CredentialBootstrap, VerifyLease: r.config.VerifyLease, Lease: candidatecatalog.WriterLease{ID: buildInput.Lease.ID, AttemptID: buildInput.Attempt.ID, PhysicalPoolID: buildInput.Lease.PhysicalPoolID, HolderID: buildInput.Lease.OwnerID, Epoch: buildInput.Lease.Epoch, ExpiresAt: buildInput.Lease.ExpiresAt, Status: candidatecatalog.LeaseActive}, Base: base}, func(ctx context.Context, catalog *candidatecatalog.WorkingCatalog) error {
 		inputs, err := r.config.Materialize(ctx, catalog, buildInput, r.artifacts, r.input.Candidate.ID)
 		if err != nil {
 			return err
@@ -607,6 +612,7 @@ type ReadOnlyCatalogVerifier struct {
 	PoolContract        *ducklake.PoolContract
 	StagingRoot         string
 	ObjectStore         catalogseal.ObjectStore
+	ExtensionAdmission  extension.Admission
 	CredentialBootstrap ducklake.CredentialBootstrap
 }
 
@@ -620,6 +626,9 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	}
 	if strings.EqualFold(strings.TrimSpace(v.PoolContract.Tuple.StorageImplementation), "s3") && v.CredentialBootstrap == nil {
 		return fmt.Errorf("remote verifier requires target-owned S3 credential bootstrap")
+	}
+	if v.ExtensionAdmission == nil {
+		return fmt.Errorf("remote verifier requires exact DuckDB extension admission")
 	}
 	object, err := verification.Open(ctx)
 	if err != nil {
@@ -674,7 +683,7 @@ func (v ReadOnlyCatalogVerifier) verify(ctx context.Context, verification catalo
 	if err != nil {
 		return err
 	}
-	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract, v.CredentialBootstrap)
+	preview, err := candidatecatalog.OpenReadOnlyCatalog(ctx, root, path, v.PoolContract, v.ExtensionAdmission, v.CredentialBootstrap)
 	if err != nil {
 		return err
 	}

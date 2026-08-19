@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -698,9 +699,21 @@ func fixtureConfig(t *testing.T, config Config) Config {
 		storageImplementation = "s3"
 	}
 	config.PoolContract = fixturePoolContractFor(t, storageImplementation, dataPath)
+	if config.ExtensionAdmission == nil {
+		config.ExtensionAdmission = extensionfixture.New(t, "ducklake", "sqlite").Admission
+	}
 	config.SharedPool = true
 	config.PhysicalPoolID = ""
 	config.Compatibility = CompatibilityTuple{}
+	return config
+}
+
+func admittedConfig(t *testing.T, config Config, names ...string) Config {
+	t.Helper()
+	if len(names) == 0 {
+		names = []string{"ducklake"}
+	}
+	config.ExtensionAdmission = extensionfixture.New(t, names...).Admission
 	return config
 }
 

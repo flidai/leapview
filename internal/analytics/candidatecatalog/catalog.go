@@ -26,20 +26,22 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 var (
-	ErrInvalidRequest       = errors.New("candidate catalog request is invalid")
-	ErrLeaseRequired        = errors.New("an active exact writer lease verifier is required")
-	ErrLeaseMismatch        = errors.New("writer lease does not match build attempt or physical pool")
-	ErrLeaseExpired         = errors.New("writer lease is expired")
-	ErrPoolContractRequired = errors.New("an admitted physical-pool contract is required")
-	ErrBaseMismatch         = errors.New("sealed base catalog does not match the admitted physical pool")
-	ErrArtifactDigest       = errors.New("sealed catalog artifact digest mismatch")
-	ErrArtifactSize         = errors.New("sealed catalog artifact size mismatch")
-	ErrArtifactSource       = errors.New("sealed catalog artifact reader failed")
-	ErrMutationFailed       = errors.New("candidate catalog mutation failed")
-	ErrClosed               = errors.New("candidate catalog working handle is closed")
+	ErrInvalidRequest             = errors.New("candidate catalog request is invalid")
+	ErrLeaseRequired              = errors.New("an active exact writer lease verifier is required")
+	ErrLeaseMismatch              = errors.New("writer lease does not match build attempt or physical pool")
+	ErrLeaseExpired               = errors.New("writer lease is expired")
+	ErrPoolContractRequired       = errors.New("an admitted physical-pool contract is required")
+	ErrExtensionAdmissionRequired = errors.New("an exact DuckDB extension admission is required")
+	ErrBaseMismatch               = errors.New("sealed base catalog does not match the admitted physical pool")
+	ErrArtifactDigest             = errors.New("sealed catalog artifact digest mismatch")
+	ErrArtifactSize               = errors.New("sealed catalog artifact size mismatch")
+	ErrArtifactSource             = errors.New("sealed catalog artifact reader failed")
+	ErrMutationFailed             = errors.New("candidate catalog mutation failed")
+	ErrClosed                     = errors.New("candidate catalog working handle is closed")
 )
 
 const (
@@ -137,6 +139,10 @@ type Request struct {
 	AttemptID    string
 	StagingRoot  string
 	PoolContract *ducklake.PoolContract
+	// ExtensionAdmission is the target-reviewed source of exact DuckDB
+	// extension artifacts. Candidate catalogs never install or resolve
+	// extensions implicitly.
+	ExtensionAdmission extension.Admission
 	// CredentialBootstrap provisions ephemeral target-owned object-store
 	// credentials for every DuckDB connector. Secrets never enter the request
 	// identity or pool contract; nil is valid for public/local pools.
@@ -258,6 +264,7 @@ func Open(ctx context.Context, request Request) (*WorkingCatalog, error) {
 			SharedPool:          true,
 			Compatibility:       request.PoolContract.Tuple,
 			PoolContract:        request.PoolContract,
+			ExtensionAdmission:  request.ExtensionAdmission,
 			CredentialBootstrap: request.CredentialBootstrap,
 			ReadOnly:            true,
 		})
@@ -282,6 +289,7 @@ func Open(ctx context.Context, request Request) (*WorkingCatalog, error) {
 		SharedPool:          true,
 		Compatibility:       request.PoolContract.Tuple,
 		PoolContract:        request.PoolContract,
+		ExtensionAdmission:  request.ExtensionAdmission,
 		CredentialBootstrap: request.CredentialBootstrap,
 	})
 	if err != nil {
@@ -607,6 +615,9 @@ func validateRequest(ctx context.Context, request Request) error {
 	}
 	if request.PoolContract == nil {
 		return ErrPoolContractRequired
+	}
+	if request.ExtensionAdmission == nil {
+		return ErrExtensionAdmissionRequired
 	}
 	if err := request.PoolContract.Validate(); err != nil {
 		return fmt.Errorf("%w: %v", ErrPoolContractRequired, err)

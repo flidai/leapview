@@ -99,32 +99,45 @@ func (e *Environment) ValidateNoLiveInlineData(ctx context.Context) error {
 	if err := conn.QueryRowContext(ctx, "SELECT id FROM ducklake_current_snapshot(?)", catalogAlias).Scan(&currentSnapshot); err != nil {
 		return fmt.Errorf("read DuckLake current snapshot for inline validation: %w", err)
 	}
+	// Deletion inlining applies to rows in existing Parquet files, so a table
+	// can have a live inlined-delete table without an entry in
+	// ducklake_inlined_data_tables. Enumerate every current logical table first,
+	// then associate its newest inlined-data table (if any) and probe the delete
+	// table independently below.
 	rows, err := conn.QueryContext(ctx, `
-WITH current_snapshot AS (SELECT id FROM ducklake_current_snapshot(?))
-SELECT i.table_id, t.table_name, i.table_name, t.schema_id, s.schema_name, i.schema_version
-FROM __ducklake_metadata_lake.ducklake_inlined_data_tables i
-CROSS JOIN current_snapshot cs
-JOIN __ducklake_metadata_lake.ducklake_table t ON t.table_id = i.table_id
-  AND cs.id >= t.begin_snapshot
-  AND (t.end_snapshot IS NULL OR cs.id < t.end_snapshot)
-JOIN __ducklake_metadata_lake.ducklake_schema s ON s.schema_id = t.schema_id
-  AND cs.id >= s.begin_snapshot
-  AND (s.end_snapshot IS NULL OR cs.id < s.end_snapshot)
-WHERE i.schema_version = (SELECT MAX(i2.schema_version) FROM __ducklake_metadata_lake.ducklake_inlined_data_tables i2 WHERE i2.table_id = i.table_id)`, catalogAlias)
+WITH current_snapshot AS (SELECT id FROM ducklake_current_snapshot(?)),
+current_tables AS (
+  SELECT t.table_id, t.table_name, s.schema_name
+  FROM __ducklake_metadata_lake.ducklake_table t
+  JOIN __ducklake_metadata_lake.ducklake_schema s ON s.schema_id = t.schema_id
+  CROSS JOIN current_snapshot cs
+  WHERE cs.id >= t.begin_snapshot
+    AND (t.end_snapshot IS NULL OR cs.id < t.end_snapshot)
+    AND cs.id >= s.begin_snapshot
+    AND (s.end_snapshot IS NULL OR cs.id < s.end_snapshot)
+), latest_inline AS (
+  SELECT table_id, table_name,
+         ROW_NUMBER() OVER (PARTITION BY table_id ORDER BY schema_version DESC) AS row_number
+  FROM __ducklake_metadata_lake.ducklake_inlined_data_tables
+)
+SELECT ct.table_id, ct.table_name, ct.schema_name, li.table_name
+FROM current_tables ct
+LEFT JOIN latest_inline li ON li.table_id = ct.table_id AND li.row_number = 1`, catalogAlias)
 	if err != nil {
-		return fmt.Errorf("inspect DuckLake inlined data tables: %w", err)
+		return fmt.Errorf("inspect DuckLake tables for inline data: %w", err)
 	}
 	type inlineEntry struct {
 		tableID      int64
-		inlinedTable string
+		inlinedTable sql.NullString
 		schema       string
 		table        string
 	}
 	var entries []inlineEntry
 	for rows.Next() {
-		var tableID, schemaID, schemaVersion int64
-		var inlinedTable, schema, table string
-		if err := rows.Scan(&tableID, &table, &inlinedTable, &schemaID, &schema, &schemaVersion); err != nil {
+		var tableID int64
+		var inlinedTable sql.NullString
+		var schema, table string
+		if err := rows.Scan(&tableID, &table, &schema, &inlinedTable); err != nil {
 			_ = rows.Close()
 			return err
 		}
@@ -138,13 +151,15 @@ WHERE i.schema_version = (SELECT MAX(i2.schema_version) FROM __ducklake_metadata
 		return err
 	}
 	for _, entry := range entries {
-		query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE begin_snapshot <= ? AND (end_snapshot IS NULL OR end_snapshot > ?)", metadataCatalogAlias, quoteIdentifier(entry.inlinedTable))
-		var inlinedRows int64
-		if err := conn.QueryRowContext(ctx, query, currentSnapshot, currentSnapshot).Scan(&inlinedRows); err != nil {
-			return fmt.Errorf("count inlined rows for %s.%s: %w", entry.schema, entry.table, err)
-		}
-		if inlinedRows > 0 {
-			return fmt.Errorf("%s.%s has %d live inlined rows: %w", entry.schema, entry.table, inlinedRows, ErrLiveInlineData)
+		if entry.inlinedTable.Valid && strings.TrimSpace(entry.inlinedTable.String) != "" {
+			query := fmt.Sprintf("SELECT COUNT(*) FROM %s.%s WHERE begin_snapshot <= ? AND (end_snapshot IS NULL OR end_snapshot > ?)", metadataCatalogAlias, quoteIdentifier(entry.inlinedTable.String))
+			var inlinedRows int64
+			if err := conn.QueryRowContext(ctx, query, currentSnapshot, currentSnapshot).Scan(&inlinedRows); err != nil {
+				return fmt.Errorf("count inlined rows for %s.%s: %w", entry.schema, entry.table, err)
+			}
+			if inlinedRows > 0 {
+				return fmt.Errorf("%s.%s has %d live inlined rows: %w", entry.schema, entry.table, inlinedRows, ErrLiveInlineData)
+			}
 		}
 		deleteTable := fmt.Sprintf("ducklake_inlined_delete_%d", entry.tableID)
 		if exists, existsErr := duckLakeTableExists(ctx, conn, deleteTable); existsErr != nil {

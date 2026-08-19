@@ -18,6 +18,7 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -141,7 +142,7 @@ spec: {type: managed}
 			"sources/orders_source.yaml": `apiVersion: leapview.dev/v1
 kind: Source
 metadata: {id: source:orders_source, name: orders_source}
-spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}
+spec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv, options: {header: true}}}
 `,
 			"models/orders.yaml": "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders}\n" + modelContext + `spec:
   definition: {type: direct, source: orders_source}
@@ -357,11 +358,9 @@ spec:
 	execute := func(model *semanticmodel.Model) dataquery.Result {
 		ctx := context.Background()
 		dir := t.TempDir()
-		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2})
+		admission := extensionfixture.New(t, "ducklake")
+		environment, err := analyticsducklake.Open(ctx, analyticsducklake.Config{RootDir: filepath.Join(dir, "ducklake"), MaxConnections: 2, ExtensionAdmission: admission.Admission})
 		if err != nil {
-			if strings.Contains(err.Error(), "extension admission is required") || strings.Contains(err.Error(), "duckdb_arrow build tag") {
-				t.Skipf("analytical fixture unavailable: %v", err)
-			}
 			t.Fatalf("open DuckLake fixture environment: %v", err)
 		}
 		controller, err := workload.New(workload.DefaultConfig())
@@ -377,6 +376,7 @@ spec:
 		}
 		runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(lease.Context(), analyticsduckdb.ProjectRuntimeConfig{
 			ProjectID: "project:test", Models: map[string]*semanticmodel.Model{"semantic:sales": model}, Database: environment,
+			ExtensionAdmission: admission.Admission,
 		})
 		if err != nil {
 			lease.Release()

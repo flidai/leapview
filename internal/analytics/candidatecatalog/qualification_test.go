@@ -21,7 +21,7 @@ import (
 func TestNormalizeAndQualifyRetainsOneSnapshotAndProbesClosure(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -109,7 +109,7 @@ func TestNormalizeAndQualifyRetainsOneSnapshotAndProbesClosure(t *testing.T) {
 func TestNormalizeRejectsLiveInlineDataWithoutRepair(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestNormalizeRejectsLiveInlineDataWithoutRepair(t *testing.T) {
 func TestNormalizeRejectsNonZeroInliningPolicyWithoutRepair(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestNormalizeRejectsNonZeroInliningPolicyWithoutRepair(t *testing.T) {
 func TestNormalizeRejectsLiveInlineDeletesWithoutRepair(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestNormalizeRejectsLiveInlineDeletesWithoutRepair(t *testing.T) {
 	}
 	defer working.Close()
 	if _, err := working.Commit(ctx, "delete-create", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_delete AS SELECT range AS id FROM range(0, 2000)")
+		_, err := tx.ExecContext(ctx, "CREATE SCHEMA IF NOT EXISTS model; CREATE TABLE model.inline_delete (id INTEGER)")
 		return err
 	}); err != nil {
 		t.Fatal(err)
@@ -224,13 +224,19 @@ func TestNormalizeRejectsLiveInlineDeletesWithoutRepair(t *testing.T) {
 			t.Fatalf("persist delete policy (%s): %v", statement, err)
 		}
 	}
-	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_delete')"); err != nil {
+	if _, err := working.Commit(ctx, "delete-seed", nil, func(tx *sql.Tx) error {
+		_, err := tx.ExecContext(ctx, "INSERT INTO model.inline_delete SELECT range FROM range(0, 2000)")
+		return err
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := working.Commit(ctx, "delete-update", nil, func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE model.inline_delete SET id = 3001 WHERE id = 1")
+		_, err := tx.ExecContext(ctx, "DELETE FROM model.inline_delete WHERE id = 1")
 		return err
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := working.Exec(ctx, "CALL ducklake_set_option('lake', 'data_inlining_row_limit', 0, schema => 'model', table_name => 'inline_delete')"); err != nil {
 		t.Fatal(err)
 	}
 	err = nil
@@ -296,7 +302,7 @@ func TestRemotePoolRequiresTargetObjectProbe(t *testing.T) {
 func TestQualificationFailureRemovesWorkingStaging(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -325,7 +331,7 @@ func TestQualificationFailureRemovesWorkingStaging(t *testing.T) {
 func TestHistoricalFileReferenceIsAbsentFromCurrentUnionBeforeNormalization(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}
@@ -365,7 +371,7 @@ func TestHistoricalFileReferenceIsAbsentFromCurrentUnionBeforeNormalization(t *t
 func TestNormalizeAndQualifyObjectProbeReceivesCanonicalReferences(t *testing.T) {
 	ctx := context.Background()
 	contract := testPoolContract(t, t.TempDir())
-	working, err := Open(ctx, testRequest(contract, t.TempDir()))
+	working, err := Open(ctx, testRequest(t, contract, t.TempDir()))
 	if extensionUnavailableForTest(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

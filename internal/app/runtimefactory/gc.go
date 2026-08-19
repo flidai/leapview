@@ -93,7 +93,7 @@ func RunSQLiteProductionGC(ctx context.Context, config ProductionGCRunConfig) er
 				EvidenceDigest:      admission.Admission.EvidenceDigest,
 				OwnerID:             config.OwnerID,
 			})
-			inspectors[compatibilityDigest] = gcadapter.Inspector{Store: store, PoolContract: contract, StagingRoot: config.StagingRoot, CredentialBootstrap: credentialBootstrap}
+			inspectors[compatibilityDigest] = gcadapter.Inspector{Store: store, PoolContract: contract, StagingRoot: config.StagingRoot, ExtensionAdmission: config.PoolS3.ExtensionAdmission, CredentialBootstrap: credentialBootstrap}
 		}
 		inspector := compatibilityInspector{db: config.Database, poolID: poolID, inspectors: inspectors}
 		runner, err := gcadapter.NewProductionRunner(delivery, stores, inspector, gc.Config{

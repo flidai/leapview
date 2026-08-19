@@ -24,6 +24,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
@@ -35,6 +36,7 @@ import (
 // never persisted in Config or admission evidence.
 func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 	ctx := context.Background()
+	admission := extensionfixture.New(t, "ducklake")
 	endpoint := startConformanceMinIO(t, ctx)
 	bucket := "leapview-conformance"
 	accessKey := "leapview"
@@ -73,6 +75,7 @@ func TestSharedPoolConformanceMinIOLane(t *testing.T) {
 		return Config{
 			RootDir: root, CatalogPath: catalog, DataPath: sharedData,
 			PoolContract: contract, SharedPool: true, MaxConnections: 3, CredentialBootstrap: bootstrap,
+			ExtensionAdmission: admission.Admission,
 		}
 	}
 

@@ -6,10 +6,13 @@ import (
 	"context"
 	"io"
 	"path/filepath"
+	"strings"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/extensionsupplyloader"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 type Operations struct{}
@@ -91,6 +94,14 @@ func newService() (*adminoffline.Service, error) {
 	if err != nil {
 		return nil, err
 	}
+	var extensionAdmission extension.Admission
+	if strings.TrimSpace(cfg.DuckDBExtensionSupplyPath) != "" {
+		supply, supplyErr := extensionsupplyloader.Load(context.Background(), cfg)
+		if supplyErr != nil {
+			return nil, supplyErr
+		}
+		extensionAdmission = supply
+	}
 	normalized := adminoffline.Config{
 		HomeDir:            cfg.HomeDir,
 		DBPath:             cfg.DBPath(),
@@ -115,16 +126,17 @@ func newService() (*adminoffline.Service, error) {
 		Storage: storageCleaner{
 			dbPath: cfg.DBPath(), home: cfg.HomeDir,
 			catalogPath: cfg.DuckLakeCatalogPath(), dataPath: cfg.DuckLakeDataDir(),
+			extensionAdmission: extensionAdmission,
 		},
 		PhysicalPool: physicalPoolBootstrap{dbPath: cfg.DBPath(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
 		}},
 		DeliveryRepair: deliveryRepair{dbPath: cfg.DBPath(), home: cfg.HomeDir, stagingRoot: cfg.RuntimeDir(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
+			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
 		}},
 		Archive: instanceArchive{home: cfg.HomeDir, dbPath: cfg.DBPath()},
 	}), nil

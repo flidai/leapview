@@ -22,6 +22,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/gc"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/locking"
@@ -231,7 +232,7 @@ func (repair deliveryRepair) inspectorForRoot(ctx context.Context, delivery *dep
 	if err != nil {
 		return gcadapter.Inspector{}, err
 	}
-	return gcadapter.Inspector{Store: poolStore, PoolContract: contract, StagingRoot: repair.stagingRoot, CredentialBootstrap: credentialBootstrap}, nil
+	return gcadapter.Inspector{Store: poolStore, PoolContract: contract, StagingRoot: repair.stagingRoot, ExtensionAdmission: repair.s3.ExtensionAdmission, CredentialBootstrap: credentialBootstrap}, nil
 }
 
 func (physicalPoolBootstrap) ValidateEvidence(evidence physicalpool.Evidence) error {
@@ -431,10 +432,11 @@ func (retention operationalRetention) Prune(ctx context.Context, policy adminoff
 }
 
 type storageCleaner struct {
-	dbPath      string
-	home        string
-	catalogPath string
-	dataPath    string
+	dbPath             string
+	home               string
+	catalogPath        string
+	dataPath           string
+	extensionAdmission extension.Admission
 }
 
 func (cleaner storageCleaner) Cleanup(ctx context.Context, environment string, dryRun bool, out io.Writer) error {
@@ -445,6 +447,7 @@ func (cleaner storageCleaner) Cleanup(ctx context.Context, environment string, d
 	defer store.Close()
 	snapshots, err := analyticsducklake.Open(ctx, analyticsducklake.Config{
 		RootDir: cleaner.home, CatalogPath: cleaner.catalogPath, DataPath: cleaner.dataPath,
+		ExtensionAdmission: cleaner.extensionAdmission,
 	})
 	if err != nil {
 		return err

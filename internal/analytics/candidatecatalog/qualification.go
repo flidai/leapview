@@ -24,6 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 var (
@@ -237,9 +238,10 @@ type QualifiedCatalog struct {
 	DetachedCatalog
 	Record QualificationRecord
 
-	contract  *ducklake.PoolContract
-	probe     ObjectProbe
-	bootstrap ducklake.CredentialBootstrap
+	contract           *ducklake.PoolContract
+	probe              ObjectProbe
+	extensionAdmission extension.Admission
+	bootstrap          ducklake.CredentialBootstrap
 }
 
 // Qualification returns a copy of the immutable qualification record.
@@ -266,9 +268,12 @@ type PreviewCatalog struct {
 // mutation capability. It is used by seal verification after remote upload.
 // Object-backed pools require the target-owned per-connector bootstrap so
 // DuckDB cannot resolve ambient process credentials.
-func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract, bootstrap ducklake.CredentialBootstrap) (*PreviewCatalog, error) {
+func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contract *ducklake.PoolContract, admission extension.Admission, bootstrap ducklake.CredentialBootstrap) (*PreviewCatalog, error) {
 	if contract == nil || contract.Validate() != nil || strings.TrimSpace(catalogPath) == "" {
 		return nil, ErrQualifiedCatalogRequired
+	}
+	if admission == nil {
+		return nil, fmt.Errorf("exact DuckDB extension admission is required for read-only catalog verification")
 	}
 	if strings.EqualFold(strings.TrimSpace(contract.Tuple.StorageImplementation), "s3") && bootstrap == nil {
 		return nil, fmt.Errorf("target-owned S3 credential bootstrap is required for read-only catalog verification")
@@ -277,7 +282,7 @@ func OpenReadOnlyCatalog(ctx context.Context, rootDir, catalogPath string, contr
 	if err != nil {
 		return nil, err
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ReadOnly: true, CredentialBootstrap: bootstrap})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: rootDir, CatalogPath: catalogPath, DataPath: dataPath, PhysicalPoolID: contract.Pool.ID.String(), SharedPool: true, Compatibility: contract.Tuple, PoolContract: contract, ExtensionAdmission: admission, ReadOnly: true, CredentialBootstrap: bootstrap})
 	if err != nil {
 		return nil, err
 	}
@@ -523,7 +528,7 @@ func NormalizeAndQualify(ctx context.Context, working *WorkingCatalog, request Q
 			return QualifiedCatalog{}, fmt.Errorf("%w: policy callback: %v", ErrQualificationFailed, err)
 		}
 	}
-	qualified := QualifiedCatalog{DetachedCatalog: detached, Record: record, contract: working.request.PoolContract, probe: request.Probe, bootstrap: request.CredentialBootstrap}
+	qualified := QualifiedCatalog{DetachedCatalog: detached, Record: record, contract: working.request.PoolContract, probe: request.Probe, extensionAdmission: working.request.ExtensionAdmission, bootstrap: request.CredentialBootstrap}
 	// Prove the exact artifact through the same read-only attach path used by
 	// serving before returning a qualified result.
 	preview, previewErr := OpenQualifiedPreview(ctx, qualified)
@@ -623,7 +628,7 @@ func OpenQualifiedPreview(ctx context.Context, qualified QualifiedCatalog) (*Pre
 	if size != qualified.Record.CatalogSize {
 		return nil, ErrCatalogSize
 	}
-	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: qualified.StagingPath(), CatalogPath: qualified.CatalogPath(), DataPath: dataPath, PhysicalPoolID: qualified.contract.Pool.ID.String(), SharedPool: true, Compatibility: qualified.contract.Tuple, PoolContract: qualified.contract, ReadOnly: true, CredentialBootstrap: qualified.bootstrap})
+	env, err := ducklake.Open(ctx, ducklake.Config{RootDir: qualified.StagingPath(), CatalogPath: qualified.CatalogPath(), DataPath: dataPath, PhysicalPoolID: qualified.contract.Pool.ID.String(), SharedPool: true, Compatibility: qualified.contract.Tuple, PoolContract: qualified.contract, ExtensionAdmission: qualified.extensionAdmission, ReadOnly: true, CredentialBootstrap: qualified.bootstrap})
 	if err != nil {
 		return nil, err
 	}
