@@ -6,7 +6,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow"
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/memory"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 func TestArrowLookupLeaseSurvivesEviction(t *testing.T) {

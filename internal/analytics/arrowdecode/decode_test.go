@@ -1,4 +1,4 @@
-package arrowresult
+package arrowdecode
 
 import (
 	"testing"
@@ -8,6 +8,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/array"
 	"github.com/apache/arrow-go/v18/arrow/decimal128"
 	"github.com/apache/arrow-go/v18/arrow/memory"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 func TestDecodeDecimalAlwaysUsesCanonicalStringTransport(t *testing.T) {
@@ -67,7 +68,7 @@ func TestDecodeRowsOwnsVariableWidthValues(t *testing.T) {
 	stringsArray.Release()
 	binaryArray.Release()
 
-	collector := NewBuilderWithAllocator(allocator)
+	collector := arrowresult.NewBuilderWithAllocator(allocator)
 	if err := collector.WriteSchema(schema); err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestDecodeRowsPreservesPhysicalValuesAndNulls(t *testing.T) {
 	record := recordBuilder.NewRecordBatch()
 	recordBuilder.Release()
 
-	collector := NewBuilder()
+	collector := arrowresult.NewBuilder()
 	if err := collector.WriteSchema(record.Schema()); err != nil {
 		t.Fatal(err)
 	}

@@ -9,7 +9,7 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/pkg/arrowresult"
 	"golang.org/x/sync/singleflight"
 )
 

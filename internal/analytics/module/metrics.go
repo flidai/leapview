@@ -1,9 +1,9 @@
 package module
 
 import (
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/pkg/arrowresult"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

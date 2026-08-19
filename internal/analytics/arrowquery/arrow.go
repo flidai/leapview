@@ -5,8 +5,8 @@ import (
 
 	"github.com/apache/arrow-go/v18/arrow"
 	arrowutil "github.com/apache/arrow-go/v18/arrow/util"
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 func ConsumeSchemaBudget(ctx context.Context, schema *arrow.Schema) error {
