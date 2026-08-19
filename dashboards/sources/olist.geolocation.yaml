@@ -14,7 +14,7 @@ spec:
     mode: compatible
     fields:
       geolocation_zip_code_prefix: {datatype: String, description: Five-digit Brazilian ZIP-code prefix.}
-      geolocation_lat: {datatype: Decimal, description: Latitude supplied by the Olist geolocation dataset.}
-      geolocation_lng: {datatype: Decimal, description: Longitude supplied by the Olist geolocation dataset.}
+      geolocation_lat: {datatype: Float, description: Latitude supplied by the Olist geolocation dataset.}
+      geolocation_lng: {datatype: Float, description: Longitude supplied by the Olist geolocation dataset.}
       geolocation_city: {datatype: String, description: City associated with the coordinate observation.}
       geolocation_state: {datatype: String, description: Brazilian state abbreviation associated with the coordinate observation.}

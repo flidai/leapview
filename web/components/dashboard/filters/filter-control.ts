@@ -187,6 +187,12 @@ export class DashboardFilterLeaf extends LitElement {
     ) {
       if (this.visibleOptionsControl() || this.dropdownFocused()) this.requestOptions()
     }
+    if (
+      (changed.has('definition') || changed.has('binding') || changed.has('presentation'))
+      && this.visibleOptionsControl()
+    ) {
+      this.requestOptions()
+    }
     if (changed.has('presentation') || changed.has('definition') || changed.has('autoHeight')) {
       // Report canvases scale visually; layout contracts resolve against the untransformed CSS box.
       this.applyResponsiveLayout(this.clientWidth, this.clientHeight)

@@ -105,7 +105,9 @@ func sourceInputsFromManifest(artifacts release.CandidateArtifactSet, runtime an
 		SourceObservations() []analyticsmaterialize.SourceObservation
 	}); ok {
 		for _, item := range reader.SourceObservations() {
-			observed[item.ID] = item
+			canonicalID := canonicalSourceObservationID(artifacts.Compiler.Manifest.NameIndex.Sources, item.ID)
+			item.ID = canonicalID
+			observed[canonicalID] = item
 		}
 	}
 	if len(observed) == 0 && artifacts.Generation.BaseGateEvidence != nil {
@@ -134,6 +136,15 @@ func sourceInputsFromManifest(artifacts release.CandidateArtifactSet, runtime an
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	return result
+}
+
+func canonicalSourceObservationID(sources map[string]string, observationID string) string {
+	for authoredName, canonicalID := range sources {
+		if projectmodule.RuntimeSourceAlias(authoredName) == observationID {
+			return canonicalID
+		}
+	}
+	return observationID
 }
 
 // deliveryMaterializationDelta maps compiler model-resource changes to the
@@ -1017,7 +1028,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					} else if loadErr != nil && !errors.Is(loadErr, sql.ErrNoRows) && !errors.Is(loadErr, deployment.ErrNotFound) && !errors.Is(loadErr, physicalpool.ErrPoolNotAdmitted) {
 						poolErr = fmt.Errorf("load local physical-pool admission: %w", loadErr)
 					} else {
-						evidence, evidenceErr := ducklake.RunLocalPoolConformance(ctx, filepath.Join(cfg.RuntimeDir(), "delivery-conformance"), tuple)
+						evidence, evidenceErr := ducklake.RunLocalPoolConformance(ctx, filepath.Join(cfg.RuntimeDir(), "delivery-conformance"), tuple, extensionSupply)
 						if evidenceErr != nil {
 							poolErr = fmt.Errorf("run local physical-pool conformance: %w", evidenceErr)
 						} else if dataPath, dataPathErr := pool.DataPath(); dataPathErr != nil {

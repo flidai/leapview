@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/dashboard"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 )
@@ -64,6 +66,44 @@ func TestCompileCanonicalDashboardFiltersPreservesOrderDefaultsAndPlacement(t *t
 	}
 	if got := compiled.Pages[0].Visuals[0].Binding; got.Scope != "report" || got.ID != "status" {
 		t.Fatalf("slicer binding = %#v", got)
+	}
+	if got := compiled.Pages[0].Visuals[0].Presentation.Style; got != dashboardfilter.PresentationDropdown {
+		t.Fatalf("slicer presentation = %q, want dropdown", got)
+	}
+	definition := dashboarddefinition.Definition{Pages: []dashboard.Page{{ID: "overview", Visuals: []dashboard.PageVisual{{ID: "status-control", Kind: "slicer"}, {ID: "orders-card", Kind: "visual"}}}}}
+	if err := compiled.ApplyToDefinition(&definition); err != nil {
+		t.Fatal(err)
+	}
+	if got := definition.Pages[0].Visuals[0].Presentation.Style; got != dashboardfilter.PresentationDropdown {
+		t.Fatalf("attached slicer presentation = %q, want dropdown", got)
+	}
+}
+
+func TestCanonicalFilterPresentationLowersTypedControls(t *testing.T) {
+	tests := []struct {
+		name    string
+		control document.DashboardFilterControlVariant
+		want    dashboardfilter.PresentationStyle
+	}{
+		{name: "single default", control: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}, want: dashboardfilter.PresentationDropdown},
+		{name: "single distinct", control: &document.SingleSelectDashboardFilterControl{Type: "singleSelect", Options: &document.DashboardFilterOptions{Value: &document.DistinctDashboardFilterOptions{Type: "distinct", Dataset: "orders"}}}, want: dashboardfilter.PresentationList},
+		{name: "single static", control: &document.SingleSelectDashboardFilterControl{Type: "singleSelect", Options: &document.DashboardFilterOptions{Value: &document.StaticDashboardFilterOptions{Type: "static", Values: []document.DashboardFilterOption{}}}}, want: dashboardfilter.PresentationButtons},
+		{name: "multi", control: &document.MultiSelectDashboardFilterControl{Type: "multiSelect"}, want: dashboardfilter.PresentationDropdown},
+		{name: "text", control: &document.TextDashboardFilterControl{Type: "text"}, want: dashboardfilter.PresentationInput},
+		{name: "numeric", control: &document.NumericRangeDashboardFilterControl{Type: "numericRange"}, want: dashboardfilter.PresentationNumericRange},
+		{name: "date", control: &document.DateRangeDashboardFilterControl{Type: "dateRange"}, want: dashboardfilter.PresentationDateRange},
+		{name: "relative", control: &document.RelativePeriodDashboardFilterControl{Type: "relativePeriod"}, want: dashboardfilter.PresentationRelativePeriod},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			got, err := canonicalFilterPresentation(document.DashboardFilterControl{Value: test.control})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got.Style != test.want {
+				t.Fatalf("presentation style = %q, want %q", got.Style, test.want)
+			}
+		})
 	}
 }
 

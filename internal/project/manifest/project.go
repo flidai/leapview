@@ -1,12 +1,35 @@
 package manifest
 
 import (
+	"strings"
+
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
+
+// RuntimeSourceAlias returns the stable SQL/runtime identifier used for an
+// authored source name. Compiler lowering and target-side observation evidence
+// must use this one mapping so canonical resource IDs cannot lose their live
+// schema evidence at the delivery boundary.
+func RuntimeSourceAlias(sourceName string) string {
+	var builder strings.Builder
+	for index, char := range sourceName {
+		valid := char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || index > 0 && char >= '0' && char <= '9'
+		if valid {
+			builder.WriteRune(char)
+			continue
+		}
+		builder.WriteByte('_')
+	}
+	out := builder.String()
+	if out == "" || out[0] >= '0' && out[0] <= '9' {
+		out = "source_" + out
+	}
+	return out
+}
 
 // DashboardSourceMetadata retains descriptive authored identity alongside a
 // normalized dashboard document. It carries no serving namespace.

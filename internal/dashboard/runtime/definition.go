@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -25,6 +26,17 @@ type ProjectDefinition struct {
 // projection. The maps and model pointers supplied by callers are never
 // retained, so a generation cannot change after activation.
 func NewProjectDefinition(projectID projectgraph.ResourceID, title, description string, models map[projectgraph.ResourceID]*semanticmodel.Model, dashboards map[projectgraph.ResourceID]dashboarddefinition.Definition) (*ProjectDefinition, error) {
+	return newProjectDefinition(projectID, title, description, models, dashboards, false)
+}
+
+// NewTargetBoundProjectDefinition validates and defensively copies a runtime
+// projection after trusted target-owned managed-data roots have been bound.
+// All other target state is redacted exactly as it is by NewProjectDefinition.
+func NewTargetBoundProjectDefinition(projectID projectgraph.ResourceID, title, description string, models map[projectgraph.ResourceID]*semanticmodel.Model, dashboards map[projectgraph.ResourceID]dashboarddefinition.Definition) (*ProjectDefinition, error) {
+	return newProjectDefinition(projectID, title, description, models, dashboards, true)
+}
+
+func newProjectDefinition(projectID projectgraph.ResourceID, title, description string, models map[projectgraph.ResourceID]*semanticmodel.Model, dashboards map[projectgraph.ResourceID]dashboarddefinition.Definition, retainManagedRoots bool) (*ProjectDefinition, error) {
 	if err := projectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project id: %w", err)
 	}
@@ -36,7 +48,7 @@ func NewProjectDefinition(projectID projectgraph.ResourceID, title, description 
 		if model == nil {
 			return nil, fmt.Errorf("semantic model %q is nil", id)
 		}
-		clone, err := cloneModel(model)
+		clone, err := cloneModel(model, retainManagedRoots)
 		if err != nil {
 			return nil, fmt.Errorf("semantic model %q: %w", id, err)
 		}
@@ -66,8 +78,21 @@ func NewProjectDefinition(projectID projectgraph.ResourceID, title, description 
 	return &ProjectDefinition{projectID: projectID, title: title, description: description, models: copyModels, dashboards: copyDashboards}, nil
 }
 
-func cloneModel(model *semanticmodel.Model) (*semanticmodel.Model, error) {
-	return model.RuntimeSnapshot()
+func cloneModel(model *semanticmodel.Model, retainManagedRoots bool) (*semanticmodel.Model, error) {
+	clone, err := model.RuntimeSnapshot()
+	if err != nil || clone == nil || !retainManagedRoots {
+		return clone, err
+	}
+	for name, source := range model.Connections {
+		root := strings.TrimSpace(source.Root)
+		if source.Kind != "managed" || root == "" {
+			continue
+		}
+		connection := clone.Connections[name]
+		connection.Root = root
+		clone.Connections[name] = connection
+	}
+	return clone, nil
 }
 
 func cloneDashboard(dashboard dashboarddefinition.Definition) (dashboarddefinition.Definition, error) {
@@ -118,7 +143,9 @@ func (d *ProjectDefinition) Models() map[projectgraph.ResourceID]*semanticmodel.
 	}
 	result := make(map[projectgraph.ResourceID]*semanticmodel.Model, len(d.models))
 	for id, model := range d.models {
-		clone, _ := cloneModel(model)
+		// The definition already contains only roots admitted through the
+		// target-bound constructor, so detached accessors retain them.
+		clone, _ := cloneModel(model, true)
 		result[id] = clone
 	}
 	return result

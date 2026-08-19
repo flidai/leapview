@@ -127,6 +127,39 @@ func TestProjectDefinitionRuntimeModelCloneRetainsExecutionAndRedactsTargetState
 	}
 }
 
+func TestTargetBoundProjectDefinitionRetainsOnlyManagedRoots(t *testing.T) {
+	model := &semanticmodel.Model{Connections: map[string]semanticmodel.Connection{
+		"managed": {
+			Kind: "managed", Root: " /managed/revision ", Scope: "target-scope", Host: "target.example",
+			Credentials: semanticmodel.ConnectionCredentials{Secret: "secret"}, Auth: semanticmodel.ConnectionAuth{"token": "secret"},
+		},
+		"external": {Kind: "postgres", Root: "/external/root", Host: "postgres.example"},
+	}}
+	definition, err := NewTargetBoundProjectDefinition("project_1", "", "", map[projectgraph.ResourceID]*semanticmodel.Model{"model_1": model}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	model.Connections["managed"] = semanticmodel.Connection{Kind: "managed", Root: "/mutated"}
+
+	first := definition.Models()["model_1"]
+	if got := first.Connections["managed"].Root; got != "/managed/revision" {
+		t.Fatalf("managed root = %q, want trusted runtime root", got)
+	}
+	managed := first.Connections["managed"]
+	if managed.Scope != "" || managed.Host != "" || managed.Credentials != (semanticmodel.ConnectionCredentials{}) || managed.Auth != nil {
+		t.Fatalf("target-bound clone retained non-root target state: %#v", managed)
+	}
+	if external := first.Connections["external"]; external.Root != "" || external.Host != "" {
+		t.Fatalf("target-bound clone retained external target state: %#v", external)
+	}
+
+	managed.Root = "/caller-mutation"
+	first.Connections["managed"] = managed
+	if got := definition.Models()["model_1"].Connections["managed"].Root; got != "/managed/revision" {
+		t.Fatalf("managed root mutation leaked into definition: %q", got)
+	}
+}
+
 func TestProjectDefinitionRuntimeModelClonePropagatesInvalidPathUnion(t *testing.T) {
 	model := &semanticmodel.Model{Sources: map[string]semanticmodel.Source{
 		"broken": {PathLocation: &projectcontracts.PathSourceLocation{Value: (*projectcontracts.CSVPathSourceLocation)(nil)}},

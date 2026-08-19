@@ -76,6 +76,51 @@ test('dashboard coalesces duplicate option requests for one binding context', as
   }
 })
 
+test('responsive report canvas derives browser geometry from canonical grid placement', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-report-canvas'))
+    const geometry = await page.evaluate(async () => {
+      const canvas = document.createElement('lv-report-canvas') as any
+      canvas.style.width = '1200px'
+      canvas.style.height = '720px'
+      canvas.width = 0
+      canvas.height = 0
+      canvas.columns = 12
+      canvas.rowHeight = 48
+      canvas.gap = 16
+      canvas.padding = 16
+      const frame = (col: number, row: number, colSpan: number, rowSpan: number) => {
+        const element = document.createElement('div')
+        element.dataset.canvasVisual = ''
+        element.dataset.col = String(col)
+        element.dataset.row = String(row)
+        element.dataset.colSpan = String(colSpan)
+        element.dataset.rowSpan = String(rowSpan)
+        canvas.append(element)
+        return element
+      }
+      const left = frame(1, 1, 4, 2)
+      const right = frame(5, 1, 8, 2)
+      document.body.append(canvas)
+      await canvas.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      return {
+        canvas: canvas.getBoundingClientRect().toJSON(),
+        left: left.getBoundingClientRect().toJSON(),
+        right: right.getBoundingClientRect().toJSON(),
+      }
+    })
+    expect(geometry.left.width).toBeGreaterThan(0)
+    expect(geometry.right.width).toBeGreaterThan(geometry.left.width)
+    expect(geometry.left.right).toBeLessThan(geometry.right.left)
+    expect(geometry.right.right).toBeLessThanOrEqual(geometry.canvas.right - 15)
+  } finally {
+    await page.close()
+  }
+})
+
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
@@ -2280,6 +2325,41 @@ test('visible dynamic list controls wait for the canonical session before reques
       afterCurrent: 1,
       detail: { bindingKey: 'fb_state', search: '', limit: 50 },
     })
+  } finally {
+    await page.close()
+  }
+})
+
+test('visible dynamic list controls request options when their contract arrives after connection', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const requests = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      const seen: unknown[] = []
+      leaf.addEventListener('lv-filter-options-needed', (event: CustomEvent) => seen.push(event.detail))
+      document.body.append(leaf)
+      await leaf.updateComplete
+      leaf.definition = {
+        id: 'status', label: 'Status', field: 'orders.status', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: { kind: 'distinct', limit: 20, values: [] }, format: {},
+      }
+      leaf.binding = {
+        key: 'fb_status', id: 'status', filter: 'status', scope: 'page', pageID: 'filters',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', selectionLimit: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, paneLabel: 'Status',
+        targets: [], incomingDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'list', search: false, selectAll: false,
+        showCounts: false, showSummary: true, compact: false,
+      }
+      await leaf.updateComplete
+      return seen
+    })
+    expect(requests).toEqual([{ bindingKey: 'fb_status', search: '', limit: 20 }])
   } finally {
     await page.close()
   }

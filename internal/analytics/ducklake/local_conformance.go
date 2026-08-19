@@ -18,11 +18,12 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/internal/extension"
 )
 
 // RunLocalPoolConformance executes the substantive local shared-pool
 // scenarios and returns complete, content-addressed admission evidence.
-func RunLocalPoolConformance(ctx context.Context, root string, tuple physicalpool.Compatibility) (physicalpool.Evidence, error) {
+func RunLocalPoolConformance(ctx context.Context, root string, tuple physicalpool.Compatibility, admission extension.Admission) (physicalpool.Evidence, error) {
 	if err := tuple.Validate(); err != nil {
 		return physicalpool.Evidence{}, err
 	}
@@ -44,7 +45,7 @@ func RunLocalPoolConformance(ctx context.Context, root string, tuple physicalpoo
 	if err := os.MkdirAll(dataPath, 0o700); err != nil {
 		return physicalpool.Evidence{}, err
 	}
-	base, err := Open(ctx, Config{RootDir: baseRoot, CatalogPath: filepath.Join(baseRoot, "catalog.duckdb"), DataPath: dataPath, Compatibility: tuple})
+	base, err := Open(ctx, Config{RootDir: baseRoot, CatalogPath: filepath.Join(baseRoot, "catalog.duckdb"), DataPath: dataPath, Compatibility: tuple, ExtensionAdmission: admission})
 	if err != nil {
 		return physicalpool.Evidence{}, fmt.Errorf("open local conformance base: %w", err)
 	}
@@ -105,12 +106,12 @@ INSERT INTO model.metrics SELECT range, 'base' FROM range(1, 1001);`)
 	if err := copyCatalog(bCatalog); err != nil {
 		return physicalpool.Evidence{}, err
 	}
-	a, err := Open(ctx, Config{RootDir: aRoot, CatalogPath: aCatalog, DataPath: dataPath, Compatibility: tuple})
+	a, err := Open(ctx, Config{RootDir: aRoot, CatalogPath: aCatalog, DataPath: dataPath, Compatibility: tuple, ExtensionAdmission: admission})
 	if err != nil {
 		return physicalpool.Evidence{}, err
 	}
 	defer a.Close()
-	b, err := Open(ctx, Config{RootDir: bRoot, CatalogPath: bCatalog, DataPath: dataPath, Compatibility: tuple})
+	b, err := Open(ctx, Config{RootDir: bRoot, CatalogPath: bCatalog, DataPath: dataPath, Compatibility: tuple, ExtensionAdmission: admission})
 	if err != nil {
 		return physicalpool.Evidence{}, err
 	}
@@ -198,7 +199,7 @@ INSERT INTO model.metrics SELECT range, 'base' FROM range(1, 1001);`)
 	if err := b.Close(); err != nil {
 		return physicalpool.Evidence{}, err
 	}
-	b, err = Open(ctx, Config{RootDir: bRoot, CatalogPath: bCatalog, DataPath: dataPath, ReadOnly: true, Compatibility: tuple})
+	b, err = Open(ctx, Config{RootDir: bRoot, CatalogPath: bCatalog, DataPath: dataPath, ReadOnly: true, Compatibility: tuple, ExtensionAdmission: admission})
 	if err != nil {
 		return physicalpool.Evidence{}, err
 	}

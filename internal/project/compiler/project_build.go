@@ -385,20 +385,7 @@ func rewriteSourceSQLForRuntime(sql string, sourceAliases map[string]string) str
 }
 
 func localSourceName(sourceID string) string {
-	var builder strings.Builder
-	for index, char := range sourceID {
-		valid := char == '_' || char >= 'A' && char <= 'Z' || char >= 'a' && char <= 'z' || index > 0 && char >= '0' && char <= '9'
-		if valid {
-			builder.WriteRune(char)
-			continue
-		}
-		builder.WriteByte('_')
-	}
-	out := builder.String()
-	if out == "" || out[0] >= '0' && out[0] <= '9' {
-		out = "source_" + out
-	}
-	return out
+	return manifest.RuntimeSourceAlias(sourceID)
 }
 
 // sourceAliasesForProject builds the runtime source namespace used by model

@@ -8,25 +8,39 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
+	"github.com/flidai/leapview/internal/extension"
 )
 
-const fixtureCacheSuffix = ".cache/leapview/ci-duckdb-extensions"
+const (
+	fixtureCacheSuffix        = ".cache/leapview/ci-duckdb-extensions"
+	developmentSupportProfile = "development-fixture"
+)
 
 var fixtureExtensions = [...]string{"ducklake", "spatial"}
 
 type installer func(context.Context, string, string, string) error
 
+type preparedFixture struct {
+	Name             string
+	Path             string
+	Digest           string
+	ExtensionVersion string
+}
+
 func main() {
 	root := flag.String("root", "", "private DuckDB extension fixture cache")
+	supplyOut := flag.String("supply-out", "", "optional absolute output path for a bounded development supply document")
 	flag.Parse()
 
 	resolved, err := fixtureRoot(*root)
@@ -41,18 +55,26 @@ func main() {
 		fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extensions: %v\n", err)
 		os.Exit(1)
 	}
+	fixtures := make([]preparedFixture, 0, len(fixtureExtensions))
 	for _, name := range fixtureExtensions {
 		path, prepareErr := prepare(ctx, resolved, version, platform, name, installExtension)
 		if prepareErr != nil {
 			fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extension %s: %v\n", name, prepareErr)
 			os.Exit(1)
 		}
-		digest, verifyErr := verifyExtension(ctx, name, path)
+		digest, extensionVersion, verifyErr := verifyExtension(ctx, name, path)
 		if verifyErr != nil {
 			fmt.Fprintf(os.Stderr, "prepare DuckDB fixture extension %s: %v\n", name, verifyErr)
 			os.Exit(1)
 		}
 		fmt.Printf("prepared DuckDB fixture %s %s sha256:%s\n", name, path, digest)
+		fixtures = append(fixtures, preparedFixture{Name: name, Path: path, Digest: digest, ExtensionVersion: extensionVersion})
+	}
+	if strings.TrimSpace(*supplyOut) != "" {
+		if err := writeDevelopmentSupply(*supplyOut, version, platform, fixtures); err != nil {
+			fmt.Fprintf(os.Stderr, "prepare DuckDB development supply: %v\n", err)
+			os.Exit(1)
+		}
 	}
 }
 
@@ -154,24 +176,98 @@ func locateArtifact(root, version, platform, name string) (string, error) {
 	return path, nil
 }
 
-func verifyExtension(ctx context.Context, name, path string) (string, error) {
+func verifyExtension(ctx context.Context, name, path string) (string, string, error) {
 	contents, err := os.ReadFile(path)
 	if err != nil {
-		return "", fmt.Errorf("read %s artifact: %w", name, err)
+		return "", "", fmt.Errorf("read %s artifact: %w", name, err)
 	}
 	digest := sha256.Sum256(contents)
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
-		return "", fmt.Errorf("open DuckDB extension verifier: %w", err)
+		return "", "", fmt.Errorf("open DuckDB extension verifier: %w", err)
 	}
 	defer db.Close()
 	escapedPath := strings.ReplaceAll(path, "'", "''")
 	// Loading the exact absolute artifact asks DuckDB to verify its official
 	// extension signature. It does not enable installation in product runtime.
 	if _, err := db.ExecContext(ctx, "LOAD '"+escapedPath+"'"); err != nil {
-		return "", fmt.Errorf("verify pinned %s fixture extension: %w", name, err)
+		return "", "", fmt.Errorf("verify pinned %s fixture extension: %w", name, err)
 	}
-	return hex.EncodeToString(digest[:]), nil
+	var extensionVersion string
+	if err := db.QueryRowContext(ctx, "SELECT extension_version FROM duckdb_extensions() WHERE extension_name = ?", name).Scan(&extensionVersion); err != nil {
+		return "", "", fmt.Errorf("read pinned %s fixture version: %w", name, err)
+	}
+	extensionVersion = strings.TrimSpace(extensionVersion)
+	if extensionVersion == "" || strings.ContainsAny(extensionVersion, `/\\`) {
+		return "", "", fmt.Errorf("pinned %s fixture version is invalid", name)
+	}
+	return hex.EncodeToString(digest[:]), extensionVersion, nil
+}
+
+func writeDevelopmentSupply(rawPath, version, platform string, fixtures []preparedFixture) error {
+	path, err := filepath.Abs(rawPath)
+	if err != nil || rawPath == "" || rawPath != strings.TrimSpace(rawPath) || rawPath != path || filepath.Clean(path) != path {
+		return fmt.Errorf("development supply output must be an absolute canonical path")
+	}
+	if len(fixtures) != len(fixtureExtensions) {
+		return fmt.Errorf("development supply has %d fixture artifacts, want %d", len(fixtures), len(fixtureExtensions))
+	}
+	manifest := extensionsupply.Manifest{
+		Version: extensionsupply.ManifestVersion, DuckDBVersion: version,
+		GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform,
+		SupportProfile: developmentSupportProfile,
+	}
+	for index, fixture := range fixtures {
+		if fixture.Name != fixtureExtensions[index] || !isFixtureExtension(fixture.Name) {
+			return fmt.Errorf("development supply fixture %d is not the reviewed %q artifact", index, fixtureExtensions[index])
+		}
+		artifactPath, pathErr := filepath.Abs(fixture.Path)
+		if pathErr != nil || fixture.Path != artifactPath || filepath.Clean(artifactPath) != artifactPath {
+			return fmt.Errorf("development supply %s artifact path is not absolute and canonical", fixture.Name)
+		}
+		info, statErr := os.Lstat(artifactPath)
+		if statErr != nil || info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() || info.Size() == 0 {
+			return fmt.Errorf("development supply %s artifact is unavailable", fixture.Name)
+		}
+		if len(fixture.Digest) != sha256.Size*2 {
+			return fmt.Errorf("development supply %s digest is invalid", fixture.Name)
+		}
+		if _, decodeErr := hex.DecodeString(fixture.Digest); decodeErr != nil || strings.ToLower(fixture.Digest) != fixture.Digest {
+			return fmt.Errorf("development supply %s digest is invalid", fixture.Name)
+		}
+		if fixture.ExtensionVersion == "" || fixture.ExtensionVersion != strings.TrimSpace(fixture.ExtensionVersion) || strings.ContainsAny(fixture.ExtensionVersion, `/\\`) {
+			return fmt.Errorf("development supply %s version is invalid", fixture.Name)
+		}
+		originID := "reviewed-development-fixture-" + fixture.Name
+		manifest.Origins = append(manifest.Origins, extensionsupply.ManifestOrigin{ID: originID, Path: artifactPath, Reviewed: true})
+		manifest.Artifacts = append(manifest.Artifacts, extensionsupply.Artifact{
+			Identity: extension.Identity{
+				DuckDBVersion: version, ExtensionVersion: fixture.ExtensionVersion,
+				GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Platform: platform,
+				Name: fixture.Name, Digest: "sha256:" + fixture.Digest, SupportProfile: developmentSupportProfile,
+			},
+			Origins: []string{originID}, Provenance: "attest:duckdb-core-development-fixture", Signature: "sig:duckdb-official",
+		})
+	}
+	payload, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal development supply: %w", err)
+	}
+	payload = append(payload, '\n')
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("create development supply directory: %w", err)
+	}
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		return fmt.Errorf("write development supply: %w", err)
+	}
+	if err := os.Chmod(path, 0o600); err != nil {
+		return fmt.Errorf("protect development supply: %w", err)
+	}
+	digest := sha256.Sum256(payload)
+	if err := os.WriteFile(path+".sha256", []byte(hex.EncodeToString(digest[:])+"\n"), 0o600); err != nil {
+		return fmt.Errorf("write development supply digest: %w", err)
+	}
+	return os.Chmod(path+".sha256", 0o600)
 }
 
 func installExtension(ctx context.Context, root, _, name string) error {

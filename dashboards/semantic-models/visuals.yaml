@@ -216,7 +216,7 @@ spec:
       empty: zero
       label: Revenue
       description: Total payment revenue.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_min:
       type: aggregate
@@ -227,7 +227,7 @@ spec:
       empty: 'null'
       label: Revenue min
       description: Minimum order revenue.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_max:
       type: aggregate
@@ -238,7 +238,7 @@ spec:
       empty: 'null'
       label: Revenue max
       description: Maximum order revenue.
-      unit: R$
+      unit: BRL
       format: currency
     missing_revenue:
       type: aggregate
@@ -251,7 +251,7 @@ spec:
       empty: 'null'
       label: Missing revenue comparison
       description: Documentation-only comparison metric with no matching rows.
-      unit: R$
+      unit: BRL
       format: currency
     review_score:
       type: aggregate
@@ -312,7 +312,7 @@ spec:
       empty: zero
       label: Route revenue
       description: Seller-allocated revenue for actual order delivery routes.
-      unit: R$
+      unit: BRL
       format: currency
     aov:
       type: ratio
@@ -320,35 +320,35 @@ spec:
       denominator: order_count
       label: AOV
       description: Average order value.
-      unit: R$
+      unit: BRL
       format: currency
     revenue_baseline:
       type: derived
       label: Revenue baseline
       description: Filter-aligned baseline used by KPI comparison examples.
       expression: ${revenue} * 0.9
-      unit: R$
+      unit: BRL
       format: currency
     revenue_target:
       type: derived
       label: Revenue target
       description: Filter-aligned target used by KPI goal examples.
       expression: ${revenue} * 1.1
-      unit: R$
+      unit: BRL
       format: currency
     revenue_q1:
       type: derived
       label: Revenue lower bound
       description: Minimum order revenue used as the lower showcase bound.
       expression: ${revenue_min}
-      unit: R$
+      unit: BRL
       format: currency
     revenue_q3:
       type: derived
       label: Revenue upper bound
       description: Maximum order revenue used as the upper showcase bound.
       expression: ${revenue_max}
-      unit: R$
+      unit: BRL
       format: currency
     delivery_days_q1:
       type: derived

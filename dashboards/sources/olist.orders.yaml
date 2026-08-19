@@ -16,5 +16,5 @@ spec:
       order_id: {datatype: String, description: Raw order identifier.}
       customer_id: {datatype: String, description: Customer identifier attached to the order.}
       order_status: {datatype: String, description: Raw lifecycle status.}
-      order_purchase_timestamp: {datatype: String, description: Timestamp when the order was placed.}
-      order_delivered_customer_date: {datatype: String, description: Timestamp when the order reached the customer.}
+      order_purchase_timestamp: {datatype: DateTime, description: Timestamp when the order was placed.}
+      order_delivered_customer_date: {datatype: DateTime, description: Timestamp when the order reached the customer.}

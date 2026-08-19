@@ -39,6 +39,29 @@ func (compiled CanonicalFilterCompilation) ApplyToDefinition(definition *dashboa
 	if definition == nil {
 		return fmt.Errorf("dashboard definition is required")
 	}
+	compiledSlicers := make(map[string]dashboard.PageVisual)
+	for _, page := range compiled.Pages {
+		for _, component := range page.Visuals {
+			if component.Kind == "slicer" {
+				compiledSlicers[page.ID+"\x00"+component.ID] = component
+			}
+		}
+	}
+	for pageIndex := range definition.Pages {
+		page := &definition.Pages[pageIndex]
+		for componentIndex := range page.Visuals {
+			component := &page.Visuals[componentIndex]
+			if component.Kind != "slicer" {
+				continue
+			}
+			canonical, ok := compiledSlicers[page.ID+"\x00"+component.ID]
+			if !ok {
+				return fmt.Errorf("page %q slicer %q is missing from canonical filter compilation", page.ID, component.ID)
+			}
+			component.Binding = canonical.Binding
+			component.Presentation = canonical.Presentation
+		}
+	}
 	definition.FilterDefinitions = cloneCanonicalDefinitions(compiled.Definitions)
 	definition.FilterBindings = cloneCanonicalBindings(compiled.Bindings)
 	definition.FilterOrder = append([]string(nil), compiled.Order...)
@@ -370,6 +393,10 @@ func validateCanonicalOptionDependencies(filters []document.DashboardFilter, def
 }
 
 func compileCanonicalFilterPages(doc document.DashboardDocument, model *semanticmodel.Model, dashboardID string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding) ([]dashboard.Page, error) {
+	authoredFilters := make(map[string]document.DashboardFilter, len(doc.Spec.Filters))
+	for _, filter := range doc.Spec.Filters {
+		authoredFilters[strings.TrimSpace(filter.ID)] = filter
+	}
 	pages := make([]dashboard.Page, 0, len(doc.Spec.Pages))
 	for _, authored := range doc.Spec.Pages {
 		page := dashboard.Page{ID: strings.TrimSpace(authored.ID), Title: authored.Title, Visuals: []dashboard.PageVisual{}}
@@ -400,11 +427,15 @@ func compileCanonicalFilterPages(doc document.DashboardDocument, model *semantic
 				if _, ok := definitions[filterID]; !ok {
 					return nil, fmt.Errorf("page %q component %q references unknown filter %q", page.ID, base.ID, filterID)
 				}
+				presentation, err := canonicalFilterPresentation(authoredFilters[filterID].Control)
+				if err != nil {
+					return nil, fmt.Errorf("page %q component %q filter %q presentation: %w", page.ID, base.ID, filterID, err)
+				}
 				if _, exists := seenFilters[filterID]; exists {
 					return nil, fmt.Errorf("page %q places filter %q more than once", page.ID, filterID)
 				}
 				seenFilters[filterID] = struct{}{}
-				page.Visuals = append(page.Visuals, dashboard.PageVisual{ID: base.ID, Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: filterID}, Placement: placement})
+				page.Visuals = append(page.Visuals, dashboard.PageVisual{ID: base.ID, Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: filterID}, Presentation: presentation, Placement: placement})
 			case *document.VisualDashboardPageComponent:
 				if strings.TrimSpace(value.Visual) == "" {
 					return nil, fmt.Errorf("page %q component %q visual is required", page.ID, base.ID)
@@ -429,6 +460,41 @@ func compileCanonicalFilterPages(doc document.DashboardDocument, model *semantic
 		return nil, err
 	}
 	return pages, nil
+}
+
+func canonicalFilterPresentation(control document.DashboardFilterControl) (dashboardfilter.Presentation, error) {
+	presentation := dashboardfilter.Presentation{}
+	switch value := control.Value.(type) {
+	case *document.SingleSelectDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationDropdown
+		if value.Options != nil {
+			switch value.Options.Value.(type) {
+			case *document.DistinctDashboardFilterOptions:
+				presentation.Style = dashboardfilter.PresentationList
+			case *document.StaticDashboardFilterOptions:
+				presentation.Style = dashboardfilter.PresentationButtons
+			case nil:
+				return dashboardfilter.Presentation{}, fmt.Errorf("singleSelect options variant is required")
+			default:
+				return dashboardfilter.Presentation{}, fmt.Errorf("unsupported singleSelect options %T", value.Options.Value)
+			}
+		}
+	case *document.MultiSelectDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationDropdown
+	case *document.TextDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationInput
+	case *document.NumericRangeDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationNumericRange
+	case *document.DateRangeDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationDateRange
+	case *document.RelativePeriodDashboardFilterControl:
+		presentation.Style = dashboardfilter.PresentationRelativePeriod
+	case nil:
+		return dashboardfilter.Presentation{}, fmt.Errorf("filter control variant is required")
+	default:
+		return dashboardfilter.Presentation{}, fmt.Errorf("unsupported filter control %T", control.Value)
+	}
+	return presentation, nil
 }
 
 func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semanticmodel.Model, _ string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, pages []dashboard.Page) error {
