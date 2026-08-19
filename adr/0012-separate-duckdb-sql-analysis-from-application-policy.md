@@ -141,6 +141,11 @@ pinned `extension/core_functions` JSON descriptors that also feed DuckDB's
 documentation build. CI verifies every snapshot against the exact source
 commit as well as regenerating it hermetically from checked-in inputs.
 
+The generator commands and their pinned source snapshots are private package
+implementation details under `pkg/duckdbsql/internal`. Application tooling
+invokes those package-owned commands but does not own or duplicate DuckDB SQL
+metadata generation.
+
 Generated metadata describes what DuckDB exposes; it does not decide what
 LeapView authorizes. In particular, a function reported as scalar, aggregate,
 internal, stable, or free of database side effects is not automatically safe,

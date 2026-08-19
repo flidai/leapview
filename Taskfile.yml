@@ -330,22 +330,22 @@ tasks:
   duckdbsql:generate:
     desc: Generate pinned DuckDB SQL runtime, AST, enum, and documentation metadata
     cmds:
-      - go run ./internal/app/tools/duckdbsqlgen
-      - go run ./internal/app/tools/duckdbsqldocsgen
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen
 
   duckdbsql:generated:check:
     desc: Verify pinned DuckDB SQL metadata is current without network access
     cmds:
-      - go run ./internal/app/tools/duckdbsqlgen -check
-      - go run ./internal/app/tools/duckdbsqldocsgen -check
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen -check
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen -check
 
   duckdbsql:source:check:
     desc: Verify generated DuckDB SQL metadata against the exact pinned source checkout
     requires:
       vars: [DUCKDB_SOURCE]
     cmds:
-      - go run ./internal/app/tools/duckdbsqlgen -check -source {{.DUCKDB_SOURCE | quote}}
-      - go run ./internal/app/tools/duckdbsqldocsgen -check -source {{printf "%s/extension/core_functions" .DUCKDB_SOURCE | quote}}
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen -check -source {{.DUCKDB_SOURCE | quote}}
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen -check -source {{printf "%s/extension/core_functions" .DUCKDB_SOURCE | quote}}
 
   duckdbsql:qualification:
     desc: Run the independent Phase-1 DuckDB SQL qualification lane
@@ -559,7 +559,7 @@ tasks:
       - task: generated:git-check
       - task: config:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json internal/app/tools/duckdbsqlgen/ast_schema_snapshot.json internal/app/tools/duckdbsqlgen/enum_schema_snapshot.json internal/app/tools/duckdbsqldocsgen/upstream.lock.json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:

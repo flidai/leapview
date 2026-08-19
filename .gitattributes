@@ -1,1 +1,1 @@
-internal/app/tools/duckdbsqldocsgen/upstream/** -whitespace
+pkg/duckdbsql/internal/upstream/function_docs/** -whitespace
