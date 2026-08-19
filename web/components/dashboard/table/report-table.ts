@@ -593,6 +593,7 @@ export class ReportTable extends LitElement {
 
     .cell.pinned-left {
       z-index: calc(var(--zIndex-default) + 2);
+      background: var(--lv-row-bg-current, var(--lv-chart-surface));
     }
 
     .header-cell.pinned-left > .header-button,
@@ -775,8 +776,8 @@ export class ReportTable extends LitElement {
       --lv-row-bg: var(--lv-chart-surface);
       --lv-row-bg-hover: var(--control-transparent-bgColor-hover);
       --lv-row-bg-selected: var(--bgColor-accent-muted);
-      --lv-row-bg-selected-hover: var(--selection-bgColor);
-      background: var(--lv-row-bg);
+      --lv-row-bg-current: var(--lv-row-bg);
+      background: var(--lv-row-bg-current);
       color: var(--lv-fg-default);
     }
 
@@ -790,20 +791,20 @@ export class ReportTable extends LitElement {
     }
 
     .row:hover {
-      background: var(--lv-row-bg-hover);
+      --lv-row-bg-current: var(--lv-row-bg-hover);
     }
 
     .row.hovered {
-      background: var(--lv-row-bg-hover);
+      --lv-row-bg-current: var(--lv-row-bg-hover);
     }
 
     .row.selected {
-      background: var(--lv-row-bg-selected);
+      --lv-row-bg-current: var(--lv-row-bg-selected);
     }
 
     .row.selected:hover,
     .row.selected.hovered {
-      background: var(--lv-row-bg-selected-hover);
+      --lv-row-bg-current: var(--lv-row-bg-selected);
     }
 
     .row.highlight-dimmed {

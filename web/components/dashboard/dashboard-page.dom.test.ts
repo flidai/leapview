@@ -752,6 +752,57 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
   } finally { await page.close() }
 })
 
+test('selected sticky table cells preserve the visible row highlight', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.row'))
+    })
+    const colors = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      table.table = {
+        ...table.table,
+        interaction: {
+          kind: 'row_selection',
+          mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'order_id' }],
+        },
+        selection: [{
+          label: 'o1',
+          mappings: [{ field: 'orders.order_id', dataset: 'orders', value: 'o1' }],
+        }],
+      }
+      table.style.setProperty('--bgColor-accent-muted', 'rgb(221, 244, 255)')
+      await table.updateComplete
+      const selected = table.shadowRoot.querySelector('.row[aria-selected="true"]') as HTMLElement
+      const pinned = selected.querySelector('.cell.pinned-left') as HTMLElement
+      const unselected = table.shadowRoot.querySelector('.row[aria-selected="false"]') as HTMLElement
+      const selectedColor = getComputedStyle(selected).backgroundColor
+      const pinnedColor = getComputedStyle(pinned).backgroundColor
+      selected.classList.add('hovered')
+      return {
+        selected: selectedColor,
+        pinned: pinnedColor,
+        hovered: getComputedStyle(selected).backgroundColor,
+        pinnedHovered: getComputedStyle(pinned).backgroundColor,
+        unselected: getComputedStyle(unselected).backgroundColor,
+      }
+    })
+    expect(colors.selected).toBe('rgb(221, 244, 255)')
+    expect(colors.pinned).toBe(colors.selected)
+    expect(colors.hovered).toBe(colors.selected)
+    expect(colors.pinnedHovered).toBe(colors.selected)
+    expect(colors.pinned).not.toBe(colors.unselected)
+  } finally {
+    await page.close()
+  }
+})
+
 test('table resize handles expose keyboard increments and accessible labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
