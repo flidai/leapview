@@ -67976,9 +67976,8 @@ components:
           example: example
         interactionKind:
           type: string
-          enum:
-            - point_selection
-            - row_selection
+          minLength: 1
+          description: Stable interaction ID from the source visualization specification. The legacy field name is retained for wire compatibility.
           example: example
         entries:
           type: array
@@ -86200,6 +86199,7 @@ components:
       properties:
         id:
           type: string
+          description: Stable compiler-owned interaction identity. Commands and persisted selections must reference this exact value.
           example: example
         kind:
           $ref: '#/components/schemas/VisualizationInteractionKind'

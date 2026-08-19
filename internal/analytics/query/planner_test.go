@@ -71,6 +71,25 @@ func TestPlannerScalarMultiDatasetAggregatesDatasetsIndependently(t *testing.T) 
 	}
 }
 
+func TestPlannerOrdersSelectedRowFilterBeforeDerivedDecimalLiteral(t *testing.T) {
+	model := testModel()
+	model.Metrics["revenue_baseline"] = semanticmodel.Metric{Type: "derived", Expression: "${revenue} * 0.9"}
+	selectedRowID := "0812eb902a67711a1cb742b3cdaa65ae"
+	plan, err := mustNewCompiledPlanner(t, model).Plan(Request{
+		Metrics: []Field{{Field: "revenue_baseline"}},
+		Filters: []Filter{{
+			Field: "orders.status", Dataset: "orders", Operator: "equals", Values: []any{selectedRowID},
+		}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantArgs := []any{selectedRowID, "0.9"}
+	if !reflect.DeepEqual(plan.Args, wantArgs) {
+		t.Fatalf("plan args = %#v, want SQL placeholder order %#v\nSQL: %s", plan.Args, wantArgs, plan.SQL)
+	}
+}
+
 func TestPlannerAggregatePaginationAlwaysHasTotalOrdering(t *testing.T) {
 	plan, err := mustNewCompiledPlanner(t, testModel()).Plan(Request{
 		Dimensions: []Field{{Field: "customer_state", Alias: "label"}},

@@ -84,7 +84,7 @@ func canonicalCartesian(t *testing.T, id, field, target string, targets []string
 	for index, visualID := range targets {
 		interactionTargets[index] = visualizationir.VisualizationInteractionTarget{VisualID: visualID, Effect: visualizationir.VisualizationInteractionEffectFilter}
 	}
-	base.Interactions = []visualizationir.VisualizationInteraction{{ID: "point_selection", Kind: visualizationir.VisualizationInteractionKindSelect, Mode: visualizationir.VisualizationSelectionModeSingle, RequiresStableIdentity: false, Mappings: []visualizationir.VisualizationInteractionMapping{{Source: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field}, TargetFieldID: target}}, Targets: interactionTargets}}
+	base.Interactions = []visualizationir.VisualizationInteraction{{ID: "interaction-0", Kind: visualizationir.VisualizationInteractionKindSelect, Mode: visualizationir.VisualizationSelectionModeSingle, RequiresStableIdentity: false, Mappings: []visualizationir.VisualizationInteractionMapping{{Source: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field}, TargetFieldID: target}}, Targets: interactionTargets}}
 	spec := visualizationir.VisualizationSpec{Value: &visualizationir.CartesianVisualizationSpec{VisualizationSpecBase: base, Kind: "cartesian", Mark: visualizationir.VisualizationCartesianMarkBar, X: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field}, Y: []visualizationir.VisualizationFieldRef{{Dataset: "primary", Field: "value"}}, Presentation: visualizationir.CartesianVisualizationPresentation{VisualizationPresentation: visualizationir.VisualizationPresentation{Legend: visualizationir.VisualizationLegendPositionHidden, LabelPolicy: visualizationir.VisualizationLabelPolicy{Density: visualizationir.VisualizationLabelDensityHidden, MaxCharacters: 24, TooltipFallback: true}}}}}
 	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryAggregate, ResultShape: visualizationdefinition.ResultCategoryValue, ModelID: "model", DatasetID: "primary", Aggregate: &visualizationdefinition.AggregateQueryBinding{TableID: "orders", Dimensions: []visualizationdefinition.FieldBinding{{FieldID: field, Alias: field}}, Metrics: []visualizationdefinition.FieldBinding{{FieldID: "order_count", Alias: "value"}}, Limit: 100}})
 	if err != nil {
@@ -118,6 +118,7 @@ func canonicalTable(t *testing.T, id string) visualizationdefinition.Definition 
 	t.Helper()
 	fields := []visualizationir.VisualizationField{{ID: "state", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeString, Label: "State"}}
 	base := canonicalBase("table", "Orders", fields)
+	base.Interactions = []visualizationir.VisualizationInteraction{{ID: "interaction-0", Kind: visualizationir.VisualizationInteractionKindSelect, Mode: visualizationir.VisualizationSelectionModeMultiple, Mappings: []visualizationir.VisualizationInteractionMapping{{Source: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "state"}, TargetFieldID: "state"}}, Targets: []visualizationir.VisualizationInteractionTarget{{VisualID: "chart", Effect: visualizationir.VisualizationInteractionEffectFilter}}}}
 	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{VisualizationSpecBase: base, Kind: "table", Columns: []visualizationir.TableVisualizationColumn{{Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: "state"}, Label: "State", Formatting: []visualizationir.TableVisualizationFormattingRule{}}}, Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 28, ShowHeader: true}}}
 	definition, err := visualizationdefinition.New(id, spec, visualizationdefinition.QueryBinding{Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow, ModelID: "model", DatasetID: "primary", Detail: &visualizationdefinition.DetailQueryBinding{TableID: "orders", Fields: []visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "state"}}, Limit: 100}})
 	if err != nil {
@@ -130,7 +131,7 @@ func TestCanonicalCommandDispatchAndRevisionAuthorization(t *testing.T) {
 	fixture := canonicalCommandFixture(t)
 	filters := dashboard.Filters{ServingStateID: "generation", DataRevisions: map[string]int64{"chart": 1}, CompiledState: &dashboardfilter.State{}}.WithDefaults()
 	definition := fixture.definition
-	command := dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", SpecRevision: definition.Visualizations["chart"].SpecRevision, DataRevision: 1, ServingStateID: "generation", FilterRevision: int64(filters.CompiledState.Revision), InteractionRevision: int64(filters.InteractionRevision), Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "CA"}}}
+	command := dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", SpecRevision: definition.Visualizations["chart"].SpecRevision, DataRevision: 1, ServingStateID: "generation", FilterRevision: int64(filters.CompiledState.Revision), InteractionRevision: int64(filters.InteractionRevision), Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "CA"}}}
 	prepared, err := (Service{Metrics: fixture}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, filters)
 	if err != nil {
 		t.Fatal(err)
@@ -198,8 +199,8 @@ func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
 
 func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testing.T) {
 	definition := testDashboardDefinition()
-	authoritative := dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "existing", InteractionKind: "point_selection"}}, ServingStateID: "serving-test", CompiledState: &dashboardfilter.State{}, DataRevisions: map[string]int64{"chart": 1}}.WithDefaults()
-	command := stampInteractionCommand(definition, authoritative, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
+	authoritative := dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "existing", InteractionKind: "interaction-0"}}, ServingStateID: "serving-test", CompiledState: &dashboardfilter.State{}, DataRevisions: map[string]int64{"chart": 1}}.WithDefaults()
+	command := stampInteractionCommand(definition, authoritative, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
 	prepared, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, authoritative)
 	if err != nil {
 		t.Fatal(err)
@@ -219,7 +220,7 @@ func TestPrepareSelectRestrictsExplicitTargetsToActivePage(t *testing.T) {
 	spec.Interactions[0].Targets = []visualizationir.VisualizationInteractionTarget{{VisualID: "orders", Effect: visualizationir.VisualizationInteractionEffectFilter}, {VisualID: "boolean_chart", Effect: visualizationir.VisualizationInteractionEffectHighlight}}
 	definition.Visualizations["chart"] = chart
 	filters := authoritativeFilters()
-	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
 	prepared, err := (Service{Metrics: canonicalMetrics{definition: definition, model: canonicalCommandFixture(t).model}}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, filters)
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +233,7 @@ func TestPrepareSelectRestrictsExplicitTargetsToActivePage(t *testing.T) {
 func TestPrepareSelectCanonicalizesTypedMappings(t *testing.T) {
 	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
-	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "boolean_chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "active", Value: false}}})
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "boolean_chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "active", Value: false}}})
 	prepared, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "boolean", InteractionCommand: command}, filters)
 	if err != nil {
 		t.Fatal(err)
@@ -243,10 +244,32 @@ func TestPrepareSelectCanonicalizesTypedMappings(t *testing.T) {
 	}
 }
 
+func TestPrepareSelectUsesCompiledInteractionIDForSemanticTable(t *testing.T) {
+	definition := testDashboardDefinition()
+	filters := authoritativeFilters()
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "orders", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
+	prepared, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, filters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(prepared.Filters.Selections) != 1 || prepared.Filters.Selections[0].InteractionKind != "interaction-0" || len(prepared.Plan.Targets) != 1 || prepared.Plan.Targets[0].ID != "chart" {
+		t.Fatalf("prepared = %#v", prepared)
+	}
+}
+
+func TestPrepareSelectRejectsLegacyInteractionKindWhenCompiledIDDiffers(t *testing.T) {
+	definition := testDashboardDefinition()
+	filters := authoritativeFilters()
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
+	if _, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, filters); err == nil || !strings.Contains(err.Error(), "interaction ID") {
+		t.Fatalf("error = %v, want compiled interaction ID rejection", err)
+	}
+}
+
 func TestPrepareSelectRejectsForgedMapping(t *testing.T) {
 	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
-	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "orders.secret", Value: "x"}}})
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "orders.secret", Value: "x"}}})
 	if _, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, filters); err == nil {
 		t.Fatal("forged mapping was accepted")
 	}
@@ -256,7 +279,7 @@ func TestPrepareSelectRejectsEveryStaleRevisionBeforeApplyingState(t *testing.T)
 	definition := testDashboardDefinition()
 	filters := authoritativeFilters()
 	filters.InteractionRevision = 3
-	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
+	command := stampInteractionCommand(definition, filters, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
 	for name, mutate := range map[string]func(*dashboard.InteractionCommand){"serving state": func(command *dashboard.InteractionCommand) { command.ServingStateID = "stale" }, "specification": func(command *dashboard.InteractionCommand) { command.SpecRevision = "sha256:stale" }, "data": func(command *dashboard.InteractionCommand) { command.DataRevision++ }, "filter": func(command *dashboard.InteractionCommand) { command.FilterRevision++ }, "interaction": func(command *dashboard.InteractionCommand) { command.InteractionRevision-- }} {
 		t.Run(name, func(t *testing.T) {
 			stale := command
@@ -276,7 +299,7 @@ func TestPrepareClearSelectionPlansAffectedTargetUnion(t *testing.T) {
 	definition.Visualizations["chart"] = chart
 	fixture := canonicalCommandFixture(t)
 	fixture.definition = definition
-	prepared, err := (Service{Metrics: fixture}).PrepareClearSelection(Request{DashboardID: "dash", PageID: "overview"}, dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "chart", InteractionKind: "point_selection"}, {SourceKind: "visual", SourceID: "boolean_chart", InteractionKind: "point_selection"}}}.WithDefaults())
+	prepared, err := (Service{Metrics: fixture}).PrepareClearSelection(Request{DashboardID: "dash", PageID: "overview"}, dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0"}, {SourceKind: "visual", SourceID: "boolean_chart", InteractionKind: "interaction-0"}}}.WithDefaults())
 	if err != nil {
 		t.Fatal(err)
 	}

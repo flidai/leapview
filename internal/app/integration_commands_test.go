@@ -37,8 +37,7 @@ func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
 			name: "/commands/clear-selection",
 			path: "/commands/clear-selection",
 			signals: mergeSignals(runtimeSignals("cmd-clear", "overview"), map[string]any{
-				"interactionSelections": []map[string]any{selectionSignal("orders", "status", "delivered")},
-				"visualWindowCommand":   visualWindowCommand("order_rows", "all", 0, 50, 4, 0),
+				"visualWindowCommand": visualWindowCommand("order_rows", "all", 0, 50, 4, 0),
 			}),
 			assert: func(t *testing.T, patches []map[string]any) {
 				t.Helper()
@@ -56,6 +55,9 @@ func TestCommandsPublishReloadPatchesToOpenStream(t *testing.T) {
 				tt.signals["interactionCommand"] = ordersRowSelectionCommand(t, "delivered", initialPatches)
 			}
 			if tt.path == "/commands/clear-selection" {
+				visual := mergedVisualFromPatches(t, initialPatches, "orders")
+				interactionID := compiledInteractionID(t, visual)
+				tt.signals["interactionSelections"] = []map[string]any{selectionSignal("orders", interactionID, "status", "delivered")}
 				primeSignals := mergeSignals(runtimeSignals(clientIDFromSignals(tt.signals), "overview"), map[string]any{
 					"interactionCommand": ordersRowSelectionCommand(t, "delivered", initialPatches),
 				})
@@ -272,7 +274,7 @@ func ordersRowSelectionCommand(t *testing.T, status string, patches []map[string
 	return map[string]any{
 		"sourceKind":          "visual",
 		"sourceId":            "orders",
-		"interactionKind":     "point_selection",
+		"interactionKind":     compiledInteractionID(t, visual),
 		"action":              "set",
 		"toggle":              true,
 		"specRevision":        visual["specRevision"],
@@ -304,12 +306,29 @@ func mergedVisualFromPatches(t *testing.T, patches []map[string]any, visualID st
 	return merged
 }
 
-func selectionSignal(sourceID, field, value string) map[string]any {
+func compiledInteractionID(t *testing.T, visual map[string]any) string {
+	t.Helper()
+	interactions, ok := mapAt(visual, "spec")["interactions"].([]any)
+	if !ok || len(interactions) == 0 {
+		t.Fatalf("visual did not emit a compiled interaction: %#v", visual)
+	}
+	interaction, ok := interactions[0].(map[string]any)
+	if !ok {
+		t.Fatalf("visual emitted an invalid compiled interaction: %#v", interactions[0])
+	}
+	interactionID, _ := interaction["id"].(string)
+	if strings.TrimSpace(interactionID) == "" {
+		t.Fatalf("visual emitted a compiled interaction without an ID: %#v", interaction)
+	}
+	return interactionID
+}
+
+func selectionSignal(sourceID, interactionID, field, value string) map[string]any {
 	return map[string]any{
-		"id":              "visual:" + sourceID + ":point_selection",
+		"id":              "visual:" + sourceID + ":" + interactionID,
 		"sourceKind":      "visual",
 		"sourceId":        sourceID,
-		"interactionKind": "point_selection",
+		"interactionKind": interactionID,
 		"entries": []map[string]any{{
 			"mappings": []map[string]any{{
 				"field":   field,

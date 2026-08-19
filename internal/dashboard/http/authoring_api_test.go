@@ -390,6 +390,17 @@ func TestAuthoringPreviewFiltersRejectUnknownSelectionVocabulary(t *testing.T) {
 	}
 }
 
+func TestAuthoringPreviewFiltersAcceptCompiledInteractionID(t *testing.T) {
+	filters := &dashboardgen.DashboardAuthoringPreviewFilters{Selections: []dashboardgen.DashboardAuthoringPreviewSelection{{SourceKind: "visual", SourceId: "categories", InteractionKind: "interaction-0", Entries: []dashboardgen.DashboardAuthoringPreviewSelectionEntry{{Mappings: []dashboardgen.DashboardAuthoringPreviewSelectionMapping{{Field: "category", Value: "books"}}}}}}}
+	projected, err := filtersFromAPIGen(filters)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projected.Selections) != 1 || projected.Selections[0].InteractionKind != "interaction-0" {
+		t.Fatalf("projected selections = %#v", projected.Selections)
+	}
+}
+
 func TestAuthoringPreviewProjectionRoundTripPreservesFullRuntimeShape(t *testing.T) {
 	projectID, err := projectgraph.NewResourceID("project")
 	if err != nil {

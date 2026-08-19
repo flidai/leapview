@@ -244,8 +244,10 @@ func (m InteractionSelectionMapping) HasValue() bool {
 }
 
 type InteractionCommand struct {
-	SourceKind          string                      `json:"sourceKind"`
-	SourceID            string                      `json:"sourceId"`
+	SourceKind string `json:"sourceKind"`
+	SourceID   string `json:"sourceId"`
+	// InteractionKind carries the compiler-owned interaction ID. The legacy
+	// name remains part of the browser wire contract for compatibility.
 	InteractionKind     string                      `json:"interactionKind"`
 	Action              string                      `json:"action"`
 	Toggle              bool                        `json:"toggle"`
