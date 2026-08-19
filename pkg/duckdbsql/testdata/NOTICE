@@ -1,0 +1,21 @@
+duckdbsql Phase-1 qualification corpus
+
+This directory contains short SQL inputs and provenance metadata used to
+qualify the application-neutral parser and typed AST. Inputs are minimal
+selection examples, not copied documentation or a replacement for DuckDB's
+grammar. The corpus intentionally stores no serialized AST payloads.
+
+Upstream provenance:
+
+* DuckDB engine: https://github.com/duckdb/duckdb, commit
+  08e34c447bae34eaee3723cac61f2878b6bdf787 (v1.5.4), MIT License.
+* DuckDB documentation: https://github.com/duckdb/duckdb-web, commit
+  0f4f64ac3c12c139edfd57947ceed142178c9419, MIT License.
+* LeapSQL: https://github.com/leapstacklabs/leapsql, commit
+  e6c4605252eac2aefe3cf502c9b156edee05a42d, Apache License 2.0.
+* SQLGlot: https://github.com/tobymao/sqlglot, commit
+  1ba7b2715dd9aba896edc7dc69fcc41bbb601b90d, MIT License.
+
+The JSON manifest records each individual source path, commit, and license.
+DuckDB remains the sole authority for generic parser behavior; the secondary
+projects provide dialect-oriented examples only.

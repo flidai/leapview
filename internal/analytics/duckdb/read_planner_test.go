@@ -302,6 +302,27 @@ func TestPlanModelTableRejectsQualifiedSourceColumnRefs(t *testing.T) {
 	}
 }
 
+func TestPlanModelTableRejectsRuntimeAnalysisEvidenceMismatch(t *testing.T) {
+	ctx := context.Background()
+	db := openPlanningRuntimeDB(t)
+	defer db.Close()
+	model := planningModel(map[string][]string{
+		"orders":   {"order_id"},
+		"payments": {"order_id"},
+	}, semanticmodel.Table{
+		SourceDependencies: []string{"orders"},
+		Entities:           map[string]semanticmodel.EntityDefinition{"order_id": {Type: "primary", Fields: []string{"order_id"}}}, GrainEntity: "order_id",
+		Dimensions: map[string]semanticmodel.MetricDimension{"order_id": {Label: "Order ID", Datatype: semanticmodel.DataTypeString}},
+		Execution:  semanticmodel.ExecutionDefinition{SQL: `SELECT order_id FROM source.payments`},
+	})
+	validateAndBindPlanningManagedRoot(t, model, managedPlanningRoot)
+
+	_, err := PlanModelTable(ctx, db, model, "orders", model.Tables["orders"])
+	if err == nil || !strings.Contains(err.Error(), "SQL AST analysis does not match compiled evidence") {
+		t.Fatalf("PlanModelTable error = %v, want analysis evidence mismatch", err)
+	}
+}
+
 func TestPlanModelTableFailsClosedWhenInlineExplainOmitsSourceScan(t *testing.T) {
 	ctx := context.Background()
 	db := openPlanningRuntimeDB(t)

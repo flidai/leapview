@@ -1257,7 +1257,7 @@ spec:
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
+	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), `relation schema "raw" is not governed`) && !strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
 		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
 	}
 	projectBytes, err := os.ReadFile(projectPath)
