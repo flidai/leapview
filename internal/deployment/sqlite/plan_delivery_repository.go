@@ -335,11 +335,7 @@ func (r *Repository) CreateWriterLeaseAndBuildAttempt(ctx context.Context, lease
 	if err != nil {
 		return zeroLease, zeroAttempt, err
 	}
-	expectedAttemptBaseGeneration := plan.BaseGenerationID
-	if attempt.BaseCatalogDigest == "" && attempt.BasePhysicalPoolID == "" {
-		expectedAttemptBaseGeneration = ""
-	}
-	if attempt.PlanDigest != plan.Digest || attempt.SourceDigest != plan.SourceDigest || attempt.ExecutionDigest != plan.ExecutionDigest || attempt.BaseGenerationID != expectedAttemptBaseGeneration {
+	if attempt.PlanDigest != plan.Digest || attempt.SourceDigest != plan.SourceDigest || attempt.ExecutionDigest != plan.ExecutionDigest || attempt.BaseGenerationID != plan.BaseGenerationID {
 		return zeroLease, zeroAttempt, fmt.Errorf("%w: build does not match plan", deployment.ErrDeliveryConflict)
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
