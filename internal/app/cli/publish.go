@@ -68,7 +68,7 @@ func (operations projectPublishOperations) Publish(
 		return fmt.Errorf("publish delivery candidate returned no durable publication identity")
 	}
 	if operations.checkpoints != nil {
-		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target}
+		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target, TargetSelector: checkpoint.TargetSelector}
 		if response.Body.CandidateId != "" {
 			_ = operations.checkpoints.SaveObjectIdentity("candidate", response.Body.CandidateId, identity)
 		}

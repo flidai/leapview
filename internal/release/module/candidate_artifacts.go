@@ -50,6 +50,13 @@ type candidateGenerationBase struct {
 	active          bool
 }
 
+func planCandidateProject(projectPath string, base candidateGenerationBase) (projectcompiler.ProjectPlan, error) {
+	if base.active {
+		return projectcompiler.PlanProjectAgainstArtifact(projectPath, base.artifact)
+	}
+	return projectcompiler.PlanProjectAgainstGraph(projectPath, projectgraph.ProjectGraph{})
+}
+
 // InspectCandidateArtifacts is the plan-phase, read-only half of candidate
 // preparation. It compiles the retained source, computes graph impact against
 // the exact active base, resolves managed-data pins, and derives authorization
@@ -76,10 +83,6 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 		}
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	plan, err := projectcompiler.PlanProject(request.Source.ProjectPath)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
 	baseIdentity, err := request.Scope.BaseIdentity()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -88,11 +91,9 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
-	if base.active {
-		plan, err = projectcompiler.PlanProjectAgainstArtifact(request.Source.ProjectPath, base.artifact)
-		if err != nil {
-			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-		}
+	plan, err := planCandidateProject(request.Source.ProjectPath, base)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	activations, err := compiledProject.ConnectionActivations()
 	if err != nil {
@@ -426,10 +427,6 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 		}
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	plan, err := projectcompiler.PlanProject(request.Source.ProjectPath)
-	if err != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-	}
 	projectID := request.Scope.ProjectID
 	environment := servingstate.Environment(request.Scope.Environment)
 	baseIdentity, identityErr := request.Scope.BaseIdentity()
@@ -440,11 +437,9 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
-	if base.active {
-		plan, err = projectcompiler.PlanProjectAgainstArtifact(request.Source.ProjectPath, base.artifact)
-		if err != nil {
-			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
-		}
+	plan, err := planCandidateProject(request.Source.ProjectPath, base)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	activations, err := compiledProject.ConnectionActivations()
 	if err != nil {
