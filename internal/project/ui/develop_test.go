@@ -243,6 +243,7 @@ func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
 }
 
 func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
+	const configuration = "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:zip_geolocations, name: zip_geolocations}\n"
 	table := semanticmodel.Table{
 		Execution:          semanticmodel.ExecutionDefinition{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix", Description: "ZIP code prefix"}},
@@ -253,7 +254,11 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 	asset := projectview.DevelopAssetView{
 		ID: "model:zip_geolocations", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Title: "ZIP locations",
-		Payload: projectview.ModelTableAssetPayload(table),
+		Payload: projectview.ModelTableAssetPayloadWithAuthoredSource(table, nil, configuration),
+	}
+	asset.Payload["Physical"] = map[string]any{
+		"RowCount": int64(99_441), "ColumnCount": int64(5), "FileCount": int64(2),
+		"SizeBytes": int64(1_572_864), "SnapshotID": int64(17),
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
@@ -266,17 +271,83 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Mode"); got != "Definition" {
 		t.Fatalf("mode fact = %q, want Definition", got)
 	}
-	if len(details.Sections) != 3 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" || details.Sections[2].Title != "SQL" {
-		t.Fatalf("sections = %#v, want entities, fields, and SQL", details.Sections)
+	if got := factValue(details.Overview, "Rows"); got != "99,441" {
+		t.Fatalf("rows fact = %q, want 99,441", got)
+	}
+	if got := factValue(details.Overview, "Physical size"); got != "1.5 MiB" {
+		t.Fatalf("physical size fact = %q, want 1.5 MiB", got)
+	}
+	if got := factValue(details.Overview, "Data files"); got != "2" {
+		t.Fatalf("data files fact = %q, want 2", got)
+	}
+	if got := factValue(details.Overview, "DuckLake snapshot"); got != "17" {
+		t.Fatalf("snapshot fact = %q, want 17", got)
+	}
+	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" {
+		t.Fatalf("detail sections = %#v, want entities and fields only", details.Sections)
 	}
 	if len(details.Sections[0].Table.Rows) != 1 || details.Sections[0].Table.Rows[0]["name"] != "zip_prefix" || details.Sections[0].Table.Rows[0]["grain"] != "Yes" {
 		t.Fatalf("entity rows = %#v, want grain zip_prefix entity", details.Sections[0].Table.Rows)
 	}
-	if uisignals.ValueOrZero(details.Sections[2].Code) != table.Execution.SQL || uisignals.ValueOrZero(details.Sections[2].Lang) != "sql" {
-		t.Fatalf("SQL section = %#v, want compiled transform SQL", details.Sections[2])
+	definition := projectAssetDefinitionSignal(asset)
+	if len(definition.Sections) != 2 {
+		t.Fatalf("definition sections = %#v, want configuration and SQL", definition.Sections)
+	}
+	if uisignals.ValueOrZero(definition.Sections[0].Code) != configuration || uisignals.ValueOrZero(definition.Sections[0].Lang) != "yaml" {
+		t.Fatalf("configuration section = %#v, want authored YAML", definition.Sections[0])
+	}
+	if uisignals.ValueOrZero(definition.Sections[1].Code) != table.Execution.SQL || uisignals.ValueOrZero(definition.Sections[1].Lang) != "sql" {
+		t.Fatalf("SQL section = %#v, want compiled transform SQL", definition.Sections[1])
 	}
 	if len(details.Sections[1].Table.Rows) != 1 {
 		t.Fatalf("field rows = %#v, want one row", details.Sections[1].Table.Rows)
+	}
+}
+
+func TestAuthoredAssetsExposeDefinitionTabWithStableSectionHref(t *testing.T) {
+	for _, asset := range []projectview.DevelopAssetView{
+		{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{"Configuration": "kind: Source\n"}},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Payload: map[string]any{"Configuration": "kind: Model\n"}},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Payload: map[string]any{"Configuration": "kind: SemanticModel\n"}},
+		{ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Payload: map[string]any{"Configuration": "kind: Dashboard\n"}},
+		{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Payload: map[string]any{"Configuration": "kind: Pipeline\n"}},
+	} {
+		page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "definition", assetLineageModel{})
+		if page.ActiveSection != "definition" || page.Definition == nil {
+			t.Fatalf("%s page = %#v, want active definition payload", asset.Type, page)
+		}
+		found := false
+		for _, tab := range page.Tabs {
+			if tab.ID == "definition" {
+				found = tab.Active && strings.HasSuffix(tab.Href, "/definition")
+			}
+		}
+		if !found {
+			t.Fatalf("%s tabs = %#v, want active stable definition tab", asset.Type, page.Tabs)
+		}
+		if asset.Type == string(projectview.AssetTypeRefreshPipeline) {
+			for _, action := range uisignals.ValueOrZero(page.Actions) {
+				if action.Label == "Run now" {
+					t.Fatalf("pipeline definition actions = %#v, refresh action requires operational state", uisignals.ValueOrZero(page.Actions))
+				}
+			}
+		}
+	}
+	connection := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Payload: map[string]any{"Configuration": "kind: Connection\n"}}
+	page := connectionAssetPageSignal(projectview.DevelopView{ID: "project:test"}, connection, []projectview.DevelopAssetView{connection}, nil, "definition", assetLineageModel{})
+	if page.ActiveSection != "definition" || page.Definition == nil {
+		t.Fatalf("connection page = %#v, want active redacted definition payload", page)
+	}
+	if len(page.Tabs) < 2 || page.Tabs[1].ID != "definition" || !page.Tabs[1].Active || !strings.HasSuffix(page.Tabs[1].Href, "/definition") {
+		t.Fatalf("connection tabs = %#v, want active stable definition tab", page.Tabs)
+	}
+}
+
+func TestConnectionAssetBootstrapIncludesInjectedApplicationChrome(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Title: "Warehouse"}
+	patch := ConnectionAssetBootstrapSignalsForEnvironment(catalog.Catalog{}, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetVersionsState{}, testLayoutProvider())
+	if _, ok := patch["chrome"]; !ok {
+		t.Fatalf("bootstrap signals = %#v, want injected application chrome", patch)
 	}
 }
 
@@ -296,6 +367,107 @@ func TestDevelopCatalogUsesStableDashboardLinksWithoutProjectPicker(t *testing.T
 	}, "")
 	if len(page.Dashboards) != 1 || page.Dashboards[0].Href != "/dashboards/executive" {
 		t.Fatalf("dashboard link = %#v, want stable dashboard route", page.Dashboards)
+	}
+}
+
+func TestDashboardDetailUsesCompiledDefinitionAndShowsPublications(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Title: "Sales",
+		Payload: map[string]any{
+			"SemanticModel":     "semantic:sales",
+			"Pages":             []any{map[string]any{"ID": "overview", "Title": "Overview", "Description": "Summary"}},
+			"FilterDefinitions": map[string]any{"region": map[string]any{"Label": "Region", "Field": "region"}},
+			"Visualizations":    map[string]any{"revenue": map[string]any{"RendererID": "echarts", "Query": map[string]any{"Aggregate": map[string]any{"Metrics": []any{"revenue"}, "Dimensions": []any{"region"}}}}},
+			"Publications":      []map[string]any{{"Name": "publication:website", "Dashboard": "dashboard:sales", "DefaultPage": "overview", "AllowedOrigins": []any{"https://example.test"}, "ConfigurationDigest": "sha256:abc"}},
+		},
+	}
+	details := projectAssetDetailsSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil)
+	if got := factValue(details.Overview, "Semantic model"); got != "semantic:sales" {
+		t.Fatalf("semantic model fact = %q, want semantic:sales", got)
+	}
+	for _, want := range []string{"Pages (1)", "Filters (1)", "Visuals (1)", "Publications (1)"} {
+		found := false
+		for _, section := range details.Sections {
+			if section.Title == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("dashboard sections = %#v, missing %q", details.Sections, want)
+		}
+	}
+	publicationTable := details.Sections[3].Table
+	if len(publicationTable.Rows) != 1 || publicationTable.Rows[0]["publication"] != "publication:website" || publicationTable.Rows[0]["default_page"] != "overview" {
+		t.Fatalf("publication rows = %#v, want configured publication", publicationTable.Rows)
+	}
+	pagesTable := details.Sections[0].Table
+	if pagesTable.Rows[0]["pageHref"] != nil || pagesTable.Columns[0].Kind != nil || pagesTable.Columns[0].HrefKey != nil {
+		t.Fatalf("synthetic page row remains clickable: columns=%#v row=%#v", pagesTable.Columns, pagesTable.Rows[0])
+	}
+	if got := pagesTable.Rows[0]["runtimeHref"]; got != "/dashboards/dashboard:sales/pages/overview" {
+		t.Fatalf("dashboard runtime href = %q, want stable dashboard ID route", got)
+	}
+	for _, section := range details.Sections[1:3] {
+		if section.Table.Columns[0].Kind != nil || section.Table.Columns[0].HrefKey != nil {
+			t.Fatalf("synthetic dashboard child remains clickable in %q: %#v", section.Title, section.Table.Columns[0])
+		}
+	}
+}
+
+func TestExplicitJSONConfigurationIsPrettyPrintedAndLabeledJSON(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders",
+		Payload: map[string]any{"Configuration": `{"kind":"Source","metadata":{"id":"source:orders"}}`},
+	}
+	definition := projectAssetDefinitionSignal(asset)
+	if len(definition.Sections) != 1 {
+		t.Fatalf("definition sections = %#v, want configuration", definition.Sections)
+	}
+	section := definition.Sections[0]
+	if got := uisignals.ValueOrZero(section.Lang); got != "json" {
+		t.Fatalf("configuration language = %q, want json", got)
+	}
+	code := uisignals.ValueOrZero(section.Code)
+	if !strings.Contains(code, "\n  \"kind\": \"Source\"") || !strings.HasSuffix(code, "\n") {
+		t.Fatalf("configuration code = %q, want pretty-printed JSON", code)
+	}
+}
+
+func TestDashboardYAMLConfigurationRemainsYAML(t *testing.T) {
+	const configuration = "apiVersion: leapview.dev/v1\nkind: Dashboard\nspec:\n  semanticModel: sales\n"
+	asset := projectview.DevelopAssetView{
+		ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales",
+		Payload: map[string]any{"Configuration": configuration},
+	}
+	definition := projectAssetDefinitionSignal(asset)
+	if len(definition.Sections) != 1 {
+		t.Fatalf("definition sections = %#v, want configuration", definition.Sections)
+	}
+	section := definition.Sections[0]
+	if got := uisignals.ValueOrZero(section.Lang); got != "yaml" {
+		t.Fatalf("configuration language = %q, want yaml", got)
+	}
+	if got := uisignals.ValueOrZero(section.Code); got != configuration {
+		t.Fatalf("configuration code = %q, want canonical YAML", got)
+	}
+}
+
+func TestDashboardVersionsSectionIsReachableWhenHistoryExists(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Title: "Sales"}
+	versions := AssetVersionsState{CurrentContentHash: "sha256:current", Versions: []AssetVersionState{{ContentHash: "sha256:current"}}}
+	page := projectAssetPageSignalWithRefreshAndVersions(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "versions", assetLineageModel{}, AssetRefreshState{}, versions)
+	if page.ActiveSection != "versions" || page.Versions == nil {
+		t.Fatalf("dashboard versions page = %#v, want active versions payload", page)
+	}
+	found := false
+	for _, tab := range page.Tabs {
+		if tab.ID == "versions" {
+			found = tab.Active && strings.HasSuffix(tab.Href, "/versions")
+		}
+	}
+	if !found {
+		t.Fatalf("dashboard tabs = %#v, want active Versions tab", page.Tabs)
 	}
 }
 
@@ -328,6 +500,101 @@ func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
 	}
 	if got := detailFactValue(pipelineDetails.Overview, "Schedule"); !strings.Contains(got, "0 * * * *") || !strings.Contains(got, "UTC") {
 		t.Fatalf("pipeline schedule fact = %q, want cron and timezone", got)
+	}
+}
+
+func TestSourceListPreservesAuthorizedConnectionContext(t *testing.T) {
+	source := projectview.DevelopAssetView{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders"}
+	connection := projectview.DevelopAssetView{ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse", Title: "Warehouse"}
+	edges := []projectview.DevelopEdgeView{{FromAssetID: source.ID, ToAssetID: connection.ID, Type: string(projectview.AssetEdgeUsesConnection)}}
+	page := projectPageSignalWithContext(projectview.DevelopView{ID: "project:test"}, []projectview.DevelopAssetView{source}, []projectview.DevelopAssetView{source, connection}, edges, "sources", string(projectview.AssetTypeSource), "", "")
+	item := (*page.AssetList).Assets[0]
+	if uisignals.ValueOrZero(item.ParentTitle) != "Warehouse" || uisignals.ValueOrZero(item.ParentHref) != "/connections/connection:warehouse/details" {
+		t.Fatalf("source summary = %#v, want authorized parent connection context", item)
+	}
+}
+
+func TestSourceAndModelSchemaUseLogicalFallbacksAndExplicitUnknowns(t *testing.T) {
+	fields := map[string]any{
+		"physical": map[string]any{"Datatype": "logical_text", "Nullable": false},
+		"logical":  map[string]any{"Datatype": "integer", "Nullable": false},
+		"unknown":  map[string]any{},
+	}
+	schema := map[string]any{"Columns": []any{
+		map[string]any{"Name": "physical", "Ordinal": 0, "PhysicalType": "VARCHAR", "Nullable": true},
+		map[string]any{"Name": "logical", "Ordinal": 1},
+		map[string]any{"Name": "unknown", "Ordinal": 2},
+	}}
+	for name, table := range map[string]recordTable{
+		"source": sourceFieldsGrid(fields, schema),
+		"model":  modelTableFieldsGrid("project:test", "model", "table", map[string]any{"Dimensions": fields, "Schema": schema}, nil),
+	} {
+		rows := map[string]map[string]any{}
+		for _, row := range table.Rows {
+			rows[row["name"].(string)] = row
+		}
+		if got := rows["physical"]["physical_type"].(recordTableBadge).Label; got != "VARCHAR" {
+			t.Fatalf("%s physical type = %q, want physical-over-logical VARCHAR", name, got)
+		}
+		if got := rows["physical"]["nullable"]; got != "Yes" {
+			t.Fatalf("%s physical nullable = %q, want schema-over-logical Yes", name, got)
+		}
+		if got := rows["logical"]["physical_type"].(recordTableBadge).Label; got != "integer" {
+			t.Fatalf("%s logical type = %q, want Datatype fallback integer", name, got)
+		}
+		if got := rows["logical"]["nullable"]; got != "No" {
+			t.Fatalf("%s logical nullable = %q, want explicit No", name, got)
+		}
+		if got := rows["unknown"]["physical_type"].(recordTableBadge).Label; got != "Not profiled" {
+			t.Fatalf("%s unknown type = %q, want Not profiled", name, got)
+		}
+		if got := rows["unknown"]["nullable"]; got != "Not profiled" {
+			t.Fatalf("%s unknown nullable = %q, want Not profiled", name, got)
+		}
+	}
+}
+
+func TestUnavailablePipelineExplainsRecoveryAndLinksConnections(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh"}
+	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", assetLineageModel{}, AssetRefreshState{Unavailable: true})
+	if page.Details == nil || factValue(page.Details.Overview, "Refresh status") != "unavailable" || !strings.Contains(factValue(page.Details.Overview, "Refresh guidance"), "Review Connections") {
+		t.Fatalf("pipeline details = %#v, want unavailable status and recovery guidance", page.Details)
+	}
+	actions := uisignals.ValueOrZero(page.Actions)
+	if len(actions) < 3 || actions[0].Disabled == nil || !*actions[0].Disabled || !strings.Contains(actions[0].Label, "unavailable") {
+		t.Fatalf("pipeline actions = %#v, want explanatory disabled Run now", actions)
+	}
+	foundConnections := false
+	for _, action := range actions {
+		if action.Label == "Review connections" && uisignals.ValueOrZero(action.Href) == "/connections" {
+			foundConnections = true
+		}
+	}
+	if !foundConnections {
+		t.Fatalf("pipeline actions = %#v, want Review connections recovery action", actions)
+	}
+}
+
+func TestProjectAssetSectionsAreResourceAware(t *testing.T) {
+	for _, test := range []struct {
+		assetType string
+		section   string
+		want      bool
+	}{
+		{string(projectview.AssetTypeSource), "details", true},
+		{string(projectview.AssetTypeSource), "definition", true},
+		{string(projectview.AssetTypeSource), "data", false},
+		{string(projectview.AssetTypeModelTable), "data", true},
+		{string(projectview.AssetTypeRefreshPipeline), "refreshes", true},
+		{string(projectview.AssetTypeDashboard), "refreshes", false},
+		{string(projectview.AssetTypeDashboard), "bogus", false},
+	} {
+		if got := ValidProjectAssetSection(test.assetType, test.section); got != test.want {
+			t.Fatalf("ValidProjectAssetSection(%q, %q) = %t, want %t", test.assetType, test.section, got, test.want)
+		}
+	}
+	if got := normalizeProjectAssetSection("  details  "); got != "details" {
+		t.Fatalf("normalized section = %q, want details", got)
 	}
 }
 

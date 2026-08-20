@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -295,6 +296,94 @@ func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelI
 		return AssetDataVersion{}, found, err
 	}
 	return AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}, true, nil
+}
+
+// AssetRefreshState returns the durable presentation state for a refresh
+// pipeline in the requested project/environment scope. Run reads use the
+// project/environment scope so history remains visible after generation
+// replacement; schedule and data-version reads remain pinned to the active
+// serving generation.
+func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, pipelineID, modelID projectgraph.ResourceID) (AssetRefreshState, error) {
+	state := AssetRefreshState{
+		RunCommand:    refreshgen.GenUIActionCreateRefreshRun(),
+		CancelCommand: refreshgen.GenUIActionCancelRefreshRun(),
+	}
+	if err := projectID.Validate(); err != nil {
+		return state, err
+	}
+	if err := pipelineID.Validate(); err != nil {
+		return state, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	if m == nil || m.runs == nil {
+		state.Unavailable = true
+		return state, nil
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
+	if err := scope.Validate(); err != nil {
+		return state, err
+	}
+	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID, refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		return state, err
+	}
+	state.Runs = make([]AssetRefreshRun, 0, len(runs))
+	for _, run := range runs {
+		state.Runs = append(state.Runs, assetRefreshRun(run))
+	}
+	if len(state.Runs) > 0 {
+		state.Latest = state.Runs[0]
+	}
+	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID)
+	if err != nil {
+		return state, err
+	}
+	if ok {
+		state.LatestSuccessful = assetRefreshRun(latest)
+	}
+	if m.schedules == nil || m.service.ServingStates == nil {
+		return state, nil
+	}
+	identity, err := m.activeServingIdentity(ctx, projectID, environment)
+	if err != nil {
+		return state, err
+	}
+	if next, ok, err := m.schedules.NextRun(ctx, identity, pipelineID); err != nil {
+		return state, err
+	} else if ok {
+		state.NextRun = next
+	}
+	if modelID == "" {
+		return state, nil
+	}
+	if err := modelID.Validate(); err != nil {
+		return state, err
+	}
+	if version, ok, err := m.schedules.DataVersion(ctx, identity, modelID); err != nil {
+		return state, err
+	} else if ok {
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+	}
+	return state, nil
+}
+
+func (m *Module) activeServingIdentity(ctx context.Context, projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
+	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
+	if err != nil {
+		return projectgraph.ServingIdentity{}, err
+	}
+	return projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+}
+
+func assetRefreshRun(run refreshrun.RunRecord) AssetRefreshRun {
+	return AssetRefreshRun{
+		ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(),
+		ServingStateID: run.Identity.GenerationID, PrincipalID: run.PrincipalID,
+		PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
+		ParentRunID: run.ParentRunID, RetryOf: run.RetryOf, TargetGeneration: run.TargetRevision,
+		Status: run.Status, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
+		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
+	}
 }
 
 type activeServingStates interface {

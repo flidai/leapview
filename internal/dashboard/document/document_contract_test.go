@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -123,6 +124,55 @@ func TestCanonicalYAMLFixtureUsesGeneratedJSONContract(t *testing.T) {
 	}
 	if document.Spec.SemanticModel != "sales" || len(document.Spec.Pages) != 1 {
 		t.Fatalf("canonical fixture decoded unexpected document: %#v", document)
+	}
+}
+
+func TestEncodeYAMLEmitsBlockStyleConfiguration(t *testing.T) {
+	content, err := os.ReadFile(filepath.Join("testdata", "canonical.yaml"))
+	if err != nil {
+		t.Fatalf("read canonical YAML fixture: %v", err)
+	}
+	var source map[string]any
+	if err := yaml.Unmarshal(content, &source); err != nil {
+		t.Fatalf("decode canonical YAML fixture: %v", err)
+	}
+	normalized, err := json.Marshal(source)
+	if err != nil {
+		t.Fatalf("normalize canonical YAML fixture: %v", err)
+	}
+	var dashboard DashboardDocument
+	if err := json.Unmarshal(normalized, &dashboard); err != nil {
+		t.Fatalf("decode canonical dashboard: %v", err)
+	}
+
+	encoded, err := EncodeYAML(dashboard)
+	if err != nil {
+		t.Fatalf("EncodeYAML() error = %v", err)
+	}
+	if json.Valid(encoded) {
+		t.Fatalf("EncodeYAML() emitted JSON instead of block-style YAML:\n%s", encoded)
+	}
+	text := string(encoded)
+	for _, fragment := range []string{"apiVersion: leapview.dev/v1\n", "kind: Dashboard\n", "spec:\n", "  semanticModel: sales\n"} {
+		if !strings.Contains(text, fragment) {
+			t.Fatalf("EncodeYAML() output omitted block-style fragment %q:\n%s", fragment, text)
+		}
+	}
+
+	var roundTrip map[string]any
+	if err := yaml.Unmarshal(encoded, &roundTrip); err != nil {
+		t.Fatalf("decode encoded YAML: %v", err)
+	}
+	roundTripJSON, err := json.Marshal(roundTrip)
+	if err != nil {
+		t.Fatalf("normalize encoded YAML: %v", err)
+	}
+	var decoded DashboardDocument
+	if err := json.Unmarshal(roundTripJSON, &decoded); err != nil {
+		t.Fatalf("decode encoded dashboard: %v", err)
+	}
+	if !reflect.DeepEqual(decoded, dashboard) {
+		t.Fatalf("block-style YAML changed dashboard semantics:\n got=%#v\nwant=%#v", decoded, dashboard)
 	}
 }
 

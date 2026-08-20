@@ -10,6 +10,7 @@ import (
 // project asset. Consumers may adapt it into their own page contracts.
 type AssetRefreshState struct {
 	CSRFToken        string
+	Unavailable      bool
 	RunCommand       uicommand.Binding
 	CancelCommand    uicommand.Binding
 	Runs             []AssetRefreshRun

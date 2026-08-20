@@ -9,6 +9,11 @@ ON CONFLICT(id) DO UPDATE SET
   description = excluded.description,
   updated_at = CURRENT_TIMESTAMP;
 
+-- name: EnsureProjectIdentity :exec
+INSERT INTO projects (id, title)
+VALUES (?, ?)
+ON CONFLICT(id) DO NOTHING;
+
 -- name: GetProject :one
 SELECT * FROM projects WHERE id = ?;
 

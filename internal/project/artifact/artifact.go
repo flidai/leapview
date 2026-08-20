@@ -199,6 +199,17 @@ func validateGraphManifest(graph projectgraph.ProjectGraph, project manifest.Pro
 			}
 		}
 	}
+	for id := range project.AuthoredResourceSources {
+		resource, ok := resources[projectgraph.ResourceID(id)]
+		if !ok {
+			return fmt.Errorf("manifest authoredResourceSources key %q is missing from graph", id)
+		}
+		switch resource.Kind {
+		case projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindDashboard:
+		default:
+			return fmt.Errorf("manifest authoredResourceSources key %q resolves to forbidden graph kind %q", id, resource.Kind)
+		}
+	}
 	for _, resource := range graph.Resources() {
 		if resource.Kind == projectgraph.KindProject {
 			continue

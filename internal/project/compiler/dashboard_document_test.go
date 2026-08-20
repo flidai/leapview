@@ -109,7 +109,7 @@ func TestExportDashboardPreservesZeroDomainAndEmptyFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, `"filters": []`) || !strings.Contains(text, `"minimum": 0`) {
+	if !strings.Contains(text, "filters: []") || !strings.Contains(text, "minimum: 0") {
 		t.Fatalf("generated export dropped meaningful zero/empty values:\n%s", text)
 	}
 	var roundTrip document.DashboardDocument

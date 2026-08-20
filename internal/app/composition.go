@@ -1335,6 +1335,16 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				}
 				return deployment.DeliveryPublication{}, err
 			}
+			activated := deployment.Deployment{
+				ServingIdentity: projectgraph.ServingIdentity{
+					ProjectID: request.Publication.ProjectID, Environment: request.Publication.Environment,
+					GenerationID: request.Generation.ServingStateID,
+				},
+				ActivationPrincipal: actor,
+			}
+			if err := reconcileActivatedDashboardPublications(publishCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
+				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Generation.ServingStateID)
+			}
 			return sealedDelivery.DeliveryPublicationByID(publishCtx, request.Publication.ID)
 		}, Rollback: func(rollbackCtx context.Context, project, generation, actor, key string) (deployment.DeliveryPublication, error) {
 			generationRecord, generationErr := sealedDelivery.DeliveryGenerationByID(rollbackCtx, generation)
@@ -1359,6 +1369,16 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return activateCanonicalServingState(activationCtx, runtimeHostModule, request.Request.GenerationID, commitAndVerify)
 			}); err != nil {
 				return deployment.DeliveryPublication{}, err
+			}
+			activated := deployment.Deployment{
+				ServingIdentity: projectgraph.ServingIdentity{
+					ProjectID: request.Request.ProjectID, Environment: request.Request.Environment,
+					GenerationID: request.Request.GenerationID,
+				},
+				ActivationPrincipal: actor,
+			}
+			if err := reconcileActivatedDashboardPublications(rollbackCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
+				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Request.GenerationID)
 			}
 			return sealedDelivery.DeliveryPublicationByID(rollbackCtx, request.Request.ID)
 		}, Plan: planCandidate, PlanPreview: planCandidate, BuildRequest: func(buildCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error) {

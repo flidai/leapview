@@ -6,7 +6,15 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 )
+
+type SemanticModelConnectionReadModel struct {
+	Kind           string                           `json:"Kind,omitempty"`
+	Description    string                           `json:"Description,omitempty"`
+	Access         semanticmodel.ConnectionAccess   `json:"Access,omitempty"`
+	ReaderDefaults *projectcontracts.ReaderDefaults `json:"ReaderDefaults,omitempty"`
+}
 
 // SemanticModelAssetReadModel is the typed detail projection used by the
 // project browser. The serving graph intentionally carries only portable
@@ -20,7 +28,7 @@ type SemanticModelAssetReadModel struct {
 	Description       string                                       `json:"Description,omitempty"`
 	AIContext         *semanticmodel.AIContext                     `json:"AIContext,omitempty"`
 	DefaultConnection string                                       `json:"DefaultConnection,omitempty"`
-	Connections       map[string]semanticmodel.Connection          `json:"Connections,omitempty"`
+	Connections       map[string]SemanticModelConnectionReadModel  `json:"Connections,omitempty"`
 	Sources           map[string]semanticmodel.Source              `json:"Sources,omitempty"`
 	Datasets          map[string]semanticmodel.SemanticDatasetSpec `json:"Datasets,omitempty"`
 	DatasetDetails    map[string]semanticmodel.Table               `json:"DatasetDetails,omitempty"`
@@ -57,7 +65,7 @@ func SemanticModelAssetPayload(model *semanticmodel.Model, compiled *semanticque
 		Description:       model.Description,
 		AIContext:         model.AIContext,
 		DefaultConnection: model.DefaultConnection,
-		Connections:       model.Connections,
+		Connections:       semanticModelConnections(model.Connections),
 		Sources:           model.Sources,
 		Datasets:          datasets,
 		DatasetDetails:    datasetDetails,
@@ -75,4 +83,15 @@ func SemanticModelAssetPayload(model *semanticmodel.Model, compiled *semanticque
 		return nil
 	}
 	return payload
+}
+
+func semanticModelConnections(input map[string]semanticmodel.Connection) map[string]SemanticModelConnectionReadModel {
+	output := make(map[string]SemanticModelConnectionReadModel, len(input))
+	for name, connection := range input {
+		output[name] = SemanticModelConnectionReadModel{
+			Kind: connection.Kind, Description: connection.Description,
+			Access: connection.Access, ReaderDefaults: connection.ReaderDefaults,
+		}
+	}
+	return output
 }

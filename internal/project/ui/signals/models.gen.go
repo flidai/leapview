@@ -1347,6 +1347,10 @@ type ResourceActionSignal struct {
 	Label    string  `json:"label" yaml:"label"`
 }
 
+type ResourceAssetDefinitionSignal struct {
+	Sections []ResourceDetailSectionSignal `json:"sections" yaml:"sections"`
+}
+
 type ResourceAssetDetailsSignal struct {
 	Overview           []DefinitionFactSignal        `json:"overview" yaml:"overview"`
 	Sections           []ResourceDetailSectionSignal `json:"sections" yaml:"sections"`
@@ -1378,21 +1382,22 @@ type ResourceAssetPageEnvelope struct {
 }
 
 type ResourceAssetPageSignal struct {
-	Actions             *[]ResourceActionSignal      `json:"actions,omitempty" yaml:"actions,omitempty"`
-	ActiveSection       string                       `json:"activeSection" yaml:"activeSection"`
-	Asset               ResourceAssetSummarySignal   `json:"asset" yaml:"asset"`
-	AssetID             string                       `json:"assetId" yaml:"assetId"`
-	Breadcrumbs         []ResourceBreadcrumbSignal   `json:"breadcrumbs" yaml:"breadcrumbs"`
-	ConnectionLifecycle *ConnectionLifecycleSignal   `json:"connectionLifecycle,omitempty" yaml:"connectionLifecycle,omitempty"`
-	Details             *ResourceAssetDetailsSignal  `json:"details,omitempty" yaml:"details,omitempty"`
-	DrawerParent        *ResourceAssetPageSignal     `json:"drawerParent,omitempty" yaml:"drawerParent,omitempty"`
-	Environment         *string                      `json:"environment,omitempty" yaml:"environment,omitempty"`
-	Kind                RouteKind                    `json:"kind" yaml:"kind"`
-	Lineage             *ResourceAssetLineageSignal  `json:"lineage,omitempty" yaml:"lineage,omitempty"`
-	Refresh             *ResourceAssetRefreshSignal  `json:"refresh,omitempty" yaml:"refresh,omitempty"`
-	Tabs                []ResourceTabSignal          `json:"tabs" yaml:"tabs"`
-	Title               string                       `json:"title" yaml:"title"`
-	Versions            *ResourceAssetVersionsSignal `json:"versions,omitempty" yaml:"versions,omitempty"`
+	Actions             *[]ResourceActionSignal        `json:"actions,omitempty" yaml:"actions,omitempty"`
+	ActiveSection       string                         `json:"activeSection" yaml:"activeSection"`
+	Asset               ResourceAssetSummarySignal     `json:"asset" yaml:"asset"`
+	AssetID             string                         `json:"assetId" yaml:"assetId"`
+	Breadcrumbs         []ResourceBreadcrumbSignal     `json:"breadcrumbs" yaml:"breadcrumbs"`
+	ConnectionLifecycle *ConnectionLifecycleSignal     `json:"connectionLifecycle,omitempty" yaml:"connectionLifecycle,omitempty"`
+	Definition          *ResourceAssetDefinitionSignal `json:"definition,omitempty" yaml:"definition,omitempty"`
+	Details             *ResourceAssetDetailsSignal    `json:"details,omitempty" yaml:"details,omitempty"`
+	DrawerParent        *ResourceAssetPageSignal       `json:"drawerParent,omitempty" yaml:"drawerParent,omitempty"`
+	Environment         *string                        `json:"environment,omitempty" yaml:"environment,omitempty"`
+	Kind                RouteKind                      `json:"kind" yaml:"kind"`
+	Lineage             *ResourceAssetLineageSignal    `json:"lineage,omitempty" yaml:"lineage,omitempty"`
+	Refresh             *ResourceAssetRefreshSignal    `json:"refresh,omitempty" yaml:"refresh,omitempty"`
+	Tabs                []ResourceTabSignal            `json:"tabs" yaml:"tabs"`
+	Title               string                         `json:"title" yaml:"title"`
+	Versions            *ResourceAssetVersionsSignal   `json:"versions,omitempty" yaml:"versions,omitempty"`
 }
 
 type ResourceAssetRefreshSignal struct {

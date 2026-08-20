@@ -131,7 +131,7 @@ func loadFlatModels(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		table, aiContext, err := decodeModelResource(path, content, envelope.Metadata)
+		table, aiContext, authoredDefinition, err := decodeModelResourceWithDefinition(path, content, envelope.Metadata)
 		if err != nil {
 			return err
 		}
@@ -144,6 +144,9 @@ func loadFlatModels(project *Project, includes []string) error {
 		}
 		table.AIContext = aiContext
 		project.Models[name] = table
+		project.ModelDefinitions[name] = authoredDefinition
+		project.ModelSources[name] = string(content)
+		project.ResourceSources[id] = string(content)
 		project.ModelAIContexts[name] = aiContext
 		project.ModelIDs[name], project.ModelPaths[name] = id, path
 	}
@@ -163,6 +166,10 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 		if envelope.Kind != "SemanticModel" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want SemanticModel", path, envelope.Kind)
 		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
 		var spec projectSemanticModelSpec
 		if err := envelope.Spec.Decode(&spec); err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
@@ -175,6 +182,7 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 			return resourceError(path, id, "metadata.name", "duplicate SemanticModel %q", name)
 		}
 		project.SemanticModels[name] = spec
+		project.ResourceSources[id] = string(content)
 		project.SemanticModelAIContexts[name] = envelope.AIContext
 		project.SemanticModelIDs[name], project.SemanticModelPaths[name] = id, path
 	}
@@ -194,6 +202,10 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		if envelope.Kind != "Pipeline" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Pipeline", path, envelope.Kind)
 		}
+		content, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
 		var spec refreshPipelineSpec
 		if err := envelope.Spec.Decode(&spec); err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
@@ -211,6 +223,7 @@ func loadFlatPipelines(project *Project, includes []string) error {
 			pipeline.Schedules = append(pipeline.Schedules, schedule)
 		}
 		project.RefreshPipelines[name] = pipeline
+		project.ResourceSources[id] = string(content)
 		project.PipelineIDs[name], project.PipelinePaths[name] = id, path
 	}
 	return nil
@@ -226,6 +239,10 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
+		content, err := ExportDashboard(document)
+		if err != nil {
+			return err
+		}
 		envelope := resourceEnvelope{APIVersion: string(document.APIVersion), Kind: string(document.Kind), Metadata: metadata{ID: document.Metadata.ID, Name: document.Metadata.Name, Description: valueOrEmpty(document.Metadata.Description), Owner: valueOrEmpty(document.Metadata.Owner), Domain: valueOrEmpty(document.Metadata.Domain), Tags: valueOrStrings(document.Metadata.Tags), Documentation: valueOrEmpty(document.Metadata.Documentation)}}
 		id, name, err := flatResourceIdentity(project, envelope, path, "dashboard")
 		if err != nil {
@@ -236,6 +253,7 @@ func loadFlatDashboards(project *Project, includes []string) error {
 		}
 		document.Metadata.ID = id
 		project.Dashboards[name] = &document
+		project.ResourceSources[id] = string(content)
 		project.DashboardIDs[name], project.DashboardPaths[name] = id, path
 		project.DashboardMetadata[name] = projectgraph.Metadata{DisplayName: firstNonEmpty(valueOrEmpty(document.Metadata.DisplayName), name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation}
 	}

@@ -168,6 +168,9 @@ func catalogLayoutContext(catalog catalog.Catalog) webpage.Context {
 }
 
 func projectLayoutContext(catalog catalog.Catalog, active string) webpage.Context {
+	if active == "dashboards" {
+		active = "dashboard-catalog"
+	}
 	return webpage.Context{
 		Active: active, ScopeID: catalog.Project.ID, ScopeTitle: catalog.Project.Title,
 		SectionTitle: "Project", PageTitle: "Published assets",

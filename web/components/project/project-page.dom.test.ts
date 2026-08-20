@@ -59,10 +59,21 @@ test('project asset list renders current resource signals and filter event', asy
       input.value = 'orders'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await element.updateComplete
-      return { title: root.querySelector('h1')?.textContent?.trim(), rows: root.querySelectorAll('lv-record-table').length, detail }
+      const table = root.querySelector('lv-record-table') as any
+      return {
+        title: root.querySelector('h1')?.textContent?.trim(),
+        rows: root.querySelectorAll('lv-record-table').length,
+        columns: table?.table?.columns?.map((column: any) => column.header),
+        firstRow: table?.table?.rows?.[0],
+        detail,
+      }
     })
     expect(state.title).toBe('Develop')
     expect(state.rows).toBe(1)
+    expect(state.columns).toEqual(['Name', 'Type', 'Identifier'])
+    expect(state.firstRow.name.description).toBe('Raw orders.')
+    expect(state.firstRow.key).toBe('source:orders')
+    expect(state.firstRow.actions).toEqual([])
     expect(state.detail).toEqual({ type: 'source', query: 'orders' })
   } finally {
     await page.close()
@@ -173,8 +184,89 @@ test('connections list and asset detail render without workspace terminology', a
       return { title: root.querySelector('h1')?.textContent?.trim(), tabs: Array.from(root.querySelectorAll('.tabs a')).map((tab: Element) => tab.textContent?.trim()), text: root.textContent }
     })
     expect(detail.title).toBe('orders')
-    expect(detail.tabs).toContain('Details')
+    expect(detail.tabs).toEqual(expect.arrayContaining(['Details', 'Definition']))
     expect(detail.text.toLowerCase()).not.toContain('workspace')
+
+    await page.goto(`${baseURL}/?root=connection-detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const connection = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        hasCatalogShell: Boolean(root.querySelector('.asset-page.connection-asset-page')),
+        hasStandaloneEntityShell: Boolean(root.querySelector('.detail-surface')),
+        heading: root.querySelector('.breadcrumb-header h1')?.textContent?.trim(),
+        tabs: Array.from(root.querySelectorAll('.asset-body > .tabs a')).map((tab: Element) => tab.textContent?.trim()),
+        hasAdministration: Boolean(root.querySelector('lv-connection-administration')),
+        overview: root.querySelector('.detail-section[aria-label="Overview"]')?.textContent?.trim(),
+      }
+    })
+    expect(connection.hasCatalogShell).toBe(true)
+    expect(connection.hasStandaloneEntityShell).toBe(false)
+    expect(connection.heading).toContain('Warehouse')
+    expect(connection.tabs).toEqual(expect.arrayContaining(['Details', 'Definition', 'Lineage']))
+    expect(connection.hasAdministration).toBe(true)
+    expect(connection.overview).toContain('DuckDB')
+  } finally {
+    await page.close()
+  }
+})
+
+test('asset Definition tab renders authored YAML and SQL as separate code sections', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=model-definition`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        activeTab: root.querySelector('.tabs a[aria-current="page"]')?.textContent?.trim(),
+        label: root.querySelector('#definition')?.getAttribute('aria-label'),
+        sections: Array.from(root.querySelectorAll('#definition .detail-section')).map((section: any) => ({
+          title: section.querySelector('h2')?.textContent?.trim(),
+          code: section.querySelector('lv-code-block')?.code,
+          language: section.querySelector('lv-code-block')?.getAttribute('language'),
+        })),
+      }
+    })
+    expect(definition.activeTab).toBe('Definition')
+    expect(definition.label).toBe('Asset definition')
+    expect(definition.sections).toEqual([
+      { title: 'Configuration', code: 'kind: Model\n', language: 'yaml' },
+      { title: 'SQL', code: 'select * from source.orders', language: 'sql' },
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+test('unavailable pipeline shows visible recovery guidance and connections action', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipeline-unavailable`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const run = root.querySelector('button[aria-label*="Run now unavailable"]') as HTMLButtonElement | null
+      const recovery = root.querySelector('a.action-link[href="/connections"]') as HTMLAnchorElement | null
+      const recoveryStyle = recovery ? getComputedStyle(recovery) : null
+      return {
+        runDisabled: run?.disabled,
+        recoveryText: recovery?.textContent?.trim(),
+        recoveryBackground: recoveryStyle?.backgroundColor,
+        recoveryForeground: recoveryStyle?.color,
+        recoveryMinHeight: recoveryStyle?.minHeight,
+        overview: root.querySelector('.detail-section[aria-label="Overview"]')?.textContent?.trim(),
+      }
+    })
+    expect(state.runDisabled).toBe(true)
+    expect(state.recoveryText).toContain('Review connections')
+    expect(state.recoveryBackground).toBe('rgb(9, 105, 218)')
+    expect(state.recoveryForeground).toBe('rgb(255, 255, 255)')
+    expect(state.recoveryMinHeight).toBe('32px')
+    expect(state.overview).toContain('Refresh state could not be loaded')
   } finally {
     await page.close()
   }
@@ -183,8 +275,14 @@ test('connections list and asset detail render without workspace terminology', a
 function testDocument(rootName: string): string {
   const page = rootName === 'connections' ? {
     kind: 'connections', title: 'Connections', description: 'Data connections.', connections: [{ id: 'conn', title: 'Warehouse', description: 'Primary warehouse.', detailHref: '/connections/conn', kind: 'DuckDB', scope: 'Project', sourceCount: 2, credentialStatus: 'Configured', lifecycle: lifecycle() }],
+  } : rootName === 'connection-detail' ? {
+    kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], sections: [] },
+  } : rootName === 'model-definition' ? {
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
+  } : rootName === 'pipeline-unavailable' ? {
+    kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable; review connections', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }, { label: 'Review connections', href: '/connections', icon: 'open' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Review Connections and runtime setup, then retry.', wide: true }], sections: [] },
   } : rootName === 'detail' ? {
-    kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details', active: true }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
+    kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details', active: true }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'semantic-detail' ? {
     kind: 'data', title: 'orders', assetId: 'semantic:orders', activeSection: 'details', asset: { id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/semantic-models/semantic:orders/details', active: true }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'model-data' ? {
@@ -194,12 +292,12 @@ function testDocument(rootName: string): string {
   } : rootName === 'semantic-models' ? {
     kind: 'data', title: 'Semantic models', assetList: { activeType: 'semantic_model', assets: [{ id: 'semantic:orders', key: 'semantic_model:orders', title: 'orders', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:orders/details', openHref: '/semantic-models/semantic:orders/details' }], empty: 'No semantic models.', searchHref: '/semantic-models', tabs: [] },
   } : {
-    kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
+    kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'semantic-detail' || rootName === 'model-data' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'pipeline-unavailable' ? 'lv-project-asset-page' : 'lv-project-page'
   const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
   const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
-  return `<!doctype html><html><body><main data-signals="${escapeHTML(JSON.stringify({ page, dataExplorer, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><body style="--lv-button-height:32px;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-border-rest:#0969da"><main data-signals="${escapeHTML(JSON.stringify({ page, dataExplorer, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function lifecycle() {

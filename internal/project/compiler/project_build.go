@@ -101,7 +101,7 @@ func sortedUniqueTrimmed(values []string) []string {
 func projectManifest(project Project) (manifest.Project, error) {
 	result := manifest.Project{
 		ID: string(project.ID), Name: project.Name, Title: project.Metadata.DisplayName, Description: project.Metadata.Description,
-		Connections: map[string]semanticmodel.Connection{}, Sources: map[string]semanticmodel.Source{}, Models: map[string]semanticmodel.Table{}, SemanticModels: map[string]*semanticmodel.Model{},
+		Connections: map[string]semanticmodel.Connection{}, Sources: map[string]semanticmodel.Source{}, Models: map[string]semanticmodel.Table{}, AuthoredModelDefinitions: map[string]manifest.AuthoredModelDefinition{}, AuthoredModelSources: map[string]string{}, AuthoredResourceSources: map[string]string{}, SemanticModels: map[string]*semanticmodel.Model{},
 		DashboardDefinitions: map[string]dashboarddefinition.Definition{}, DashboardSources: map[string]manifest.DashboardSource{}, Publications: map[string]publication.Definition{}, RefreshPipelines: map[string]refreshschedule.Definition{},
 		NameIndex:     manifest.NameIndex{Connections: map[string]string{}, Sources: map[string]string{}, Models: map[string]string{}, SemanticModels: map[string]string{}, Dashboards: map[string]string{}, Pipelines: map[string]string{}, Publications: map[string]string{}},
 		ResourceFiles: map[string]string{},
@@ -109,6 +109,9 @@ func projectManifest(project Project) (manifest.Project, error) {
 	result.ResourceFiles[string(project.ID)] = projectRelativePath(&project, project.ProjectPath)
 	for id, path := range project.ResourcePaths {
 		result.ResourceFiles[id] = projectRelativePath(&project, path)
+	}
+	for id, source := range project.ResourceSources {
+		result.AuthoredResourceSources[id] = source
 	}
 	for name, value := range project.Connections {
 		id := project.ConnectionIDs[name]
@@ -137,6 +140,12 @@ func projectManifest(project Project) (manifest.Project, error) {
 		value.ModelDependencies = canonicalRefs(project, "model", value.ModelDependencies)
 		value.ModelName = name
 		result.Models[id] = value
+		if authored, ok := project.ModelDefinitions[name]; ok {
+			result.AuthoredModelDefinitions[id] = authored
+		}
+		if source, ok := project.ModelSources[name]; ok {
+			result.AuthoredModelSources[id] = source
+		}
 		result.NameIndex.Models[name] = id
 	}
 	for name, spec := range project.SemanticModels {

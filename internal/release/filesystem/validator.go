@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 
@@ -31,11 +32,23 @@ func ValidateArtifactWithOptions(path string, projectID projectgraph.ResourceID,
 	if validation.ProjectID != identity.ProjectID.String() {
 		return servingstate.Validation{}, fmt.Errorf("artifact project %q does not match serving project %q", validation.ProjectID, identity.ProjectID)
 	}
+	publicationsJSON, err := compiledDashboardPublicationsJSON(validation.Manifest.Publications)
+	if err != nil {
+		return servingstate.Validation{}, fmt.Errorf("encode compiled dashboard publications: %w", err)
+	}
 	return servingstate.Validation{
 		Digest: validation.Digest, ManifestJSON: validation.ManifestJSON, RootDir: validation.RootDir,
 		ProjectID: identity.ProjectID, ProjectDigest: validation.ProjectDigest,
-		AccessPolicy: validation.Manifest.Access, Graph: validation.Graph,
+		AccessPolicy: validation.Manifest.Access, DashboardPublicationsJSON: publicationsJSON, Graph: validation.Graph,
 	}, nil
+}
+
+func compiledDashboardPublicationsJSON(definitions any) (string, error) {
+	encoded, err := json.Marshal(definitions)
+	if err == nil && string(encoded) == "null" {
+		return "{}", nil
+	}
+	return string(encoded), err
 }
 
 func (Validator) Cleanup(validation servingstate.Validation) error {

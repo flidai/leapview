@@ -28,6 +28,8 @@ type Project struct {
 	SourcePaths             map[string]string
 	SourceIDs               map[string]string
 	Models                  map[string]semanticmodel.Table
+	ModelDefinitions        map[string]manifest.AuthoredModelDefinition
+	ModelSources            map[string]string
 	ModelAIContexts         map[string]*semanticmodel.AIContext
 	ModelIDs                map[string]string
 	ModelPaths              map[string]string
@@ -50,6 +52,9 @@ type Project struct {
 	ResourceIDOwners        map[string]string
 	ResourcePaths           map[string]string
 	ResourceMetadata        map[string]projectgraph.Metadata
+	// ResourceSources is keyed by canonical resource ID and contains validated
+	// authored YAML for definition views. Connections are never inserted.
+	ResourceSources map[string]string
 }
 
 func CompileProject(projectPath string) (projectartifact.Project, error) {
