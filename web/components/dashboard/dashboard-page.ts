@@ -45,6 +45,11 @@ import {
   type InteractionConfigLike,
   type OptimisticInteractionCommand,
 } from './interaction-selection'
+import {
+  DashboardAgentStateController,
+  DashboardNavigationController,
+  DashboardOptimisticInteractionController,
+} from './dashboard-page-controller'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -72,35 +77,6 @@ type DashboardRefreshProgress = {
   percent: number
 }
 
-const dashboardAgentStorageKey = 'leapview-dashboard-agent-state'
-
-type DashboardAgentStoredState = {
-  open: boolean
-  conversationId: string
-}
-
-function readDashboardAgentState(): DashboardAgentStoredState {
-  const fallback = { open: false, conversationId: '' }
-  try {
-    const value = JSON.parse(localStorage.getItem(dashboardAgentStorageKey) ?? '') as Partial<DashboardAgentStoredState>
-    return {
-      open: value.open === true,
-      conversationId: typeof value.conversationId === 'string' ? value.conversationId.trim() : '',
-    }
-  } catch {
-    return fallback
-  }
-}
-
-function writeDashboardAgentState(state: DashboardAgentStoredState): void {
-  try {
-    localStorage.setItem(dashboardAgentStorageKey, JSON.stringify(state))
-  } catch {
-    // Storage can be unavailable in privacy-constrained browser contexts. The
-    // drawer remains fully functional for the current page in that case.
-  }
-}
-
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
   @state() private unsupportedKinds = new Set<string>()
@@ -116,13 +92,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private persistedAgentOpen = false
   private persistedAgentConversationID = ''
   private optimisticExpectedGeneration = 0
-  private optimisticRollbackTimer?: ReturnType<typeof setTimeout>
   private renderSnapshot?: DashboardRenderSnapshot
   private filterStateFingerprint = ''
   private filterValidationMutationID = ''
-  private pendingPageNavigation = ''
-  private pendingPageID = ''
-  private navigationRequested = false
+  private readonly navigationController = new DashboardNavigationController()
+  private readonly agentStateController = new DashboardAgentStateController()
+  private readonly optimisticController = new DashboardOptimisticInteractionController((snapshot) => {
+    this.optimisticSelections = snapshot.selections
+    this.optimisticSpatialSelections = snapshot.spatialSelections
+    this.optimisticExpectedGeneration = snapshot.expectedGeneration
+    this.requestUpdate()
+  }, () => this.status.generation)
   private readonly filterOptionGenerations = new Map<string, number>()
   private readonly filterOptionRequestContexts = new Map<string, Map<number, string>>()
   private readonly filterOptionInFlight = new Map<string, { context: string, generation: number, startedAt: number }>()
@@ -778,7 +758,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   connectedCallback(): void {
     if (this.presentation === 'app' && !this.agentStateInitialized) {
-      const stored = readDashboardAgentState()
+      const stored = this.agentStateController.initialize(true)
       this.agentDrawerOpen = stored.open
       this.restoredAgentConversationID = stored.conversationId
       this.persistedAgentOpen = stored.open
@@ -802,7 +782,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     this.removeEventListener('lv-interaction-spatial-select', this.handleOptimisticSpatialInteraction as EventListener, { capture: true })
     this.removeEventListener('lv-filter-mutate', this.handleFilterMutation as EventListener, { capture: true })
     this.removeEventListener('lv-filter-options-needed', this.handleFilterOptionsNeeded as EventListener, { capture: true })
-    this.clearOptimisticRollbackTimer()
+    this.optimisticController.dispose()
     super.disconnectedCallback()
   }
 
@@ -814,6 +794,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       const activeConversationID = agent.activeConversationId?.trim() ?? ''
       if (activeConversationID) {
         this.restoredAgentConversationID = activeConversationID
+        this.agentStateController.syncConversation(activeConversationID)
         this.persistAgentState()
       }
       if (this.restoredAgentConversationID && !this.agentRestoreDispatched) {
@@ -832,26 +813,22 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     })
     this.loadRenderedComponents()
     this.reconcileFilterController()
-    if (this.pendingPageID && page.pageId === this.pendingPageID) {
-      const path = new URL(this.pendingPageNavigation, window.location.href).pathname
+    const completedNavigation = this.navigationController.complete(page.pageId)
+    if (completedNavigation) {
+      const path = new URL(completedNavigation.href, window.location.href).pathname
       window.DatastarURLSync?.push(this.signal<Record<string, string | string[]>>('urlParams', {}), path)
-      this.pendingPageNavigation = ''
-      this.pendingPageID = ''
-      this.navigationRequested = false
       return
     }
     if (
-      this.pendingPageNavigation
+      this.navigationController.request
       && this.canonicalFilterState.dirtyBindings.length === 0
       && !this.filterController.pending
-      && !this.navigationRequested
+      && !this.navigationController.navigationRequested
     ) {
       this.dispatchPageNavigation()
       return
     }
-    if (this.optimisticSelections && this.status.generation >= this.optimisticExpectedGeneration) {
-      this.clearOptimisticState()
-    }
+    this.optimisticController.reconcile(this.status.generation)
   }
 
   get page(): DashboardPageSignal | null {
@@ -1216,35 +1193,36 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
     event.preventDefault()
     event.stopPropagation()
-    this.pendingPageNavigation = anchor.href
-    this.pendingPageID = target.id
-    this.navigationRequested = false
-    if (this.filterContract.applicationMode === 'deferred' && this.canonicalFilterState.dirtyBindings.length > 0) {
-      if (window.confirm('Apply pending filter changes before leaving this page?')) {
+    const decision = this.navigationController.begin({ href: anchor.href, pageId: target.id }, {
+      active: target.active,
+      deferred: this.filterContract.applicationMode === 'deferred',
+      dirty: this.canonicalFilterState.dirtyBindings.length > 0,
+      confirm: (message) => window.confirm(message),
+    })
+    if (decision === 'apply') {
         this.filterController.apply()
         this.requestUpdate()
         return
-      }
-      if (window.confirm('Discard pending filter changes and leave this page?')) {
+    }
+    if (decision === 'discard') {
         this.filterController.cancel()
         this.requestUpdate()
         return
-      }
-      this.pendingPageNavigation = ''
-      this.pendingPageID = ''
+    }
+    if (decision === 'cancel') {
       return
     }
     this.dispatchPageNavigation()
   }
 
   private dispatchPageNavigation(): void {
-    if (!this.pendingPageID || this.navigationRequested) return
-    this.navigationRequested = true
+    const request = this.navigationController.markRequested()
+    if (!request) return
     this.dispatchEvent(new CustomEvent('lv-page-navigate', {
       bubbles: true,
       composed: true,
       detail: {
-        pageID: this.pendingPageID,
+        pageID: request.pageId,
         baseFilterRevision: this.canonicalFilterState.revision,
         clientMutationID: crypto.randomUUID(),
       },
@@ -1436,6 +1414,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   private handleAgentNew = () => {
     this.restoredAgentConversationID = ''
     this.agentRestoreDispatched = true
+    this.agentStateController.newConversation()
     this.persistAgentState()
   }
 
@@ -1445,16 +1424,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private persistAgentState(): void {
-    if (
-      this.persistedAgentOpen === this.agentDrawerOpen
-      && this.persistedAgentConversationID === this.restoredAgentConversationID
-    ) return
+    this.agentStateController.setOpen(this.agentDrawerOpen)
     this.persistedAgentOpen = this.agentDrawerOpen
     this.persistedAgentConversationID = this.restoredAgentConversationID
-    writeDashboardAgentState({
-      open: this.agentDrawerOpen,
-      conversationId: this.restoredAgentConversationID,
-    })
   }
 
   private missingPayload(kind: string) {
@@ -1498,15 +1470,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (!validateInteractionCommand(command, configured)) return
 
     const current = this.optimisticSelections ?? this.interactionSelections
-    this.optimisticSelections = applyOptimisticInteraction(current, {
+    this.optimisticController.setSelections(applyOptimisticInteraction(current, {
       ...command,
       toggle: configured?.toggle !== false,
-    })
-    this.optimisticExpectedGeneration = Math.max(
-      this.status.generation + 1,
-      this.optimisticExpectedGeneration + 1,
-    )
-    this.scheduleOptimisticRollback()
+    }), this.status.generation)
   }
 
   private handleFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
@@ -1646,9 +1613,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const current = [...(this.optimisticSpatialSelections ?? this.spatialSelections)]
       .filter((selection) => selection.visualID !== command.visualID || selection.interactionID !== command.interactionID)
     if (command.action === 'set' && command.geometry) current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
-    this.optimisticSpatialSelections = current
-    this.optimisticExpectedGeneration = Math.max(this.status.generation + 1, this.optimisticExpectedGeneration + 1)
-    this.scheduleOptimisticRollback()
+    this.optimisticController.setSpatialSelections(current, this.status.generation)
   }
 
   private interactionConfigFor(sourceKind: 'visual', sourceId: string): InteractionConfigLike | undefined {
@@ -1668,21 +1633,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     }
   }
 
-  private scheduleOptimisticRollback(): void {
-    this.clearOptimisticRollbackTimer()
-    this.optimisticRollbackTimer = setTimeout(() => this.clearOptimisticState(), 10_000)
-  }
-
-  private clearOptimisticRollbackTimer(): void {
-    if (this.optimisticRollbackTimer !== undefined) clearTimeout(this.optimisticRollbackTimer)
-    this.optimisticRollbackTimer = undefined
-  }
-
   private clearOptimisticState(): void {
-    this.clearOptimisticRollbackTimer()
-    this.optimisticSelections = null
-    this.optimisticSpatialSelections = null
-    this.optimisticExpectedGeneration = this.status.generation
+    this.optimisticController.clear(this.status.generation)
   }
 
   private loadRenderedComponents(): void {

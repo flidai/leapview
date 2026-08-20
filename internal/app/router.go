@@ -5,19 +5,9 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	adminmodule "github.com/flidai/leapview/internal/admin/module"
-	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
-	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
-	"github.com/flidai/leapview/internal/app/desktopdiscovery"
-	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
-	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
-	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
-	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -34,134 +24,37 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	publicProtocol := func(next http.Handler) http.Handler {
 		return publicProtocolMiddleware(platform.apiProtocol, next)
 	}
-	if policy.requestLogging {
-		mux.Use(apihttpmiddleware.RequestLogger(platform.logger))
+	registerAPIGen := func(r chi.Router) {
+		apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
 	}
-	mux.Use(platform.telemetry.Middleware)
-	mux.Use(apihttpmiddleware.PanicRecovery(platform.logger))
-	mux.Use(apihttpmiddleware.SecurityHeadersMiddleware(policy.securityHeaders))
-	mux.Use(apihttpmiddleware.AllowedHosts(policy.allowedHosts))
-	mux.Use(apihttpmiddleware.RequestBodyLimit(policy.requestBodyLimit))
-	mux.Get("/favicon.ico", favicon)
-	mux.Get("/healthz", platform.health.Healthz)
-	mux.Get("/readyz", platform.health.Readyz)
-	mux.With(policy.rateLimits.PublicPage(func() {
-		routes.dashboardTelemetry.PublicRateLimitObserved("desktop-discovery")
-	})).Get(desktopdiscovery.WellKnownPath, policy.desktopDiscovery.ServeHTTP)
-	mux.Get("/api/openapi.json", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		openAPIDescription(platform.apiProtocol, w, r)
-	}))
-	mux.Get("/api/docs", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { publicDocs(platform.apiProtocol, w, r) }))
-	mux.Group(func(r chi.Router) {
-		r.Use(policy.rateLimits.PublicPage(func() { routes.dashboardTelemetry.PublicRateLimitObserved("page") }))
-		routes.dashboardModule.MountPublicDocuments(r)
+	mountRouterMiddleware(mux, routerMiddlewareDependencies{
+		logger: platform.logger, telemetry: platform.telemetry, securityHeaders: policy.securityHeaders,
+		allowedHosts: policy.allowedHosts, requestBodyLimit: policy.requestBodyLimit, requestLogging: policy.requestLogging,
 	})
-	mux.Group(func(r chi.Router) {
-		r.Use(policy.rateLimits.PublicCommand(func() { routes.dashboardTelemetry.PublicRateLimitObserved("command") }))
-		routes.dashboardModule.MountPublicCommands(r)
+	mountPlatformRoutes(mux, platformRouteDependencies{
+		dashboardTelemetry: routes.dashboardTelemetry, rateLimits: policy.rateLimits,
+		desktopDiscovery: policy.desktopDiscovery, health: platform.health, apiProtocol: platform.apiProtocol,
 	})
-	routes.dashboardModule.MountPublicStream(mux.With(policy.rateLimits.PublicStream(func() { routes.dashboardTelemetry.PublicRateLimitObserved("stream") })))
-	if runtime.pageStreamTrace != nil {
-		traceHandler := uitransport.TraceHandler{Store: runtime.pageStreamTrace}
-		mux.Get("/__dev/pagestream/traces", traceHandler.Traces)
-		mux.Get("/__dev/pagestream/signals", traceHandler.Signals)
-	}
+	mountPublicDashboardRoutes(mux, publicDashboardRouteDependencies{
+		dashboard: routes.dashboardModule, dashboardTelemetry: routes.dashboardTelemetry, rateLimits: policy.rateLimits,
+	})
+	mountDevelopmentRoutes(mux, runtime.pageStreamTrace)
 	mux.With(policy.rateLimits.Auth()).Handle("/metrics", platform.telemetry.MetricsHandler(policy.metricsBearerToken, accessmodule.BearerToken))
 	mux.With(csrf).Group(routes.accessModule.MountLoginPage)
-	mux.Group(func(r chi.Router) {
-		r.Use(csrf)
-		r.With(policy.rateLimits.Updates()).Get("/updates", runtime.pageStreams.ServeHTTP)
-		if routes.projectBrowser != nil {
-			routes.projectBrowser.MountAuthenticated(r)
-		} else {
-			r.Get("/", routes.accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			})).ServeHTTP)
-		}
-		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(
-				routes.accessModule, runtime.runtimeHostModule, access.CapabilityProjectAdmin,
-				activeProjectResource, next,
-			)
-		}
-		r.Get("/candidates/{candidate}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
-			candidatePreview(candidates, w, request)
-		}))
-		r.Get("/candidates/{candidate}/dashboards/{dashboard}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
-			candidateDashboardDocument(candidates, w, request)
-		}))
-		r.Get("/candidates/{candidate}/dashboards/{dashboard}/pages/{page}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
-			candidateDashboardDocument(candidates, w, request)
-		}))
-		r.With(policy.rateLimits.Updates()).Get("/candidates/{candidate}/updates", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
-			candidateDashboardUpdates(candidates, w, request)
-		}))
-		r.Post("/candidates/{candidate}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
-			candidateDashboardCommand(candidates, w, request)
-		}))
-		routes.agentModule.MountAuthenticated(r, agentmodule.RouteGuard{
-			Authenticate:         routes.accessModule.Authenticate,
-			RequirePlatformAdmin: routes.accessModule.RequirePlatformAdmin,
-		})
-		routes.adminModule.MountAuthenticated(r, adminmodule.RouteGuard{
-			Authenticate:         routes.accessModule.Authenticate,
-			RequirePlatformAdmin: routes.accessModule.RequirePlatformAdmin,
-		})
-		routes.dashboardModule.MountAuthenticated(r, dashboardmodule.RouteGuard{
-			ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
-				return protectProjectResources(routes.accessModule, runtime.runtimeHostModule, capability, resolve, next)
-			},
-		})
-		routes.accessModule.MountAuthenticatedBrowser(r)
-	})
-	mux.Group(func(r chi.Router) {
-		r.Use(policy.rateLimits.Auth())
-		r.Use(csrf)
-		routes.accessModule.MountLocalLogin(r)
-	})
-	mux.Group(func(r chi.Router) {
-		r.Use(policy.rateLimits.Auth())
-		routes.accessModule.MountOAuthEndpoints(r)
-	})
-	routes.accessModule.MountOAuthMetadata(mux)
-	if runtime.persistenceConfigured {
-		if platform.auth != nil {
-			routes.agentModule.MountMCP(mux.With(policy.rateLimits.API()))
-		}
-		if strings.TrimSpace(policy.scimBearerToken) != "" {
-			_ = routes.accessModule.MountSCIM(mux.With(policy.rateLimits.API()), policy.scimBearerToken)
-		}
-		mux.Group(func(r chi.Router) {
-			r.Use(policy.rateLimits.API())
-			r.Use(publicProtocol)
-			routes.managedDataModule.MountTus(r, policy.managedDataTus, func(next http.Handler) http.Handler {
-				return protectManagedDataTransportWithBootstrap(routes.accessModule, runtime.runtimeHostModule, routes.managedDataModule, policy.managedDataBootstrap, next)
-			})
-			apiaggregate.RegisterAPIGenRoutes(r, platform.apiGenServers)
-		})
-	}
-	if routes.dashboardAssets != nil {
-		mux.Handle("/map-assets/*", routes.dashboardAssets.Handler())
-	}
-	mux.Handle("/static/*", staticAssetCache(platform.assets, http.StripPrefix("/static/", http.FileServer(http.Dir("static")))))
-	mux.NotFound(func(w http.ResponseWriter, r *http.Request) {
-		if isPublicAPIPath(r.URL.Path) {
-			apiprotocol.PrepareRequest(w, r)
-			apitransport.WriteProblem(w, r, http.StatusNotFound, "API_ROUTE_NOT_FOUND", "The requested API route does not exist", nil)
-			return
-		}
-		http.NotFound(w, r)
-	})
-	registeredMethods := registeredRouteMethods(mux)
-	mux.MethodNotAllowed(func(w http.ResponseWriter, r *http.Request) {
-		setAllowedMethods(w.Header(), mux, registeredMethods, r.URL.Path)
-		if isPublicAPIPath(r.URL.Path) {
-			if platform.apiProtocol.Authenticate(w, r) {
-				apitransport.WriteProblem(w, r, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "The requested method is not supported for this API route", nil)
-			}
-			return
-		}
-		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
+	mountAuthenticatedRoutes(mux, authenticatedRouteDependencies{
+		access: routes.accessModule, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
+		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,
+		pageStreams: runtime.pageStreams, rateLimits: policy.rateLimits, candidates: candidates,
+	}, csrf)
+	mountAuthenticationRoutes(mux, routes.accessModule, policy.rateLimits, csrf)
+	mountAPIRoutes(mux, apiRouteDependencies{
+		persistenceConfigured: runtime.persistenceConfigured, auth: platform.auth, agent: routes.agentModule,
+		access: routes.accessModule, managedData: routes.managedDataModule, runtimeHost: runtime.runtimeHostModule,
+		rateLimits: policy.rateLimits, scimBearerToken: policy.scimBearerToken, managedDataTus: policy.managedDataTus,
+		managedDataBootstrap: policy.managedDataBootstrap,
+	}, publicProtocol, registerAPIGen)
+	mountStaticAndErrorRoutes(mux, staticRouteDependencies{
+		dashboardAssets: routes.dashboardAssets, assets: platform.assets, apiProtocol: platform.apiProtocol,
 	})
 
 	return mux

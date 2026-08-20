@@ -4,11 +4,8 @@ import { spawn } from "node:child_process";
 import { release as operatingSystemRelease } from "node:os";
 import {
   dirname,
-  isAbsolute,
   join,
-  relative,
   resolve,
-  sep,
 } from "node:path";
 
 import {
@@ -28,13 +25,24 @@ import {
 } from "electron";
 
 import {
-  authenticateDesktopProfile,
   clearDesktopProfileState,
   disconnectDesktopProfile,
   DesktopProfileRemovedLocallyError,
   prepareDesktopSession,
   removeDesktopProfileState,
 } from "./auth.js";
+import { DesktopAuthenticationCoordinator } from "./application-auth.js";
+import { DesktopShutdownCoordinator } from "./application-shutdown.js";
+import {
+  isRetryableRecoveryFailure,
+  nonRetryableRecoveryMessage,
+} from "./application-recovery.js";
+import {
+  canonicalExternalURL,
+  exactProfileURL,
+  pathIsInside,
+  profilePartition,
+} from "./application-navigation.js";
 import {
   DeepLinkDispatcher,
   DESKTOP_DEEP_LINK_SCHEME,
@@ -48,13 +56,13 @@ import {
   type DiscoveryDocument,
 } from "./discovery.js";
 import {
-  DiagnosticJournal,
   normalizeChildProcessType,
   normalizeProcessGoneReason,
   writeDiagnosticReport,
   type DiagnosticEnvironment,
   type DiagnosticEvent,
 } from "./diagnostics.js";
+import { DesktopDiagnosticsCoordinator } from "./application-diagnostics.js";
 import { resolveDesktopDistribution } from "./distribution.js";
 import { runPackagedSecurityProofIfRequested } from "./packaged-security-proof.js";
 import { buildNativeMenuTemplate } from "./native-menu.js";
@@ -69,7 +77,6 @@ import {
 } from "./managed-policy.js";
 import {
   profileDisplayName,
-  profilePartitionName,
   DesktopProfileReplacementCancelledError,
   ProfileStore,
   type Profile,
@@ -91,7 +98,6 @@ import {
   configureRemoteSession,
   parseConfiguredOrigin,
 } from "./security/remote-policy.mjs";
-import { isSafeDesktopRoute } from "./safe-route.js";
 import {
   handleSquirrelLifecycle,
   SQUIRREL_APP_USER_MODEL_ID,
@@ -101,10 +107,9 @@ import { TrustedUI } from "./trusted-ui.js";
 import { DesktopUpdateCoordinator } from "./update-coordinator.js";
 import type { DesktopAutoUpdater } from "./updater.js";
 import {
-  fitWindowStateToWorkArea,
-  WindowStateStore,
   type PersistedWindowState,
 } from "./window-state.js";
+import { DesktopWindowStateCoordinator } from "./application-window-state.js";
 
 const TRUSTED_SCHEME = "leapview";
 const TRUSTED_PARTITION = "leapview-shell";
@@ -125,11 +130,6 @@ interface RemotePolicyDecision {
   allowed: boolean;
 }
 
-interface AuthenticationTransaction {
-  controller: AbortController;
-  promise: Promise<void>;
-}
-
 protocol.registerSchemesAsPrivileged([
   {
     scheme: TRUSTED_SCHEME,
@@ -148,10 +148,10 @@ app.enableSandbox();
 let shellWindow: BrowserWindow | null = null;
 let trustedUI: TrustedUI | null = null;
 const remoteWindows = new Map<string, BrowserWindow>();
-const authenticationTransactions = new Map<
-  string,
-  AuthenticationTransaction
->();
+const authenticationCoordinator = new DesktopAuthenticationCoordinator(
+  (authorizationURL) => shell.openExternal(authorizationURL, { activate: true }),
+  recordDiagnostic,
+);
 const configuredSessions = new WeakSet<Session>();
 const configuredSessionOrigins = new WeakMap<Session, string>();
 const externalApprovals = new Set<string>();
@@ -175,12 +175,9 @@ let desktopPolicy: DesktopPolicy = {
   preconfiguredOrigins: [],
   revision: "desktop-policy-v1-invalid",
 };
-let windowStates: WindowStateStore | null = null;
-let windowStateFlushTimer: NodeJS.Timeout | null = null;
-let windowStateQuitPending = false;
-let windowStateQuitReady = false;
-let diagnostics: DiagnosticJournal | null = null;
-let diagnosticFlushTimer: NodeJS.Timeout | null = null;
+let windowStateCoordinator: DesktopWindowStateCoordinator | null = null;
+const shutdownCoordinator = new DesktopShutdownCoordinator();
+let diagnostics: DesktopDiagnosticsCoordinator | null = null;
 let diagnosticExportActive = false;
 let systemSuspended = false;
 let networkAvailable = true;
@@ -277,19 +274,15 @@ if (squirrelLifecycleHandled) {
       networkStatusTimer = null;
     }
     desktopUpdates?.stop();
-    if (windowStateQuitReady || windowStates === null) {
+    if (shutdownCoordinator.isReady || windowStateCoordinator === null) {
       return;
     }
-    event.preventDefault();
-    if (windowStateQuitPending) {
-      return;
-    }
-    windowStateQuitPending = true;
-    captureAllWindowStates();
-    void Promise.all([flushWindowStates(), flushDiagnostics()]).finally(() => {
-      windowStateQuitReady = true;
-      app.quit();
-    });
+    shutdownCoordinator.begin(
+      () => event.preventDefault(),
+      captureAllWindowStates,
+      () => Promise.all([flushWindowStates(), flushDiagnostics()]).then(() => undefined),
+      () => app.quit(),
+    );
   });
   void app.whenReady().then(start).catch(() => {
     console.error("LeapView Desktop failed to start safely.");
@@ -334,9 +327,10 @@ async function start(): Promise<void> {
     { allowLoopbackHTTP },
   );
   profiles = new ProfileStore(join(app.getPath("userData"), "profiles.json"));
-  diagnostics = await DiagnosticJournal.open(
+  diagnostics = await DesktopDiagnosticsCoordinator.open(
     join(app.getPath("userData"), "diagnostics.json"),
-    { enabled: desktopPolicy.diagnosticsEnabled },
+    desktopPolicy.diagnosticsEnabled,
+    DIAGNOSTIC_FLUSH_DELAY_MS,
   );
   recordDiagnostic({ kind: "startup", packaged: app.isPackaged });
   recordDiagnostic({
@@ -349,8 +343,9 @@ async function start(): Promise<void> {
       ? "enabled"
       : "disabled",
   });
-  windowStates = await WindowStateStore.open(
+  windowStateCoordinator = await DesktopWindowStateCoordinator.open(
     join(app.getPath("userData"), "window-state.json"),
+    WINDOW_STATE_FLUSH_DELAY_MS,
   );
   initializeDesktopUpdater(distribution);
   Menu.setApplicationMenu(
@@ -509,7 +504,7 @@ async function resolveVerifiedProfile(
     discovery,
   );
   await clearDesktopProfileState(oldSession);
-  windowStates?.remove(current.id);
+  windowStateCoordinator?.remove(current.id);
   scheduleWindowStateFlush();
   recordDiagnostic({
     kind: "profile",
@@ -584,7 +579,7 @@ async function removeProfile(profileID: string): Promise<void> {
     removalError === undefined ||
     removalError instanceof DesktopProfileRemovedLocallyError
   ) {
-    windowStates?.remove(profileID);
+    windowStateCoordinator?.remove(profileID);
     scheduleWindowStateFlush();
     recordDiagnostic({
       kind: "profile",
@@ -766,91 +761,20 @@ async function openRemoteWindow(
   }
 }
 
-function exactProfileURL(profile: Profile, path: string): string {
-  const target = new URL(path, profile.canonicalOrigin);
-  if (
-    !isSafeDesktopRoute(path) ||
-    target.origin !== profile.canonicalOrigin ||
-    target.hash !== ""
-  ) {
-    throw new Error("LeapView route is not safe for the saved instance.");
-  }
-  return target.toString();
-}
-
-function profilePartition(profile: Profile): string {
-  return profilePartitionName(profile);
-}
 
 async function ensureAuthenticated(
   profile: Profile,
   profileSession: Session,
 ): Promise<void> {
-  const fetcher = (input: string, init: RequestInit) =>
-    profileSession.fetch(input, init);
-  if (await prepareDesktopSession(profile, fetcher, profileSession)) {
-    recordDiagnostic({ kind: "authentication", phase: "session-valid" });
-    return;
-  }
-  recordDiagnostic({ kind: "authentication", phase: "required" });
-  const existing = authenticationTransactions.get(profile.id);
-  if (existing !== undefined) {
-    await existing.promise;
-    return;
-  }
-  if (authenticationTransactions.size >= 3) {
-    throw new Error(
-      "Too many LeapView authentication requests are already active.",
-    );
-  }
-  const controller = new AbortController();
-  const promise = authenticateDesktopProfile(
-    profile,
-    fetcher,
-    async (authorizationURL) => {
-      const parsed = new URL(authorizationURL);
-      if (
-        parsed.origin !== profile.canonicalOrigin ||
-        parsed.pathname !== "/auth/desktop/authorize" ||
-        parsed.hash !== ""
-      ) {
-        throw new Error("LeapView produced an unsafe authorization URL.");
-      }
-      await shell.openExternal(parsed.toString(), { activate: true });
-    },
-    { signal: controller.signal },
-  );
-  recordDiagnostic({ kind: "authentication", phase: "started" });
-  const transaction = { controller, promise };
-  authenticationTransactions.set(profile.id, transaction);
-  try {
-    await promise;
-    recordDiagnostic({ kind: "authentication", phase: "completed" });
-  } catch (error) {
-    recordDiagnostic({ kind: "authentication", phase: "failed" });
-    throw error;
-  } finally {
-    if (authenticationTransactions.get(profile.id) === transaction) {
-      authenticationTransactions.delete(profile.id);
-    }
-  }
+  await authenticationCoordinator.ensure(profile, profileSession);
 }
 
-async function cancelAuthenticationTransaction(
-  profileID: string,
-): Promise<void> {
-  const transaction = authenticationTransactions.get(profileID);
-  if (transaction === undefined) {
-    return;
-  }
-  transaction.controller.abort();
-  await transaction.promise.catch(() => undefined);
+async function cancelAuthenticationTransaction(profileID: string): Promise<void> {
+  await authenticationCoordinator.cancel(profileID);
 }
 
 function cancelAllAuthenticationTransactions(): void {
-  for (const transaction of authenticationTransactions.values()) {
-    transaction.controller.abort();
-  }
+  authenticationCoordinator.cancelAll();
 }
 
 function registerDeepLinkProtocolClient(): void {
@@ -963,7 +887,7 @@ async function prepareForUpdateRestart(): Promise<void> {
   cancelAllRemoteRecoveries();
   captureAllWindowStates();
   await Promise.all([flushWindowStates(), flushDiagnostics()]);
-  windowStateQuitReady = true;
+  shutdownCoordinator.markReady();
 }
 
 function focusTrustedShell(reload = false): void {
@@ -1055,15 +979,7 @@ function restoreWindowState(
   minimumWidth: number,
   minimumHeight: number,
 ): PersistedWindowState | undefined {
-  const saved = windowStates?.get(key);
-  if (saved === undefined) {
-    return undefined;
-  }
-  const display = screen.getDisplayMatching(saved.bounds);
-  return fitWindowStateToWorkArea(saved, display.workArea, {
-    width: minimumWidth,
-    height: minimumHeight,
-  });
+  return windowStateCoordinator?.restore(key, minimumWidth, minimumHeight);
 }
 
 function trackWindowState(
@@ -1072,115 +988,28 @@ function trackWindowState(
   minimumWidth: number,
   minimumHeight: number,
 ): void {
-  const capture = () => {
-    captureWindowState(window, key);
-    scheduleWindowStateFlush();
-  };
-  window.on("move", capture);
-  window.on("resize", capture);
-  window.on("maximize", capture);
-  window.on("unmaximize", capture);
-  window.on("closed", () => {
-    scheduleWindowStateFlush();
-  });
-  keepWindowVisible(window, key, minimumWidth, minimumHeight);
-  capture();
-}
-
-function captureWindowState(window: BrowserWindow, key: string): void {
-  if (window.isDestroyed() || windowStates === null) {
-    return;
-  }
-  windowStates.record(key, {
-    bounds: window.getNormalBounds(),
-    maximized: window.isMaximized(),
-  });
+  windowStateCoordinator?.track(window, key, minimumWidth, minimumHeight);
 }
 
 function scheduleWindowStateFlush(): void {
-  if (windowStateFlushTimer !== null) {
-    clearTimeout(windowStateFlushTimer);
-  }
-  windowStateFlushTimer = setTimeout(() => {
-    windowStateFlushTimer = null;
-    void flushWindowStates();
-  }, WINDOW_STATE_FLUSH_DELAY_MS);
+  windowStateCoordinator?.scheduleFlush();
 }
 
 async function flushWindowStates(): Promise<void> {
-  if (windowStateFlushTimer !== null) {
-    clearTimeout(windowStateFlushTimer);
-    windowStateFlushTimer = null;
-  }
-  if (windowStates === null) {
-    return;
-  }
-  try {
-    await windowStates.flush();
-  } catch {
-    console.warn("LeapView Desktop could not save window placement.");
-  }
+  await windowStateCoordinator?.flush();
 }
 
 function captureAllWindowStates(): void {
-  if (shellWindow !== null && !shellWindow.isDestroyed()) {
-    captureWindowState(shellWindow, "shell");
-  }
-  for (const [profileID, remote] of remoteWindows) {
-    captureWindowState(remote, profileID);
-  }
+  windowStateCoordinator?.captureAll(shellWindow, remoteWindows);
 }
 
 function keepAllWindowsVisible(): void {
-  if (shellWindow !== null && !shellWindow.isDestroyed()) {
-    keepWindowVisible(
-      shellWindow,
-      "shell",
-      SHELL_WINDOW_SIZE.minimumWidth,
-      SHELL_WINDOW_SIZE.minimumHeight,
-    );
-  }
-  for (const [profileID, remote] of remoteWindows) {
-    keepWindowVisible(
-      remote,
-      profileID,
-      REMOTE_WINDOW_SIZE.minimumWidth,
-      REMOTE_WINDOW_SIZE.minimumHeight,
-    );
-  }
-}
-
-function keepWindowVisible(
-  window: BrowserWindow,
-  key: string,
-  minimumWidth: number,
-  minimumHeight: number,
-): void {
-  if (
-    windowStates === null ||
-    window.isDestroyed() ||
-    window.isMaximized() ||
-    window.isMinimized() ||
-    window.isFullScreen()
-  ) {
-    return;
-  }
-  const current = window.getNormalBounds();
-  const display = screen.getDisplayMatching(current);
-  const fitted = fitWindowStateToWorkArea(
-    { bounds: current, maximized: false },
-    display.workArea,
-    { width: minimumWidth, height: minimumHeight },
+  windowStateCoordinator?.keepAllVisible(
+    shellWindow,
+    remoteWindows,
+    SHELL_WINDOW_SIZE,
+    REMOTE_WINDOW_SIZE,
   );
-  if (
-    current.x !== fitted.bounds.x ||
-    current.y !== fitted.bounds.y ||
-    current.width !== fitted.bounds.width ||
-    current.height !== fitted.bounds.height
-  ) {
-    window.setBounds(fitted.bounds);
-  }
-  windowStates.record(key, fitted);
 }
 
 async function saveDiagnosticReport(): Promise<void> {
@@ -1287,36 +1116,11 @@ function diagnosticEnvironment(): DiagnosticEnvironment {
 }
 
 function recordDiagnostic(event: DiagnosticEvent): void {
-  if (diagnostics === null) {
-    return;
-  }
-  try {
-    diagnostics.record(event);
-  } catch {
-    console.warn("LeapView Desktop rejected an internal diagnostic event.");
-    return;
-  }
-  if (diagnosticFlushTimer === null) {
-    diagnosticFlushTimer = setTimeout(() => {
-      diagnosticFlushTimer = null;
-      void flushDiagnostics();
-    }, DIAGNOSTIC_FLUSH_DELAY_MS);
-  }
+  diagnostics?.record(event);
 }
 
 async function flushDiagnostics(): Promise<void> {
-  if (diagnosticFlushTimer !== null) {
-    clearTimeout(diagnosticFlushTimer);
-    diagnosticFlushTimer = null;
-  }
-  if (diagnostics === null) {
-    return;
-  }
-  try {
-    await diagnostics.flush();
-  } catch {
-    console.warn("LeapView Desktop could not save diagnostic events.");
-  }
+  await diagnostics?.flush();
 }
 
 function recordRemotePolicyDecision(decision: RemotePolicyDecision): void {
@@ -1392,17 +1196,6 @@ function diagnosticSurface(
   return "unknown";
 }
 
-function pathIsInside(candidate: string, parent: string): boolean {
-  const relationship = relative(resolve(parent), resolve(candidate));
-  return (
-    relationship === "" ||
-    (
-      relationship !== ".." &&
-      !relationship.startsWith(`..${sep}`) &&
-      !isAbsolute(relationship)
-    )
-  );
-}
 
 function configureSessionOnce(target: Session, profile?: Profile): void {
   if (configuredSessions.has(target)) {
@@ -1471,39 +1264,6 @@ async function confirmExternalOpen(
   }
 }
 
-function canonicalExternalURL(
-  candidate: string,
-  configuredOrigin: string,
-): string | null {
-  if (new TextEncoder().encode(candidate).byteLength > 2_048) {
-    return null;
-  }
-  let parsed: URL;
-  try {
-    parsed = new URL(candidate);
-  } catch {
-    return null;
-  }
-  if (
-    parsed.protocol === "https:" &&
-    parsed.origin !== configuredOrigin &&
-    parsed.username === "" &&
-    parsed.password === ""
-  ) {
-    return parsed.toString();
-  }
-  if (
-    parsed.protocol === "mailto:" &&
-    parsed.search === "" &&
-    parsed.hash === "" &&
-    /^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]{1,64}@[A-Za-z0-9.-]{1,189}$/u.test(
-      parsed.pathname,
-    )
-  ) {
-    return parsed.toString();
-  }
-  return null;
-}
 
 function handleRemoteFailure(
   profile: Profile,
@@ -1648,43 +1408,6 @@ async function attemptRemoteRecovery(
   }
 }
 
-function isRetryableRecoveryFailure(error: unknown): boolean {
-  if (error instanceof DesktopDiscoveryError) {
-    return ["dns", "network", "proxy", "timeout", "http"].includes(
-      error.kind,
-    );
-  }
-  const message = error instanceof Error
-    ? error.message.toLowerCase()
-    : "";
-  return (
-    message.includes("could not load after successful discovery") ||
-    message.includes("failed to fetch") ||
-    message.includes("network") ||
-    message.includes("timed out")
-  );
-}
-
-function nonRetryableRecoveryMessage(error: unknown): string {
-  if (error instanceof DesktopDiscoveryError) {
-    if (error.kind === "tls") {
-      return "LeapView stopped automatic recovery because the server certificate could not be verified. Check the operating-system trust store, then reopen the instance.";
-    }
-    if (
-      [
-        "schema_incompatible",
-        "protocol_incompatible",
-        "authentication_incompatible",
-        "capability_incompatible",
-        "canonical_origin_mismatch",
-        "instance_identity_mismatch",
-      ].includes(error.kind)
-    ) {
-      return "LeapView stopped automatic recovery because the instance identity or desktop compatibility contract changed. Reopen the instance to review it.";
-    }
-  }
-  return "LeapView stopped automatic recovery after a non-network failure. Reopen the saved instance to continue safely.";
-}
 
 function cancelRemoteRecovery(profileID: string): void {
   remoteRecoveries.get(profileID)?.cancel();

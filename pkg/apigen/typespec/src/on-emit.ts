@@ -1,5 +1,4 @@
 import {
-  emitFile,
   getAllTags,
   getDoc,
   getDiscriminatedUnion,
@@ -28,7 +27,6 @@ import {
   type Union,
 } from "@typespec/compiler";
 import {
-  getAllHttpServices,
   getServers,
   isOverloadSameEndpoint,
   isSharedRoute,
@@ -57,7 +55,6 @@ import {
   getContracts,
   getMetadata,
   getNamedFailures,
-  getPackages,
   getPropertyNames,
   getResponseShape,
   getSensitivity,
@@ -70,6 +67,16 @@ import {
   isQuery,
 } from "./decorators.js";
 import { type EmitterOptions, reportDiagnostic } from "./lib.js";
+import { discoverHttpServices } from "./phase-discovery.js";
+import { emitDocumentFile } from "./phase-emission.js";
+import { normalizeDocument } from "./phase-normalization.js";
+import { qualifiedNamespaceName, readPackageMetadata } from "./phase-naming.js";
+import {
+  hasErrorDiagnostics,
+  validateOutputFile,
+  validateServiceCount,
+  validateServicePresence,
+} from "./phase-validation.js";
 
 interface Document {
   schema_version: "v4";
@@ -667,22 +674,17 @@ function isJSONScalarType(type: Type): boolean {
 
 export async function $onEmit(context: EmitContext<EmitterOptions>) {
   const outputFile = context.options["output-file"];
-  if (!outputFile) {
-    reportDiagnostic(context.program, { code: "missing-output-file", target: context.program.getGlobalNamespaceType() });
+  if (!validateOutputFile(context.program, outputFile)) {
     return;
   }
 
-  const [services, diagnostics] = getAllHttpServices(context.program);
-  context.program.reportDiagnostics(diagnostics);
-  if (diagnostics.some((diagnostic) => diagnostic.severity === "error")) {
+  const discovery = discoverHttpServices(context.program);
+  context.program.reportDiagnostics(discovery.diagnostics);
+  if (hasErrorDiagnostics(discovery.diagnostics)) {
     return;
   }
-  if (services.length > 1) {
-    reportDiagnostic(context.program, {
-      code: "multiple-services",
-      format: { count: String(services.length) },
-      target: context.program.getGlobalNamespaceType(),
-    });
+  const services = discovery.services;
+  if (!validateServiceCount(context.program, services.length)) {
     return;
   }
 
@@ -700,11 +702,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     }
   } else {
     if (contracts.length === 0 || httpServices.length > 1) {
-      reportDiagnostic(context.program, {
-        code: "multiple-services",
-        format: { count: String(httpServices.length) },
-        target: context.program.getGlobalNamespaceType(),
-      });
+      validateServicePresence(context.program, httpServices.length);
       return;
     }
     doc = buildContractDocument(context.program, contracts, context.options);
@@ -714,10 +712,7 @@ export async function $onEmit(context: EmitContext<EmitterOptions>) {
     return;
   }
 
-  await emitFile(context.program, {
-    path: outputFile,
-    content: `${JSON.stringify(doc, null, 2)}\n`,
-  });
+  await emitDocumentFile(context.program, outputFile, doc);
 }
 
 function buildContractDocument(
@@ -740,30 +735,11 @@ function buildContractDocument(
 }
 
 function packageMetadata(program: Program): { title: string; version: string; description?: string; namespace?: string } {
-  const packages = getPackages({ program });
-  if (packages.length > 0) {
-    const [namespace, pkg] = packages[0];
-    return {
-      title: pkg.title,
-      version: pkg.version,
-      description: pkg.description,
-      namespace: namespaceName(namespace),
-    };
-  }
-  return {
-    title: "Data Contracts",
-    version: "0.1.0",
-  };
+  return readPackageMetadata(program);
 }
 
 function namespaceName(namespace: Namespace | undefined): string | undefined {
-  const parts: string[] = [];
-  let current = namespace;
-  while (current) {
-    if (current.name) parts.unshift(current.name);
-    current = current.namespace;
-  }
-  return parts.length > 0 ? parts.join(".") : undefined;
+  return qualifiedNamespaceName(namespace);
 }
 
 function contractRoots(program: Program, builder: IRBuilder, localNamespace: string | undefined): Contract[] {
@@ -2298,33 +2274,5 @@ function isNamedUserModel(type: Model): boolean {
 }
 
 function prune<T>(value: T): T {
-  if (Array.isArray(value)) {
-    return value.filter((item) => item !== undefined).map((item) => prune(item)) as T;
-  }
-  if (value && typeof value === "object") {
-    if (isSecurityRequirementObject(value)) {
-      return value;
-    }
-    const output: Record<string, unknown> = {};
-    for (const [key, child] of Object.entries(value)) {
-      if (child === undefined) {
-        continue;
-      }
-      if (Array.isArray(child) && child.length === 0 && key !== "failures") {
-        continue;
-      }
-      if (key === "extensions") {
-        output[key] = child;
-        continue;
-      }
-      output[key] = prune(child);
-    }
-    return output as T;
-  }
-  return value;
-}
-
-function isSecurityRequirementObject(value: object): value is Record<string, string[]> {
-  const entries = Object.entries(value);
-  return entries.length > 0 && entries.every(([, child]) => Array.isArray(child));
+  return normalizeDocument(value);
 }

@@ -431,6 +431,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			DuckLakeDataPath:   options.DuckLakeDataPath,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,
+			AllowDevAuthBypass: true,
 		},
 		httpAssemblyInputs{
 			RateLimits: options.RateLimits, SecurityHeaders: options.SecurityHeaders,
