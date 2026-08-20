@@ -16,13 +16,16 @@ import (
 )
 
 type refreshRunResponse struct {
-	ID            string                       `json:"id"`
-	Identity      projectgraph.ServingIdentity `json:"identity"`
-	PipelineID    string                       `json:"pipelineId"`
-	SemanticModel string                       `json:"semanticModel"`
-	Trigger       string                       `json:"trigger"`
-	Status        string                       `json:"status"`
-	CreatedAt     string                       `json:"createdAt"`
+	ID                   string                       `json:"id"`
+	Identity             projectgraph.ServingIdentity `json:"identity"`
+	PipelineID           string                       `json:"pipelineId"`
+	SemanticModel        string                       `json:"semanticModel"`
+	Trigger              string                       `json:"trigger"`
+	TriggerID            string                       `json:"triggerId"`
+	PlanDigest           string                       `json:"planDigest"`
+	MaterializationScope []string                     `json:"materializationScope"`
+	Status               string                       `json:"status"`
+	CreatedAt            string                       `json:"createdAt"`
 }
 
 func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
@@ -31,7 +34,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 	projectID := h.projectID.String()
 	pipelineID := h.pipelineID.String()
 
-	status, body, _ := refreshAPIRequest(t, h, http.MethodPost, "/api/v1/projects/"+projectID+"/refresh-runs", `{"pipelineId":"`+pipelineID+`"}`, "canonical-refresh")
+	status, body, _ := refreshAPIRequest(t, h, http.MethodPost, "/api/v1/projects/"+projectID+"/refresh-runs", `{"pipelineId":"`+pipelineID+`","triggerId":"manual"}`, "canonical-refresh")
 	if status != http.StatusAccepted {
 		t.Fatalf("manual refresh API status = %d, body=%s", status, body)
 	}
@@ -39,7 +42,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode manual refresh response: %v; body=%s", err, body)
 	}
-	if created.ID == "" || created.PipelineID != pipelineID || created.SemanticModel != h.semanticModel.String() || created.Trigger != refreshrun.TriggerManual {
+	if created.ID == "" || created.PipelineID != pipelineID || created.SemanticModel != h.semanticModel.String() || created.Trigger != refreshrun.TriggerManual || created.TriggerID != "manual" || created.PlanDigest == "" || len(created.MaterializationScope) == 0 {
 		t.Fatalf("manual refresh response = %#v", created)
 	}
 	if created.Identity.ProjectID != h.projectID || created.Identity.Environment != string(h.environment) || created.Identity.GenerationID == "" {

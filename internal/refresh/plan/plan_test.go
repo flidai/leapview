@@ -136,3 +136,51 @@ func TestForPipelineRejectsUnknownModelDependency(t *testing.T) {
 		t.Fatalf("plan refresh pipeline error = %v, want unknown dependency", err)
 	}
 }
+
+func TestBindGenerationProducesStableGenerationBoundDigest(t *testing.T) {
+	definition := &artifact.Definition{
+		Models:    map[string]*semanticmodel.Model{"sales": {Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}},
+		Pipelines: map[string]refreshschedule.Definition{"daily": {ID: "daily", SemanticModelID: "sales"}},
+	}
+	base, err := ForPipeline(definition, projectgraph.ResourceID("project_acme"), projectgraph.ResourceID("daily"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectgraph.ResourceID("project_acme"), "prod", "generation-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := base.BindGeneration(identity, "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := base.BindGeneration(identity, "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Digest == "" || first.Digest != second.Digest {
+		t.Fatalf("digest is not deterministic: %q vs %q", first.Digest, second.Digest)
+	}
+	other, err := base.BindGeneration(projectgraph.ServingIdentity{ProjectID: identity.ProjectID, Environment: identity.Environment, GenerationID: "generation-2"}, "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Digest == first.Digest {
+		t.Fatal("generation change did not change pipeline plan digest")
+	}
+	delivery, err := first.DeliveryPipelinePlan(InvocationPolicy{TriggerType: "schedule", TriggerID: "weekdays", MissedOccurrences: "latest", Overlap: "replace"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivery.ProjectID != "project_acme" || delivery.Environment != "prod" || delivery.ServingGenerationID != "generation-1" || delivery.MaterializationScope[0] != "orders" || delivery.ModelExecutionOrder[0] != "orders" || delivery.Digest == "" {
+		t.Fatalf("unexpected delivery pipeline plan: %#v", delivery)
+	}
+	if delivery.TriggerType != "schedule" || delivery.TriggerID != "weekdays" || delivery.MissedOccurrences != "latest" || delivery.Overlap != "replace" {
+		t.Fatalf("effective invocation policy = %#v", delivery)
+	}
+	for name, value := range map[string]string{"execution": delivery.ExecutionDigest, "provenance": delivery.ProvenanceDigest, "governance": delivery.GovernanceDigest, "evidence": delivery.EvidenceDigest} {
+		if value == "" {
+			t.Errorf("%s digest is empty", name)
+		}
+	}
+}

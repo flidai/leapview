@@ -150,20 +150,6 @@ package contracts
 	})
 })
 
-#PipelineResource: close({
-	apiVersion!: #APIVersion
-	kind!:       "Pipeline"
-	metadata!:   #Metadata
-	spec!: close({
-		semanticModel!: #ResourceID
-		on?: close({
-			schedule?: [...close({
-				cron!:     string & !=""
-				timezone?: string & !=""
-			})]
-		})
-	})
-})
 #SemanticModelResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "SemanticModel"

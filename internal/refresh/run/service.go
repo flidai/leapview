@@ -138,6 +138,7 @@ type QueuePipelineInput struct {
 	EstimatedMemoryBytes int64
 	PipelineID           projectgraph.ResourceID
 	TriggerType          string
+	TriggerID            string
 	RetryOf              string
 	ArtifactDigest       string
 	Occurrence           *refreshschedule.Occurrence
@@ -186,6 +187,9 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if !ok {
 		return QueueAssetResult{}, fmt.Errorf("unknown refresh pipeline %q", input.PipelineID)
 	}
+	if err := validatePipelineInvocation(pipeline, &input); err != nil {
+		return QueueAssetResult{}, err
+	}
 	plan, err := refreshplan.ForPipeline(loaded.Definition, input.Identity.ProjectID, input.PipelineID)
 	if err != nil {
 		return QueueAssetResult{}, err
@@ -197,8 +201,40 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 			return QueueAssetResult{}, err
 		}
 	}
-	payload, _ := json.Marshal(map[string]string{"pipelineId": input.PipelineID.String(), "semanticModel": pipeline.SemanticModelID.String()})
-	rootInput := RunInput{Identity: mustStateIdentity(candidate.State), SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
+	runIdentity := mustStateIdentity(candidate.State)
+	plan, err = plan.BindGeneration(runIdentity, active.Artifact.Digest)
+	if err != nil {
+		return QueueAssetResult{}, err
+	}
+	missedOccurrences := ""
+	if input.TriggerType == TriggerSchedule {
+		for _, schedule := range pipeline.Schedules {
+			if schedule.ID == input.TriggerID {
+				missedOccurrences = schedule.MissedOccurrences
+				break
+			}
+		}
+	}
+	pipelinePlan, err := plan.DeliveryPipelinePlan(refreshplan.InvocationPolicy{
+		TriggerType: input.TriggerType, TriggerID: input.TriggerID,
+		MissedOccurrences: missedOccurrences, Overlap: pipeline.Overlap,
+	})
+	if err != nil {
+		return QueueAssetResult{}, err
+	}
+	payload, err := json.Marshal(struct {
+		PipelineID    string `json:"pipelineId"`
+		SemanticModel string `json:"semanticModel"`
+		Plan          any    `json:"pipelinePlan"`
+	}{input.PipelineID.String(), pipeline.SemanticModelID.String(), pipelinePlan})
+	if err != nil {
+		return QueueAssetResult{}, fmt.Errorf("encode refresh pipeline job: %w", err)
+	}
+	nominalTime := ""
+	if input.Occurrence != nil {
+		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
+	}
+	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, TriggerID: input.TriggerID, NominalTime: nominalTime, Overlap: pipeline.Overlap, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
 	var root RunRecord
 	if input.Occurrence != nil {
 		creator, ok := s.Runs.(interface {
@@ -217,13 +253,16 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		}
 		return QueueAssetResult{}, err
 	}
+	if root.Status == RunStatusSkipped {
+		return QueueAssetResult{Run: root, ServingStateID: candidate.State.ID}, nil
+	}
 	children := make([]RunRecord, 0, len(plan.DependencyTables))
 	for _, table := range plan.DependencyTables {
 		targetID, parseErr := projectgraph.NewResourceID(table)
 		if parseErr != nil {
 			return QueueAssetResult{}, parseErr
 		}
-		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
+		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
 		if childErr != nil {
 			_, _ = s.Runs.MarkRunFailed(ctx, root.Identity, root.ID, childErr.Error())
 			if s.CanonicalExecutor == nil {
@@ -235,6 +274,41 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	s.publish(ctx, root.Identity, root.TargetType, root.TargetID)
 	return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: candidate.State.ID}, nil
+}
+
+func validatePipelineInvocation(pipeline refreshschedule.Definition, input *QueuePipelineInput) error {
+	if input == nil {
+		return fmt.Errorf("refresh pipeline invocation is required")
+	}
+	if input.TriggerType == TriggerSchedule {
+		if input.Occurrence == nil {
+			return fmt.Errorf("scheduled refresh occurrence is required")
+		}
+		if input.TriggerID == "" {
+			input.TriggerID = input.Occurrence.TriggerID
+		}
+		if input.TriggerID != input.Occurrence.TriggerID {
+			return fmt.Errorf("scheduled refresh trigger does not match occurrence")
+		}
+		for _, schedule := range pipeline.Schedules {
+			if schedule.ID == input.TriggerID {
+				return nil
+			}
+		}
+		return fmt.Errorf("unknown schedule trigger %q for pipeline %q", input.TriggerID, pipeline.ID)
+	}
+	if input.TriggerType == TriggerManual {
+		for _, triggerID := range pipeline.ManualTriggers {
+			if triggerID == input.TriggerID {
+				return nil
+			}
+		}
+		return fmt.Errorf("unknown manual trigger %q for pipeline %q", input.TriggerID, pipeline.ID)
+	}
+	if input.TriggerID == "" {
+		input.TriggerID = "retry"
+	}
+	return nil
 }
 
 func (s Service) activeForIdentity(ctx context.Context, identity projectgraph.ServingIdentity) (ServingState, error) {
@@ -276,6 +350,12 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		}
 		result, err := s.CanonicalExecutor(ctx, job)
 		if err != nil {
+			if errors.Is(err, ErrRunStale) {
+				if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
+					_ = fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error())
+				}
+				return err
+			}
 			_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
 			return err
 		}

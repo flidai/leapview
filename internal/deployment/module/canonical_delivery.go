@@ -104,7 +104,15 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	}
 	planID := CanonicalDeliveryPlanID(intent.TargetID, intent.ProjectID, intent.Environment, operation, idempotencyKey)
 	if existing, readErr := m.Lifecycle.Store.PlanByID(ctx, planID); readErr == nil {
-		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.SourceOwnerID != sourceOwnerID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest {
+		existingPipelineDigest := ""
+		if existing.PipelinePlan != nil {
+			existingPipelineDigest = existing.PipelinePlan.Digest
+		}
+		intentPipelineDigest := ""
+		if intent.PipelinePlan != nil {
+			intentPipelineDigest = intent.PipelinePlan.Digest
+		}
+		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.SourceOwnerID != sourceOwnerID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest || existingPipelineDigest != intentPipelineDigest {
 			return deployment.DeliveryPlan{}, fmt.Errorf("%w: idempotency key is bound to a different immutable plan", deployment.ErrDeliveryConflict)
 		}
 		return existing, nil
@@ -120,7 +128,7 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
-	planned, err := m.Plan(ctx, deployment.DeliveryCandidateBuildInput{ProjectID: intent.ProjectID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Operation: operation, CandidateKey: planID, Candidate: candidate, Source: source}, inspected)
+	planned, err := m.Plan(ctx, deployment.DeliveryCandidateBuildInput{ProjectID: intent.ProjectID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Operation: operation, CandidateKey: planID, Candidate: candidate, Source: source, PipelinePlan: intent.PipelinePlan}, inspected)
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
 	}
@@ -183,7 +191,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
-	buildInput := deployment.DeliveryCandidateBuildInput{ProjectID: plan.ProjectID, OwnerID: plan.SourceOwnerID, ArtifactDigest: plan.SourceDigest, Operation: plan.Operation, CandidateKey: plan.ID, Candidate: candidate, Source: source, Plan: &plan}
+	buildInput := deployment.DeliveryCandidateBuildInput{ProjectID: plan.ProjectID, OwnerID: plan.SourceOwnerID, ArtifactDigest: plan.SourceDigest, Operation: plan.Operation, CandidateKey: plan.ID, Candidate: candidate, Source: source, Plan: &plan, PipelinePlan: plan.PipelinePlan}
 	planningInput := buildInput
 	planningInput.Candidate.ID = strings.TrimPrefix(plan.ID, "plan-")
 	if err := m.verifyPlanEvidence(ctx, plan, planningInput, inspected); err != nil {
@@ -309,7 +317,14 @@ func (m *CanonicalDeliveryMutations) verifyPlanEvidence(ctx context.Context, pla
 	if err != nil {
 		return fmt.Errorf("recompute compiler evidence for build: %w", err)
 	}
-	if expected.Operation != plan.Operation || expected.SourceDigest != plan.SourceDigest || expected.ExecutionDigest != plan.ExecutionDigest || expected.ProvenanceDigest != plan.ProvenanceDigest || expected.GovernanceDigest != plan.GovernanceDigest || expected.EvidenceDigest != plan.EvidenceDigest {
+	expectedPipelineDigest, planPipelineDigest := "", ""
+	if expected.PipelinePlan != nil {
+		expectedPipelineDigest = expected.PipelinePlan.Digest
+	}
+	if plan.PipelinePlan != nil {
+		planPipelineDigest = plan.PipelinePlan.Digest
+	}
+	if expected.Operation != plan.Operation || expected.SourceDigest != plan.SourceDigest || expected.ExecutionDigest != plan.ExecutionDigest || expected.ProvenanceDigest != plan.ProvenanceDigest || expected.GovernanceDigest != plan.GovernanceDigest || expected.EvidenceDigest != plan.EvidenceDigest || expectedPipelineDigest != planPipelineDigest {
 		return fmt.Errorf("%w: inspected compiler evidence differs from durable plan", deployment.ErrDeliveryConflict)
 	}
 	return nil

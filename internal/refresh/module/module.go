@@ -204,6 +204,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 					ArtifactDigest: occurrence.ArtifactDigest, Occurrence: &occurrence,
 				})
 				if err == nil {
+					if result.Run.Status == refreshrun.RunStatusSkipped {
+						return result.Run.ID, refreshschedule.ErrOccurrenceSkipped
+					}
 					m.Dispatch(ctx)
 				}
 				return result.Run.ID, err
@@ -215,7 +218,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
 	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
-	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf string) (refreshrun.RunRecord, error) {
+	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, triggerID, principalID, retryOf string) (refreshrun.RunRecord, error) {
 		trigger := refreshrun.TriggerManual
 		if retryOf != "" {
 			trigger = refreshrun.TriggerRetry
@@ -226,7 +229,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
-			PipelineID: pipelineIDValue, TriggerType: trigger, RetryOf: retryOf,
+			PipelineID: pipelineIDValue, TriggerType: trigger, TriggerID: triggerID, RetryOf: retryOf,
 		})
 		if err != nil {
 			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",

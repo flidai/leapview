@@ -38,7 +38,7 @@ func TestRefreshArtifactDigestIsCanonical(t *testing.T) {
 }
 
 func TestManualOnlyPipelineDefinitionIsValid(t *testing.T) {
-	definition := Definition{ID: "pipeline_manual", SemanticModelID: "semantic_sales"}
+	definition := Definition{ID: "pipeline_manual", SemanticModelID: "semantic_sales", Overlap: OverlapReplace, ManualTriggers: []string{"manual"}}
 	if err := definition.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -79,15 +79,11 @@ func TestParseScheduleAcceptsGitHubCompatibleCron(t *testing.T) {
 	}
 }
 
-func TestParseScheduleDefaultsTimezoneToUTC(t *testing.T) {
+func TestParseScheduleRequiresTimezone(t *testing.T) {
 	t.Parallel()
 
-	schedule, err := ParseSchedule("0 6 * * *", "")
-	if err != nil {
-		t.Fatalf("ParseSchedule() error = %v", err)
-	}
-	if schedule.Timezone != "UTC" {
-		t.Fatalf("timezone = %q, want UTC", schedule.Timezone)
+	if _, err := ParseSchedule("0 6 * * *", ""); err == nil {
+		t.Fatal("ParseSchedule() error = nil, want required timezone")
 	}
 }
 
@@ -147,6 +143,10 @@ func TestScheduleNextRunsRepeatedDSTTimeOnce(t *testing.T) {
 	}
 	first := schedule.Next(time.Date(2026, 10, 24, 3, 0, 0, 0, time.UTC))
 	second := schedule.Next(first)
+	wantFirst := time.Date(2026, 10, 25, 0, 30, 0, 0, time.UTC)
+	if !first.Equal(wantFirst) {
+		t.Fatalf("first repeated wall time = %s, want earlier instant %s", first, wantFirst)
+	}
 	if first.Equal(second) || second.Before(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)) {
 		t.Fatalf("repeated local time ran more than once: first=%s second=%s", first, second)
 	}

@@ -30,13 +30,14 @@ type Handler struct {
 	RunCreated            func(context.Context, refreshrun.RunRecord) error
 	AuthorizePipelineView func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
-	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string) (refreshrun.RunRecord, error)
+	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string, string) (refreshrun.RunRecord, error)
 }
 
 var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
+	TriggerID  string `json:"triggerId"`
 	RetryOf    string `json:"retryOf,omitempty"`
 }
 
@@ -51,6 +52,10 @@ type PipelineRunResponse struct {
 	PrincipalID          string                       `json:"principalId,omitempty"`
 	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
 	Trigger              string                       `json:"trigger"`
+	TriggerID            string                       `json:"triggerId"`
+	NominalTime          string                       `json:"nominalTime,omitempty"`
+	PlanDigest           string                       `json:"planDigest"`
+	MaterializationScope []string                     `json:"materializationScope"`
 	RetryOf              string                       `json:"retryOf,omitempty"`
 	Status               string                       `json:"status"`
 	Error                string                       `json:"error,omitempty"`
@@ -78,9 +83,14 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 	if err != nil {
 		return PipelineRunResponse{}, false
 	}
+	nominalTime, err := httptransport.NormalizeTimestamp(run.NominalTime)
+	if err != nil {
+		return PipelineRunResponse{}, false
+	}
 	return PipelineRunResponse{
 		ID: run.ID, Identity: run.Identity, PipelineID: run.PipelineID.String(), SemanticModel: run.SemanticModelID.String(),
-		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, Trigger: run.TriggerType,
+		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, Trigger: run.TriggerType, TriggerID: run.TriggerID,
+		NominalTime: nominalTime, PlanDigest: run.PlanDigest, MaterializationScope: append([]string(nil), run.MaterializationScope...),
 		RetryOf: run.RetryOf, Status: run.Status, Error: run.Error, CreatedAt: createdAt,
 		StartedAt: startedAt, FinishedAt: finishedAt,
 	}, true
@@ -111,6 +121,10 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 	}
 	if strings.TrimSpace(input.PipelineID) == "" {
 		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh pipeline not found"))
+		return
+	}
+	if input.TriggerID == "" || input.TriggerID != strings.TrimSpace(input.TriggerID) {
+		writeCommandFailure(w, r, operationID, apigenfailure.New("invalid", "refresh triggerId is required"))
 		return
 	}
 	pipelineID, err := projectgraph.NewResourceID(input.PipelineID)
@@ -155,7 +169,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh pipeline runner is not configured"))
 		return
 	}
-	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, principalID, input.RetryOf)
+	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, input.TriggerID, principalID, input.RetryOf)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)

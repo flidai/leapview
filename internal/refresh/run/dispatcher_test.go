@@ -12,7 +12,7 @@ import (
 var dispatcherIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
 
 func dispatcherJob(kind string) JobRecord {
-	return JobRecord{ID: "job_1", Identity: dispatcherIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_1", Kind: kind, TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual}
+	return JobRecord{ID: "job_1", Identity: dispatcherIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PipelinePlan: testPipelinePlan(dispatcherIdentity, "pipeline_sales", "semantic_sales"), TriggerID: "manual", PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_1", Kind: kind, TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual}
 }
 
 func TestDispatcherMarksUnsupportedJobFailed(t *testing.T) {

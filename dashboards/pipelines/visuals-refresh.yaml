@@ -4,4 +4,11 @@ metadata:
   id: pipeline:visuals-refresh
   name: visuals-refresh
 spec:
-  semanticModel: semantic-model:visuals
+  selection:
+    type: semanticModel
+    semanticModel: semantic-model:visuals
+  triggers:
+    - id: manual
+      type: manual
+  runPolicy:
+    overlap: replace

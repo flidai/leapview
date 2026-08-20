@@ -6,6 +6,7 @@ namespace LeapViewAPI.Refresh;
 
 model RefreshRunCreateRequest {
   pipelineId: ResourceId;
+  triggerId: string;
   retryOf?: string;
 }
 
@@ -17,6 +18,10 @@ model RefreshRunResponse {
   principalId?: string;
   principalDisplayName?: string;
   trigger: string;
+  triggerId: string;
+  nominalTime?: utcDateTime;
+  planDigest: string;
+  materializationScope: string[];
   retryOf?: string;
   status: string;
   error?: string;
@@ -47,6 +52,10 @@ model RefreshQueuedAuditPayload {
   @apigen.auditPublic
   trigger: string;
   @apigen.auditInternal
+  triggerId: string;
+  @apigen.auditInternal
+  planDigest: string;
+  @apigen.auditInternal
   retryOf: string;
   @apigen.auditPublic
   status: string;
@@ -62,6 +71,8 @@ model RefreshCancelledAuditPayload {
   status: string;
   @apigen.auditPublic
   trigger: string;
+  @apigen.auditInternal
+  triggerId: string;
 }
 
 @apigen.failureDefinition(#{ kind: "invalid", statusCode: 422, code: "INVALID_REFRESH_RUN", publicDetail: "The refresh run request is invalid." })

@@ -113,6 +113,7 @@ type DeliveryPlanIntent struct {
 	Operation               deployment.DeliveryOperationKind
 	SourceDigest            string
 	SourceAttestationDigest string
+	PipelinePlan            *deployment.PipelinePlan
 }
 
 func decodePlanIntent(project, environment, principalID string, body deploymentgen.DeliveryPlanRequest) (DeliveryPlanIntent, error) {

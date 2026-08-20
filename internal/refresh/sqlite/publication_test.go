@@ -176,7 +176,7 @@ INSERT INTO delivery_build_attempts (
 		t.Fatalf("seed canonical publication: %v", err)
 	}
 	job := refreshrun.JobRecord{
-		ID: "root_job", Identity: publicationIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily",
+		ID: "root_job", Identity: publicationIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: testSQLitePipelinePlan(publicationIdentity, "pipeline_daily", "semantic_sales"), TriggerID: "manual",
 		PrincipalID: "user:test", Kind: refreshrun.JobKindRefreshPipeline, EstimatedMemoryBytes: 67108864,
 		RunID: "root_run", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
 		TargetRevision: 1, TriggerType: refreshrun.TriggerManual, LeaseOwner: "worker-1", LeaseRevision: 1,

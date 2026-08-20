@@ -2,11 +2,13 @@ package sqlite
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
@@ -17,6 +19,30 @@ import (
 )
 
 var testRunIdentity = projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a"}
+
+func testSQLitePipelinePlan(identity projectgraph.ServingIdentity, pipelineID, semanticModelID string) *deployment.PipelinePlan {
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_test", PipelineID: pipelineID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: semanticModelID, ServingGenerationID: identity.GenerationID,
+		ArtifactDigest:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SelectionDigest:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MaterializationScope: []string{"model_orders"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &plan
+}
+
+func testSQLiteRootRunInput(identity projectgraph.ServingIdentity, pipelineID, semanticModelID, principalID string) refreshrun.RunInput {
+	plan := testSQLitePipelinePlan(identity, pipelineID, semanticModelID)
+	payload, _ := json.Marshal(map[string]any{"pipelinePlan": plan})
+	return refreshrun.RunInput{
+		Identity: identity, SemanticModelID: projectgraph.ResourceID(semanticModelID), PipelineID: projectgraph.ResourceID(pipelineID), PipelinePlan: plan,
+		TriggerID: "manual", Overlap: "replace", PrincipalID: principalID, GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(pipelineID), TriggerType: refreshrun.TriggerManual,
+		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: string(payload),
+	}
+}
 
 func TestSQLRunRepositoryRecordsInitialLifecycleInRunTransaction(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
@@ -35,11 +61,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), events, RunWorkflowConfig{
 		ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued",
 	})
-	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
-		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
-	})
+	run, err := repository.CreateRun(t.Context(), testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,11 +88,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 	repository := NewSQLRunRepositoryWithWorkflow(store.SQLDB(), jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
 		return injected
 	}), RunWorkflowConfig{ResourceKind: "refresh", InitialEvent: "refresh.queued", InitialState: "queued"})
-	_, err = repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily",
-		TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
-	})
+	_, err = repository.CreateRun(t.Context(), testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test"))
 	if !errors.Is(err, injected) {
 		t.Fatalf("CreateRun() error = %v, want injected failure", err)
 	}
@@ -240,18 +258,17 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	repository := NewSQLRunRepository(store.SQLDB())
 	identityB := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_b"}
 	input := func(identity projectgraph.ServingIdentity, pipeline, semanticModel string) refreshrun.RunInput {
-		return refreshrun.RunInput{
-			Identity: identity, SemanticModelID: projectgraph.ResourceID(semanticModel), PipelineID: projectgraph.ResourceID(pipeline), PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
-			TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(pipeline),
-			TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
-		}
+		return testSQLiteRootRunInput(identity, pipeline, semanticModel, "user:test")
 	}
 	runA, err := repository.CreateRun(t.Context(), input(testRunIdentity, "pipeline_daily", "semantic_sales"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_daily", "semantic_sales")); !errors.Is(err, refreshrun.ErrTargetActive) {
-		t.Fatalf("same target across generations error = %v, want ErrTargetActive", err)
+	forbidden := input(identityB, "pipeline_daily", "semantic_sales")
+	forbidden.Overlap = "forbid"
+	skipped, err := repository.CreateRun(t.Context(), forbidden)
+	if err != nil || skipped.Status != refreshrun.RunStatusSkipped {
+		t.Fatalf("same target across generations run = %#v error = %v, want skipped", skipped, err)
 	}
 	runB, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_other", "semantic_other"))
 	if err != nil {
@@ -321,10 +338,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 		t.Fatal(err)
 	}
 	repository := NewSQLRunRepository(store.SQLDB())
-	run, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
-		Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
-	})
+	run, err := repository.CreateRun(t.Context(), testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,11 +393,7 @@ INSERT INTO principals (id, email, display_name) VALUES
 		{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_prod"},
 	}
 	for index, identity := range identities {
-		if _, err := repository.CreateRun(t.Context(), refreshrun.RunInput{
-			Identity: identity, SemanticModelID: projectgraph.ResourceID("semantic_" + string(rune('a'+index))), PipelineID: projectgraph.ResourceID("pipeline_" + string(rune('a'+index))),
-			PrincipalID: "user:" + string(rune('a'+index)), GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
-			TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID("pipeline_" + string(rune('a'+index))), TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
-		}); err != nil {
+		if _, err := repository.CreateRun(t.Context(), testSQLiteRootRunInput(identity, "pipeline_"+string(rune('a'+index)), "semantic_"+string(rune('a'+index)), "user:"+string(rune('a'+index)))); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -409,7 +419,8 @@ func TestMaterializationRunMappingRejectsCorruptPersistedIdentity(t *testing.T) 
 	base := materializationRunDBRow{
 		ID: "run_1", ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a",
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline,
-		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual,
+		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual, TriggerID: "manual",
+		PlanDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MaterializationScopeJSON: `["model_orders"]`,
 		Status: refreshrun.RunStatusQueued,
 	}
 	if _, err := materializationRunFromDB(base); err != nil {
@@ -461,6 +472,15 @@ INSERT INTO refresh_job_runs (
 );`, runStatus); err != nil {
 		t.Fatalf("seed refresh job: %v", err)
 	}
+	plan := testSQLitePipelinePlan(testRunIdentity, "pipeline_daily", "semantic_sales")
+	payload, _ := json.Marshal(map[string]any{"pipelinePlan": plan})
+	scope, _ := json.Marshal(plan.MaterializationScope)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_jobs SET payload_json = ? WHERE id = 'job_1';`, string(payload)); err != nil {
+		t.Fatalf("seed refresh plan payload: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET project_id = 'project_sales', trigger_id = 'manual', plan_digest = ?, materialization_scope_json = ? WHERE id = 'run_1';`, plan.Digest, string(scope)); err != nil {
+		t.Fatalf("seed refresh run plan: %v", err)
+	}
 	if _, err := store.SQLDB().ExecContext(t.Context(),
 		`UPDATE refresh_jobs SET lease_expires_at = datetime('now', ?) WHERE id = 'job_1'`,
 		leaseOffset,
@@ -468,7 +488,7 @@ INSERT INTO refresh_job_runs (
 		t.Fatalf("set refresh job lease: %v", err)
 	}
 	job := refreshrun.JobRecord{
-		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
+		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: plan, TriggerID: "manual", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 		Kind: refreshrun.JobKindRefreshPipeline, RunID: "run_1",
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TargetRevision: 1,
 		TriggerType: refreshrun.TriggerManual, LeaseOwner: "worker-1", LeaseRevision: 1,

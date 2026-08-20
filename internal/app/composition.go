@@ -249,6 +249,40 @@ func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, delive
 			refreshAll = true
 		}
 	}
+	// A generation-bound pipeline restatement is intentionally scoped even
+	// when compiler materialization impact is false. Add its authored model
+	// table closure as explicit refresh targets while retaining every unrelated
+	// relation from the sealed base.
+	if deliveryPlan.PipelinePlan != nil {
+		for _, selected := range deliveryPlan.PipelinePlan.MaterializationScope {
+			matched := false
+			for modelID, model := range artifacts.Compiler.Artifact.Models() {
+				if model == nil {
+					continue
+				}
+				if _, ok := model.Tables[selected]; !ok {
+					foundAlias := false
+					for _, table := range model.Tables {
+						if table.ModelName == selected {
+							foundAlias = true
+							break
+						}
+					}
+					if !foundAlias {
+						continue
+					}
+				}
+				matched = true
+				if changedByModel[modelID] == nil {
+					changedByModel[modelID] = make(map[string]struct{})
+				}
+				changedByModel[modelID][selected] = struct{}{}
+			}
+			if !matched {
+				refreshAll = true
+			}
+		}
+	}
 	if len(changedByModel) == 0 && len(removed) == 0 && artifacts.Compiler.Plan.Summary.MaterializationImpact {
 		refreshAll = true
 	}
@@ -1184,7 +1218,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err := analyticsmodule.BindCandidateManagedDataRoots(models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, managedResolution.Roots); err != nil {
 				return nil, err
 			}
-			if artifacts.Generation.DataMode == release.GenerationDataReuseBase {
+			pipelineScoped := buildInput.Plan.PipelinePlan != nil && buildInput.Plan.Operation == deployment.DeliveryOperationRestatement
+			if artifacts.Generation.DataMode == release.GenerationDataReuseBase && !pipelineScoped {
 				actual, err := working.VisibleTables(matCtx)
 				if err != nil {
 					return nil, err

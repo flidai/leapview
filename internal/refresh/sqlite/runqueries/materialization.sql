@@ -1,17 +1,32 @@
 -- Refresh execution, materialization runs, and durable scheduling jobs.
 
+-- name: RefreshTargetHasActiveRun :one
+SELECT EXISTS(
+  SELECT 1 FROM refresh_job_runs
+  WHERE project_id = sqlc.arg(project_id)
+    AND environment = sqlc.arg(environment)
+    AND parent_run_id IS NULL
+    AND target_type = sqlc.arg(target_type)
+    AND target_id = sqlc.arg(target_id)
+    AND status IN ('queued', 'running', 'prepared')
+) AS active;
+
 -- name: CreateRefreshJob :exec
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, payload_json, status, queued_at)
 VALUES (sqlc.arg(id), sqlc.arg(project_id), sqlc.arg(generation_id), sqlc.arg(semantic_model_id), sqlc.arg(pipeline_id), sqlc.arg(principal_id), sqlc.arg(group_ids_json), sqlc.arg(estimated_memory_bytes), sqlc.arg(kind), sqlc.arg(payload_json), sqlc.arg(status), CURRENT_TIMESTAMP);
 
 -- name: CreateRefreshJobRun :exec
 INSERT INTO refresh_job_runs (
-  id, job_id, principal_id, environment, target_type, target_id, trigger_type,
+  id, job_id, project_id, principal_id, environment, target_type, target_id, trigger_type,
+  trigger_id, nominal_time, plan_digest, materialization_scope_json,
   parent_run_id, retry_of, status, target_revision, created_sequence
 )
 VALUES (
-  sqlc.arg(id), sqlc.arg(job_id), NULLIF(CAST(sqlc.arg(principal_id) AS TEXT), ''),
+  sqlc.arg(id), sqlc.arg(job_id),
+  COALESCE((SELECT project_id FROM refresh_jobs WHERE id = sqlc.arg(job_id)), ''),
+  NULLIF(CAST(sqlc.arg(principal_id) AS TEXT), ''),
   sqlc.arg(environment), sqlc.arg(target_type), sqlc.arg(target_id), sqlc.arg(trigger_type),
+  sqlc.arg(trigger_id), sqlc.arg(nominal_time), sqlc.arg(plan_digest), sqlc.arg(materialization_scope_json),
   NULLIF(CAST(sqlc.arg(parent_run_id) AS TEXT), ''), NULLIF(CAST(sqlc.arg(retry_of) AS TEXT), ''),
   sqlc.arg(status),
   CASE WHEN CAST(sqlc.arg(target_revision) AS INTEGER) > 0 THEN CAST(sqlc.arg(target_revision) AS INTEGER)
@@ -30,6 +45,19 @@ VALUES (
   COALESCE((SELECT MAX(created_sequence) + 1 FROM refresh_job_runs), 1)
 );
 
+-- name: SkipRefreshPipelineOccurrence :execrows
+UPDATE refresh_pipeline_occurrences
+SET run_id = sqlc.arg(run_id), status = 'skipped', outcome = 'skipped',
+    terminal_reason = 'overlap forbidden', outcome_at = CURRENT_TIMESTAMP
+WHERE project_id = sqlc.arg(project_id)
+  AND environment = sqlc.arg(environment)
+  AND pipeline_id = sqlc.arg(pipeline_id)
+  AND trigger_id = sqlc.arg(trigger_id)
+  AND generation_id = sqlc.arg(generation_id)
+  AND scheduled_at = sqlc.arg(scheduled_at)
+  AND status = 'claimed'
+  AND run_id IS NULL;
+
 -- name: SupersedeRefreshTargetJobs :exec
 UPDATE refresh_jobs
 SET status = 'superseded', finished_at = CURRENT_TIMESTAMP, lease_owner = '', lease_expires_at = NULL,
@@ -39,7 +67,6 @@ WHERE id IN (
   FROM refresh_job_runs candidate
   JOIN refresh_jobs candidate_job ON candidate_job.id = candidate.job_id
   WHERE candidate_job.project_id = sqlc.arg(project_id)
-    AND candidate_job.generation_id = sqlc.arg(generation_id)
     AND candidate.environment = sqlc.arg(environment)
     AND candidate.status IN ('queued', 'running', 'prepared')
     AND (
@@ -48,7 +75,6 @@ WHERE id IN (
         SELECT root.id FROM refresh_job_runs root
         JOIN refresh_jobs root_job ON root_job.id = root.job_id
         WHERE root_job.project_id = sqlc.arg(project_id)
-          AND root_job.generation_id = sqlc.arg(generation_id)
           AND root.environment = sqlc.arg(environment)
           AND root.parent_run_id IS NULL
           AND root.target_type = sqlc.arg(target_type)
@@ -66,7 +92,6 @@ WHERE id IN (
   FROM refresh_job_runs candidate
   JOIN refresh_jobs candidate_job ON candidate_job.id = candidate.job_id
   WHERE candidate_job.project_id = sqlc.arg(project_id)
-    AND candidate_job.generation_id = sqlc.arg(generation_id)
     AND candidate.environment = sqlc.arg(environment)
     AND candidate.status IN ('queued', 'running', 'prepared')
     AND (
@@ -75,7 +100,6 @@ WHERE id IN (
         SELECT root.id FROM refresh_job_runs root
         JOIN refresh_jobs root_job ON root_job.id = root.job_id
         WHERE root_job.project_id = sqlc.arg(project_id)
-          AND root_job.generation_id = sqlc.arg(generation_id)
           AND root.environment = sqlc.arg(environment)
           AND root.parent_run_id IS NULL
           AND root.target_type = sqlc.arg(target_type)
@@ -87,7 +111,7 @@ WHERE id IN (
 
 -- name: NextExecutableRefreshJob :one
 SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, j.principal_id, j.group_ids_json, j.estimated_memory_bytes, j.kind, j.payload_json,
-       r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision
+       r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, j.attempt_count, j.lease_owner, j.lease_revision
 FROM refresh_jobs j
 JOIN refresh_job_runs r ON r.job_id = j.id
 WHERE COALESCE(r.parent_run_id, '') = ''
@@ -105,7 +129,7 @@ LIMIT 1;
 -- name: ListExecutableRefreshJobHeads :many
 WITH eligible AS (
   SELECT j.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, j.principal_id, j.group_ids_json, j.estimated_memory_bytes, j.kind, j.payload_json,
-         r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, j.attempt_count, j.lease_owner, j.lease_revision,
+         r.id AS run_id, r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, j.attempt_count, j.lease_owner, j.lease_revision,
          ROW_NUMBER() OVER (
            PARTITION BY j.principal_id
            ORDER BY COALESCE(NULLIF(j.queued_at, ''), j.created_at) ASC, j.id ASC
@@ -123,7 +147,7 @@ WITH eligible AS (
     )
 )
 SELECT id, project_id, environment, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, payload_json,
-       run_id, target_type, target_id, target_revision, trigger_type, attempt_count, lease_owner, lease_revision
+       run_id, target_type, target_id, target_revision, trigger_type, trigger_id, nominal_time, plan_digest, materialization_scope_json, attempt_count, lease_owner, lease_revision
 FROM eligible
 WHERE principal_position = 1
 ORDER BY queue_position ASC, id ASC
@@ -148,8 +172,8 @@ SET status = sqlc.arg(status), started_at = CURRENT_TIMESTAMP, finished_at = NUL
 WHERE refresh_job_runs.id = sqlc.arg(id)
   AND refresh_job_runs.environment = sqlc.arg(environment)
   AND refresh_job_runs.job_id IN (SELECT refresh_jobs.id FROM refresh_jobs
-                 WHERE project_id = sqlc.arg(project_id)
-                   AND generation_id = sqlc.arg(generation_id));
+	                 WHERE refresh_jobs.project_id = sqlc.arg(project_id)
+	                   AND refresh_jobs.generation_id = sqlc.arg(generation_id));
 
 -- name: MarkRefreshRunPrepared :execrows
 UPDATE refresh_job_runs
@@ -158,7 +182,7 @@ WHERE refresh_job_runs.id = sqlc.arg(run_id) AND refresh_job_runs.status = 'runn
   AND refresh_job_runs.environment = sqlc.arg(environment)
   AND refresh_job_runs.job_id IN (
 	SELECT refresh_jobs.id FROM refresh_jobs
-    WHERE project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id) AND status = 'running'
+	    WHERE refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id) AND status = 'running'
       AND lease_owner = sqlc.arg(lease_owner) AND lease_revision = sqlc.arg(lease_revision)
       AND lease_expires_at IS NOT NULL AND lease_expires_at > CURRENT_TIMESTAMP
   );
@@ -197,14 +221,14 @@ UPDATE refresh_job_runs
 SET status = 'superseded', finished_at = CURRENT_TIMESTAMP, error = 'superseded by a newer target revision'
 WHERE refresh_job_runs.id = sqlc.arg(run_id)
   AND refresh_job_runs.environment = sqlc.arg(environment)
-  AND refresh_job_runs.job_id IN (SELECT refresh_jobs.id FROM refresh_jobs WHERE project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id))
+	  AND refresh_job_runs.job_id IN (SELECT refresh_jobs.id FROM refresh_jobs WHERE refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id))
   AND refresh_job_runs.status IN ('running', 'prepared');
 
 -- name: RenewRefreshJobLease :execrows
 UPDATE refresh_jobs
 SET lease_expires_at = datetime('now', CAST(sqlc.arg(lease_modifier) AS TEXT)), updated_at = CURRENT_TIMESTAMP
 WHERE id = sqlc.arg(id) AND lease_owner = sqlc.arg(lease_owner)
-  AND project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id)
+	AND refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id)
   AND lease_revision = sqlc.arg(lease_revision) AND status = sqlc.arg(status)
   AND lease_expires_at IS NOT NULL AND lease_expires_at > CURRENT_TIMESTAMP;
 
@@ -223,7 +247,7 @@ WHERE COALESCE(r.parent_run_id, '') = ''
 -- name: GetMaterializationRun :one
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
-       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
@@ -234,7 +258,7 @@ WHERE r.id = sqlc.arg(run_id) AND j.project_id = sqlc.arg(project_id)
 -- name: ListChildMaterializationRuns :many
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
-       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
@@ -246,7 +270,7 @@ ORDER BY r.rowid ASC;
 -- name: LatestSuccessfulMaterializationRun :one
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
-       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.parent_run_id, r.retry_of, r.status, j.created_at, j.updated_at,
        r.started_at, r.finished_at, r.error
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
@@ -285,8 +309,8 @@ SET status = sqlc.arg(status), finished_at = finished_at, error = sqlc.arg(error
 WHERE refresh_job_runs.id = sqlc.arg(run_id)
   AND environment = sqlc.arg(environment)
   AND job_id IN (SELECT refresh_jobs.id FROM refresh_jobs
-                 WHERE project_id = sqlc.arg(project_id)
-                   AND generation_id = sqlc.arg(generation_id));
+	                 WHERE refresh_jobs.project_id = sqlc.arg(project_id)
+	                   AND refresh_jobs.generation_id = sqlc.arg(generation_id));
 
 -- name: MarkMaterializationRunTerminal :execresult
 UPDATE refresh_job_runs
@@ -295,8 +319,8 @@ WHERE refresh_job_runs.id = sqlc.arg(run_id)
   AND refresh_job_runs.status IN ('queued', 'running', 'prepared')
   AND refresh_job_runs.environment = sqlc.arg(environment)
   AND job_id IN (SELECT refresh_jobs.id FROM refresh_jobs
-                 WHERE project_id = sqlc.arg(project_id)
-                   AND generation_id = sqlc.arg(generation_id));
+	                 WHERE refresh_jobs.project_id = sqlc.arg(project_id)
+	                   AND refresh_jobs.generation_id = sqlc.arg(generation_id));
 
 -- Worker-owned terminal transitions are fenced by the currently claimed root
 -- job. Child runs intentionally inherit their parent's claim fence because
@@ -418,26 +442,72 @@ SET status = 'failed', updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIM
       AND claim_job.lease_expires_at IS NOT NULL AND claim_job.lease_expires_at > CURRENT_TIMESTAMP
   );
 
+-- name: MarkRefreshRunTreeSupersededClaimed :execrows
+UPDATE refresh_job_runs
+SET status = 'superseded', finished_at = CURRENT_TIMESTAMP, error = sqlc.arg(error_message)
+WHERE refresh_job_runs.status IN ('queued', 'running', 'prepared')
+  AND (refresh_job_runs.id = sqlc.arg(run_id) OR refresh_job_runs.parent_run_id = sqlc.arg(run_id))
+  AND EXISTS (
+    SELECT 1 FROM refresh_job_runs root
+    JOIN refresh_jobs claim_job ON claim_job.id = root.job_id
+    WHERE root.id = sqlc.arg(run_id)
+      AND claim_job.project_id = sqlc.arg(project_id)
+      AND claim_job.generation_id = sqlc.arg(generation_id)
+      AND root.environment = sqlc.arg(environment)
+      AND claim_job.status = 'running'
+      AND claim_job.lease_owner = sqlc.arg(lease_owner)
+      AND claim_job.lease_revision = sqlc.arg(lease_revision)
+      AND claim_job.lease_expires_at IS NOT NULL
+      AND claim_job.lease_expires_at > CURRENT_TIMESTAMP
+  );
+
+-- name: CompleteRefreshJobTreeSupersededClaimed :execrows
+UPDATE refresh_jobs
+SET status = 'superseded', updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP,
+    lease_owner = '', lease_expires_at = NULL, last_error = sqlc.arg(error_message)
+WHERE refresh_jobs.id IN (
+  SELECT refresh_job_runs.job_id FROM refresh_job_runs
+  JOIN refresh_jobs tree_job ON tree_job.id = refresh_job_runs.job_id
+  WHERE tree_job.project_id = sqlc.arg(project_id)
+    AND tree_job.generation_id = sqlc.arg(generation_id)
+    AND refresh_job_runs.environment = sqlc.arg(environment)
+    AND (refresh_job_runs.id = sqlc.arg(run_id) OR refresh_job_runs.parent_run_id = sqlc.arg(run_id))
+)
+AND refresh_jobs.status IN ('queued', 'running', 'prepared')
+AND EXISTS (
+  SELECT 1 FROM refresh_job_runs root
+  JOIN refresh_jobs claim_job ON claim_job.id = root.job_id
+  WHERE root.id = sqlc.arg(run_id)
+    AND claim_job.project_id = sqlc.arg(project_id)
+    AND claim_job.generation_id = sqlc.arg(generation_id)
+    AND root.environment = sqlc.arg(environment)
+    AND claim_job.status = 'running'
+    AND claim_job.lease_owner = sqlc.arg(lease_owner)
+    AND claim_job.lease_revision = sqlc.arg(lease_revision)
+    AND claim_job.lease_expires_at IS NOT NULL
+    AND claim_job.lease_expires_at > CURRENT_TIMESTAMP
+);
+
 -- name: UpdateRefreshJobForActiveRun :exec
 UPDATE refresh_jobs
 SET status = sqlc.arg(new_status), updated_at = CURRENT_TIMESTAMP
-WHERE refresh_jobs.id = (SELECT job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
-  AND project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id)
+WHERE refresh_jobs.id = (SELECT refresh_job_runs.job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
+	AND refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id)
   AND EXISTS (SELECT 1 FROM refresh_job_runs scoped WHERE scoped.id = sqlc.arg(run_id) AND scoped.environment = sqlc.arg(environment));
 -- name: CompleteRefreshJobSucceeded :exec
 UPDATE refresh_jobs
 SET status = 'succeeded', updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP,
     lease_owner = '', lease_expires_at = NULL
-WHERE refresh_jobs.id = (SELECT job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
-  AND project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id)
+WHERE refresh_jobs.id = (SELECT refresh_job_runs.job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
+	AND refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id)
   AND EXISTS (SELECT 1 FROM refresh_job_runs scoped WHERE scoped.id = sqlc.arg(run_id) AND scoped.environment = sqlc.arg(environment));
 
 -- name: CompleteRefreshJobFailed :exec
 UPDATE refresh_jobs
 SET status = 'failed', updated_at = CURRENT_TIMESTAMP, finished_at = CURRENT_TIMESTAMP,
     lease_owner = '', lease_expires_at = NULL, last_error = sqlc.arg(error_message)
-WHERE refresh_jobs.id = (SELECT job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
-  AND project_id = sqlc.arg(project_id) AND generation_id = sqlc.arg(generation_id)
+WHERE refresh_jobs.id = (SELECT refresh_job_runs.job_id FROM refresh_job_runs WHERE refresh_job_runs.id = sqlc.arg(run_id))
+  AND refresh_jobs.project_id = sqlc.arg(project_id) AND refresh_jobs.generation_id = sqlc.arg(generation_id)
   AND EXISTS (SELECT 1 FROM refresh_job_runs scoped WHERE scoped.id = sqlc.arg(run_id) AND scoped.environment = sqlc.arg(environment));
 
 -- name: CompleteRefreshJobSucceededClaimed :execrows
@@ -526,8 +596,8 @@ WHERE refresh_job_runs.parent_run_id = sqlc.arg(parent_run_id)
   AND refresh_job_runs.status = sqlc.arg(queued_status)
   AND refresh_job_runs.environment = sqlc.arg(environment)
   AND refresh_job_runs.job_id IN (SELECT id FROM refresh_jobs
-                                  WHERE project_id = sqlc.arg(project_id)
-                                    AND generation_id = sqlc.arg(generation_id));
+	                                  WHERE refresh_jobs.project_id = sqlc.arg(project_id)
+	                                    AND refresh_jobs.generation_id = sqlc.arg(generation_id));
 
 -- name: CancelQueuedChildRefreshJobs :exec
 UPDATE refresh_jobs
@@ -550,7 +620,7 @@ WHERE id = sqlc.arg(generation_id)
 -- name: ListMaterializationRuns :many
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
-       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.parent_run_id, r.retry_of, r.status,
        j.created_at, j.updated_at, r.started_at, r.finished_at, r.error
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id
@@ -570,7 +640,7 @@ LIMIT sqlc.arg(limit);
 -- name: ListTargetMaterializationRuns :many
 SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
        COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
-       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.parent_run_id, r.retry_of, r.status,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.parent_run_id, r.retry_of, r.status,
        j.created_at, j.updated_at, r.started_at, r.finished_at, r.error
 FROM refresh_job_runs r
 JOIN refresh_jobs j ON j.id = r.job_id

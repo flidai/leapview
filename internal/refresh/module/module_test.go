@@ -226,7 +226,7 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 				return refreshrun.LoadedArtifact{Definition: &artifact.Definition{
 					Models: map[string]*semanticmodel.Model{"orders": {}},
 					Pipelines: map[string]refreshschedule.Definition{
-						"daily": {ID: "daily", SemanticModelID: "orders"},
+						"daily": {ID: "daily", SemanticModelID: "orders", Overlap: refreshschedule.OverlapForbid, ManualTriggers: []string{"manual"}},
 					},
 				}}, nil
 			}),

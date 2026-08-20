@@ -127,6 +127,19 @@ func TestDeliveryMaterializationDeltaSelectsOnlyImpactedTables(t *testing.T) {
 	}
 }
 
+func TestDeliveryMaterializationDeltaAddsPipelineScopeWithoutGraphImpact(t *testing.T) {
+	artifact := materializationDeltaFixture(t)
+	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{Artifact: artifact, Graph: artifact.Graph(), Plan: projectcompiler.ProjectPlan{Project: "delta"}}}
+	plan := deployment.DeliveryPlan{PipelinePlan: &deployment.PipelinePlan{MaterializationScope: []string{"customers"}}}
+	changed, removed, refreshAll := deliveryMaterializationDelta(artifacts, plan)
+	if refreshAll || len(removed) != 0 {
+		t.Fatalf("pipeline scope widened unexpectedly: changed=%#v removed=%#v refreshAll=%v", changed, removed, refreshAll)
+	}
+	if got := changed["semantic:sales"]; len(got) != 1 || got[0] != "customers" {
+		t.Fatalf("pipeline scope = %#v, want semantic:sales/customers", changed)
+	}
+}
+
 func materializationDeltaFixture(t *testing.T) projectartifact.Project {
 	t.Helper()
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{

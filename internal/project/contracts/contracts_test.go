@@ -165,6 +165,54 @@ spec:
 	}
 }
 
+func TestPipelineContractDecodesSelectionAndTriggers(t *testing.T) {
+	content := []byte(`apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:sales
+  name: sales_refresh
+spec:
+  selection:
+    type: semanticModel
+    semanticModel: semantic:sales
+  triggers:
+    - id: manual
+      type: manual
+    - id: weekdays-0600
+      type: schedule
+      cron: "0 6 * * 1-5"
+      timezone: Europe/Copenhagen
+      missedOccurrences: latest
+  runPolicy:
+    overlap: replace
+`)
+	var pipeline contracts.PipelineDocument
+	if err := configschema.DecodeResource(configschema.KindPipeline, "pipeline.yaml", content, &pipeline); err != nil {
+		t.Fatalf("decode Pipeline: %v", err)
+	}
+	if _, ok := pipeline.Spec.Selection.Value.(*contracts.SemanticModelPipelineSelection); !ok {
+		t.Fatalf("selection variant = %T, want semantic-model variant", pipeline.Spec.Selection.Value)
+	}
+	if len(pipeline.Spec.Triggers) != 2 {
+		t.Fatalf("triggers = %d, want 2", len(pipeline.Spec.Triggers))
+	}
+	if _, ok := pipeline.Spec.Triggers[1].Value.(*contracts.SchedulePipelineTrigger); !ok {
+		t.Fatalf("schedule trigger variant = %T", pipeline.Spec.Triggers[1].Value)
+	}
+}
+
+func TestPipelineContractRejectsLegacyShape(t *testing.T) {
+	content := []byte(`apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata: {id: pipeline:sales, name: sales_refresh}
+spec: {semanticModel: semantic:sales}
+`)
+	var pipeline contracts.PipelineDocument
+	if err := configschema.DecodeResource(configschema.KindPipeline, "pipeline.yaml", content, &pipeline); err == nil {
+		t.Fatal("legacy semanticModel pipeline shape was accepted")
+	}
+}
+
 func TestGeneratedResourceBoundaryRejectsTargetOwnedFields(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: Connection

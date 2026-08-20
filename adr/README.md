@@ -32,6 +32,7 @@ customer site.
 | [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Complete | — |
 | [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | Complete | — |
 | [ADR-0013](0013-separate-workload-admission-from-application-policy.md) | Separate workload admission from application policy | Accepted | 2026-08-19 | Complete | — |
+| [ADR-0014](0014-adopt-an-asset-selected-refresh-pipeline-contract.md) | Adopt an asset-selected refresh pipeline contract | Accepted | 2026-08-20 | Pending | — |
 
 ## Companion specifications
 

@@ -91,7 +91,7 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 		t.Fatalf("list response=%d viewChecks=%d runChecks=%d body=%s", listResponse.Code, viewChecks, runChecks, listResponse.Body.String())
 	}
 
-	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`)), map[string]string{"project": "sales"})
+	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh","triggerId":"manual"}`)), map[string]string{"project": "sales"})
 	createResponse := httptest.NewRecorder()
 	handler.CreateRun(createResponse, createRequest, "sales")
 	if createResponse.Code != http.StatusNotFound || viewChecks != 1 || runChecks != 1 {

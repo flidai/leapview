@@ -2,21 +2,77 @@
 package plan
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 )
 
 type Plan struct {
+	ProjectID        projectgraph.ResourceID
+	Environment      string
 	TargetType       string
 	TargetID         projectgraph.ResourceID
 	SemanticModelID  projectgraph.ResourceID
 	Tables           []string
 	DependencyTables []string
+	// MaterializationScope is the exact ordered model-table closure selected
+	// by the pipeline. It is intentionally distinct from downstream/dashboard
+	// scope and is preserved through delivery planning.
+	MaterializationScope []string
+	SourceInputs         []string
+	ServingGenerationID  string
+	ArtifactDigest       string
+	SelectionDigest      string
+	Digest               string
+}
+
+// InvocationPolicy is the effective authored trigger and overlap policy bound
+// when a compiled selection is admitted as a run.
+type InvocationPolicy struct {
+	TriggerType       string
+	TriggerID         string
+	MissedOccurrences string
+	Overlap           string
+}
+
+// DeliveryPipelinePlan lowers a generation-bound refresh selection into the
+// target delivery contract. Callers must bind the refresh plan first; an
+// unbound plan is not safe to dispatch.
+func (p Plan) DeliveryPipelinePlan(policy ...InvocationPolicy) (projectpipelineplan.Plan, error) {
+	if p.Digest == "" || p.ServingGenerationID == "" || p.ArtifactDigest == "" {
+		return projectpipelineplan.Plan{}, fmt.Errorf("pipeline plan is not generation-bound")
+	}
+	effective := InvocationPolicy{}
+	if len(policy) > 1 {
+		return projectpipelineplan.Plan{}, fmt.Errorf("pipeline plan accepts one effective invocation policy")
+	}
+	if len(policy) == 1 {
+		effective = policy[0]
+	}
+	selectionDigest := p.SelectionDigest
+	if selectionDigest == "" {
+		selectionDigest = digestPlan(struct {
+			SemanticModel string   `json:"semanticModel"`
+			Scope         []string `json:"scope"`
+			Sources       []string `json:"sources"`
+		}{p.SemanticModelID.String(), p.MaterializationScope, p.SourceInputs})
+	}
+	return projectpipelineplan.New(projectpipelineplan.Plan{
+		ID: "pipeline-plan-" + strings.TrimPrefix(p.Digest, "sha256:"), PipelineID: p.TargetID.String(), ProjectID: p.ProjectID.String(), Environment: p.Environment,
+		SemanticModelID: p.SemanticModelID.String(), SelectedResourceType: "semanticModel", SelectedResourceID: p.SemanticModelID.String(), ServingGenerationID: p.ServingGenerationID,
+		ArtifactDigest: p.ArtifactDigest, SelectionDigest: selectionDigest, MaterializationScope: append([]string(nil), p.MaterializationScope...),
+		ModelExecutionOrder: append([]string(nil), p.MaterializationScope...), SourceInputs: append([]string(nil), p.SourceInputs...),
+		TriggerType: effective.TriggerType, TriggerID: effective.TriggerID, MissedOccurrences: effective.MissedOccurrences, Overlap: effective.Overlap,
+	})
 }
 
 func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID projectgraph.ResourceID) (Plan, error) {
@@ -41,13 +97,89 @@ func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID p
 	if err != nil {
 		return Plan{}, err
 	}
-	return Plan{
+	result := Plan{
+		ProjectID:        projectID,
 		TargetType:       "refresh_pipeline",
 		TargetID:         pipelineID,
 		SemanticModelID:  pipeline.SemanticModelID,
 		Tables:           order,
-		DependencyTables: append([]string(nil), order...),
-	}, nil
+		DependencyTables: append([]string(nil), order...), MaterializationScope: append([]string(nil), order...),
+		SourceInputs: modelSourceInputs(model, order),
+	}
+	result.SelectionDigest = digestPlan(struct {
+		SemanticModel string   `json:"semanticModel"`
+		Scope         []string `json:"scope"`
+		Sources       []string `json:"sources"`
+	}{result.SemanticModelID.String(), result.MaterializationScope, result.SourceInputs})
+	return result, nil
+}
+
+// BindGeneration makes a compiled selection immutable for one serving
+// generation and source artifact. The same selection against a different
+// generation or artifact receives a different plan digest.
+func (p Plan) BindGeneration(identity projectgraph.ServingIdentity, artifactDigest string) (Plan, error) {
+	if err := identity.Validate(); err != nil {
+		return Plan{}, err
+	}
+	if len(p.MaterializationScope) == 0 {
+		return Plan{}, fmt.Errorf("pipeline materialization scope is empty")
+	}
+	if p.ProjectID != identity.ProjectID {
+		return Plan{}, fmt.Errorf("pipeline plan project does not match serving identity")
+	}
+	p.Environment = identity.Environment
+	p.ServingGenerationID = identity.GenerationID
+	p.ArtifactDigest = artifactDigest
+	p.Digest = digestPlan(struct {
+		TargetID            string   `json:"targetId"`
+		PipelineID          string   `json:"pipelineId"`
+		SemanticModelID     string   `json:"semanticModelId"`
+		ServingGenerationID string   `json:"servingGenerationId"`
+		ArtifactDigest      string   `json:"artifactDigest"`
+		SelectionDigest     string   `json:"selectionDigest"`
+		Scope               []string `json:"materializationScope"`
+		Sources             []string `json:"sourceInputs"`
+	}{p.TargetID.String(), p.TargetID.String(), p.SemanticModelID.String(), identity.GenerationID, p.ArtifactDigest, p.SelectionDigest, p.MaterializationScope, p.SourceInputs})
+	return p, nil
+}
+
+func digestPlan(value any) string {
+	encoded, _ := json.Marshal(value)
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func modelSourceInputs(model *semanticmodel.Model, order []string) []string {
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		return nil
+	}
+	tables := make(map[string]semanticmodel.Table, len(order))
+	for _, datasetName := range compiled.DatasetNames() {
+		dataset, ok := compiled.Dataset(datasetName)
+		if !ok {
+			continue
+		}
+		tables[dataset.ModelName()] = dataset.Table()
+	}
+	seen := map[string]struct{}{}
+	for _, name := range order {
+		table, ok := tables[name]
+		if !ok {
+			continue
+		}
+		for _, source := range append([]string{table.Execution.Source}, table.SourceDependencies...) {
+			if source != "" {
+				seen[source] = struct{}{}
+			}
+		}
+	}
+	result := make([]string, 0, len(seen))
+	for source := range seen {
+		result = append(result, source)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func modelTableOrder(model *semanticmodel.Model) ([]string, error) {

@@ -43,7 +43,7 @@ func TestManagedDataMigrationCreatesProjectDeploymentsWithoutLegacyRollouts(t *t
 
 // TestDeliveryMigrationChainIsContiguousAndRestartSafe keeps the embedded
 // Goose chain's current tail explicit. A fresh install and a second Open both
-// apply/verify every migration through 089; a missing or duplicated sequence
+// apply/verify every migration through 090; a missing or duplicated sequence
 // entry would either fail the numeric assertion or leave one of the tail
 // columns absent after restart.
 func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
 
 // TestDeliveryMigrationUpgradeFrom072 exercises the real upgrade path rather
 // than only a fresh install: seed a database through the last pre-delivery
-// migration, then let Open apply 073..089 in one restart-safe upgrade.
+// migration, then let Open apply 073..090 in one restart-safe upgrade.
 func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "delivery-upgrade.db")
@@ -104,19 +104,19 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied = 1`).Scan(&latest); err != nil {
 		t.Fatalf("inspect applied Goose migrations: %v", err)
 	}
-	if latest != 89 {
-		t.Fatalf("latest applied migration = %d, want 89", latest)
+	if latest != 90 {
+		t.Fatalf("latest applied migration = %d, want 90", latest)
 	}
 	rows, err := store.SQLDB().QueryContext(ctx, `
 		SELECT version_id
 		FROM goose_db_version
-		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 89
+		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 90
 		ORDER BY version_id`)
 	if err != nil {
 		t.Fatalf("inspect applied delivery migration sequence: %v", err)
 	}
 	defer rows.Close()
-	for want := int64(73); want <= 89; want++ {
+	for want := int64(73); want <= 90; want++ {
 		if !rows.Next() {
 			t.Fatalf("applied delivery migration sequence ended before %d", want)
 		}

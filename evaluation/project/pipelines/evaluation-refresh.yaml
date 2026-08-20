@@ -4,4 +4,11 @@ metadata:
   id: pipeline:evaluation-refresh
   name: evaluation-refresh
 spec:
-  semanticModel: sales
+  selection:
+    type: semanticModel
+    semanticModel: sales
+  triggers:
+    - id: manual
+      type: manual
+  runPolicy:
+    overlap: replace

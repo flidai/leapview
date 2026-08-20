@@ -83,6 +83,19 @@ func finalizeReuseEvidence(evidence *deployment.DeliveryPlanEvidence, decisions 
 	}
 }
 
+// pipelineScopeContains accepts canonical relation IDs as well as authored
+// model-table names. The refresh compiler owns the latter while delivery
+// relation evidence is keyed by graph resource ID; matching both forms keeps
+// the boundary explicit without weakening exact reuse checks.
+func pipelineScopeContains(scope []string, relationID string) bool {
+	for _, selected := range scope {
+		if selected == relationID || strings.HasSuffix(relationID, ":"+selected) || strings.HasSuffix(relationID, "_"+selected) {
+			return true
+		}
+	}
+	return false
+}
+
 // materializationIdentity is the execution identity for physical relations.
 // The portable project artifact also contains dashboards, access, and other
 // serving metadata; including its digest would force a full physical rebuild
@@ -208,6 +221,15 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	if input.Plan != nil && !input.Plan.CreatedAt.IsZero() {
 		now = input.Plan.CreatedAt.UTC()
 	}
+	if input.PipelinePlan != nil {
+		pipelinePlan := input.PipelinePlan
+		if err := pipelinePlan.Validate(); err != nil {
+			return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline plan: %w", err)
+		}
+		if pipelinePlan.ArtifactDigest != input.ArtifactDigest {
+			return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline plan artifact digest differs from delivery source")
+		}
+	}
 	if strings.TrimSpace(runtimeVersion) == "" {
 		return deployment.DeliveryPlanRequest{}, fmt.Errorf("candidate runtime version is required")
 	}
@@ -314,13 +336,72 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		Evidence:  evidence,
 		CreatedAt: now, Persist: true,
 	}
+	if input.PipelinePlan != nil {
+		pipelinePlan := *input.PipelinePlan
+		request.PipelinePlan = &pipelinePlan
+	}
 	currentContextDigest, err := request.Execution.ContextDigest()
 	if err != nil {
 		return deployment.DeliveryPlanRequest{}, err
 	}
 	if reuse != nil || artifacts.Generation.DataMode == release.GenerationDataReuseBase {
 		decision := deployment.DeliveryReuseDecision{ResourceID: input.Candidate.ID, Reusable: false, Reason: "retained base reuse identity is unavailable"}
-		if operation != deployment.DeliveryOperationCodeChange {
+		if operation != deployment.DeliveryOperationCodeChange && input.PipelinePlan != nil && reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
+			candidateReuse := *reuse
+			if candidateReuse.BaseContextDigest != "" {
+				candidateReuse.ContextDigest = currentContextDigest
+			}
+			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
+			if candidateReuse.EquivalenceToken == "" {
+				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
+			}
+			for _, planned := range request.Execution.DataInputs {
+				if planned.Mode == deployment.DeliveryDataObserved {
+					candidateReuse.Observed = true
+				}
+			}
+			ids := make([]string, 0, len(artifacts.Compiler.RelationExecution))
+			for id := range artifacts.Compiler.RelationExecution {
+				ids = append(ids, id)
+			}
+			sort.Strings(ids)
+			decisions := make([]deployment.DeliveryReuseDecision, 0, len(ids))
+			matchedScope := make(map[string]struct{}, len(input.PipelinePlan.MaterializationScope))
+			for _, id := range ids {
+				baseDigest := artifacts.Compiler.BaseRelationExecution[id]
+				if baseDigest == "" {
+					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reason: "base relation execution identity is unavailable"})
+					continue
+				}
+				if pipelineScopeContains(input.PipelinePlan.MaterializationScope, id) {
+					for _, selected := range input.PipelinePlan.MaterializationScope {
+						if pipelineScopeContains([]string{selected}, id) {
+							matchedScope[selected] = struct{}{}
+						}
+					}
+					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reusable: false, RetainBase: true, Reason: "pipeline materialization scope requires refresh"})
+					continue
+				}
+				relationReuse := candidateReuse
+				relationReuse.RelationScoped = true
+				relationReuse.ResourceID = id
+				relationReuse.ExecutionDigest = artifacts.Compiler.RelationExecution[id]
+				relationReuse.BaseExecutionDigest = baseDigest
+				decision, reuseErr := deployment.EvaluateDeliveryReuse(relationReuse)
+				if reuseErr != nil {
+					return deployment.DeliveryPlanRequest{}, fmt.Errorf("evaluate scoped relation reuse %q: %w", id, reuseErr)
+				}
+				decisions = append(decisions, decision)
+			}
+			for _, selected := range input.PipelinePlan.MaterializationScope {
+				if _, ok := matchedScope[selected]; !ok {
+					return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline materialization scope relation %q is absent from compiled relation evidence", selected)
+				}
+			}
+			request.Evidence.Reuse = decisions
+			finalizeReuseEvidence(&request.Evidence, decisions)
+			return request, nil
+		} else if operation != deployment.DeliveryOperationCodeChange {
 			decision.Reason = "operation requires explicit full materialization"
 		} else if reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
 			candidateReuse := *reuse

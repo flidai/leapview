@@ -94,11 +94,17 @@ metadata:
   id: pipeline:sales-refresh
   name: sales-refresh
 spec:
-  semanticModel: sales
-  on:
-    schedule:
-      - cron: "0 6 * * *"
-        timezone: Europe/Copenhagen
+  selection:
+    type: semanticModel
+    semanticModel: sales
+  triggers:
+    - id: weekdays-0600
+      type: schedule
+      cron: "0 6 * * *"
+      timezone: Europe/Copenhagen
+      missedOccurrences: latest
+  runPolicy:
+    overlap: replace
 ` + "```\n"
 
 	if issues := ValidateMarkdown("docs/example.md", []byte(markdown)); len(issues) != 0 {

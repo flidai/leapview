@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -12,9 +13,18 @@ import (
 
 var artifactDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
 
+// ErrOccurrenceSkipped reports a terminal policy decision that has already
+// been persisted by the trigger implementation. The scheduler must not
+// release such an occurrence for retry.
+var ErrOccurrenceSkipped = errors.New("refresh occurrence skipped")
+
 const (
 	DataVersionSourcePublish = "publish"
 	DataVersionSourceRefresh = "refresh"
+	MissedOccurrencesSkip    = "skip"
+	MissedOccurrencesLatest  = "latest"
+	OverlapForbid            = "forbid"
+	OverlapReplace           = "replace"
 )
 
 type ReconcileInput struct {
@@ -25,10 +35,14 @@ type ReconcileInput struct {
 }
 
 type Occurrence struct {
-	Identity        projectgraph.ServingIdentity
-	PipelineID      projectgraph.ResourceID
+	Identity   projectgraph.ServingIdentity
+	PipelineID projectgraph.ResourceID
+	// TriggerID is stable within the authored Pipeline and is part of the
+	// logical occurrence key.  It intentionally does not include generation.
+	TriggerID       string
 	SemanticModelID projectgraph.ResourceID
 	ArtifactDigest  string
+	Timezone        string
 	ScheduledAt     time.Time
 }
 
@@ -98,6 +112,34 @@ func (definition Definition) Validate() error {
 	if err := definition.SemanticModelID.Validate(); err != nil {
 		return err
 	}
+	if definition.Overlap != OverlapForbid && definition.Overlap != OverlapReplace {
+		return errors.New("refresh pipeline overlap policy must be forbid or replace")
+	}
+	triggerIDs := map[string]struct{}{}
+	for _, triggerID := range definition.ManualTriggers {
+		if err := ValidateOperationalID(triggerID); err != nil {
+			return fmt.Errorf("refresh pipeline manual trigger id: %w", err)
+		}
+		if _, exists := triggerIDs[triggerID]; exists {
+			return fmt.Errorf("refresh pipeline trigger id %q is duplicated", triggerID)
+		}
+		triggerIDs[triggerID] = struct{}{}
+	}
+	for _, schedule := range definition.Schedules {
+		if err := ValidateOperationalID(schedule.ID); err != nil {
+			return fmt.Errorf("refresh pipeline trigger id: %w", err)
+		}
+		if _, exists := triggerIDs[schedule.ID]; exists {
+			return fmt.Errorf("refresh pipeline trigger id %q is duplicated", schedule.ID)
+		}
+		triggerIDs[schedule.ID] = struct{}{}
+		if schedule.MissedOccurrences != MissedOccurrencesSkip && schedule.MissedOccurrences != MissedOccurrencesLatest {
+			return fmt.Errorf("refresh pipeline trigger %q missed occurrence policy must be skip or latest", schedule.ID)
+		}
+		if schedule.Timezone == "" {
+			return fmt.Errorf("refresh pipeline trigger %q timezone is required", schedule.ID)
+		}
+	}
 	return nil
 }
 
@@ -137,6 +179,9 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 	for _, occurrence := range occurrences {
 		runID, triggerErr := scheduler.Trigger(ctx, occurrence)
 		if triggerErr != nil {
+			if errors.Is(triggerErr, ErrOccurrenceSkipped) {
+				continue
+			}
 			dispatchErrors = append(dispatchErrors, triggerErr)
 			if releaseErr := scheduler.Repository.ReleaseOccurrence(ctx, occurrence); releaseErr != nil {
 				dispatchErrors = append(dispatchErrors, releaseErr)

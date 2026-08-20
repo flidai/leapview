@@ -111,6 +111,15 @@ targets:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir
         typescript_module: ../visualization
+  - name: pipeline-contracts
+    kind: contracts
+    typespec_dir: .
+    typespec_entrypoint: pipeline/main.tsp
+    ir_out: gen/pipeline-ir.json
+    go_models_out: ../internal/project/contracts/pipeline_models.gen.go
+    go_models_package: contracts
+    ts_out: ../web/generated/pipeline/index.ts
+    json_schema_out: ../schemas/json/pipeline.schema.json
   - name: agent-tool-contracts
     kind: contracts
     typespec_dir: ..

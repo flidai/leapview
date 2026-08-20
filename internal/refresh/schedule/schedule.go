@@ -18,15 +18,19 @@ type Definition struct {
 	ID              projectgraph.ResourceID
 	Name            string
 	SemanticModelID projectgraph.ResourceID
+	Overlap         string
+	ManualTriggers  []string
 	Schedules       []Schedule
 }
 
 // Schedule is a validated five-field POSIX cron schedule evaluated in Timezone.
 type Schedule struct {
-	Expression string
-	Timezone   string
-	location   *time.Location
-	schedule   cron.Schedule
+	ID                string
+	Expression        string
+	Timezone          string
+	MissedOccurrences string
+	location          *time.Location
+	schedule          cron.Schedule
 }
 
 var githubActionsParser = cron.NewParser(
@@ -39,7 +43,7 @@ func ParseSchedule(expression, timezone string) (Schedule, error) {
 		return Schedule{}, fmt.Errorf("cron must be a five-field POSIX expression")
 	}
 	if timezone == "" {
-		timezone = "UTC"
+		return Schedule{}, fmt.Errorf("timezone is required and must be a valid IANA timezone")
 	}
 	location, err := time.LoadLocation(timezone)
 	if err != nil {
@@ -76,13 +80,24 @@ func (schedule Schedule) Next(after time.Time) time.Time {
 	wallAfter := time.Date(local.Year(), local.Month(), local.Day(), local.Hour(), local.Minute(), local.Second(), local.Nanosecond(), time.UTC)
 	wallNext := schedule.schedule.Next(wallAfter)
 	candidate := time.Date(wallNext.Year(), wallNext.Month(), wallNext.Day(), wallNext.Hour(), wallNext.Minute(), 0, 0, schedule.location)
-	candidateLocal := candidate.In(schedule.location)
-	if sameWallMinute(candidateLocal, wallNext) && candidate.After(after) {
-		return candidate.UTC()
-	}
-	// time.Date normalizes a nonexistent spring-forward wall time. Walk the
-	// small transition window to the first valid local instant after it.
+	// Walk the small transition window in absolute time. This deliberately
+	// chooses the earlier instant when a fall-back fold contains the same wall
+	// minute twice; time.Date alone is implementation-defined for that fold.
 	start := candidate.Add(-3 * time.Hour).Truncate(time.Minute)
+	for instant := start; instant.Before(candidate.Add(5 * time.Hour)); instant = instant.Add(time.Minute) {
+		if !instant.After(after) {
+			continue
+		}
+		value := instant.In(schedule.location)
+		if value.Year() != wallNext.Year() || value.Month() != wallNext.Month() || value.Day() != wallNext.Day() {
+			continue
+		}
+		if sameWallMinute(value, wallNext) {
+			return instant.UTC()
+		}
+	}
+	// A nonexistent spring-forward wall time is advanced to the first valid
+	// local instant at or after the authored wall target.
 	for instant := start; instant.Before(candidate.Add(5 * time.Hour)); instant = instant.Add(time.Minute) {
 		if !instant.After(after) {
 			continue

@@ -99,3 +99,23 @@ func TestSchedulerUsesInjectedClockAndAttachesCreatedRun(t *testing.T) {
 		t.Fatalf("environment=%q claimed=%s triggered=%d attached=%#v", repository.environment, repository.claimed, triggered, repository.attached)
 	}
 }
+
+func TestSchedulerDoesNotRetryPolicySkippedOccurrence(t *testing.T) {
+	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	repository := &schedulerRepository{due: []Occurrence{{Identity: projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, PipelineID: "pipeline_daily", TriggerID: "weekdays", ScheduledAt: now}}}
+	scheduler := Scheduler{
+		Repository: repository, Clock: fixedClock{now: now},
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
+			return projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, nil
+		},
+		Trigger: func(context.Context, Occurrence) (string, error) {
+			return "run_skipped", ErrOccurrenceSkipped
+		},
+	}
+	if err := scheduler.DispatchDue(context.Background()); err != nil {
+		t.Fatalf("DispatchDue() error = %v", err)
+	}
+	if len(repository.released) != 0 || len(repository.attached) != 0 {
+		t.Fatalf("skipped occurrence released/attached = %#v/%#v", repository.released, repository.attached)
+	}
+}

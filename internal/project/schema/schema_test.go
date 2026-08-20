@@ -855,6 +855,28 @@ func TestGeneratedJSONSchemasRejectInvalidDocuments(t *testing.T) {
 				},
 			},
 		},
+		{
+			name: "pipeline legacy shape",
+			kind: KindPipeline,
+			instance: map[string]any{
+				"apiVersion": "leapview.dev/v1",
+				"kind":       "Pipeline",
+				"metadata":   map[string]any{"id": "pipeline:sales", "name": "sales"},
+				"spec":       map[string]any{"semanticModel": "sales"},
+			},
+		},
+		{
+			name: "pipeline missing trigger policy",
+			kind: KindPipeline,
+			instance: map[string]any{
+				"apiVersion": "leapview.dev/v1",
+				"kind":       "Pipeline",
+				"metadata":   map[string]any{"id": "pipeline:sales", "name": "sales"},
+				"spec": map[string]any{
+					"selection": map[string]any{"type": "semanticModel", "semanticModel": "sales"},
+				},
+			},
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
