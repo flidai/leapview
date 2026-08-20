@@ -53,6 +53,47 @@ func (r *Repository) ServingStateGraph(ctx context.Context, projectID projectgra
 	return r.servingStateGraph(ctx, projectID, servingstate.Environment(environment), state)
 }
 
+// AssetVersions returns distinct published configuration versions for one
+// project asset, newest first. The query deliberately collapses repeated
+// serving states with the same content hash while retaining the current and
+// historical provenance rows needed by the browser.
+func (r *Repository) AssetVersions(ctx context.Context, projectID projectgraph.ResourceID, environment string, assetID projectgraph.ResourceID) ([]servingstate.AssetVersion, error) {
+	if err := projectID.Validate(); err != nil {
+		return nil, err
+	}
+	if err := assetID.Validate(); err != nil {
+		return nil, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	rows, err := r.q.ListAssetVersions(ctx, platformdb.ListAssetVersionsParams{
+		ProjectID: string(projectID), Environment: environment, LogicalAssetID: string(assetID),
+	})
+	if err != nil {
+		return nil, err
+	}
+	versions := make([]servingstate.AssetVersion, 0, len(rows))
+	for _, row := range rows {
+		version := servingstate.AssetVersion{
+			ServingStateID: servingstate.ID(row.ServingStateID),
+			ProjectID:      projectID,
+			Environment:    servingstate.Environment(row.Environment),
+			Status:         row.Status,
+			Digest:         row.Digest,
+			CreatedBy:      row.CreatedBy,
+			CreatedAt:      row.CreatedAt,
+			SnapshotID:     row.SnapshotID,
+			AssetID:        assetID,
+			SourceFile:     row.SourceFile,
+			ContentHash:    row.ContentHash,
+		}
+		if row.ActivatedAt.Valid {
+			version.ActivatedAt = row.ActivatedAt.String
+		}
+		versions = append(versions, version)
+	}
+	return versions, nil
+}
+
 func (r *Repository) servingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment, state servingstate.State) (servingstate.AssetGraph, bool, error) {
 	if state.ProjectID != projectID || state.Environment != environment {
 		return servingstate.AssetGraph{}, false, fmt.Errorf("serving state %q scope does not match project %q environment %q", state.ID, projectID, environment)

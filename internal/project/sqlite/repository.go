@@ -48,6 +48,19 @@ func (r *Repository) Ensure(ctx context.Context, input EnsureInput) error {
 	return r.q.UpsertProject(ctx, projectdb.UpsertProjectParams{ID: id.String(), Title: title, Description: input.Description})
 }
 
+// EnsureIdentity installs the minimum durable project row required by older
+// foreign-keyed control-plane projections. Existing authored metadata is left
+// untouched.
+func (r *Repository) EnsureIdentity(ctx context.Context, id projectgraph.ResourceID) error {
+	validated, err := projectgraph.NewResourceID(strings.TrimSpace(id.String()))
+	if err != nil {
+		return fmt.Errorf("project id: %w", err)
+	}
+	return r.q.EnsureProjectIdentity(ctx, projectdb.EnsureProjectIdentityParams{
+		ID: validated.String(), Title: validated.String(),
+	})
+}
+
 func (r *Repository) List(ctx context.Context) ([]Record, error) {
 	rows, err := r.q.ListProjects(ctx)
 	if err != nil {

@@ -126,6 +126,80 @@ func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	}
 }
 
+func TestAssetRefreshStateReadsScopedRunsAndDataVersion(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'active');
+INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test');
+INSERT INTO refresh_jobs (
+  id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json,
+  estimated_memory_bytes, kind, status
+) VALUES (
+  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'user:test', '[]',
+  67108864, 'refresh_pipeline', 'succeeded'
+);
+INSERT INTO refresh_job_runs (
+  id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type,
+  status, created_sequence
+) VALUES (
+  'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 3, 'manual',
+  'succeeded', 1
+);`); err != nil {
+		t.Fatalf("seed refresh state: %v", err)
+	}
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{
+			ID: "generation_a", ProjectID: "project_sales", Environment: "dev",
+		}}},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	now := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a"}
+	if err := module.schedules.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
+		Identity: identity, SemanticModelID: "semantic_sales", SnapshotID: 42,
+		RefreshedAt: now, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_daily", RunID: "run_1",
+	}); err != nil {
+		t.Fatalf("save data version: %v", err)
+	}
+	state, err := module.AssetRefreshState(t.Context(), "project_sales", "dev", "pipeline_daily", "semantic_sales")
+	if err != nil {
+		t.Fatalf("asset refresh state: %v", err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run_1" || state.Runs[0].TargetGeneration != 3 {
+		t.Fatalf("runs = %#v", state.Runs)
+	}
+	if state.LatestSuccessful.ID != "run_1" {
+		t.Fatalf("latest successful = %#v", state.LatestSuccessful)
+	}
+	if state.DataVersion.SnapshotID != 42 || state.DataVersion.ServingStateID != "generation_a" || !state.DataVersion.RefreshedAt.Equal(now) {
+		t.Fatalf("data version = %#v", state.DataVersion)
+	}
+	if state.RunCommand.OperationID() == "" || state.CancelCommand.OperationID() == "" {
+		t.Fatalf("generated command bindings missing: run=%#v cancel=%#v", state.RunCommand, state.CancelCommand)
+	}
+}
+
+func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
+	module, err := Build(t.Context(), Config{Authorization: testAuthorization()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	state, err := module.AssetRefreshState(t.Context(), "project_sales", "dev", "pipeline_daily", "semantic_sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !state.Unavailable {
+		t.Fatalf("refresh state = %#v, want unavailable without persistence", state)
+	}
+}
+
 func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {

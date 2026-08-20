@@ -8,6 +8,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 )
 
@@ -129,9 +130,19 @@ func decodeSourceResource(path string, content []byte, metadata metadata) (seman
 // the lowered runtime representation. SQL dependencies are intentionally not
 // accepted here and are derived later by the canonical AST analyzer.
 func decodeModelResource(path string, content []byte, metadata metadata) (semanticmodel.Table, *semanticmodel.AIContext, error) {
+	table, aiContext, _, err := decodeModelResourceWithDefinition(path, content, metadata)
+	return table, aiContext, err
+}
+
+// decodeModelResourceWithDefinition lowers the executable model contract while
+// retaining the non-secret authored definition union for the project detail
+// read model. Runtime consumers receive only table.Execution; the authored
+// value is carried separately so target binding can never rewrite what the
+// browser presents as source.
+func decodeModelResourceWithDefinition(path string, content []byte, metadata metadata) (semanticmodel.Table, *semanticmodel.AIContext, projectmanifest.AuthoredModelDefinition, error) {
 	var authored projectcontracts.Model
 	if err := configschema.DecodeResource(configschema.KindModel, path, content, &authored); err != nil {
-		return semanticmodel.Table{}, nil, err
+		return semanticmodel.Table{}, nil, projectmanifest.AuthoredModelDefinition{}, err
 	}
 	table := semanticmodel.Table{
 		Entities:    map[string]semanticmodel.EntityDefinition{},
@@ -167,7 +178,7 @@ func decodeModelResource(path string, content []byte, metadata metadata) (semant
 	}
 	definition, err := modelDefinition(authored.Spec.Definition)
 	if err != nil {
-		return semanticmodel.Table{}, nil, err
+		return semanticmodel.Table{}, nil, projectmanifest.AuthoredModelDefinition{}, err
 	}
 	table.Execution.Source = definition.source
 	table.Execution.SQL = definition.sql
@@ -176,12 +187,13 @@ func decodeModelResource(path string, content []byte, metadata metadata) (semant
 	}
 	table.Checks, err = lowerModelChecks(authored.Spec.Checks)
 	if err != nil {
-		return semanticmodel.Table{}, nil, err
+		return semanticmodel.Table{}, nil, projectmanifest.AuthoredModelDefinition{}, err
 	}
-	return table, lowerAIContext(authored.AiContext), nil
+	return table, lowerAIContext(authored.AiContext), projectmanifest.AuthoredModelDefinition{Type: definition.kind, Source: definition.source, SQL: definition.sql}, nil
 }
 
 type loweredModelDefinition struct {
+	kind   string
 	source string
 	sql    string
 }
@@ -193,13 +205,13 @@ func modelDefinition(value projectcontracts.ModelDefinition) (loweredModelDefini
 		if source == "" {
 			return loweredModelDefinition{}, fmt.Errorf("direct model definition source is required")
 		}
-		return loweredModelDefinition{source: source}, nil
+		return loweredModelDefinition{kind: "direct", source: source}, nil
 	case *projectcontracts.SQLModelDefinition:
 		sql := strings.TrimSpace(variant.SQL)
 		if sql == "" {
 			return loweredModelDefinition{}, fmt.Errorf("sql model definition sql is required")
 		}
-		return loweredModelDefinition{sql: sql}, nil
+		return loweredModelDefinition{kind: "sql", sql: sql}, nil
 	case nil:
 		return loweredModelDefinition{}, fmt.Errorf("model definition variant is required")
 	default:

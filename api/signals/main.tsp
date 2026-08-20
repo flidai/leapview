@@ -1935,6 +1935,12 @@ model ResourceAssetDetailsSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model ResourceAssetDefinitionSignal {
+  `sections`: ResourceDetailSectionSignal[];
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model ResourceAssetLineageSignal {
   `count`: int64;
   `graph`: AssetLineageGraphSignal;
@@ -1975,6 +1981,7 @@ model ResourceAssetPageSignal {
   `assetId`: string;
   `breadcrumbs`: ResourceBreadcrumbSignal[];
   `connectionLifecycle`?: ConnectionLifecycleSignal;
+  `definition`?: ResourceAssetDefinitionSignal;
   `details`?: ResourceAssetDetailsSignal;
   `drawerParent`?: ResourceAssetPageSignal;
   `environment`?: string;

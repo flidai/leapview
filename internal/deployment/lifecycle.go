@@ -428,7 +428,15 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 	if err != nil {
 		return DeliveryBuildResult{}, err
 	}
-	attempt, err := NewDeliveryBuildAttempt(DeliveryBuildAttempt{ID: request.AttemptID, PlanID: plan.ID, IdempotencyKey: request.IdempotencyKey, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, BaseGenerationID: plan.BaseGenerationID, BaseCatalogDigest: request.BaseCatalogDigest, BasePhysicalPoolID: request.BasePhysicalPoolID, PhysicalPoolID: request.PhysicalPoolID, WriterLeaseID: lease.ID, CreatedAt: request.CreatedAt})
+	// The plan's base generation is always the publication/staleness fence, but
+	// it becomes a build-attempt base only when the build explicitly reuses the
+	// sealed catalog. Fresh materialization against an active generation must
+	// not manufacture an incomplete catalog-reuse identity.
+	attemptBaseGenerationID := ""
+	if request.BaseCatalogDigest != "" || request.BasePhysicalPoolID != "" {
+		attemptBaseGenerationID = plan.BaseGenerationID
+	}
+	attempt, err := NewDeliveryBuildAttempt(DeliveryBuildAttempt{ID: request.AttemptID, PlanID: plan.ID, IdempotencyKey: request.IdempotencyKey, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, BaseGenerationID: attemptBaseGenerationID, BaseCatalogDigest: request.BaseCatalogDigest, BasePhysicalPoolID: request.BasePhysicalPoolID, PhysicalPoolID: request.PhysicalPoolID, WriterLeaseID: lease.ID, CreatedAt: request.CreatedAt})
 	if err != nil {
 		return DeliveryBuildResult{}, err
 	}

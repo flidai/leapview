@@ -103,3 +103,9 @@ func (m *Module) ActiveServingStateGraph(ctx context.Context, projectID projectg
 func (m *Module) ServingStateGraph(ctx context.Context, projectID projectgraph.ResourceID, environment string, servingStateID servingstate.ID) (servingstate.AssetGraph, bool, error) {
 	return m.states.ServingStateGraph(ctx, projectID, environment, servingStateID)
 }
+
+// AssetVersions returns the distinct published configuration history for one
+// logical project asset.
+func (m *Module) AssetVersions(ctx context.Context, projectID projectgraph.ResourceID, environment string, assetID projectgraph.ResourceID) ([]servingstate.AssetVersion, error) {
+	return m.states.AssetVersions(ctx, projectID, environment, assetID)
+}

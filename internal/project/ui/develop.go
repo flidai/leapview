@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -45,8 +46,12 @@ func ProjectPageForEnvironment(catalog catalog.Catalog, project projectview.Deve
 // canonical Develop resource areas. The project identity remains server-bound
 // in the page signal; area only controls navigation and filtering.
 func ProjectAreaPage(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
+	return ProjectAreaPageWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, csrfToken, chromeOptions...)
+}
+
+func ProjectAreaPageWithContext(catalog catalog.Catalog, project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
 	area = canonicalProjectArea(area)
-	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
+	page := projectPageSignalWithContext(project, assets, contextAssets, edges, area, activeType, query, environment)
 	attrs := []g.Node{g.Attr("slot", "page")}
 	attrs = append(attrs, projectAssetFilterRouteBridge(area)...)
 	return projectRouteDocument(project.Title, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-page", attrs...), projectDocumentExtras{CSRFToken: csrfToken, Area: area}, chromeOptions)
@@ -61,13 +66,21 @@ func ProjectBootstrapSignalsForEnvironment(catalog catalog.Catalog, project proj
 }
 
 func ProjectBootstrapSignalsForArea(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
+	return ProjectBootstrapSignalsForAreaWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, chromeOptions...)
+}
+
+func ProjectBootstrapSignalsForAreaWithContext(catalog catalog.Catalog, project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
 	area = canonicalProjectArea(area)
-	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
+	page := projectPageSignalWithContext(project, assets, contextAssets, edges, area, activeType, query, environment)
 	return projectRouteBootstrapSignals(catalog, area, roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
 }
 
 func ProjectAssetListResultsPatch(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
-	list := projectAssetListSignal(projectID, assets, edges, "", "", nil, "", "")
+	return ProjectAssetListResultsPatchWithContext(projectID, assets, assets, edges)
+}
+
+func ProjectAssetListResultsPatchWithContext(projectID string, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
+	list := projectAssetListSignalWithContext(projectID, assets, contextAssets, edges, "", "", nil, "", "")
 	return map[string]any{"page": map[string]any{
 		"assetList": map[string]any{"assets": list.Assets},
 	}}
@@ -168,6 +181,10 @@ func projectAssetFilterRouteBridge(area string) []g.Node {
 }
 
 func projectPageSignal(project projectview.DevelopView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment string) uisignals.ResourcePageSignal {
+	return projectPageSignalWithContext(project, assets, assets, edges, area, activeType, query, environment)
+}
+
+func projectPageSignalWithContext(project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment string) uisignals.ResourcePageSignal {
 	area = canonicalProjectArea(area)
 	assetType := projectAssetTypeForArea(area)
 	// Each route owns one resource type. Keep the signal scoped even when a
@@ -177,9 +194,10 @@ func projectPageSignal(project projectview.DevelopView, assets []projectview.Dev
 		Kind:        uisignals.RouteKindData,
 		Title:       projectAreaLabel(area),
 		Environment: uisignals.Optional(environment),
-		AssetList: uisignals.Pointer(projectAssetListSignal(
+		AssetList: uisignals.Pointer(projectAssetListSignalWithContext(
 			project.ID,
 			assets,
+			contextAssets,
 			edges,
 			activeType,
 			query,
@@ -244,9 +262,13 @@ func connectionSourceCount(connectionID string, edges []projectview.DevelopEdgeV
 }
 
 func projectAssetListSignal(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeType, query string, tabs []uisignals.ResourceTabSignal, empty, searchHref string) uisignals.ResourceAssetListSignal {
+	return projectAssetListSignalWithContext(projectID, assets, assets, edges, activeType, query, tabs, empty, searchHref)
+}
+
+func projectAssetListSignalWithContext(projectID string, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeType, query string, tabs []uisignals.ResourceTabSignal, empty, searchHref string) uisignals.ResourceAssetListSignal {
 	items := make([]uisignals.ResourceAssetSummarySignal, 0, len(assets))
 	sortedAssets := sortedProjectAssetList(assets)
-	assetIndex := assetsByID(sortedAssets)
+	assetIndex := assetsByID(contextAssets)
 	for _, asset := range sortedAssets {
 		items = append(items, projectAssetSummarySignal(projectID, asset, assetIndex, edges))
 	}
@@ -335,6 +357,7 @@ func projectAssetPageSignalWithRefresh(project projectview.DevelopView, asset pr
 }
 
 func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection string, lineage assetLineageModel, refresh AssetRefreshState, versions AssetVersionsState) uisignals.ResourceAssetPageSignal {
+	activeSection = normalizeProjectAssetSection(activeSection)
 	page := baseProjectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
 	area := projectAreaForAssetType(asset.Type)
 	areaHref := projectAssetBaseHref(area)
@@ -345,13 +368,20 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		{Label: assetTitle(asset), Current: uisignals.Pointer(true)},
 	}
 	actions := []uisignals.ResourceActionSignal{{Label: "Back to " + strings.ToLower(areaLabel), Href: uisignals.Pointer(areaHref), Icon: uisignals.Pointer("back")}}
-	if assetRefreshable(asset.Type) {
+	if assetRefreshable(asset.Type) && activeSection != "definition" {
+		runLabel := "Run now"
+		if refresh.Unavailable {
+			runLabel = "Run now unavailable; review connections"
+		}
 		actions = append([]uisignals.ResourceActionSignal{{
-			Label:    "Run now",
+			Label:    runLabel,
 			Icon:     uisignals.Pointer("refresh"),
 			Command:  uisignals.Pointer("run-refresh-pipeline"),
-			Disabled: uisignals.Optional(assetRefreshSignal(refresh).Running),
+			Disabled: uisignals.Optional(refresh.Unavailable || assetRefreshSignal(refresh).Running),
 		}}, actions...)
+		if refresh.Unavailable {
+			actions = append(actions, uisignals.ResourceActionSignal{Label: "Review connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("open")})
+		}
 	}
 	if asset.Href != "" {
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})
@@ -359,6 +389,7 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	page.Actions = uisignals.OptionalSlice(actions)
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
+		{ID: "definition", Label: "Definition", Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
 	}
 	if assetDataInspectable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
@@ -382,6 +413,7 @@ func connectionAssetPageSignal(project projectview.DevelopView, asset projectvie
 }
 
 func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection string, lineage assetLineageModel, versions AssetVersionsState, administration ...ConnectionAdministrationView) uisignals.ResourceAssetPageSignal {
+	activeSection = normalizeProjectAssetSection(activeSection)
 	page := baseProjectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, AssetRefreshState{}, versions)
 	admin := ConnectionAdministrationView{}
 	if len(administration) > 0 {
@@ -397,6 +429,7 @@ func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asse
 	page.Actions = uisignals.Pointer([]uisignals.ResourceActionSignal{{Label: "Back to connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("back")}})
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
+		{ID: "definition", Label: "Definition", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "definition"), Active: activeSection == "definition"},
 		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))},
 	}
 	return page
@@ -424,6 +457,9 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))
 	}
+	if activeSection == "definition" {
+		page.Definition = uisignals.Pointer(projectAssetDefinitionSignal(asset))
+	}
 	if activeSection == "lineage" {
 		page.Lineage = uisignals.Pointer(uisignals.ResourceAssetLineageSignal{
 			Count:       int64(lineage.Count),
@@ -449,8 +485,43 @@ func projectAssetDetailsSignal(project projectview.DevelopView, asset projectvie
 
 func projectAssetDetailsSignalWithRefresh(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState) uisignals.ResourceAssetDetailsSignal {
 	model := assetDetailModelForAssetWithRefresh(project, asset, assets, edges, refresh)
-	sections := make([]uisignals.ResourceDetailSectionSignal, 0, len(model.Sections))
-	for _, section := range model.Sections {
+	return uisignals.ResourceAssetDetailsSignal{
+		Overview:           definitionFactSignals(model.Overview),
+		Sections:           assetDetailSectionSignals(model.Sections),
+		SemanticModelGraph: model.SemanticModelGraph,
+	}
+}
+
+func projectAssetDefinitionSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetDefinitionSignal {
+	sections := []assetDetailSection{}
+	if configuration := metaString(asset.Payload, "Configuration", "configuration"); configuration != "" {
+		lang, code := formattedResourceConfiguration(configuration)
+		sections = append(sections, assetDetailSection{Title: "Configuration", Lang: lang, Code: code})
+	}
+	if asset.Type == string(projectview.AssetTypeModelTable) {
+		if sql := modelTableSQL(asset.Payload); sql != "" {
+			sections = append(sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
+		}
+	}
+	return uisignals.ResourceAssetDefinitionSignal{Sections: assetDetailSectionSignals(sections)}
+}
+
+func formattedResourceConfiguration(configuration string) (string, string) {
+	trimmed := strings.TrimSpace(configuration)
+	if !json.Valid([]byte(trimmed)) {
+		return "yaml", configuration
+	}
+	var formatted bytes.Buffer
+	if err := json.Indent(&formatted, []byte(trimmed), "", "  "); err != nil {
+		return "json", configuration
+	}
+	formatted.WriteByte('\n')
+	return "json", formatted.String()
+}
+
+func assetDetailSectionSignals(input []assetDetailSection) []uisignals.ResourceDetailSectionSignal {
+	sections := make([]uisignals.ResourceDetailSectionSignal, 0, len(input))
+	for _, section := range input {
 		sections = append(sections, uisignals.ResourceDetailSectionSignal{
 			Title: section.Title,
 			Facts: uisignals.OptionalSlice(definitionFactSignals(section.Facts)),
@@ -459,11 +530,7 @@ func projectAssetDetailsSignalWithRefresh(project projectview.DevelopView, asset
 			Lang:  uisignals.Optional(section.Lang),
 		})
 	}
-	return uisignals.ResourceAssetDetailsSignal{
-		Overview:           definitionFactSignals(model.Overview),
-		Sections:           sections,
-		SemanticModelGraph: model.SemanticModelGraph,
-	}
+	return sections
 }
 
 func definitionFactSignals(facts []definitionFact) []uisignals.DefinitionFactSignal {
@@ -534,8 +601,8 @@ func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectvie
 	return ConnectionAssetBootstrapSignalsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
 }
 
-func ConnectionAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState) map[string]any {
-	return ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{})
+func ConnectionAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
+	return ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, chromeOptions...)
 }
 
 func ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, administration ConnectionAdministrationView, chromeOptions ...webpage.Provider) map[string]any {
@@ -552,8 +619,8 @@ func ConnectionAssetPageWithVersions(catalog catalog.Catalog, project projectvie
 	return ConnectionAssetPageWithVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
 }
 
-func ConnectionAssetPageWithVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState) g.Node {
-	return ConnectionAssetPageWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, ConnectionCommandBindings{}, "", nil)
+func ConnectionAssetPageWithVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
+	return ConnectionAssetPageWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, ConnectionCommandBindings{}, "", chromeOptions)
 }
 
 func ConnectionAssetPageWithAdministrationForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, administration ConnectionAdministrationView, commands ConnectionCommandBindings, csrfToken string, chromeOptions []webpage.Provider) g.Node {
@@ -684,6 +751,8 @@ func canonicalProjectArea(area string) string {
 		return "models"
 	case "semantic-models":
 		return "semantic-models"
+	case "dashboards":
+		return "dashboards"
 	case "pipelines":
 		return "pipelines"
 	case "connections":
@@ -695,6 +764,8 @@ func canonicalProjectArea(area string) string {
 
 func projectAreaForAssetType(assetType string) string {
 	switch assetType {
+	case string(projectview.AssetTypeDashboard):
+		return "dashboards"
 	case string(projectview.AssetTypeModelTable):
 		return "models"
 	case string(projectview.AssetTypeSemanticModel):
@@ -710,6 +781,8 @@ func projectAreaForAssetType(assetType string) string {
 
 func projectAreaLabel(area string) string {
 	switch canonicalProjectArea(area) {
+	case "dashboards":
+		return "Dashboards"
 	case "models":
 		return "Models"
 	case "semantic-models":
@@ -725,6 +798,8 @@ func projectAreaLabel(area string) string {
 
 func projectAssetTypeForArea(area string) string {
 	switch canonicalProjectArea(area) {
+	case "dashboards":
+		return string(projectview.AssetTypeDashboard)
 	case "models":
 		return string(projectview.AssetTypeModelTable)
 	case "semantic-models":
@@ -734,9 +809,23 @@ func projectAssetTypeForArea(area string) string {
 	}
 }
 
-func ValidProjectAssetSection(section string) bool {
+func ValidProjectAssetSection(assetType, section string) bool {
+	section = strings.TrimSpace(section)
 	switch section {
-	case "details", "data", "lineage", "refreshes", "versions":
+	case "details", "definition", "lineage", "versions":
+		return true
+	case "data":
+		return assetDataInspectable(assetType)
+	case "refreshes":
+		return assetRefreshable(assetType)
+	default:
+		return false
+	}
+}
+
+func validProjectAssetSectionName(section string) bool {
+	switch strings.TrimSpace(section) {
+	case "details", "definition", "data", "lineage", "refreshes", "versions":
 		return true
 	default:
 		return false
@@ -745,6 +834,7 @@ func ValidProjectAssetSection(section string) bool {
 
 type AssetRefreshState struct {
 	CSRFToken        string
+	Unavailable      bool
 	RunCommand       uicommand.Binding
 	CancelCommand    uicommand.Binding
 	Runs             []AssetRefreshRun
@@ -805,7 +895,9 @@ func ProjectAssetRefreshSignals(project projectview.DevelopView, asset projectvi
 
 func assetRefreshSignal(refresh AssetRefreshState) uisignals.ResourceAssetRefreshSignal {
 	status := strings.TrimSpace(refresh.Latest.Status)
-	if status == "" {
+	if refresh.Unavailable {
+		status = "unavailable"
+	} else if status == "" {
 		status = "not refreshed"
 	}
 	return uisignals.ResourceAssetRefreshSignal{
@@ -996,7 +1088,8 @@ func projectAssetDataHref(asset projectview.DevelopAssetView) string {
 }
 
 func normalizeProjectAssetSection(section string) string {
-	if ValidProjectAssetSection(section) {
+	section = strings.TrimSpace(section)
+	if validProjectAssetSectionName(section) {
 		return section
 	}
 	return "details"
@@ -1695,10 +1788,6 @@ type assetDetailSection struct {
 	Lang   string
 }
 
-func assetDetailUsesCodeBlock(asset projectview.DevelopAssetView) bool {
-	return asset.Type == "model_table" && modelTableSQL(asset.Payload) != ""
-}
-
 func assetDetailModelForAsset(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetDetailModel {
 	return assetDetailModelForAssetWithRefresh(project, asset, assets, edges, AssetRefreshState{})
 }
@@ -1802,14 +1891,19 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 }
 
 func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
-	status := strings.TrimSpace(refresh.Latest.Status)
-	if status == "" {
-		status = "not refreshed"
-	}
-	return []definitionFact{
+	status := assetRefreshSignal(refresh).Status
+	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
 		{Label: "Last refreshed", Value: emptyDash(refresh.LatestSuccessful.FinishedAt)},
 	}
+	if refresh.Unavailable {
+		facts = append(facts, definitionFact{
+			Label: "Refresh guidance",
+			Value: "Refresh state could not be loaded. Review Connections and runtime setup, then retry.",
+			Wide:  true,
+		})
+	}
+	return facts
 }
 
 func semanticFieldCount(tables map[string]any) int {
@@ -2245,14 +2339,46 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
+	if physical := metaMap(asset.Payload, "Physical", "physical"); len(physical) > 0 {
+		model.Overview = append(model.Overview,
+			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
+			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
+			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
+			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
+		)
+	}
 	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
 	)
-	if sql := modelTableSQL(asset.Payload); sql != "" {
-		model.Sections = append(model.Sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
+}
+
+func formatCatalogCount(value int64) string {
+	if value < 0 {
+		return "-"
 	}
+	digits := strconv.FormatInt(value, 10)
+	for index := len(digits) - 3; index > 0; index -= 3 {
+		digits = digits[:index] + "," + digits[index:]
+	}
+	return digits
+}
+
+func formatCatalogBytes(value int64) string {
+	if value < 0 {
+		return "-"
+	}
+	const unit = int64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	divisor, exponent := unit, 0
+	for quotient := value / unit; quotient >= unit && exponent < 4; quotient /= unit {
+		divisor *= unit
+		exponent++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(divisor), "KMGTPE"[exponent])
 }
 
 func modelTableKeyParts(asset projectview.DevelopAssetView) (string, string) {
@@ -2314,8 +2440,8 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 			"name":          name,
 			"nameHref":      childHref(projectID, child),
 			"label":         firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name)),
-			"physical_type": recordTableBadgeValue(metaString(column, "PhysicalType", "physicalType"), "muted"),
-			"nullable":      nullableLabel(column, "Nullable", "nullable"),
+			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
+			"nullable":      schemaNullableLabel(column, field),
 			"entities":      emptyDash(strings.Join(entityNames[name], ", ")),
 			"grain":         boolLabel(grainFields[name]),
 			"description":   emptyDash(metaString(field, "Description", "description")),
@@ -2325,7 +2451,7 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 		Columns: []recordTableColumn{
 			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("170px")},
 			{ID: "label", Header: "Label", Width: uisignals.Pointer("180px")},
-			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
 			{ID: "entities", Header: "Entities", Width: uisignals.Pointer("180px")},
 			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
@@ -2370,15 +2496,15 @@ func sourceFieldsGrid(fields, schema map[string]any) recordTable {
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"description":   emptyDash(metaString(field, "Description", "description")),
-			"physical_type": recordTableBadgeValue(metaString(column, "PhysicalType", "physicalType"), "muted"),
-			"nullable":      nullableLabel(column, "Nullable", "nullable"),
+			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
+			"nullable":      schemaNullableLabel(column, field),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
 			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("170px")},
 			{ID: "description", Header: "Description"},
-			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
 		},
 		Rows:     rows,
@@ -2405,6 +2531,25 @@ func modelTableSchemaColumns(fields map[string]any, schema map[string]any) []map
 		columns = append(columns, map[string]any{"name": name})
 	}
 	return columns
+}
+
+func schemaFieldType(column, field map[string]any) string {
+	return firstNonEmpty(
+		metaString(column, "PhysicalType", "physicalType"),
+		metaString(field, "Datatype", "datatype", "Type", "type"),
+		metaString(column, "Datatype", "datatype", "Type", "type"),
+		"Not profiled",
+	)
+}
+
+func schemaNullableLabel(column, field map[string]any) string {
+	if value := metaValue(column, "Nullable", "nullable"); value != nil {
+		return nullableValueLabel(value)
+	}
+	if value := metaValue(field, "Nullable", "nullable"); value != nil {
+		return nullableValueLabel(value)
+	}
+	return "Not profiled"
 }
 
 func semanticFieldsGrid(projectID string, parent projectview.DevelopAssetView, assets []projectview.DevelopAssetView, meta map[string]any) recordTable {
@@ -2520,6 +2665,19 @@ func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAsse
 	pages := childrenByType(asset.ID, "page", assets)
 	filters := childrenByType(asset.ID, "filter", assets)
 	visuals := childrenByType(asset.ID, "visual", assets)
+	// Serving graph rows intentionally contain only graph metadata. When the
+	// selected dashboard was enriched from its typed compiled definition, use
+	// that payload as the fallback child projection so the detail view still
+	// shows pages, filters, and visuals.
+	if len(pages) == 0 {
+		pages = dashboardPayloadChildren(asset, "page")
+	}
+	if len(filters) == 0 {
+		filters = dashboardPayloadChildren(asset, "filter")
+	}
+	if len(visuals) == 0 {
+		visuals = dashboardPayloadChildren(asset, "visual")
+	}
 	model.Overview = append(model.Overview,
 		definitionFact{Label: "Semantic model", Value: metaString(asset.Payload, "SemanticModel", "semantic_model")},
 		definitionFact{Label: "Tags", Value: strings.Join(stringSlice(metaValue(asset.Payload, "Tags", "tags")), ", ")},
@@ -2529,6 +2687,71 @@ func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAsse
 		assetDetailSection{Title: fmt.Sprintf("Filters (%d)", len(filters)), Signal: "assetDetailsFiltersTable", Table: dashboardFiltersTable(asset, filters)},
 		assetDetailSection{Title: fmt.Sprintf("Visuals (%d)", len(visuals)), Signal: "assetDetailsVisualsTable", Table: dashboardVisualsTable(asset, visuals)},
 	)
+	publications := dashboardPayloadChildren(asset, "publication")
+	model.Sections = append(model.Sections,
+		assetDetailSection{Title: fmt.Sprintf("Publications (%d)", len(publications)), Signal: "assetDetailsPublicationsTable", Table: dashboardPublicationsTable(publications)},
+	)
+}
+
+func dashboardPayloadChildren(parent projectview.DevelopAssetView, typ string) []projectview.DevelopAssetView {
+	var values []projectview.DevelopAssetView
+	appendValue := func(key string, value any) {
+		payload := asMap(value)
+		title := metaString(payload, "Title", "title", "Label", "label")
+		if title == "" {
+			title = key
+		}
+		values = append(values, projectview.DevelopAssetView{
+			ID: parent.ID + ":" + typ + ":" + key, ProjectID: parent.ProjectID, ServingStateID: parent.ServingStateID,
+			Type: typ, Key: parent.Key + "." + key, ParentID: parent.ID, Title: title,
+			Description: metaString(payload, "Description", "description"), Payload: payload,
+		})
+	}
+	switch typ {
+	case "page":
+		for _, value := range metaSlice(parent.Payload, "Pages", "pages") {
+			entry := asMap(value)
+			appendValue(metaString(entry, "ID", "id"), entry)
+		}
+	case "filter":
+		for key, value := range metaMap(parent.Payload, "FilterDefinitions", "filterDefinitions") {
+			appendValue(key, value)
+		}
+	case "visual":
+		for key, value := range metaMap(parent.Payload, "Visualizations", "visualizations") {
+			appendValue(key, value)
+		}
+	case "publication":
+		for _, value := range metaSlice(parent.Payload, "Publications", "publications") {
+			entry := asMap(value)
+			appendValue(metaString(entry, "Name", "name"), entry)
+		}
+	}
+	sortAssetChildren(parent, values)
+	return values
+}
+
+func dashboardPublicationsTable(publications []projectview.DevelopAssetView) recordTable {
+	rows := make([]map[string]any, 0, len(publications))
+	for _, publication := range publications {
+		rows = append(rows, map[string]any{
+			"publication":  publication.Title,
+			"dashboard":    emptyDash(metaString(publication.Payload, "Dashboard", "dashboard")),
+			"default_page": emptyDash(metaString(publication.Payload, "DefaultPage", "defaultPage")),
+			"origins":      emptyDash(strings.Join(stringSlice(metaValue(publication.Payload, "AllowedOrigins", "allowedOrigins")), ", ")),
+			"config_hash":  emptyDash(metaString(publication.Payload, "ConfigurationDigest", "configurationDigest")),
+		})
+	}
+	return recordTable{
+		Columns: []recordTableColumn{
+			{ID: "publication", Header: "Publication", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
+			{ID: "dashboard", Header: "Dashboard", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
+			{ID: "default_page", Header: "Default page", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
+			{ID: "origins", Header: "Allowed origins", Width: uisignals.Pointer("260px")},
+			{ID: "config_hash", Header: "Config digest", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
+		},
+		Rows: rows, Empty: "No dashboard publications are configured.", MinWidth: uisignals.Pointer("1060px"),
+	}
 }
 
 func dashboardPagesTable(parent projectview.DevelopAssetView, pages []projectview.DevelopAssetView) recordTable {
@@ -2537,16 +2760,15 @@ func dashboardPagesTable(parent projectview.DevelopAssetView, pages []projectvie
 		key := assetChildName(parent, page)
 		rows = append(rows, map[string]any{
 			"page":        assetTitle(page),
-			"pageHref":    assetnav.ProjectAssetSectionHref(page.ID, "details"),
 			"key":         key,
 			"description": emptyDash(page.Description),
 			"runtime":     "Open",
-			"runtimeHref": "/dashboards/" + parent.Key + "/pages/" + key,
+			"runtimeHref": "/dashboards/" + url.PathEscape(parent.ID) + "/pages/" + url.PathEscape(key),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "page", Header: "Page", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("pageHref"), Width: uisignals.Pointer("220px")},
+			{ID: "page", Header: "Page", Width: uisignals.Pointer("220px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("190px")},
 			{ID: "description", Header: "Description"},
 			{ID: "runtime", Header: "Runtime", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("runtimeHref"), Width: uisignals.Pointer("110px")},
@@ -2562,16 +2784,15 @@ func dashboardFiltersTable(parent projectview.DevelopAssetView, filters []projec
 	rows := make([]map[string]any, 0, len(filters))
 	for _, filter := range filters {
 		rows = append(rows, map[string]any{
-			"filter":     assetTitle(filter),
-			"filterHref": assetnav.ProjectAssetSectionHref(filter.ID, "details"),
-			"key":        assetChildName(parent, filter),
-			"field":      emptyDash(metaString(filter.Payload, "Dimension", "dimension", "Field", "field")),
-			"type":       emptyDash(metaString(filter.Payload, "Type", "type", "Kind", "kind")),
+			"filter": assetTitle(filter),
+			"key":    assetChildName(parent, filter),
+			"field":  emptyDash(metaString(filter.Payload, "Dimension", "dimension", "Field", "field")),
+			"type":   emptyDash(metaString(filter.Payload, "Type", "type", "Kind", "kind")),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "filter", Header: "Filter", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("filterHref"), Width: uisignals.Pointer("190px")},
+			{ID: "filter", Header: "Filter", Width: uisignals.Pointer("190px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("160px")},
 			{ID: "field", Header: "Field", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
 			{ID: "type", Header: "Type", Width: uisignals.Pointer("120px")},
@@ -2587,18 +2808,20 @@ func dashboardVisualsTable(parent projectview.DevelopAssetView, visuals []projec
 	rows := make([]map[string]any, 0, len(visuals))
 	for _, visual := range visuals {
 		query := metaMap(visual.Payload, "Query", "query")
+		if aggregate := metaMap(query, "Aggregate", "aggregate"); len(aggregate) > 0 {
+			query = aggregate
+		}
 		rows = append(rows, map[string]any{
 			"visual":     assetTitle(visual),
-			"visualHref": assetnav.ProjectAssetSectionHref(visual.ID, "details"),
 			"key":        assetChildName(parent, visual),
-			"type":       emptyDash(firstNonEmpty(metaString(visual.Payload, "Type", "type"), metaString(visual.Payload, "Shape", "shape"))),
+			"type":       emptyDash(firstNonEmpty(metaString(visual.Payload, "Type", "type", "RendererID", "rendererID"), metaString(visual.Payload, "Shape", "shape"))),
 			"metrics":    emptyDash(strings.Join(stringSlice(metaValue(query, "Metrics", "metrics")), ", ")),
 			"dimensions": emptyDash(strings.Join(stringSlice(metaValue(query, "Dimensions", "dimensions")), ", ")),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "visual", Header: "Visual", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("visualHref"), Width: uisignals.Pointer("230px")},
+			{ID: "visual", Header: "Visual", Width: uisignals.Pointer("230px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
 			{ID: "type", Header: "Type", Width: uisignals.Pointer("120px")},
 			{ID: "metrics", Header: "Metrics", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("220px")},
@@ -2851,8 +3074,16 @@ func metaMap(meta map[string]any, keys ...string) map[string]any {
 }
 
 func metaSlice(meta map[string]any, keys ...string) []any {
-	if typed, ok := metaValue(meta, keys...).([]any); ok {
+	value := metaValue(meta, keys...)
+	if typed, ok := value.([]any); ok {
 		return typed
+	}
+	if typed, ok := value.([]map[string]any); ok {
+		values := make([]any, len(typed))
+		for index := range typed {
+			values[index] = typed[index]
+		}
+		return values
 	}
 	return nil
 }
@@ -2916,6 +3147,19 @@ func metaInt(meta map[string]any, keys ...string) int {
 	}
 }
 
+func metaInt64(meta map[string]any, keys ...string) int64 {
+	switch typed := metaValue(meta, keys...).(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
 func sortedMapKeys(values map[string]any) []string {
 	keys := make([]string, 0, len(values))
 	for key := range values {
@@ -2964,11 +3208,7 @@ func boolLabel(value bool) string {
 	return "No"
 }
 
-func nullableLabel(meta map[string]any, keys ...string) string {
-	value := metaValue(meta, keys...)
-	if value == nil {
-		return "-"
-	}
+func nullableValueLabel(value any) string {
 	switch typed := value.(type) {
 	case bool:
 		return boolLabel(typed)
@@ -2980,7 +3220,7 @@ func nullableLabel(meta map[string]any, keys ...string) string {
 			return "No"
 		}
 	}
-	return "-"
+	return "Not profiled"
 }
 
 func firstNonEmpty(values ...string) string {

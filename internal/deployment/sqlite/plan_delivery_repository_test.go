@@ -58,6 +58,34 @@ func insertDeliveryPool(t *testing.T, store *platform.Store, id string) {
 	}
 }
 
+func TestDeliveryRepositoryAcceptsFreshBuildAgainstActivePlanBase(t *testing.T) {
+	store, repo := openDeliveryRepository(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := repoDeliveryPlan(t, now)
+	plan.BaseGenerationID, plan.BaseTargetRevision = "generation-active", 4
+	plan, err := deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO delivery_target_revisions (target_id,project_id,environment,target_revision,active_generation_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(target_id) DO UPDATE SET active_generation_id=excluded.active_generation_id,target_revision=excluded.target_revision,updated_at=excluded.updated_at`, plan.TargetID, plan.ProjectID.String(), plan.Environment, plan.BaseTargetRevision, plan.BaseGenerationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePlan(t.Context(), plan); err != nil {
+		t.Fatal(err)
+	}
+	pool := repoDeliveryDigest('9')
+	insertDeliveryPool(t, store, pool)
+	lease := deployment.DeliveryWriterLease{ID: "writer-fresh-active", AttemptID: "attempt-fresh-active", PhysicalPoolID: pool, OwnerID: "builder", Epoch: 1, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	attempt := deployment.DeliveryBuildAttempt{ID: lease.AttemptID, PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: pool, WriterLeaseID: lease.ID, CreatedAt: now}
+	_, persisted, err := repo.CreateWriterLeaseAndBuildAttempt(t.Context(), lease, attempt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.BaseGenerationID != "" || persisted.BaseCatalogDigest != "" || persisted.BasePhysicalPoolID != "" {
+		t.Fatalf("fresh persisted attempt retained base identity: %#v", persisted)
+	}
+}
+
 func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	store, repo := openDeliveryRepository(t)
 	now := time.Now().UTC().Truncate(time.Second)

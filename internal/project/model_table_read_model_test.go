@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
 func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
@@ -59,6 +60,26 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	}
 	if columns, ok := schema["columns"].([]any); !ok || len(columns) != 1 {
 		t.Fatalf("payload schema columns = %#v", schema["columns"])
+	}
+}
+
+func TestModelTableAssetPayloadUsesAuthoredDefinitionOverTargetExecution(t *testing.T) {
+	const authoredSQL = `WITH normalized AS (SELECT * FROM source."olist.geolocation") SELECT * FROM normalized`
+	const authoredSource = "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:zip_geolocations, name: zip_geolocations}\n"
+	table := semanticmodel.Table{
+		// A target-bound runtime may retain only a direct source execution for
+		// materialization. The detail projection must still show authored SQL.
+		Execution: semanticmodel.ExecutionDefinition{Source: "source:olist.geolocation"},
+		Entities:  map[string]semanticmodel.EntityDefinition{"zip": {Type: "primary", Fields: []string{"zip_prefix"}}},
+	}
+	authored := projectmanifest.AuthoredModelDefinition{Type: "sql", SQL: authoredSQL}
+	payload := ModelTableAssetPayloadWithAuthoredSource(table, &authored, authoredSource)
+	definition, ok := payload["Definition"].(map[string]any)
+	if !ok || definition["SQL"] != authoredSQL || definition["Source"] != nil {
+		t.Fatalf("payload definition = %#v, want authored SQL", payload["Definition"])
+	}
+	if payload["Configuration"] != authoredSource {
+		t.Fatalf("payload configuration = %#v, want authored model source", payload["Configuration"])
 	}
 }
 

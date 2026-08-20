@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"gopkg.in/yaml.v3"
@@ -47,6 +48,8 @@ func LoadProject(projectPath string) (Project, error) {
 		SourcePaths:             map[string]string{},
 		SourceIDs:               map[string]string{},
 		Models:                  map[string]semanticmodel.Table{},
+		ModelDefinitions:        map[string]projectmanifest.AuthoredModelDefinition{},
+		ModelSources:            map[string]string{},
 		ModelAIContexts:         map[string]*semanticmodel.AIContext{},
 		ModelIDs:                map[string]string{},
 		ModelPaths:              map[string]string{},
@@ -69,6 +72,7 @@ func LoadProject(projectPath string) (Project, error) {
 		ResourceIDOwners:        map[string]string{},
 		ResourcePaths:           map[string]string{},
 		ResourceMetadata:        map[string]projectgraph.Metadata{},
+		ResourceSources:         map[string]string{},
 	}
 	if envelope.Metadata.ID == "" {
 		return Project{}, resourceError(projectPath, envelopeResourceID(envelope, ""), "metadata.id", "%s metadata.id is required", projectPath)
@@ -190,6 +194,7 @@ func loadSources(project *Project, includes []string) error {
 		project.ResourceIDs["source:"+name] = envelope.Metadata.ID
 		project.ResourcePaths[envelope.Metadata.ID] = path
 		project.ResourceMetadata[envelope.Metadata.ID] = flatResourceMetadata(envelope.Metadata, name)
+		project.ResourceSources[envelope.Metadata.ID] = string(content)
 	}
 	return nil
 }

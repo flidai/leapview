@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -281,6 +282,130 @@ type runtimeAssemblyInputs struct {
 	DeliveryStartup func(context.Context) error
 }
 
+// reconcileActivatedDashboardPublications projects the immutable publication
+// definitions carried by a serving generation into the durable admin/public
+// publication table. Deployment activation deliberately commits its serving
+// CAS first; this observer then uses a fresh transaction so a reconciliation
+// failure cannot make a successfully activated generation look failed.
+func reconcileActivatedDashboardPublications(
+	ctx context.Context,
+	database *sql.DB,
+	states interface {
+		ByID(context.Context, servingstate.ID) (servingstate.State, error)
+	},
+	activated deployment.Deployment,
+) error {
+	if database == nil || states == nil {
+		return nil
+	}
+	state, err := states.ByID(ctx, servingstate.ID(activated.ServingIdentity.GenerationID))
+	if err != nil {
+		return fmt.Errorf("load activated serving state %q for dashboard publications: %w", activated.ServingIdentity.GenerationID, err)
+	}
+	if state.ProjectID != activated.ServingIdentity.ProjectID {
+		return fmt.Errorf("activated serving state project %q does not match deployment project %q", state.ProjectID, activated.ServingIdentity.ProjectID)
+	}
+	// AfterActivated is intentionally non-transactional and may overlap a
+	// subsequent cutover. If the durable active pointer has already advanced,
+	// this callback is stale and must not roll the admin projection backward.
+	if activeReader, ok := states.(interface {
+		ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
+	}); ok {
+		current, _, currentErr := activeReader.ActiveArtifact(ctx, activated.ServingIdentity.ProjectID, servingstate.Environment(activated.ServingIdentity.Environment))
+		if currentErr == nil && current.ID != state.ID {
+			return nil
+		}
+		if currentErr != nil && !errors.Is(currentErr, servingstate.ErrNotFound) && !errors.Is(currentErr, sql.ErrNoRows) {
+			return fmt.Errorf("check active serving state before dashboard publication reconciliation: %w", currentErr)
+		}
+	}
+	raw := strings.TrimSpace(state.DashboardPublicationsJSON)
+	// Older and test-authored serving states predate the compiled publication
+	// snapshot. An absent snapshot is not an authoritative empty definition and
+	// must not erase publication rows owned by those activation paths. Modern
+	// compilation writes an explicit JSON object (including "{}" for none).
+	if raw == "" || raw == "null" {
+		return nil
+	}
+	publications := make(map[string]json.RawMessage)
+	if err := json.Unmarshal([]byte(raw), &publications); err != nil {
+		return fmt.Errorf("decode activated dashboard publications for serving state %q: %w", state.ID, err)
+	}
+	if err := projectmodule.EnsureIdentity(ctx, database, activated.ServingIdentity.ProjectID); err != nil {
+		return fmt.Errorf("ensure project identity for dashboard publications: %w", err)
+	}
+	tx, err := database.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin dashboard publication reconciliation: %w", err)
+	}
+	defer tx.Rollback()
+	if err := dashboardmodule.ReconcilePublications(ctx, tx, dashboardmodule.PublicationActivationInput{
+		ProjectID:      activated.ServingIdentity.ProjectID.String(),
+		ServingStateID: string(state.ID),
+		ActorID:        activated.ActivationPrincipal,
+		Publications:   publications,
+	}, accessmodule.ActivateDashboardPublicationPrincipal); err != nil {
+		return fmt.Errorf("reconcile dashboard publications for serving state %q: %w", state.ID, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit dashboard publication reconciliation for serving state %q: %w", state.ID, err)
+	}
+	return nil
+}
+
+func logDashboardPublicationReconciliationFailure(logger *slog.Logger, err error, generationID string) {
+	if err == nil {
+		return
+	}
+	if logger == nil {
+		logger = slog.Default()
+	}
+	logger.Warn("dashboard publication reconciliation failed", "generation", generationID, "error", err)
+}
+
+func startupDashboardPublicationActivation(
+	ctx context.Context,
+	runtimeHost *runtimehostmodule.Module,
+	states interface {
+		ByID(context.Context, servingstate.ID) (servingstate.State, error)
+	},
+	targets deliveryTargetReader,
+	sealed bool,
+	instanceID string,
+) (deployment.Deployment, error) {
+	if states == nil {
+		return deployment.Deployment{}, servingstate.ErrNotFound
+	}
+	if sealed && targets != nil {
+		target, err := targets.DeliveryTargetRevision(ctx, instanceID)
+		if err != nil {
+			return deployment.Deployment{}, err
+		}
+		if strings.TrimSpace(target.ActiveGenerationID) == "" {
+			return deployment.Deployment{}, servingstate.ErrNotFound
+		}
+		state, err := states.ByID(ctx, servingstate.ID(target.ActiveGenerationID))
+		if err != nil {
+			return deployment.Deployment{}, err
+		}
+		return deployment.Deployment{
+			ServingIdentity:     projectgraph.ServingIdentity{ProjectID: state.ProjectID, Environment: string(state.Environment), GenerationID: string(state.ID)},
+			ActivationPrincipal: "system:startup-reconcile",
+		}, nil
+	}
+	if runtimeHost == nil {
+		return deployment.Deployment{}, servingstate.ErrNotFound
+	}
+	state, _, err := runtimeHost.ActiveArtifact(ctx)
+	if err != nil {
+		return deployment.Deployment{}, err
+	}
+	return deployment.Deployment{
+		ServingIdentity:     projectgraph.ServingIdentity{ProjectID: state.ProjectID, Environment: string(state.Environment), GenerationID: string(state.ID)},
+		ActivationPrincipal: "system:startup-reconcile",
+	}, nil
+}
+
 type httpAssemblyInputs struct {
 	RateLimits       apihttpmiddleware.RateLimitConfig
 	SecurityHeaders  apihttpmiddleware.SecurityHeadersConfig
@@ -522,8 +647,16 @@ func buildApplicationSurfaces(
 	if runtimeConfig.RuntimeHost != nil {
 		projectDefinitionReader = projectmodule.NewActiveProjectDefinitionReader(runtimeConfig.RuntimeHost.Provider())
 	}
+	var projectPhysicalCatalog projecthttp.PhysicalCatalogReader
+	if runtimeConfig.RuntimeHost != nil {
+		projectPhysicalCatalog = activeProjectPhysicalCatalog{provider: runtimeConfig.RuntimeHost.Provider()}
+	}
+	var projectAssetVersions projecthttp.AssetVersionsReader
+	if reader, ok := any(servingStateRepo).(projecthttp.AssetVersionsReader); ok {
+		projectAssetVersions = reader
+	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
+		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
 		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
@@ -591,6 +724,9 @@ func buildApplicationSurfaces(
 	}
 	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
+	}
+	if routes.projectBrowser != nil {
+		routes.projectBrowser.RefreshState = routes.refreshModule
 	}
 	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
@@ -751,6 +887,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
 		}
+		priorAfterActivated := config.AfterActivated
+		config.AfterActivated = func(ctx context.Context, activated deployment.Deployment) {
+			if priorAfterActivated != nil {
+				priorAfterActivated(ctx, activated)
+			}
+			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
+				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+			}
+		}
 		var err error
 		routes.deploymentModule, err = deploymentmodule.Build(ctx, config)
 		if err != nil {
@@ -895,6 +1040,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		})
 		if err != nil {
 			return fmt.Errorf("build dashboard module: %w", err)
+		}
+	}
+	if database != nil && routes.dashboardModule != nil {
+		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
+			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
+				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+			}
+		} else if !errors.Is(err, servingstate.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
+			logDashboardPublicationReconciliationFailure(platform.logger, err, "startup")
 		}
 	}
 	if routes.agentModule == nil {

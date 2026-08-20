@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "0b019c241194b1a48522ee6a2563ab175c4badbe0b820c50bfaea9b2c2b92baf"
+	const expectedRouteContractDigest = "d84e80d8fd49f2c81757d6e5d6bfb39e906869a83545952a5309d7751d3bebe1"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -157,6 +157,9 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
 		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_READ"
+	case path == "/dashboards" || path == "/dashboards/{asset}/details" || path == "/dashboards/{asset}/definition" || path == "/dashboards/{asset}/versions" || path == "/dashboards/{asset}/lineage" || path == "/dashboards/search":
+		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_READ"
 	case strings.Contains(path, "/dashboards/") || strings.Contains(path, "/commands/"):
 		authenticated.owner = "dashboard"
@@ -264,6 +267,11 @@ GET /candidates/{candidate}/dashboards/{dashboard}/pages/{page}
 GET /candidates/{candidate}/updates
 GET /connections
 GET /connections/{asset}/{section}
+GET /dashboards
+GET /dashboards/{asset}/definition
+GET /dashboards/{asset}/details
+GET /dashboards/{asset}/lineage
+GET /dashboards/{asset}/versions
 GET /sources
 GET /sources/{asset}/{section}
 GET /device
@@ -320,6 +328,7 @@ POST /chats/turns
 POST /candidates/{candidate}/commands/{command}
 POST /catalog/search
 POST /connections/search
+POST /dashboards/search
 POST /explore/command
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter

@@ -399,6 +399,39 @@ func TestDeliveryLifecycleAllowRetainedBaseRequiresExactSealedIdentity(t *testin
 	}
 }
 
+func TestDeliveryLifecycleFreshMaterializationKeepsBaseOnlyAsPublicationFence(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	plan.BaseGenerationID, plan.BaseTargetRevision = "generation-active", 4
+	plan.ExecutionDigest, _ = plan.Execution.ExecutionDigest()
+	plan.GovernanceDigest, _ = canonicalJSONDigest(plan.Governance)
+	plan.EvidenceDigest, _ = plan.Evidence.Digest()
+	plan.Digest = ""
+	plan, err := NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &lifecycleBuildStore{plan: plan}
+	constructed := false
+	lifecycle := &DeliveryLifecycle{
+		Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod", ActiveGenerationID: "generation-active", TargetRevision: 4}},
+		Store:   store, Now: func() time.Time { return now },
+	}
+	_, buildErr := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: "attempt-fresh-active", WriterLeaseID: "writer-fresh-active",
+		CandidateID: "candidate-fresh-active", SealID: "seal-fresh-active",
+		ServingArtifactID: "artifact-fresh-active", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-fresh-active",
+		PhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		PhasedRunner: lifecycleConstructProbe{called: &constructed},
+	})
+	if buildErr == nil || !strings.Contains(buildErr.Error(), "injected construct failure") || !constructed {
+		t.Fatalf("fresh active-base build err=%v constructed=%v", buildErr, constructed)
+	}
+	if store.attempt.BaseGenerationID != "" || store.attempt.BaseCatalogDigest != "" || store.attempt.BasePhysicalPoolID != "" {
+		t.Fatalf("fresh attempt retained base identity: %#v", store.attempt)
+	}
+}
+
 type lifecycleConstructProbe struct{ called *bool }
 
 func (r lifecycleConstructProbe) Construct(context.Context, DeliveryBuildInput) (any, error) {

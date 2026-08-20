@@ -26,6 +26,24 @@ type Asset struct {
 	ContentHash    string
 }
 
+// AssetVersion is the durable serving-state history row for one logical
+// project asset. It intentionally carries only public provenance fields used
+// by the browser's versions table.
+type AssetVersion struct {
+	ServingStateID ID
+	ProjectID      projectgraph.ResourceID
+	Environment    Environment
+	Status         string
+	Digest         string
+	CreatedBy      string
+	CreatedAt      string
+	ActivatedAt    string
+	SnapshotID     string
+	AssetID        projectgraph.ResourceID
+	SourceFile     string
+	ContentHash    string
+}
+
 type AssetEdge struct {
 	ID             string
 	ProjectID      projectgraph.ResourceID
