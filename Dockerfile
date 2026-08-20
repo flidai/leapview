@@ -120,7 +120,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=${BUILD_DIRTY} \
       -X github.com/flidai/leapview/internal/platform/buildinfo.release=${BUILD_RELEASE}" && \
     CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapview ./cmd/leapview && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapviewctl ./cmd/leapviewctl
+    CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapviewctl ./cmd/leapviewctl
 
 # The production image carries a complete, target-native, offline extension
 # supply. This stage performs the only upstream acquisition during packaging;
