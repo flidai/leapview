@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
+	"github.com/flidai/leapview/internal/app/config"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
@@ -39,6 +40,10 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	if operations.client == nil {
 		return projectcli.DeliveryPlanResult{}, fmt.Errorf("delivery plan API client is required")
 	}
+	targetSelector := strings.TrimSpace(options.Credentials.Target)
+	if targetSelector == "" {
+		targetSelector = strings.TrimSpace(config.MustLoad().Target)
+	}
 	credentials, err := operations.client.Resolve(ctx, options.Credentials)
 	if err != nil {
 		return projectcli.DeliveryPlanResult{}, err
@@ -51,6 +56,7 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		return operations.resolveCandidatePlan(
 			ctx,
 			credentials,
+			targetSelector,
 			projectID,
 			candidateID,
 			targetID,
@@ -128,7 +134,7 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	}
 	result := deliveryPlanResult(response.Body)
 	if operations.checkpoints != nil {
-		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{PlanID: result.PlanID, ProjectID: result.ProjectID, TargetID: result.TargetID, Environment: result.Environment, TargetOrigin: credentials.Target, SourceDigest: result.SourceDigest, SourceAttestationDigest: result.SourceAttestationDigest, PlanDigest: result.PlanDigest, ExecutionDigest: result.ExecutionDigest, EvidenceDigest: result.EvidenceDigest}); err != nil {
+		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{PlanID: result.PlanID, ProjectID: result.ProjectID, TargetID: result.TargetID, Environment: result.Environment, TargetOrigin: credentials.Target, TargetSelector: targetSelector, SourceDigest: result.SourceDigest, SourceAttestationDigest: result.SourceAttestationDigest, PlanDigest: result.PlanDigest, ExecutionDigest: result.ExecutionDigest, EvidenceDigest: result.EvidenceDigest}); err != nil {
 			return projectcli.DeliveryPlanResult{}, fmt.Errorf("persist delivery plan checkpoint: %w", err)
 		}
 	}
@@ -138,6 +144,7 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 func (operations projectDeliveryPlanOperations) resolveCandidatePlan(
 	ctx context.Context,
 	credentials cliapi.Credentials,
+	targetSelector string,
 	projectID string,
 	candidateID string,
 	targetID string,
@@ -190,7 +197,7 @@ func (operations projectDeliveryPlanOperations) resolveCandidatePlan(
 		if err := operations.checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{
 			PlanID: result.PlanID, ProjectID: result.ProjectID,
 			TargetID: result.TargetID, Environment: result.Environment,
-			TargetOrigin: credentials.Target, SourceDigest: result.SourceDigest,
+			TargetOrigin: credentials.Target, TargetSelector: targetSelector, SourceDigest: result.SourceDigest,
 			SourceAttestationDigest: result.SourceAttestationDigest,
 			PlanDigest:              result.PlanDigest, ExecutionDigest: result.ExecutionDigest,
 			EvidenceDigest: result.EvidenceDigest,
@@ -238,14 +245,19 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 	if operations.client == nil {
 		return projectcli.DeliveryBuildResult{}, fmt.Errorf("delivery build API client is required")
 	}
+	var planCheckpoint projectcli.DeliveryPlanCheckpoint
 	if strings.TrimSpace(options.ProjectID) == "" && operations.checkpoints != nil {
 		plan, lookupErr := operations.checkpoints.LoadPlan(options.PlanID)
 		if lookupErr != nil {
 			return projectcli.DeliveryBuildResult{}, fmt.Errorf("resolve plan checkpoint: %w", lookupErr)
 		}
+		planCheckpoint = plan
 		options.ProjectID = plan.ProjectID
 		if options.Credentials.Target == "" {
-			options.Credentials.Target = plan.TargetOrigin
+			options.Credentials.Target = plan.TargetSelector
+			if strings.TrimSpace(options.Credentials.Target) == "" {
+				options.Credentials.Target = plan.TargetOrigin
+			}
 		}
 	}
 	if strings.TrimSpace(options.ProjectID) == "" {
@@ -265,17 +277,14 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 	value := response.Body
 	result := projectcli.DeliveryBuildResult{SchemaVersion: 1, BuildID: value.Id, PlanID: value.PlanId, PlanDigest: value.PlanDigest, SourceDigest: value.SourceDigest, ExecutionDigest: value.ExecutionDigest, CandidateID: optionalString(value.CandidateId), SealID: optionalString(value.SealId), Status: string(value.Status), Revision: value.Revision}
 	if result.CandidateID != "" && operations.checkpoints != nil {
-		origin := options.Credentials.Target
-		var targetID, environment string
-		if origin == "" {
-			if plan, lookupErr := operations.checkpoints.LoadPlan(options.PlanID); lookupErr == nil {
-				origin = plan.TargetOrigin
-				targetID, environment = plan.TargetID, plan.Environment
-			}
-		} else if plan, lookupErr := operations.checkpoints.LoadPlan(options.PlanID); lookupErr == nil {
-			targetID, environment = plan.TargetID, plan.Environment
+		if planCheckpoint.PlanID == "" {
+			planCheckpoint, _ = operations.checkpoints.LoadPlan(options.PlanID)
 		}
-		_ = operations.checkpoints.SaveObjectIdentity("candidate", result.CandidateID, projectcli.DeliveryObjectCheckpoint{ProjectID: options.ProjectID, TargetOrigin: origin, TargetID: targetID, Environment: environment})
+		origin := planCheckpoint.TargetOrigin
+		if origin == "" {
+			origin = options.Credentials.Target
+		}
+		_ = operations.checkpoints.SaveObjectIdentity("candidate", result.CandidateID, projectcli.DeliveryObjectCheckpoint{ProjectID: options.ProjectID, TargetOrigin: origin, TargetSelector: planCheckpoint.TargetSelector, TargetID: planCheckpoint.TargetID, Environment: planCheckpoint.Environment})
 	}
 	return result, nil
 }
@@ -296,7 +305,10 @@ func (operations projectDeliveryRollbackOperations) Rollback(ctx context.Context
 		}
 		options.ProjectID = identity.ProjectID
 		if options.Credentials.Target == "" {
-			options.Credentials.Target = identity.TargetOrigin
+			options.Credentials.Target = identity.TargetSelector
+			if strings.TrimSpace(options.Credentials.Target) == "" {
+				options.Credentials.Target = identity.TargetOrigin
+			}
 		}
 	}
 	if strings.TrimSpace(options.ProjectID) == "" {

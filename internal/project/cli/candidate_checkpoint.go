@@ -28,6 +28,7 @@ var ErrCandidateCheckpointNotFound = errors.New("candidate checkpoint not found"
 type CandidateCheckpoint struct {
 	ProjectPath       string `json:"projectPath"`
 	TargetOrigin      string `json:"targetOrigin"`
+	TargetSelector    string `json:"targetSelector,omitempty"`
 	TargetID          string `json:"targetId"`
 	Environment       string `json:"environment"`
 	ProjectID         string `json:"projectId"`
@@ -56,6 +57,7 @@ type DeliveryPlanCheckpoint struct {
 	TargetID                string `json:"targetId"`
 	Environment             string `json:"environment"`
 	TargetOrigin            string `json:"targetOrigin"`
+	TargetSelector          string `json:"targetSelector,omitempty"`
 	SourceDigest            string `json:"sourceDigest"`
 	SourceAttestationDigest string `json:"sourceAttestationDigest,omitempty"`
 	PlanDigest              string `json:"planDigest"`
@@ -64,10 +66,11 @@ type DeliveryPlanCheckpoint struct {
 }
 
 type DeliveryObjectCheckpoint struct {
-	ProjectID    string `json:"projectId"`
-	TargetOrigin string `json:"targetOrigin"`
-	TargetID     string `json:"targetId,omitempty"`
-	Environment  string `json:"environment,omitempty"`
+	ProjectID      string `json:"projectId"`
+	TargetOrigin   string `json:"targetOrigin"`
+	TargetSelector string `json:"targetSelector,omitempty"`
+	TargetID       string `json:"targetId,omitempty"`
+	Environment    string `json:"environment,omitempty"`
 }
 
 // CandidateCheckpointStore atomically persists non-secret authoring state.
@@ -312,6 +315,7 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 		return CandidateCheckpoint{}, err
 	}
 	checkpoint.TargetID = strings.TrimSpace(checkpoint.TargetID)
+	checkpoint.TargetSelector = strings.TrimSpace(checkpoint.TargetSelector)
 	checkpoint.Environment = strings.TrimSpace(checkpoint.Environment)
 	checkpoint.ProjectID = strings.TrimSpace(checkpoint.ProjectID)
 	checkpoint.CandidateID = strings.TrimSpace(checkpoint.CandidateID)

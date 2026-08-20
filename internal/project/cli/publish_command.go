@@ -107,13 +107,16 @@ func RunPublish(
 		options.ProjectID = identity.ProjectID
 	}
 	if strings.TrimSpace(options.Credentials.Target) == "" {
-		options.Credentials.Target = identity.TargetOrigin
+		options.Credentials.Target = identity.TargetSelector
+		if strings.TrimSpace(options.Credentials.Target) == "" {
+			options.Credentials.Target = identity.TargetOrigin
+		}
 	}
 	credentials, err := client.Resolve(ctx, options.Credentials)
 	if err != nil {
 		return err
 	}
-	checkpoint := CandidateCheckpoint{ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target, TargetID: identity.TargetID, Environment: identity.Environment, ProjectID: options.ProjectID, CandidateID: options.CandidateID}
+	checkpoint := CandidateCheckpoint{ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target, TargetSelector: identity.TargetSelector, TargetID: identity.TargetID, Environment: identity.Environment, ProjectID: options.ProjectID, CandidateID: options.CandidateID}
 	if options.CandidateID != "" {
 		checkpoint.CandidateID = options.CandidateID
 	}

@@ -207,6 +207,7 @@ func RunDev(
 	if options.Format != "text" && options.Format != "json" {
 		return fmt.Errorf("dev format must be text or json")
 	}
+	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	credentials, err := client.Resolve(ctx, options.Credentials)
 	if err != nil {
 		return err
@@ -258,7 +259,8 @@ func RunDev(
 		}
 		checkpoint := CandidateCheckpoint{
 			ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target,
-			TargetID: candidate.TargetID, Environment: candidate.Environment,
+			TargetSelector: targetSelector,
+			TargetID:       candidate.TargetID, Environment: candidate.Environment,
 			ProjectID: candidate.ProjectID.String(), CandidateID: candidate.ID,
 			CandidateKey:      options.CandidateKey,
 			CandidateRevision: candidate.Revision,
@@ -286,7 +288,8 @@ func RunDev(
 		}
 		if err := checkpoints.SaveObjectIdentity("candidate", candidate.ID, DeliveryObjectCheckpoint{
 			ProjectID: candidate.ProjectID.String(), TargetOrigin: credentials.Target,
-			TargetID: candidate.TargetID, Environment: candidate.Environment,
+			TargetSelector: targetSelector,
+			TargetID:       candidate.TargetID, Environment: candidate.Environment,
 		}); err != nil {
 			return fmt.Errorf("persist candidate identity: %w", err)
 		}

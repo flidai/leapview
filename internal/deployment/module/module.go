@@ -336,7 +336,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.DeliveryMutations = &CanonicalDeliveryMutations{
 				Lifecycle: config.CanonicalDeliveryAdapter.Lifecycle,
 				Sources:   config.CandidateSources, Artifacts: config.CandidateArtifacts,
-				Plan: config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
+				Admission: config.CandidateAdmission,
+				Plan:      config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
 				Adapter: config.CanonicalDeliveryAdapter, Publish: config.CanonicalDeliveryAdapter.Publish, Rollback: config.CanonicalDeliveryAdapter.Rollback,
 			}
 		}

@@ -861,6 +861,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// physical-pool admission is absent.
 	var canonicalDelivery *deploymentmodule.CanonicalDeliveryAdapter
 	var canonicalDeliveryMutations *deploymentmodule.CanonicalDeliveryMutations
+	candidatePreparationAdmission := deploymentmodule.CandidatePreparationAdmitterFunc(
+		func(ctx context.Context) (deploymentmodule.CandidatePreparationLease, error) {
+			return workloadController.Acquire(
+				ctx,
+				workloadmodule.ControlRequest("candidate.prepare"),
+			)
+		},
+	)
 	canonicalDeliveryRequired := true
 	// Sealed production serving uses delivery-owned catalog lease/GC state;
 	// the legacy serving-state snapshot retention worker must not inspect or
@@ -1393,6 +1401,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			Lifecycle:    canonicalDelivery.Lifecycle,
 			Sources:      candidateSources,
 			Artifacts:    releaseModule,
+			Admission:    candidatePreparationAdmission,
 			Plan:         canonicalDelivery.Plan,
 			PlanPreview:  canonicalDelivery.PlanPreview,
 			BuildRequest: canonicalDelivery.BuildRequest,
@@ -1516,22 +1525,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		},
 		CandidateRuntime:          runtimeHostModule,
 		CandidateRuntimeLifecycle: runtimeHostModule,
-		CandidateAdmission: deploymentmodule.CandidatePreparationAdmitterFunc(
-			func(ctx context.Context) (deploymentmodule.CandidatePreparationLease, error) {
-				return workloadController.Acquire(
-					ctx,
-					workloadmodule.ControlRequest("candidate.prepare"),
-				)
-			},
-		),
-		CandidateSources:         candidateSources,
-		CandidateArtifacts:       releaseModule,
-		CanonicalDeliveryAdapter: canonicalDelivery,
-		DeliveryMutations:        canonicalDeliveryMutations,
-		RequireCanonicalDelivery: canonicalDeliveryRequired,
-		CandidateSourceAudit:     candidateSourceAuditRecorder(accessModule),
-		CandidateSourceBlobAudit: candidateSourceAuditRecorder(accessModule),
-		RuntimeVersion:           identity.Version + ":" + identity.Revision,
+		CandidateAdmission:        candidatePreparationAdmission,
+		CandidateSources:          candidateSources,
+		CandidateArtifacts:        releaseModule,
+		CanonicalDeliveryAdapter:  canonicalDelivery,
+		DeliveryMutations:         canonicalDeliveryMutations,
+		RequireCanonicalDelivery:  canonicalDeliveryRequired,
+		CandidateSourceAudit:      candidateSourceAuditRecorder(accessModule),
+		CandidateSourceBlobAudit:  candidateSourceAuditRecorder(accessModule),
+		RuntimeVersion:            identity.Version + ":" + identity.Revision,
 		AfterActivated: func(ctx context.Context, activated deployment.Deployment) {
 			generation, generationErr := activatedRevalidationGeneration(
 				ctx, servingStateRepo, runtimeHostModule, activated.ServingIdentity, activated.PriorGenerationID,

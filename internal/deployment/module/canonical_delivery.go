@@ -33,6 +33,7 @@ type CanonicalDeliveryMutations struct {
 	Sources   deployment.CandidateSourceSynchronizer
 	Adapter   *CanonicalDeliveryAdapter
 	Artifacts release.CandidateArtifactPreparer
+	Admission CandidatePreparationAdmitter
 	Plan      func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryPlan, error)
 	// PlanPreview is the non-persisting form used when Build rechecks durable
 	// compiler evidence. Keeping it separate prevents a retry from attempting
@@ -132,7 +133,7 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 }
 
 func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, planID, principalID, idempotencyKey string) (deployment.DeliveryBuildAttempt, error) {
-	if m == nil || m.Lifecycle == nil || m.Artifacts == nil || m.BuildRequest == nil || m.Adapter == nil || m.Adapter.ReadyCandidate == nil {
+	if m == nil || m.Lifecycle == nil || m.Artifacts == nil || m.Admission == nil || m.BuildRequest == nil || m.Adapter == nil || m.Adapter.ReadyCandidate == nil {
 		return deployment.DeliveryBuildAttempt{}, fmt.Errorf("canonical delivery build coordinator is unavailable")
 	}
 	plan, err := m.Lifecycle.Store.PlanByID(ctx, planID)
@@ -188,6 +189,12 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if err := m.verifyPlanEvidence(ctx, plan, planningInput, inspected); err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
+	preparationLease, err := m.Admission.AcquireCandidatePreparation(ctx)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, candidatePreparationError(err)
+	}
+	defer preparationLease.Release()
+	ctx = preparationLease.Context()
 	buildRequest, err := m.BuildRequest(ctx, buildInput, inspected)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
