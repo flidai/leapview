@@ -27,12 +27,14 @@ publication, and data restatement. Pipeline authoring has not yet been brought
 to the same contract standard as Connection, Source, Model, SemanticModel, and
 Dashboard.
 
-The current Pipeline document is a handwritten Go and CUE shape containing one
-`semanticModel` reference and an optional list of cron schedules. Its compiled
-runtime form contains the same reference and schedule data. It does not define
-stable trigger identity, occurrence identity, overlap behavior, catch-up
-behavior, plan identity, or the relationship between a selected semantic asset
-and the physical work that will execute.
+The original Pipeline document was a handwritten Go and CUE shape containing
+one `semanticModel` reference and an optional list of cron schedules. The first
+implementation of this ADR moved the shape to TypeSpec but exposed tagged-union
+machinery in authored YAML. Neither shape provides the intended ergonomic
+contract. The original shape also did not define stable schedule identity,
+occurrence identity, concurrency behavior, late-start behavior, plan identity,
+or the relationship between a selected semantic asset and the physical work
+that will execute.
 
 The apparent execution scope is also misleading. The refresh planner resolves
 the Models required by the selected SemanticModel and creates child run records
@@ -77,10 +79,12 @@ observability without becoming a general workflow engine.
 - Give scheduled occurrences stable identity and deterministic recovery across
   process restarts, scheduler outages, concurrent dispatchers, and deployment
   changes.
-- Make overlap and missed-occurrence behavior explicit rather than hidden in
-  queue and scheduler implementation.
-- Define a portable cron and timezone contract, including daylight-saving
-  gaps and folds.
+- Use established concurrency and late-start concepts rather than inventing
+  Pipeline-specific policy vocabulary.
+- Inherit one established specification for each generic concern and make any
+  intentional restriction or incompatibility explicit.
+- Define a version-pinned cron and timezone compatibility profile, including
+  daylight-saving gaps and folds.
 - Keep retries, timeouts, backfills, event triggers, execution infrastructure,
   and asset selection as separate extension axes.
 - Reuse workload admission, authorization, delivery fencing, immutable
@@ -88,7 +92,8 @@ observability without becoming a general workflow engine.
 - Support OpenLineage-compatible observability without treating OpenLineage as
   an authoring, authorization, or execution-interoperability contract.
 - Avoid embedding GitHub Actions, Dagster, Argo, Kubernetes, dbt, SQLMesh, or a
-  general workflow DSL into the public resource model.
+  general workflow DSL into the public resource model while still inheriting
+  focused semantics from an identified external specification.
 
 ## Considered options
 
@@ -112,8 +117,9 @@ could execute capable workflows.
 Adopting either contract wholesale would duplicate LeapView's compiler,
 resource graph, authorization, workload admission, immutable candidate, and
 publication lifecycles. It would also expose infrastructure concepts far beyond
-refreshing governed analytical assets. Their semantics are references, not new
-runtime dependencies.
+refreshing governed analytical assets. LeapView adopts the focused Argo
+scheduling semantics below without adopting its resource or runtime; Dagster
+remains comparison material.
 
 ### Expose only project-wide refresh
 
@@ -135,11 +141,11 @@ and runtime surface.
 
 ### Adopt a native asset-selected refresh contract
 
-Pipeline remains a small project asset expressing selection, triggers, and run
-policy. The compiler resolves exact work from the project graph and produces an
-immutable generation-bound plan. Each invocation produces an auditable run and
-executes the plan through canonical delivery. External systems may invoke and
-observe that lifecycle without owning its semantics.
+Pipeline remains a small project asset expressing selection, schedules, and
+concurrency policy. The compiler resolves exact work from the project graph and
+produces an immutable generation-bound plan. Each invocation produces an
+auditable run and executes the plan through canonical delivery. External
+systems may invoke and observe that lifecycle without owning its semantics.
 
 ## Decision outcome
 
@@ -154,28 +160,48 @@ The identity chain is:
 
 A scheduled occurrence is logically identified by:
 
-`projectId + environment + pipelineId + triggerId + nominalTime`
+`projectId + environment + pipelineId + nominalTime`
 
 Pipeline IDs are stable within a project, not globally across every project and
 environment. `projectId` and `environment` are therefore required namespace
 components of scheduled-occurrence identity; the shorter
-`pipelineId + triggerId + nominalTime` tuple is not a canonical identity.
+`pipelineId + nominalTime` tuple is not a canonical identity. Schedule IDs
+identify authored expressions and appear in evidence, but do not split one
+Argo-equivalent scheduled execution into multiple LeapView occurrences when
+expressions overlap at the same nominal instant.
+
+For each generic concern, LeapView names one normative external specification
+and inherits its semantics. LeapView-specific extensions may add identity,
+evidence, analytical compilation, admission, or publication invariants, but
+must not alter inherited behavior unless this ADR explicitly declares an
+incompatibility. Comparison systems are non-normative unless the reference
+table says otherwise.
 
 Pipeline structure is authored in TypeSpec and projected through the same
 generation boundary used by the other public assets. The current handwritten
 `semanticModel` plus `on.schedule` draft shape is replaced directly before the
 first public release; no compatibility reader, alias, or migration surface is
-retained. Repository examples that preserve existing operational intent must
-be rewritten once to state `overlap: replace` explicitly. This source rewrite
-must not introduce parser or runtime normalization for an omitted value.
+retained. The subsequently implemented tagged `selection`, tagged `triggers`,
+and `runPolicy.overlap` shape is also replaced before that release because it
+exposes code-generation structure rather than author intent. Repository
+examples that preserve existing operational intent must be rewritten once to
+state `concurrencyPolicy: Replace` explicitly when schedules exist. This source
+rewrite must not introduce parser or runtime normalization for an omitted
+scheduled-policy value.
 
 ### Authored Pipeline contract
 
 The public Pipeline document contains three independent concerns:
 
 - `selection`: the governed asset the author asks LeapView to refresh;
-- `triggers`: the ways invocations may be created; and
-- `runPolicy`: policy applied when an invocation is admitted.
+- `schedules`: optional named recurring invocations; and
+- Pipeline-wide `timezone`, `startingDeadlineSeconds`, and
+  `concurrencyPolicy` fields that govern scheduled invocations.
+
+Manual invocation is an operation available to authorized callers for every
+Pipeline. It is not an authored trigger and does not require a placeholder in
+the document. A Pipeline without `schedules` is therefore a valid manual-only
+Pipeline.
 
 An illustrative v1 document is:
 
@@ -187,50 +213,70 @@ metadata:
   name: sales_refresh
 spec:
   selection:
-    type: semanticModel
-    semanticModel: semantic-model:sales
-  triggers:
-    - id: manual
-      type: manual
-    - id: weekdays-0600
-      type: schedule
-      cron: "0 6 * * 1-5"
-      timezone: Europe/Copenhagen
-      missedOccurrences: latest
-  runPolicy:
-    overlap: replace
+    semanticModel: sales
+  schedules:
+    weekdays-0600: "0 6 * * 1-5"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 ```
 
-`selection` is a closed tagged union. V1 contains only the `semanticModel`
-variant. Variant-specific reference fields are retained so generated APIs make
-the selected resource kind explicit. Future selection variants require their
-own compilation and authorization semantics; they are not open strings.
+The resource envelope intentionally retains the `metadata.id` and
+`metadata.name` distinction established by ADR-0005 and ADR-0006. Aligning all
+authored assets with the Backstage/Kubernetes `name` plus optional `title`
+convention is a cross-asset identity decision; this Pipeline ADR must not create
+a one-off metadata convention or silently supersede those earlier decisions.
 
-`triggers` is a closed tagged union. V1 contains `manual` and `schedule`.
-Every trigger has a non-empty ID unique within the Pipeline. A manual trigger
-permits authorized on-demand invocation; it does not grant authorization by
-itself. A schedule trigger creates occurrences under a target-owned scheduler
-workload identity. `managedDataPublished` may be added later as a trigger
-variant without changing selection or run policy.
+`selection` is a closed object. V1 contains only the `semanticModel` field,
+whose value is the project-unique authored name of a SemanticModel. The field
+name already identifies the selected resource kind, so a second
+`type: semanticModel` discriminator and a kind-prefixed reference add no
+information. Future selection kinds require distinct fields with their own
+compilation and authorization semantics; LeapView must not introduce a generic
+selector language until the use case needs the graph, set, or tag operations
+provided by mature selector contracts such as dbt.
 
-`runPolicy.overlap` is required and has no implicit default. V1 supports:
+`schedules` is an optional map. Each key is a non-empty schedule ID unique
+within the Pipeline and supplies the durable identity that would otherwise
+require a repeated `id` field. Each value is an Argo-compatible cron expression.
+The keys add authoring, change-review, and execution-evidence identity only.
+Removing the keys produces the corresponding Argo `schedules` list; key names
+must not change occurrence cardinality, missed-run recovery, concurrency, or
+daylight-saving behavior. The compiled projection orders expressions by their
+canonical cron text and retains duplicate expressions so map iteration and key
+renames cannot alter scheduler behavior. A schedule creates occurrences under
+a target-owned scheduler workload identity. Future event sources may be added
+as separate named collections; they must not force every schedule through a
+tagged-union list.
 
-- `forbid`: while an earlier run for the same Pipeline and environment is
-  nonterminal, record the new invocation as skipped and do not begin its
-  physical work; and
-- `replace`: atomically supersede earlier queued or running runs before
-  admitting the replacement. Cancellation of already executing physical work
-  is best effort, but lease revocation and publication fencing guarantee that a
-  superseded run can never publish.
+When `schedules` is non-empty, `timezone`, `startingDeadlineSeconds`, and
+`concurrencyPolicy` are required Pipeline-wide fields. They have the same scope
+as the corresponding Argo CronWorkflow fields. They are absent from a
+manual-only Pipeline because Argo scheduling semantics do not govern externally
+initiated invocations.
 
-V1 does not expose `allow`. Concurrent restatements from the same active base
+`concurrencyPolicy` uses the established Kubernetes CronJob and Argo
+CronWorkflow vocabulary for scheduled-versus-scheduled overlap. V1 supports:
+
+- `Forbid`: while an earlier scheduled run for the same Pipeline and
+  environment is nonterminal, record the new scheduled occurrence as skipped
+  and do not begin its physical work; and
+- `Replace`: supersede earlier scheduled runs before admitting the new
+  scheduled execution. Cancellation of already executing physical work is best
+  effort, but lease revocation and publication fencing guarantee that a
+  superseded scheduled run can never publish.
+
+V1 does not expose `Allow`. Concurrent restatements from the same active base
 cannot both satisfy exact publication compare-and-swap semantics, so permitting
 both to build would advertise concurrency that normally degenerates into stale
-work. A future ADR may add `allow` only with defined merge, partition, or
+work. A future ADR may add `Allow` only with defined merge, partition, or
 independent-scope publication semantics.
 
-Retry and timeout belong to `runPolicy` when introduced. Bounded restatement
-ranges and backfills are invocation inputs, not trigger or selection variants.
+The contract does not reserve a one-field `runPolicy` wrapper for hypothetical
+future features. Retry and timeout policy may be added when their semantics are
+defined. Bounded restatement ranges and backfills are invocation inputs, not
+schedule or selection variants. Manual and backfill conflicts are governed by
+Pipeline invocation admission below, not by `concurrencyPolicy`.
 
 ### Selection and compiled materialization scope
 
@@ -245,6 +291,13 @@ The SemanticModel remains the governed selected asset. Models are the ordered
 materialization work. Sources are inputs unless their own contract explicitly
 requires managed materialization. Dashboards and other consumers of the
 SemanticModel are not part of this closure.
+
+The normative generic graph operation is dbt's ancestor expansion: include the
+selected node's upstream parents transitively. LeapView does not import dbt
+selector syntax; it applies that graph direction to the typed SemanticModel
+selection and then projects only materializable Models into execution work.
+Dagster remains useful design precedent for asset-oriented orchestration, but
+does not define Pipeline selection semantics.
 
 The compiler follows consumer-to-dependency graph edges and emits a stable
 topological Model order. It must reject missing dependencies, cycles, ambiguous
@@ -277,7 +330,7 @@ Admission creates or resolves an immutable PipelinePlan containing at least:
 - deterministic Model execution order and resolved Source inputs;
 - required qualification checks;
 - requested and effective restatement interval or watermark, when present;
-- effective trigger and run policy;
+- effective invocation source and scheduling policy when applicable;
 - execution, provenance, governance, and evidence digests; and
 - an overall plan digest.
 
@@ -306,57 +359,98 @@ the new generation. Recovery may resume the same run only against its captured
 plan. Creating a replacement against the new generation is a new invocation
 with a new run ID and must follow the configured admission policy.
 
-The logical scheduled-occurrence key excludes generation so activating a new
-generation cannot execute the same Pipeline trigger and nominal time twice.
-The captured generation remains part of occurrence evidence. Durable uniqueness
-and atomic run attachment make concurrent dispatchers and crash recovery
-idempotent.
+The logical scheduled-occurrence key excludes generation and schedule ID so
+activating a new generation, renaming a schedule, or matching the same nominal
+instant through overlapping expressions cannot execute the same
+Argo-equivalent occurrence twice. The captured generation and every matching
+schedule ID remain part of occurrence evidence. Durable uniqueness and atomic
+run attachment make concurrent dispatchers and crash recovery idempotent.
 
-Each schedule trigger declares `missedOccurrences`:
+`startingDeadlineSeconds` follows Argo CronWorkflow's Pipeline-wide late-start
+model:
 
-- `skip`: advance past missed nominal times without creating an invocation; or
-- `latest`: create at most the latest missed occurrence for that trigger.
+- `0`: advance past a missed nominal time without creating a recovery
+  execution; or
+- a positive integer: permit one recovery execution when the Argo compatibility
+  baseline considers a missed scheduled time to be within the deadline.
 
-Catch-up is evaluated independently per trigger ID, never globally per
-Pipeline. After occurrences are produced, `overlap` deterministically governs
-their admission in nominal-time and trigger-ID order. `latest` is bounded
-recovery, not a backfill mechanism; replaying multiple historical intervals
-requires explicit bounded backfill invocation inputs.
+The complete schedule set is evaluated as one CronWorkflow. Recovery creates
+at most one execution for the Pipeline, not one execution per schedule ID.
+Schedule IDs add evidence about the expressions matching the chosen nominal
+time; they do not change the recovery decision. Replaying multiple historical
+intervals requires explicit bounded backfill invocation inputs.
 
 Every occurrence records its outcome, including admitted, skipped because of
-overlap, superseded, or attached run. Scheduler restart, claim expiry, and lost
-acknowledgement must converge on that record rather than create another run.
+concurrency policy, superseded, or attached run. Scheduler restart, claim
+expiry, and lost acknowledgement must converge on that record rather than
+create another run.
+
+### Pipeline invocation admission
+
+Argo `concurrencyPolicy` governs only collisions between scheduled executions
+of the same Pipeline and environment. LeapView Pipeline invocation admission
+governs collisions involving externally initiated manual and backfill
+operations. It is distinct from the capacity-oriented workload admission in
+ADR-0013.
+
+The collision outcomes are:
+
+| Active invocation | Incoming invocation | Required outcome |
+|---|---|---|
+| Scheduled | Scheduled | Apply the Pipeline's Argo `Forbid` or `Replace` policy. |
+| Manual or backfill | Scheduled | Durably record the occurrence and terminal `admission_denied_external_active` outcome; perform no work and do not queue it. |
+| Any nonterminal invocation | Manual or backfill | Reject the request as a conflict by default; do not reinterpret `concurrencyPolicy`. |
+
+`Replace` never authorizes a scheduled occurrence to terminate a manual or
+backfill run. Replacing any externally initiated or scheduled run outside the
+scheduled-versus-scheduled rule is a separate, explicit, authorized operation.
+That operation creates supersession evidence, revokes the earlier run's leases
+and publication authority atomically, and admits a new invocation only after
+the fencing transition succeeds.
 
 ### Cron and daylight-saving semantics
 
-Schedule triggers use LeapView's portable cron profile:
+Scheduling uses a restricted, version-pinned Argo-compatible profile. The
+normative baseline is the Argo Workflows v4.0.8 CronWorkflow contract, including
+its documented Kubernetes CronJob-compatible `robfig/cron` profile and
+behavior. LeapView accepts that documented cron grammar, including:
 
-- exactly five fields: minute, hour, day of month, month, and day of week;
-- no seconds field and no `@daily`-style aliases;
-- named months and weekdays are accepted;
-- schedules must not resolve more frequently than once every five minutes; and
-- `timezone` is required and must be an IANA timezone name.
+- five-field minute, hour, day-of-month, month, and day-of-week expressions;
+- lists, ranges, steps, and named months and weekdays;
+- `?` where the baseline treats it as equivalent to `*`; and
+- the documented `@yearly`, `@annually`, `@monthly`, `@weekly`, `@daily`,
+  `@midnight`, and `@hourly` macros.
 
-The cron expression is evaluated as local wall-clock time in the declared
-timezone. If a selected wall time does not exist during a daylight-saving gap,
-the occurrence advances to the first valid local minute at or after that wall
-time on the same local date. If a selected wall time occurs twice during a
-fold, LeapView emits exactly one occurrence at the earlier instant. Nominal time
-is stored as an absolute UTC instant together with the trigger timezone and
-wall-clock schedule evidence.
+There is no GitHub Actions-derived five-minute minimum. Every-minute schedules
+are valid. Seconds fields, the undocumented `@every` descriptor, and
+schedule-embedded `TZ` or `CRON_TZ` declarations are rejected as explicit
+profile restrictions.
 
-Changes to this cron grammar, minimum interval, or gap and fold behavior are
-contract changes and require conformance-test updates. Scheduler host timezone
-must never affect evaluation.
+LeapView deliberately narrows, but does not reinterpret, the Argo contract:
+`timezone` must be an explicit IANA timezone rather than inheriting the
+scheduler machine timezone; `startingDeadlineSeconds` and `concurrencyPolicy`
+must be explicit when schedules exist; and V1 rejects Argo's `Allow` policy.
+For every accepted document, cron evaluation, missed-run recovery,
+scheduled-versus-scheduled concurrency, and daylight-saving behavior are the
+baseline Argo behavior. In particular, nonexistent local times are skipped on
+a spring-forward transition and matching local times may run twice during a
+fall-back fold. Nominal time is stored as an absolute UTC instant together with
+the configured timezone, matching schedule IDs, and wall-clock evidence.
+
+The implementation must pin the parser dependency and maintain an Argo v4.0.8
+conformance corpus. A future dependency or compatibility-baseline upgrade is a
+contract change when it changes accepted syntax or observable scheduling
+behavior. Scheduler host timezone must never affect evaluation.
 
 ### PipelineRun and operational evidence
 
 PipelineRun binds one admitted invocation to one immutable PipelinePlan. It
 records run ID, occurrence or request identity, actor or workload identity,
-trigger ID and type, nominal and actual times, selected resource,
-materialization scope, serving generation, plan and execution digests, parent
-and child execution relationships, admission result, lease revisions, status,
-attempts, data versions, qualification, publication, and terminal reason.
+invocation source and matching schedule IDs when applicable, nominal and actual
+times, selected resource, materialization scope, serving generation, plan and
+execution digests, parent and child execution relationships, admission result,
+lease revisions, status, attempts, data versions, qualification, publication,
+and terminal reason.
 
 Child Model executions are operational projections of the PipelinePlan, not a
 second source of dependency truth. Their order and identity must agree with the
@@ -370,16 +464,19 @@ admitted or what plan it referenced.
 
 ### Reference specifications and interoperability
 
-LeapView borrows focused semantics rather than adopting one external workflow
-contract:
+LeapView adopts one normative external specification for each generic concern:
 
 | Concern | Reference | LeapView decision |
 |---|---|---|
-| Asset selection | [Dagster asset jobs](https://docs.dagster.io/guides/build/jobs/asset-jobs) | Authors select governed assets; the compiler derives dependency work. Dagster is not a runtime dependency. |
-| Scheduling policy | [Argo CronWorkflow](https://argo-workflows.readthedocs.io/en/latest/cron-workflows/) | Borrow explicit timezone, concurrency, and missed-run concepts, but define LeapView-specific occurrence and DST semantics. |
-| Observability | [OpenLineage object model](https://openlineage.io/docs/spec/object-model/) | Export standards-aligned lineage and run observations; LeapView evidence remains authoritative. |
-| General workflow portability | [Open Workflow Specification](https://github.com/open-workflow-specification/specification/blob/main/dsl.md) | Track as a useful vendor-neutral specification; do not expose its general task language in v1. |
-| Repository automation | [GitHub Actions scheduled workflows](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule) | Permit CI/CD invocation of LeapView APIs and CLI; do not use workflow YAML as the Pipeline contract. |
+| Graph selection | [dbt graph operators](https://docs.getdbt.com/reference/node-selection/graph-operators) | Inherit dbt's upstream ancestor meaning. LeapView supplies a typed SemanticModel root and compiler-owned materialization projection instead of importing dbt selector syntax. |
+| Scheduling | [Argo Workflows v4.0.8 CronWorkflow](https://github.com/argoproj/argo-workflows/blob/v4.0.8/docs/cron-workflows.md) | Inherit cron parsing, timezone/DST behavior, one-execution deadline recovery, and scheduled concurrency. Require explicit timezone and policy, omit `Allow`, and add schedule IDs as evidence-only metadata. |
+| Observability | [OpenLineage object model](https://openlineage.io/docs/spec/object-model/) and [facet extensibility](https://openlineage.io/docs/spec/facets/) | Inherit Job, Run, Dataset, standard-facet, and custom-facet semantics. LeapView evidence remains authoritative. |
+
+Dagster asset jobs remain design precedent, not a selection specification.
+Temporal schedules and the Open Workflow Specification remain comparison
+material, not sources of Pipeline behavior. GitHub Actions may invoke LeapView
+APIs or CLI from repository automation, but neither its workflow nor cron
+semantics contribute to the Pipeline contract.
 
 For OpenLineage export, Pipeline maps to Job and PipelineRun maps to Run.
 Scheduled occurrences use the nominal-time facet. Separately emitted Model
@@ -389,9 +486,13 @@ Dataset merely because it appears in the project graph.
 
 OpenLineage is an observability interoperability boundary. It does not own
 execution, retries, authorization, approval, publication, rollback, or canonical
-LeapView identity. Lossless standard fields are used where available; scoped
-LeapView facets may carry generation, plan, selection, and qualification
-evidence without replacing the internal ledger.
+LeapView identity. Lossless standard fields are used where available. Every
+LeapView custom facet key must use the `leapView_` prefix, its facet type must
+use the `LeapView` prefix and OpenLineage entity suffix, and it must contain
+`_schemaURL`. That URL must be the single canonical URL for the schema version
+and must identify an immutable release or content digest, never a mutable
+branch. Such facets may carry generation, plan, selection, admission, and
+qualification evidence without replacing the internal ledger.
 
 ### Prohibited shortcuts
 
@@ -406,22 +507,28 @@ The implementation must not:
   recomputation;
 - silently retarget a queued or running invocation to a newer generation;
 - allow a superseded run or revoked lease to publish;
-- deduplicate missed occurrences globally across independent trigger IDs;
-- give overlap or missed-occurrence policy a hidden runtime default;
+- recover missed occurrences independently per schedule ID;
+- allow schedule IDs or map iteration order to change Argo scheduling behavior;
+- give concurrency or late-start policy a hidden runtime default;
+- apply `concurrencyPolicy` to a manual or backfill invocation;
+- queue a scheduled occurrence blocked by an external invocation;
 - interpret scheduler host timezone as authored schedule timezone;
+- change Argo cron, missed-run, or daylight-saving behavior while claiming
+  compatibility;
 - include nondeterministic estimates in execution identity;
 - treat child run records as an independent dependency graph; or
-- describe OpenLineage export as runtime or execution interoperability.
+- describe OpenLineage export as runtime or execution interoperability;
+- emit an unprefixed LeapView OpenLineage facet or a mutable `_schemaURL`.
 
 ## Consequences
 
 Authors gain a small declarative Pipeline resource that says what governed
-asset to refresh, when invocations may occur, and how overlap is handled. They
-do not maintain an imperative DAG that duplicates Model lineage. Generated
-schemas and documentation can describe every accepted field and reject hidden
-or unsupported behavior before deployment.
+asset to refresh, when scheduled invocations may occur, and how concurrency is
+handled. They do not maintain an imperative DAG that duplicates Model lineage.
+Generated schemas and documentation can describe every accepted field and
+reject hidden or unsupported behavior before deployment.
 
-Operators gain stable trigger, occurrence, plan, and run identities. Scheduler
+Operators gain stable schedule, occurrence, plan, and run identities. Scheduler
 outages, concurrent dispatchers, deployment races, replacement, and stale
 publication have explicit outcomes. The chain from author intent to compiler
 decision to physical execution becomes inspectable and exportable.
@@ -429,32 +536,36 @@ decision to physical execution becomes inspectable and exportable.
 Scoped materialization can substantially reduce restatement work while
 preserving a complete immutable candidate. It also makes relation-level reuse
 and correct scope propagation mandatory. The current canonical restatement
-path, scheduler grouping, authored CUE/Go shape, and run evidence do not yet
+path, scheduler grouping, interim TypeSpec shape, and run evidence do not yet
 conform and must change.
 
-Requiring explicit `overlap` and `missedOccurrences` makes documents slightly
-more verbose. It avoids silently preserving current behavior or introducing a
-behavioral migration under a default. Existing draft examples must be rewritten
-to the new TypeSpec-generated shape.
+Requiring explicit Pipeline-wide `timezone`, `concurrencyPolicy`, and
+`startingDeadlineSeconds` when schedules exist makes scheduled documents
+slightly more verbose. It avoids host-dependent timezones and behavioral
+migrations under hidden defaults. Manual-only Pipelines carry none of those
+irrelevant fields. Existing examples must be rewritten to the new
+TypeSpec-generated shape.
 
-Stable trigger IDs become durable API and audit identities. Renaming a trigger
-is an operational change, not cosmetic metadata. Tooling must surface the
-resulting schedule replacement and prevent accidental duplicate occurrence
-creation around activation.
+Stable schedule-map keys become durable API and audit identities. Renaming a
+schedule is an evidence change, not a scheduling-policy change. Tooling must
+surface the renamed evidence identity, while occurrence uniqueness prevents the
+rename from duplicating an execution for the same Pipeline and nominal time.
 
-The DST gap policy delays a missing occurrence to the first valid minute, while
-the fold policy emits only the earlier occurrence. These choices differ from
-some external cron systems, so LeapView must document and test them rather than
-claim generic cron equivalence.
+Argo-compatible DST behavior can skip a nonexistent spring-forward wall time or
+produce two executions for a matching fall-back wall time. This is less
+analytics-specific than the former LeapView rule, but it is predictable,
+portable to an established controller contract, and testable without a bespoke
+exception.
 
-V1 intentionally omits arbitrary task DAGs, user code, containers, `allow`
-overlap, unbounded catch-up, retries, timeout, event triggers, and backfill
+V1 intentionally omits arbitrary task DAGs, user code, containers, `Allow`
+concurrency, unbounded catch-up, retries, timeout, event triggers, and backfill
 grammar. Those omissions keep the trust and execution boundary narrow. They may
 be added independently when a demonstrated use case has precise semantics.
 
-GitHub Actions remains useful for repository CI and deployment automation;
-Dagster, Argo, Open Workflow Specification, and OpenLineage remain references
-or interoperability boundaries rather than mandatory infrastructure.
+GitHub Actions remains useful for repository CI and deployment automation.
+Dagster, Temporal, and Open Workflow Specification remain comparison material.
+dbt, Argo, and OpenLineage provide the normative generic semantics identified
+above without becoming mandatory runtime infrastructure.
 
 ## Confirmation
 
@@ -462,11 +573,13 @@ Conformance requires evidence that:
 
 - TypeSpec is the sole structural authority for Pipeline and generates Go,
   JSON Schema, documentation, and other required projections;
-- the generated schema accepts only the closed selection and trigger variants,
-  requires explicit overlap and schedule recovery policy, and rejects the old
-  `semanticModel` plus `on.schedule` shape;
+- the generated schema accepts only the closed selection fields and named
+  string-valued schedule map, requires Pipeline-wide timezone, concurrency, and
+  late-start policy exactly when schedules exist, and rejects both the old
+  `semanticModel` plus `on.schedule` shape and the interim tagged `selection`
+  and `triggers` shape;
 - compilation of a SemanticModel selection produces the exact deterministic
-  required Model closure, topological order, Source inputs, and
+  dbt-ancestor-equivalent Model closure, topological order, Source inputs, and
   `materializationScope`, while excluding unrelated Models and dashboards;
 - repeated compilation produces identical execution digests independent of
   source map order, process, and dispatcher;
@@ -479,16 +592,26 @@ Conformance requires evidence that:
 - occurrence uniqueness and atomic run attachment prevent duplicates across
   concurrent dispatchers, restart, claim expiry, activation, and lost
   acknowledgement;
-- missed occurrences are coalesced per trigger, and table-driven tests cover
-  every supported `overlap` and `missedOccurrences` interaction with multiple
-  triggers and recovery;
+- the schedule map projects to Argo-equivalent scheduling independent of key
+  names and map iteration, with conformance cases for overlapping expressions,
+  identical expressions under different IDs, multiple missed expressions, and
+  daylight-saving transitions;
+- missed occurrences are evaluated Pipeline-wide and recovery creates at most
+  one execution, with table-driven tests covering every supported
+  `concurrencyPolicy` and `startingDeadlineSeconds` interaction;
 - replacement revokes prior publication authority even when physical
   cancellation is delayed or impossible;
-- cron conformance tests cover the five-field grammar, named values, minimum
-  interval, IANA zones, host-zone independence, daylight-saving gaps and folds,
-  and deterministic nominal UTC time;
+- Argo v4.0.8 conformance tests cover five-field grammar, ranges, steps, named
+  values, `?`, macros, every-minute schedules, IANA zones, host-zone
+  independence, spring-forward skips, fall-back duplicates, missed-run
+  recovery, and deterministic nominal UTC time;
+- scheduled-versus-scheduled, scheduled-versus-external, and
+  external-versus-active tests enforce the collision matrix without allowing
+  `Replace` to terminate a manual or backfill run;
 - manual and scheduled invocations enforce the same authorization, workload,
-  planning, execution, and publication boundaries; and
+  planning, execution, and publication boundaries after Pipeline invocation
+  admission; and
 - OpenLineage contract tests map Pipelines, runs, child executions, nominal
-  time, Sources, and materialized outputs without treating exported events as
-  execution authority.
+  time, Sources, and materialized outputs, require `leapView_` custom-facet keys
+  and immutable canonical `_schemaURL` values, and never treat exported events
+  as execution authority.

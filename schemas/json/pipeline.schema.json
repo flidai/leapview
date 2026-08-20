@@ -1,28 +1,14 @@
 {
   "$defs": {
-    "ManualPipelineTrigger": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/PipelineTriggerBase"
-        }
-      ],
+    "ManualPipelineSpec": {
+      "description": "Manual-only form: schedule policy is not meaningful without schedules.",
       "properties": {
-        "id": {
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "manual"
-          ],
-          "type": "string"
+        "selection": {
+          "$ref": "#/$defs/PipelineSelection"
         }
       },
       "required": [
-        "id",
-        "type"
+        "selection"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -30,6 +16,13 @@
     "PipelineApiVersion": {
       "enum": [
         "leapview.dev/v1"
+      ],
+      "type": "string"
+    },
+    "PipelineConcurrencyPolicy": {
+      "enum": [
+        "Forbid",
+        "Replace"
       ],
       "type": "string"
     },
@@ -100,169 +93,80 @@
       "type": "object",
       "unevaluatedProperties": false
     },
-    "PipelineMissedOccurrences": {
-      "enum": [
-        "skip",
-        "latest"
-      ],
-      "type": "string"
-    },
-    "PipelineOverlapPolicy": {
-      "enum": [
-        "forbid",
-        "replace"
-      ],
-      "type": "string"
-    },
     "PipelineResourceKind": {
       "enum": [
         "Pipeline"
       ],
       "type": "string"
     },
-    "PipelineRunPolicy": {
-      "properties": {
-        "overlap": {
-          "$ref": "#/$defs/PipelineOverlapPolicy"
-        }
-      },
-      "required": [
-        "overlap"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
     "PipelineSelection": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/SemanticModelPipelineSelection"
-        }
-      ]
-    },
-    "PipelineSelectionBase": {
-      "properties": {
-        "type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "type"
-      ],
-      "type": "object"
-    },
-    "PipelineSpec": {
-      "properties": {
-        "runPolicy": {
-          "$ref": "#/$defs/PipelineRunPolicy"
-        },
-        "selection": {
-          "$ref": "#/$defs/PipelineSelection"
-        },
-        "triggers": {
-          "items": {
-            "$ref": "#/$defs/PipelineTrigger"
-          },
-          "type": "array"
-        }
-      },
-      "required": [
-        "runPolicy",
-        "selection",
-        "triggers"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "PipelineTrigger": {
-      "oneOf": [
-        {
-          "$ref": "#/$defs/ManualPipelineTrigger"
-        },
-        {
-          "$ref": "#/$defs/SchedulePipelineTrigger"
-        }
-      ]
-    },
-    "PipelineTriggerBase": {
-      "properties": {
-        "id": {
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-          "type": "string"
-        },
-        "type": {
-          "type": "string"
-        }
-      },
-      "required": [
-        "id",
-        "type"
-      ],
-      "type": "object"
-    },
-    "SchedulePipelineTrigger": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/PipelineTriggerBase"
-        }
-      ],
-      "properties": {
-        "cron": {
-          "type": "string"
-        },
-        "id": {
-          "maxLength": 128,
-          "minLength": 1,
-          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
-          "type": "string"
-        },
-        "missedOccurrences": {
-          "$ref": "#/$defs/PipelineMissedOccurrences"
-        },
-        "timezone": {
-          "type": "string"
-        },
-        "type": {
-          "enum": [
-            "schedule"
-          ],
-          "type": "string"
-        }
-      },
-      "required": [
-        "cron",
-        "id",
-        "missedOccurrences",
-        "timezone",
-        "type"
-      ],
-      "type": "object",
-      "unevaluatedProperties": false
-    },
-    "SemanticModelPipelineSelection": {
-      "allOf": [
-        {
-          "$ref": "#/$defs/PipelineSelectionBase"
-        }
-      ],
       "properties": {
         "semanticModel": {
           "maxLength": 128,
           "minLength": 1,
           "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
           "type": "string"
+        }
+      },
+      "required": [
+        "semanticModel"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PipelineSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ManualPipelineSpec"
         },
-        "type": {
-          "enum": [
-            "semanticModel"
-          ],
+        {
+          "$ref": "#/$defs/ScheduledPipelineSpec"
+        }
+      ]
+    },
+    "ScheduledPipelineSpec": {
+      "description": "Scheduled form: all Pipeline-wide schedule policy is explicit.",
+      "properties": {
+        "concurrencyPolicy": {
+          "$ref": "#/$defs/PipelineConcurrencyPolicy",
+          "description": "Argo-compatible scheduled overlap policy, required when schedules is non-empty."
+        },
+        "schedules": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": "Named schedule IDs are evidence-only keys; values are cron expressions.",
+          "minProperties": 1,
+          "propertyNames": {
+            "maxLength": 128,
+            "minLength": 1,
+            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "selection": {
+          "$ref": "#/$defs/PipelineSelection"
+        },
+        "startingDeadlineSeconds": {
+          "description": "Argo-compatible late-start deadline, required when schedules is non-empty.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timezone": {
+          "description": "Required when schedules is non-empty; omitted for manual-only Pipelines.",
+          "minLength": 1,
           "type": "string"
         }
       },
       "required": [
-        "semanticModel",
-        "type"
+        "concurrencyPolicy",
+        "schedules",
+        "selection",
+        "startingDeadlineSeconds",
+        "timezone"
       ],
       "type": "object",
       "unevaluatedProperties": false

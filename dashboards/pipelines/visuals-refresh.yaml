@@ -5,10 +5,4 @@ metadata:
   name: visuals-refresh
 spec:
   selection:
-    type: semanticModel
     semanticModel: semantic-model:visuals
-  triggers:
-    - id: manual
-      type: manual
-  runPolicy:
-    overlap: replace

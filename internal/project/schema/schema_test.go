@@ -866,14 +866,15 @@ func TestGeneratedJSONSchemasRejectInvalidDocuments(t *testing.T) {
 			},
 		},
 		{
-			name: "pipeline missing trigger policy",
+			name: "pipeline missing scheduling policy",
 			kind: KindPipeline,
 			instance: map[string]any{
 				"apiVersion": "leapview.dev/v1",
 				"kind":       "Pipeline",
 				"metadata":   map[string]any{"id": "pipeline:sales", "name": "sales"},
 				"spec": map[string]any{
-					"selection": map[string]any{"type": "semanticModel", "semanticModel": "sales"},
+					"selection": map[string]any{"semanticModel": "sales"},
+					"schedules": map[string]any{"daily": "0 6 * * *"},
 				},
 			},
 		},
@@ -883,6 +884,25 @@ func TestGeneratedJSONSchemasRejectInvalidDocuments(t *testing.T) {
 			schema := compileGeneratedSchema(t, tt.kind)
 			if err := schema.Validate(tt.instance); err == nil {
 				t.Fatal("generated JSON Schema accepted invalid document")
+			}
+		})
+	}
+}
+
+func TestPipelineSchemaRejectsEmptySchedulesAndManualSchedulingPolicy(t *testing.T) {
+	base := `apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata: {id: pipeline:test, name: test}
+spec:
+  selection: {semanticModel: sales}
+`
+	for name, document := range map[string]string{
+		"empty schedules": base + "  schedules: {}\n  timezone: Europe/Copenhagen\n  startingDeadlineSeconds: 0\n  concurrencyPolicy: Forbid\n",
+		"manual policy":   base + "  timezone: Europe/Copenhagen\n",
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := ValidateBytes(KindPipeline, "pipeline.yaml", []byte(document)); err == nil {
+				t.Fatal("ValidateBytes accepted invalid scheduling shape")
 			}
 		})
 	}

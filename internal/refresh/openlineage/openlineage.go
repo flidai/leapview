@@ -24,8 +24,13 @@ const (
 	// this URL explicit so an exporter can forward the event without adding
 	// transport-specific metadata.
 	SchemaURL = "https://openlineage.io/spec/2-0-2/OpenLineage.json"
-	// FacetSchemaURL is the schema identifier for the LeapView-scoped facet.
-	FacetSchemaURL = "https://leapview.dev/openlineage/facets/refresh.json"
+	// Facet schema URLs are version-pinned and identify the corresponding
+	// LeapView facet type; the mutable refresh.json alias is never emitted.
+	PipelineFacetSchemaURL   = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json"
+	InvocationFacetSchemaURL = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json"
+
+	PipelineFacetKey   = "leapView_pipeline"
+	InvocationFacetKey = "leapView_invocation"
 )
 
 // EventType is the OpenLineage lifecycle event type.
@@ -86,21 +91,25 @@ type Dataset struct {
 type Pipeline struct {
 	// Namespace is optional.  If omitted, NamespaceFor(ProjectID,
 	// Environment) is used.
-	Namespace            string
-	ProjectID            string
-	Environment          string
-	ID                   string
-	SemanticModelID      string
-	GenerationID         string
-	PlanDigest           string
-	SelectionDigest      string
-	ExecutionDigest      string
-	ProvenanceDigest     string
-	GovernanceDigest     string
-	EvidenceDigest       string
-	QualificationChecks  []string
-	MaterializationScope []string
-	SourceInputs         []string
+	Namespace               string
+	ProjectID               string
+	Environment             string
+	ID                      string
+	SemanticModelID         string
+	GenerationID            string
+	PlanDigest              string
+	SelectionDigest         string
+	ExecutionDigest         string
+	ProvenanceDigest        string
+	GovernanceDigest        string
+	EvidenceDigest          string
+	InvocationSource        string
+	MatchingScheduleIDs     []string
+	StartingDeadlineSeconds int64
+	ConcurrencyPolicy       string
+	QualificationChecks     []string
+	MaterializationScope    []string
+	SourceInputs            []string
 }
 
 // FromPipelinePlan adapts the immutable delivery plan to the export context.
@@ -108,20 +117,24 @@ type Pipeline struct {
 // intentionally generation-bound but does not duplicate serving scope.
 func FromPipelinePlan(projectID, environment string, plan projectpipelineplan.Plan) Pipeline {
 	return Pipeline{
-		ProjectID:            projectID,
-		Environment:          environment,
-		ID:                   plan.PipelineID,
-		SemanticModelID:      plan.SemanticModelID,
-		GenerationID:         plan.ServingGenerationID,
-		PlanDigest:           plan.Digest,
-		SelectionDigest:      plan.SelectionDigest,
-		ExecutionDigest:      plan.ExecutionDigest,
-		ProvenanceDigest:     plan.ProvenanceDigest,
-		GovernanceDigest:     plan.GovernanceDigest,
-		EvidenceDigest:       plan.EvidenceDigest,
-		QualificationChecks:  append([]string(nil), plan.QualificationChecks...),
-		MaterializationScope: append([]string(nil), plan.MaterializationScope...),
-		SourceInputs:         append([]string(nil), plan.SourceInputs...),
+		ProjectID:               projectID,
+		Environment:             environment,
+		ID:                      plan.PipelineID,
+		SemanticModelID:         plan.SemanticModelID,
+		GenerationID:            plan.ServingGenerationID,
+		PlanDigest:              plan.Digest,
+		SelectionDigest:         plan.SelectionDigest,
+		ExecutionDigest:         plan.ExecutionDigest,
+		ProvenanceDigest:        plan.ProvenanceDigest,
+		GovernanceDigest:        plan.GovernanceDigest,
+		EvidenceDigest:          plan.EvidenceDigest,
+		InvocationSource:        plan.InvocationSource,
+		MatchingScheduleIDs:     append([]string(nil), plan.MatchingScheduleIDs...),
+		StartingDeadlineSeconds: plan.StartingDeadlineSeconds,
+		ConcurrencyPolicy:       plan.ConcurrencyPolicy,
+		QualificationChecks:     append([]string(nil), plan.QualificationChecks...),
+		MaterializationScope:    append([]string(nil), plan.MaterializationScope...),
+		SourceInputs:            append([]string(nil), plan.SourceInputs...),
 	}
 }
 
@@ -130,17 +143,17 @@ func FromPipelinePlan(projectID, environment string, plan projectpipelineplan.Pl
 // nominalTime run facet.  ModelID and ParentRunID identify a separately
 // emitted child Model run; leave both empty for the PipelineRun event.
 type PipelineRun struct {
-	ID          string
-	PipelineID  string
-	EventType   EventType
-	EventTime   time.Time
-	TriggerID   string
-	TriggerType string
-	NominalTime *time.Time
-	ParentRunID string
-	ModelID     string
-	Inputs      []string
-	Outputs     []string
+	ID                  string
+	PipelineID          string
+	EventType           EventType
+	EventTime           time.Time
+	InvocationSource    string
+	MatchingScheduleIDs []string
+	NominalTime         *time.Time
+	ParentRunID         string
+	ModelID             string
+	Inputs              []string
+	Outputs             []string
 }
 
 // Exporter is the deliberately narrow observability boundary.  Implementors
@@ -172,7 +185,7 @@ func JobForPipeline(p Pipeline) (Job, error) {
 	return Job{
 		Namespace: namespace,
 		Name:      p.ID,
-		Facets:    Facets{"leapview": mustFacet(leapViewFacet(p))},
+		Facets:    Facets{PipelineFacetKey: mustFacet(leapViewFacet(p))},
 	}, nil
 }
 
@@ -210,18 +223,33 @@ func EventForPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
 	}
 	eventTime = eventTime.UTC()
 
-	runFacets := Facets{"leapview": mustFacet(leapViewFacet(p))}
+	runFacets := Facets{PipelineFacetKey: mustFacet(leapViewFacet(p))}
 	if r.NominalTime != nil {
 		runFacets["nominalTime"] = mustFacet(nominalTimeFacet(*r.NominalTime))
 	}
 	if r.ParentRunID != "" {
 		runFacets["parent"] = mustFacet(parentFacet(p, r.ParentRunID))
 	}
-	if r.TriggerID != "" || r.TriggerType != "" {
-		runFacets["leapviewTrigger"] = mustFacet(map[string]any{
-			"_producer": Producer, "_schemaURL": FacetSchemaURL,
-			"triggerId": r.TriggerID, "triggerType": r.TriggerType,
-		})
+	invocationSource := r.InvocationSource
+	if invocationSource == "" {
+		invocationSource = p.InvocationSource
+	}
+	scheduleIDs := append([]string(nil), r.MatchingScheduleIDs...)
+	if scheduleIDs == nil {
+		scheduleIDs = append([]string(nil), p.MatchingScheduleIDs...)
+	}
+	if invocationSource != "" || len(scheduleIDs) > 0 {
+		policy := map[string]any{
+			"_producer": Producer, "_schemaURL": InvocationFacetSchemaURL,
+			"invocationSource": invocationSource, "matchingScheduleIds": scheduleIDs,
+		}
+		if p.StartingDeadlineSeconds > 0 {
+			policy["startingDeadlineSeconds"] = p.StartingDeadlineSeconds
+		}
+		if p.ConcurrencyPolicy != "" {
+			policy["concurrencyPolicy"] = p.ConcurrencyPolicy
+		}
+		runFacets[InvocationFacetKey] = mustFacet(policy)
 	}
 
 	inputs := r.Inputs
@@ -270,7 +298,7 @@ func ModelRun(p Pipeline, r PipelineRun, modelID string) (Event, error) {
 		return Event{}, err
 	}
 	event.Job.Name = modelID
-	event.Job.Facets = Facets{"leapview": mustFacet(leapViewFacet(p))}
+	event.Job.Facets = Facets{PipelineFacetKey: mustFacet(leapViewFacet(p))}
 	return event, nil
 }
 
@@ -328,7 +356,7 @@ func datasets(namespace string, names []string) []Dataset {
 }
 
 func leapViewFacet(p Pipeline) map[string]any {
-	facet := map[string]any{"_producer": Producer, "_schemaURL": FacetSchemaURL, "pipelineId": p.ID}
+	facet := map[string]any{"_producer": Producer, "_schemaURL": PipelineFacetSchemaURL, "pipelineId": p.ID}
 	for key, value := range map[string]string{
 		"projectId": p.ProjectID, "environment": p.Environment,
 		"semanticModelId": p.SemanticModelID, "generationId": p.GenerationID,

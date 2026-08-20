@@ -138,10 +138,24 @@ type QueuePipelineInput struct {
 	EstimatedMemoryBytes int64
 	PipelineID           projectgraph.ResourceID
 	TriggerType          string
+	InvocationSource     string
 	TriggerID            string
+	MatchingScheduleIDs  []string
 	RetryOf              string
 	ArtifactDigest       string
 	Occurrence           *refreshschedule.Occurrence
+}
+
+// InvocationAdmissionChecker is an optional repository fast-path used before
+// candidate construction. The durable CreateRun transaction remains the final
+// fence; this check prevents an external conflict from allocating physical
+// candidate state that can never be queued.
+type InvocationAdmissionChecker interface {
+	CheckInvocationAdmission(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID, string) error
+}
+
+type ScheduledInvocationAdmissionChecker interface {
+	CheckScheduledInvocationAdmission(context.Context, refreshschedule.Occurrence) error
 }
 
 func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineInput) (QueueAssetResult, error) {
@@ -165,6 +179,9 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	if input.TriggerType == "" {
 		input.TriggerType = TriggerManual
+	}
+	if input.InvocationSource == "" {
+		input.InvocationSource = input.TriggerType
 	}
 	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule && input.TriggerType != TriggerRetry {
 		return QueueAssetResult{}, fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
@@ -190,6 +207,18 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err := validatePipelineInvocation(pipeline, &input); err != nil {
 		return QueueAssetResult{}, err
 	}
+	if checker, ok := s.Runs.(InvocationAdmissionChecker); ok {
+		if err := checker.CheckInvocationAdmission(ctx, input.Identity, input.PipelineID, input.InvocationSource); err != nil {
+			return QueueAssetResult{}, err
+		}
+	}
+	if input.TriggerType == TriggerSchedule && input.Occurrence != nil {
+		if checker, ok := s.Runs.(ScheduledInvocationAdmissionChecker); ok {
+			if err := checker.CheckScheduledInvocationAdmission(ctx, *input.Occurrence); err != nil {
+				return QueueAssetResult{}, err
+			}
+		}
+	}
 	plan, err := refreshplan.ForPipeline(loaded.Definition, input.Identity.ProjectID, input.PipelineID)
 	if err != nil {
 		return QueueAssetResult{}, err
@@ -206,19 +235,17 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err != nil {
 		return QueueAssetResult{}, err
 	}
-	missedOccurrences := ""
+	matchingScheduleIDs := append([]string(nil), input.MatchingScheduleIDs...)
 	if input.TriggerType == TriggerSchedule {
-		for _, schedule := range pipeline.Schedules {
-			if schedule.ID == input.TriggerID {
-				missedOccurrences = schedule.MissedOccurrences
-				break
-			}
-		}
+		matchingScheduleIDs = append([]string(nil), input.Occurrence.MatchingScheduleIDs...)
 	}
-	pipelinePlan, err := plan.DeliveryPipelinePlan(refreshplan.InvocationPolicy{
-		TriggerType: input.TriggerType, TriggerID: input.TriggerID,
-		MissedOccurrences: missedOccurrences, Overlap: pipeline.Overlap,
-	})
+	policy := refreshplan.InvocationPolicy{InvocationSource: input.InvocationSource}
+	if input.TriggerType == TriggerSchedule {
+		policy.MatchingScheduleIDs = matchingScheduleIDs
+		policy.StartingDeadlineSeconds = pipeline.StartingDeadlineSeconds
+		policy.ConcurrencyPolicy = pipeline.ConcurrencyPolicy
+	}
+	pipelinePlan, err := plan.DeliveryPipelinePlan(policy)
 	if err != nil {
 		return QueueAssetResult{}, err
 	}
@@ -234,7 +261,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.Occurrence != nil {
 		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
 	}
-	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, TriggerID: input.TriggerID, NominalTime: nominalTime, Overlap: pipeline.Overlap, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
+	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
 	var root RunRecord
 	if input.Occurrence != nil {
 		creator, ok := s.Runs.(interface {
@@ -262,7 +289,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		if parseErr != nil {
 			return QueueAssetResult{}, parseErr
 		}
-		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
+		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
 		if childErr != nil {
 			_, _ = s.Runs.MarkRunFailed(ctx, root.Identity, root.ID, childErr.Error())
 			if s.CanonicalExecutor == nil {
@@ -284,26 +311,26 @@ func validatePipelineInvocation(pipeline refreshschedule.Definition, input *Queu
 		if input.Occurrence == nil {
 			return fmt.Errorf("scheduled refresh occurrence is required")
 		}
-		if input.TriggerID == "" {
-			input.TriggerID = input.Occurrence.TriggerID
+		if len(input.Occurrence.MatchingScheduleIDs) == 0 {
+			return fmt.Errorf("scheduled refresh matching schedule ids are required")
 		}
-		if input.TriggerID != input.Occurrence.TriggerID {
-			return fmt.Errorf("scheduled refresh trigger does not match occurrence")
-		}
+		schedules := make(map[string]struct{}, len(pipeline.Schedules))
 		for _, schedule := range pipeline.Schedules {
-			if schedule.ID == input.TriggerID {
-				return nil
+			schedules[schedule.ID] = struct{}{}
+		}
+		for _, id := range input.Occurrence.MatchingScheduleIDs {
+			if _, ok := schedules[id]; !ok {
+				return fmt.Errorf("unknown schedule %q for pipeline %q", id, pipeline.ID)
 			}
 		}
-		return fmt.Errorf("unknown schedule trigger %q for pipeline %q", input.TriggerID, pipeline.ID)
+		return nil
 	}
 	if input.TriggerType == TriggerManual {
-		for _, triggerID := range pipeline.ManualTriggers {
-			if triggerID == input.TriggerID {
-				return nil
-			}
-		}
-		return fmt.Errorf("unknown manual trigger %q for pipeline %q", input.TriggerID, pipeline.ID)
+		// Manual invocation is implicit and intentionally has no authored trigger
+		// ID list. Authorization is performed by the API/module boundary.
+		input.TriggerID = ""
+		input.MatchingScheduleIDs = nil
+		return nil
 	}
 	if input.TriggerID == "" {
 		input.TriggerID = "retry"

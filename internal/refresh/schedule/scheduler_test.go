@@ -102,7 +102,7 @@ func TestSchedulerUsesInjectedClockAndAttachesCreatedRun(t *testing.T) {
 
 func TestSchedulerDoesNotRetryPolicySkippedOccurrence(t *testing.T) {
 	now := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
-	repository := &schedulerRepository{due: []Occurrence{{Identity: projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, PipelineID: "pipeline_daily", TriggerID: "weekdays", ScheduledAt: now}}}
+	repository := &schedulerRepository{due: []Occurrence{{Identity: projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}, PipelineID: "pipeline_daily", MatchingScheduleIDs: []string{"weekdays"}, SemanticModelID: "semantic_sales", ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", Timezone: "UTC", ScheduledAt: now}}}
 	scheduler := Scheduler{
 		Repository: repository, Clock: fixedClock{now: now},
 		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {

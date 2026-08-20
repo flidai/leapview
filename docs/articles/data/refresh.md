@@ -14,21 +14,15 @@ metadata:
   name: sales_refresh
 spec:
   selection:
-    type: semanticModel
     semanticModel: semantic-model:sales
-  triggers:
-    - id: manual
-      type: manual
-    - id: weekdays-0600
-      type: schedule
-      cron: "0 6 * * 1-5"
-      timezone: Europe/Copenhagen
-      missedOccurrences: latest
-  runPolicy:
-    overlap: replace
+  schedules:
+    weekdays-0600: "0 6 * * 1-5"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 ```
 
-Trigger IDs are durable operational identities and must be unique within the Pipeline. Schedule triggers use five-field cron, require an IANA timezone, and declare `missedOccurrences` as `skip` or `latest`. `runPolicy.overlap` is also explicit: `forbid` records a new invocation as skipped while another run is nonterminal; `replace` supersedes the earlier run and revokes its publication authority.
+Schedule map keys are durable evidence identities and must be unique within the Pipeline. Schedule values use the Argo-compatible five-field cron profile (including the documented macros). Scheduled Pipelines require one explicit IANA `timezone`, `startingDeadlineSeconds`, and `concurrencyPolicy`: `Forbid` records an overlapping occurrence as skipped while another scheduled run is nonterminal; `Replace` supersedes the earlier scheduled run and revokes its publication authority. Manual-only Pipelines omit these scheduling fields entirely.
 
 GitHub Actions and other orchestrators may call the LeapView API or CLI, but their workflow syntax is not the Pipeline contract.
 

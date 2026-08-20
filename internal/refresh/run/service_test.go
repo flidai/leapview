@@ -241,7 +241,7 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	}
 	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
 	})
 	if err != nil {
 		t.Fatalf("QueuePipelineRefresh() error = %v", err)
@@ -255,10 +255,10 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
 	}
-	if repo.createdRuns[0].TriggerID != "manual" || repo.createdRuns[0].PipelinePlan == nil || repo.createdRuns[0].PipelinePlan.ServingGenerationID != serviceIdentity.GenerationID || repo.createdRuns[0].PipelinePlan.Digest == "" {
+	if repo.createdRuns[0].TriggerID != "" || repo.createdRuns[0].PipelinePlan == nil || repo.createdRuns[0].PipelinePlan.ServingGenerationID != serviceIdentity.GenerationID || repo.createdRuns[0].PipelinePlan.Digest == "" {
 		t.Fatalf("root plan evidence = %#v, want manual generation-bound plan", repo.createdRuns[0])
 	}
-	if repo.createdRuns[0].PipelinePlan.TriggerType != TriggerManual || repo.createdRuns[0].PipelinePlan.TriggerID != "manual" || repo.createdRuns[0].PipelinePlan.Overlap != "replace" {
+	if repo.createdRuns[0].PipelinePlan.InvocationSource != TriggerManual || repo.createdRuns[0].PipelinePlan.ConcurrencyPolicy != "" {
 		t.Fatalf("root effective policy = %#v", repo.createdRuns[0].PipelinePlan)
 	}
 	if got, want := repo.createdRuns[0].PipelinePlan.MaterializationScope, []string{"customers", "orders"}; !reflect.DeepEqual(got, want) {
@@ -266,18 +266,18 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	}
 }
 
-func TestServiceQueuePipelineRefreshRejectsUnknownManualTrigger(t *testing.T) {
+func TestServiceQueuePipelineRefreshAcceptsImplicitManualInvocation(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{ServingStates: repo, Runs: repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()}}
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "invented",
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
 	})
-	if err == nil || !strings.Contains(err.Error(), "unknown manual trigger") {
-		t.Fatalf("QueuePipelineRefresh() error = %v, want unknown trigger", err)
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v, want implicit manual admission", err)
 	}
-	if len(repo.createdRuns) != 0 {
-		t.Fatalf("created runs = %#v, want none", repo.createdRuns)
+	if len(repo.createdRuns) != 3 {
+		t.Fatalf("created runs = %#v, want implicit manual root plus dependencies", repo.createdRuns)
 	}
 }
 
@@ -481,7 +481,7 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 
 func refreshTestDefinition() *artifact.Definition {
 	return &artifact.Definition{Pipelines: map[string]refreshschedule.Definition{
-		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales", Overlap: refreshschedule.OverlapReplace, ManualTriggers: []string{"manual"}},
+		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{{ID: "daily", Expression: "0 6 * * *"}}},
 	}, Models: map[string]*semanticmodel.Model{
 		"sales": {
 			Name: "sales",

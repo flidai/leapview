@@ -5,18 +5,24 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
-type ManualPipelineTrigger struct {
-	PipelineTriggerBase
-	ID   string `json:"id" yaml:"id"`
-	Type string `json:"type" yaml:"type"`
+type ManualPipelineSpec struct {
+	Selection PipelineSelection `json:"selection" yaml:"selection"`
 }
 
 type PipelineApiVersion string
 
 const (
 	PipelineApiVersionLeapviewDevV1 PipelineApiVersion = "leapview.dev/v1"
+)
+
+type PipelineConcurrencyPolicy string
+
+const (
+	PipelineConcurrencyPolicyForbid  PipelineConcurrencyPolicy = "Forbid"
+	PipelineConcurrencyPolicyReplace PipelineConcurrencyPolicy = "Replace"
 )
 
 type PipelineDocument struct {
@@ -37,345 +43,133 @@ type PipelineMetadata struct {
 	Documentation *string   `json:"documentation,omitempty" yaml:"documentation,omitempty"`
 }
 
-type PipelineMissedOccurrences string
-
-const (
-	PipelineMissedOccurrencesSkip   PipelineMissedOccurrences = "skip"
-	PipelineMissedOccurrencesLatest PipelineMissedOccurrences = "latest"
-)
-
-type PipelineOverlapPolicy string
-
-const (
-	PipelineOverlapPolicyForbid  PipelineOverlapPolicy = "forbid"
-	PipelineOverlapPolicyReplace PipelineOverlapPolicy = "replace"
-)
-
 type PipelineResourceKind string
 
 const (
 	PipelineResourceKindPipeline PipelineResourceKind = "Pipeline"
 )
 
-type PipelineRunPolicy struct {
-	Overlap PipelineOverlapPolicy `json:"overlap" yaml:"overlap"`
-}
-
-type PipelineSelectionVariant interface {
-	isPipelineSelectionVariant()
-}
-
 type PipelineSelection struct {
-	Value PipelineSelectionVariant
+	SemanticModel string `json:"semanticModel" yaml:"semanticModel"`
 }
 
-func (*SemanticModelPipelineSelection) isPipelineSelectionVariant() {}
-
-func (value PipelineSelection) MarshalJSON() ([]byte, error) {
-	switch variant := value.Value.(type) {
-	case *SemanticModelPipelineSelection:
-		if variant == nil {
-			return nil, fmt.Errorf("PipelineSelection variant is nil")
-		}
-		return json.Marshal(variant)
-	case nil:
-		return nil, fmt.Errorf("PipelineSelection variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported PipelineSelection variant %T", variant)
-	}
-}
-
-func (value *PipelineSelection) UnmarshalJSON(data []byte) error {
-	if value == nil {
-		return fmt.Errorf("cannot unmarshal PipelineSelection into nil receiver")
-	}
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode PipelineSelection object: %w", err)
-	}
-	var tag struct {
-		Value string `json:"type"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode PipelineSelection discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("PipelineSelection discriminator type is required")
-	}
-	decode := func(dest any) error {
-		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(dest)
-	}
-	switch tag.Value {
-	case "semanticModel":
-		if _, ok := fields["semanticModel"]; !ok {
-			return fmt.Errorf("decode PipelineSelection variant %q: required property semanticModel is missing", tag.Value)
-		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode PipelineSelection variant %q: required property type is missing", tag.Value)
-		}
-		var variant SemanticModelPipelineSelection
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode PipelineSelection variant %q: %w", tag.Value, err)
-		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown PipelineSelection discriminator %q", tag.Value)
-	}
-	return nil
-}
-
-type PipelineSelectionVisitor interface {
-	VisitSemanticModelPipelineSelection(*SemanticModelPipelineSelection) error
-}
-
-func (value *PipelineSelection) Visit(visitor PipelineSelectionVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil PipelineSelection")
-	}
-	if visitor == nil {
-		return fmt.Errorf("PipelineSelection visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *SemanticModelPipelineSelection:
-		if variant == nil {
-			return fmt.Errorf("PipelineSelection variant is nil")
-		}
-		return visitor.VisitSemanticModelPipelineSelection(variant)
-	case nil:
-		return fmt.Errorf("PipelineSelection variant is required")
-	default:
-		return fmt.Errorf("unsupported PipelineSelection variant %T", variant)
-	}
-}
-
-func (value *PipelineSelection) Type() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil PipelineSelection")
-	}
-	switch variant := value.Value.(type) {
-	case *SemanticModelPipelineSelection:
-		if variant == nil {
-			return "", fmt.Errorf("PipelineSelection variant is nil")
-		}
-		return "semanticModel", nil
-	case nil:
-		return "", fmt.Errorf("PipelineSelection variant is required")
-	default:
-		return "", fmt.Errorf("unsupported PipelineSelection variant %T", variant)
-	}
-}
-
-func (value *PipelineSelection) Base() (*PipelineSelectionBase, error) {
-	if value == nil {
-		return nil, fmt.Errorf("cannot inspect nil PipelineSelection")
-	}
-	switch variant := value.Value.(type) {
-	case *SemanticModelPipelineSelection:
-		if variant == nil {
-			return nil, fmt.Errorf("PipelineSelection variant is nil")
-		}
-		return &variant.PipelineSelectionBase, nil
-	case nil:
-		return nil, fmt.Errorf("PipelineSelection variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported PipelineSelection variant %T", variant)
-	}
-}
-
-type PipelineSelectionBase struct {
-	Type string `json:"type" yaml:"type"`
+type PipelineSpecVariant interface {
+	isPipelineSpecVariant()
 }
 
 type PipelineSpec struct {
-	Selection PipelineSelection `json:"selection" yaml:"selection"`
-	Triggers  []PipelineTrigger `json:"triggers" yaml:"triggers"`
-	RunPolicy PipelineRunPolicy `json:"runPolicy" yaml:"runPolicy"`
+	Value PipelineSpecVariant
 }
 
-type PipelineTriggerVariant interface {
-	isPipelineTriggerVariant()
-}
+func (*ManualPipelineSpec) isPipelineSpecVariant()    {}
+func (*ScheduledPipelineSpec) isPipelineSpecVariant() {}
 
-type PipelineTrigger struct {
-	Value PipelineTriggerVariant
-}
-
-func (*ManualPipelineTrigger) isPipelineTriggerVariant()   {}
-func (*SchedulePipelineTrigger) isPipelineTriggerVariant() {}
-
-func (value PipelineTrigger) MarshalJSON() ([]byte, error) {
+func (value PipelineSpec) MarshalJSON() ([]byte, error) {
 	switch variant := value.Value.(type) {
-	case *ManualPipelineTrigger:
+	case *ManualPipelineSpec:
 		if variant == nil {
-			return nil, fmt.Errorf("PipelineTrigger variant is nil")
+			return nil, fmt.Errorf("PipelineSpec variant is nil")
 		}
 		return json.Marshal(variant)
-	case *SchedulePipelineTrigger:
+	case *ScheduledPipelineSpec:
 		if variant == nil {
-			return nil, fmt.Errorf("PipelineTrigger variant is nil")
+			return nil, fmt.Errorf("PipelineSpec variant is nil")
 		}
 		return json.Marshal(variant)
 	case nil:
-		return nil, fmt.Errorf("PipelineTrigger variant is required")
+		return nil, fmt.Errorf("PipelineSpec variant is required")
 	default:
-		return nil, fmt.Errorf("unsupported PipelineTrigger variant %T", variant)
+		return nil, fmt.Errorf("unsupported PipelineSpec variant %T", variant)
 	}
 }
 
-func (value *PipelineTrigger) UnmarshalJSON(data []byte) error {
+func (value *PipelineSpec) UnmarshalJSON(data []byte) error {
 	if value == nil {
-		return fmt.Errorf("cannot unmarshal PipelineTrigger into nil receiver")
+		return fmt.Errorf("cannot unmarshal PipelineSpec into nil receiver")
 	}
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(data, &fields); err != nil {
-		return fmt.Errorf("decode PipelineTrigger object: %w", err)
+		return fmt.Errorf("decode PipelineSpec object: %w", err)
 	}
-	var tag struct {
-		Value string `json:"type"`
-	}
-	if err := json.Unmarshal(data, &tag); err != nil {
-		return fmt.Errorf("decode PipelineTrigger discriminator: %w", err)
-	}
-	if tag.Value == "" {
-		return fmt.Errorf("PipelineTrigger discriminator type is required")
-	}
+	*value = PipelineSpec{}
+	var matched string
+	var decoded any
+	var failures []string
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
-	switch tag.Value {
-	case "manual":
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property id is missing", tag.Value)
+	{
+		valid := true
+		if _, ok := fields["selection"]; !ok {
+			valid = false
+			failures = append(failures, "ManualPipelineSpec: required property selection is missing")
 		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property type is missing", tag.Value)
+		if valid {
+			var candidate ManualPipelineSpec
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode PipelineSpec: object matches both %s and ManualPipelineSpec", matched)
+				}
+				matched = "ManualPipelineSpec"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "ManualPipelineSpec: "+err.Error())
+			}
 		}
-		var variant ManualPipelineTrigger
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode PipelineTrigger variant %q: %w", tag.Value, err)
+	}
+	{
+		valid := true
+		if _, ok := fields["selection"]; !ok {
+			valid = false
+			failures = append(failures, "ScheduledPipelineSpec: required property selection is missing")
 		}
-		value.Value = &variant
-	case "schedule":
-		if _, ok := fields["cron"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property cron is missing", tag.Value)
-		}
-		if _, ok := fields["id"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property id is missing", tag.Value)
-		}
-		if _, ok := fields["missedOccurrences"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property missedOccurrences is missing", tag.Value)
+		if _, ok := fields["schedules"]; !ok {
+			valid = false
+			failures = append(failures, "ScheduledPipelineSpec: required property schedules is missing")
 		}
 		if _, ok := fields["timezone"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property timezone is missing", tag.Value)
+			valid = false
+			failures = append(failures, "ScheduledPipelineSpec: required property timezone is missing")
 		}
-		if _, ok := fields["type"]; !ok {
-			return fmt.Errorf("decode PipelineTrigger variant %q: required property type is missing", tag.Value)
+		if _, ok := fields["startingDeadlineSeconds"]; !ok {
+			valid = false
+			failures = append(failures, "ScheduledPipelineSpec: required property startingDeadlineSeconds is missing")
 		}
-		var variant SchedulePipelineTrigger
-		if err := decode(&variant); err != nil {
-			return fmt.Errorf("decode PipelineTrigger variant %q: %w", tag.Value, err)
+		if _, ok := fields["concurrencyPolicy"]; !ok {
+			valid = false
+			failures = append(failures, "ScheduledPipelineSpec: required property concurrencyPolicy is missing")
 		}
-		value.Value = &variant
-	default:
-		return fmt.Errorf("unknown PipelineTrigger discriminator %q", tag.Value)
+		if valid {
+			var candidate ScheduledPipelineSpec
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode PipelineSpec: object matches both %s and ScheduledPipelineSpec", matched)
+				}
+				matched = "ScheduledPipelineSpec"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "ScheduledPipelineSpec: "+err.Error())
+			}
+		}
+	}
+	if matched == "" {
+		return fmt.Errorf("decode PipelineSpec: no object variant matched (fields=%v, errors=%s)", fields, strings.Join(failures, "; "))
+	}
+	switch matched {
+	case "ManualPipelineSpec":
+		value.Value = decoded.(*ManualPipelineSpec)
+	case "ScheduledPipelineSpec":
+		value.Value = decoded.(*ScheduledPipelineSpec)
 	}
 	return nil
 }
 
-type PipelineTriggerVisitor interface {
-	VisitManualPipelineTrigger(*ManualPipelineTrigger) error
-	VisitSchedulePipelineTrigger(*SchedulePipelineTrigger) error
-}
-
-func (value *PipelineTrigger) Visit(visitor PipelineTriggerVisitor) error {
-	if value == nil {
-		return fmt.Errorf("cannot visit nil PipelineTrigger")
-	}
-	if visitor == nil {
-		return fmt.Errorf("PipelineTrigger visitor is required")
-	}
-	switch variant := value.Value.(type) {
-	case *ManualPipelineTrigger:
-		if variant == nil {
-			return fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return visitor.VisitManualPipelineTrigger(variant)
-	case *SchedulePipelineTrigger:
-		if variant == nil {
-			return fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return visitor.VisitSchedulePipelineTrigger(variant)
-	case nil:
-		return fmt.Errorf("PipelineTrigger variant is required")
-	default:
-		return fmt.Errorf("unsupported PipelineTrigger variant %T", variant)
-	}
-}
-
-func (value *PipelineTrigger) Type() (string, error) {
-	if value == nil {
-		return "", fmt.Errorf("cannot inspect nil PipelineTrigger")
-	}
-	switch variant := value.Value.(type) {
-	case *ManualPipelineTrigger:
-		if variant == nil {
-			return "", fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return "manual", nil
-	case *SchedulePipelineTrigger:
-		if variant == nil {
-			return "", fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return "schedule", nil
-	case nil:
-		return "", fmt.Errorf("PipelineTrigger variant is required")
-	default:
-		return "", fmt.Errorf("unsupported PipelineTrigger variant %T", variant)
-	}
-}
-
-func (value *PipelineTrigger) Base() (*PipelineTriggerBase, error) {
-	if value == nil {
-		return nil, fmt.Errorf("cannot inspect nil PipelineTrigger")
-	}
-	switch variant := value.Value.(type) {
-	case *ManualPipelineTrigger:
-		if variant == nil {
-			return nil, fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return &variant.PipelineTriggerBase, nil
-	case *SchedulePipelineTrigger:
-		if variant == nil {
-			return nil, fmt.Errorf("PipelineTrigger variant is nil")
-		}
-		return &variant.PipelineTriggerBase, nil
-	case nil:
-		return nil, fmt.Errorf("PipelineTrigger variant is required")
-	default:
-		return nil, fmt.Errorf("unsupported PipelineTrigger variant %T", variant)
-	}
-}
-
-type PipelineTriggerBase struct {
-	ID   string `json:"id" yaml:"id"`
-	Type string `json:"type" yaml:"type"`
-}
-
-type SchedulePipelineTrigger struct {
-	PipelineTriggerBase
-	ID                string                    `json:"id" yaml:"id"`
-	Type              string                    `json:"type" yaml:"type"`
-	Cron              string                    `json:"cron" yaml:"cron"`
-	Timezone          string                    `json:"timezone" yaml:"timezone"`
-	MissedOccurrences PipelineMissedOccurrences `json:"missedOccurrences" yaml:"missedOccurrences"`
-}
-
-type SemanticModelPipelineSelection struct {
-	PipelineSelectionBase
-	Type          string `json:"type" yaml:"type"`
-	SemanticModel string `json:"semanticModel" yaml:"semanticModel"`
+type ScheduledPipelineSpec struct {
+	Selection               PipelineSelection         `json:"selection" yaml:"selection"`
+	Schedules               map[string]string         `json:"schedules" yaml:"schedules"`
+	Timezone                string                    `json:"timezone" yaml:"timezone"`
+	StartingDeadlineSeconds int64                     `json:"startingDeadlineSeconds" yaml:"startingDeadlineSeconds"`
+	ConcurrencyPolicy       PipelineConcurrencyPolicy `json:"concurrencyPolicy" yaml:"concurrencyPolicy"`
 }

@@ -21,10 +21,6 @@ var ErrOccurrenceSkipped = errors.New("refresh occurrence skipped")
 const (
 	DataVersionSourcePublish = "publish"
 	DataVersionSourceRefresh = "refresh"
-	MissedOccurrencesSkip    = "skip"
-	MissedOccurrencesLatest  = "latest"
-	OverlapForbid            = "forbid"
-	OverlapReplace           = "replace"
 )
 
 type ReconcileInput struct {
@@ -37,13 +33,14 @@ type ReconcileInput struct {
 type Occurrence struct {
 	Identity   projectgraph.ServingIdentity
 	PipelineID projectgraph.ResourceID
-	// TriggerID is stable within the authored Pipeline and is part of the
-	// logical occurrence key.  It intentionally does not include generation.
-	TriggerID       string
-	SemanticModelID projectgraph.ResourceID
-	ArtifactDigest  string
-	Timezone        string
-	ScheduledAt     time.Time
+	// MatchingScheduleIDs is evidence only. It is sorted canonically and does
+	// not participate in occurrence uniqueness, so overlapping expressions and
+	// schedule renames cannot create duplicate executions.
+	MatchingScheduleIDs []string
+	SemanticModelID     projectgraph.ResourceID
+	ArtifactDigest      string
+	Timezone            string
+	ScheduledAt         time.Time
 }
 
 type DataVersion struct {
@@ -112,32 +109,35 @@ func (definition Definition) Validate() error {
 	if err := definition.SemanticModelID.Validate(); err != nil {
 		return err
 	}
-	if definition.Overlap != OverlapForbid && definition.Overlap != OverlapReplace {
-		return errors.New("refresh pipeline overlap policy must be forbid or replace")
+	if len(definition.Schedules) == 0 {
+		if definition.Timezone != "" || definition.ConcurrencyPolicy != "" || definition.StartingDeadlineSeconds != 0 {
+			return errors.New("manual-only refresh pipeline must not declare scheduling policy")
+		}
+		return nil
 	}
-	triggerIDs := map[string]struct{}{}
-	for _, triggerID := range definition.ManualTriggers {
-		if err := ValidateOperationalID(triggerID); err != nil {
-			return fmt.Errorf("refresh pipeline manual trigger id: %w", err)
-		}
-		if _, exists := triggerIDs[triggerID]; exists {
-			return fmt.Errorf("refresh pipeline trigger id %q is duplicated", triggerID)
-		}
-		triggerIDs[triggerID] = struct{}{}
+	if definition.StartingDeadlineSeconds < 0 {
+		return errors.New("refresh pipeline starting deadline seconds must not be negative")
 	}
-	for _, schedule := range definition.Schedules {
-		if err := ValidateOperationalID(schedule.ID); err != nil {
-			return fmt.Errorf("refresh pipeline trigger id: %w", err)
+	if definition.Timezone == "" {
+		return errors.New("refresh pipeline timezone is required when schedules exist")
+	}
+	if _, err := time.LoadLocation(definition.Timezone); err != nil {
+		return fmt.Errorf("refresh pipeline timezone %q must be a valid IANA timezone: %w", definition.Timezone, err)
+	}
+	if definition.ConcurrencyPolicy != ConcurrencyForbid && definition.ConcurrencyPolicy != ConcurrencyReplace {
+		return errors.New("refresh pipeline concurrency policy must be Forbid or Replace when schedules exist")
+	}
+	seenIDs := map[string]struct{}{}
+	for _, item := range definition.Schedules {
+		if err := ValidateOperationalID(item.ID); err != nil {
+			return fmt.Errorf("refresh pipeline schedule id: %w", err)
 		}
-		if _, exists := triggerIDs[schedule.ID]; exists {
-			return fmt.Errorf("refresh pipeline trigger id %q is duplicated", schedule.ID)
+		if _, exists := seenIDs[item.ID]; exists {
+			return fmt.Errorf("refresh pipeline schedule id %q is duplicated", item.ID)
 		}
-		triggerIDs[schedule.ID] = struct{}{}
-		if schedule.MissedOccurrences != MissedOccurrencesSkip && schedule.MissedOccurrences != MissedOccurrencesLatest {
-			return fmt.Errorf("refresh pipeline trigger %q missed occurrence policy must be skip or latest", schedule.ID)
-		}
-		if schedule.Timezone == "" {
-			return fmt.Errorf("refresh pipeline trigger %q timezone is required", schedule.ID)
+		seenIDs[item.ID] = struct{}{}
+		if _, err := ParseSchedule(item.Expression, definition.Timezone); err != nil {
+			return fmt.Errorf("refresh pipeline schedule %q: %w", item.ID, err)
 		}
 	}
 	return nil

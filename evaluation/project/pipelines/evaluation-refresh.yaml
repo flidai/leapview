@@ -5,10 +5,4 @@ metadata:
   name: evaluation-refresh
 spec:
   selection:
-    type: semanticModel
     semanticModel: sales
-  triggers:
-    - id: manual
-      type: manual
-  runPolicy:
-    overlap: replace

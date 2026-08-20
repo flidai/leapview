@@ -3,6 +3,7 @@ package compiler
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -33,31 +34,18 @@ func lowerRefreshPipeline(authored projectcontracts.PipelineDocument) (refreshsc
 	if authored.Kind != projectcontracts.PipelineResourceKindPipeline {
 		return refreshschedule.Definition{}, fmt.Errorf("pipeline kind %q is invalid", authored.Kind)
 	}
-	selection, err := lowerPipelineSelection(authored.Spec.Selection)
+	selection, timezone, deadline, policy, schedules, err := lowerPipelineSpec(authored.Spec)
 	if err != nil {
-		return refreshschedule.Definition{}, fmt.Errorf("spec.selection: %w", err)
+		return refreshschedule.Definition{}, fmt.Errorf("spec: %w", err)
 	}
 	definition := refreshschedule.Definition{
-		ID:              projectgraph.ResourceID(authored.Metadata.ID),
-		Name:            authored.Metadata.Name,
-		SemanticModelID: projectgraph.ResourceID(selection),
-		Overlap:         string(authored.Spec.RunPolicy.Overlap),
-	}
-	for index, trigger := range authored.Spec.Triggers {
-		switch variant := trigger.Value.(type) {
-		case *projectcontracts.ManualPipelineTrigger:
-			definition.ManualTriggers = append(definition.ManualTriggers, variant.ID)
-		case *projectcontracts.SchedulePipelineTrigger:
-			schedule, err := refreshschedule.ParseSchedule(variant.Cron, variant.Timezone)
-			if err != nil {
-				return refreshschedule.Definition{}, fmt.Errorf("spec.triggers[%d]: %w", index, err)
-			}
-			schedule.ID = variant.ID
-			schedule.MissedOccurrences = string(variant.MissedOccurrences)
-			definition.Schedules = append(definition.Schedules, schedule)
-		default:
-			return refreshschedule.Definition{}, fmt.Errorf("spec.triggers[%d]: trigger variant is required", index)
-		}
+		ID:                      projectgraph.ResourceID(authored.Metadata.ID),
+		Name:                    authored.Metadata.Name,
+		SemanticModelID:         projectgraph.ResourceID(selection),
+		Timezone:                timezone,
+		StartingDeadlineSeconds: deadline,
+		ConcurrencyPolicy:       policy,
+		Schedules:               schedules,
 	}
 	if err := definition.Validate(); err != nil {
 		return refreshschedule.Definition{}, err
@@ -65,16 +53,53 @@ func lowerRefreshPipeline(authored projectcontracts.PipelineDocument) (refreshsc
 	return definition, nil
 }
 
-func lowerPipelineSelection(value projectcontracts.PipelineSelection) (string, error) {
-	switch variant := value.Value.(type) {
-	case *projectcontracts.SemanticModelPipelineSelection:
-		if strings.TrimSpace(variant.SemanticModel) == "" {
-			return "", fmt.Errorf("semanticModel is required")
+func lowerPipelineSpec(spec projectcontracts.PipelineSpec) (string, string, int64, string, []refreshschedule.Schedule, error) {
+	lowerSelection := func(selection projectcontracts.PipelineSelection) (string, error) {
+		if strings.TrimSpace(selection.SemanticModel) == "" {
+			return "", fmt.Errorf("selection.semanticModel is required")
 		}
-		return variant.SemanticModel, nil
+		return selection.SemanticModel, nil
+	}
+	switch variant := spec.Value.(type) {
+	case *projectcontracts.ManualPipelineSpec:
+		selection, err := lowerSelection(variant.Selection)
+		return selection, "", 0, "", nil, err
+	case *projectcontracts.ScheduledPipelineSpec:
+		selection, err := lowerSelection(variant.Selection)
+		if err != nil {
+			return "", "", 0, "", nil, err
+		}
+		if len(variant.Schedules) == 0 {
+			return "", "", 0, "", nil, fmt.Errorf("schedules must contain at least one schedule")
+		}
+		type authoredSchedule struct {
+			id         string
+			expression string
+		}
+		items := make([]authoredSchedule, 0, len(variant.Schedules))
+		for id, expression := range variant.Schedules {
+			canonical := strings.Join(strings.Fields(expression), " ")
+			items = append(items, authoredSchedule{id: id, expression: canonical})
+		}
+		sort.Slice(items, func(i, j int) bool {
+			if items[i].expression != items[j].expression {
+				return items[i].expression < items[j].expression
+			}
+			return items[i].id < items[j].id
+		})
+		schedules := make([]refreshschedule.Schedule, 0, len(items))
+		for _, item := range items {
+			schedule, parseErr := refreshschedule.ParseSchedule(item.expression, variant.Timezone)
+			if parseErr != nil {
+				return "", "", 0, "", nil, fmt.Errorf("schedules[%q]: %w", item.id, parseErr)
+			}
+			schedule.ID = item.id
+			schedules = append(schedules, schedule)
+		}
+		return selection, variant.Timezone, variant.StartingDeadlineSeconds, string(variant.ConcurrencyPolicy), schedules, nil
 	case nil:
-		return "", fmt.Errorf("selection variant is required")
+		return "", "", 0, "", nil, fmt.Errorf("spec variant is required")
 	default:
-		return "", fmt.Errorf("unsupported selection variant %T", value.Value)
+		return "", "", 0, "", nil, fmt.Errorf("unsupported spec variant %T", spec.Value)
 	}
 }

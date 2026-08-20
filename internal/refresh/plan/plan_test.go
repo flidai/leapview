@@ -168,19 +168,62 @@ func TestBindGenerationProducesStableGenerationBoundDigest(t *testing.T) {
 	if other.Digest == first.Digest {
 		t.Fatal("generation change did not change pipeline plan digest")
 	}
-	delivery, err := first.DeliveryPipelinePlan(InvocationPolicy{TriggerType: "schedule", TriggerID: "weekdays", MissedOccurrences: "latest", Overlap: "replace"})
+	delivery, err := first.DeliveryPipelinePlan(InvocationPolicy{InvocationSource: "schedule", MatchingScheduleIDs: []string{"weekdays"}, StartingDeadlineSeconds: 3600, ConcurrencyPolicy: "Replace"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if delivery.ProjectID != "project_acme" || delivery.Environment != "prod" || delivery.ServingGenerationID != "generation-1" || delivery.MaterializationScope[0] != "orders" || delivery.ModelExecutionOrder[0] != "orders" || delivery.Digest == "" {
 		t.Fatalf("unexpected delivery pipeline plan: %#v", delivery)
 	}
-	if delivery.TriggerType != "schedule" || delivery.TriggerID != "weekdays" || delivery.MissedOccurrences != "latest" || delivery.Overlap != "replace" {
+	if delivery.InvocationSource != "schedule" || len(delivery.MatchingScheduleIDs) != 1 || delivery.StartingDeadlineSeconds != 3600 || delivery.ConcurrencyPolicy != "Replace" {
 		t.Fatalf("effective invocation policy = %#v", delivery)
 	}
 	for name, value := range map[string]string{"execution": delivery.ExecutionDigest, "provenance": delivery.ProvenanceDigest, "governance": delivery.GovernanceDigest, "evidence": delivery.EvidenceDigest} {
 		if value == "" {
 			t.Errorf("%s digest is empty", name)
 		}
+	}
+}
+
+func TestInvocationEvidenceChangesGovernanceNotExecutionDigest(t *testing.T) {
+	definition := &artifact.Definition{
+		Models:    map[string]*semanticmodel.Model{"sales": {Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}},
+		Pipelines: map[string]refreshschedule.Definition{"daily": {ID: "daily", SemanticModelID: "sales"}},
+	}
+	base, err := ForPipeline(definition, "project_acme", "daily")
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity("project_acme", "prod", "generation-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	bound, err := base.BindGeneration(identity, "sha256:"+strings.Repeat("a", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+	manual, err := bound.DeliveryPipelinePlan(InvocationPolicy{InvocationSource: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scheduled, err := bound.DeliveryPipelinePlan(InvocationPolicy{InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, StartingDeadlineSeconds: 60, ConcurrencyPolicy: "Forbid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := bound.DeliveryPipelinePlan(InvocationPolicy{InvocationSource: "schedule", MatchingScheduleIDs: []string{"renamed"}, StartingDeadlineSeconds: 60, ConcurrencyPolicy: "Forbid"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manual.ExecutionDigest != scheduled.ExecutionDigest {
+		t.Fatalf("execution digest changed with admission evidence: %s/%s", manual.ExecutionDigest, scheduled.ExecutionDigest)
+	}
+	if manual.GovernanceDigest == scheduled.GovernanceDigest || manual.EvidenceDigest == scheduled.EvidenceDigest {
+		t.Fatal("plan digests did not capture invocation evidence")
+	}
+	if scheduled.ExecutionDigest != renamed.ExecutionDigest || scheduled.GovernanceDigest != renamed.GovernanceDigest || scheduled.EvidenceDigest == renamed.EvidenceDigest {
+		t.Fatalf("schedule evidence was folded into execution/governance: %#v / %#v", scheduled, renamed)
+	}
+	if manual.ConcurrencyPolicy != "" || manual.StartingDeadlineSeconds != 0 || len(manual.MatchingScheduleIDs) != 0 {
+		t.Fatalf("manual plan unexpectedly carried scheduling policy: %#v", manual)
 	}
 }

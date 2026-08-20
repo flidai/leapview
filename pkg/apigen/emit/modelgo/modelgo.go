@@ -39,6 +39,9 @@ func Emit(doc ir.Document, opts Options) ([]byte, error) {
 		goImports["bytes"] = ""
 		goImports["encoding/json"] = ""
 		goImports["fmt"] = ""
+		if hasObjectUnion(doc, names) {
+			goImports["strings"] = ""
+		}
 	}
 	for _, name := range imported {
 		_, binding, _ := imports.Schema(doc, name)
@@ -78,7 +81,11 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	switch schema.Type {
 	case "union":
 		if schema.Discriminator == nil {
-			if hasNonScalarUnionVariant(schema) {
+			if isObjectUnion(doc, schema) {
+				if err := gounion.EmitObject(b, doc, name, schema, resolveName); err != nil {
+					return err
+				}
+			} else if hasNonScalarUnionVariant(schema) {
 				if err := gounion.EmitScalarObject(b, doc, name, schema, resolveName); err != nil {
 					return err
 				}
@@ -173,6 +180,35 @@ func hasUnion(doc ir.Document, names []string) bool {
 		}
 	}
 	return false
+}
+
+func hasObjectUnion(doc ir.Document, names []string) bool {
+	for _, name := range names {
+		if schema := doc.Schemas[name]; schema.Type == "union" && schema.Discriminator == nil && isObjectUnion(doc, schema) {
+			return true
+		}
+	}
+	return false
+}
+
+func isObjectUnion(doc ir.Document, schema ir.Schema) bool {
+	if schema.Type != "union" || schema.Discriminator != nil || len(schema.OneOf) < 2 {
+		return false
+	}
+	for _, variant := range schema.OneOf {
+		if variant.Ref == "" {
+			return false
+		}
+		name, ok := ir.NormalizedSchemaRefName(variant)
+		if !ok {
+			return false
+		}
+		candidate, ok := doc.Schemas[name]
+		if !ok || candidate.Type != "object" {
+			return false
+		}
+	}
+	return true
 }
 
 func hasNonScalarUnionVariant(schema ir.Schema) bool {

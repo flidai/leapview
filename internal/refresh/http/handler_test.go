@@ -18,21 +18,21 @@ import (
 func TestPipelineRunResponseForExposesOnlyPipelineContract(t *testing.T) {
 	run := refreshrun.RunRecord{
 		ID: "run_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh",
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
 		Status: refreshrun.RunStatusQueued, CreatedAt: "2026-07-19T06:00:00Z",
 	}
 	response, ok := PipelineRunResponseFor(run)
 	if !ok {
 		t.Fatal("PipelineRunResponseFor() rejected a root pipeline run")
 	}
-	if response.PipelineID != "sales-refresh" || response.SemanticModel != "sales" || response.Trigger != refreshrun.TriggerManual {
+	if response.PipelineID != "sales-refresh" || response.SemanticModel != "sales" || response.InvocationSource != refreshrun.TriggerManual {
 		t.Fatalf("response = %#v", response)
 	}
 	payload, err := json.Marshal(response)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, internalField := range []string{"modelId", "servingStateId", "targetType", "targetId", "triggerType", "parentRunId"} {
+	for _, internalField := range []string{"modelId", "servingStateId", "targetType", "targetId", "triggerType", "triggerId", "trigger", "parentRunId"} {
 		if strings.Contains(string(payload), `"`+internalField+`"`) {
 			t.Fatalf("public response contains internal field %q: %s", internalField, payload)
 		}
@@ -52,7 +52,7 @@ func TestPipelineRunResponseForRejectsDependencyRun(t *testing.T) {
 func TestPipelineRunResponseForNormalizesSQLiteTimestamps(t *testing.T) {
 	response, ok := PipelineRunResponseFor(refreshrun.RunRecord{
 		ID: "run_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh",
-		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
 		Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19 06:00:00",
 		StartedAt: "2026-07-19 06:00:00.123", FinishedAt: "2026-07-19T06:01:00+02:00",
 	})
@@ -68,7 +68,7 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{{
 		ID: "run_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh",
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh",
-		TriggerType: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+		TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
 	}}}
 	viewChecks := 0
 	runChecks := 0
@@ -91,7 +91,7 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 		t.Fatalf("list response=%d viewChecks=%d runChecks=%d body=%s", listResponse.Code, viewChecks, runChecks, listResponse.Body.String())
 	}
 
-	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh","triggerId":"manual"}`)), map[string]string{"project": "sales"})
+	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`)), map[string]string{"project": "sales"})
 	createResponse := httptest.NewRecorder()
 	handler.CreateRun(createResponse, createRequest, "sales")
 	if createResponse.Code != http.StatusNotFound || viewChecks != 1 || runChecks != 1 {
@@ -101,8 +101,8 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 
 func TestHandlerBindsProjectAndFiltersUnauthorizedRuns(t *testing.T) {
 	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{
-		{ID: "run-visible", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "visible", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "visible", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z"},
-		{ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:01:00Z"},
+		{ID: "run-visible", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "visible", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "visible", InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z"},
+		{ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:01:00Z"},
 	}}
 	handler := Handler{
 		Repository:      func() (refreshrun.RunRepository, error) { return repo, nil },
@@ -124,7 +124,7 @@ func TestHandlerProjectMismatchAndAuthorizationFailureDoNotEnumerate(t *testing.
 	handler := Handler{
 		Repository: func() (refreshrun.RunRepository, error) {
 			return &authorizationRunRepository{runs: []refreshrun.RunRecord{{
-				ID: "run-1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+				ID: "run-1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
 			}}}, nil
 		},
 		ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return testIdentity(), nil },
@@ -150,7 +150,7 @@ func TestHandlerProjectMismatchAndAuthorizationFailureDoNotEnumerate(t *testing.
 
 func TestHandlerDeniedRunIsNonEnumeratingNotFound(t *testing.T) {
 	repo := &authorizationRunRepository{runs: []refreshrun.RunRecord{{
-		ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
+		ID: "run-hidden", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "hidden", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "hidden", InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusSucceeded, CreatedAt: "2026-07-19T06:00:00Z",
 	}}}
 	handler := Handler{
 		Repository:            func() (refreshrun.RunRepository, error) { return repo, nil },

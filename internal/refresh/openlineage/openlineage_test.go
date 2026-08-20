@@ -2,6 +2,7 @@ package openlineage
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 )
@@ -37,7 +38,7 @@ func TestJobForPipelineMapsPipelineIdentityAndScopedFacet(t *testing.T) {
 	if job.Namespace != NamespaceFor("project:commerce", "prod") || job.Name != "pipeline:sales" {
 		t.Fatalf("job identity = %#v", job)
 	}
-	scoped := facet(t, job.Facets, "leapview")
+	scoped := facet(t, job.Facets, PipelineFacetKey)
 	for key, want := range map[string]string{"generationId": "generation-17", "planDigest": "sha256:plan", "selectionDigest": "sha256:selection"} {
 		if scoped[key] != want {
 			t.Errorf("leapview %s = %v, want %q", key, scoped[key], want)
@@ -61,14 +62,14 @@ func TestEventForPipelineRunMapsRunAndMaterialization(t *testing.T) {
 	if event.Producer != Producer || event.SchemaURL != SchemaURL {
 		t.Fatalf("event metadata = %q %q", event.Producer, event.SchemaURL)
 	}
-	if got := facet(t, event.Run.Facets, "leapview")["generationId"]; got != "generation-17" {
+	if got := facet(t, event.Run.Facets, PipelineFacetKey)["generationId"]; got != "generation-17" {
 		t.Errorf("run generation = %v", got)
 	}
 }
 
 func TestScheduledRunEmitsNominalTimeFacet(t *testing.T) {
 	nominal := time.Date(2026, 8, 20, 6, 0, 0, 123000000, time.FixedZone("CEST", 2*60*60))
-	event, err := EventForPipelineRun(testPipeline(), PipelineRun{ID: "run-scheduled", EventTime: nominal.Add(3 * time.Minute), NominalTime: &nominal, TriggerID: "weekdays-0600", TriggerType: "schedule"})
+	event, err := EventForPipelineRun(testPipeline(), PipelineRun{ID: "run-scheduled", EventTime: nominal.Add(3 * time.Minute), NominalTime: &nominal, InvocationSource: "schedule", MatchingScheduleIDs: []string{"weekdays-0600"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,8 +77,8 @@ func TestScheduledRunEmitsNominalTimeFacet(t *testing.T) {
 	if nominalFacet["nominalStartTime"] != nominal.UTC().Format(time.RFC3339Nano) {
 		t.Errorf("nominal start = %v", nominalFacet["nominalStartTime"])
 	}
-	trigger := facet(t, event.Run.Facets, "leapviewTrigger")
-	if trigger["triggerId"] != "weekdays-0600" || trigger["triggerType"] != "schedule" {
+	trigger := facet(t, event.Run.Facets, InvocationFacetKey)
+	if trigger["invocationSource"] != "schedule" || trigger["matchingScheduleIds"].([]any)[0] != "weekdays-0600" {
 		t.Errorf("trigger facet = %#v", trigger)
 	}
 }
@@ -119,5 +120,66 @@ func TestModelRunConvenienceDerivesChildID(t *testing.T) {
 	}
 	if got := facet(t, event.Run.Facets, "parent")["parent"].(map[string]any)["run"].(map[string]any)["runId"]; got != "pipeline-run-1" {
 		t.Fatalf("derived parent = %v", got)
+	}
+}
+
+func TestCustomFacetContractUsesLeapViewPrefixAndImmutableSchemas(t *testing.T) {
+	p := testPipeline()
+	p.InvocationSource = "schedule"
+	p.MatchingScheduleIDs = []string{"daily", "weekday"}
+	p.StartingDeadlineSeconds = 3600
+	p.ConcurrencyPolicy = "Replace"
+	job, err := JobForPipeline(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, raw := range job.Facets {
+		if !strings.HasPrefix(key, "leapView_") {
+			t.Fatalf("job facet key %q is not LeapView-prefixed", key)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Fatal(err)
+		}
+		if value["_producer"] != Producer || value["_schemaURL"] != PipelineFacetSchemaURL {
+			t.Fatalf("job facet metadata = %#v", value)
+		}
+	}
+	nominal := time.Date(2026, 8, 20, 6, 0, 0, 0, time.UTC)
+	event, err := EventForPipelineRun(p, PipelineRun{ID: "run-contract", InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily", "weekday"}, NominalTime: &nominal})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for key, raw := range event.Run.Facets {
+		if key == "nominalTime" || key == "parent" {
+			continue
+		}
+		if !strings.HasPrefix(key, "leapView_") {
+			t.Fatalf("run facet key %q is not LeapView-prefixed", key)
+		}
+		var value map[string]any
+		if err := json.Unmarshal(raw, &value); err != nil {
+			t.Fatal(err)
+		}
+		if value["_producer"] != Producer {
+			t.Fatalf("run facet producer = %#v", value)
+		}
+		if key == InvocationFacetKey && value["_schemaURL"] != InvocationFacetSchemaURL {
+			t.Fatalf("invocation schema = %#v", value)
+		}
+	}
+}
+
+func TestEventUsesPlanInvocationEvidenceWhenRunOmitsIt(t *testing.T) {
+	p := testPipeline()
+	p.InvocationSource = "schedule"
+	p.MatchingScheduleIDs = []string{"daily"}
+	event, err := EventForPipelineRun(p, PipelineRun{ID: "run-plan-evidence"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	invocation := facet(t, event.Run.Facets, InvocationFacetKey)
+	if invocation["invocationSource"] != "schedule" || invocation["matchingScheduleIds"].([]any)[0] != "daily" {
+		t.Fatalf("plan invocation evidence = %#v", invocation)
 	}
 }

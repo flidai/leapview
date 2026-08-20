@@ -47,6 +47,9 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.MinProperties != nil {
+		out["minProperties"] = *ref.MinProperties
+	}
 	if ref.Pattern != "" {
 		out["pattern"] = ref.Pattern
 	}
@@ -87,6 +90,9 @@ func applySchemaRefConstraints(doc ir.Document, out map[string]any, ref ir.Schem
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinProperties != nil {
+		out["minProperties"] = *ref.MinProperties
 	}
 	if ref.Pattern != "" {
 		out["pattern"] = ref.Pattern

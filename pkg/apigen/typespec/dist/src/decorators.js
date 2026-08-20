@@ -22,6 +22,7 @@ const metadataKey = Symbol.for("@yacobolo/apigen.metadata");
 const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
+const minPropertiesKey = Symbol.for("@yacobolo/apigen.minProperties");
 export function $cli(context, target, options) {
     context.program.stateMap(cliKey).set(target, options);
 }
@@ -200,6 +201,34 @@ export function $propertyNames(context, target, key) {
     }
     context.program.stateMap(propertyNamesKey).set(target, key);
 }
+export function $minProperties(context, target, value) {
+    if (context.program.stateMap(minPropertiesKey).has(target)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-min-properties",
+            format: { reason: "the decorator may only be applied once" },
+            target,
+        });
+        return;
+    }
+    if (target.type.kind !== "Model" || !isRecordModelType(target.type)) {
+        reportDiagnostic(context.program, {
+            code: "invalid-min-properties",
+            format: { reason: "target must be a string-indexed map (for example, extends Record<T>)" },
+            target,
+        });
+        return;
+    }
+    const numeric = Number(value.value ?? value);
+    if (!Number.isSafeInteger(numeric) || numeric < 0) {
+        reportDiagnostic(context.program, {
+            code: "invalid-min-properties",
+            format: { reason: "value must be a non-negative integer" },
+            target,
+        });
+        return;
+    }
+    context.program.stateMap(minPropertiesKey).set(target, numeric);
+}
 export const $decorators = {
     apigen: {
         cli: $cli,
@@ -228,6 +257,7 @@ export const $decorators = {
         tool: $tool,
         transportErrors: $transportErrors,
         propertyNames: $propertyNames,
+        minProperties: $minProperties,
     },
 };
 export function getCLI(context, target) {
@@ -321,4 +351,7 @@ export function getTransportErrors(context, target) {
 }
 export function getPropertyNames(context, target) {
     return context.program.stateMap(propertyNamesKey).get(target);
+}
+export function getMinProperties(context, target) {
+    return context.program.stateMap(minPropertiesKey).get(target);
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -38,7 +39,7 @@ func testSQLiteRootRunInput(identity projectgraph.ServingIdentity, pipelineID, s
 	payload, _ := json.Marshal(map[string]any{"pipelinePlan": plan})
 	return refreshrun.RunInput{
 		Identity: identity, SemanticModelID: projectgraph.ResourceID(semanticModelID), PipelineID: projectgraph.ResourceID(pipelineID), PipelinePlan: plan,
-		TriggerID: "manual", Overlap: "replace", PrincipalID: principalID, GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
+		PrincipalID: principalID, GroupIDs: []string{}, EstimatedMemoryBytes: 67108864,
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(pipelineID), TriggerType: refreshrun.TriggerManual,
 		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: string(payload),
 	}
@@ -68,6 +69,91 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 	recorded, err := events.ListEvents(t.Context(), "refresh", run.ID, 0, 10)
 	if err != nil || len(recorded) != 1 || recorded[0].EventType != "refresh.queued" {
 		t.Fatalf("initial events = %#v, %v", recorded, err)
+	}
+}
+
+func TestSQLRunRepositoryAdmissionCollisionMatrix(t *testing.T) {
+	t.Run("external active denies scheduled without supersession", func(t *testing.T) {
+		store, repo, _ := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
+		at := time.Date(2026, 8, 20, 6, 0, 0, 0, time.UTC)
+		insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", at, []string{"daily"})
+		input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
+		input.TriggerType, input.InvocationSource = refreshrun.TriggerSchedule, refreshrun.TriggerSchedule
+		input.TriggerID, input.NominalTime = "", at.Format(time.RFC3339Nano)
+		input.MatchingScheduleIDs, input.ConcurrencyPolicy = []string{"daily"}, "Replace"
+		occurrence := refreshschedule.Occurrence{Identity: testRunIdentity, PipelineID: "pipeline_daily", MatchingScheduleIDs: []string{"daily"}, ArtifactDigest: testSQLitePipelinePlan(testRunIdentity, "pipeline_daily", "semantic_sales").ArtifactDigest, ScheduledAt: at, Timezone: "UTC"}
+		if _, err := repo.CreateScheduledRun(t.Context(), input, occurrence); !errors.Is(err, refreshrun.ErrAdmissionDeniedExternalActive) {
+			t.Fatalf("scheduled admission error = %v, want admission_denied_external_active", err)
+		}
+		assertRefreshStatuses(t, store, refreshrun.RunStatusRunning, refreshrun.RunStatusRunning)
+		var outcome string
+		if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT outcome FROM refresh_pipeline_occurrences WHERE project_id=? AND environment=? AND pipeline_id=? AND scheduled_at=?`, testRunIdentity.ProjectID.String(), testRunIdentity.Environment, "pipeline_daily", at.Format(time.RFC3339Nano)).Scan(&outcome); err != nil {
+			t.Fatal(err)
+		}
+		if outcome != refreshrun.AdmissionDeniedExternalActive {
+			t.Fatalf("occurrence outcome = %q", outcome)
+		}
+	})
+
+	t.Run("active invocation rejects incoming manual", func(t *testing.T) {
+		_, repo, _ := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
+		input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:other")
+		input.InvocationSource, input.TriggerID = refreshrun.TriggerManual, ""
+		if _, err := repo.CreateRun(t.Context(), input); !errors.Is(err, refreshrun.ErrInvocationConflict) {
+			t.Fatalf("manual admission error = %v, want conflict", err)
+		}
+	})
+
+	t.Run("scheduled forbid skips scheduled overlap", func(t *testing.T) {
+		store, repo, _ := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
+		if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET trigger_type='schedule' WHERE id='run_1'`); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
+		insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", at, []string{"daily"})
+		input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
+		input.TriggerType, input.InvocationSource = refreshrun.TriggerSchedule, refreshrun.TriggerSchedule
+		input.TriggerID, input.NominalTime = "", at.Format(time.RFC3339Nano)
+		input.MatchingScheduleIDs, input.ConcurrencyPolicy = []string{"daily"}, "Forbid"
+		occurrence := refreshschedule.Occurrence{Identity: testRunIdentity, PipelineID: "pipeline_daily", MatchingScheduleIDs: []string{"daily"}, ArtifactDigest: testSQLitePipelinePlan(testRunIdentity, "pipeline_daily", "semantic_sales").ArtifactDigest, ScheduledAt: at, Timezone: "UTC"}
+		run, err := repo.CreateScheduledRun(t.Context(), input, occurrence)
+		if err != nil || run.Status != refreshrun.RunStatusSkipped {
+			t.Fatalf("forbid overlap run=%#v err=%v", run, err)
+		}
+	})
+
+	t.Run("scheduled replace supersedes only scheduled", func(t *testing.T) {
+		store, repo, _ := seedRefreshJob(t, refreshrun.RunStatusRunning, "+5 minutes")
+		if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET trigger_type='schedule' WHERE id='run_1'`); err != nil {
+			t.Fatal(err)
+		}
+		at := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
+		insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", at, []string{"daily"})
+		input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
+		input.TriggerType, input.InvocationSource = refreshrun.TriggerSchedule, refreshrun.TriggerSchedule
+		input.TriggerID, input.NominalTime = "", at.Format(time.RFC3339Nano)
+		input.MatchingScheduleIDs, input.ConcurrencyPolicy = []string{"daily"}, "Replace"
+		occurrence := refreshschedule.Occurrence{Identity: testRunIdentity, PipelineID: "pipeline_daily", MatchingScheduleIDs: []string{"daily"}, ArtifactDigest: testSQLitePipelinePlan(testRunIdentity, "pipeline_daily", "semantic_sales").ArtifactDigest, ScheduledAt: at, Timezone: "UTC"}
+		run, err := repo.CreateScheduledRun(t.Context(), input, occurrence)
+		if err != nil || run.Status != refreshrun.RunStatusQueued {
+			t.Fatalf("replace run=%#v err=%v", run, err)
+		}
+		var prior string
+		if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM refresh_job_runs WHERE id='run_1'`).Scan(&prior); err != nil {
+			t.Fatal(err)
+		}
+		if prior != refreshrun.RunStatusSuperseded {
+			t.Fatalf("prior scheduled status = %q", prior)
+		}
+	})
+}
+
+func insertClaimedOccurrence(t *testing.T, store *platform.Store, identity projectgraph.ServingIdentity, pipeline string, at time.Time, ids []string) {
+	t.Helper()
+	encoded, _ := json.Marshal(ids)
+	_, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO refresh_pipeline_occurrences (project_id, environment, pipeline_id, generation_id, artifact_digest, scheduled_at, timezone, matching_schedule_ids_json, status, outcome, claimed_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'claimed', 'pending', CURRENT_TIMESTAMP)`, identity.ProjectID.String(), identity.Environment, pipeline, identity.GenerationID, testSQLitePipelinePlan(identity, pipeline, "semantic_sales").ArtifactDigest, at.Format(time.RFC3339Nano), "UTC", string(encoded))
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -264,13 +350,20 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if err != nil {
 		t.Fatal(err)
 	}
-	forbidden := input(identityB, "pipeline_daily", "semantic_sales")
-	forbidden.Overlap = "forbid"
-	skipped, err := repository.CreateRun(t.Context(), forbidden)
-	if err != nil || skipped.Status != refreshrun.RunStatusSkipped {
-		t.Fatalf("same target across generations run = %#v error = %v, want skipped", skipped, err)
+	conflicting := input(identityB, "pipeline_daily", "semantic_sales")
+	if _, err := repository.CreateRun(t.Context(), conflicting); !errors.Is(err, refreshrun.ErrInvocationConflict) {
+		t.Fatalf("same target across generations error = %v, want invocation conflict", err)
 	}
-	runB, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_other", "semantic_other"))
+	scheduledInput := func(nominal string) refreshrun.RunInput {
+		value := input(identityB, "pipeline_other", "semantic_other")
+		value.TriggerType = refreshrun.TriggerSchedule
+		value.InvocationSource = refreshrun.TriggerSchedule
+		value.MatchingScheduleIDs = []string{"daily"}
+		value.NominalTime = nominal
+		value.ConcurrencyPolicy = refreshschedule.ConcurrencyReplace
+		return value
+	}
+	runB, err := repository.CreateRun(t.Context(), scheduledInput("2026-08-20T06:00:00Z"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -291,7 +384,7 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if _, err := repository.MarkRunPrepared(t.Context(), claimedB); err != nil {
 		t.Fatal(err)
 	}
-	newB, err := repository.CreateRun(t.Context(), input(identityB, "pipeline_other", "semantic_other"))
+	newB, err := repository.CreateRun(t.Context(), scheduledInput("2026-08-21T06:00:00Z"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -419,7 +512,7 @@ func TestMaterializationRunMappingRejectsCorruptPersistedIdentity(t *testing.T) 
 	base := materializationRunDBRow{
 		ID: "run_1", ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a",
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline,
-		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual, TriggerID: "manual",
+		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual,
 		PlanDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MaterializationScopeJSON: `["model_orders"]`,
 		Status: refreshrun.RunStatusQueued,
 	}
@@ -488,7 +581,7 @@ INSERT INTO refresh_job_runs (
 		t.Fatalf("set refresh job lease: %v", err)
 	}
 	job := refreshrun.JobRecord{
-		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: plan, TriggerID: "manual", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
+		ID: "job_1", Identity: testRunIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: plan, PrincipalID: "user:test", EstimatedMemoryBytes: 67108864,
 		Kind: refreshrun.JobKindRefreshPipeline, RunID: "run_1",
 		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TargetRevision: 1,
 		TriggerType: refreshrun.TriggerManual, LeaseOwner: "worker-1", LeaseRevision: 1,

@@ -40,21 +40,23 @@ type Plan struct {
 	ModelExecutionOrder  []string `json:"modelExecutionOrder"`
 	SourceInputs         []string `json:"sourceInputs,omitempty"`
 	QualificationChecks  []string `json:"qualificationChecks"`
-	TriggerType          string   `json:"triggerType,omitempty"`
-	TriggerID            string   `json:"triggerId,omitempty"`
-	MissedOccurrences    string   `json:"missedOccurrences,omitempty"`
-	Overlap              string   `json:"overlap,omitempty"`
-	RequestedStart       string   `json:"requestedStart,omitempty"`
-	RequestedEnd         string   `json:"requestedEnd,omitempty"`
-	RequestedWatermark   string   `json:"requestedWatermark,omitempty"`
-	EffectiveStart       string   `json:"effectiveStart,omitempty"`
-	EffectiveEnd         string   `json:"effectiveEnd,omitempty"`
-	EffectiveWatermark   string   `json:"effectiveWatermark,omitempty"`
-	ExecutionDigest      string   `json:"executionDigest"`
-	ProvenanceDigest     string   `json:"provenanceDigest"`
-	GovernanceDigest     string   `json:"governanceDigest"`
-	EvidenceDigest       string   `json:"evidenceDigest"`
-	Digest               string   `json:"digest"`
+	// Invocation evidence is distinct from authored trigger identity. Matching
+	// schedule IDs are evidence only and never split one logical occurrence.
+	InvocationSource        string   `json:"invocationSource,omitempty"`
+	MatchingScheduleIDs     []string `json:"matchingScheduleIds,omitempty"`
+	StartingDeadlineSeconds int64    `json:"startingDeadlineSeconds,omitempty"`
+	ConcurrencyPolicy       string   `json:"concurrencyPolicy,omitempty"`
+	RequestedStart          string   `json:"requestedStart,omitempty"`
+	RequestedEnd            string   `json:"requestedEnd,omitempty"`
+	RequestedWatermark      string   `json:"requestedWatermark,omitempty"`
+	EffectiveStart          string   `json:"effectiveStart,omitempty"`
+	EffectiveEnd            string   `json:"effectiveEnd,omitempty"`
+	EffectiveWatermark      string   `json:"effectiveWatermark,omitempty"`
+	ExecutionDigest         string   `json:"executionDigest"`
+	ProvenanceDigest        string   `json:"provenanceDigest"`
+	GovernanceDigest        string   `json:"governanceDigest"`
+	EvidenceDigest          string   `json:"evidenceDigest"`
+	Digest                  string   `json:"digest"`
 }
 
 // Canonical returns a detached canonical copy suitable for validation and
@@ -70,10 +72,8 @@ func (p Plan) Canonical() Plan {
 	p.ServingGenerationID = strings.TrimSpace(p.ServingGenerationID)
 	p.ArtifactDigest = strings.TrimSpace(p.ArtifactDigest)
 	p.SelectionDigest = strings.TrimSpace(p.SelectionDigest)
-	p.TriggerType = strings.TrimSpace(p.TriggerType)
-	p.TriggerID = strings.TrimSpace(p.TriggerID)
-	p.MissedOccurrences = strings.TrimSpace(p.MissedOccurrences)
-	p.Overlap = strings.TrimSpace(p.Overlap)
+	p.InvocationSource = strings.TrimSpace(p.InvocationSource)
+	p.ConcurrencyPolicy = strings.TrimSpace(p.ConcurrencyPolicy)
 	p.RequestedStart = strings.TrimSpace(p.RequestedStart)
 	p.RequestedEnd = strings.TrimSpace(p.RequestedEnd)
 	p.RequestedWatermark = strings.TrimSpace(p.RequestedWatermark)
@@ -89,6 +89,7 @@ func (p Plan) Canonical() Plan {
 	p.ModelExecutionOrder = canonicalOrderedList(p.ModelExecutionOrder)
 	p.SourceInputs = canonicalSet(p.SourceInputs)
 	p.QualificationChecks = canonicalSet(p.QualificationChecks)
+	p.MatchingScheduleIDs = canonicalSet(p.MatchingScheduleIDs)
 	return p
 }
 
@@ -172,21 +173,32 @@ func (p Plan) ValidateWithoutDigest() error {
 			return fmt.Errorf("qualification check: %w", err)
 		}
 	}
-	if p.TriggerType != "" || p.TriggerID != "" || p.Overlap != "" {
-		if p.TriggerType != "manual" && p.TriggerType != "schedule" && p.TriggerType != "retry" {
-			return fmt.Errorf("%w: unsupported effective trigger type %q", ErrInvalid, p.TriggerType)
+	if p.InvocationSource != "" {
+		switch p.InvocationSource {
+		case "manual", "schedule", "retry", "backfill", "external":
+		default:
+			return fmt.Errorf("%w: unsupported invocation source %q", ErrInvalid, p.InvocationSource)
 		}
-		if err := validateID(p.TriggerID); err != nil {
-			return fmt.Errorf("effective trigger: %w", err)
+	}
+	if p.StartingDeadlineSeconds < 0 {
+		return fmt.Errorf("%w: starting deadline must not be negative", ErrInvalid)
+	}
+	if p.ConcurrencyPolicy != "" && p.ConcurrencyPolicy != "Forbid" && p.ConcurrencyPolicy != "Replace" {
+		return fmt.Errorf("%w: concurrency policy must be Forbid or Replace", ErrInvalid)
+	}
+	if p.InvocationSource == "schedule" {
+		if len(p.MatchingScheduleIDs) == 0 {
+			return fmt.Errorf("%w: scheduled plan requires matching schedule ids", ErrInvalid)
 		}
-		if p.Overlap != "forbid" && p.Overlap != "replace" {
-			return fmt.Errorf("%w: overlap must be forbid or replace", ErrInvalid)
+		if p.ConcurrencyPolicy == "" {
+			return fmt.Errorf("%w: scheduled plan requires concurrency policy", ErrInvalid)
 		}
-		if p.TriggerType == "schedule" && p.MissedOccurrences != "skip" && p.MissedOccurrences != "latest" {
-			return fmt.Errorf("%w: scheduled plans require missed-occurrence policy", ErrInvalid)
-		}
-		if p.TriggerType != "schedule" && p.MissedOccurrences != "" {
-			return fmt.Errorf("%w: missed-occurrence policy belongs to schedule triggers", ErrInvalid)
+	} else if len(p.MatchingScheduleIDs) != 0 || p.StartingDeadlineSeconds != 0 || p.ConcurrencyPolicy != "" {
+		return fmt.Errorf("%w: schedule policy belongs to scheduled invocations", ErrInvalid)
+	}
+	for _, scheduleID := range p.MatchingScheduleIDs {
+		if err := validateID(scheduleID); err != nil {
+			return fmt.Errorf("matching schedule id: %w", err)
 		}
 	}
 	return nil
@@ -244,11 +256,18 @@ func componentDigests(plan Plan) (string, string, string, string, error) {
 	if err != nil {
 		return "", "", "", "", err
 	}
-	governance, err := digestJSON(struct{ TriggerType, TriggerID, MissedOccurrences, Overlap string }{plan.TriggerType, plan.TriggerID, plan.MissedOccurrences, plan.Overlap})
+	governance, err := digestJSON(struct {
+		InvocationSource        string
+		StartingDeadlineSeconds int64
+		ConcurrencyPolicy       string
+	}{plan.InvocationSource, plan.StartingDeadlineSeconds, plan.ConcurrencyPolicy})
 	if err != nil {
 		return "", "", "", "", err
 	}
-	evidence, err := digestJSON(struct{ QualificationChecks []string }{plan.QualificationChecks})
+	evidence, err := digestJSON(struct {
+		QualificationChecks []string
+		MatchingScheduleIDs []string
+	}{plan.QualificationChecks, plan.MatchingScheduleIDs})
 	return execution, provenance, governance, evidence, err
 }
 

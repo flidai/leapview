@@ -784,7 +784,7 @@ spec:
 	write("pipelines/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:sales, name: sales_refresh}
-spec: {selection: {type: semanticModel, semanticModel: sales}, triggers: [{id: manual, type: manual}], runPolicy: {overlap: replace}}
+spec: {selection: {semanticModel: sales}}
 `)
 	write("dashboards/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -1321,9 +1321,11 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 kind: Pipeline
 metadata: {id: pipeline:sales-refresh, name: sales_refresh}
 spec:
-  selection: {type: semanticModel, semanticModel: sales}
-  triggers: [{id: weekdays-0600, type: schedule, cron: "0 6 * * *", timezone: Europe/Copenhagen, missedOccurrences: latest}]
-  runPolicy: {overlap: replace}
+  selection: {semanticModel: sales}
+  schedules: {weekdays-0600: "0 6 * * *"}
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 `
 	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, validFiles)
 	project, err := LoadProject(projectPath)
@@ -1331,14 +1333,14 @@ spec:
 		t.Fatalf("LoadProject(valid pipeline) error = %v", err)
 	}
 	pipeline := project.RefreshPipelines["sales_refresh"]
-	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || pipeline.Overlap != "replace" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].ID != "weekdays-0600" || pipeline.Schedules[0].MissedOccurrences != "latest" || pipeline.Schedules[0].Timezone != "Europe/Copenhagen" {
+	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || pipeline.Timezone != "Europe/Copenhagen" || pipeline.StartingDeadlineSeconds != 3600 || pipeline.ConcurrencyPolicy != "Replace" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].ID != "weekdays-0600" || pipeline.Schedules[0].Expression != "0 6 * * *" {
 		t.Fatalf("pipeline = %#v, want normalized schedule", pipeline)
 	}
 	manualFiles := cloneFixtureFiles(base)
 	manualFiles["pipelines/manual.yaml"] = `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:manual, name: manual}
-spec: {selection: {type: semanticModel, semanticModel: sales}, triggers: [{id: manual, type: manual}], runPolicy: {overlap: forbid}}
+spec: {selection: {semanticModel: sales}}
 `
 	manual, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, manualFiles))
 	if err != nil {
@@ -1351,7 +1353,7 @@ spec: {selection: {type: semanticModel, semanticModel: sales}, triggers: [{id: m
 	invalidFiles["pipelines/bad.yaml"] = `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:bad, name: bad}
-spec: {selection: {type: semanticModel, semanticModel: missing}, triggers: [{id: manual, type: manual}], runPolicy: {overlap: replace}}
+spec: {selection: {semanticModel: missing}}
 `
 	_, err = LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, invalidFiles))
 	if err == nil || !strings.Contains(err.Error(), `reference "missing" is missing`) {

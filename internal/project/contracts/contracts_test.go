@@ -165,7 +165,7 @@ spec:
 	}
 }
 
-func TestPipelineContractDecodesSelectionAndTriggers(t *testing.T) {
+func TestPipelineContractDecodesSelectionAndSchedules(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata:
@@ -173,31 +173,26 @@ metadata:
   name: sales_refresh
 spec:
   selection:
-    type: semanticModel
     semanticModel: semantic:sales
-  triggers:
-    - id: manual
-      type: manual
-    - id: weekdays-0600
-      type: schedule
-      cron: "0 6 * * 1-5"
-      timezone: Europe/Copenhagen
-      missedOccurrences: latest
-  runPolicy:
-    overlap: replace
+  schedules:
+    weekdays-0600: "0 6 * * 1-5"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 `)
 	var pipeline contracts.PipelineDocument
 	if err := configschema.DecodeResource(configschema.KindPipeline, "pipeline.yaml", content, &pipeline); err != nil {
 		t.Fatalf("decode Pipeline: %v", err)
 	}
-	if _, ok := pipeline.Spec.Selection.Value.(*contracts.SemanticModelPipelineSelection); !ok {
-		t.Fatalf("selection variant = %T, want semantic-model variant", pipeline.Spec.Selection.Value)
+	scheduled, ok := pipeline.Spec.Value.(*contracts.ScheduledPipelineSpec)
+	if !ok {
+		t.Fatalf("spec variant = %T, want scheduled variant", pipeline.Spec.Value)
 	}
-	if len(pipeline.Spec.Triggers) != 2 {
-		t.Fatalf("triggers = %d, want 2", len(pipeline.Spec.Triggers))
+	if scheduled.Selection.SemanticModel != "semantic:sales" || len(scheduled.Schedules) != 1 || scheduled.Schedules["weekdays-0600"] != "0 6 * * 1-5" {
+		t.Fatalf("scheduled spec = %#v, want selection and schedule", scheduled)
 	}
-	if _, ok := pipeline.Spec.Triggers[1].Value.(*contracts.SchedulePipelineTrigger); !ok {
-		t.Fatalf("schedule trigger variant = %T", pipeline.Spec.Triggers[1].Value)
+	if scheduled.Timezone != "Europe/Copenhagen" || scheduled.StartingDeadlineSeconds != 3600 || scheduled.ConcurrencyPolicy != contracts.PipelineConcurrencyPolicyReplace {
+		t.Fatalf("scheduled policy = %#v, want explicit policy", scheduled)
 	}
 }
 

@@ -3,6 +3,7 @@ package module
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -151,6 +153,21 @@ INSERT INTO refresh_job_runs (
 );`); err != nil {
 		t.Fatalf("seed refresh state: %v", err)
 	}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_test", PipelineID: "pipeline_daily", ProjectID: "project_sales", Environment: "dev", SemanticModelID: "semantic_sales", ServingGenerationID: "generation_a",
+		ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", SelectionDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", MaterializationScope: []string{"model_orders"},
+	})
+	if err != nil {
+		t.Fatalf("build test pipeline plan: %v", err)
+	}
+	payload, _ := json.Marshal(map[string]any{"pipelinePlan": plan})
+	scope, _ := json.Marshal(plan.MaterializationScope)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_jobs SET payload_json = ? WHERE id = 'job_1'`, string(payload)); err != nil {
+		t.Fatalf("persist test pipeline plan: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET project_id = 'project_sales', trigger_id = 'manual', plan_digest = ?, materialization_scope_json = ? WHERE id = 'run_1'`, plan.Digest, string(scope)); err != nil {
+		t.Fatalf("persist test run plan evidence: %v", err)
+	}
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
 		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{
@@ -226,7 +243,7 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 				return refreshrun.LoadedArtifact{Definition: &artifact.Definition{
 					Models: map[string]*semanticmodel.Model{"orders": {}},
 					Pipelines: map[string]refreshschedule.Definition{
-						"daily": {ID: "daily", SemanticModelID: "orders", Overlap: refreshschedule.OverlapForbid, ManualTriggers: []string{"manual"}},
+						"daily": {ID: "daily", SemanticModelID: "orders"},
 					},
 				}}, nil
 			}),

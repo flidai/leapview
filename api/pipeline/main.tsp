@@ -22,6 +22,14 @@ scalar PipelineResourceName extends string;
 @pattern("^[A-Za-z_][A-Za-z0-9_-]*$")
 scalar PipelineIdentifier extends string;
 
+/** A five-field Argo-compatible cron expression supplied by an author. */
+@minLength(1)
+scalar PipelineCronExpression extends string;
+
+/** Explicit IANA timezone used for every schedule in the Pipeline. */
+@minLength(1)
+scalar PipelineTimezone extends string;
+
 enum PipelineApiVersion {
   v1: "leapview.dev/v1",
 }
@@ -30,14 +38,9 @@ enum PipelineResourceKind {
   pipeline: "Pipeline",
 }
 
-enum PipelineMissedOccurrences {
-  skip: "skip",
-  latest: "latest",
-}
-
-enum PipelineOverlapPolicy {
-  forbid: "forbid",
-  replace: "replace",
+enum PipelineConcurrencyPolicy {
+  forbid: "Forbid",
+  replace: "Replace",
 }
 
 model PipelineMetadata {
@@ -51,44 +54,35 @@ model PipelineMetadata {
   documentation?: string;
 }
 
-@discriminator("type")
 model PipelineSelection {
-  type: string;
-}
-
-model SemanticModelPipelineSelection extends PipelineSelection {
-  type: "semanticModel";
   semanticModel: PipelineResourceID;
 }
 
-@discriminator("type")
-model PipelineTrigger {
-  id: PipelineIdentifier;
-  type: string;
-}
-
-model ManualPipelineTrigger extends PipelineTrigger {
-  id: PipelineIdentifier;
-  type: "manual";
-}
-
-model SchedulePipelineTrigger extends PipelineTrigger {
-  id: PipelineIdentifier;
-  type: "schedule";
-  cron: string;
-  timezone: string;
-  missedOccurrences: PipelineMissedOccurrences;
-}
-
-model PipelineRunPolicy {
-  overlap: PipelineOverlapPolicy;
-}
-
-model PipelineSpec {
+/** Manual-only form: schedule policy is not meaningful without schedules. */
+model ManualPipelineSpec {
   selection: PipelineSelection;
-  @minItems(1)
-  triggers: PipelineTrigger[];
-  runPolicy: PipelineRunPolicy;
+}
+
+/** Scheduled form: all Pipeline-wide schedule policy is explicit. */
+model ScheduledPipelineSpec {
+  selection: PipelineSelection;
+  /** Named schedule IDs are evidence-only keys; values are cron expressions. */
+  @apigen.minProperties(1)
+  @apigen.propertyNames(PipelineIdentifier)
+  schedules: Record<PipelineCronExpression>;
+  /** Required when schedules is non-empty; omitted for manual-only Pipelines. */
+  timezone: PipelineTimezone;
+  /** Argo-compatible late-start deadline, required when schedules is non-empty. */
+  @minValue(0)
+  startingDeadlineSeconds: int64;
+  /** Argo-compatible scheduled overlap policy, required when schedules is non-empty. */
+  concurrencyPolicy: PipelineConcurrencyPolicy;
+}
+
+/** Conditional authored shape; the union is structural and has no YAML tag. */
+union PipelineSpec {
+  manual: ManualPipelineSpec,
+  scheduled: ScheduledPipelineSpec,
 }
 
 @apigen.contract(#{ kind: "pipeline", tags: #["pipeline", "authoring", "resource"] })

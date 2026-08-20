@@ -38,10 +38,10 @@ type Plan struct {
 // InvocationPolicy is the effective authored trigger and overlap policy bound
 // when a compiled selection is admitted as a run.
 type InvocationPolicy struct {
-	TriggerType       string
-	TriggerID         string
-	MissedOccurrences string
-	Overlap           string
+	InvocationSource        string
+	MatchingScheduleIDs     []string
+	StartingDeadlineSeconds int64
+	ConcurrencyPolicy       string
 }
 
 // DeliveryPipelinePlan lowers a generation-bound refresh selection into the
@@ -71,7 +71,7 @@ func (p Plan) DeliveryPipelinePlan(policy ...InvocationPolicy) (projectpipelinep
 		SemanticModelID: p.SemanticModelID.String(), SelectedResourceType: "semanticModel", SelectedResourceID: p.SemanticModelID.String(), ServingGenerationID: p.ServingGenerationID,
 		ArtifactDigest: p.ArtifactDigest, SelectionDigest: selectionDigest, MaterializationScope: append([]string(nil), p.MaterializationScope...),
 		ModelExecutionOrder: append([]string(nil), p.MaterializationScope...), SourceInputs: append([]string(nil), p.SourceInputs...),
-		TriggerType: effective.TriggerType, TriggerID: effective.TriggerID, MissedOccurrences: effective.MissedOccurrences, Overlap: effective.Overlap,
+		InvocationSource: effective.InvocationSource, MatchingScheduleIDs: append([]string(nil), effective.MatchingScheduleIDs...), StartingDeadlineSeconds: effective.StartingDeadlineSeconds, ConcurrencyPolicy: effective.ConcurrencyPolicy,
 	})
 }
 

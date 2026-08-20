@@ -95,16 +95,12 @@ metadata:
   name: sales-refresh
 spec:
   selection:
-    type: semanticModel
     semanticModel: sales
-  triggers:
-    - id: weekdays-0600
-      type: schedule
-      cron: "0 6 * * *"
-      timezone: Europe/Copenhagen
-      missedOccurrences: latest
-  runPolicy:
-    overlap: replace
+  schedules:
+    weekdays-0600: "0 6 * * *"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 ` + "```\n"
 
 	if issues := ValidateMarkdown("docs/example.md", []byte(markdown)); len(issues) != 0 {

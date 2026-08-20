@@ -1,7 +1,6 @@
 package schedule
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -38,44 +37,54 @@ func TestRefreshArtifactDigestIsCanonical(t *testing.T) {
 }
 
 func TestManualOnlyPipelineDefinitionIsValid(t *testing.T) {
-	definition := Definition{ID: "pipeline_manual", SemanticModelID: "semantic_sales", Overlap: OverlapReplace, ManualTriggers: []string{"manual"}}
+	definition := Definition{ID: "pipeline_manual", SemanticModelID: "semantic_sales"}
 	if err := definition.Validate(); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func TestScheduleNextAfterArtifactRoundTrip(t *testing.T) {
+func TestScheduledDefinitionRequiresPipelineWidePolicy(t *testing.T) {
+	schedule := Schedule{ID: "every-minute", Expression: "* * * * *"}
+	cases := []Definition{
+		{ID: "pipeline", SemanticModelID: "semantic", Schedules: []Schedule{schedule}},
+		{ID: "pipeline", SemanticModelID: "semantic", Timezone: "UTC", ConcurrencyPolicy: ConcurrencyForbid, StartingDeadlineSeconds: -1, Schedules: []Schedule{schedule}},
+		{ID: "pipeline", SemanticModelID: "semantic", Timezone: "UTC", ConcurrencyPolicy: "Allow", Schedules: []Schedule{schedule}},
+	}
+	for _, definition := range cases {
+		if err := definition.Validate(); err == nil {
+			t.Fatalf("Definition.Validate(%#v) = nil", definition)
+		}
+	}
+	valid := Definition{ID: "pipeline", SemanticModelID: "semantic", Timezone: "UTC", ConcurrencyPolicy: ConcurrencyReplace, StartingDeadlineSeconds: 0, Schedules: []Schedule{schedule}}
+	if err := valid.Validate(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestScheduleNextAfterCopy(t *testing.T) {
 	schedule, err := ParseSchedule("0 6 * * *", "Europe/Copenhagen")
 	if err != nil {
 		t.Fatal(err)
 	}
-	payload, err := json.Marshal(schedule)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var decoded Schedule
-	if err := json.Unmarshal(payload, &decoded); err != nil {
-		t.Fatal(err)
-	}
-	got := decoded.Next(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
+	copy := schedule
+	got := copy.Next(time.Date(2026, 7, 18, 12, 0, 0, 0, time.UTC))
 	want := time.Date(2026, 7, 19, 4, 0, 0, 0, time.UTC)
 	if !got.Equal(want) {
 		t.Fatalf("Next() = %s, want %s", got, want)
 	}
 }
 
-func TestParseScheduleAcceptsGitHubCompatibleCron(t *testing.T) {
+func TestParseScheduleAcceptsArgoCronProfile(t *testing.T) {
 	t.Parallel()
 
-	schedule, err := ParseSchedule("0 6 * JAN MON-FRI", "Europe/Copenhagen")
-	if err != nil {
-		t.Fatalf("ParseSchedule() error = %v", err)
-	}
-	if schedule.Expression != "0 6 * JAN MON-FRI" {
-		t.Fatalf("expression = %q", schedule.Expression)
-	}
-	if schedule.Timezone != "Europe/Copenhagen" {
-		t.Fatalf("timezone = %q", schedule.Timezone)
+	for _, expression := range []string{"0 6 * JAN MON-FRI", "* * * * *", "0 0 * * ?", "@yearly", "@annually", "@monthly", "@weekly", "@daily", "@midnight", "@hourly"} {
+		schedule, err := ParseSchedule(expression, "Europe/Copenhagen")
+		if err != nil {
+			t.Fatalf("ParseSchedule(%q) error = %v", expression, err)
+		}
+		if schedule.Expression != expression {
+			t.Fatalf("expression = %q, want %q", schedule.Expression, expression)
+		}
 	}
 }
 
@@ -95,9 +104,9 @@ func TestParseScheduleRejectsUnsupportedSchedules(t *testing.T) {
 		cron     string
 		timezone string
 	}{
-		{name: "alias", cron: "@daily"},
+		{name: "every descriptor", cron: "@every 1m"},
 		{name: "six fields", cron: "0 0 6 * * *"},
-		{name: "too frequent", cron: "*/4 * * * *"},
+		{name: "embedded timezone", cron: "CRON_TZ=UTC 0 6 * * *"},
 		{name: "invalid timezone", cron: "0 6 * * *", timezone: "Mars/Olympus_Mons"},
 	}
 	for _, tc := range cases {
@@ -124,19 +133,31 @@ func TestScheduleNextUsesLocalTimezone(t *testing.T) {
 	}
 }
 
+func TestScheduleNextIsIndependentOfHostTimezone(t *testing.T) {
+	schedule, err := ParseSchedule("0 6 * * *", "Europe/Copenhagen")
+	if err != nil {
+		t.Fatal(err)
+	}
+	utcAfter := time.Date(2026, 7, 18, 3, 0, 0, 0, time.UTC)
+	fixedHost := utcAfter.In(time.FixedZone("host", -8*60*60))
+	if got, want := schedule.Next(utcAfter), schedule.Next(fixedHost); !got.Equal(want) {
+		t.Fatalf("host timezone changed nominal instant: UTC=%s fixed=%s", got, want)
+	}
+}
+
 func TestScheduleNextAdvancesNonexistentDSTTime(t *testing.T) {
 	schedule, err := ParseSchedule("30 2 * * *", "Europe/Copenhagen")
 	if err != nil {
 		t.Fatal(err)
 	}
 	got := schedule.Next(time.Date(2026, 3, 28, 3, 0, 0, 0, time.UTC))
-	want := time.Date(2026, 3, 29, 1, 0, 0, 0, time.UTC)
+	want := time.Date(2026, 3, 30, 0, 30, 0, 0, time.UTC)
 	if !got.Equal(want) {
-		t.Fatalf("Next() = %s, want nonexistent 02:30 advanced to %s", got, want)
+		t.Fatalf("Next() = %s, want nonexistent local match skipped to %s", got, want)
 	}
 }
 
-func TestScheduleNextRunsRepeatedDSTTimeOnce(t *testing.T) {
+func TestScheduleNextRunsRepeatedDSTTimeTwice(t *testing.T) {
 	schedule, err := ParseSchedule("30 2 * * *", "Europe/Copenhagen")
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +168,8 @@ func TestScheduleNextRunsRepeatedDSTTimeOnce(t *testing.T) {
 	if !first.Equal(wantFirst) {
 		t.Fatalf("first repeated wall time = %s, want earlier instant %s", first, wantFirst)
 	}
-	if first.Equal(second) || second.Before(time.Date(2026, 10, 26, 0, 0, 0, 0, time.UTC)) {
-		t.Fatalf("repeated local time ran more than once: first=%s second=%s", first, second)
+	wantSecond := time.Date(2026, 10, 25, 1, 30, 0, 0, time.UTC)
+	if !second.Equal(wantSecond) {
+		t.Fatalf("second repeated wall time = %s, want %s", second, wantSecond)
 	}
 }

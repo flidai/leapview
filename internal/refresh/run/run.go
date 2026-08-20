@@ -13,10 +13,12 @@ import (
 )
 
 var (
-	ErrRunNotCancellable = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
-	ErrTargetActive      = apigenfailure.New("conflict", "refresh target already has an active run")
-	ErrLeaseLost         = errors.New("refresh job lease fence is no longer active")
-	ErrRunStale          = errors.New("refresh run is stale")
+	ErrRunNotCancellable             = apigenfailure.New("not_cancellable", "refresh run is not cancellable")
+	ErrTargetActive                  = apigenfailure.New("conflict", "refresh target already has an active run")
+	ErrInvocationConflict            = apigenfailure.New("conflict", "refresh invocation conflicts with an active invocation")
+	ErrAdmissionDeniedExternalActive = apigenfailure.New("admission_denied_external_active", "scheduled refresh admission denied while an external invocation is active")
+	ErrLeaseLost                     = errors.New("refresh job lease fence is no longer active")
+	ErrRunStale                      = errors.New("refresh run is stale")
 )
 
 var validTargetTypes = map[string]struct{}{TargetModelTable: {}, TargetRefreshPipeline: {}}
@@ -32,6 +34,9 @@ const (
 	RunStatusCancelled  = "cancelled"
 	RunStatusSuperseded = "superseded"
 	RunStatusSkipped    = "skipped"
+	// AdmissionDeniedExternalActive is a terminal occurrence outcome. It is
+	// intentionally not a runnable RunStatus: no job or run tree is created.
+	AdmissionDeniedExternalActive = "admission_denied_external_active"
 
 	TargetModelTable      = "model_table"
 	TargetRefreshPipeline = "refresh_pipeline"
@@ -54,6 +59,8 @@ type RunRecord struct {
 	// TargetID only for refresh_pipeline targets, never for model_table targets.
 	PipelineID           projectgraph.ResourceID   `json:"pipelineId,omitempty"`
 	PipelinePlan         *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
+	InvocationSource     string                    `json:"invocationSource,omitempty"`
+	MatchingScheduleIDs  []string                  `json:"matchingScheduleIds,omitempty"`
 	TriggerID            string                    `json:"triggerId,omitempty"`
 	NominalTime          string                    `json:"nominalTime,omitempty"`
 	PlanDigest           string                    `json:"planDigest,omitempty"`
@@ -81,9 +88,11 @@ type RunInput struct {
 	SemanticModelID      projectgraph.ResourceID
 	PipelineID           projectgraph.ResourceID
 	PipelinePlan         *projectpipelineplan.Plan
+	InvocationSource     string
+	MatchingScheduleIDs  []string
 	TriggerID            string
 	NominalTime          string
-	Overlap              string
+	ConcurrencyPolicy    string
 	PrincipalID          string
 	GroupIDs             []string
 	EstimatedMemoryBytes int64
@@ -103,6 +112,8 @@ type JobRecord struct {
 	SemanticModelID      projectgraph.ResourceID
 	PipelineID           projectgraph.ResourceID
 	PipelinePlan         *projectpipelineplan.Plan
+	InvocationSource     string
+	MatchingScheduleIDs  []string
 	TriggerID            string
 	NominalTime          string
 	PrincipalID          string
@@ -189,6 +200,11 @@ type RunPage struct {
 // generation is part of the identity and is never inferred from a container
 // or a mutable serving-state alias.
 func (input RunInput) Validate() error {
+	if input.TriggerType == "" {
+		if _, ok := validTriggerTypes[input.InvocationSource]; ok {
+			input.TriggerType = input.InvocationSource
+		}
+	}
 	if err := input.Identity.Validate(); err != nil {
 		return err
 	}
@@ -219,11 +235,22 @@ func (input RunInput) Validate() error {
 		return errors.New("refresh pipeline target must equal pipeline id")
 	}
 	if input.TargetType == TargetRefreshPipeline && input.ParentRunID == "" {
-		if err := validateOperational(input.TriggerID, "trigger id", true); err != nil {
-			return err
+		if input.InvocationSource == "" {
+			input.InvocationSource = input.TriggerType
 		}
-		if input.Overlap != "forbid" && input.Overlap != "replace" {
-			return errors.New("refresh overlap policy must be forbid or replace")
+		if input.InvocationSource != TriggerManual && input.InvocationSource != TriggerSchedule && input.InvocationSource != TriggerRetry && input.InvocationSource != "backfill" && input.InvocationSource != "external" {
+			return errors.New("refresh invocation source is unsupported")
+		}
+		if input.InvocationSource == TriggerSchedule && len(input.MatchingScheduleIDs) == 0 {
+			return errors.New("scheduled refresh matching schedule ids are required")
+		}
+		if input.InvocationSource == TriggerSchedule && input.ConcurrencyPolicy != "Forbid" && input.ConcurrencyPolicy != "Replace" {
+			return errors.New("scheduled refresh concurrency policy must be Forbid or Replace")
+		}
+		if input.TriggerID != "" {
+			if err := validateOperational(input.TriggerID, "trigger id", false); err != nil {
+				return err
+			}
 		}
 		if input.PipelinePlan == nil {
 			return errors.New("refresh pipeline plan is required")
@@ -234,9 +261,15 @@ func (input RunInput) Validate() error {
 		if input.PipelinePlan.ProjectID != input.Identity.ProjectID.String() || input.PipelinePlan.Environment != input.Identity.Environment || input.PipelinePlan.PipelineID != input.PipelineID.String() || input.PipelinePlan.SemanticModelID != input.SemanticModelID.String() || input.PipelinePlan.ServingGenerationID != input.Identity.GenerationID {
 			return errors.New("refresh pipeline plan does not match run identity")
 		}
+		if input.InvocationSource != "" && input.PipelinePlan.InvocationSource != "" && input.InvocationSource != input.PipelinePlan.InvocationSource {
+			return errors.New("refresh pipeline invocation source does not match plan evidence")
+		}
 		if input.TriggerType == TriggerSchedule && input.NominalTime == "" {
 			return errors.New("scheduled refresh nominal time is required")
 		}
+	}
+	if err := validateScheduleIDs(input.MatchingScheduleIDs); err != nil {
+		return err
 	}
 	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID, "retry of": input.RetryOf} {
 		required := name == "principal id"
@@ -252,6 +285,20 @@ func (input RunInput) Validate() error {
 	}
 	if input.EstimatedMemoryBytes <= 0 {
 		return errors.New("refresh estimated memory must be positive")
+	}
+	return nil
+}
+
+func validateScheduleIDs(ids []string) error {
+	previous := ""
+	for _, id := range ids {
+		if err := validateOperational(id, "matching schedule id", true); err != nil {
+			return err
+		}
+		if previous != "" && id <= previous {
+			return errors.New("matching schedule ids must be sorted canonically")
+		}
+		previous = id
 	}
 	return nil
 }
@@ -282,7 +329,7 @@ func (job JobRecord) Validate() error {
 		return errors.New("refresh pipeline target must equal pipeline id")
 	}
 	if job.TargetType == TargetRefreshPipeline {
-		if err := validateOperational(job.TriggerID, "trigger id", true); err != nil {
+		if err := validateOperational(job.TriggerID, "trigger id", false); err != nil {
 			return err
 		}
 		if job.PipelinePlan == nil {
@@ -294,6 +341,18 @@ func (job JobRecord) Validate() error {
 		if job.PipelinePlan.ProjectID != job.Identity.ProjectID.String() || job.PipelinePlan.Environment != job.Identity.Environment || job.PipelinePlan.PipelineID != job.PipelineID.String() || job.PipelinePlan.SemanticModelID != job.SemanticModelID.String() || job.PipelinePlan.ServingGenerationID != job.Identity.GenerationID {
 			return errors.New("refresh pipeline job plan does not match job identity")
 		}
+		if job.InvocationSource == "" {
+			job.InvocationSource = job.TriggerType
+		}
+		if job.InvocationSource == TriggerSchedule && len(job.MatchingScheduleIDs) == 0 {
+			return errors.New("scheduled refresh job matching schedule ids are required")
+		}
+		if job.PipelinePlan.InvocationSource != "" && job.PipelinePlan.InvocationSource != job.InvocationSource {
+			return errors.New("refresh pipeline job invocation source does not match plan evidence")
+		}
+	}
+	if err := validateScheduleIDs(job.MatchingScheduleIDs); err != nil {
+		return err
 	}
 	for name, value := range map[string]string{"job id": job.ID, "run id": job.RunID, "principal id": job.PrincipalID} {
 		required := true

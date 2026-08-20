@@ -25,7 +25,7 @@ func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 	base := RunInput{
 		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetRefreshPipeline,
-		TargetID: "pipeline_sales", TriggerType: TriggerManual, TriggerID: "manual", Overlap: "forbid", JobKind: JobKindRefreshPipeline,
+		TargetID: "pipeline_sales", TriggerType: TriggerManual, JobKind: JobKindRefreshPipeline,
 	}
 	base.PipelinePlan = testPipelinePlan(base.Identity, base.PipelineID.String(), base.SemanticModelID.String())
 	if err := base.Validate(); err != nil {

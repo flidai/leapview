@@ -49073,6 +49073,9 @@ paths:
                       environment: example
                       generationId: example
                       projectId: example
+                    invocationSource: example
+                    matchingScheduleIds:
+                      - example
                     materializationScope:
                       - example
                     nominalTime: "2026-01-02T15:04:05Z"
@@ -49084,8 +49087,6 @@ paths:
                     semanticModel: example
                     startedAt: "2026-01-02T15:04:05Z"
                     status: example
-                    trigger: example
-                    triggerId: example
                 page:
                   nextCursor: example
         '400':
@@ -49367,6 +49368,9 @@ paths:
                   environment: example
                   generationId: example
                   projectId: example
+                invocationSource: example
+                matchingScheduleIds:
+                  - example
                 materializationScope:
                   - example
                 nominalTime: "2026-01-02T15:04:05Z"
@@ -49378,8 +49382,6 @@ paths:
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
-                trigger: example
-                triggerId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -49625,7 +49627,6 @@ paths:
             example:
               pipelineId: example
               retryOf: example
-              triggerId: example
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -49636,6 +49637,10 @@ paths:
             fields:
               - name: id
                 sensitivity: internal
+              - name: invocationSource
+                sensitivity: public
+              - name: matchingScheduleIds
+                sensitivity: public
               - name: pipelineId
                 sensitivity: internal
               - name: planDigest
@@ -49646,10 +49651,6 @@ paths:
                 sensitivity: internal
               - name: status
                 sensitivity: public
-              - name: trigger
-                sensitivity: public
-              - name: triggerId
-                sensitivity: internal
             retention: security
             schema:
               ref: RefreshQueuedAuditPayload
@@ -49727,6 +49728,9 @@ paths:
                   environment: example
                   generationId: example
                   projectId: example
+                invocationSource: example
+                matchingScheduleIds:
+                  - example
                 materializationScope:
                   - example
                 nominalTime: "2026-01-02T15:04:05Z"
@@ -49738,8 +49742,6 @@ paths:
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
-                trigger: example
-                triggerId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -50026,6 +50028,9 @@ paths:
                   environment: example
                   generationId: example
                   projectId: example
+                invocationSource: example
+                matchingScheduleIds:
+                  - example
                 materializationScope:
                   - example
                 nominalTime: "2026-01-02T15:04:05Z"
@@ -50037,8 +50042,6 @@ paths:
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
-                trigger: example
-                triggerId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -50285,14 +50288,14 @@ paths:
             fields:
               - name: id
                 sensitivity: internal
+              - name: invocationSource
+                sensitivity: public
+              - name: matchingScheduleIds
+                sensitivity: public
               - name: pipelineId
                 sensitivity: internal
               - name: status
                 sensitivity: public
-              - name: trigger
-                sensitivity: public
-              - name: triggerId
-                sensitivity: internal
             retention: security
             schema:
               ref: RefreshCancelledAuditPayload
@@ -80447,8 +80450,8 @@ components:
         - id
         - pipelineId
         - status
-        - trigger
-        - triggerId
+        - invocationSource
+        - matchingScheduleIds
       properties:
         id:
           type: string
@@ -80462,26 +80465,30 @@ components:
         status:
           type: string
           example: example
-        trigger:
+        invocationSource:
           type: string
           example: example
-        triggerId:
-          type: string
-          example: example
+        matchingScheduleIds:
+          type: array
+          items:
+            type: string
+          example:
+            - example
       example:
         id: example
+        invocationSource: example
+        matchingScheduleIds:
+          - example
         pipelineId: example
         status: example
-        trigger: example
-        triggerId: example
     RefreshQueuedAuditPayload:
       type: object
       required:
         - id
         - pipelineId
         - semanticModel
-        - trigger
-        - triggerId
+        - invocationSource
+        - matchingScheduleIds
         - planDigest
         - retryOf
         - status
@@ -80501,12 +80508,15 @@ components:
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        trigger:
+        invocationSource:
           type: string
           example: example
-        triggerId:
-          type: string
-          example: example
+        matchingScheduleIds:
+          type: array
+          items:
+            type: string
+          example:
+            - example
         planDigest:
           type: string
           example: example
@@ -80518,18 +80528,18 @@ components:
           example: example
       example:
         id: example
+        invocationSource: example
+        matchingScheduleIds:
+          - example
         pipelineId: example
         planDigest: example
         retryOf: example
         semanticModel: example
         status: example
-        trigger: example
-        triggerId: example
     RefreshRunCreateRequest:
       type: object
       required:
         - pipelineId
-        - triggerId
       properties:
         pipelineId:
           type: string
@@ -80537,16 +80547,12 @@ components:
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        triggerId:
-          type: string
-          example: example
         retryOf:
           type: string
           example: example
       example:
         pipelineId: example
         retryOf: example
-        triggerId: example
     RefreshRunListResponse:
       type: object
       required:
@@ -80566,6 +80572,9 @@ components:
                 environment: example
                 generationId: example
                 projectId: example
+              invocationSource: example
+              matchingScheduleIds:
+                - example
               materializationScope:
                 - example
               nominalTime: "2026-01-02T15:04:05Z"
@@ -80577,8 +80586,6 @@ components:
               semanticModel: example
               startedAt: "2026-01-02T15:04:05Z"
               status: example
-              trigger: example
-              triggerId: example
         page:
           $ref: '#/components/schemas/PageInfo'
       example:
@@ -80591,6 +80598,9 @@ components:
               environment: example
               generationId: example
               projectId: example
+            invocationSource: example
+            matchingScheduleIds:
+              - example
             materializationScope:
               - example
             nominalTime: "2026-01-02T15:04:05Z"
@@ -80602,8 +80612,6 @@ components:
             semanticModel: example
             startedAt: "2026-01-02T15:04:05Z"
             status: example
-            trigger: example
-            triggerId: example
         page:
           nextCursor: example
     RefreshRunResponse:
@@ -80613,8 +80621,7 @@ components:
         - identity
         - pipelineId
         - semanticModel
-        - trigger
-        - triggerId
+        - invocationSource
         - planDigest
         - materializationScope
         - status
@@ -80643,12 +80650,15 @@ components:
         principalDisplayName:
           type: string
           example: example
-        trigger:
+        invocationSource:
           type: string
           example: example
-        triggerId:
-          type: string
-          example: example
+        matchingScheduleIds:
+          type: array
+          items:
+            type: string
+          example:
+            - example
         nominalTime:
           type: string
           format: date-time
@@ -80692,6 +80702,9 @@ components:
           environment: example
           generationId: example
           projectId: example
+        invocationSource: example
+        matchingScheduleIds:
+          - example
         materializationScope:
           - example
         nominalTime: "2026-01-02T15:04:05Z"
@@ -80703,8 +80716,6 @@ components:
         semanticModel: example
         startedAt: "2026-01-02T15:04:05Z"
         status: example
-        trigger: example
-        triggerId: example
     RefreshServingIdentity:
       type: object
       required:

@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -50,11 +51,10 @@ func TestRepositoryReconcileAndClaimDueCoalescesCatchUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest,
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", Name: "sales-refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", Name: "sales-refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 		Now:       deployedAt,
 	}); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
@@ -100,7 +100,6 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	for _, item := range []struct {
 		identity projectgraph.ServingIdentity
@@ -111,7 +110,7 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 			Identity: item.identity, ArtifactDigest: validDigest("a"), Now: deployedAt,
-			Pipelines: []refreshschedule.Definition{{ID: item.pipeline.ID, SemanticModelID: item.pipeline.SemanticModelID, Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+			Pipelines: []refreshschedule.Definition{{ID: item.pipeline.ID, SemanticModelID: item.pipeline.SemanticModelID, Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -126,7 +125,7 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	}
 }
 
-func TestRepositoryCoalescesSimultaneouslyDueScheduleEntries(t *testing.T) {
+func TestRepositoryCoalescesOverlappingScheduleEntries(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -134,15 +133,13 @@ func TestRepositoryCoalescesSimultaneouslyDueScheduleEntries(t *testing.T) {
 	defer store.Close()
 	seedRefreshGenerations(t, store)
 	morning, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
-	later, _ := refreshschedule.ParseSchedule("0 7 * * *", "UTC")
+	later, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	morning.ID = "morning"
-	morning.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	later.ID = "later"
-	later.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{morning, later}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{morning, later}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -150,8 +147,11 @@ func TestRepositoryCoalescesSimultaneouslyDueScheduleEntries(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(due) != 2 || !due[0].ScheduledAt.Equal(time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)) || !due[1].ScheduledAt.Equal(time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC)) {
-		t.Fatalf("due = %#v, want one latest occurrence per trigger", due)
+	if len(due) != 1 || !due[0].ScheduledAt.Equal(time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)) {
+		t.Fatalf("due = %#v, want one overlapping occurrence", due)
+	}
+	if got, want := strings.Join(due[0].MatchingScheduleIDs, ","), "later,morning"; got != want {
+		t.Fatalf("matching schedule IDs = %q, want %q", got, want)
 	}
 }
 
@@ -164,11 +164,10 @@ func TestRepositoryReleaseOccurrenceMakesQueueFailureRetryable(t *testing.T) {
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +184,8 @@ func TestRepositoryReleaseOccurrenceMakesQueueFailureRetryable(t *testing.T) {
 SELECT status, outcome
 FROM refresh_pipeline_occurrences
 WHERE project_id = 'project_sales' AND environment = 'prod'
-  AND pipeline_id = 'pipeline_sales_refresh' AND trigger_id = ?
-  AND scheduled_at = ?`, first[0].TriggerID, first[0].ScheduledAt.UTC().Format(time.RFC3339Nano)).Scan(&status, &outcome); err != nil {
+  AND pipeline_id = 'pipeline_sales_refresh'
+  AND scheduled_at = ?`, first[0].ScheduledAt.UTC().Format(time.RFC3339Nano)).Scan(&status, &outcome); err != nil {
 		t.Fatal(err)
 	}
 	if status != "pending" || outcome != "dispatch_failed" {
@@ -210,11 +209,10 @@ func TestRepositoryRecoversAbandonedOccurrenceClaim(t *testing.T) {
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,11 +243,10 @@ func TestRepositoryClaimDueDeduplicatesConcurrentDispatchers(t *testing.T) {
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -295,9 +292,8 @@ func TestRepositoryReconcileRemovesSupersededSchedules(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
-	input := refreshschedule.ReconcileInput{Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}}, Now: now}
+	input := refreshschedule.ReconcileInput{Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}}, Now: now}
 	if err := repo.Reconcile(t.Context(), input); err != nil {
 		t.Fatal(err)
 	}
@@ -325,15 +321,14 @@ func TestRepositoryGenerationIsolationAcrossScheduleOperations(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	for _, item := range []struct {
 		identity projectgraph.ServingIdentity
 		pipeline refreshschedule.Definition
 		digest   string
 	}{
-		{testIdentity("prod", "generation_a"), refreshschedule.Definition{ID: "pipeline_a", SemanticModelID: "semantic_a", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("a")},
-		{testIdentity("prod", "generation_b"), refreshschedule.Definition{ID: "pipeline_b", SemanticModelID: "semantic_b", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("b")},
+		{testIdentity("prod", "generation_a"), refreshschedule.Definition{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("a")},
+		{testIdentity("prod", "generation_b"), refreshschedule.Definition{ID: "pipeline_b", SemanticModelID: "semantic_b", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("b")},
 	} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{Identity: item.identity, ArtifactDigest: item.digest, Pipelines: []refreshschedule.Definition{item.pipeline}, Now: now}); err != nil {
 			t.Fatal(err)
@@ -416,13 +411,12 @@ func TestRepositoryOccurrenceIdentityExcludesGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	schedule.ID = "daily"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	for _, generation := range []string{"generation_a", "generation_b"} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 			Identity: testIdentity("prod", generation), ArtifactDigest: testArtifactDigest, Now: now,
 			Pipelines: []refreshschedule.Definition{{
-				ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid,
+				ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
 				Schedules: []refreshschedule.Schedule{schedule},
 			}},
 		}); err != nil {
@@ -446,7 +440,7 @@ func TestRepositoryOccurrenceIdentityExcludesGeneration(t *testing.T) {
 SELECT COUNT(*), MAX(generation_id)
 FROM refresh_pipeline_occurrences
 WHERE project_id = 'project_sales' AND environment = 'prod'
-  AND pipeline_id = 'pipeline_sales_refresh' AND trigger_id = 'daily'
+  AND pipeline_id = 'pipeline_sales_refresh'
   AND scheduled_at = '2026-07-18T06:00:00Z'`).Scan(&rows, &capturedGeneration); err != nil {
 		t.Fatal(err)
 	}
@@ -455,7 +449,7 @@ WHERE project_id = 'project_sales' AND environment = 'prod'
 	}
 }
 
-func TestRepositoryClaimDueOrdersNominalThenTrigger(t *testing.T) {
+func TestRepositoryClaimDueOrdersNominalThenPipeline(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -465,16 +459,14 @@ func TestRepositoryClaimDueOrdersNominalThenTrigger(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	firstTrigger, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	firstTrigger.ID = "z-trigger"
-	firstTrigger.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	secondTrigger, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	secondTrigger.ID = "a-trigger"
-	secondTrigger.MissedOccurrences = refreshschedule.MissedOccurrencesLatest
 	now := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: now,
 		Pipelines: []refreshschedule.Definition{
-			{ID: "pipeline_z", SemanticModelID: "semantic_z", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{firstTrigger}},
-			{ID: "pipeline_a", SemanticModelID: "semantic_a", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{secondTrigger}},
+			{ID: "pipeline_z", SemanticModelID: "semantic_z", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{firstTrigger}},
+			{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{secondTrigger}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -483,15 +475,15 @@ func TestRepositoryClaimDueOrdersNominalThenTrigger(t *testing.T) {
 	if err != nil || len(due) != 2 {
 		t.Fatalf("ClaimDue() = %#v, %v", due, err)
 	}
-	if due[0].TriggerID != "a-trigger" || due[1].TriggerID != "z-trigger" {
-		t.Fatalf("ClaimDue order = %q, %q; want trigger-ID tie break", due[0].TriggerID, due[1].TriggerID)
+	if due[0].PipelineID != "pipeline_a" || due[1].PipelineID != "pipeline_z" {
+		t.Fatalf("ClaimDue order = %q, %q; want pipeline-ID tie break", due[0].PipelineID, due[1].PipelineID)
 	}
 	if !due[0].ScheduledAt.Equal(due[1].ScheduledAt) {
 		t.Fatalf("nominal times differ: %s vs %s", due[0].ScheduledAt, due[1].ScheduledAt)
 	}
 }
 
-func TestRepositoryMissedSkipAdvancesWithoutOccurrence(t *testing.T) {
+func TestRepositoryDeadlineZeroStillDispatchesNormalTick(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -501,11 +493,10 @@ func TestRepositoryMissedSkipAdvancesWithoutOccurrence(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "skip-missed"
-	schedule.MissedOccurrences = refreshschedule.MissedOccurrencesSkip
 	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: deployedAt,
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Overlap: refreshschedule.OverlapForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -513,18 +504,91 @@ func TestRepositoryMissedSkipAdvancesWithoutOccurrence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(due) != 0 {
-		t.Fatalf("ClaimDue() = %#v, want missed occurrence skipped", due)
-	}
-	var rows int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM refresh_pipeline_occurrences WHERE trigger_id = 'skip-missed'`).Scan(&rows); err != nil {
-		t.Fatal(err)
-	}
-	if rows != 0 {
-		t.Fatalf("occurrence rows=%d, want none for skip policy", rows)
+	if len(due) != 1 {
+		t.Fatalf("ClaimDue() = %#v, want one normal tick occurrence", due)
 	}
 	next, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_a"), "pipeline_sales_refresh")
 	if err != nil || !ok || !next.Equal(time.Date(2026, 7, 19, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("next run=%s found=%v err=%v, want next day", next, ok, err)
+	}
+}
+
+func TestRepositoryPositiveDeadlineRecoversOnePipelineOccurrence(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	seedRefreshGenerations(t, store)
+	first, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
+	first.ID = "morning"
+	second, _ := refreshschedule.ParseSchedule("0 7 * * *", "UTC")
+	second.ID = "later"
+	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+	repo := NewRepository(store.SQLDB())
+	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: deployedAt,
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{first, second}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC),
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{first, second}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != 1 || !due[0].ScheduledAt.Equal(time.Date(2026, 7, 18, 7, 0, 0, 0, time.UTC)) {
+		t.Fatalf("due = %#v, want one latest deadline recovery", due)
+	}
+}
+
+func TestRepositoryReconcileSkipsMissedOccurrenceAtOrOutsideDeadline(t *testing.T) {
+	for _, deadline := range []int64{0, 1800} {
+		t.Run(fmt.Sprintf("deadline_%d", deadline), func(t *testing.T) {
+			store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			seedRefreshGenerations(t, store)
+			scheduled, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
+			scheduled.ID = "morning"
+			deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+			repo := NewRepository(store.SQLDB())
+			definition := refreshschedule.Definition{
+				ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC",
+				StartingDeadlineSeconds: deadline, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+				Schedules: []refreshschedule.Schedule{scheduled},
+			}
+			if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+				Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest,
+				Now: deployedAt, Pipelines: []refreshschedule.Definition{definition},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			restartedAt := time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC)
+			if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+				Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest,
+				Now: restartedAt, Pipelines: []refreshschedule.Definition{definition},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), restartedAt)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(due) != 0 {
+				t.Fatalf("ClaimDue() = %#v, want missed occurrence skipped", due)
+			}
+			next, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_a"), definition.ID)
+			if err != nil || !ok || !next.Equal(time.Date(2026, 7, 19, 6, 0, 0, 0, time.UTC)) {
+				t.Fatalf("next run=%s found=%v err=%v, want next scheduled day", next, ok, err)
+			}
+		})
 	}
 }
