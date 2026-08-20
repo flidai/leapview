@@ -43,6 +43,7 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
   for (const required of [
     "TestPackagedLeapViewPreservesRemoteContentBoundary",
     "runner.os == 'macOS'",
+    'LEAPVIEW_PACKAGED_APP="$GITHUB_WORKSPACE/$executable"',
     "runner.os == 'Windows'",
     "runner.os == 'Linux'",
   ]) {

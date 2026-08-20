@@ -2383,6 +2383,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
 		"FROM oven/bun:1.3.14@sha256:",
+		"COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
