@@ -26,7 +26,7 @@ func TestCompileDashboardLayoutUsesDefaultsAndDerivesHeight(t *testing.T) {
 		ID: "overview", Title: "Overview",
 		Components: []document.DashboardPageComponent{
 			canonicalVisualComponent("first", "revenue", canonicalPlacement(1, 1, 6, 2)),
-			canonicalVisualComponent("second", "orders", canonicalPlacement(7, 4, 6, 3)),
+			canonicalVisualComponent("second", "orders", canonicalPlacement(7, 3, 6, 3)),
 		},
 	}}}
 	layout, err := CompileDashboardLayout(spec)
@@ -37,10 +37,10 @@ func TestCompileDashboardLayoutUsesDefaultsAndDerivesHeight(t *testing.T) {
 		t.Fatalf("defaults = %#v, want %#v", got, want)
 	}
 	page := layout.Pages[0]
-	if page.ResponsiveLayout.OccupiedRows != 6 {
-		t.Fatalf("occupied rows = %d, want 6", page.ResponsiveLayout.OccupiedRows)
+	if page.ResponsiveLayout.OccupiedRows != 5 {
+		t.Fatalf("occupied rows = %d, want 5", page.ResponsiveLayout.OccupiedRows)
 	}
-	if got, want := page.Height, 16*2+6*48+5*16; got != want {
+	if got, want := page.Height, 16*2+5*48+4*16; got != want {
 		t.Fatalf("height = %d, want %d", got, want)
 	}
 	if page.Canvas.Width != 0 || page.Canvas.Height != 0 || page.Visuals[1].X != 0 || page.Visuals[1].Y != 0 || page.Visuals[1].Width != 0 || page.Visuals[1].Height != 0 {
@@ -64,7 +64,7 @@ func TestCompileDashboardLayoutAppliesPageOverrides(t *testing.T) {
 		Pages: []document.DashboardPage{{
 			ID: "detail", Title: "Detail",
 			Layout:     &document.DashboardLayoutOverride{Columns: &columns, RowHeight: &rowHeight, Gap: &gap, Padding: &padding},
-			Components: []document.DashboardPageComponent{canonicalVisualComponent("card", "orders", canonicalPlacement(8, 2, 1, 1))},
+			Components: []document.DashboardPageComponent{canonicalVisualComponent("card", "orders", canonicalPlacement(8, 1, 1, 1))},
 		}},
 	}
 	layout, err := CompileDashboardLayout(spec)
@@ -75,8 +75,8 @@ func TestCompileDashboardLayoutAppliesPageOverrides(t *testing.T) {
 	if page.Grid != (dashboard.PageGrid{Columns: 8, RowHeight: 24, Gap: 4, Padding: 10}) {
 		t.Fatalf("page override = %#v", page.Grid)
 	}
-	if page.Height != 10*2+2*24+4 {
-		t.Fatalf("height = %d, want %d", page.Height, 10*2+2*24+4)
+	if page.Height != 10*2+24 {
+		t.Fatalf("height = %d, want %d", page.Height, 10*2+24)
 	}
 }
 
@@ -117,6 +117,14 @@ func TestCompileDashboardLayoutRejectsInvalidPlacements(t *testing.T) {
 				canonicalVisualComponent("two", "orders", canonicalPlacement(4, 2, 4, 2)),
 			}}},
 			want: "overlap",
+		},
+		{
+			name: "empty grid row",
+			pages: []document.DashboardPage{{ID: "overview", Components: []document.DashboardPageComponent{
+				canonicalVisualComponent("one", "revenue", canonicalPlacement(1, 1, 12, 2)),
+				canonicalVisualComponent("two", "orders", canonicalPlacement(1, 4, 12, 2)),
+			}}},
+			want: "grid row 3 is empty",
 		},
 	}
 	for _, test := range cases {
