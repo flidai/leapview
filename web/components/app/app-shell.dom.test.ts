@@ -285,13 +285,15 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
           const link = root.querySelector('.collapsed-area-switch') as HTMLAnchorElement | null
           if (!link) return null
           const rect = link.getBoundingClientRect()
+          const iconRect = (link.querySelector('.area-icon') as HTMLElement).getBoundingClientRect()
           const style = getComputedStyle(link)
           return {
             visible: rect.width > 0 && rect.height > 0 && style.display !== 'none' && style.visibility !== 'hidden',
+            href: link.getAttribute('href'),
             label: link.getAttribute('aria-label'),
             title: link.getAttribute('title'),
-            href: link.getAttribute('href'),
             iconDisplay: getComputedStyle(link.querySelector('.area-icon') as HTMLElement).display,
+            iconCentered: Math.abs((iconRect.left + iconRect.width / 2) - (rect.left + rect.width / 2)) <= 1,
           }
         })(),
       }
@@ -311,13 +313,13 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
       visibleAreaSwitcherCount: 0,
       collapsedAreaSwitch: {
         visible: true,
+        href: '/',
         label: 'Switch to Insights',
         title: 'Switch to Insights',
-        href: '/',
         iconDisplay: 'grid',
+        iconCentered: true,
       },
     })
-
     await page.locator('lv-app-shell').evaluate(async (element: any) => {
       const sidebar = element.shadowRoot.querySelector('lv-sidebar') as any
       const button = sidebar.shadowRoot.querySelector('.collapse-button') as HTMLButtonElement
@@ -777,8 +779,10 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
-    expect(developState.switcherStyle).toEqual({ display: 'grid', borderTopWidth: '0px', backgroundColor: 'rgba(0, 0, 0, 0)' })
-    expect(developState.currentAreaStyle.boxShadow).toBe('none')
+    expect(developState.switcherStyle.display).toBe('grid')
+    expect(developState.switcherStyle.borderTopWidth).toBe('1px')
+    expect(developState.switcherStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
+    expect(developState.currentAreaStyle.boxShadow).not.toBe('none')
     expect(developState.currentAreaStyle.backgroundColor).not.toBe(developState.switcherStyle.backgroundColor)
     expect(developState.areaIconDisplay).toBe('grid')
 
@@ -1215,6 +1219,16 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
             --control-bgColor-hover: #eff2f5;
             --lv-border-transparent: 1px solid transparent;
             --lv-border-muted: 1px solid #d8dee4;
+            --lv-border-default: 1px solid #d0d7de;
+            --lv-bg-accent-muted: #ddf4ff;
+            --lv-fg-default: #24292f;
+            --lv-fg-accent: #0969da;
+            --lv-shadow-floating-sm: 0 1px 2px rgb(0 0 0 / 8%);
+            --lv-radius-default: 6px;
+            --base-size-2: 2px;
+            --base-size-4: 4px;
+            --base-size-12: 12px;
+            --base-size-36: 36px;
             --lv-border-width: 1px;
             --lv-fg-muted: #57606a;
             --lv-shadow-floating: 0 8px 24px rgb(0 0 0 / 12%);
