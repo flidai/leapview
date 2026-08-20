@@ -48,7 +48,7 @@ function readMarker(
   path: string,
 ): string | undefined | null {
   try {
-    return readFile(path);
+    return readFile(path).replace(/\r\n?/gu, "\n");
   } catch (error) {
     return error instanceof Error &&
         "code" in error &&
