@@ -101,10 +101,10 @@ const distributionMarkers = {
   },
 };
 const expectedDistribution = distributionMarkers[packagedDistribution];
-const marker = await readFile(
+const marker = (await readFile(
   join(resources, expectedDistribution.filename),
   "utf8",
-);
+)).replace(/\r\n?/gu, "\n");
 if (marker !== expectedDistribution.contents) {
   throw new Error(
     `packaged ${packagedDistribution} distribution marker is invalid`,

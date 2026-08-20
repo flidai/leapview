@@ -2412,6 +2412,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"COPY --from=web /src/internal/dashboard/appearance/icons_gen.go ./internal/dashboard/appearance/icons_gen.go",
 		"COPY --from=sourcegen /src/docs ./docs",
 		"CGO_ENABLED=1 go build",
+		"CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags=\"$BUILD_LDFLAGS\" -o /out/leapviewctl ./cmd/leapviewctl",
 		"FROM debian:bookworm-slim@sha256:",
 		"USER leapview",
 		"WORKDIR /app",
