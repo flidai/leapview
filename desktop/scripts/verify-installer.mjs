@@ -66,6 +66,10 @@ export function validateInstallerContract({
   };
 }
 
+export function squirrelArchiveArguments(archive, destination) {
+  return ["--force-local", "-xf", archive, "-C", destination];
+}
+
 async function main() {
   const desktopRoot = resolve(import.meta.dirname, "..");
   const out = join(desktopRoot, "out");
@@ -218,7 +222,11 @@ async function inspectWindowsInstaller(artifact, makeRoot) {
       );
     }
     await mkdir(payload);
-    await runFile("tar.exe", ["-xf", packages[0], "-C", payload]);
+    // Git for Windows' GNU tar treats a drive letter in an absolute path as a
+    // remote archive unless --force-local is provided. Without this flag the
+    // post-package verification fails only on the Windows runner, before it
+    // can inspect the Squirrel payload.
+    await runFile("tar.exe", squirrelArchiveArguments(packages[0], payload));
     const files = await findFiles(payload, () => true);
     const specification = files.find((path) =>
       path.toLowerCase().endsWith(".nuspec"),
