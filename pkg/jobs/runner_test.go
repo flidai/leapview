@@ -138,12 +138,19 @@ func TestRunnerRenewsLeaseDuringLongHandler(t *testing.T) {
 }
 
 func TestRunnerUsesHandlerLeaseTimeout(t *testing.T) {
-	repository := &leaseRecordingRunnerRepository{candidate: Job{ID: "job-1", Kind: "slow", WorkloadClass: "control", PrincipalID: "test", EstimatedMemoryBytes: 1}}
+	repository := &leaseRecordingRunnerRepository{
+		candidate: Job{ID: "job-1", Kind: "slow", WorkloadClass: "control", PrincipalID: "test", EstimatedMemoryBytes: 1},
+		renewed:   make(chan struct{}),
+	}
 	runner, err := NewRunner(RunnerConfig{
 		Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, LeaseTimeout: 5 * time.Millisecond,
-		Handlers: []Handler{HandlerFunc{JobKind: "slow", ExecutionLeaseTimeout: 50 * time.Millisecond, Run: func(context.Context, Job) error {
-			time.Sleep(40 * time.Millisecond)
-			return nil
+		Handlers: []Handler{HandlerFunc{JobKind: "slow", ExecutionLeaseTimeout: 50 * time.Millisecond, Run: func(ctx context.Context, _ Job) error {
+			select {
+			case <-repository.renewed:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
 		}}},
 	})
 	if err != nil {
@@ -329,6 +336,8 @@ type leaseRecordingRunnerRepository struct {
 	candidate    Job
 	claimTimeout time.Duration
 	renewTimeout time.Duration
+	renewed      chan struct{}
+	renewOnce    sync.Once
 }
 
 func (r *leaseRecordingRunnerRepository) ClaimByID(_ context.Context, id, _ string, _ string, timeout time.Duration) (Job, bool, error) {
@@ -340,7 +349,10 @@ func (r *leaseRecordingRunnerRepository) ClaimByID(_ context.Context, id, _ stri
 }
 
 func (r *leaseRecordingRunnerRepository) Renew(_ context.Context, _ string, _ Fence, timeout time.Duration) error {
-	r.renewTimeout = timeout
+	r.renewOnce.Do(func() {
+		r.renewTimeout = timeout
+		close(r.renewed)
+	})
 	return nil
 }
 

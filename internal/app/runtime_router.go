@@ -1588,10 +1588,10 @@ func bootstrapAPIGenDecision(
 	targets deliveryTargetReader,
 	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	// Deployment status/event reads and candidate source synchronization are
-	// control-plane operations. Their project-scoped RESOURCE_READ/EDIT
-	// contracts cannot be evaluated against the project graph (projects
-	// intentionally only support PROJECT_ADMIN), and the sealed delivery
+	// Deployment status/event reads, delivery plan resolution, and candidate
+	// source synchronization are control-plane operations. Their project-scoped
+	// RESOURCE_READ/EDIT contracts cannot be evaluated against the project graph
+	// (projects intentionally only support PROJECT_ADMIN), and the sealed delivery
 	// pointer advances before the in-process runtime cutover. Keep these
 	// operations on the durable, exact-claim bootstrap path through that
 	// marker-to-runtime warm-up window.
@@ -1634,7 +1634,8 @@ func bootstrapAPIGenDecision(
 func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
 	case "listDeployments", "getDeployment", "listDeploymentEvents",
-		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization":
+		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
+		"getDeliveryCandidateStatus", "getDeliveryPlanPreview":
 		return true
 	default:
 		return false
@@ -1643,7 +1644,7 @@ func bootstrapControlPlaneOperation(operationID string) bool {
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate",
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"listDeployments", "getDeployment", "listDeploymentEvents":

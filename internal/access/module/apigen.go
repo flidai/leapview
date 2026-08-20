@@ -236,7 +236,7 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 		if a.delivery == nil || a.runtime == nil {
 			return nil, false
 		}
-		if (operationID == "createDeliveryPlan" || operationID == "buildDeliveryPlan" || operationID == "publishDeliveryCandidate") && a.bootstrap != nil {
+		if isBootstrapDeliveryAPIGenOperation(operationID) && a.bootstrap != nil {
 			return a.protectDeliveryBootstrapAware(operationID, capability, next), true
 		}
 		return a.protectDelivery(operationID, capability, next), true
@@ -281,6 +281,17 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 	// Generated contracts carry the public API prefix (currently /api/v1),
 	// while this authorizer only cares about the target-owned delivery suffix.
 	return strings.Contains(contract.Path, "/projects/{project}/delivery")
+}
+
+// isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
+// establish and resolve a plan before the target has an active generation.
+func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
+	switch operationID {
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access.Capability, next http.Handler) http.Handler {
