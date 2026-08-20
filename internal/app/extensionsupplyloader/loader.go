@@ -148,7 +148,23 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 			}
 			return nil
 		},
-		VerifySignatureAtPath: verifyDuckDBArtifactAtPath,
+		VerifySignatureAtPath: func(ctx context.Context, artifact extensionsupply.Artifact, path string) error {
+			var dependencies []string
+			if artifact.Identity.Name == "iceberg" {
+				for _, candidate := range manifest.Artifacts {
+					if candidate.Identity.Name != "avro" {
+						continue
+					}
+					dependencyPath, pathErr := extensionCachePath(cacheDir, candidate.Identity)
+					if pathErr != nil {
+						return pathErr
+					}
+					dependencies = append(dependencies, dependencyPath)
+					break
+				}
+			}
+			return verifyDuckDBArtifactAtPath(ctx, artifact, path, dependencies...)
+		},
 	})
 }
 
@@ -157,7 +173,7 @@ func Load(ctx context.Context, cfg config.Config) (*extensionsupply.Supply, erro
 // verification. Automatic acquisition is disabled first, so a dependency
 // cannot turn this build/runtime check into a network install. The callback is
 // run before Supply links the staged file into cache.
-func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact, path string) error {
+func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact, path string, dependencies ...string) error {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		return fmt.Errorf("open DuckDB extension verifier: %w", err)
@@ -171,11 +187,34 @@ func verifyDuckDBArtifactAtPath(ctx context.Context, _ extensionsupply.Artifact,
 			return fmt.Errorf("configure DuckDB extension verifier: %w", err)
 		}
 	}
+	for _, dependency := range dependencies {
+		if info, statErr := os.Stat(dependency); statErr != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("verify DuckDB extension dependency %q: unavailable", filepath.Base(dependency))
+		}
+		escapedDependency := strings.ReplaceAll(dependency, "'", "''")
+		if _, err := db.ExecContext(ctx, "LOAD '"+escapedDependency+"'"); err != nil {
+			return fmt.Errorf("LOAD exact DuckDB extension dependency %q: %w", filepath.Base(dependency), err)
+		}
+	}
 	escaped := strings.ReplaceAll(path, "'", "''")
 	if _, err := db.ExecContext(ctx, "LOAD '"+escaped+"'"); err != nil {
 		return fmt.Errorf("LOAD exact DuckDB extension artifact: %w", err)
 	}
 	return nil
+}
+
+func extensionCachePath(cacheDir string, identity extension.Identity) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", fmt.Errorf("validate DuckDB extension dependency identity: %w", err)
+	}
+	digest := strings.TrimPrefix(identity.Digest, "sha256:")
+	path := filepath.Clean(filepath.Join(cacheDir, digest, extension.ArtifactFilenameStem(identity.Name)+".duckdb_extension"))
+	root := filepath.Clean(cacheDir)
+	relative, err := filepath.Rel(root, path)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("DuckDB extension dependency path escapes cache root")
+	}
+	return path, nil
 }
 
 // ReadPackagedSupplyDigest reads the build-generated SHA-256 sidecar. It is

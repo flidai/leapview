@@ -274,7 +274,7 @@ func prepareOne(ctx context.Context, installRoot, outputRoot, version, platform,
 	if err != nil {
 		return extensionsupply.Artifact{}, err
 	}
-	if err := verifyExactLoad(ctx, path); err != nil {
+	if err := verifyExactLoad(ctx, path, installRoot); err != nil {
 		return extensionsupply.Artifact{}, fmt.Errorf("verify signed %s extension: %w", name, err)
 	}
 	contents, err := os.ReadFile(path)
@@ -316,20 +316,37 @@ func locateInstalled(db *sql.DB, root, version, platform, name string) (string, 
 	return path, extensionVersion, nil
 }
 
-func verifyExactLoad(ctx context.Context, path string) error {
+func verifyExactLoad(ctx context.Context, path, extensionDirectory string) error {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {
 		return err
 	}
 	defer db.Close()
-	for _, statement := range []string{"SET autoinstall_known_extensions = false", "SET autoload_known_extensions = false"} {
+	escapedDirectory := strings.ReplaceAll(extensionDirectory, "'", "''")
+	statements := []string{
+		"SET extension_directory = '" + escapedDirectory + "'",
+		"SET autoinstall_known_extensions = false",
+		"SET autoload_known_extensions = false",
+	}
+	if filepath.Base(path) == "iceberg.duckdb_extension" {
+		// Iceberg depends on the official Avro extension. It is installed into
+		// the same version/platform directory before Iceberg, so load it first
+		// while implicit installation remains disabled.
+		dependency := filepath.Join(filepath.Dir(path), "avro.duckdb_extension")
+		if _, statErr := os.Stat(dependency); statErr != nil {
+			return fmt.Errorf("iceberg dependency avro is unavailable: %w", statErr)
+		}
+		escapedDependency := strings.ReplaceAll(dependency, "'", "''")
+		statements = append(statements, "LOAD '"+escapedDependency+"'")
+	}
+	escaped := strings.ReplaceAll(path, "'", "''")
+	statements = append(statements, "LOAD '"+escaped+"'")
+	for _, statement := range statements {
 		if _, err := db.ExecContext(ctx, statement); err != nil {
 			return err
 		}
 	}
-	escaped := strings.ReplaceAll(path, "'", "''")
-	_, err = db.ExecContext(ctx, "LOAD '"+escaped+"'")
-	return err
+	return nil
 }
 
 func runtimeTarget(ctx context.Context) (string, string, error) {

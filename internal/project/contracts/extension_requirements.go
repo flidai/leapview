@@ -4,10 +4,11 @@ import "sort"
 
 // RequiredExtensionNames is the closed runtime/package supply set derived
 // from generated connector and path-format profiles. Spatial is the sole
-// runtime-only extension used by visualization preparation; it is included
-// explicitly rather than allowing an unreviewed authored extension name.
+// runtime-only extension used by visualization preparation; DuckDB's Iceberg
+// extension also has an official Avro dependency, which must be supplied
+// explicitly so offline loading never falls back to implicit installation.
 func RequiredExtensionNames() []string {
-	seen := map[string]struct{}{"spatial": {}}
+	seen := map[string]struct{}{"avro": {}, "spatial": {}}
 	for _, profile := range ConnectorRegistry {
 		for _, name := range profile.ApprovedExtensions {
 			if name != "" {
