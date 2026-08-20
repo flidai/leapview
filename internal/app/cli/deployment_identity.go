@@ -1,12 +1,23 @@
 package cli
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"strings"
 )
+
+func newDeploymentIdempotencyKey(kind string, values ...string) (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("generate %s operation identity: %w", kind, err)
+	}
+	keyValues := append([]string(nil), values...)
+	keyValues = append(keyValues, hex.EncodeToString(nonce[:]))
+	return deploymentIdempotencyKey(kind, keyValues...), nil
+}
 
 func deploymentIdempotencyKey(kind string, values ...string) string {
 	digest := sha256.New()

@@ -99,6 +99,21 @@ func TestPlanBuildPublishCommandsCompleteAgainstRealApplication(t *testing.T) {
 	if plan.Evidence.AddedCount == 0 {
 		t.Errorf("bootstrap plan reported no added resources: %#v", plan.Evidence)
 	}
+	// Replanning is an explicit new review operation. It must not resurrect an
+	// older durable plan merely because source and target inputs are unchanged;
+	// planner/compiler evidence may have changed between invocations.
+	replanCommand := projectcli.DeliveryPlanCommand(ctx, projectDeliveryPlanOperations{
+		client: client, remotes: projectDevRemoteFactory{client: client}, checkpoints: checkpoints,
+	})
+	replanOutput := executeDeliveryCommand(t, replanCommand, projectPath, "--target", targetProfile, "--format", "json")
+	var replanned projectcli.DeliveryPlanResult
+	if err := json.Unmarshal(replanOutput, &replanned); err != nil {
+		t.Fatalf("decode replanned result: %v\n%s", err, replanOutput)
+	}
+	if replanned.PlanID == plan.PlanID || replanned.SourceDigest != plan.SourceDigest || replanned.BaseTargetRevision != plan.BaseTargetRevision {
+		t.Fatalf("replanned identity = %#v, first = %#v", replanned, plan)
+	}
+	plan = replanned
 
 	buildOperations := projectDeliveryBuildOperations{client: client, checkpoints: checkpoints}
 	buildCommand := projectcli.DeliveryBuildCommand(ctx, buildOperations)

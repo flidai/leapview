@@ -124,9 +124,13 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 	if err != nil {
 		return projectcli.DeliveryPlanResult{}, err
 	}
+	operationKey, err := newDeploymentIdempotencyKey("delivery-plan", projectID, targetID, operation, sourceDigest, candidateID)
+	if err != nil {
+		return projectcli.DeliveryPlanResult{}, err
+	}
 	response, err := deploymentgen.NewGenClient(transport).CreateDeliveryPlan(ctx, deploymentgen.GenCreateDeliveryPlanClientRequest{
 		Project: projectID,
-		Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: deploymentIdempotencyKey("delivery-plan", projectID, targetID, operation, sourceDigest, candidateID)},
+		Headers: deploymentgen.GenCreateDeliveryPlanClientHeaders{IdempotencyKey: operationKey},
 		Body:    deploymentgen.DeliveryPlanRequest{TargetId: targetID, Operation: deploymentgen.DeliveryOperationKind(operation), SourceDigest: sourceDigest, SourceAttestationDigest: sourceAttestationDigest},
 	})
 	if err != nil {
@@ -267,10 +271,40 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 	if err != nil {
 		return projectcli.DeliveryBuildResult{}, err
 	}
-	response, err := deploymentgen.NewGenClient(transport).BuildDeliveryPlan(ctx, deploymentgen.GenBuildDeliveryPlanClientRequest{
-		Project: options.ProjectID, Plan: options.PlanID,
-		Headers: deploymentgen.GenBuildDeliveryPlanClientHeaders{IdempotencyKey: deploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)},
-	})
+	operationKey := deploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+	if operations.checkpoints != nil && planCheckpoint.PlanID != "" {
+		freshKey, keyErr := newDeploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+		if keyErr != nil {
+			return projectcli.DeliveryBuildResult{}, keyErr
+		}
+		operationKey, keyErr = operations.checkpoints.BindPlanBuildIdempotencyKey(options.PlanID, "", freshKey)
+		if keyErr != nil {
+			return projectcli.DeliveryBuildResult{}, fmt.Errorf("persist delivery build operation: %w", keyErr)
+		}
+	}
+	client := deploymentgen.NewGenClient(transport)
+	build := func(key string) (deploymentgen.GenBuildDeliveryPlanClientResponse, error) {
+		return client.BuildDeliveryPlan(ctx, deploymentgen.GenBuildDeliveryPlanClientRequest{
+			Project: options.ProjectID, Plan: options.PlanID,
+			Headers: deploymentgen.GenBuildDeliveryPlanClientHeaders{IdempotencyKey: key},
+		})
+	}
+	response, err := build(operationKey)
+	if err != nil && deliveryCLIProblemCode(err, "DELIVERY_IDEMPOTENCY_DRIFT") {
+		freshKey, keyErr := newDeploymentIdempotencyKey("delivery-build", options.ProjectID, options.PlanID)
+		if keyErr != nil {
+			return projectcli.DeliveryBuildResult{}, keyErr
+		}
+		if operations.checkpoints != nil && planCheckpoint.PlanID != "" {
+			freshKey, keyErr = operations.checkpoints.BindPlanBuildIdempotencyKey(options.PlanID, operationKey, freshKey)
+			if keyErr != nil {
+				return projectcli.DeliveryBuildResult{}, fmt.Errorf("rotate delivery build operation: %w", keyErr)
+			}
+		}
+		if freshKey != operationKey {
+			response, err = build(freshKey)
+		}
+	}
 	if err != nil {
 		return projectcli.DeliveryBuildResult{}, mapDeliveryCLIError("build delivery plan", err)
 	}
@@ -364,4 +398,9 @@ func mapDeliveryCLIError(operation string, err error) error {
 		kind = "authentication"
 	}
 	return &projectcli.DeliveryError{Operation: operation, Kind: kind, Code: code, Status: problem.Response.StatusCode, Detail: problem.Problem.Detail, Cause: err}
+}
+
+func deliveryCLIProblemCode(err error, code string) bool {
+	var problem *apigenclient.ProblemError
+	return errors.As(err, &problem) && strings.TrimSpace(problem.Problem.Code) == code
 }
