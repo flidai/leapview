@@ -50,12 +50,12 @@ components:
   - id: order-details
     type: visual
     visual: orders-table
-    placement: {column: 1, row: 10, columnSpan: 12, rowSpan: 8}
+    placement: {column: 1, row: 9, columnSpan: 12, rowSpan: 8}
 ```
 
 Use `type: visual` for charts, KPIs, tables, matrices, and pivots. Use `type: filter` for an on-page filter presentation and `type: header` for headings. A filter component references the dashboard filter ID; it does not define a second predicate system.
 
-Coordinates are one-based. Keep `column + columnSpan - 1` within the configured column count and avoid accidental overlaps.
+Coordinates are one-based. Keep `column + columnSpan - 1` within the configured column count and avoid accidental overlaps. Every grid row through the last component must contain part of a component; a fully empty row creates an oversized horizontal band and is rejected during compilation and publishing.
 
 ### Design reading order
 

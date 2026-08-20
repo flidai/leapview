@@ -121,7 +121,7 @@ spec:
     - id: total-orders
       placement:
         column: 1
-        row: 4
+        row: 3
         columnSpan: 6
         rowSpan: 3
       type: visual
@@ -129,7 +129,7 @@ spec:
     - id: revenue
       placement:
         column: 7
-        row: 4
+        row: 3
         columnSpan: 6
         rowSpan: 3
       type: visual
@@ -137,7 +137,7 @@ spec:
     - id: categories
       placement:
         column: 1
-        row: 8
+        row: 6
         columnSpan: 12
         rowSpan: 6
       type: visual
@@ -145,7 +145,7 @@ spec:
     - id: orders
       placement:
         column: 1
-        row: 15
+        row: 12
         columnSpan: 12
         rowSpan: 8
       type: visual

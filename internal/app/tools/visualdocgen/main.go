@@ -1144,7 +1144,7 @@ func buildExampleDashboard(catalog visualCatalog, examplesByPage map[string][]vi
 		for index, example := range examplesByPage[document.Source] {
 			report.Spec.Visuals[example.ID] = example.Visual
 			page.Components = append(page.Components, dashboarddocument.DashboardPageComponent{Value: &dashboarddocument.VisualDashboardPageComponent{
-				DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: example.ID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: int32(1 + index*8), ColumnSpan: 6, RowSpan: 7}},
+				DashboardPageComponentBase: dashboarddocument.DashboardPageComponentBase{ID: example.ID, Type: "visual", Placement: dashboarddocument.DashboardPlacement{Column: 1, Row: int32(1 + index*7), ColumnSpan: 6, RowSpan: 7}},
 				Type:                       "visual", Visual: example.ID,
 			}})
 		}

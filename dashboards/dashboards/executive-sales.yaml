@@ -155,7 +155,7 @@ spec:
     - id: total-orders
       placement:
         column: 1
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -163,7 +163,7 @@ spec:
     - id: revenue
       placement:
         column: 5
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -171,7 +171,7 @@ spec:
     - id: aov
       placement:
         column: 9
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -179,7 +179,7 @@ spec:
     - id: revenue-trend
       placement:
         column: 1
-        row: 8
+        row: 6
         columnSpan: 12
         rowSpan: 6
       type: visual
@@ -187,7 +187,7 @@ spec:
     - id: categories
       placement:
         column: 1
-        row: 14
+        row: 12
         columnSpan: 12
         rowSpan: 6
       type: visual
@@ -195,7 +195,7 @@ spec:
     - id: orders_table
       placement:
         column: 1
-        row: 21
+        row: 18
         columnSpan: 12
         rowSpan: 8
       type: visual

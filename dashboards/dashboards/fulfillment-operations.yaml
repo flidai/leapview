@@ -150,7 +150,7 @@ spec:
     - id: total-orders
       placement:
         column: 1
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -158,7 +158,7 @@ spec:
     - id: delivery-days
       placement:
         column: 5
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -166,7 +166,7 @@ spec:
     - id: review-score
       placement:
         column: 9
-        row: 4
+        row: 3
         columnSpan: 4
         rowSpan: 3
       type: visual
@@ -174,7 +174,7 @@ spec:
     - id: status
       placement:
         column: 1
-        row: 8
+        row: 6
         columnSpan: 4
         rowSpan: 6
       type: visual
@@ -182,7 +182,7 @@ spec:
     - id: delivery-speed
       placement:
         column: 5
-        row: 8
+        row: 6
         columnSpan: 4
         rowSpan: 6
       type: visual
@@ -190,7 +190,7 @@ spec:
     - id: reviews
       placement:
         column: 9
-        row: 8
+        row: 6
         columnSpan: 4
         rowSpan: 6
       type: visual
