@@ -44,6 +44,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS web
 WORKDIR /src
 
+COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
 COPY scripts ./scripts
 COPY static ./static
