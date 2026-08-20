@@ -246,6 +246,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### Contributing
 
 - [Repository and development workflow](/docs/contributing/repository): Work effectively in the LeapView monorepo.
+- [Maintainability refactor contract](/docs/contributing/maintainability): Preserve behavior and capability ownership while extracting concentrated implementation complexity.
 - [Add a visual type](/docs/contributing/visual): Extend contracts, rendering, documentation, and tests together.
 - [Add a configuration resource](/docs/contributing/configuration): Extend schemas, generated references, and validation together.
 - [Write documentation](/docs/contributing/documentation): Author procedural guides and accessible diagrams that remain valid with the product.

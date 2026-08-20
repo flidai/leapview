@@ -3,7 +3,6 @@ import { createRef, ref, type Ref } from 'lit/directives/ref.js'
 import { EllipsisVertical } from 'lucide'
 import { type ColumnResizeDrag, resizeClientX, resizeGuideX, resizePlaneScaleX, resizedColumnWidth } from '../../shared/column-resize'
 import { lucideIcon } from '../../shared/lucide-icons'
-import { virtualRowRange } from '../../shared/table-window'
 import {
   TableController,
   callMemoOrStaticFn,
@@ -39,11 +38,7 @@ import { defaultDirection, formatCell, rowKey } from './format'
 import { blockStartsForAll, emptyBlocks, emptyTable, preserveCardinality, sameSort, sortedBlockRows, tableConverter } from './block-source'
 import {
   buildRowSelectionCommand,
-  rowClickSelectionAction,
-  rowIsSelected as tableRowIsSelected,
   rowSelectionFromEntries as tableRowSelectionFromEntries,
-  selectedRowCount as tableSelectedRowCount,
-  selectionLabels as tableSelectionLabels,
   type RowClickSelectionAction,
 } from './selection'
 import {
@@ -57,13 +52,18 @@ import {
   type TableBlock,
   type VisualWindowCommand,
   type TableColumn,
-  type TableFormattingRule,
   type TableRow,
   type TableSignal,
   type TanStackTableRow,
   type VisualAction,
   type VisibleRowSlot,
 } from './types'
+import {
+  ReportTableColumnController,
+  ReportTableFormattingController,
+  ReportTableSelectionController,
+  ReportTableVirtualizationController,
+} from './report-table-controller'
 
 const reportTableFeatures = tableFeatures({
   columnPinningFeature,
@@ -92,67 +92,6 @@ function defaultColumnSize(column: TableColumn): number {
   if (widths[column.key]) return widths[column.key]
   if (column.align === 'right') return 120
   return 140
-}
-
-function tableTone(value: string | undefined, fallback = 'accent'): string {
-  const normalized = String(value || fallback).toLowerCase().replace(/[^a-z0-9_-]/g, '')
-  return normalized || fallback
-}
-
-function toneColor(value: string | undefined, fallback = 'accent'): string {
-  switch (tableTone(value, fallback)) {
-    case 'success':
-    case 'green':
-      return 'var(--lv-fg-success)'
-    case 'danger':
-    case 'red':
-      return 'var(--lv-fg-danger)'
-    case 'warning':
-    case 'yellow':
-      return 'var(--lv-fg-warning)'
-    case 'muted':
-    case 'gray':
-      return 'var(--lv-fg-muted)'
-    default:
-      return 'var(--lv-fg-link)'
-  }
-}
-
-function numericValue(value: unknown): number | null {
-  const next = Number(value)
-  return Number.isFinite(next) ? next : null
-}
-
-function ruleMatches(value: unknown, rule: TableFormattingRule): boolean {
-  const next = numericValue(value)
-  if (next === null) return false
-  if (typeof rule.min === 'number' && next < rule.min) return false
-  if (typeof rule.max === 'number' && next > rule.max) return false
-  return true
-}
-
-function scalePercent(value: unknown, rule: TableFormattingRule): number {
-  const next = numericValue(value)
-  if (next === null) return 0
-  const min = typeof rule.min === 'number' ? rule.min : 0
-  const max = typeof rule.max === 'number' && rule.max > min ? rule.max : Math.max(min + 1, next)
-  return Math.max(0, Math.min(100, ((next - min) / (max - min)) * 100))
-}
-
-function badgeRule(column: TableColumn): TableFormattingRule | undefined {
-  return column.formatting?.find((rule) => rule.kind === 'badge')
-}
-
-function dataBarRule(column: TableColumn): TableFormattingRule | undefined {
-  return column.formatting?.find((rule) => rule.kind === 'data_bar')
-}
-
-function backgroundRule(value: unknown, column: TableColumn): TableFormattingRule | undefined {
-  return column.formatting?.find((rule) => rule.kind === 'background_scale' && ruleMatches(value, rule))
-}
-
-function textColorRule(value: unknown, column: TableColumn): TableFormattingRule | undefined {
-  return column.formatting?.find((rule) => rule.kind === 'text_color' && ruleMatches(value, rule))
 }
 
 function applyUpdater<T>(updater: unknown, current: T): T {
@@ -239,6 +178,10 @@ export class ReportTable extends LitElement {
   private resizeGuideFrame = 0
   private resizeDrag?: ColumnResizeDrag
   private tableController = new TableController<typeof reportTableFeatures, TanStackTableRow>(this)
+  private readonly virtualizationController = new ReportTableVirtualizationController()
+  private readonly selectionController = new ReportTableSelectionController()
+  private readonly columnController = new ReportTableColumnController(() => this.columnSizing)
+  private readonly formattingController = new ReportTableFormattingController()
   private handleOutsidePointerDown = (event: PointerEvent) => {
     const details = this.renderRoot.querySelector<HTMLDetailsElement>('.visual-options')
     if (!details?.open) return
@@ -1066,8 +1009,10 @@ export class ReportTable extends LitElement {
     if (!viewport) return
     this.resizeObserver?.disconnect()
     this.viewportHeight = viewport.clientHeight
+    this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
     this.resizeObserver = new ResizeObserver(() => {
       this.viewportHeight = viewport.clientHeight
+      this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
       this.scheduleEnsureBlocksForScroll()
     })
     this.resizeObserver.observe(viewport)
@@ -1117,6 +1062,7 @@ export class ReportTable extends LitElement {
         viewport.scrollLeft = 0
         this.viewportTop = 0
         this.viewportHeight = viewport.clientHeight
+        this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
         this.scheduleEnsureBlocksForScroll()
       })
     }
@@ -1133,7 +1079,7 @@ export class ReportTable extends LitElement {
   get visibleRows(): VisibleRowSlot[] {
     if (this.availableRows <= 0) return []
     const rowMap = new Map(this.loadedRows.map((item) => [item.index, item.row]))
-    const { first, last } = virtualRowRange(this.availableRows, this.viewportTop, this.viewportHeight || this.rowHeight, this.rowHeight, 2)
+    const { first, last } = this.virtualizationController.visibleRange(this.availableRows, this.rowHeight, 2)
     const rows: VisibleRowSlot[] = []
     for (let index = first; index < last; index++) {
       const row = rowMap.get(index)
@@ -1180,15 +1126,15 @@ export class ReportTable extends LitElement {
   }
 
   private columnPixelWidths(columns: TableColumn[]): number[] {
-    return columns.map((column) => this.columnPixelWidth(column))
+    return this.columnController.pixelWidths(columns)
   }
 
   private columnPixelWidth(column: TableColumn): number {
-    return Math.max(this.minColumnSize(column), this.columnSizing[column.key] ?? defaultColumnSize(column) ?? 140)
+    return this.columnController.pixelWidth(column)
   }
 
   private minColumnSize(column: TableColumn): number {
-    return column.key === 'order_id' || column.key === 'category' ? 160 : 64
+    return this.columnController.minSize(column)
   }
 
   private tanstackRowsForSlots(slots: VisibleRowSlot[]): TanStackTableRow[] {
@@ -1275,6 +1221,7 @@ export class ReportTable extends LitElement {
     const target = event.currentTarget as HTMLDivElement
     this.viewportTop = target.scrollTop
     this.viewportHeight = target.clientHeight
+    this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
     this.scheduleEnsureBlocksForScroll()
   }
 
@@ -1297,12 +1244,7 @@ export class ReportTable extends LitElement {
 
   private selectRow(key: string, row: TableRow, event: MouseEvent): void {
     const selected = this.rowIsSelected(row, key)
-    const action = rowClickSelectionAction({
-      selected,
-      selectedCount: this.selectedRowCount(),
-      metaKey: event.metaKey,
-      ctrlKey: event.ctrlKey,
-    })
+    const action = this.selectionController.action(selected, this.selectedRowCount(), event)
     this.selectedCellKey = ''
     this.emitRowSelection(key, row, action)
   }
@@ -1327,15 +1269,15 @@ export class ReportTable extends LitElement {
   }
 
   private selectedRowCount(): number {
-    return tableSelectedRowCount(this.table?.selection)
+    return this.selectionController.count(this.table?.selection)
   }
 
   private selectionLabels(): string[] {
-    return tableSelectionLabels(this.table?.selection)
+    return this.selectionController.labels(this.table?.selection)
   }
 
   private rowIsSelected(row: TableRow, key: string): boolean {
-    return tableRowIsSelected(row, key, this.table?.interaction, this.table?.selection)
+    return this.selectionController.isSelected(row, key, this.table?.interaction, this.table?.selection)
   }
 
   private emitRowSelection(key: string, row: TableRow, selectionAction: RowClickSelectionAction): void {
@@ -1517,25 +1459,25 @@ export class ReportTable extends LitElement {
     const styles = [this.pinnedCellStyle(pinnedColumn)].filter(Boolean)
     const value = row[column.key]
     const conditional = conditionalCellAppearance(row, column)
-    const background = conditional.background ? undefined : backgroundRule(value, column)
+    const background = conditional.background ? undefined : this.formattingController.background(value, column)
     if (conditional.background) {
       styles.push(`background-color:${conditional.background}`)
     } else if (background) {
-      const percent = scalePercent(value, background)
-      const color = toneColor(background.highColor || background.background || background.color, 'warning')
+      const percent = this.formattingController.percent(value, background)
+      const color = this.formattingController.color(background.highColor || background.background || background.color, 'warning')
       styles.push(`--lv-cell-bg-color:${color}`)
       styles.push(`--lv-cell-bg-fade:${Math.max(66, 92 - Math.round(percent * 0.22))}%`)
     }
     if (conditional.foreground) {
       styles.push(`color:${conditional.foreground}`)
     } else {
-      const text = textColorRule(value, column)
-      if (text?.color) styles.push(`color:${toneColor(text.color)}`)
+      const text = this.formattingController.textColor(value, column)
+      if (text?.color) styles.push(`color:${this.formattingController.color(text.color)}`)
     }
-    const bar = dataBarRule(column)
+    const bar = this.formattingController.dataBar(column)
     if (bar) {
-      styles.push(`--lv-cell-bar-width:${scalePercent(value, bar)}%`)
-      styles.push(`--lv-cell-bar-color:${toneColor(bar.color || bar.highColor || 'accent')}`)
+      styles.push(`--lv-cell-bar-width:${this.formattingController.percent(value, bar)}%`)
+      styles.push(`--lv-cell-bar-color:${this.formattingController.color(bar.color || bar.highColor || 'accent')}`)
     }
     return styles.join(';')
   }
@@ -1548,8 +1490,8 @@ export class ReportTable extends LitElement {
       column.role === 'row_header' ? 'row-header' : '',
       this.pinnedCellClass(pinnedColumn),
       cellKey === this.selectedCellKey ? 'active' : '',
-      conditionalCellAppearance(row, column).background || backgroundRule(value, column) ? 'has-background' : '',
-      dataBarRule(column) ? 'has-data-bar' : '',
+      conditionalCellAppearance(row, column).background || this.formattingController.background(value, column) ? 'has-background' : '',
+      this.formattingController.dataBar(column) ? 'has-data-bar' : '',
     ].filter(Boolean).join(' ')
   }
 
@@ -1559,11 +1501,11 @@ export class ReportTable extends LitElement {
     const cue = conditional.icon
       ? html`<span class="conditional-cue" aria-hidden="true">${conditional.icon}</span><span class="conditional-cue-label">Status: ${conditional.iconLabel}</span>`
       : nothing
-    const badge = badgeRule(column)
+    const badge = this.formattingController.badge(column)
     if (badge?.values) {
       const tone = badge.values[String(value)] ?? badge.values[String(value).toLowerCase()]
       if (tone) {
-        return html`${cue}<span class=${`cell-badge tone-${tableTone(tone)}`}>${formatted}</span>`
+        return html`${cue}<span class=${`cell-badge tone-${this.formattingController.tone(tone)}`}>${formatted}</span>`
       }
     }
     return html`${cue}${formatted}`
@@ -1605,7 +1547,7 @@ export class ReportTable extends LitElement {
                   this.selectCell(row, column, index, event)
                 }}
               >
-                ${dataBarRule(column) ? html`<span class="cell-data-bar" aria-hidden="true"></span>` : nothing}
+                ${this.formattingController.dataBar(column) ? html`<span class="cell-data-bar" aria-hidden="true"></span>` : nothing}
                 <span class="cell-value">${this.renderCellValue(row, column, formatted)}</span>
               </button>
             </div>
@@ -1771,10 +1713,7 @@ export class ReportTable extends LitElement {
   }
 
   private desiredStarts(currentStart: number): number[] {
-    const starts = currentStart <= 0
-      ? [0, this.chunkSize, this.chunkSize * 2]
-      : [Math.max(0, currentStart - this.chunkSize), currentStart, currentStart + this.chunkSize]
-    return starts.filter((start, index, all) => start < this.availableRows && all.indexOf(start) === index)
+    return this.virtualizationController.desiredStarts(currentStart, this.availableRows, this.chunkSize)
   }
 
   private reusableBlock(desiredStarts: Set<number>, usedBlocks: Set<BlockID>): BlockID | undefined {
@@ -1814,18 +1753,11 @@ export class ReportTable extends LitElement {
   }
 
   private allBlockStarts(start: number): number[] {
-    const currentStart = Math.max(0, Math.floor(start / this.chunkSize) * this.chunkSize)
-    if (currentStart <= 0) return [0, this.chunkSize, this.chunkSize * 2]
-    return [Math.max(0, currentStart - this.chunkSize), currentStart, currentStart + this.chunkSize]
+    return this.virtualizationController.allBlockStarts(start, this.chunkSize)
   }
 
   private rowRangeText(): string {
-	if (!this.availableRows) return this.table.cardinality.kind === 'exact' ? 'No rows' : 'No loaded rows'
-    const firstIndex = Math.min(this.availableRows - 1, Math.max(0, Math.floor(this.viewportTop / this.rowHeight)))
-    const visibleRows = Math.max(1, Math.ceil((this.viewportHeight || this.rowHeight) / this.rowHeight))
-    const lastIndex = Math.min(this.availableRows, firstIndex + visibleRows)
-	const total = cardinalityLabel(this.table.cardinality)
-	return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${total}`
+	return this.virtualizationController.rowRangeText(this.table, this.availableRows, this.rowHeight)
   }
 
   private mergeIncomingBlocks(): void {
@@ -1924,16 +1856,6 @@ export class ReportTable extends LitElement {
       }
       return next
     })
-  }
-}
-
-function cardinalityLabel(cardinality: TableSignal['cardinality']): string {
-  const value = cardinality.value.toLocaleString()
-  switch (cardinality.kind) {
-    case 'exact': return value
-    case 'estimated': return `~${value}`
-    case 'lower_bound': return `${value}+`
-    default: return 'unknown'
   }
 }
 

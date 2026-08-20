@@ -46,7 +46,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
-	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -533,28 +532,25 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if !production {
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
-	analyticsModule, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
+	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{
 		Database: store.SQLDB(), CredentialMode: credentialMode,
-		CredentialTargetID: instanceID, CredentialProjectID: projectID, CredentialEnvironment: string(environment),
+		CredentialTarget: instanceID, CredentialProject: projectID, Environment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
-			InfisicalBaseURL:               cfg.InfisicalBaseURL,
-			InfisicalUniversalClientID:     cfg.InfisicalUniversalClientID,
-			InfisicalUniversalClientSecret: cfg.InfisicalUniversalClientSecret,
-			InfisicalAllowedScopes:         cfg.InfisicalAllowedScopes,
+			InfisicalBaseURL: cfg.InfisicalBaseURL, InfisicalUniversalClientID: cfg.InfisicalUniversalClientID,
+			InfisicalUniversalClientSecret: cfg.InfisicalUniversalClientSecret, InfisicalAllowedScopes: cfg.InfisicalAllowedScopes,
 		},
-		RootDir:            cfg.DuckDBDirPath(),
-		ExtensionAdmission: extensionSupply,
-		CatalogPath:        duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
+		RootDir: cfg.DuckDBDirPath(), ExtensionSupply: extensionSupply,
+		CatalogPath: duckLakeCatalogPath, DataPath: cfg.DuckLakeDataDir(),
 		MaxConnections: workloadConfig.MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes,
-		TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads,
-		TempDir:                   cfg.DuckDBTempDirPath(),
-		DisableProcessEnvironment: production,
-		RuntimeCacheEntries:       cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes,
-		NodeCacheEntries: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes,
+		TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(),
+		DisableProcessEnv: production,
+		RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes,
+		NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes,
 	})
 	if err != nil {
 		return fail(err)
 	}
+	analyticsModule := analyticsBundle.Module
 	cleanup.Push("analytics", func(context.Context) error { return analyticsModule.Close() })
 	avatarBlobs, err := profileImageBlobStore(ctx, cfg)
 	if err != nil {
@@ -584,44 +580,31 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		return projectID, nil
 	}
-	accessModule, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure),
-		Assets:      assets,
-		AvatarBlobs: avatarBlobs,
-		PublicURL:   publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL,
-		CurrentProjectID: currentProjectID,
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{
+		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
+		PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProjectID,
 	})
 	if err != nil {
 		return fail(err)
 	}
-	accessRepo, err := accessRepository(accessModule)
-	if err != nil {
-		return fail(err)
-	}
-	authorizationInstaller, err := authorizationSnapshotInstaller(accessRepo)
-	if err != nil {
-		return fail(err)
-	}
+	accessModule := accessBundle.Module
+	accessRepo := accessBundle.Repository
+	authorizationInstaller := accessBundle.AuthorizationInstaller
 	if !production {
 		if err := accessModule.SeedLocalDeveloperPlatformAdmin(ctx); err != nil {
 			return fail(err)
 		}
 	}
-	workloadController, err := workloadmodule.Build(ctx, workloadmodule.Config{Policy: workloadConfig})
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Workload: workloadmodule.Config{Policy: workloadConfig}, Database: store.SQLDB(), LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default()})
 	if err != nil {
 		return fail(err)
 	}
+	workloadController := workloadBundle.Controller
 	cleanup.Push("workload", func(context.Context) error {
 		workloadController.Close()
 		return nil
 	})
-	jobModule, err := jobsmodule.Build(ctx, jobsmodule.Config{
-		Database: store.SQLDB(), Admission: workloadmodule.JobAdmitter(workloadController),
-		LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default(),
-	})
-	if err != nil {
-		return fail(err)
-	}
+	jobModule := workloadBundle.Jobs
 	authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
 		if runtimeHostModule == nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime host is unavailable")
@@ -1603,6 +1586,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken,
 			MetricsBearerToken: cfg.MetricsBearerToken, AllowedHosts: allowedHosts, Assets: assets,
 			InstanceID: instanceID, RequireActiveDeployment: cfg.EvaluationMode, SealedServing: true,
+			RequireQueryAuthorization: production, AllowDevAuthBypass: !production,
 			DeliveryStartup: deliveryStartupCheck,
 		},
 		httpAssemblyInputs{

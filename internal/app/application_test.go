@@ -29,6 +29,15 @@ func TestBuildApplicationSurfacesRequiresExplicitWorkloadAdmission(t *testing.T)
 	}
 }
 
+func TestQueryAuthorizationDependenciesFailClosedWhenRequired(t *testing.T) {
+	if err := validateQueryAuthorizationDependencies(fakeMetrics{}, true, nil, nil); err == nil {
+		t.Fatal("required query authorization accepted missing snapshot/access dependencies")
+	}
+	if err := validateQueryAuthorizationDependencies(fakeMetrics{}, false, nil, nil); err != nil {
+		t.Fatalf("development query composition rejected explicit bypass: %v", err)
+	}
+}
+
 func (l recordedLifecycle) Start(context.Context) error {
 	*l.events = append(*l.events, "start:"+l.name)
 	return l.startErr

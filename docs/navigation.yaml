@@ -555,6 +555,11 @@ sections:
             navigationTitle: Overview
             summary: Work effectively in the LeapView monorepo.
             source: articles/contributing/repository.md
+          - slug: contributing/maintainability
+            title: Maintainability refactor contract
+            type: explanation
+            summary: Preserve behavior and capability ownership while extracting concentrated implementation complexity.
+            source: articles/contributing/maintainability.md
           - slug: contributing/visual
             title: Add a visual type
             type: how-to

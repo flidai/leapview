@@ -19,6 +19,13 @@ import { domainEvents, emitDomainEvent } from '../shared/events'
 import { agentIcon } from '../chat/agent-icon'
 import { fieldTypeIcon } from '../shared/field-type-icon'
 import { lucideIcon } from '../shared/lucide-icons'
+import {
+  DataExplorerAgentStateController,
+  DataExplorerPanelController,
+  DataExplorerQueryController,
+  DataExplorerSelectionController,
+  toggleVisibleColumns,
+} from './data-explorer-controller'
 import '../chat/chat-drawer'
 import './preview-table'
 import './explore-table'
@@ -59,17 +66,6 @@ type ResourceGroup = {
 
 type ExplorerColumn = { key: string, label?: string }
 
-const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
-
-function readDataExplorerAgentState(): { open: boolean, conversationId: string } {
-  try {
-    const value = JSON.parse(localStorage.getItem(dataExplorerAgentStorageKey) ?? '') as { open?: boolean, conversationId?: string }
-    return { open: value.open === true, conversationId: typeof value.conversationId === 'string' ? value.conversationId.trim() : '' }
-  } catch {
-    return { open: false, conversationId: '' }
-  }
-}
-
 class DataExplorerPage extends DatastarLit(LitElement) {
   @property({ type: Boolean, reflect: true }) embedded = false
   @state() private search = ''
@@ -83,7 +79,6 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   @state() private browserCollapsed = false
   @state() private browserWidth = 320
   @state() private exploreVisibleColumns: string[] = []
-  private lastSelectedKey = ''
   private lastSearch = ''
   private expandedGroupIDs = new Set<string>()
   private exploreTimer = 0
@@ -91,6 +86,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private agentRestoreDispatched = false
   private restoredAgentConversationId = ''
   private browserResizeCleanup?: () => void
+  private readonly agentStateController = new DataExplorerAgentStateController()
+  private readonly panelController = new DataExplorerPanelController()
+  private readonly queryController = new DataExplorerQueryController()
+  private readonly selectionController = new DataExplorerSelectionController()
 
   static styles = css`
     :host {
@@ -976,7 +975,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   connectedCallback(): void {
     if (!this.agentStateInitialized) {
-      const stored = readDataExplorerAgentState()
+      const stored = this.agentStateController.initialize()
       this.agentDrawerOpen = stored.open
       this.restoredAgentConversationId = stored.conversationId
       this.agentStateInitialized = true
@@ -992,8 +991,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   updated(): void {
     const selectedKey = this.dataExplorer.selectedKey ?? ''
-    if (selectedKey !== this.lastSelectedKey) {
-      this.lastSelectedKey = selectedKey
+    if (this.selectionController.observe(selectedKey)) {
       this.showSQL = false
       requestAnimationFrame(() => {
         this.renderRoot.querySelector<HTMLElement>('.object-button.is-selected')?.scrollIntoView({ block: 'nearest' })
@@ -1018,6 +1016,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const activeConversationId = agent?.activeConversationId?.trim() ?? ''
     if (activeConversationId) {
       this.restoredAgentConversationId = activeConversationId
+      this.agentStateController.syncConversation(activeConversationId)
       this.persistAgentState()
     }
     if (agent && this.restoredAgentConversationId && !this.agentRestoreDispatched) {
@@ -1086,7 +1085,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 aria-label=${this.browserCollapsed ? 'Open data browser' : 'Close data browser'}
                 aria-expanded=${String(!this.browserCollapsed)}
                 title=${this.browserCollapsed ? 'Open data browser' : 'Close data browser'}
-                @click=${() => this.browserCollapsed = !this.browserCollapsed}
+                @click=${() => {
+                  this.browserCollapsed = this.panelController.toggleBrowser().browserCollapsed
+                }}
               >${lucideIcon(Database, { size: 16 })}</button>
               ${this.browserCollapsed ? nothing : html`
                 <label class="search">
@@ -1279,7 +1280,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return html`<section class="filter-editor" aria-label="Add filter">
       <label>Field<input .value=${fieldLabel(this.filterField, fields)} disabled /></label>
       <label>Condition
-        <select .value=${this.filterOperator} @change=${(event: Event) => this.filterOperator = (event.target as HTMLSelectElement).value}>
+        <select .value=${this.filterOperator} @change=${(event: Event) => {
+          this.filterOperator = this.panelController.setFilterOperator((event.target as HTMLSelectElement).value).filterOperator
+        }}>
           <option value="equals">Equals</option>
           <option value="in">Is one of</option>
           <option value="contains">Contains</option>
@@ -1291,7 +1294,9 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           <option value="is_not_null">Is not null</option>
         </select>
       </label>
-      <label>Value<input .value=${this.filterValue} ?disabled=${this.filterOperator === 'is_null' || this.filterOperator === 'is_not_null'} @input=${(event: Event) => this.filterValue = (event.target as HTMLInputElement).value} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.applyExploreFilter(command) }} /></label>
+      <label>Value<input .value=${this.filterValue} ?disabled=${this.filterOperator === 'is_null' || this.filterOperator === 'is_not_null'} @input=${(event: Event) => {
+        this.filterValue = this.panelController.setFilterValue((event.target as HTMLInputElement).value).filterValue
+      }} @keydown=${(event: KeyboardEvent) => { if (event.key === 'Enter') this.applyExploreFilter(command) }} /></label>
       <div class="query-actions">
         <button type="button" class="text-button" @click=${() => this.closeFilter()}>Cancel</button>
         <button type="button" class="text-button" @click=${() => this.applyExploreFilter(command)}>Apply</button>
@@ -1369,15 +1374,17 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private openFilter(field: DataExploreFieldSignal) {
-    this.filterField = field.id
-    this.filterOperator = 'equals'
-    this.filterValue = ''
+    const state = this.panelController.openFilter(field.id)
+    this.filterField = state.filterField
+    this.filterOperator = state.filterOperator
+    this.filterValue = state.filterValue
   }
 
   private closeFilter() {
-    this.filterField = ''
-    this.filterOperator = 'equals'
-    this.filterValue = ''
+    const state = this.panelController.closeFilter()
+    this.filterField = state.filterField
+    this.filterOperator = state.filterOperator
+    this.filterValue = state.filterValue
   }
 
   private applyExploreFilter(command: DataExploreCommand) {
@@ -1399,20 +1406,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private emitExplore(next: DataExploreCommand, immediate = false) {
     window.clearTimeout(this.exploreTimer)
     const current = this.optimisticExplore ?? this.dataExplorer.explore.command ?? emptyExplorer.explore.command
-    const command: DataExploreCommand = {
-      ...current,
-      ...next,
-      modelId: next.modelId ?? current.modelId ?? '',
-      datasetId: next.datasetId ?? current.datasetId ?? '',
-      dimensions: [...(next.dimensions ?? current.dimensions ?? [])],
-      metrics: [...(next.metrics ?? current.metrics ?? [])],
-      filters: [...(next.filters ?? current.filters ?? [])],
-      sort: [...(next.sort ?? current.sort ?? [])],
-      limit: next.limit || current.limit || 100,
-      requestSeq: Math.max(current.requestSeq ?? 0, next.requestSeq ?? 0) + 1,
-      resetVersion: Math.max(current.resetVersion ?? 0, next.resetVersion ?? 0) + 1,
-      columnWidths: next.columnWidths ?? current.columnWidths ?? {},
-    }
+    const command = this.queryController.explore(current, next, immediate)
     this.optimisticExplore = command
     if (!this.embedded) replaceDataExplorerURL({ ...this.dataExplorer.command, mode: 'explore', explore: command })
     const dispatch = () => this.emitCommand({ mode: 'explore', explore: command })
@@ -1441,11 +1435,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private handleAgentNew = () => {
     this.restoredAgentConversationId = ''
     this.agentRestoreDispatched = true
+    this.agentStateController.newConversation()
     this.persistAgentState()
   }
 
   private setAgentDrawerOpen(open: boolean): void {
     this.agentDrawerOpen = open
+    this.agentStateController.setOpen(open)
     this.persistAgentState()
   }
 
@@ -1456,7 +1452,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const startX = event.clientX
     const startWidth = this.browserWidth
     const move = (next: PointerEvent) => {
-      this.browserWidth = clampBrowserWidth(startWidth + next.clientX - startX)
+      this.browserWidth = this.panelController.setBrowserWidth(startWidth + next.clientX - startX).browserWidth
     }
     const finish = () => this.browserResizeCleanup?.()
     this.browserResizeCleanup = () => {
@@ -1473,7 +1469,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   private resizeBrowserFromKeyboard = (event: KeyboardEvent): void => {
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
-    this.browserWidth = clampBrowserWidth(this.browserWidth + (event.key === 'ArrowRight' ? 16 : -16))
+    this.browserWidth = this.panelController.setBrowserWidth(this.browserWidth + (event.key === 'ArrowRight' ? 16 : -16)).browserWidth
   }
 
   private headerColumns(explorer: DataExplorerSignal, semanticActive: boolean): ExplorerColumn[] {
@@ -1492,10 +1488,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private toggleHeaderColumn(key: string, checked: boolean, columns: ExplorerColumn[], semanticActive: boolean): void {
     const visible = this.headerVisibleColumnKeys(this.dataExplorer, columns, semanticActive)
-    const next = checked
-      ? columns.map((column) => column.key).filter((columnKey) => columnKey === key || visible.includes(columnKey))
-      : visible.filter((columnKey) => columnKey !== key)
-    const configured = next.length === columns.length ? [] : next
+    const configured = toggleVisibleColumns(visible, key, checked, columns.map((column) => column.key))
     if (semanticActive) {
       this.exploreVisibleColumns = configured
       return
@@ -1504,14 +1497,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private persistAgentState(): void {
-    try {
-      localStorage.setItem(dataExplorerAgentStorageKey, JSON.stringify({
-        open: this.agentDrawerOpen,
-        conversationId: this.restoredAgentConversationId,
-      }))
-    } catch {
-      // The drawer remains usable when local storage is unavailable.
-    }
+    this.agentStateController.setOpen(this.agentDrawerOpen)
   }
 
   private renderResourceGroups(
@@ -1817,21 +1803,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
 
   private emitCommand(partial: Partial<DataExplorerCommand>) {
     const current = this.dataExplorer?.command ?? emptyExplorer.command
-    const next: DataExplorerCommand = {
-      mode: partial.mode ?? current.mode ?? 'browse',
-      explore: partial.explore ?? current.explore ?? this.dataExplorer?.explore?.command,
-      objectKey: partial.objectKey ?? current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
-      offset: partial.offset ?? current.offset ?? 0,
-      limit: partial.limit ?? current.limit ?? 100,
-      block: partial.block ?? current.block ?? 'all',
-      start: partial.start ?? partial.offset ?? current.start ?? current.offset ?? 0,
-      count: partial.count ?? partial.limit ?? current.count ?? current.limit ?? 100,
-      requestSeq: partial.requestSeq ?? current.requestSeq ?? 0,
-      resetVersion: partial.resetVersion ?? current.resetVersion ?? 0,
-      sort: partial.sort ?? current.sort ?? {},
-      visibleColumns: partial.visibleColumns ?? current.visibleColumns ?? [],
-      columnWidths: partial.columnWidths ?? current.columnWidths ?? {},
-    }
+    const next = this.queryController.command({
+      ...current,
+      explore: current.explore ?? this.dataExplorer?.explore?.command,
+      objectKey: current.objectKey ?? this.dataExplorer?.selectedKey ?? '',
+    }, partial)
     if (!this.embedded && (partial.objectKey !== undefined || partial.mode !== undefined || partial.explore !== undefined)) {
       replaceDataExplorerURL(next)
     }
@@ -1997,10 +1973,6 @@ function queryTargetLabel(object: DataExplorerObjectSignal): string {
 function label(value: unknown): string {
   if (value == null || value === '') return '-'
   return String(value)
-}
-
-function clampBrowserWidth(value: number): number {
-  return Math.min(440, Math.max(280, Math.round(value)))
 }
 
 if (!customElements.get('lv-data-explorer')) customElements.define('lv-data-explorer', DataExplorerPage)
