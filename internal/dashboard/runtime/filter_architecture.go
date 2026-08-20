@@ -121,7 +121,13 @@ func semanticFiltersForExpression(definition dashboardfilter.Definition, express
 		base.Operator = string(expression.Operator)
 		return []reportdef.QueryFilter{base}, nil
 	case dashboardfilter.ExpressionSet:
-		base.Operator = string(expression.Operator)
+		operator := string(expression.Operator)
+		if operator == "equals" && len(expression.Values) > 1 {
+			operator = "in"
+		} else if operator == "not_equals" && len(expression.Values) > 1 {
+			operator = "not_in"
+		}
+		base.Operator = operator
 		for _, value := range expression.Values {
 			base.Values = append(base.Values, value.Value)
 		}

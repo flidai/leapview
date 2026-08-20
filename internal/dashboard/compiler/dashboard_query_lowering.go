@@ -181,6 +181,9 @@ func lowerCanonicalHistogram(query document.HistogramDashboardQuery, model *sema
 	if err != nil {
 		return LoweredDashboardQuery{}, fmt.Errorf("histogram metric: %w", err)
 	}
+	if name == "pending_metric" {
+		return LoweredDashboardQuery{}, fmt.Errorf("histogram requires a metric")
+	}
 	if query.Bins <= 0 || query.Bins > 100000 {
 		return LoweredDashboardQuery{}, fmt.Errorf("histogram bins must be between 1 and 100000")
 	}
@@ -215,6 +218,9 @@ func lowerCanonicalDistribution(query document.DistributionDashboardQuery, model
 	name, alias, err := canonicalMetric(query.Field)
 	if err != nil {
 		return LoweredDashboardQuery{}, fmt.Errorf("distribution metric: %w", err)
+	}
+	if name == "pending_metric" {
+		return LoweredDashboardQuery{}, fmt.Errorf("distribution requires a metric")
 	}
 	if len(query.Quantiles) == 0 {
 		return LoweredDashboardQuery{}, fmt.Errorf("distribution requires at least one quantile")
