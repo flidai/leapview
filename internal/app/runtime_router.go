@@ -162,15 +162,16 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
-	managedDataValidation   refreshmodule.CandidateValidationHook
-	managedDataResolver     runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock    refreshmodule.Clock
-	refreshMaterializer     refreshrun.Materializer
-	enableRefreshDispatcher bool
-	agent                   *agentmodule.Service
-	agentConfig             agentmodule.ModelConfig
-	reloader                runtimeReloader
-	deploymentConfig        deploymentmodule.Config
+	managedDataValidation    refreshmodule.CandidateValidationHook
+	managedDataResolver      runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock     refreshmodule.Clock
+	refreshMaterializer      refreshrun.Materializer
+	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	enableRefreshDispatcher  bool
+	agent                    *agentmodule.Service
+	agentConfig              agentmodule.ModelConfig
+	reloader                 runtimeReloader
+	deploymentConfig         deploymentmodule.Config
 }
 
 type storageInputs struct {
@@ -240,18 +241,19 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings           agentmodule.Settings
-	ManagedDataValidation   refreshmodule.CandidateValidationHook
-	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
-	AgentConfig             agentmodule.ModelConfig
-	Auth                    *accessmodule.Auth
-	Reloader                runtimeReloader
-	Workload                workloadControl
-	DeploymentConfig        deploymentmodule.Config
-	RefreshPipelineClock    refreshmodule.Clock
-	RefreshMaterializer     refreshrun.Materializer
-	EnableRefreshDispatcher bool
-	QueryAudit              *analyticsmodule.QueryAuditSurface
+	AgentSettings            agentmodule.Settings
+	ManagedDataValidation    refreshmodule.CandidateValidationHook
+	ManagedDataResolver      runtimehostmodule.ManagedDataResolver
+	AgentConfig              agentmodule.ModelConfig
+	Auth                     *accessmodule.Auth
+	Reloader                 runtimeReloader
+	Workload                 workloadControl
+	DeploymentConfig         deploymentmodule.Config
+	RefreshPipelineClock     refreshmodule.Clock
+	RefreshMaterializer      refreshrun.Materializer
+	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	EnableRefreshDispatcher  bool
+	QueryAudit               *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
@@ -403,6 +405,7 @@ func buildApplicationSurfaces(
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
 	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
+	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
@@ -1264,6 +1267,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return false, err
 			}
+			if deliveryApprovalDecisionOperation(operationID) {
+				if plan.ProjectID != projectID {
+					return false, nil
+				}
+				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
+			}
 			resources, err := deliveryAuthorizationResources(plan)
 			if err != nil {
 				return false, err
@@ -1488,7 +1497,7 @@ func writeProductCommandFailure(ctx context.Context, w http.ResponseWriter, r *h
 
 func hasActiveBootstrapServingState(
 	ctx context.Context,
-	_ *runtimehostmodule.Module,
+	_ canonicalRuntimeHost,
 	states servingStateRepository,
 	environment string,
 	targets deliveryTargetReader,
@@ -1540,6 +1549,29 @@ func hasActiveBootstrapServingState(
 	return false, nil
 }
 
+// hasActiveBootstrapRuntime reports whether the process-local immutable
+// serving generation is ready to authorize requests. The durable delivery
+// pointer may advance before runtime cutover, so deployment status reads use
+// this check to distinguish that marker-to-runtime warm-up window from the
+// normal active snapshot path. An unavailable runtime is intentionally
+// treated as not ready here; the caller then applies the exact durable claim
+// bootstrap policy, which remains fail-closed for missing or mismatched
+// claims.
+func hasActiveBootstrapRuntime(ctx context.Context, runtimeHost canonicalRuntimeHost) (bool, error) {
+	if runtimeHost == nil {
+		return false, nil
+	}
+	lease, err := runtimeHost.Acquire(ctx)
+	if err != nil {
+		return false, nil
+	}
+	if lease == nil {
+		return false, errors.New("runtime host returned a nil lease")
+	}
+	lease.Release()
+	return true, nil
+}
+
 // bootstrapAPIGenDecision is deliberately a read-only seam. It distinguishes
 // a typed empty active-generation pointer from a serving-state store failure,
 // then evaluates only the durable singleton claim and the explicit candidate
@@ -1548,7 +1580,7 @@ func hasActiveBootstrapServingState(
 // never here.
 func bootstrapAPIGenDecision(
 	ctx context.Context,
-	runtimeHost *runtimehostmodule.Module,
+	runtimeHost canonicalRuntimeHost,
 	states servingStateRepository,
 	claims deploymentmodule.ProjectClaimReader,
 	environment, operationID string,
@@ -1556,12 +1588,29 @@ func bootstrapAPIGenDecision(
 	targets deliveryTargetReader,
 	targetID string,
 ) (accessmodule.APIGenBootstrapDecision, error) {
-	active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
-	if err != nil {
-		return accessmodule.APIGenBootstrapDecision{}, err
-	}
-	if active {
-		return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+	// Deployment status/event reads, delivery plan resolution, and candidate
+	// source synchronization are control-plane operations. Their project-scoped
+	// RESOURCE_READ/EDIT contracts cannot be evaluated against the project graph
+	// (projects intentionally only support PROJECT_ADMIN), and the sealed delivery
+	// pointer advances before the in-process runtime cutover. Keep these
+	// operations on the durable, exact-claim bootstrap path through that
+	// marker-to-runtime warm-up window.
+	if bootstrapControlPlaneOperation(operationID) {
+		active, err := hasActiveBootstrapRuntime(ctx, runtimeHost)
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+		}
+	} else {
+		active, err := hasActiveBootstrapServingState(ctx, runtimeHost, states, environment, targets, targetID, projectID.String())
+		if err != nil {
+			return accessmodule.APIGenBootstrapDecision{}, err
+		}
+		if active {
+			return accessmodule.APIGenBootstrapDecision{Handled: false}, nil
+		}
 	}
 	if err := projectID.Validate(); err != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
 		return accessmodule.APIGenBootstrapDecision{Handled: true}, nil
@@ -1582,11 +1631,23 @@ func bootstrapAPIGenDecision(
 	return accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: bootstrapOperationAllowed(operationID)}, nil
 }
 
+func bootstrapControlPlaneOperation(operationID string) bool {
+	switch operationID {
+	case "listDeployments", "getDeployment", "listDeploymentEvents",
+		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
+		"getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+		return true
+	default:
+		return false
+	}
+}
+
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate",
+	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"listDeployments", "getDeployment", "listDeploymentEvents":
 		return true
 	case "managedDataTusTransport":
 		return true
@@ -1626,6 +1687,27 @@ func deliveryRoleAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects 
 	return false
 }
 
+// deliveryProjectAllows evaluates project-scoped administrative authority on
+// the exact project root. Unlike the role-only fallback used for graph-wide
+// resource operations, approval decisions intentionally accept either an
+// explicit project role or a canonical grant on the project resource.
+func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+	project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	if err != nil {
+		return false, err
+	}
+	for _, subject := range subjects {
+		allowed, err := snapshot.Allows(subject, project, capability)
+		if err != nil {
+			return false, err
+		}
+		if allowed {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
 	if strings.TrimSpace(objectID) == "" {
 		return deployment.DeliveryPlan{}, sql.ErrNoRows
@@ -1663,7 +1745,7 @@ func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryRe
 			return deployment.DeliveryPlan{}, err
 		}
 		return loadPlan(seal.PlanID)
-	case "getDeliveryPublicationEvidence":
+	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
 		publication, err := reader.DeliveryPublicationByID(ctx, objectID)
 		if err != nil {
 			return deployment.DeliveryPlan{}, err
@@ -1671,6 +1753,15 @@ func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryRe
 		return loadPlan(publication.PlanID)
 	default:
 		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
+	}
+}
+
+func deliveryApprovalDecisionOperation(operationID string) bool {
+	switch operationID {
+	case "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
+		return true
+	default:
+		return false
 	}
 }
 
@@ -1703,12 +1794,18 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 	}
 	return resources, nil
 }
-
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
+		resourceCapability := deliveryResourceCapability(resource, capability)
+		if handled, roleAllowed := deliveryProjectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
+			if !roleAllowed {
+				return false, nil
+			}
+			continue
+		}
 		allowed := false
 		for _, subject := range subjects {
-			candidate, err := snapshot.Allows(subject, resource, capability)
+			candidate, err := snapshot.Allows(subject, resource, resourceCapability)
 			if err != nil {
 				return false, err
 			}
@@ -1722,4 +1819,27 @@ func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subje
 		}
 	}
 	return true, nil
+}
+
+// deliveryProjectRootRoleDecision applies the project-root half of canonical
+// delivery authorization. Project roots deliberately accept only
+// PROJECT_ADMIN as direct grants, so a delivery resource capability on a
+// changed root must be satisfied by an explicit project role bundle.
+func deliveryProjectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
+	if resource.Kind() != projectgraph.KindProject || access.SupportsCapability(resource.Kind(), capability) {
+		return false, false
+	}
+	return true, deliveryRoleAllows(snapshot, subjects, capability)
+}
+
+func deliveryResourceCapability(resource access.ResourceRef, capability access.Capability) access.Capability {
+	if capability == access.CapabilityResourcePublish &&
+		!access.SupportsCapability(resource.Kind(), capability) &&
+		access.SupportsCapability(resource.Kind(), access.CapabilityResourceEdit) {
+		// Publishing a plan requires publish authority for publishable
+		// dashboards and edit authority for the non-publishable graph
+		// resources changed by that same immutable plan.
+		return access.CapabilityResourceEdit
+	}
+	return capability
 }

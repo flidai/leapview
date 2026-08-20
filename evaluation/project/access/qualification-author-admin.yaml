@@ -1,0 +1,10 @@
+apiVersion: leapview.dev/v1
+kind: RoleBinding
+metadata:
+  id: role-binding:qualification-author-admin
+  name: qualification-author-admin
+spec:
+  role: admin
+  subject:
+    kind: principal
+    principalId: email_7ba684f146c9445720e4b9a8d6ed775d

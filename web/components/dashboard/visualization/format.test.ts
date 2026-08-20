@@ -12,6 +12,10 @@ test('formatting fails closed for unsupported locale and currency', () => {
   expect(() => formatValue('en-US', { kind: 'currency', currency: 'XYZ' }, 1)).toThrow()
 })
 
+test('date-only temporal values cannot satisfy a time-only format', () => {
+  expect(() => formatValue('en-US', { kind: 'temporal', timeStyle: 'medium' }, '2026-07-19')).toThrow(/time-only/)
+})
+
 test('auto display units use one three-significant-digit scale for the complete scope', () => {
   const unit = resolveDisplayUnit('auto', [1_234_567, 45_219, 982.14])
 

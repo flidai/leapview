@@ -48,4 +48,13 @@ describe('progressive table cardinality', () => {
     expect(preserveCardinality(first, second).cardinality.value).toBe(150)
     expect(preserveCardinality(exact, second).cardinality).toEqual({ kind: 'exact', value: 75 })
   })
+
+  test('accepts a newer exact total after a same-reset filter refresh', () => {
+    const previous = normalizeTable({ ...emptyTable, resetVersion: 1, cardinality: { kind: 'exact', value: 24 }, availableRows: 24 })
+    const incoming = normalizeTable({ ...emptyTable, resetVersion: 1, cardinality: { kind: 'exact', value: 6 }, availableRows: 6 })
+
+    const merged = preserveCardinality(previous, incoming)
+    expect(merged.cardinality).toEqual({ kind: 'exact', value: 6 })
+    expect(merged.availableRows).toBe(6)
+  })
 })

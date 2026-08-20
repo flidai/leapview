@@ -43,6 +43,40 @@ func TestRequestEffectiveCapabilitiesRejectsCrossProjectAuthoringCredential(t *t
 	}
 }
 
+func TestAuthorizeAuthoringBootstrapRequestAllowsProjectAdminScopeForResourceOperation(t *testing.T) {
+	module, err := newSurface(surfaceConfig{
+		Auth: &Auth{},
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "principal-1"}, true
+		},
+		CurrentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+			return []access.Capability{access.CapabilityProjectAdmin}, nil
+		},
+		CurrentProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return projectgraph.ResourceID("project_active"), nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := access.NewAuthoringScope(
+		"instance-prod", projectgraph.ResourceID("project_active"),
+		[]access.Capability{access.CapabilityProjectAdmin},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project_active/candidate-sync/plan", nil)
+	request = request.WithContext(WithPrincipal(request.Context(), Principal{ID: "principal-1"}))
+	request = request.WithContext(WithAPICredential(request.Context(), access.APICredential{
+		Authoring: &access.AuthoringSession{Scope: scope},
+	}))
+	allowed, err := module.AuthorizeAuthoringBootstrapRequest(request.Context(), request, "project_active", access.CapabilityResourceEdit)
+	if err != nil || !allowed {
+		t.Fatalf("authoring bootstrap authorization = %t, %v; want true, nil", allowed, err)
+	}
+}
+
 func TestRequestEffectiveCapabilitiesRejectsExplicitEmptyAPIToken(t *testing.T) {
 	module, err := newSurface(surfaceConfig{
 		Auth: &Auth{},

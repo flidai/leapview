@@ -182,6 +182,34 @@ func TestServiceExecuteClaimedJobRequiresAtomicRuntimeHost(t *testing.T) {
 	}
 }
 
+func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
+	repo := newFakeRepo()
+	executed := false
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(_ context.Context, job JobRecord) (CanonicalRefreshResult, error) {
+			executed = true
+			if job.RunID != "run_root" {
+				t.Fatalf("canonical run = %q, want run_root", job.RunID)
+			}
+			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
+		},
+		Publication: fakePublication{repo: repo},
+	}
+	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh",
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual,
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("execute canonical claimed job: %v", err)
+	}
+	if !executed || repo.runStatuses["run_root"] != RunStatusSucceeded || repo.runStatuses["run_child"] != RunStatusSucceeded {
+		t.Fatalf("executed/statuses = %v/%#v", executed, repo.runStatuses)
+	}
+}
+
 func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
@@ -204,6 +232,85 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	}
 	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
+	}
+}
+
+func TestServiceQueuePipelineRefreshUsesExactActiveResolver(t *testing.T) {
+	repo := newFakeRepo()
+	repo.activeErr = servingstate.ErrNotFound
+	identity := serviceIdentity
+	identity.GenerationID = string(repo.activeDeployment.ID)
+	resolved := false
+	service := Service{
+		ServingStates: repo,
+		ResolveActive: func(_ context.Context, requested projectgraph.ServingIdentity) (ServingState, error) {
+			resolved = true
+			if requested != identity {
+				t.Fatalf("resolved identity = %#v, want %#v", requested, identity)
+			}
+			return ServingState{State: repo.activeDeployment, Artifact: repo.activeArtifact}, nil
+		},
+		Runs:      repo,
+		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
+	}
+	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+	})
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v", err)
+	}
+	if !resolved || result.ServingStateID != repo.candidateState.ID {
+		t.Fatalf("resolved = %v candidate = %q, want exact resolver and %q", resolved, result.ServingStateID, repo.candidateState.ID)
+	}
+}
+
+func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testing.T) {
+	repo := newFakeRepo()
+	identity := serviceIdentity
+	identity.GenerationID = string(repo.activeDeployment.ID)
+	service := Service{
+		ServingStates: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, nil
+		},
+		Runs:      repo,
+		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
+	}
+	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+	})
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v", err)
+	}
+	if result.ServingStateID != repo.activeDeployment.ID || result.Run.Identity != identity {
+		t.Fatalf("canonical refresh result = %#v, want active identity %#v", result, identity)
+	}
+	if repo.savedArtifact.ID != "" {
+		t.Fatalf("legacy serving candidate was created: %#v", repo.savedArtifact)
+	}
+}
+
+func TestServiceQueuePipelineRefreshRejectsMismatchedActiveResolver(t *testing.T) {
+	repo := newFakeRepo()
+	service := Service{
+		ServingStates: repo,
+		ResolveActive: func(context.Context, projectgraph.ServingIdentity) (ServingState, error) {
+			return ServingState{State: repo.activeDeployment, Artifact: repo.activeArtifact}, nil
+		},
+		Runs:      repo,
+		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
+	}
+	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+	})
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("QueuePipelineRefresh() error = %v, want exact identity mismatch", err)
+	}
+	if len(repo.createdRuns) != 0 {
+		t.Fatalf("created runs = %#v, want none", repo.createdRuns)
 	}
 }
 
@@ -353,6 +460,7 @@ func refreshTestDefinition() *artifact.Definition {
 }
 
 type fakeRepo struct {
+	activeErr                  error
 	activeDeployment           servingstate.State
 	activeArtifact             servingstate.Artifact
 	candidateState             servingstate.State
@@ -409,6 +517,9 @@ func newFakeRepo() *fakeRepo {
 }
 
 func (r *fakeRepo) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
+	if r.activeErr != nil {
+		return servingstate.State{}, servingstate.Artifact{}, r.activeErr
+	}
 	return r.activeDeployment, r.activeArtifact, nil
 }
 
@@ -531,6 +642,12 @@ func (p fakePublication) Publish(ctx context.Context, identity projectgraph.Serv
 	_, err := p.repo.MarkRunSucceeded(ctx, identity, version.RunID)
 	p.repo.runStatuses["run_child"] = RunStatusSucceeded
 	return err
+}
+
+func (p fakePublication) CompleteCanonicalRefresh(_ context.Context, _ JobRecord, _ CanonicalRefreshResult) error {
+	p.repo.runStatuses["run_root"] = RunStatusSucceeded
+	p.repo.runStatuses["run_child"] = RunStatusSucceeded
+	return nil
 }
 
 func (h *fakeCandidateValidationHook) AfterArtifactValidation(_ context.Context, candidate servingstate.State, validation servingstate.Validation) error {

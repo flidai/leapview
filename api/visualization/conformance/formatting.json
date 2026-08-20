@@ -14,5 +14,6 @@
   {"locale":"en-US","format":{"kind":"duration","unit":"days"},"value":12.25,"expected":"12.3d"},
   {"locale":"pt-BR","format":{"kind":"duration","unit":"days"},"value":12.25,"expected":"12,3d"},
   {"locale":"en-US","format":{"kind":"temporal","dateStyle":"short"},"value":"2026-07-19T13:45:00Z","expected":"2026-07-19"},
+  {"locale":"en-US","format":{"kind":"temporal","dateStyle":"short"},"value":"2026-07-19","expected":"2026-07-19"},
   {"locale":"pt-BR","format":{"kind":"temporal","timeStyle":"medium"},"value":"2026-07-19T13:45:00Z","expected":"13:45:00"}
 ]

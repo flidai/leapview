@@ -114,6 +114,37 @@ func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T
 	}
 }
 
+func TestDeliveryPlanResolvesThePlanAlreadyBuiltByDev(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	transport := &deliveryPlanSourceHandoffTransport{
+		candidate: deploymentgen.DeliveryCandidateStatusResponse{
+			Id: "candidate-1", PlanId: "plan-candidate-1", PlanDigest: digest,
+			ProjectId: "project-1", TargetId: "target-1", Environment: "development",
+			SourceDigest: digest, Status: deploymentgen.DeliveryCandidateStatusReady,
+		},
+		preview: deploymentgen.DeliveryPlanPreviewResponse{
+			Id: "plan-candidate-1", PlanDigest: digest, ProjectId: "project-1",
+			TargetId: "target-1", Environment: "development", SourceDigest: digest,
+			Status: deploymentgen.DeliveryPlanStatusPlanned,
+		},
+	}
+	result, err := (projectDeliveryPlanOperations{
+		client: deliveryPlanSourceHandoffClient{transport: transport},
+	}).Create(t.Context(), projectcli.DeliveryPlanOptions{
+		ProjectID: "project-1", CandidateID: "candidate-1",
+		TargetID: "target-1", Environment: "development", SourceDigest: digest,
+		ResolveCandidatePlan: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PlanID != "plan-candidate-1" || result.PlanDigest != digest ||
+		transport.candidateCalls != 1 || transport.previewCalls != 1 ||
+		transport.createCalls != 0 || transport.retainCalls != 0 {
+		t.Fatalf("result=%#v transport=%#v", result, transport)
+	}
+}
+
 func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
 	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
 	snapshot, err := (devloop.FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
@@ -169,10 +200,14 @@ func (client deliveryPlanSourceHandoffClient) Transport(context.Context, cliapi.
 }
 
 type deliveryPlanSourceHandoffTransport struct {
-	retained    deploymentgen.CandidateSourceSnapshotResponse
-	planCalls   int
-	retainCalls int
-	createCalls int
+	retained       deploymentgen.CandidateSourceSnapshotResponse
+	candidate      deploymentgen.DeliveryCandidateStatusResponse
+	preview        deploymentgen.DeliveryPlanPreviewResponse
+	planCalls      int
+	retainCalls    int
+	createCalls    int
+	candidateCalls int
+	previewCalls   int
 }
 
 func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
@@ -191,6 +226,12 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 		transport.createCalls++
 		body := request.Body.(deploymentgen.DeliveryPlanRequest)
 		response = deploymentgen.DeliveryPlanPreviewResponse{Id: "plan-1", ProjectId: request.PathParams["project"], TargetId: body.TargetId, Environment: "development", SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest, Status: deploymentgen.DeliveryPlanStatusPlanned}
+	case deploymentgen.GenOperationGetDeliveryCandidateStatus:
+		transport.candidateCalls++
+		response = transport.candidate
+	case deploymentgen.GenOperationGetDeliveryPlanPreview:
+		transport.previewCalls++
+		response = transport.preview
 	default:
 		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)
 	}

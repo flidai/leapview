@@ -17,10 +17,12 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/deployment"
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
+	"github.com/flidai/leapview/internal/release"
 )
 
 var _ catalogseal.SealRepository = (*Repository)(nil)
 var _ deployment.DeliveryCompletionReader = (*Repository)(nil)
+var _ deployment.DeliveryCompletionEvidenceReader = (*Repository)(nil)
 
 // durableCatalogSeal contains the generic record plus the deployment rows
 // whose composite bindings are checked on every read.  Keeping these values
@@ -274,6 +276,24 @@ func (r *Repository) CompletedDelivery(ctx context.Context, attemptID, candidate
 		return catalogseal.Completion{}, catalogSealIdentityConflict("completion candidate identity differs from verified seal")
 	}
 	return catalogseal.Completion{Seal: state.record, CandidateID: candidateID, LeaseReleased: true}, nil
+}
+
+func (r *Repository) CompletedDeliveryGateEvidence(ctx context.Context, candidateID string) (*release.GateEvidence, error) {
+	candidate, err := r.DeliveryCandidateByID(ctx, candidateID)
+	if err != nil {
+		return nil, catalogSealRepositoryError(err)
+	}
+	if candidate.Status != deployment.DeliveryCandidateReady || candidate.ResolvedInputs.GateEvidence == nil {
+		return nil, catalogSealTransition("completion candidate gate evidence is missing")
+	}
+	canonical, err := candidate.ResolvedInputs.GateEvidence.Canonical()
+	if err != nil {
+		return nil, catalogSealRepositoryError(err)
+	}
+	if canonical.Outcome != release.GateSuccess && canonical.Outcome != release.GateWarning {
+		return nil, catalogSealTransition("completion candidate gate evidence is not successful")
+	}
+	return &canonical, nil
 }
 
 // Lookup implements catalogseal.SealRepository. A missing row is the only

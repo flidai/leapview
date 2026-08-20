@@ -97,6 +97,7 @@ type Module struct {
 	logger             *slog.Logger
 	events             EventStore
 	refreshExecution   apigencommand.AsyncExecutionContract
+	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
 
 	mu          sync.Mutex
 	background  context.Context
@@ -139,6 +140,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		leaseTimeout: leaseTimeout, logger: logger,
 		events:           config.Events,
 		refreshExecution: refreshExecution,
+		resolveIdentity:  config.ResolveIdentity,
 	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
@@ -225,6 +227,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: trigger, RetryOf: retryOf,
 		})
+		if err != nil {
+			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",
+				slog.String("project_id", identity.ProjectID.String()),
+				slog.String("serving_state_id", identity.GenerationID),
+				slog.String("pipeline_id", pipelineID),
+				slog.String("error", err.Error()),
+			)
+		}
 		return result.Run, err
 	}
 	return m, nil
@@ -247,20 +257,34 @@ func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.Queu
 // DataVersion returns the latest persisted semantic-model version for the
 // active serving generation in the requested project/environment scope.
 func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelID string) (AssetDataVersion, bool, error) {
-	if m == nil || m.schedules == nil || m.service.ServingStates == nil {
+	if m == nil || m.schedules == nil {
 		return AssetDataVersion{}, false, nil
 	}
 	project, err := projectgraph.NewResourceID(projectID)
 	if err != nil {
 		return AssetDataVersion{}, false, err
 	}
-	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, project, servingstate.Environment(environment))
-	if err != nil {
-		return AssetDataVersion{}, false, err
-	}
-	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
-	if err != nil {
-		return AssetDataVersion{}, false, err
+	var identity projectgraph.ServingIdentity
+	if m.resolveIdentity != nil {
+		identity, err = m.resolveIdentity(ctx)
+		if err != nil {
+			return AssetDataVersion{}, false, err
+		}
+		if identity.ProjectID != project || identity.Environment != environment {
+			return AssetDataVersion{}, false, fmt.Errorf("active refresh identity does not match requested scope")
+		}
+	} else {
+		if m.service.ServingStates == nil {
+			return AssetDataVersion{}, false, nil
+		}
+		state, _, activeErr := m.service.ServingStates.ActiveArtifact(ctx, project, servingstate.Environment(environment))
+		if activeErr != nil {
+			return AssetDataVersion{}, false, activeErr
+		}
+		identity, err = projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+		if err != nil {
+			return AssetDataVersion{}, false, err
+		}
 	}
 	model, err := projectgraph.NewResourceID(modelID)
 	if err != nil {

@@ -40,6 +40,22 @@ func TestAuthorizeBootstrapRequestAllowsOnlyConfiguredLocalDevelopmentBearer(t *
 	}
 }
 
+func TestBootstrapTokenCapabilityAllowsProjectAdminForProjectOperations(t *testing.T) {
+	admin := []access.Capability{access.CapabilityProjectAdmin}
+	for _, required := range []access.Capability{
+		access.CapabilityResourceRead,
+		access.CapabilityResourceEdit,
+		access.CapabilityResourcePublish,
+	} {
+		if !bootstrapTokenAllowsCapability(admin, required) {
+			t.Fatalf("PROJECT_ADMIN token does not satisfy %s", required)
+		}
+	}
+	if bootstrapTokenAllowsCapability([]access.Capability{access.CapabilityResourceRead}, access.CapabilityResourceEdit) {
+		t.Fatal("narrow token unexpectedly satisfied RESOURCE_EDIT")
+	}
+}
+
 func (r bootstrapCredentialRepository) BootstrapAPITokenEvidence(context.Context, string, string, time.Time) (access.APIToken, error) {
 	return r.token, r.err
 }

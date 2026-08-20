@@ -63,6 +63,27 @@ func TestEnvironmentPointerExposesDeploymentAndPublicRevision(t *testing.T) {
 	}
 }
 
+func TestEnvironmentPointerPrefersCanonicalActiveGenerationBinding(t *testing.T) {
+	legacy := fixtureRepository()
+	active := activeFakeRepository{
+		fakeRepository: legacy,
+		active: manageddata.EnvironmentPointer{
+			CollectionID: "collection_a", Environment: "prod", RevisionID: "revision_b", DeploymentID: "publication_b",
+		},
+	}
+	adapter, err := New(&active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := adapter.EnvironmentPointer(context.Background(), "collection_a", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RevisionID != "revision_b" || got.RevisionDigest != digestB || got.DeploymentID != "publication_b" {
+		t.Fatalf("active pointer = %#v", got)
+	}
+}
+
 func mustNew(t *testing.T, repository *fakeRepository) *Adapter {
 	t.Helper()
 	adapter, err := New(repository)
@@ -91,6 +112,15 @@ type fakeRepository struct {
 	revisions   []manageddata.Revision
 	uploads     map[string]string
 	pointer     manageddata.EnvironmentPointer
+}
+
+type activeFakeRepository struct {
+	*fakeRepository
+	active manageddata.EnvironmentPointer
+}
+
+func (r *activeFakeRepository) ActiveEnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+	return r.active, nil
 }
 
 func (r *fakeRepository) ListUploadSessions(_ context.Context, collectionID projectgraph.ResourceID) ([]manageddata.UploadSession, error) {
@@ -132,7 +162,7 @@ func (r *fakeRepository) UploadSessionIDByRevisionID(_ context.Context, revision
 	return manageddata.UploadID(id), nil
 }
 
-func (r *fakeRepository) EnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+func (r *fakeRepository) ActiveEnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error) {
 	return r.pointer, nil
 }
 

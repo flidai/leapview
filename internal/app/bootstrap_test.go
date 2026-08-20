@@ -74,6 +74,26 @@ func TestHasActiveBootstrapServingStateUsesFreshScopes(t *testing.T) {
 	}
 }
 
+func TestHasActiveBootstrapServingStateUsesCanonicalTargetScope(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	target := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
+		TargetID:           "target_demo",
+		ProjectID:          project.String(),
+		Environment:        "prod",
+		ActiveGenerationID: "generation_active",
+	}}
+	active, err := hasActiveBootstrapServingState(context.Background(), nil, bootstrapStateStoreFake{}, "prod", target, "target_demo", project.String())
+	if err != nil {
+		t.Fatalf("hasActiveBootstrapServingState() error = %v", err)
+	}
+	if !active {
+		t.Fatal("hasActiveBootstrapServingState() = false, want active canonical target")
+	}
+	if _, err := hasActiveBootstrapServingState(context.Background(), nil, bootstrapStateStoreFake{}, "prod", target, "target_demo", ""); err == nil {
+		t.Fatal("hasActiveBootstrapServingState() accepted a stale empty project scope")
+	}
+}
+
 func TestBootstrapAPIGenDecision(t *testing.T) {
 	project := bootstrapProject(t, "project_demo")
 	foreign := bootstrapProject(t, "project_foreign")
@@ -98,11 +118,18 @@ func TestBootstrapAPIGenDecision(t *testing.T) {
 		{name: "no claim delivery plan denied", operation: "createDeliveryPlan", claims: bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
 		{name: "no claim delivery build denied", operation: "buildDeliveryPlan", claims: bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
 		{name: "no claim delivery publish denied", operation: "publishDeliveryCandidate", claims: bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
+		{name: "no claim delivery candidate status denied", operation: "getDeliveryCandidateStatus", claims: bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
+		{name: "no claim delivery plan preview denied", operation: "getDeliveryPlanPreview", claims: bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
 		{name: "exact claim candidate allowed", operation: "getProjectCandidate", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim source retention allowed", operation: "retainProjectCandidateSource", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery plan allowed", operation: "createDeliveryPlan", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery build allowed", operation: "buildDeliveryPlan", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim delivery publish allowed", operation: "publishDeliveryCandidate", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
+		{name: "exact claim delivery candidate status allowed", operation: "getDeliveryCandidateStatus", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
+		{name: "exact claim delivery plan preview allowed", operation: "getDeliveryPlanPreview", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
+		{name: "exact claim deployment status allowed while active", operation: "getDeployment", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: bootstrapStateStoreFake{scopes: []servingstate.ActiveScope{{ProjectID: project, Environment: environment}}}, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
+		{name: "exact claim deployment events allowed while active", operation: "listDeploymentEvents", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: bootstrapStateStoreFake{scopes: []servingstate.ActiveScope{{ProjectID: project, Environment: environment}}}, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
+		{name: "exact claim synchronization plan allowed while active", operation: "planProjectCandidateSynchronization", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: bootstrapStateStoreFake{scopes: []servingstate.ActiveScope{{ProjectID: project, Environment: environment}}}, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim managed data finalize allowed", operation: "finalizeManagedDataUploadSession", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}},
 		{name: "exact claim managed data revision denied", operation: "listManagedDataRevisions", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
 		{name: "foreign claim denied", operation: "getProjectCandidate", claims: bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: foreign, Environment: environment}}, states: emptyState, project: project, want: accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}},
@@ -136,5 +163,79 @@ func TestBootstrapAPIGenDecisionUsesCanonicalTargetPointer(t *testing.T) {
 	}
 	if got != (accessmodule.APIGenBootstrapDecision{Handled: false}) {
 		t.Fatalf("bootstrap decision = %#v, want active canonical target to close bootstrap", got)
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeploymentReadsUseActiveRuntimeWhenReady(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, lease: tusLease{}}
+	claims := bootstrapClaimStoreFake{err: errors.New("claim must not be read while runtime is active")}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: false}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want active runtime to close bootstrap", got)
+			}
+		})
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeploymentReadsUseExactClaimDuringRuntimeWarmup(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
+	claims := bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: "prod"}}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want exact claim bootstrap during warm-up", got)
+			}
+		})
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeploymentReadsRemainFailClosedWithoutClaim(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
+	claims := bootstrapClaimStoreFake{err: deployment.ErrProjectClaimNotFound}
+	for _, operation := range []string{"listDeployments", "getDeployment", "listDeploymentEvents"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, nil, "")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: false}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want fail-closed bootstrap decision", got)
+			}
+		})
+	}
+}
+
+func TestBootstrapAPIGenDecisionDeliveryPlanResolutionReadsUseExactClaimDuringRuntimeWarmup(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	runtime := tusRuntime{project: project, err: errors.New("runtime is still warming up")}
+	claims := bootstrapClaimStoreFake{claim: deployment.ProjectClaim{ProjectID: project, Environment: "prod"}}
+	targets := bootstrapTargetReaderFake{target: deployment.DeliveryTarget{
+		TargetID:           "target_demo",
+		ProjectID:          project.String(),
+		Environment:        "prod",
+		ActiveGenerationID: "generation_active",
+	}}
+	for _, operation := range []string{"getDeliveryCandidateStatus", "getDeliveryPlanPreview"} {
+		t.Run(operation, func(t *testing.T) {
+			got, err := bootstrapAPIGenDecision(context.Background(), runtime, nil, claims, "prod", operation, project, targets, "target_demo")
+			if err != nil {
+				t.Fatalf("bootstrapAPIGenDecision() error = %v", err)
+			}
+			if got != (accessmodule.APIGenBootstrapDecision{Handled: true, Allowed: true}) {
+				t.Fatalf("bootstrapAPIGenDecision() = %#v, want exact claim bootstrap during warm-up", got)
+			}
+		})
 	}
 }

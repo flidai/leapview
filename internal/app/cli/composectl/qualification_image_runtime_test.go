@@ -23,8 +23,11 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 	metricsToken := ""
 	server := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		switch request.URL.Path {
-		case "/healthz", "/readyz":
+		case "/healthz":
 			response.WriteHeader(http.StatusOK)
+		case "/readyz":
+			response.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = io.WriteString(response, `{"checks":{"deliveryStartup":"missing_physical_pool_admission,target_revision_missing"},"status":"not_ready"}`)
 		case "/metrics":
 			authorization := request.Header.Get("Authorization")
 			if authorization == "" {
@@ -52,7 +55,7 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 		case len(arguments) > 0 && arguments[0] == "port":
 			return []byte(strings.TrimPrefix(server.URL, "http://") + "\n"), nil
 		case len(arguments) > 0 && arguments[0] == "inspect" && slices.Contains(arguments, "{{.State.Health.Status}}"):
-			return []byte("healthy\n"), nil
+			return []byte("unhealthy\n"), nil
 		default:
 			return []byte("ok\n"), nil
 		}

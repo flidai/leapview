@@ -273,8 +273,9 @@ func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, delive
 // sealedPublicationBootstrapDecision is kept separate from the coordinator
 // closure so the first-activation fence is directly testable. A durable active
 // generation wins a race and returns unhandled, forcing the caller through the
-// live snapshot authorizer. Only an exact APIGen marker may authorize while
-// the durable target is still fresh.
+// live snapshot authorizer. While the durable target is still fresh, an exact
+// APIGen marker or a worker binding backed by the revalidated bootstrap policy
+// may authorize the publication.
 func sealedPublicationBootstrapDecision(
 	ctx context.Context,
 	binding sealedcontrol.SealBinding,
@@ -294,6 +295,16 @@ func sealedPublicationBootstrapDecision(
 	}
 	if isActive {
 		return false, nil
+	}
+	if binding.Bootstrap {
+		// Async activation workers do not retain the original HTTP request
+		// context. The deployment worker may set Bootstrap only after the
+		// durable one-shot policy has been revalidated; the active-generation
+		// check above still wins any concurrent first-activation race.
+		if marked && (marker.PrincipalID != binding.ActorID || marker.ProjectID.String() != binding.ProjectID || marker.Capability != access.CapabilityResourcePublish) {
+			return true, fmt.Errorf("sealed publication bootstrap authorization is missing or mismatched")
+		}
+		return true, nil
 	}
 	if !marked || marker.PrincipalID != binding.ActorID || marker.ProjectID.String() != binding.ProjectID || marker.Capability != access.CapabilityResourcePublish {
 		return true, fmt.Errorf("sealed publication bootstrap authorization is missing or mismatched")
@@ -378,7 +389,7 @@ func authorizeSealedPublication(
 		if len(resources) == 0 {
 			allowed, err = authorizeProjectRole(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, capability)
 		} else {
-			allowed, err = authorizeProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, resources, capability)
+			allowed, err = authorizeDeliveryProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, resources, capability)
 		}
 		if err != nil {
 			return fmt.Errorf("sealed publication live authorization: %w", err)
@@ -633,9 +644,23 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return snapshot, nil
 	}
 	sealedDelivery := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
+	resolveCurrentProjectID := func(ctx context.Context) (projectgraph.ResourceID, error) {
+		claimed, found, err := readClaim(ctx)
+		if err != nil {
+			return "", fmt.Errorf("read live project claim: %w", err)
+		}
+		if found {
+			return claimed, nil
+		}
+		return projectID, nil
+	}
 	snapshotAuthorizeConnection := accessmodule.ConnectionAuthorizerFromSnapshot(authorizationSnapshot, accessModule.AuthorizationSubjects)
 	authorizeConnection := bootstrapAwareConnectionAuthorization(snapshotAuthorizeConnection, func(ctx context.Context) (bool, error) {
-		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, projectID.String())
+		currentProjectID, err := resolveCurrentProjectID(ctx)
+		if err != nil {
+			return false, err
+		}
+		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, currentProjectID.String())
 	})
 	managedDataModule, err := manageddatamodule.Build(ctx, manageddatamodule.Config{
 		Database: store.SQLDB(), Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
@@ -702,8 +727,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	var sealedActiveState func(context.Context) (servingstate.ID, error)
 	var deliveryStartupCheck func(context.Context) error
 	{
+		var beforePublicationCommit func(context.Context, deployment.PublicationIntent) error
+		if string(environment) == "evaluation" {
+			beforePublicationCommit = func(ctx context.Context, publication deployment.PublicationIntent) error {
+				return sealedcontrol.QualificationActivationBarrier(ctx, publication.Environment)
+			}
+		}
 		sealedCoordinator = &sealedcontrol.Coordinator{
 			Publications: sealedDelivery, Rollbacks: sealedDelivery,
+			BeforePublicationCommit: beforePublicationCommit,
 			Authorize: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
 				if binding.Operation == "publish" {
 					marker, marked := accessmodule.BootstrapAuthorizationFromContext(ctx)
@@ -720,6 +752,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule)
 			},
 			VerifySeal: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
+				slog.Default().InfoContext(ctx, "sealed publication seal verification started", "deployment", binding.DeploymentID, "candidate", binding.CandidateID, "bootstrap", binding.Bootstrap)
 				candidate, err := sealedDelivery.DeliveryCandidateByID(ctx, binding.CandidateID)
 				if err != nil {
 					return err
@@ -746,6 +779,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					return fmt.Errorf("open sealed catalog object: %w", err)
 				}
 				defer object.Body.Close()
+				slog.Default().InfoContext(ctx, "sealed publication catalog object opened", "deployment", binding.DeploymentID, "objectKey", binding.Seal.CatalogObjectKey, "size", binding.Seal.ObjectSize)
 				hash := sha256.New()
 				n, err := io.Copy(hash, object.Body)
 				if err != nil {
@@ -754,13 +788,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				if n != binding.Seal.ObjectSize || object.Size != binding.Seal.ObjectSize || "sha256:"+hex.EncodeToString(hash.Sum(nil)) != binding.Seal.CatalogDigest {
 					return fmt.Errorf("sealed catalog object bytes or metadata do not match verified seal")
 				}
+				slog.Default().InfoContext(ctx, "sealed publication seal verification completed", "deployment", binding.DeploymentID, "candidate", binding.CandidateID)
 				return nil
 			},
 		}
 		releases := releaseModule.DeploymentLinkage()
-		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor) (sealedcontrol.PublishRequest, error) {
+		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, bootstrap bool) (sealedcontrol.PublishRequest, error) {
 			request, err := buildSealedPublishRequest(ctx, sealedDelivery, releases, pending, releaseID, instanceID)
 			request.ActorID = actor.PrincipalID
+			request.Bootstrap = bootstrap
 			return request, err
 		}
 		sealedRollbackRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, expectedBaseGenerationID string, expectedTargetRevision int64) (sealedcontrol.RollbackRequest, error) {
@@ -779,6 +815,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return target.ActiveGenerationID, target.TargetRevision, nil
 		}
 		sealedActiveState = func(ctx context.Context) (servingstate.ID, error) {
+			currentProjectID, err := resolveCurrentProjectID(ctx)
+			if err != nil {
+				return "", err
+			}
 			target, targetErr := sealedDelivery.DeliveryTargetRevision(ctx, instanceID)
 			if targetErr != nil {
 				if errors.Is(targetErr, sql.ErrNoRows) || errors.Is(targetErr, deployment.ErrNotFound) {
@@ -786,7 +826,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				}
 				return "", targetErr
 			}
-			if target.ProjectID != projectID.String() || target.Environment != string(environment) {
+			if target.ProjectID != currentProjectID.String() || target.Environment != string(environment) {
 				return "", fmt.Errorf("%w: target scope or active generation changed", deployment.ErrDeliveryConflict)
 			}
 			// A target revision is created before its first publication. An empty
@@ -795,7 +835,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if strings.TrimSpace(target.ActiveGenerationID) == "" {
 				return "", servingstate.ErrNotFound
 			}
-			active, err := sealedDelivery.ActiveDeliveryGenerationForTarget(ctx, instanceID, projectID.String(), string(environment))
+			active, err := sealedDelivery.ActiveDeliveryGenerationForTarget(ctx, instanceID, currentProjectID.String(), string(environment))
 			if err != nil {
 				// A fresh production target has no delivery pointer yet. Keep the
 				// administration surface bootable and let readiness/serving report
@@ -820,6 +860,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// runtime-host construction below; administration remains available when
 	// physical-pool admission is absent.
 	var canonicalDelivery *deploymentmodule.CanonicalDeliveryAdapter
+	var canonicalDeliveryMutations *deploymentmodule.CanonicalDeliveryMutations
 	canonicalDeliveryRequired := true
 	// Sealed production serving uses delivery-owned catalog lease/GC state;
 	// the legacy serving-state snapshot retention worker must not inspect or
@@ -833,8 +874,12 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	{
 		var gcErr error
 		gcMaintenance, gcErr = gcadapter.NewMaintenance(func(gcCtx context.Context) error {
+			gcProjectID, err := resolveCurrentProjectID(gcCtx)
+			if err != nil {
+				return fmt.Errorf("resolve physical-pool GC project: %w", err)
+			}
 			return appruntimefactory.RunSQLiteProductionGC(gcCtx, appruntimefactory.ProductionGCRunConfig{
-				Database: store.SQLDB(), TargetID: instanceID, ProjectID: projectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
+				Database: store.SQLDB(), TargetID: instanceID, ProjectID: gcProjectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
 				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 				LeaseDuration: 15 * time.Minute, BuildGrace: time.Hour, OrphanGrace: time.Hour, ReaderGrace: 30 * time.Minute,
@@ -1010,7 +1055,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		var poolErr error
 		deliveryPhysicalPoolID := strings.TrimSpace(cfg.DeliveryPhysicalPoolID)
 		deliveryCompatibilityDigest := strings.TrimSpace(cfg.DeliveryPhysicalPoolCompatibilityDigest)
-		if !production && deliveryPhysicalPoolID == "" {
+		// The disposable loopback-only evaluation profile deliberately uses the
+		// production serving runtime, but it retains the development contract of
+		// owning and qualifying an isolated local pool. Ordinary production
+		// targets must still use reviewed offline admission evidence.
+		if allowsLocalEvaluationRuntime(production, cfg.EvaluationMode) && deliveryPhysicalPoolID == "" {
 			tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:" + identity.Version + ":" + identity.Revision, DuckLakeExtension: "ducklake:managed", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
 			deliveryStorageLocation, storageLocationErr := filepath.Abs(cfg.DuckLakeDataDir())
 			if storageLocationErr != nil {
@@ -1077,10 +1126,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		// callback reads durable state each time; configuration never synthesizes
 		// an admission or serving pointer.
 		deliveryStartupCheck = func(ctx context.Context) error {
+			startupProjectID, err := resolveDeliveryStartupProjectID(ctx, projectID, readClaim)
+			if err != nil {
+				return fmt.Errorf("delivery startup project claim: %w", err)
+			}
 			state := deployment.DeliveryStartupState{
 				Production:               production,
 				TargetID:                 instanceID,
-				ProjectID:                projectID.String(),
+				ProjectID:                startupProjectID.String(),
 				Environment:              string(environment),
 				ConfiguredPhysicalPoolID: deliveryPhysicalPoolID,
 				PhysicalPoolExists:       poolContract != nil,
@@ -1095,14 +1148,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			target, targetErr := deliveryRepository.DeliveryTargetRevision(ctx, instanceID)
 			if targetErr == nil {
 				state.TargetRevisionExists = true
-				if target.ProjectID != projectID.String() || target.Environment != string(environment) {
+				if target.ProjectID != startupProjectID.String() || target.Environment != string(environment) {
 					return fmt.Errorf("delivery startup target scope changed")
 				}
 			} else if !errors.Is(targetErr, sql.ErrNoRows) && !errors.Is(targetErr, deployment.ErrNotFound) {
 				return fmt.Errorf("delivery startup target revision: %w", targetErr)
 			}
 			if targetErr == nil && strings.TrimSpace(target.ActiveGenerationID) != "" {
-				active, err := deliveryRepository.ActiveDeliveryGenerationForTarget(ctx, instanceID, projectID.String(), string(environment))
+				active, err := deliveryRepository.ActiveDeliveryGenerationForTarget(ctx, instanceID, startupProjectID.String(), string(environment))
 				if err == nil {
 					state.ActiveServingGeneration = true
 					state.ActiveServingStateIdentity = active.ServingStateID
@@ -1245,9 +1298,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					CompatibilityDigest: generation.CompatibilityDigest, BaseCompatibilityDigest: generation.CompatibilityDigest, Deterministic: artifacts.Generation.Deterministic,
 				}
 			}
-			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: protectedPublishingTarget(production, cfg.EvaluationMode), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
+			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
 		}
-		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, key string) (deployment.DeliveryPublication, error) {
+		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
 			if candidateErr != nil {
 				return deployment.DeliveryPublication{}, candidateErr
@@ -1255,7 +1308,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if candidateRecord.ProjectID.String() != project {
 				return deployment.DeliveryPublication{}, fmt.Errorf("%w: publication project scope changed", deployment.ErrDeliveryConflict)
 			}
-			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, key, instanceID)
+			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, instanceID)
 			if err != nil {
 				return deployment.DeliveryPublication{}, err
 			}
@@ -1304,7 +1357,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if poolErr != nil || poolContract == nil {
 				return deployment.DeliveryBuildRequest{}, fmt.Errorf("%w: candidate physical-pool admission unavailable", deployment.ErrCandidateUnavailable)
 			}
-			return buildFactory(buildCtx, input, artifacts)
+			request, err := buildFactory(buildCtx, input, artifacts)
+			if err != nil {
+				return deployment.DeliveryBuildRequest{}, err
+			}
+			return request, nil
 		}, ReadyCandidate: func(readyCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, build deployment.DeliveryBuildResult) (deployment.Candidate, error) {
 			if build.GateEvidence == nil {
 				return deployment.Candidate{}, fmt.Errorf("%w: candidate gate evidence is required", deployment.ErrCandidateInvalid)
@@ -1332,9 +1389,21 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			input.Candidate.ProvenanceDigest = retained.Digest
 			return input.Candidate, nil
 		}})
+		canonicalDeliveryMutations = &deploymentmodule.CanonicalDeliveryMutations{
+			Lifecycle:    canonicalDelivery.Lifecycle,
+			Sources:      candidateSources,
+			Artifacts:    releaseModule,
+			Plan:         canonicalDelivery.Plan,
+			PlanPreview:  canonicalDelivery.PlanPreview,
+			BuildRequest: canonicalDelivery.BuildRequest,
+			Adapter:      canonicalDelivery,
+			Publish:      canonicalDelivery.Publish,
+			Rollback:     canonicalDelivery.Rollback,
+		}
 	}
 	deploymentConfig := deploymentmodule.Config{
 		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
+		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
 		BindClaimedProject: bindClaimedProject(runtimeHostModule, environment),
@@ -1427,7 +1496,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err := accessModule.AuthorizeBootstrapCredential(ctx, policy.ActorID, policy.CredentialID, policy.CredentialExpiresAt, time.Now().UTC()); err != nil {
 				return fmt.Errorf("bootstrap credential authorization: %w", err)
 			}
-			active, activeErr := hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, projectID.String())
+			// The process may have started before candidate synchronization
+			// established the durable project claim, so the startup projectID
+			// can legitimately be empty here. The bootstrap policy has already
+			// been validated against the fresh claim above; use that canonical
+			// request scope for the active-target check instead of the stale
+			// startup snapshot.
+			active, activeErr := hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, policy.ProjectID.String())
 			if activeErr != nil {
 				return fmt.Errorf("%w: %v", deployment.ErrBootstrapPolicyConflict, activeErr)
 			}
@@ -1452,6 +1527,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		CandidateSources:         candidateSources,
 		CandidateArtifacts:       releaseModule,
 		CanonicalDeliveryAdapter: canonicalDelivery,
+		DeliveryMutations:        canonicalDeliveryMutations,
 		RequireCanonicalDelivery: canonicalDeliveryRequired,
 		CandidateSourceAudit:     candidateSourceAuditRecorder(accessModule),
 		CandidateSourceBlobAudit: candidateSourceAuditRecorder(accessModule),
@@ -1511,9 +1587,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			AgentSettings: store,
 			AgentConfig:   agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel},
 			Auth:          auth, Reloader: runtimeHostModule, Workload: workloadController,
-			ManagedDataValidation: managedDataModule.BindingValidation(),
-			ManagedDataResolver:   managedDataResolver,
-			DeploymentConfig:      deploymentConfig,
+			ManagedDataValidation:    managedDataModule.BindingValidation(),
+			ManagedDataResolver:      managedDataResolver,
+			CanonicalRefreshExecutor: canonicalRefreshExecutor(canonicalDeliveryMutations, sealedDelivery, instanceID),
+			EnableRefreshDispatcher:  true,
+			DeploymentConfig:         deploymentConfig,
 		},
 		runtimeAssemblyInputs{
 			RuntimeHost:          runtimeHostModule,
@@ -1532,7 +1610,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				InstanceID:        instanceID,
 				DisplayName:       "LeapView",
 				ServerVersion:     assets.Version(),
-				AllowLoopbackHTTP: !production,
+				AllowLoopbackHTTP: allowsLocalEvaluationRuntime(production, cfg.EvaluationMode),
 			},
 			RateLimits:      rateLimits,
 			SecurityHeaders: apihttpmiddleware.SecurityHeaders(production && cfg.HSTSEnabled(cookieSecure)),
@@ -1546,14 +1624,43 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if sealedCoordinator != nil && routes.deploymentModule != nil {
 		durableApproval := routes.deploymentModule.SealedApprovalVerifier()
 		sealedCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
+			slog.Default().InfoContext(approvalCtx, "sealed publication approval verification started", "deployment", binding.DeploymentID, "bootstrap", binding.Bootstrap)
+			if binding.Bootstrap {
+				// The activation worker has already revalidated the durable
+				// one-shot bootstrap policy. Recheck the active-generation fence
+				// here because Authorize and ApprovalVerifier are separate control
+				// boundaries; if a generation appeared in between, fall through to
+				// ordinary durable approval rather than bypassing it.
+				active, activeErr := hasActiveBootstrapServingState(
+					approvalCtx,
+					runtimeHostModule,
+					servingStateRepo,
+					string(environment),
+					sealedDelivery,
+					instanceID,
+					binding.ProjectID,
+				)
+				if activeErr != nil {
+					return activeErr
+				}
+				slog.Default().InfoContext(approvalCtx, "sealed publication bootstrap fence checked", "deployment", binding.DeploymentID, "active", active)
+				if !active {
+					return nil
+				}
+			}
 			plan, planErr := sealedDelivery.PlanByID(approvalCtx, publication.PlanID)
 			if planErr != nil {
 				return planErr
 			}
 			if !plan.Governance.RequiresApproval {
+				slog.Default().InfoContext(approvalCtx, "sealed publication approval not required", "deployment", binding.DeploymentID)
 				return nil
 			}
-			return durableApproval(approvalCtx, binding, publication)
+			err := durableApproval(approvalCtx, binding, publication)
+			if err != nil {
+				slog.Default().ErrorContext(approvalCtx, "sealed publication approval verification failed", "deployment", binding.DeploymentID, "error", err)
+			}
+			return err
 		}
 	}
 	runtime.runtimeHostModule = runtimeHostModule
@@ -1562,8 +1669,22 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	return handler, lifecycle, cleanup.Close, nil
 }
 
+func allowsLocalEvaluationRuntime(production, evaluation bool) bool {
+	return !production || evaluation
+}
+
 func protectedPublishingTarget(production, evaluation bool) bool {
 	return production && !evaluation
+}
+
+func requiresDeliveryApproval(production, evaluation bool, operation deployment.DeliveryOperationKind) bool {
+	// Restatement is the sealed implementation of an authorized operational
+	// refresh. Requiring a separate deployment approval for every scheduled or
+	// manually requested refresh would leave the refresh dispatcher unable to
+	// complete. Publication still crosses the live RBAC authorization boundary
+	// and the exact target/seal CAS; only the code/policy change approval is not
+	// applicable to this data-only operation.
+	return protectedPublishingTarget(production, evaluation) && operation != deployment.DeliveryOperationRestatement
 }
 
 func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
@@ -1583,6 +1704,23 @@ func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environm
 		}
 		return claim.ProjectID, true, nil
 	}
+}
+
+func resolveDeliveryStartupProjectID(ctx context.Context, initial projectgraph.ResourceID, readClaim func(context.Context) (projectgraph.ResourceID, bool, error)) (projectgraph.ResourceID, error) {
+	if readClaim == nil {
+		return "", errors.New("project claim reader is required")
+	}
+	claimed, found, err := readClaim(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !found {
+		return initial, nil
+	}
+	if initial != "" && claimed != initial {
+		return "", fmt.Errorf("project claim changed from %q to %q", initial, claimed)
+	}
+	return claimed, nil
 }
 
 type claimedProjectBinder interface {
@@ -1747,8 +1885,8 @@ func buildSealedPublishRequest(ctx context.Context, delivery *deploymentsqlite.R
 // exact durable tuple. It deliberately does not recapture source or create a
 // new serving artifact; publication is a control-plane operation over the
 // ready candidate's persisted generation and verified seal.
-func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublishReader, candidateID, idempotencyKey, targetID string) (sealedcontrol.PublishRequest, error) {
-	if delivery == nil || strings.TrimSpace(candidateID) == "" || strings.TrimSpace(idempotencyKey) == "" {
+func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublishReader, candidateID, targetID string) (sealedcontrol.PublishRequest, error) {
+	if delivery == nil || strings.TrimSpace(candidateID) == "" {
 		return sealedcontrol.PublishRequest{}, fmt.Errorf("canonical publication inputs are incomplete")
 	}
 	candidate, err := delivery.DeliveryCandidateByID(ctx, candidateID)
@@ -1782,7 +1920,14 @@ func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublish
 	if err != nil {
 		return sealedcontrol.PublishRequest{}, err
 	}
-	publicationID := "publication-" + strings.TrimPrefix(deployment.CanonicalDeliveryDigest([]byte("publish:"+candidateID+":"+idempotencyKey)), "sha256:")
+	// HTTP idempotency identifies one transport attempt. The durable
+	// publication identity belongs to the immutable candidate so a later CLI
+	// attempt can recover the exact approval and activation request after an
+	// indeterminate transport outcome.
+	publicationID := "publication-" + strings.TrimPrefix(
+		deployment.CanonicalDeliveryDigest([]byte("candidate-publication:"+candidate.ID)),
+		"sha256:",
+	)
 	publication, err := deployment.NewPublicationIntent(deployment.PublicationIntent{ID: publicationID, RequestDigest: deployment.CanonicalDeliveryDigest([]byte("publication:" + publicationID)), TargetID: candidate.TargetID, ProjectID: candidate.ProjectID, Environment: candidate.Environment, PlanID: candidate.PlanID, PlanDigest: candidate.PlanDigest, CandidateID: candidate.ID, GenerationID: candidate.ServingStateID, ExpectedBaseGenerationID: candidate.BaseGenerationID, ExpectedTargetRevision: candidate.BaseTargetRevision, CreatedAt: createdAt})
 	if err != nil {
 		return sealedcontrol.PublishRequest{}, err

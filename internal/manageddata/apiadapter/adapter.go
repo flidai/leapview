@@ -22,7 +22,7 @@ type Repository interface {
 	ListRevisions(context.Context, projectgraph.ResourceID) ([]manageddata.Revision, error)
 	ListUploadSessions(context.Context, projectgraph.ResourceID) ([]manageddata.UploadSession, error)
 	UploadSessionIDByRevisionID(context.Context, manageddata.RevisionID) (manageddata.UploadID, error)
-	EnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error)
+	ActiveEnvironmentPointer(context.Context, projectgraph.ResourceID, manageddata.Environment) (manageddata.EnvironmentPointer, error)
 }
 
 func (a *Adapter) ListUploadSessions(ctx context.Context, collectionID string) ([]manageddata.UploadSession, error) {
@@ -142,7 +142,7 @@ func (a *Adapter) EnvironmentPointer(ctx context.Context, collectionID string, e
 	if parseErr != nil {
 		return manageddata.EnvironmentPointer{}, control.ErrInvalid
 	}
-	pointer, err := a.repository.EnvironmentPointer(ctx, parsedCollectionID, environment)
+	pointer, err := a.repository.ActiveEnvironmentPointer(ctx, parsedCollectionID, environment)
 	if err != nil {
 		return manageddata.EnvironmentPointer{}, publicError(err)
 	}

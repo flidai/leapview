@@ -326,7 +326,10 @@ func (c *Controller) QualifyImage(
 		return err
 	}
 	instanceStarted = true
-	if err := instanceController.Start(ctx); err != nil {
+	if err := instanceController.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+		return err
+	}
+	if err := instanceController.startQualificationBootstrap(ctx); err != nil {
 		return err
 	}
 	credentialsPath := filepath.Join(bundleRoot, ".qualification-credentials.json")
@@ -372,7 +375,6 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	credentials.PublisherToken = ""
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
@@ -390,6 +392,9 @@ func (c *Controller) QualifyImage(
 	})
 	if err != nil {
 		return err
+	}
+	if err := instanceController.waitQualificationReadiness(ctx); err != nil {
+		return fmt.Errorf("production image did not become ready after sealed publication: %w", err)
 	}
 	if authoringReport.Result != "success" ||
 		!authoringReport.Assertions.BrowserApprovedLogin ||

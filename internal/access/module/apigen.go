@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -235,7 +236,7 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 		if a.delivery == nil || a.runtime == nil {
 			return nil, false
 		}
-		if (operationID == "createDeliveryPlan" || operationID == "buildDeliveryPlan" || operationID == "publishDeliveryCandidate") && a.bootstrap != nil {
+		if isBootstrapDeliveryAPIGenOperation(operationID) && a.bootstrap != nil {
 			return a.protectDeliveryBootstrapAware(operationID, capability, next), true
 		}
 		return a.protectDelivery(operationID, capability, next), true
@@ -257,7 +258,7 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 	if a.runtime == nil {
 		return nil, false
 	}
-	return a.protectResources(capability, resolver, next), true
+	return a.protectResources(operationID, capability, resolver, next), true
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
@@ -268,7 +269,8 @@ func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
+		"listDeployments", "getDeployment", "listDeploymentEvents":
 		return true
 	default:
 		return false
@@ -279,6 +281,17 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 	// Generated contracts carry the public API prefix (currently /api/v1),
 	// while this authorizer only cares about the target-owned delivery suffix.
 	return strings.Contains(contract.Path, "/projects/{project}/delivery")
+}
+
+// isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
+// establish and resolve a plan before the target has an active generation.
+func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
+	switch operationID {
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+		return true
+	default:
+		return false
+	}
 }
 
 func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access.Capability, next http.Handler) http.Handler {
@@ -341,8 +354,18 @@ func (a *APIGenAuthorizer) authorizeDeliveryRequest(w http.ResponseWriter, r *ht
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
-	allowed, err := a.delivery(r.Context(), r, operationID, deliveryObjectID(operationID, r), projectID, capability)
+	objectID := deliveryObjectID(operationID, r)
+	allowed, err := a.delivery(r.Context(), r, operationID, objectID, projectID, capability)
 	if err != nil {
+		a.module.logger.WarnContext(
+			r.Context(),
+			"generated delivery API authorization failed",
+			"operation", operationID,
+			"object", objectID,
+			"project", projectID,
+			"capability", capability,
+			"error", err,
+		)
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
@@ -370,6 +393,8 @@ func deliveryObjectID(operationID string, r *http.Request) string {
 	case "getDeliverySealStatus":
 		parameter = "seal"
 	case "getDeliveryPublicationEvidence":
+		parameter = "publication"
+	case "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
 		parameter = "publication"
 	}
 	if parameter == "" {
@@ -411,8 +436,19 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
-			a.protectResources(capability, resolver, next).ServeHTTP(w, r)
+			a.protectResources(operationID, capability, resolver, next).ServeHTTP(w, r)
 			return
+		}
+		if isAuthoringBootstrapOperation(operationID) {
+			authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if authorized && decision.Allowed {
+				next.ServeHTTP(w, r.WithContext(withBootstrapAuthorization(r.Context(), projectID, principal.ID, capability)))
+				return
+			}
 		}
 		// Bootstrap is intentionally narrower than normal project RBAC: only a
 		// REST API token with an explicit capability allowlist may establish the
@@ -434,13 +470,22 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 	}))
 }
 
+func isAuthoringBootstrapOperation(operationID string) bool {
+	switch operationID {
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization":
+		return true
+	default:
+		return false
+	}
+}
+
 func (a *APIGenAuthorizer) resourceResolverForContractMust(operationID string) APIGenResourceResolver {
 	contract := a.operations[operationID]
 	resolver, _ := a.resourceResolverForContract(contract)
 	return resolver
 }
 
-func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolve APIGenResourceResolver, next http.Handler) http.Handler {
+func (a *APIGenAuthorizer) protectResources(operationID string, capability access.Capability, resolve APIGenResourceResolver, next http.Handler) http.Handler {
 	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := a.module.CurrentPrincipal(r)
 		if !ok || strings.TrimSpace(principal.ID) == "" {
@@ -469,6 +514,7 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 		}
 		allowed, err := a.authorizeResources(r.Context(), principal.ID, projectID, resources, capability)
 		if err != nil {
+			slog.Default().WarnContext(r.Context(), "generated API resource authorization failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, errAPIGenResourceNotFound) {
 				http.NotFound(w, r)
 				return
@@ -477,12 +523,15 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 			return
 		}
 		if !allowed {
+			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
 		effective, err := a.module.RequestEffectiveCapabilities(r.Context(), r, principal.ID)
 		if err != nil {
+			slog.Default().WarnContext(r.Context(), "generated API effective capability resolution failed", "capability", capability, "project", projectID, "error", err)
 			if errors.Is(err, access.ErrForbidden) {
+				a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
 				http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 				return
 			}
@@ -490,11 +539,27 @@ func (a *APIGenAuthorizer) protectResources(capability access.Capability, resolv
 			return
 		}
 		if !containsCapability(effective, capability) {
+			a.recordResourceAuthorizationDenial(r, operationID, principal.ID, resources[0], capability)
 			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)
 	}))
+}
+
+func (a *APIGenAuthorizer) recordResourceAuthorizationDenial(r *http.Request, operationID, principalID string, resource access.ResourceRef, capability access.Capability) {
+	if a == nil || a.module == nil || a.module.repository == nil || r == nil {
+		return
+	}
+	repository, err := a.module.repository()
+	if err != nil || repository == nil {
+		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit repository unavailable", "operation", operationID, "error", err)
+		return
+	}
+	input := authAuditInput(r, "authorization.denied", principalID, string(resource.Kind()), resource.ID().String(), capability, "denied", map[string]any{"operationId": operationID})
+	if err := access.PersistAuditEvent(r.Context(), repository, input); err != nil {
+		a.module.logger.WarnContext(r.Context(), "generated API authorization denial audit failed", "operation", operationID, "error", err)
+	}
 }
 
 func containsCapability(capabilities []access.Capability, expected access.Capability) bool {
@@ -540,6 +605,12 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		if !exists || graphResource.Kind != resource.Kind() {
 			return false, errAPIGenResourceNotFound
 		}
+		if resource.Kind() == projectgraph.KindProject && !access.SupportsCapability(resource.Kind(), capability) {
+			if !projectRoleAllowsCapability(snapshot, subjects, capability) {
+				return false, nil
+			}
+			continue
+		}
 		allowed := false
 		for _, subject := range subjects {
 			candidate, err := snapshot.Allows(subject, resource, capability)
@@ -556,6 +627,25 @@ func (a *APIGenAuthorizer) authorizeResources(ctx context.Context, principalID s
 		}
 	}
 	return true, nil
+}
+
+// Project-scoped authoring APIs target the project root while requiring a
+// resource capability such as RESOURCE_EDIT. Those capabilities belong to an
+// explicit project role bundle, not to direct grants on the project kind.
+func projectRoleAllowsCapability(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, capability access.Capability) bool {
+	for _, binding := range snapshot.RoleBindings() {
+		for _, subject := range subjects {
+			if binding.Subject != subject {
+				continue
+			}
+			for _, captured := range binding.Capabilities {
+				if captured == capability {
+					return true
+				}
+			}
+		}
+	}
+	return false
 }
 
 func (a *APIGenAuthorizer) validateOperation(operationID string, contract APIGenOperationContract) error {

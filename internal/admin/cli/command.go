@@ -47,6 +47,7 @@ type Operations interface {
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
+	BootstrapQualificationLocalPhysicalPool(context.Context, io.Writer) error
 	AuditDeliveryRoots(context.Context, adminoffline.DeliveryAuditRequest, io.Writer) error
 	RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error
 }
@@ -223,8 +224,25 @@ func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Comm
 	bootstrap.Flags().StringVar(&poolPath, "pool", "", "path to non-secret physical-pool identity JSON")
 	bootstrap.Flags().StringVar(&evidencePath, "evidence", "", "path to machine-readable shared-pool conformance evidence JSON")
 	bootstrap.Flags().BoolVar(&apply, "apply", false, "persist the pool and admission; without this flag only validate and print digests")
+	var qualificationApply bool
+	qualificationBootstrap := &cobra.Command{
+		Use:    "qualify",
+		Short:  "Admit the isolated installed-candidate qualification pool",
+		Hidden: true,
+		Args:   cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			if !qualificationApply {
+				return fmt.Errorf("--apply is required")
+			}
+			return operations.BootstrapQualificationLocalPhysicalPool(ctx, command.OutOrStdout())
+		},
+	}
+	qualificationBootstrap.Flags().BoolVar(&qualificationApply, "apply", false, "run conformance and persist the isolated qualification admission")
 	pool := &cobra.Command{Use: "pool", Short: "Manage the delivery physical-pool admission"}
-	pool.AddCommand(bootstrap)
+	pool.AddCommand(bootstrap, qualificationBootstrap)
 	delivery := &cobra.Command{Use: "delivery", Short: "Manage plan-driven delivery state"}
 	delivery.AddCommand(pool)
 	return delivery

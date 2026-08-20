@@ -835,6 +835,28 @@ func (r *Repository) EnvironmentPointer(ctx context.Context, collectionID projec
 	return mapEnvironmentPointer(row), nil
 }
 
+// ActiveEnvironmentPointer derives the public active revision from the
+// canonical delivery target and its immutable serving-state binding. The
+// mutable environment pointer remains a planning input and is not evidence
+// that a revision is serving.
+func (r *Repository) ActiveEnvironmentPointer(ctx context.Context, collectionID projectgraph.ResourceID, environment manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+	normalized, err := manageddata.NormalizeEnvironment(string(environment))
+	if err != nil {
+		return manageddata.EnvironmentPointer{}, err
+	}
+	row, err := r.q.GetActiveManagedDataServingPointer(ctx, platformdb.GetActiveManagedDataServingPointerParams{
+		CollectionID: collectionID.String(), Environment: string(normalized),
+	})
+	if err != nil {
+		return manageddata.EnvironmentPointer{}, mapError(err)
+	}
+	return manageddata.EnvironmentPointer{
+		CollectionID: projectgraph.ResourceID(row.CollectionID), Environment: manageddata.Environment(row.Environment),
+		RevisionID: manageddata.RevisionID(row.RevisionID), DeploymentID: row.DeploymentID,
+		Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: row.UpdatedAt,
+	}, nil
+}
+
 func (r *Repository) InstallServingStateBindings(ctx context.Context, identity projectgraph.ServingIdentity, bindings []manageddata.ServingStateBinding) error {
 	if err := identity.Validate(); err != nil {
 		return fmt.Errorf("serving identity is required: %w", err)

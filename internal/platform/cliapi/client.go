@@ -8,11 +8,13 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 )
 
-// Credentials are the optional target and token supplied by a command.
-// A Client resolves empty values through application-owned configuration.
+// Credentials contain the optional target and token supplied by a command.
+// A Client resolves empty values through application-owned configuration and
+// may attach the validated canonical origin advertised by the target.
 type Credentials struct {
-	Target string
-	Token  string
+	Target          string
+	Token           string
+	CanonicalOrigin string
 }
 
 // Client is the narrow application-facing port used by capability CLI

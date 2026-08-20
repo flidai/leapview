@@ -49,6 +49,10 @@ func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminof
 	operations.called = "pool-bootstrap"
 	return nil
 }
+func (operations *fakeOperations) BootstrapQualificationLocalPhysicalPool(context.Context, io.Writer) error {
+	operations.called = "qualification-local-pool-bootstrap"
+	return nil
+}
 func (operations *fakeOperations) RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error {
 	operations.called = "delivery-repair"
 	return nil
@@ -104,5 +108,22 @@ func TestCommandRoutesReadOnlyDeliveryAudit(t *testing.T) {
 	}
 	if operations.called != "delivery-audit" {
 		t.Fatalf("operations called = %q", operations.called)
+	}
+}
+
+func TestCommandRoutesQualificationLocalPoolBootstrapOnlyWithApply(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"delivery", "pool", "qualify"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "--apply is required") {
+		t.Fatalf("missing confirmation error = %v", err)
+	}
+	command = Command(context.Background(), operations)
+	command.SetArgs([]string{"delivery", "pool", "qualify", "--apply"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "qualification-local-pool-bootstrap" {
+		t.Fatalf("called = %q", operations.called)
 	}
 }

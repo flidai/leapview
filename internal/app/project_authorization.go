@@ -69,8 +69,40 @@ func authorizeProjectResources(
 	resources []access.ResourceRef,
 	capability access.Capability,
 ) (bool, error) {
+	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, false, func(access.ResourceRef) access.Capability {
+		return capability
+	})
+}
+
+func authorizeDeliveryProjectResources(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	capability access.Capability,
+) (bool, error) {
+	return authorizeProjectResourcesWithCapability(ctx, accessModule, runtimeHost, principalID, projectID, resources, true, func(resource access.ResourceRef) access.Capability {
+		return deliveryResourceCapability(resource, capability)
+	})
+}
+
+func authorizeProjectResourcesWithCapability(
+	ctx context.Context,
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	principalID string,
+	projectID projectgraph.ResourceID,
+	resources []access.ResourceRef,
+	deliveryProjectRoleFallback bool,
+	capabilityFor func(access.ResourceRef) access.Capability,
+) (bool, error) {
 	if accessModule == nil || runtimeHost == nil {
 		return false, fmt.Errorf("authorization modules are required")
+	}
+	if capabilityFor == nil {
+		return false, fmt.Errorf("resource capability resolver is required")
 	}
 	if err := projectID.Validate(); err != nil {
 		return false, err
@@ -106,6 +138,15 @@ func authorizeProjectResources(
 		return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
 	}
 	for _, resource := range resources {
+		capability := capabilityFor(resource)
+		if deliveryProjectRoleFallback {
+			if handled, roleAllowed := deliveryProjectRootRoleDecision(snapshot, subjects, resource, capability); handled {
+				if !roleAllowed {
+					return false, nil
+				}
+				continue
+			}
+		}
 		allowed := false
 		for _, subject := range subjects {
 			candidate, err := snapshot.Allows(subject, resource, capability)

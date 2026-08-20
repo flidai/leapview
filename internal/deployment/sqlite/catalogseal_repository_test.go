@@ -137,6 +137,13 @@ func TestCatalogSealRepositoryRestartAndIdempotentCompletion(t *testing.T) {
 	if _, err := restarted.CompletedDelivery(t.Context(), f.identity.Attempt.ID, "candidate-other"); !errors.Is(err, catalogseal.ErrIdentityConflict) {
 		t.Fatalf("completion candidate mismatch err=%v, want identity conflict", err)
 	}
+	evidence, err := restarted.CompletedDeliveryGateEvidence(t.Context(), f.identity.Candidate.ID)
+	if err != nil {
+		t.Fatalf("restart completed gate evidence: %v", err)
+	}
+	if evidence == nil || evidence.Digest != candidate.ResolvedInputs.GateEvidence.Digest {
+		t.Fatalf("restart gate evidence = %#v, want digest %q", evidence, candidate.ResolvedInputs.GateEvidence.Digest)
+	}
 	retry, err := restarted.CompleteVerified(t.Context(), f.completionInput())
 	if err != nil || !retry.LeaseReleased || retry.CandidateID != f.identity.Candidate.ID {
 		t.Fatalf("completion retry = %#v, err=%v", retry, err)

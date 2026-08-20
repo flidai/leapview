@@ -38,6 +38,14 @@ SELECT provenance_json FROM api_releases
 WHERE project_id = ? AND environment = ? AND generation_id = ? AND status = 'ready'
 ORDER BY finalized_at DESC, id DESC LIMIT 1;
 
+-- name: GetCandidateProvenanceByGeneration :many
+SELECT provenance_json FROM release_candidate_provenance
+WHERE project_id = ?
+  AND json_extract(provenance_json, '$.plan.identity.environment') = sqlc.arg(environment)
+  AND json_extract(provenance_json, '$.plan.identity.generationId') = sqlc.arg(generation_id)
+ORDER BY retained_at DESC, candidate_id DESC, candidate_revision DESC
+LIMIT 2;
+
 -- name: RecordAPIReleaseArtifact :execrows
 UPDATE api_releases
 SET artifact_actual_digest = ?, artifact_size_bytes = ?, artifact_uploaded_at = CURRENT_TIMESTAMP
@@ -100,18 +108,36 @@ SELECT CAST(COALESCE(MIN(created_at), '') AS TEXT) AS created_at,
 SELECT id FROM api_releases WHERE project_id = ? ORDER BY created_at DESC, id DESC LIMIT 1;
 
 -- name: GetActiveAPIProjectDeploymentID :one
-SELECT id FROM project_deployments WHERE project_id = ? AND status = 'active' ORDER BY activated_at DESC LIMIT 1;
+SELECT publication.id
+FROM delivery_target_revisions target
+JOIN delivery_publications publication
+  ON publication.target_id = target.target_id
+ AND publication.generation_id = target.active_generation_id
+ AND publication.status = 'committed'
+WHERE target.project_id = ?
+ORDER BY publication.completed_at DESC, publication.id DESC
+LIMIT 1;
 
 -- name: ListAPIProjectConnections :many
-SELECT c.connection_id, c.name, c.description, COALESCE(rev.id, '') AS active_revision_id
+SELECT c.connection_id, c.name, c.description, COALESCE(rev.digest, '') AS active_revision_id
 FROM managed_data_collections c
-LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id = c.id AND ptr.environment = ?
-LEFT JOIN managed_data_revisions rev ON rev.id = ptr.revision_id
+LEFT JOIN delivery_target_revisions target ON target.project_id = c.project_id AND target.environment = ?
+LEFT JOIN managed_data_serving_state_bindings binding
+  ON binding.project_id = target.project_id
+ AND binding.environment = target.environment
+ AND binding.generation_id = target.active_generation_id
+ AND binding.collection_id = c.id
+LEFT JOIN managed_data_revisions rev ON rev.id = binding.revision_id
 WHERE c.project_id = ? AND c.status = 'active' ORDER BY c.connection_id;
 
 -- name: GetAPIProjectConnection :one
-SELECT c.name, c.description, COALESCE(rev.id, '') AS active_revision_id
+SELECT c.name, c.description, COALESCE(rev.digest, '') AS active_revision_id
 FROM managed_data_collections c
-LEFT JOIN managed_data_environment_pointers ptr ON ptr.collection_id = c.id AND ptr.environment = ?
-LEFT JOIN managed_data_revisions rev ON rev.id = ptr.revision_id
+LEFT JOIN delivery_target_revisions target ON target.project_id = c.project_id AND target.environment = ?
+LEFT JOIN managed_data_serving_state_bindings binding
+  ON binding.project_id = target.project_id
+ AND binding.environment = target.environment
+ AND binding.generation_id = target.active_generation_id
+ AND binding.collection_id = c.id
+LEFT JOIN managed_data_revisions rev ON rev.id = binding.revision_id
 WHERE c.project_id = ? AND c.connection_id = ? AND c.status = 'active';

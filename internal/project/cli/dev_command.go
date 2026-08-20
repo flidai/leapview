@@ -23,6 +23,7 @@ type DevOptions struct {
 	Credentials       cliapi.Credentials
 	UploadConcurrency int
 	Once              bool
+	Bootstrap         bool
 	NoBrowser         bool
 	CandidateKey      string
 	SourceRevision    devloop.SourceRevision
@@ -112,6 +113,13 @@ func DevCommand(
 		false,
 		"synchronize one candidate and exit",
 	)
+	command.Flags().BoolVar(
+		&values.Bootstrap,
+		"bootstrap",
+		false,
+		"synchronize the initial serving candidate without resolving a delivery plan",
+	)
+	_ = command.Flags().MarkHidden("bootstrap")
 	command.Flags().BoolVar(
 		&values.NoBrowser,
 		"no-browser",
@@ -237,8 +245,12 @@ func RunDev(
 			return nil
 		}
 		candidate := update.Result.Candidate
+		previewOrigin := credentials.CanonicalOrigin
+		if strings.TrimSpace(previewOrigin) == "" {
+			previewOrigin = credentials.Target
+		}
 		if err := validateCandidatePreviewURL(
-			credentials.Target,
+			previewOrigin,
 			candidate.ID,
 			candidate.PreviewURL,
 		); err != nil {
@@ -254,12 +266,13 @@ func RunDev(
 			ProvenanceDigest:  candidate.ProvenanceDigest,
 		}
 		var planResult DeliveryPlanResult
-		if len(planOperations) > 0 && planOperations[0] != nil {
+		if !options.Bootstrap && len(planOperations) > 0 && planOperations[0] != nil {
 			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
 				ProjectPath: options.ProjectPath, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",
 				CandidateKey: options.CandidateKey, UploadConcurrency: options.UploadConcurrency,
-				CandidateID: candidate.ID, ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
+				CandidateID: candidate.ID, ResolveCandidatePlan: true,
+				ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
 				Environment: candidate.Environment,
 			})
 			if err != nil {
@@ -359,11 +372,11 @@ func RunDev(
 }
 
 func validateCandidatePreviewURL(
-	target,
+	canonicalOrigin,
 	candidateID,
 	previewURL string,
 ) error {
-	targetURL, err := url.Parse(strings.TrimSpace(target))
+	targetURL, err := url.Parse(strings.TrimSpace(canonicalOrigin))
 	if err != nil ||
 		(targetURL.Scheme != "http" && targetURL.Scheme != "https") ||
 		targetURL.Host == "" ||

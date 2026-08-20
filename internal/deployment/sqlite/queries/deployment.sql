@@ -180,7 +180,7 @@ WHERE owner_principal_id = ?
   AND status IN ('preparing', 'ready', 'failed');
 
 -- name: GetActiveProjectCandidateBaseGeneration :one
-SELECT id
+SELECT generation_id
 FROM project_deployments
 WHERE project_id = ?
   AND environment = ?
@@ -355,14 +355,14 @@ ORDER BY created_at ASC, id ASC LIMIT 1;
 
 -- name: CreateDeliveryPlan :exec
 INSERT INTO delivery_plans
- (id, target_id, project_id, environment, operation_kind, source_digest,
+ (id, target_id, project_id, environment, actor_id, source_owner_id, operation_kind, source_digest,
   base_generation_id, base_target_revision, execution_digest, execution_inputs_json,
   provenance_digest, governance_digest, provenance_json, governance_json, evidence_json, evidence_digest,
   plan_digest, status, expires_at, created_at)
-VALUES (?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULLIF(?, ''), ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetDeliveryPlan :one
-SELECT id,target_id,project_id,environment,operation_kind,source_digest,base_generation_id,
+SELECT id,target_id,project_id,environment,actor_id,source_owner_id,operation_kind,source_digest,base_generation_id,
        base_target_revision,execution_digest,execution_inputs_json,provenance_digest,
        governance_digest,plan_digest,status,expires_at,created_at,provenance_json,governance_json,evidence_json,evidence_digest
 FROM delivery_plans WHERE id = ?;
@@ -414,8 +414,13 @@ SET status=?, seal_id=NULLIF(?,''), candidate_id=NULLIF(?,''), failure_code=?, r
 -- name: GetDeliveryBuildAttempt :one
 SELECT id,plan_id,idempotency_key,plan_digest,source_digest,execution_digest,base_generation_id,base_catalog_digest,
        base_physical_pool_id,physical_pool_id,writer_lease_id,status,seal_id,candidate_id,
-       failure_code,revision,created_at,updated_at,terminal_at
+       qualified_snapshot_id,failure_code,revision,created_at,updated_at,terminal_at
 FROM delivery_build_attempts WHERE id = ?;
+
+-- name: BindDeliveryBuildSnapshot :execresult
+UPDATE delivery_build_attempts
+SET qualified_snapshot_id=?, revision=revision+1, updated_at=?
+WHERE id=? AND revision=? AND status='validating' AND qualified_snapshot_id=0;
 
 -- name: CreateDeliveryBuildArtifactBinding :exec
 INSERT INTO delivery_build_artifact_bindings

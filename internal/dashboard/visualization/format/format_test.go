@@ -48,3 +48,13 @@ func TestFormattingFailsClosed(t *testing.T) {
 		t.Fatal("expected unsupported currency to fail")
 	}
 }
+
+func TestDateOnlyTemporalValueCannotSatisfyTimeOnlyFormat(t *testing.T) {
+	t.Parallel()
+	_, err := Value("en-US", ir.VisualizationFormat{Value: &ir.TemporalVisualizationFormat{Kind: "temporal", TimeStyle: ptr("medium")}}, "2026-07-19")
+	if err == nil {
+		t.Fatal("expected date-only value with time-only format to fail")
+	}
+}
+
+func ptr[T any](value T) *T { return &value }

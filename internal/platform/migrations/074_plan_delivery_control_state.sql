@@ -70,6 +70,14 @@ CREATE TABLE delivery_plans (
   status TEXT NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'expired')),
   expires_at TEXT NOT NULL,
   created_at TEXT NOT NULL,
+  actor_id TEXT NOT NULL DEFAULT 'delivery'
+    CHECK (length(actor_id) BETWEEN 1 AND 128
+      AND actor_id = trim(actor_id)
+      AND actor_id NOT GLOB '*[^A-Za-z0-9._:/-]*'),
+  source_owner_id TEXT NOT NULL DEFAULT 'delivery'
+    CHECK (length(source_owner_id) BETWEEN 1 AND 128
+      AND source_owner_id = trim(source_owner_id)
+      AND source_owner_id NOT GLOB '*[^A-Za-z0-9._:/-]*'),
   UNIQUE(id, plan_digest),
   UNIQUE(id, plan_digest, source_digest, execution_digest),
   UNIQUE(target_id, plan_digest),
@@ -131,6 +139,7 @@ CREATE TABLE delivery_build_attempts (
   status TEXT NOT NULL CHECK (status IN ('building', 'normalizing', 'validating', 'sealing', 'sealed', 'failed', 'abandoned')),
   seal_id TEXT,
   candidate_id TEXT,
+  qualified_snapshot_id INTEGER NOT NULL DEFAULT 0 CHECK (qualified_snapshot_id >= 0),
   failure_code TEXT NOT NULL DEFAULT '',
   revision INTEGER NOT NULL DEFAULT 1 CHECK (revision > 0),
   created_at TEXT NOT NULL,
@@ -140,13 +149,19 @@ CREATE TABLE delivery_build_attempts (
     length(base_generation_id) BETWEEN 1 AND 128
     AND base_generation_id = trim(base_generation_id)
     AND base_generation_id NOT GLOB '*[^A-Za-z0-9._:/-]*')),
+  -- A base generation fences publication for both full refreshes and
+  -- retained-base builds. Retained catalog identity is optional, but when
+  -- present its digest/pool pair remains all-or-nothing and exact to the
+  -- build's physical pool.
   CHECK ((base_generation_id IS NULL AND base_catalog_digest IS NULL AND base_physical_pool_id IS NULL)
-    OR (base_generation_id IS NOT NULL AND base_catalog_digest IS NOT NULL AND base_physical_pool_id IS NOT NULL
-      AND length(base_catalog_digest) = 71
-      AND substr(base_catalog_digest, 1, 7) = 'sha256:'
-      AND substr(base_catalog_digest, 8) NOT GLOB '*[^0-9a-f]*'
-      AND base_physical_pool_id = trim(base_physical_pool_id)
-      AND base_physical_pool_id = physical_pool_id)),
+    OR (base_generation_id IS NOT NULL
+      AND ((base_catalog_digest IS NULL AND base_physical_pool_id IS NULL)
+        OR (base_catalog_digest IS NOT NULL AND base_physical_pool_id IS NOT NULL
+          AND length(base_catalog_digest) = 71
+          AND substr(base_catalog_digest, 1, 7) = 'sha256:'
+          AND substr(base_catalog_digest, 8) NOT GLOB '*[^0-9a-f]*'
+          AND base_physical_pool_id = trim(base_physical_pool_id)
+          AND base_physical_pool_id = physical_pool_id)))),
   FOREIGN KEY (writer_lease_id, id, physical_pool_id)
     REFERENCES delivery_writer_leases(id, attempt_id, physical_pool_id),
   FOREIGN KEY (plan_id, plan_digest)
