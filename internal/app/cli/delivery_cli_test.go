@@ -89,6 +89,25 @@ func TestDeliveryPlanResultPreservesReviewEvidence(t *testing.T) {
 	}
 }
 
+func TestDeliveryPlanInvocationsUseFreshOperationKeys(t *testing.T) {
+	transport := &deliveryPlanSourceHandoffTransport{}
+	operations := projectDeliveryPlanOperations{client: fixedTransportClient{transport: transport}}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	options := projectcli.DeliveryPlanOptions{
+		ProjectID: "project-1", TargetID: "target-1", Environment: "development",
+		SourceDigest: digest, SourceAttestationDigest: digest,
+	}
+	if _, err := operations.Create(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := operations.Create(t.Context(), options); err != nil {
+		t.Fatal(err)
+	}
+	if len(transport.planKeys) != 2 || transport.planKeys[0] == transport.planKeys[1] {
+		t.Fatalf("plan operation keys = %#v, want a new plan identity per invocation", transport.planKeys)
+	}
+}
+
 func stringPointer(value string) *string { return &value }
 
 func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T) {
@@ -112,6 +131,103 @@ func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T
 	if result.SourceAttestationDigest != attestation || transport.retainCalls != 1 || transport.planCalls != 1 || transport.createCalls != 1 {
 		t.Fatalf("result=%#v transport=%#v", result, transport)
 	}
+}
+
+func TestDeliveryPlanResolvesThePlanAlreadyBuiltByDev(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	transport := &deliveryPlanSourceHandoffTransport{
+		candidate: deploymentgen.DeliveryCandidateStatusResponse{
+			Id: "candidate-1", PlanId: "plan-candidate-1", PlanDigest: digest,
+			ProjectId: "project-1", TargetId: "target-1", Environment: "development",
+			SourceDigest: digest, Status: deploymentgen.DeliveryCandidateStatusReady,
+		},
+		preview: deploymentgen.DeliveryPlanPreviewResponse{
+			Id: "plan-candidate-1", PlanDigest: digest, ProjectId: "project-1",
+			TargetId: "target-1", Environment: "development", SourceDigest: digest,
+			Status: deploymentgen.DeliveryPlanStatusPlanned,
+		},
+	}
+	result, err := (projectDeliveryPlanOperations{
+		client: deliveryPlanSourceHandoffClient{transport: transport},
+	}).Create(t.Context(), projectcli.DeliveryPlanOptions{
+		ProjectID: "project-1", CandidateID: "candidate-1",
+		TargetID: "target-1", Environment: "development", SourceDigest: digest,
+		ResolveCandidatePlan: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.PlanID != "plan-candidate-1" || result.PlanDigest != digest ||
+		transport.candidateCalls != 1 || transport.previewCalls != 1 ||
+		transport.createCalls != 0 || transport.retainCalls != 0 {
+		t.Fatalf("result=%#v transport=%#v", result, transport)
+	}
+}
+
+func TestDeliveryBuildRotatesPoisonedOperationKeyAndRetries(t *testing.T) {
+	checkpoints := projectcli.NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
+	if err := checkpoints.SavePlan(projectcli.DeliveryPlanCheckpoint{
+		PlanID: "plan-1", ProjectID: "project-1", TargetOrigin: "https://target.example",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	transport := &deliveryBuildRetryTransport{}
+	result, err := (projectDeliveryBuildOperations{
+		client: fixedTransportClient{transport: transport}, checkpoints: checkpoints,
+	}).Build(t.Context(), projectcli.DeliveryBuildOptions{PlanID: "plan-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Status != "sealed" || result.CandidateID != "candidate-2" {
+		t.Fatalf("result = %#v", result)
+	}
+	if len(transport.keys) != 2 || transport.keys[0] == transport.keys[1] {
+		t.Fatalf("build idempotency keys = %#v, want one rotated retry", transport.keys)
+	}
+	replay, err := (projectDeliveryBuildOperations{
+		client: fixedTransportClient{transport: transport}, checkpoints: checkpoints,
+	}).Build(t.Context(), projectcli.DeliveryBuildOptions{PlanID: "plan-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.BuildID != result.BuildID || len(transport.keys) != 3 || transport.keys[2] != transport.keys[1] {
+		t.Fatalf("replay = %#v keys = %#v, want persisted sealed operation", replay, transport.keys)
+	}
+	checkpoint, err := checkpoints.LoadPlan("plan-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.BuildIdempotencyKey != transport.keys[1] {
+		t.Fatalf("checkpoint build key = %q, want %q", checkpoint.BuildIdempotencyKey, transport.keys[1])
+	}
+}
+
+type deliveryBuildRetryTransport struct {
+	keys []string
+}
+
+func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
+	if request.OperationID != deploymentgen.GenOperationBuildDeliveryPlan {
+		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)
+	}
+	transport.keys = append(transport.keys, request.Headers.Get("Idempotency-Key"))
+	if len(transport.keys) == 1 {
+		return apigenclient.Response{}, generatedProblemErrorForTest(http.StatusConflict, "DELIVERY_IDEMPOTENCY_DRIFT")
+	}
+	candidateID, sealID := "candidate-2", "seal-2"
+	response := deploymentgen.DeliveryBuildStatusResponse{
+		Id: "attempt-2", PlanId: "plan-1", PlanDigest: "sha256:plan", SourceDigest: "sha256:source",
+		ExecutionDigest: "sha256:execution", PhysicalPoolId: "pool-1", WriterLeaseId: "writer-2",
+		CandidateId: &candidateID, SealId: &sealID, Status: deploymentgen.DeliveryBuildStatusSealed, Revision: 2,
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return apigenclient.Response{}, err
+	}
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return apigenclient.Response{}, err
+	}
+	return apigenclient.Response{StatusCode: http.StatusOK, Headers: http.Header{}, ContentType: "application/json"}, nil
 }
 
 func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
@@ -169,10 +285,15 @@ func (client deliveryPlanSourceHandoffClient) Transport(context.Context, cliapi.
 }
 
 type deliveryPlanSourceHandoffTransport struct {
-	retained    deploymentgen.CandidateSourceSnapshotResponse
-	planCalls   int
-	retainCalls int
-	createCalls int
+	retained       deploymentgen.CandidateSourceSnapshotResponse
+	candidate      deploymentgen.DeliveryCandidateStatusResponse
+	preview        deploymentgen.DeliveryPlanPreviewResponse
+	planCalls      int
+	retainCalls    int
+	createCalls    int
+	candidateCalls int
+	previewCalls   int
+	planKeys       []string
 }
 
 func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
@@ -189,8 +310,15 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 		response = transport.retained
 	case deploymentgen.GenOperationCreateDeliveryPlan:
 		transport.createCalls++
+		transport.planKeys = append(transport.planKeys, request.Headers.Get("Idempotency-Key"))
 		body := request.Body.(deploymentgen.DeliveryPlanRequest)
 		response = deploymentgen.DeliveryPlanPreviewResponse{Id: "plan-1", ProjectId: request.PathParams["project"], TargetId: body.TargetId, Environment: "development", SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest, Status: deploymentgen.DeliveryPlanStatusPlanned}
+	case deploymentgen.GenOperationGetDeliveryCandidateStatus:
+		transport.candidateCalls++
+		response = transport.candidate
+	case deploymentgen.GenOperationGetDeliveryPlanPreview:
+		transport.previewCalls++
+		response = transport.preview
 	default:
 		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)
 	}

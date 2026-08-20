@@ -127,7 +127,10 @@ jobs:
       github.event.pull_request.stack == null ||
       github.event.pull_request.stack.position == github.event.pull_request.stack.size
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    # Browser system dependencies come from Ubuntu mirrors and can consume
+    # most of the old budget before validation starts. Keep the lane bounded
+    # while leaving room for transient mirror retries.
+    timeout-minutes: 30
     permissions:
       contents: read
 

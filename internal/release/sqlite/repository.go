@@ -119,10 +119,27 @@ func (r *Repository) ProvenanceForServingState(ctx context.Context, identity pro
 	}
 	raw, err := r.queries.GetReadyReleaseProvenanceByGeneration(ctx, releasedb.GetReadyReleaseProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if errors.Is(err, sql.ErrNoRows) {
-		return release.Provenance{}, release.ErrNotFound
+		// Canonical sealed delivery retains immutable provenance with the
+		// candidate before publication; it does not create a second legacy API
+		// release row. Resolve that exact serving identity after the legacy read
+		// misses. More than one row is an identity conflict, never a reason to
+		// pick the newest provenance silently.
+		matches, candidateErr := r.queries.GetCandidateProvenanceByGeneration(ctx, releasedb.GetCandidateProvenanceByGenerationParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
+		if candidateErr != nil {
+			return release.Provenance{}, candidateErr
+		}
+		if len(matches) == 0 {
+			return release.Provenance{}, release.ErrNotFound
+		}
+		if len(matches) != 1 {
+			return release.Provenance{}, release.ErrConflict
+		}
+		raw = matches[0]
 	}
 	if err != nil {
-		return release.Provenance{}, err
+		if !errors.Is(err, sql.ErrNoRows) {
+			return release.Provenance{}, err
+		}
 	}
 	var p release.Provenance
 	if err := json.Unmarshal([]byte(raw), &p); err != nil {

@@ -86,8 +86,24 @@ type PublicationUnitOfWork interface {
 	Publish(context.Context, projectgraph.ServingIdentity, servingstate.ID, refreshschedule.DataVersion) error
 }
 
+type CanonicalPublicationUnitOfWork interface {
+	CompleteCanonicalRefresh(context.Context, JobRecord, CanonicalRefreshResult) error
+}
+
+// CanonicalRefreshResult is the exact committed delivery identity produced by
+// a refresh restatement. The old job identity remains the workflow/lease
+// fence; this result identifies the new immutable serving generation whose
+// data-version metadata must be committed with workflow completion.
+type CanonicalRefreshResult struct {
+	PlanID         string
+	ServingStateID string
+	SnapshotID     int64
+}
+
 type Service struct {
 	ServingStates            ServingStateRepository
+	ResolveActive            func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
+	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
 	Runs                     WorkflowRepository
 	Artifacts                ArtifactLoader
 	Materializer             Materializer
@@ -152,7 +168,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule && input.TriggerType != TriggerRetry {
 		return QueueAssetResult{}, fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
 	}
-	active, err := s.Active(ctx, input.Identity.ProjectID, servingstate.Environment(input.Identity.Environment))
+	active, err := s.activeForIdentity(ctx, input.Identity)
 	if err != nil {
 		return QueueAssetResult{}, err
 	}
@@ -174,9 +190,12 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err != nil {
 		return QueueAssetResult{}, err
 	}
-	candidate, err := s.CreateRefreshCandidate(ctx, RefreshCandidateInput{Identity: input.Identity, CreatedBy: input.PrincipalID, Active: active, ArtifactGraph: loaded.Graph, ManagedDataRevisions: loaded.ManagedDataRevisions})
-	if err != nil {
-		return QueueAssetResult{}, err
+	candidate := active
+	if s.CanonicalExecutor == nil {
+		candidate, err = s.CreateRefreshCandidate(ctx, RefreshCandidateInput{Identity: input.Identity, CreatedBy: input.PrincipalID, Active: active, ArtifactGraph: loaded.Graph, ManagedDataRevisions: loaded.ManagedDataRevisions})
+		if err != nil {
+			return QueueAssetResult{}, err
+		}
 	}
 	payload, _ := json.Marshal(map[string]string{"pipelineId": input.PipelineID.String(), "semanticModel": pipeline.SemanticModelID.String()})
 	rootInput := RunInput{Identity: mustStateIdentity(candidate.State), SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
@@ -193,7 +212,9 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		root, err = s.Runs.CreateRun(ctx, rootInput)
 	}
 	if err != nil {
-		_ = s.MarkFailed(ctx, candidate, err)
+		if s.CanonicalExecutor == nil {
+			_ = s.MarkFailed(ctx, candidate, err)
+		}
 		return QueueAssetResult{}, err
 	}
 	children := make([]RunRecord, 0, len(plan.DependencyTables))
@@ -205,13 +226,33 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
 		if childErr != nil {
 			_, _ = s.Runs.MarkRunFailed(ctx, root.Identity, root.ID, childErr.Error())
-			_ = s.MarkFailed(ctx, candidate, childErr)
+			if s.CanonicalExecutor == nil {
+				_ = s.MarkFailed(ctx, candidate, childErr)
+			}
 			return QueueAssetResult{}, childErr
 		}
 		children = append(children, child)
 	}
 	s.publish(ctx, root.Identity, root.TargetType, root.TargetID)
 	return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: candidate.State.ID}, nil
+}
+
+func (s Service) activeForIdentity(ctx context.Context, identity projectgraph.ServingIdentity) (ServingState, error) {
+	if s.ResolveActive == nil {
+		return s.Active(ctx, identity.ProjectID, servingstate.Environment(identity.Environment))
+	}
+	active, err := s.ResolveActive(ctx, identity)
+	if err != nil {
+		return ServingState{}, err
+	}
+	resolved, err := stateIdentity(active.State)
+	if err != nil {
+		return ServingState{}, err
+	}
+	if resolved != identity || active.Artifact.ServingStateID != active.State.ID {
+		return ServingState{}, fmt.Errorf("resolved refresh base does not match active serving identity")
+	}
+	return active, nil
 }
 
 func mustStateIdentity(state servingstate.State) projectgraph.ServingIdentity {
@@ -223,6 +264,31 @@ func mustStateIdentity(state servingstate.State) projectgraph.ServingIdentity {
 }
 
 func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
+	if s.CanonicalExecutor != nil {
+		if s.Runs == nil {
+			return fmt.Errorf("refresh run repository is required")
+		}
+		if err := job.Validate(); err != nil {
+			return err
+		}
+		if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
+			return err
+		}
+		result, err := s.CanonicalExecutor(ctx, job)
+		if err != nil {
+			_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
+			return err
+		}
+		publication, ok := s.Publication.(CanonicalPublicationUnitOfWork)
+		if !ok {
+			return fmt.Errorf("canonical refresh publication unit of work is required")
+		}
+		if err := publication.CompleteCanonicalRefresh(ctx, job, result); err != nil {
+			return err
+		}
+		s.publish(ctx, job.Identity, job.TargetType, job.TargetID)
+		return nil
+	}
 	if s.ServingStates == nil || s.Runs == nil || s.Artifacts == nil || s.Materializer == nil {
 		return fmt.Errorf("serving state, refresh run, artifact loader, and materializer are required")
 	}

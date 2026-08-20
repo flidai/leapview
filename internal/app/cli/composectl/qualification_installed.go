@@ -291,7 +291,10 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := c.Start(ctx); err != nil {
+	if err := c.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+		return err
+	}
+	if err := c.startQualificationBootstrap(ctx); err != nil {
 		return err
 	}
 	var credentialsOutput bytes.Buffer
@@ -359,6 +362,9 @@ func (c *Controller) QualifyInstalledCandidate(
 		SourceRevision:  sourceRevision,
 	}); err != nil {
 		return err
+	}
+	if err := c.waitQualificationReadiness(ctx); err != nil {
+		return fmt.Errorf("installed candidate did not become ready after sealed publication: %w", err)
 	}
 	if err := readQualificationJSON(credentialsPath, &credentials); err != nil {
 		return err
@@ -546,6 +552,130 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) bootstrapQualificationLocalPhysicalPool(ctx context.Context) error {
+	output, err := c.qualificationCompose(
+		ctx,
+		c.root,
+		"run", "--rm", "--no-deps", "leapview",
+		"admin", "delivery", "pool", "qualify", "--apply",
+	)
+	if err != nil {
+		return fmt.Errorf("bootstrap installed-candidate physical pool: %w", err)
+	}
+	poolID, compatibilityDigest, err := parseQualificationPoolBootstrapResult(output)
+	if err != nil {
+		return err
+	}
+	for _, entry := range []struct {
+		key   string
+		value string
+	}{
+		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID", value: poolID},
+		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST", value: compatibilityDigest},
+	} {
+		if err := appendOrReplaceQualificationEnv(c.path(appEnvName), entry.key, entry.value); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func parseQualificationPoolBootstrapResult(output []byte) (string, string, error) {
+	values := make(map[string]string)
+	for _, line := range strings.Split(string(output), "\n") {
+		key, value, ok := strings.Cut(strings.TrimSpace(line), ": ")
+		if ok {
+			values[key] = strings.TrimSpace(value)
+		}
+	}
+	poolID := values["pool_id"]
+	compatibilityDigest := values["compatibility_digest"]
+	validDigest := func(value string) bool {
+		raw := strings.TrimPrefix(value, "sha256:")
+		if len(raw) != 64 || raw == value {
+			return false
+		}
+		_, err := hex.DecodeString(raw)
+		return err == nil
+	}
+	if values["applied"] != "true" || !validDigest(poolID) || !validDigest(compatibilityDigest) {
+		return "", "", fmt.Errorf("qualification physical-pool bootstrap returned incomplete durable evidence")
+	}
+	return poolID, compatibilityDigest, nil
+}
+
+func (c *Controller) startQualificationBootstrap(ctx context.Context) error {
+	if _, err := c.qualificationCompose(ctx, c.root, "up", "-d", "leapview"); err != nil {
+		return err
+	}
+	if err := c.waitQualificationBootstrapLiveness(ctx); err != nil {
+		return err
+	}
+	if _, err := c.qualificationCompose(ctx, c.root, "up", "-d", "--no-deps", "caddy"); err != nil {
+		return fmt.Errorf("start qualification HTTPS proxy during target bootstrap: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) waitQualificationBootstrapLiveness(ctx context.Context) error {
+	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	if err != nil {
+		return err
+	}
+	containerID := strings.TrimSpace(string(containerOutput))
+	if containerID == "" {
+		return fmt.Errorf("qualification application container is missing")
+	}
+	healthCtx, cancel := qualificationContext(ctx, 2*time.Minute)
+	defer cancel()
+	err = qualificationWait(healthCtx, time.Second, func(waitCtx context.Context) (bool, error) {
+		_, checkErr := c.qualificationDocker(
+			waitCtx,
+			nil,
+			"exec", containerID,
+			"leapview", "healthcheck",
+			"--url", "http://127.0.0.1:8080/healthz",
+			"--timeout", "5s",
+		)
+		return checkErr == nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for qualification bootstrap liveness: %w", err)
+	}
+	return nil
+}
+
+func (c *Controller) waitQualificationReadiness(ctx context.Context) error {
+	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	if err != nil {
+		return err
+	}
+	containerID := strings.TrimSpace(string(containerOutput))
+	if containerID == "" {
+		return fmt.Errorf("qualification application container is missing")
+	}
+	readyCtx, cancel := qualificationContext(ctx, 3*time.Minute)
+	defer cancel()
+	err = qualificationWait(readyCtx, time.Second, func(waitCtx context.Context) (bool, error) {
+		_, checkErr := c.qualificationDocker(
+			waitCtx,
+			nil,
+			"exec", containerID,
+			"leapview", "healthcheck",
+			"--url", "http://127.0.0.1:8080/readyz",
+			"--timeout", "5s",
+		)
+		return checkErr == nil, nil
+	})
+	if err != nil {
+		return fmt.Errorf("wait for qualification readiness: %w", err)
+	}
+	if err := c.waitQualificationContainerValue(ctx, containerID, "{{.State.Health.Status}}", "healthy", time.Minute); err != nil {
+		return fmt.Errorf("wait for Docker qualification health: %w", err)
+	}
+	return nil
 }
 
 func verifyQualificationChecksums(root string) error {
@@ -1101,9 +1231,6 @@ func (c *Controller) restoreQualificationBackup(
 			return "", err
 		}
 	}
-	if err := restoreController.Start(ctx); err != nil {
-		return "", err
-	}
 	restoreController.stdout = io.Discard
 	if err := restoreController.FirstLogin(); err != nil {
 		return "", err
@@ -1112,6 +1239,9 @@ func (c *Controller) restoreQualificationBackup(
 		ctx,
 		"backups/"+filepath.Base(backupPath),
 	); err != nil {
+		return "", err
+	}
+	if err := restoreController.Start(ctx); err != nil {
 		return "", err
 	}
 	if err := restoreController.Status(ctx); err != nil {

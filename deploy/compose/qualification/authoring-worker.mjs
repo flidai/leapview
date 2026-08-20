@@ -16,7 +16,7 @@ async function requireJSON(response, description) {
 }
 
 async function signIn(page, email, temporaryPassword, password) {
-  await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(email)
   await page.getByLabel('Password').fill(temporaryPassword)
   await page.getByLabel('Password').press('Enter')
@@ -88,6 +88,56 @@ const methods = {
     )
   },
 
+  async createReviewer(params) {
+    await administratorPage.goto(new URL('/admin/principals', baseURL).href, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    })
+    // The admin page is fed by a live Datastar stream. During the initial
+    // principals refresh the toolbar can be re-rendered while Playwright is
+    // checking actionability, which makes a normal click wait for the button
+    // to be geometrically stable until its timeout. The button is already
+    // present and visible here; force the semantic click so the qualification
+    // does not depend on an incidental render frame.
+    await administratorPage
+      .getByRole('button', { name: 'Create local user', exact: true })
+      .click({ force: true })
+    await administratorPage.getByLabel('Email', { exact: true }).fill(params.email)
+    await administratorPage.getByLabel('Display name', { exact: true }).fill(params.displayName)
+    await administratorPage
+      .getByRole('button', { name: 'Create user', exact: true })
+      .click({ force: true })
+    const temporaryPassword = await administratorPage.locator('code.password-value').textContent({ timeout: 30_000 })
+    if (!temporaryPassword?.trim()) {
+      throw new Error(`create reviewer ${params.email} returned no temporary password`)
+    }
+    return {
+      principal: { id: params.principalId },
+      temporaryPassword: temporaryPassword.trim(),
+    }
+  },
+
+  async createAdministratorAPIToken(params) {
+    await administratorPage.goto(new URL('/admin/api-tokens', baseURL).href, {
+      waitUntil: 'domcontentloaded',
+      timeout: 60_000,
+    })
+    await administratorPage.locator('#token-name').fill(params.name)
+    await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
+		await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
+		for (const capability of params.capabilities) {
+			await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check({ force: true })
+		}
+    // Capability changes re-render the picker. Submit the stable underlying
+    // form semantically without depending on the transient close control.
+    await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click({ force: true })
+    const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
+    if (!token?.trim()) {
+      throw new Error(`create administrator API token ${params.name} returned no token`)
+    }
+    return { token: token.trim() }
+  },
+
   async signInReviewer(params) {
     reviewerContext ??= await browser.newContext({ ignoreHTTPSErrors: true })
     reviewerPage ??= await reviewerContext.newPage()
@@ -134,10 +184,9 @@ const methods = {
       (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },
     )
-    const dashboardURL = new URL(
-      `${previewURL.pathname}/dashboards/sales-overview`,
-      baseURL,
-    )
+    // The candidate redirect is authoritative for the compiled resource ID
+    // and default page. Authored filenames are not serving-route identities.
+    const dashboardURL = new URL(administratorPage.url())
     await administratorPage.goto(
       dashboardURL.href,
       { waitUntil: 'domcontentloaded', timeout: 60_000 },

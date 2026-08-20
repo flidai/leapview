@@ -205,7 +205,10 @@ func (client capabilityAPIClient) validateAuthoringTarget(
 			capabilitiesEnvironment,
 		)
 	}
-	return cliapi.Credentials{Target: target, Token: token}, nil
+	return cliapi.Credentials{
+		Target: target, Token: token,
+		CanonicalOrigin: instance.CanonicalOrigin,
+	}, nil
 }
 
 func (client capabilityAPIClient) Environment(ctx context.Context, credentials cliapi.Credentials, asserted string) (string, error) {

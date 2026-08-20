@@ -3,6 +3,7 @@ package architecture
 import (
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -109,13 +110,15 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 	composition := string(compositionBytes)
 	for _, required := range []string{
 		"canonicalDeliveryRequired := true",
-		"RequireCanonicalDelivery: canonicalDeliveryRequired",
 		"NewSQLiteSealedFactory",
 		"LegacyServingPathEnabled: false",
 	} {
 		if !strings.Contains(composition, required) {
 			t.Errorf("production composition missing LEA-414 gate %q", required)
 		}
+	}
+	if !regexp.MustCompile(`RequireCanonicalDelivery:\s+canonicalDeliveryRequired`).MatchString(composition) {
+		t.Error("production composition does not require canonical delivery")
 	}
 
 	// No non-test production source may construct the snapshot-pinned factory.

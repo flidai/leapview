@@ -27,8 +27,9 @@ func (client *devCommandClient) Resolve(
 		return cliapi.Credentials{}, io.ErrUnexpectedEOF
 	}
 	client.resolved = cliapi.Credentials{
-		Target: "https://prod.example.com",
-		Token:  "ephemeral",
+		Target:          "http://localhost:8080",
+		Token:           "ephemeral",
+		CanonicalOrigin: "https://prod.example.com",
 	}
 	return client.resolved, nil
 }
@@ -172,6 +173,41 @@ func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
 		if command.Flags().Lookup(forbidden) != nil {
 			t.Errorf("dev command exposes alternate workflow --%s", forbidden)
 		}
+	}
+}
+
+type devPlanRecorder struct {
+	called bool
+}
+
+func (recorder *devPlanRecorder) Create(context.Context, DeliveryPlanOptions) (DeliveryPlanResult, error) {
+	recorder.called = true
+	return DeliveryPlanResult{}, errors.New("bootstrap must not resolve a delivery plan")
+}
+
+func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
+	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	checkpoints := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
+	plan := &devPlanRecorder{}
+	command := DevCommand(
+		t.Context(),
+		&devCommandClient{},
+		checkpoints,
+		&devRemoteFactory{},
+		nil,
+		plan,
+	)
+	command.SetOut(io.Discard)
+	command.SetErr(io.Discard)
+	command.SetArgs([]string{
+		"--once", "--no-browser", "--bootstrap",
+		"--project", projectPath, "--target", "prod",
+	})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if plan.called {
+		t.Fatal("bootstrap dev resolved a delivery plan")
 	}
 }
 

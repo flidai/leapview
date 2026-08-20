@@ -162,7 +162,7 @@ type SealedCoordinator interface {
 	Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error)
 }
 
-type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor) (sealedcontrol.PublishRequest, error)
+type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, bool) (sealedcontrol.PublishRequest, error)
 type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
@@ -336,7 +336,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.DeliveryMutations = &CanonicalDeliveryMutations{
 				Lifecycle: config.CanonicalDeliveryAdapter.Lifecycle,
 				Sources:   config.CandidateSources, Artifacts: config.CandidateArtifacts,
-				Plan: config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
+				Admission: config.CandidateAdmission,
+				Plan:      config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
 				Adapter: config.CanonicalDeliveryAdapter, Publish: config.CanonicalDeliveryAdapter.Publish, Rollback: config.CanonicalDeliveryAdapter.Rollback,
 			}
 		}

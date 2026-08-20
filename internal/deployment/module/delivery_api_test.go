@@ -500,6 +500,68 @@ func TestGeneratedDeliveryRouterFlushesSuccessfulPlanAfterEvidenceCompletion(t *
 	}
 }
 
+func TestGeneratedDeliveryRouterFlushesApprovalRequestAfterEvidenceCompletion(t *testing.T) {
+	projectID, err := projectgraph.NewResourceID("finance")
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 19, 10, 0, 0, 0, time.UTC)
+	requestDigest := "sha256:" + strings.Repeat("a", 64)
+	publication := deployment.DeliveryPublication{
+		ID: "publication-command", ProjectID: projectID, Environment: "prod", TargetID: "target-command",
+		RequestDigest: requestDigest, CandidateID: "candidate-command",
+	}
+	candidate := deployment.DeliveryCandidate{
+		ID: publication.CandidateID, ProjectID: projectID, Environment: "prod", TargetID: publication.TargetID,
+		ServingArtifactID: "artifact-command", Status: deployment.DeliveryCandidateReady,
+	}
+	reader := &deliveryEvidenceFixture{
+		deliveryReadFixture: deliveryReadFixture{candidate: candidate, publication: publication},
+		byRequest: map[string]deployment.DeliveryEvent{
+			strings.Join([]string{publication.TargetID, requestDigest, "approval_requested", "approval", "approval-command"}, "\x00"): {
+				TargetID: publication.TargetID, RequestDigest: requestDigest, EventKind: "approval_requested", ObjectKind: "approval", ObjectID: "approval-command", Outcome: "accepted",
+			},
+		},
+		byObject: map[string][]deployment.DeliveryEvent{},
+	}
+	repository := &canonicalApprovalRepository{}
+	approvals, err := deployment.NewApprovalService(repository, deployment.ApprovalServiceConfig{
+		Now: nowFunc(now), NewID: func() (string, error) { return "approval-command", nil }, Lifetime: time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := deliveryTestModule(reader, true)
+	m.approvals = approvals
+	m.currentApprovalActor = func(*http.Request) (deployment.ApprovalActor, bool) {
+		return deployment.ApprovalActor{PrincipalID: "operator", CredentialClass: deployment.CredentialClassHuman, CredentialID: "credential-command", CredentialExpiresAt: now.Add(time.Hour)}, true
+	}
+	dispatch := func(operationID string, w http.ResponseWriter, r *http.Request) bool {
+		if operationID != deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval().APIGenOperationID() {
+			return false
+		}
+		m.RequestDeliveryPublicationApproval(w, r, "finance", publication.ID, "approval-command-key")
+		return true
+	}
+	handler, err := apigenruntime.Build(generatedDeliveryAuthorizer{}, dispatch, deploymentgen.GetAPIGenCommandRuntimeContract)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/finance/delivery/publications/publication-command/approval-requests", nil)
+	request.Header.Set("Idempotency-Key", "approval-command-key")
+	route := chi.NewRouteContext()
+	route.URLParams.Add("project", "finance")
+	request = request.WithContext(context.WithValue(request.Context(), chi.RouteCtxKey, route))
+	recorder := httptest.NewRecorder()
+	handler.HandleAPIGen(deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval().APIGenOperationID(), recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "COMMAND_CONTRACT_NOT_EXECUTED") {
+		t.Fatalf("successful generated response was rejected: %s", recorder.Body.String())
+	}
+}
+
 type deliveryEvidenceFixture struct {
 	deliveryReadFixture
 	byRequest map[string]deployment.DeliveryEvent
@@ -539,10 +601,16 @@ func TestDeliveryCommandCompletionVerifiesTransactionalEvidence(t *testing.T) {
 	reader.byRequest[strings.Join([]string{targetID, requestDigest, "plan_created", "plan", "plan-command"}, "\x00")] = accepted
 	reader.byRequest[strings.Join([]string{targetID, requestDigest, "publish_requested", "publication", "publication-command"}, "\x00")] = accepted
 	reader.byRequest[strings.Join([]string{targetID, requestDigest, "rollback_requested", "rollback", "rollback-command"}, "\x00")] = accepted
+	reader.byRequest[strings.Join([]string{targetID, requestDigest, "approval_requested", "approval", "approval-command"}, "\x00")] = accepted
+	reader.byRequest[strings.Join([]string{targetID, requestDigest, "approval_granted", "approval", "approval-command"}, "\x00")] = accepted
+	reader.byRequest[strings.Join([]string{targetID, requestDigest, "approval_rejected", "approval", "approval-command"}, "\x00")] = accepted
+	reader.byRequest[strings.Join([]string{targetID, requestDigest, "approval_revoked", "approval", "approval-command"}, "\x00")] = accepted
 	m := &Module{deliveryReader: reader}
+	publication := deployment.DeliveryPublication{ID: "publication-command", TargetID: targetID, RequestDigest: requestDigest}
+	approval := deployment.Approval{ID: "approval-command"}
 	cases := []struct {
-		name, operation, action string
-		verify                  func(context.Context, deliveryEventReader) error
+		name, operation, action, approvalEventKind string
+		verify                                     func(context.Context, deliveryEventReader) error
 	}{
 		{name: "create", operation: deploymentgen.GenCommandOperationCreateDeliveryPlan().APIGenOperationID(), action: "delivery.plan.created", verify: func(ctx context.Context, events deliveryEventReader) error {
 			event, err := events.DeliveryEventByRequest(ctx, targetID, requestDigest, "plan_created", "plan", "plan-command")
@@ -568,6 +636,10 @@ func TestDeliveryCommandCompletionVerifiesTransactionalEvidence(t *testing.T) {
 			}
 			return acceptedDeliveryEvent(event, "rollbackDeliveryGeneration")
 		}},
+		{name: "approval-request", operation: deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval().APIGenOperationID(), action: "delivery.publication.approval_requested", approvalEventKind: "approval_requested"},
+		{name: "approval-grant", operation: deploymentgen.GenCommandOperationApproveDeliveryPublicationApproval().APIGenOperationID(), action: "delivery.publication.approved", approvalEventKind: "approval_granted"},
+		{name: "approval-deny", operation: deploymentgen.GenCommandOperationDenyDeliveryPublicationApproval().APIGenOperationID(), action: "delivery.publication.denied", approvalEventKind: "approval_rejected"},
+		{name: "approval-revoke", operation: deploymentgen.GenCommandOperationRevokeDeliveryPublicationApproval().APIGenOperationID(), action: "delivery.publication.approval_revoked", approvalEventKind: "approval_revoked"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -579,7 +651,12 @@ func TestDeliveryCommandCompletionVerifiesTransactionalEvidence(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := m.completeDeliveryCommand(ctx, test.operation, test.action, test.verify); err != nil {
+			if test.approvalEventKind != "" {
+				err = m.completeDeliveryApprovalCommand(ctx, test.operation, test.action, publication, approval, test.approvalEventKind)
+			} else {
+				err = m.completeDeliveryCommand(ctx, test.operation, test.action, test.verify)
+			}
+			if err != nil {
 				t.Fatal(err)
 			}
 			if !guard.Completed() {

@@ -22,13 +22,13 @@ func (r *Repository) CreateApproval(
 	if err := approval.Validate(); err != nil {
 		return deployment.Approval{}, err
 	}
-	parent, err := r.DeploymentByID(ctx, approval.DeploymentID)
+	parentProject, parentEnvironment, parentRequestDigest, err := r.approvalParentScope(ctx, approval.DeploymentID)
 	if err != nil {
 		return deployment.Approval{}, err
 	}
-	if parent.ServingIdentity.ProjectID.String() != approval.ProjectID ||
-		parent.ServingIdentity.Environment != approval.Environment ||
-		parent.RequestDigest != approval.RequestDigest {
+	if parentProject != approval.ProjectID ||
+		parentEnvironment != approval.Environment ||
+		parentRequestDigest != approval.RequestDigest {
 		return deployment.Approval{}, deployment.ErrApprovalScope
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
@@ -77,6 +77,21 @@ func (r *Repository) CreateApproval(
 		return deployment.Approval{}, err
 	}
 	return approval, nil
+}
+
+func (r *Repository) approvalParentScope(ctx context.Context, id string) (string, string, string, error) {
+	parent, err := r.DeploymentByID(ctx, id)
+	if err == nil {
+		return parent.ServingIdentity.ProjectID.String(), parent.ServingIdentity.Environment, parent.RequestDigest, nil
+	}
+	if !errors.Is(err, deployment.ErrNotFound) {
+		return "", "", "", err
+	}
+	publication, err := r.DeliveryPublicationByID(ctx, id)
+	if err != nil {
+		return "", "", "", err
+	}
+	return publication.ProjectID.String(), publication.Environment, publication.RequestDigest, nil
 }
 
 func (r *Repository) ApprovalByDeployment(
@@ -150,6 +165,10 @@ func (r *Repository) SaveApproval(
 		}
 	case deployment.ApprovalDenied:
 		if err := appendApprovalEventTx(ctx, tx, approval, "approval_rejected", approval.ApprovedBy, approval.ApprovedAt); err != nil {
+			return deployment.Approval{}, err
+		}
+	case deployment.ApprovalRevoked:
+		if err := appendApprovalEventTx(ctx, tx, approval, "approval_revoked", approval.RevokedBy, approval.RevokedAt); err != nil {
 			return deployment.Approval{}, err
 		}
 	}

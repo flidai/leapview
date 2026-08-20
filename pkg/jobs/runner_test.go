@@ -137,6 +137,34 @@ func TestRunnerRenewsLeaseDuringLongHandler(t *testing.T) {
 	}
 }
 
+func TestRunnerUsesHandlerLeaseTimeout(t *testing.T) {
+	repository := &leaseRecordingRunnerRepository{
+		candidate: Job{ID: "job-1", Kind: "slow", WorkloadClass: "control", PrincipalID: "test", EstimatedMemoryBytes: 1},
+		renewed:   make(chan struct{}),
+	}
+	runner, err := NewRunner(RunnerConfig{
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"control"}, LeaseTimeout: 5 * time.Millisecond,
+		Handlers: []Handler{HandlerFunc{JobKind: "slow", ExecutionLeaseTimeout: 50 * time.Millisecond, Run: func(ctx context.Context, _ Job) error {
+			select {
+			case <-repository.renewed:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.dispatchCandidate(t.Context(), "owner", "control", repository.candidate)
+	if repository.claimTimeout != 50*time.Millisecond {
+		t.Fatalf("claim timeout = %s, want 50ms", repository.claimTimeout)
+	}
+	if repository.renewTimeout != 50*time.Millisecond {
+		t.Fatalf("renew timeout = %s, want 50ms", repository.renewTimeout)
+	}
+}
+
 func TestRunnerLeavesClaimRecoverableWhenWorkerContextStops(t *testing.T) {
 	repository := &recordingRunnerRepository{}
 	started := make(chan struct{})
@@ -301,6 +329,31 @@ type recordingRunnerRepository struct {
 	failed    string
 	cancelled string
 	problem   []byte
+}
+
+type leaseRecordingRunnerRepository struct {
+	runnerTestRepository
+	candidate    Job
+	claimTimeout time.Duration
+	renewTimeout time.Duration
+	renewed      chan struct{}
+	renewOnce    sync.Once
+}
+
+func (r *leaseRecordingRunnerRepository) ClaimByID(_ context.Context, id, _ string, _ string, timeout time.Duration) (Job, bool, error) {
+	r.claimTimeout = timeout
+	if id != r.candidate.ID {
+		return Job{}, false, nil
+	}
+	return r.candidate, true, nil
+}
+
+func (r *leaseRecordingRunnerRepository) Renew(_ context.Context, _ string, _ Fence, timeout time.Duration) error {
+	r.renewOnce.Do(func() {
+		r.renewTimeout = timeout
+		close(r.renewed)
+	})
+	return nil
 }
 
 func (r *recordingRunnerRepository) Renew(context.Context, string, Fence, time.Duration) error {

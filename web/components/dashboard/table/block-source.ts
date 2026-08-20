@@ -84,6 +84,7 @@ export function normalizeTable(value: Partial<TableSignal>): TableSignal {
 // still allowing a new reset to discard stale metadata immediately.
 export function preserveCardinality(previous: TableSignal, incoming: TableSignal): TableSignal {
 	if (previous.resetVersion !== incoming.resetVersion || !sameSort(previous.sort, incoming.sort)) return incoming
+	if (incoming.cardinality.kind === 'exact') return incoming
 	const previousRank = cardinalityRank(previous.cardinality.kind)
 	const incomingRank = cardinalityRank(incoming.cardinality.kind)
 	if (previousRank < incomingRank) return incoming

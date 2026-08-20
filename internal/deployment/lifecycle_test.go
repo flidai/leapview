@@ -189,6 +189,62 @@ func (s *lifecycleBuildStore) MarkBuildFailedAndReleaseLease(_ context.Context, 
 	s.leaseReleased = true
 	return updated, nil
 }
+func (s *lifecycleBuildStore) BindDeliveryBuildSnapshot(_ context.Context, id string, expected, snapshotID int64, now time.Time) (DeliveryBuildAttempt, error) {
+	if id != s.attempt.ID || expected != s.attempt.Revision || snapshotID <= 0 {
+		return DeliveryBuildAttempt{}, ErrDeliveryConflict
+	}
+	if s.attempt.QualifiedSnapshotID != 0 && s.attempt.QualifiedSnapshotID != snapshotID {
+		return DeliveryBuildAttempt{}, ErrDeliveryConflict
+	}
+	if s.attempt.QualifiedSnapshotID == 0 && s.attempt.Status != DeliveryBuildValidating {
+		return DeliveryBuildAttempt{}, ErrDeliveryConflict
+	}
+	if s.attempt.QualifiedSnapshotID == 0 {
+		s.attempt.QualifiedSnapshotID = snapshotID
+		s.attempt.Revision++
+		s.attempt.UpdatedAt = now
+	}
+	return s.attempt, nil
+}
+
+func TestDeliveryLifecycleRunnerBindsSnapshotAfterValidatingTransition(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	store := &lifecycleBuildStore{plan: plan}
+	file, err := os.CreateTemp(t.TempDir(), "detached-*.ducklake")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := file.WriteString("runner-catalog"); err != nil {
+		t.Fatal(err)
+	}
+	if err := file.Close(); err != nil {
+		t.Fatal(err)
+	}
+	objects := &lifecycleObjectStore{}
+	seals := &lifecycleSealRepository{onDone: func(identity catalogseal.SealIdentity) {
+		store.attempt.Status = DeliveryBuildSealed
+		store.attempt.SealID = identity.SealID
+		store.attempt.CandidateID = identity.Candidate.ID
+		store.attempt.TerminalAt = now
+		store.attempt.Revision++
+		store.attempt.UpdatedAt = now
+	}}
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
+	result, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: "attempt-runner-snapshot", WriterLeaseID: "writer-runner-snapshot", CandidateID: "candidate-runner-snapshot", SealID: "seal-runner-snapshot",
+		ServingArtifactID: "artifact-runner-snapshot", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-runner-snapshot", PhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		Runner: func(context.Context, DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			return DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: file.Name()}, SnapshotID: 42, QualificationDigest: lifecycleDigest('4'), ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'), GateEvidence: lifecycleGateEvidence(t, "candidate-runner-snapshot", plan.SourceDigest, now), ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}, ObjectStore: objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.SnapshotID != 42 || result.Attempt.QualifiedSnapshotID != 42 {
+		t.Fatalf("runner snapshot result = %#v", result)
+	}
+}
 func (s *lifecycleBuildStore) RecordFailedBuildGateEvidence(_ context.Context, _ string, evidence *release.GateEvidence) error {
 	if evidence == nil {
 		return ErrDeliveryInvalid
@@ -514,9 +570,16 @@ func TestDeliveryLifecycleReconcilesPhasesToSeal(t *testing.T) {
 			if err := file.Close(); err != nil {
 				t.Fatal(err)
 			}
-			store := &lifecycleBuildStore{plan: plan, preexisting: DeliveryBuildAttempt{ID: "attempt-restart-success", PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: "pool-build", WriterLeaseID: "writer-build", Status: phase, Revision: 2, CreatedAt: now, UpdatedAt: now}}
+			qualifiedSnapshotID := int64(0)
+			if phase == DeliveryBuildSealing {
+				qualifiedSnapshotID = 42
+			}
+			store := &lifecycleBuildStore{plan: plan, preexisting: DeliveryBuildAttempt{ID: "attempt-restart-success", PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: "pool-build", WriterLeaseID: "writer-build", Status: phase, Revision: 2, QualifiedSnapshotID: qualifiedSnapshotID, CreatedAt: now, UpdatedAt: now}}
 			objects := &lifecycleObjectStore{}
 			seals := &lifecycleSealRepository{onDone: func(identity catalogseal.SealIdentity) {
+				if store.attempt.QualifiedSnapshotID != 42 {
+					t.Errorf("catalog sealed before snapshot binding: got %d, want 42", store.attempt.QualifiedSnapshotID)
+				}
 				store.attempt.Status = DeliveryBuildSealed
 				store.attempt.SealID = identity.SealID
 				store.attempt.CandidateID = identity.Candidate.ID
@@ -525,13 +588,13 @@ func TestDeliveryLifecycleReconcilesPhasesToSeal(t *testing.T) {
 				store.attempt.UpdatedAt = now
 			}}
 			closed := false
-			runner := lifecycleSuccessPhase{closed: &closed, output: DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: file.Name()}, QualificationDigest: lifecycleDigest('4'), ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'), GateEvidence: lifecycleGateEvidence(t, "candidate-restart-success", plan.SourceDigest, now), ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}, ObjectStore: objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{}}}
+			runner := lifecycleSuccessPhase{closed: &closed, output: DeliveryBuildOutput{Catalog: catalogseal.FileCatalog{Path: file.Name()}, SnapshotID: 42, QualificationDigest: lifecycleDigest('4'), ClosureDigest: lifecycleDigest('5'), CompatibilityDigest: lifecycleDigest('6'), GateEvidence: lifecycleGateEvidence(t, "candidate-restart-success", plan.SourceDigest, now), ResolvedInputs: DeliveryResolvedBuildInputs{PolicyDigest: plan.Governance.PolicyDigest}, ObjectStore: objects, SealRepository: seals, RemoteVerifier: lifecycleRemoteVerifier{}}}
 			lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
 			result, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{PlanID: plan.ID, AttemptID: "attempt-restart-success", WriterLeaseID: "writer-build", CandidateID: "candidate-restart-success", SealID: "seal-restart-success", ServingArtifactID: "artifact-build", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "state-build", PhysicalPoolID: "pool-build", OwnerID: "owner-build", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, PhasedRunner: runner})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if result.Attempt.Status != DeliveryBuildSealed || store.failed || store.leaseReleased || (phase != DeliveryBuildSealing && store.transitionCount == 0) {
+			if result.Attempt.Status != DeliveryBuildSealed || result.SnapshotID != 42 || store.attempt.QualifiedSnapshotID != 42 || store.failed || store.leaseReleased || (phase != DeliveryBuildSealing && store.transitionCount == 0) {
 				t.Fatalf("phase %s result=%#v failed=%v released=%v transitions=%d", phase, result.Attempt, store.failed, store.leaseReleased, store.transitionCount)
 			}
 		})

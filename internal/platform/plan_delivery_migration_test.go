@@ -268,6 +268,117 @@ func TestPlanDeliveryMigrationCreatesConstrainedControlState(t *testing.T) {
 	}
 }
 
+func TestDeliveryBuildAttemptBaseGenerationAllowsFullRefresh(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	store, err := Open(ctx, filepath.Join(t.TempDir(), "full-refresh.db"))
+	if err != nil {
+		t.Fatalf("open migrated store: %v", err)
+	}
+	defer store.Close()
+
+	sha := "sha256:" + strings.Repeat("a", 64)
+	baseCatalog := "sha256:" + strings.Repeat("b", 64)
+	poolID := sha
+	const created = "2026-08-17T00:00:00Z"
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_target_revisions (target_id, project_id, environment, created_at, updated_at)
+		VALUES ('target-full-refresh', 'project-full-refresh', 'prod', ?, ?)`, created, created); err != nil {
+		t.Fatalf("insert target revision: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO physical_pools (
+		  id, identity_digest, storage_location, storage_namespace,
+		  storage_implementation, object_naming_contract, isolation_boundary,
+		  retention_authority, retention_policy_json
+		) VALUES (?, ?, 's3://warehouse', 'full-refresh', 's3',
+		  'sha256-object-names-v1', 'target-full-refresh', 'retention-full-refresh', '{}')`, poolID, sha); err != nil {
+		t.Fatalf("insert physical pool: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_plans (
+		  id, target_id, project_id, environment, operation_kind, source_digest,
+		  base_target_revision, execution_digest, execution_inputs_json,
+		  provenance_json, governance_json, provenance_digest, governance_digest,
+		  plan_digest, expires_at, created_at
+		) VALUES ('plan-full-refresh', 'target-full-refresh', 'project-full-refresh', 'prod',
+		  'code_change', ?, 0, ?, '{}', '{}', '{}', ?, ?, ?, '2026-08-18T00:00:00Z', ?)`, sha, sha, sha, sha, sha, created); err != nil {
+		t.Fatalf("insert delivery plan: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_writer_leases (id, attempt_id, physical_pool_id, owner_id, epoch, expires_at, created_at)
+		VALUES ('writer-full-refresh', 'attempt-full-refresh', ?, 'worker-full-refresh', 1, '2026-08-18T00:00:00Z', ?)`, poolID, created); err != nil {
+		t.Fatalf("insert full-refresh writer lease: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_build_attempts (
+		  id, plan_id, plan_digest, source_digest, execution_digest,
+		  base_generation_id, physical_pool_id, writer_lease_id, status,
+		  revision, created_at, updated_at
+		) VALUES ('attempt-full-refresh', 'plan-full-refresh', ?, ?, ?,
+		          'generation-full-refresh', ?, 'writer-full-refresh', 'building', 1, ?, ?)`, sha, sha, sha, poolID, created, created); err != nil {
+		t.Fatalf("full-refresh attempt with an unfurnished base pair: %v", err)
+	}
+	var generation string
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT base_generation_id FROM delivery_build_attempts WHERE id = 'attempt-full-refresh'`).Scan(&generation); err != nil {
+		t.Fatalf("read full-refresh attempt: %v", err)
+	}
+	if generation != "generation-full-refresh" {
+		t.Fatalf("base generation = %q, want generation-full-refresh", generation)
+	}
+	var roots int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT root_revision FROM delivery_pool_fences WHERE physical_pool_id = ?`, poolID).Scan(&roots); err != nil {
+		t.Fatalf("read pool root revision after full-refresh attempt: %v", err)
+	}
+	if roots != 1 {
+		t.Fatalf("pool root revision = %d, want 1 (rebuilt attempt trigger must remain attached)", roots)
+	}
+
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_writer_leases (id, attempt_id, physical_pool_id, owner_id, epoch, expires_at, created_at)
+		VALUES ('writer-retained', 'attempt-retained', ?, 'worker-retained', 2, '2026-08-18T00:00:00Z', ?)`, poolID, created); err != nil {
+		t.Fatalf("insert retained writer lease: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `
+		INSERT INTO delivery_build_attempts (
+		  id, plan_id, plan_digest, source_digest, execution_digest,
+		  base_generation_id, base_catalog_digest, base_physical_pool_id,
+		  physical_pool_id, writer_lease_id, status, revision, created_at, updated_at
+		) VALUES ('attempt-retained', 'plan-full-refresh', ?, ?, ?,
+		          'generation-retained', ?, ?, ?, 'writer-retained', 'building', 1, ?, ?)`, sha, sha, sha, baseCatalog, poolID, poolID, created, created); err != nil {
+		t.Fatalf("valid retained-base attempt: %v", err)
+	}
+	for i, test := range []struct {
+		name     string
+		catalog  any
+		basePool any
+	}{
+		{name: "catalog without pool", catalog: baseCatalog},
+		{name: "pool without catalog", basePool: poolID},
+		{name: "malformed catalog", catalog: "not-a-digest", basePool: poolID},
+		{name: "base pool mismatch", catalog: baseCatalog, basePool: "sha256:" + strings.Repeat("c", 64)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			attemptID := "attempt-invalid-" + strings.ReplaceAll(test.name, " ", "-")
+			writerID := "writer-invalid-" + strings.ReplaceAll(test.name, " ", "-")
+			if _, err := store.SQLDB().ExecContext(ctx, `
+				INSERT INTO delivery_writer_leases (id, attempt_id, physical_pool_id, owner_id, epoch, expires_at, created_at)
+				VALUES (?, ?, ?, ?, ?, '2026-08-18T00:00:00Z', ?)`, writerID, attemptID, poolID, writerID, 10+i, created); err != nil {
+				t.Fatalf("insert invalid-case writer lease: %v", err)
+			}
+			_, err := store.SQLDB().ExecContext(ctx, `
+				INSERT INTO delivery_build_attempts (
+				  id, plan_id, plan_digest, source_digest, execution_digest,
+				  base_generation_id, base_catalog_digest, base_physical_pool_id,
+				  physical_pool_id, writer_lease_id, status, revision, created_at, updated_at
+				) VALUES (?, 'plan-full-refresh', ?, ?, ?, 'generation-invalid', ?, ?, ?, ?, 'building', 1, ?, ?)`, attemptID, sha, sha, sha, test.catalog, test.basePool, poolID, writerID, created, created)
+			if err == nil {
+				t.Fatalf("invalid retained-base pair unexpectedly succeeded")
+			}
+		})
+	}
+}
+
 func TestDeliveryGenerationServingStateIdentityRejectsScopedDuplicates(t *testing.T) {
 	ctx := context.Background()
 	store, err := Open(ctx, filepath.Join(t.TempDir(), "identity.db"))

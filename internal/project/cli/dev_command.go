@@ -23,6 +23,7 @@ type DevOptions struct {
 	Credentials       cliapi.Credentials
 	UploadConcurrency int
 	Once              bool
+	Bootstrap         bool
 	NoBrowser         bool
 	CandidateKey      string
 	SourceRevision    devloop.SourceRevision
@@ -113,6 +114,13 @@ func DevCommand(
 		"synchronize one candidate and exit",
 	)
 	command.Flags().BoolVar(
+		&values.Bootstrap,
+		"bootstrap",
+		false,
+		"synchronize the initial serving candidate without resolving a delivery plan",
+	)
+	_ = command.Flags().MarkHidden("bootstrap")
+	command.Flags().BoolVar(
 		&values.NoBrowser,
 		"no-browser",
 		false,
@@ -199,6 +207,7 @@ func RunDev(
 	if options.Format != "text" && options.Format != "json" {
 		return fmt.Errorf("dev format must be text or json")
 	}
+	targetSelector := strings.TrimSpace(options.Credentials.Target)
 	credentials, err := client.Resolve(ctx, options.Credentials)
 	if err != nil {
 		return err
@@ -237,8 +246,12 @@ func RunDev(
 			return nil
 		}
 		candidate := update.Result.Candidate
+		previewOrigin := credentials.CanonicalOrigin
+		if strings.TrimSpace(previewOrigin) == "" {
+			previewOrigin = credentials.Target
+		}
 		if err := validateCandidatePreviewURL(
-			credentials.Target,
+			previewOrigin,
 			candidate.ID,
 			candidate.PreviewURL,
 		); err != nil {
@@ -246,7 +259,8 @@ func RunDev(
 		}
 		checkpoint := CandidateCheckpoint{
 			ProjectPath: options.ProjectPath, TargetOrigin: credentials.Target,
-			TargetID: candidate.TargetID, Environment: candidate.Environment,
+			TargetSelector: targetSelector,
+			TargetID:       candidate.TargetID, Environment: candidate.Environment,
 			ProjectID: candidate.ProjectID.String(), CandidateID: candidate.ID,
 			CandidateKey:      options.CandidateKey,
 			CandidateRevision: candidate.Revision,
@@ -254,12 +268,13 @@ func RunDev(
 			ProvenanceDigest:  candidate.ProvenanceDigest,
 		}
 		var planResult DeliveryPlanResult
-		if len(planOperations) > 0 && planOperations[0] != nil {
+		if !options.Bootstrap && len(planOperations) > 0 && planOperations[0] != nil {
 			planResult, err = planOperations[0].Create(ctx, DeliveryPlanOptions{
 				ProjectPath: options.ProjectPath, Credentials: credentials,
 				TargetID: candidate.TargetID, Operation: "code_change",
 				CandidateKey: options.CandidateKey, UploadConcurrency: options.UploadConcurrency,
-				CandidateID: candidate.ID, ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
+				CandidateID: candidate.ID, ResolveCandidatePlan: true,
+				ProjectID: candidate.ProjectID.String(), SourceDigest: candidate.ArtifactDigest,
 				Environment: candidate.Environment,
 			})
 			if err != nil {
@@ -273,7 +288,8 @@ func RunDev(
 		}
 		if err := checkpoints.SaveObjectIdentity("candidate", candidate.ID, DeliveryObjectCheckpoint{
 			ProjectID: candidate.ProjectID.String(), TargetOrigin: credentials.Target,
-			TargetID: candidate.TargetID, Environment: candidate.Environment,
+			TargetSelector: targetSelector,
+			TargetID:       candidate.TargetID, Environment: candidate.Environment,
 		}); err != nil {
 			return fmt.Errorf("persist candidate identity: %w", err)
 		}
@@ -359,11 +375,11 @@ func RunDev(
 }
 
 func validateCandidatePreviewURL(
-	target,
+	canonicalOrigin,
 	candidateID,
 	previewURL string,
 ) error {
-	targetURL, err := url.Parse(strings.TrimSpace(target))
+	targetURL, err := url.Parse(strings.TrimSpace(canonicalOrigin))
 	if err != nil ||
 		(targetURL.Scheme != "http" && targetURL.Scheme != "https") ||
 		targetURL.Host == "" ||

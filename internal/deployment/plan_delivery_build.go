@@ -44,6 +44,7 @@ type DeliveryBuildAttempt struct {
 	Status                DeliveryBuildAttemptStatus `json:"status"`
 	SealID                string                     `json:"sealId,omitempty"`
 	CandidateID           string                     `json:"candidateId,omitempty"`
+	QualifiedSnapshotID   int64                      `json:"qualifiedSnapshotId,omitempty"`
 	FailureCode           string                     `json:"failureCode,omitempty"`
 	CreatedAt             time.Time                  `json:"createdAt"`
 	UpdatedAt             time.Time                  `json:"updatedAt"`
@@ -82,20 +83,32 @@ func (attempt DeliveryBuildAttempt) Validate() error {
 		if err := ValidateDeliveryID(attempt.BaseGenerationID); err != nil {
 			return fmt.Errorf("base generation: %w", err)
 		}
-		if err := ValidateDeliveryDigest(attempt.BaseCatalogDigest); err != nil {
-			return fmt.Errorf("base catalog: %w", err)
+		// BaseGenerationID is always the publication fence captured by the
+		// plan. The catalog/pool pair is optional: a build may fence against
+		// the active generation while deliberately doing a full refresh rather
+		// than retaining that generation's sealed catalog.
+		if (attempt.BaseCatalogDigest == "") != (attempt.BasePhysicalPoolID == "") {
+			return fmt.Errorf("%w: base catalog and base physical pool must be supplied together", ErrDeliveryInvalid)
 		}
-		if err := ValidateDeliveryID(attempt.BasePhysicalPoolID); err != nil {
-			return fmt.Errorf("base physical pool: %w", err)
-		}
-		if attempt.BasePhysicalPoolID != attempt.PhysicalPoolID {
-			return fmt.Errorf("%w: base catalog reuse cannot cross physical pools", ErrDeliveryConflict)
+		if attempt.BaseCatalogDigest != "" {
+			if err := ValidateDeliveryDigest(attempt.BaseCatalogDigest); err != nil {
+				return fmt.Errorf("base catalog: %w", err)
+			}
+			if err := ValidateDeliveryID(attempt.BasePhysicalPoolID); err != nil {
+				return fmt.Errorf("base physical pool: %w", err)
+			}
+			if attempt.BasePhysicalPoolID != attempt.PhysicalPoolID {
+				return fmt.Errorf("%w: base catalog reuse cannot cross physical pools", ErrDeliveryConflict)
+			}
 		}
 	} else if attempt.BaseCatalogDigest != "" || attempt.BasePhysicalPoolID != "" {
 		return fmt.Errorf("%w: base catalog requires base generation", ErrDeliveryInvalid)
 	}
 	if attempt.Revision < 1 {
 		return fmt.Errorf("%w: build revision must be positive", ErrDeliveryInvalid)
+	}
+	if attempt.QualifiedSnapshotID < 0 {
+		return fmt.Errorf("%w: qualified snapshot must not be negative", ErrDeliveryInvalid)
 	}
 	if err := validateDeliveryTime("build created at", attempt.CreatedAt, true); err != nil {
 		return err

@@ -211,6 +211,10 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 			t.Errorf("five-minute evaluation dashboard missing deterministic state option %q", required)
 		}
 	}
+	ordersModel := read(t, filepath.Join(root, "evaluation", "project", "models", "orders.yaml"))
+	if !strings.Contains(ordersModel, "try_cast(revenue AS DECIMAL(18, 2)) AS revenue") {
+		t.Fatal("five-minute evaluation revenue transform must produce the authored Decimal physical type")
+	}
 	for _, contract := range []struct {
 		name       string
 		imageRun   string
@@ -366,9 +370,13 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	workflow := read(t, filepath.Join(root, ".github", "workflows", "installed-candidate.yml"))
 	installed := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_installed.go"))
+	imageQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image.go"))
 	recovery := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_recovery.go"))
+	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
+	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
+	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
 	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
@@ -390,6 +398,26 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
 	}
+	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", `"pool", "qualify"`, "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
+		if !strings.Contains(installed, required) {
+			t.Errorf("installed qualification missing sealed-delivery bootstrap contract %q", required)
+		}
+	}
+	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
+		if !strings.Contains(imageQualification, required) {
+			t.Errorf("production-image qualification missing sealed-delivery bootstrap contract %q", required)
+		}
+	}
+	restoreStart := strings.LastIndex(installed, "restoreController.Start(ctx)")
+	restoreApply := strings.LastIndex(installed, "restoreController.Restore(")
+	if restoreStart < 0 || restoreApply < 0 || restoreStart < restoreApply {
+		t.Error("isolated restore must apply admitted pool and target state before readiness-gated start")
+	}
+	for _, required := range []string{"missing_physical_pool_admission", "target_revision_missing", `"unhealthy"`} {
+		if !strings.Contains(runtimeQualification, required) {
+			t.Errorf("bare production-image smoke missing fail-closed startup assertion %q", required)
+		}
+	}
 	for _, required := range []string{"ManagedUpload", "ReleaseFinalization", "DeploymentActivation", "RefreshRecovery", "QueryStreamReconnect", "BackupInterruption", "RestorePreflight", "BoundedDisk", "waitForQualificationEvents", "/events?limit=100"} {
 		if !strings.Contains(recovery, required) {
 			t.Errorf("typed recovery controller missing %q", required)
@@ -407,6 +435,37 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if strings.Contains(performance, "setInterval(") || strings.Count(performance, "metricSamples.push(await metricSnapshot())") < 7 || !strings.Contains(performance, "{ mode: 0o644 }") {
 		t.Error("performance evidence must be bounded and artifact-readable")
+	}
+	for name, script := range map[string]string{
+		"authoring":   authoringWorker,
+		"browser":     browser,
+		"performance": performance,
+	} {
+		if !strings.Contains(script, "new URL('/login', baseURL).href") {
+			t.Errorf("%s qualification worker must navigate to the explicit public login route", name)
+		}
+	}
+	for _, required := range []string{
+		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
+		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+	} {
+		if !strings.Contains(browser, required) {
+			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
+		}
+	}
+	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
+		t.Error("browser qualification must assert the table cell accessibility label")
+	}
+	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
+		t.Error("performance qualification must select only the sortable Order header")
+	}
+	if strings.Contains(browser, "encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID") ||
+		!strings.Contains(browser, "Authorization: `Bearer ${credentials.auditToken}`") {
+		t.Error("browser qualification must preserve canonical project IDs and use the dedicated audit credential")
+	}
+	if strings.Contains(performance, "encodeURIComponent(projectID)") || strings.Contains(performance, "encodeURIComponent(semanticModelID)") {
+		t.Error("performance qualification must preserve canonical resource IDs in route paths")
 	}
 	for _, required := range []string{
 		"validateQualificationPerformancePolicy",
@@ -462,7 +521,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
-	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "ApproveDeployment", "ActivateDeployment", "dbus-run-session", "PLATFORM_ADMIN", "PROJECT_ADMIN", "capabilities"} {
+	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
 		}
@@ -475,10 +534,16 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(authoring, "MANAGE_PLATFORM") {
 		t.Error("qualification reviewer must not receive a platform grant")
 	}
-	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows"} {
+	if strings.Contains(authoring, "PLATFORM_ADMIN") {
+		t.Error("authoring credentials must not claim the durable platform-admin role")
+	}
+	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows", "check({ force: true })"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker missing %q", required)
 		}
+	}
+	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
+		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
 	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
 		if !strings.Contains(clientImage, required) {

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -46,17 +47,17 @@ func (operations projectPublishOperations) Publish(
 		return err
 	}
 	checkpoint := options.Checkpoint
+	idempotencyKey, err := publicationAttemptIdempotencyKey(checkpoint)
+	if err != nil {
+		return err
+	}
 	response, err := deploymentgen.NewGenClient(transport).PublishDeliveryCandidate(
 		ctx,
 		deploymentgen.GenPublishDeliveryCandidateClientRequest{
 			Project:   checkpoint.ProjectID,
 			Candidate: checkpoint.CandidateID,
 			Headers: deploymentgen.GenPublishDeliveryCandidateClientHeaders{
-				IdempotencyKey: deploymentIdempotencyKey(
-					"delivery-publish",
-					checkpoint.ProjectID,
-					checkpoint.CandidateID,
-				),
+				IdempotencyKey: idempotencyKey,
 			},
 		},
 	)
@@ -67,7 +68,7 @@ func (operations projectPublishOperations) Publish(
 		return fmt.Errorf("publish delivery candidate returned no durable publication identity")
 	}
 	if operations.checkpoints != nil {
-		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target}
+		identity := projectcli.DeliveryObjectCheckpoint{ProjectID: checkpoint.ProjectID, TargetOrigin: options.Credentials.Target, TargetSelector: checkpoint.TargetSelector}
 		if response.Body.CandidateId != "" {
 			_ = operations.checkpoints.SaveObjectIdentity("candidate", response.Body.CandidateId, identity)
 		}
@@ -86,6 +87,21 @@ func (operations projectPublishOperations) Publish(
 	fmt.Fprintf(out, "publication %s candidate %s generation %s status %s\n", response.Body.Id, response.Body.CandidateId, response.Body.GenerationId, response.Body.Status)
 	fmt.Fprintf(out, "plan %s digest %s target-revision %d\n", response.Body.PlanId, response.Body.PlanDigest, response.Body.ResultTargetRevision)
 	return nil
+}
+
+func publicationAttemptIdempotencyKey(
+	checkpoint projectcli.CandidateCheckpoint,
+) (string, error) {
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return "", fmt.Errorf("generate publication attempt identity: %w", err)
+	}
+	return deploymentIdempotencyKey(
+		"delivery-publish",
+		checkpoint.ProjectID,
+		checkpoint.CandidateID,
+		fmt.Sprintf("%x", nonce[:]),
+	), nil
 }
 
 func candidateCheckpointPath() string {

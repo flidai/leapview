@@ -24,6 +24,25 @@ type canonicalPublishReaderFake struct {
 	plan      deployment.DeliveryPlan
 }
 
+func TestLocalEvaluationRuntimeIsLimitedToDevelopmentAndDisposableEvaluation(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		production bool
+		evaluation bool
+		want       bool
+	}{
+		{name: "development", want: true},
+		{name: "disposable evaluation", production: true, evaluation: true, want: true},
+		{name: "production", production: true, want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := allowsLocalEvaluationRuntime(test.production, test.evaluation); got != test.want {
+				t.Fatalf("allowsLocalEvaluationRuntime(%v, %v) = %v, want %v", test.production, test.evaluation, got, test.want)
+			}
+		})
+	}
+}
+
 func (f canonicalPublishReaderFake) DeliveryCandidateByID(context.Context, string) (deployment.DeliveryCandidate, error) {
 	return f.candidate, nil
 }
@@ -49,12 +68,19 @@ func TestBuildCanonicalPublishRequestUsesReadyCandidateWithoutGenerationRow(t *t
 		ObjectKey: "catalog/catalog-1.duckdb", ObjectSize: 1, QualificationDigest: digest, Status: deployment.CatalogSealVerified, CreatedAt: now, VerifiedAt: now,
 	}
 	plan := deployment.DeliveryPlan{ID: "plan-1", Digest: digest, TargetID: "target-1", ProjectID: graph.ResourceID("project-1"), Environment: "dev", Evidence: deployment.DeliveryPlanEvidence{Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}}, CreatedAt: now}
-	request, err := buildCanonicalPublishRequest(t.Context(), canonicalPublishReaderFake{candidate: candidate, seal: seal, plan: plan}, "candidate-1", "idempotency-1", "target-1")
+	request, err := buildCanonicalPublishRequest(t.Context(), canonicalPublishReaderFake{candidate: candidate, seal: seal, plan: plan}, "candidate-1", "target-1")
 	if err != nil {
 		t.Fatalf("buildCanonicalPublishRequest() error = %v", err)
 	}
 	if request.Generation.ID != candidate.ServingStateID || request.Generation.ServingStateID != candidate.ServingStateID || request.Publication.GenerationID != candidate.ServingStateID {
 		t.Fatalf("publication generation identity = %#v / %#v, want %q", request.Generation, request.Publication, candidate.ServingStateID)
+	}
+	expectedPublicationID := "publication-" + strings.TrimPrefix(
+		deployment.CanonicalDeliveryDigest([]byte("candidate-publication:"+candidate.ID)),
+		"sha256:",
+	)
+	if request.Publication.ID != expectedPublicationID {
+		t.Fatalf("publication identity = %q, want %q", request.Publication.ID, expectedPublicationID)
 	}
 }
 

@@ -3309,10 +3309,13 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	root := repoRoot(t)
 	const prepareWatchdog = "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare"
-	for workflow, wantPrepareCount := range map[string]int{
-		"ci.yml":               3,
-		"merge-validation.yml": 4,
-		"nightly.yml":          4,
+	for workflow, contract := range map[string]struct {
+		prepareCount    int
+		frontendTimeout string
+	}{
+		"ci.yml":               {prepareCount: 3, frontendTimeout: "timeout-minutes: 30"},
+		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
+		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
 		require.NoError(t, err)
@@ -3320,13 +3323,13 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		if strings.Contains(text, "run: task ci:prepare") {
 			t.Fatalf("%s contains repository preparation without the Bun hang watchdog", workflow)
 		}
-		if got := strings.Count(text, prepareWatchdog); got != wantPrepareCount {
-			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, wantPrepareCount)
+		if got := strings.Count(text, prepareWatchdog); got != contract.prepareCount {
+			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, contract.prepareCount)
 		}
 
 		frontend := workflowJobBlock(t, text, "frontend-validation")
 		for _, want := range []string{
-			"timeout-minutes: 20",
+			contract.frontendTimeout,
 			prepareWatchdog,
 			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		} {

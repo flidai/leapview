@@ -20,7 +20,7 @@ func TestProjectPublishOperationsUseCanonicalDeliveryPublication(t *testing.T) {
 	checkpoint := projectcli.CandidateCheckpoint{
 		ProjectPath: "/work/leapview.yaml", TargetOrigin: "https://target.example",
 		TargetID: "target_1", Environment: "production", ProjectID: "finance",
-		CandidateID: "cand_1",
+		CandidateID:    "cand_1",
 		ArtifactDigest: "sha256:" + strings.Repeat("a", 64),
 		PlanID:         "plan_1", PlanDigest: "sha256:" + strings.Repeat("b", 64),
 	}
@@ -68,6 +68,28 @@ func TestProjectPublishOperationsEmitVersionedAcceptedJSON(t *testing.T) {
 		result.CandidateID != "cand_1" || result.GenerationID != "generation_1" ||
 		result.PlanID != "plan_1" || result.TargetRevision != 12 {
 		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestPublicationAttemptsUseFreshHTTPIdempotencyKeys(t *testing.T) {
+	checkpoint := projectcli.CandidateCheckpoint{
+		ProjectID: "finance", CandidateID: "cand_1",
+	}
+	first, err := publicationAttemptIdempotencyKey(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := publicationAttemptIdempotencyKey(checkpoint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("separate publication attempts reused one HTTP idempotency key")
+	}
+	for _, key := range []string{first, second} {
+		if !strings.HasPrefix(key, "deployment-delivery-publish-") {
+			t.Fatalf("publication attempt key = %q", key)
+		}
 	}
 }
 

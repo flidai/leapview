@@ -37,6 +37,7 @@ var documentedCommandSafety = map[string]commandSafety{
 	"leapview admin restore":                   {effect: "destructive", confirmation: "required"},
 	"leapview admin storage cleanup":           {effect: "destructive", confirmation: "conditional"},
 	"leapview admin delivery pool bootstrap":   {effect: "write", confirmation: "required"},
+	"leapview admin delivery pool qualify":     {effect: "write", confirmation: "required"},
 	"leapview admin delivery audit":            {effect: "read", confirmation: "never"},
 	"leapview admin delivery repair":           {effect: "destructive", confirmation: "conditional"},
 	"leapview agent ask":                       {effect: "write", confirmation: "never"},

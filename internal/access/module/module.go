@@ -255,7 +255,41 @@ func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request,
 	if err != nil {
 		return false, err
 	}
-	return isAdmin && containsCapability(credential.Token.Capabilities, required), nil
+	return isAdmin && bootstrapTokenAllowsCapability(credential.Token.Capabilities, required), nil
+}
+
+// bootstrapTokenAllowsCapability preserves the project-admin hierarchy used
+// by the canonical policy. A token explicitly scoped to PROJECT_ADMIN may
+// perform project-scoped resource operations during bootstrap; narrower
+// tokens must carry the exact operation capability.
+func bootstrapTokenAllowsCapability(capabilities []access.Capability, required access.Capability) bool {
+	return containsCapability(capabilities, required) ||
+		(required != access.CapabilityProjectAdmin && containsCapability(capabilities, access.CapabilityProjectAdmin))
+}
+
+// AuthorizeAuthoringBootstrapRequest admits an already-issued human/workload
+// authoring credential for the narrow project control-plane operations that
+// may race the serving-generation cutover. Unlike API-token bootstrap, this
+// path relies on the immutable authoring scope plus the current RBAC
+// projection; it never grants a credential authority it does not already
+// carry.
+func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (bool, error) {
+	if m == nil || r == nil || m.auth == nil {
+		return false, nil
+	}
+	principal, ok := m.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false, nil
+	}
+	credential, ok := m.auth.APICredential(r)
+	if !ok || credential.Authoring == nil || credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
+		return false, nil
+	}
+	effective, err := m.RequestEffectiveCapabilities(ctx, r, principal.ID)
+	if err != nil {
+		return false, err
+	}
+	return bootstrapTokenAllowsCapability(effective, required), nil
 }
 
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {

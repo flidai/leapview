@@ -82,6 +82,37 @@ func TestCandidateCheckpointStoreRefusesReadModifyWriteWhileAnotherProcessOwnsLo
 	}
 }
 
+func TestPlanCheckpointBuildOperationBindingIsStableAndRotatable(t *testing.T) {
+	store := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
+	plan := DeliveryPlanCheckpoint{PlanID: "plan-1", ProjectID: "project-1", PlanDigest: "sha256:plan"}
+	if err := store.SavePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+	first, err := store.BindPlanBuildIdempotencyKey(plan.PlanID, "", "build-1")
+	if err != nil || first != "build-1" {
+		t.Fatalf("first binding = %q, err = %v", first, err)
+	}
+	stable, err := store.BindPlanBuildIdempotencyKey(plan.PlanID, "", "build-other")
+	if err != nil || stable != first {
+		t.Fatalf("stable binding = %q, err = %v", stable, err)
+	}
+	if err := store.SavePlan(plan); err != nil {
+		t.Fatal(err)
+	}
+	preserved, err := store.LoadPlan(plan.PlanID)
+	if err != nil || preserved.BuildIdempotencyKey != first {
+		t.Fatalf("preserved plan = %#v, err = %v", preserved, err)
+	}
+	rotated, err := store.BindPlanBuildIdempotencyKey(plan.PlanID, first, "build-2")
+	if err != nil || rotated != "build-2" {
+		t.Fatalf("rotated binding = %q, err = %v", rotated, err)
+	}
+	concurrent, err := store.BindPlanBuildIdempotencyKey(plan.PlanID, first, "build-stale")
+	if err != nil || concurrent != rotated {
+		t.Fatalf("stale rotation = %q, err = %v", concurrent, err)
+	}
+}
+
 func TestCandidateCheckpointStoreIsolatesStableAuthoringKeys(t *testing.T) {
 	store := NewCandidateCheckpointStore(
 		filepath.Join(t.TempDir(), "authoring.json"),

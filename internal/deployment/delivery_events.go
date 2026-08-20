@@ -114,7 +114,7 @@ func DeliveryEventsEqual(left, right DeliveryEvent) bool {
 var deliveryEventKinds = map[string]bool{
 	"plan_created": true, "plan_expired": true, "build_started": true, "build_transitioned": true, "build_artifact_bound": true,
 	"candidate_qualified": true, "candidate_sealed": true, "candidate_retired": true,
-	"approval_requested": true, "approval_granted": true, "approval_rejected": true,
+	"approval_requested": true, "approval_granted": true, "approval_rejected": true, "approval_revoked": true,
 	"restatement_requested": true, "publish_requested": true,
 	"publish_committed": true, "publish_rejected": true, "publish_indeterminate": true,
 	"activation_committed": true, "rollback_requested": true, "rollback_committed": true,

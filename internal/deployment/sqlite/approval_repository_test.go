@@ -53,7 +53,7 @@ func TestApprovalRepositoryPersistsImmutableScopeAndOptimisticTransitions(t *tes
 	}
 }
 
-func TestApprovalRepositoryAppendsRequestedGrantedAndRejectedEvents(t *testing.T) {
+func TestApprovalRepositoryAppendsRequestedGrantedRejectedAndRevokedEvents(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
@@ -89,6 +89,21 @@ func TestApprovalRepositoryAppendsRequestedGrantedAndRejectedEvents(t *testing.T
 	}
 	if count != 1 {
 		t.Fatalf("approval_granted count=%d", count)
+	}
+	revoked := approved
+	revoked.Status = deployment.ApprovalRevoked
+	revoked.RevokedBy = "reviewer"
+	revoked.RevokedAt = now.Add(2 * time.Minute)
+	revoked.Revision++
+	if _, err := repository.SaveApproval(ctx, revoked, approved.Revision); err != nil {
+		t.Fatal(err)
+	}
+	revokedEvent := deployment.DeliveryEventID("approval-target", pending.RequestDigest, "approval_revoked", "approval", pending.ID)
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM delivery_events WHERE id=? AND actor_id=?`, revokedEvent, revoked.RevokedBy).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("approval_revoked count=%d", count)
 	}
 
 	// A second approval identity exercises the rejection producer without

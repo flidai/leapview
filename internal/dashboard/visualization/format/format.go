@@ -76,6 +76,12 @@ func Value(locale string, format ir.VisualizationFormat, value any) (string, err
 		if !ok {
 			return "", fmt.Errorf("temporal visualization value must be a string")
 		}
+		if parsed, dateErr := time.Parse(time.DateOnly, text); dateErr == nil {
+			if spec.TimeStyle != nil && spec.DateStyle == nil {
+				return "", fmt.Errorf("date-only visualization value cannot satisfy a time-only format")
+			}
+			return parsed.Format(time.DateOnly), nil
+		}
 		parsed, err := time.Parse(time.RFC3339, text)
 		if err != nil {
 			return "", fmt.Errorf("parse temporal visualization value: %w", err)

@@ -57,6 +57,7 @@ type DeliveryPlanOptions struct {
 	UploadConcurrency       int
 	Format                  string
 	CandidateID             string
+	ResolveCandidatePlan    bool
 	ProjectID               string
 	SourceDigest            string
 	SourceAttestationDigest string

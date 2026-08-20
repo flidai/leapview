@@ -214,6 +214,46 @@ func TestPublishWithActivationEnforcesSingleCommitAndErrorPropagation(t *testing
 	}
 }
 
+func TestPublishWithActivationInvokesCommitHookOnlyForFreshPendingPublication(t *testing.T) {
+	seal := coordinatorSeal()
+	request := PublishRequest{Publication: coordinatorPublication(), Generation: coordinatorGeneration(seal), Seal: seal}
+	store := &fakePublicationStore{}
+	var events []string
+	coordinator := &Coordinator{
+		Publications: store,
+		VerifySeal:   func(context.Context, SealBinding) error { events = append(events, "seal"); return nil },
+		Authorize:    func(context.Context, SealBinding) error { return nil },
+		BeforePublicationCommit: func(_ context.Context, publication deployment.PublicationIntent) error {
+			if publication.Status != deployment.DeliveryPublicationPending {
+				t.Fatalf("commit hook publication status = %q, want pending", publication.Status)
+			}
+			events = append(events, "hook")
+			return nil
+		},
+	}
+	if _, err := coordinator.PublishWithActivation(t.Context(), request, func(_ context.Context, commit func() error) error {
+		events = append(events, "prepared")
+		return commit()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.HasSuffix(strings.Join(events, ","), "prepared,hook") || store.activated != 1 {
+		t.Fatalf("events = %v, activated = %d; want prepared,hook and one CAS", events, store.activated)
+	}
+
+	committedStore := &fakePublicationStore{publication: request.Publication}
+	committedStore.publication.Status = deployment.DeliveryPublicationCommitted
+	hookCalls := 0
+	coordinator.Publications = committedStore
+	coordinator.BeforePublicationCommit = func(context.Context, deployment.PublicationIntent) error { hookCalls++; return nil }
+	if _, err := coordinator.Publish(t.Context(), request); err != nil {
+		t.Fatal(err)
+	}
+	if hookCalls != 0 {
+		t.Fatalf("committed retry invoked commit hook %d times", hookCalls)
+	}
+}
+
 func TestRollbackRequiresAuthorizationAndUsesControlStore(t *testing.T) {
 	seal := coordinatorSeal()
 	request := deployment.RollbackRequest{ID: "rollback-1", RequestDigest: coordinatorDigest('f'), TargetID: "target-1", ProjectID: projectgraph.ResourceID("project-1"), Environment: "prod", GenerationID: "generation-1", CandidateID: "candidate-1", ExpectedTargetRevision: 0, VerifiedSeal: seal, CreatedAt: time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)}

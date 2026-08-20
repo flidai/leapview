@@ -113,14 +113,14 @@ async function runWorkload(path) {
       const startedAt = performance.now()
       await filter.selectOption({ label: value })
       await waitForDashboardGeneration(page, generation, 30_000)
-      await page.getByRole('cell', { name: value, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('cell', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }
     metricSamples.push(await metricSnapshot())
 
     const table = page.locator('lv-report-table')
-    const orderSort = table.getByRole('button', { name: /^Order/ })
+    const orderSort = table.getByRole('button', { name: /^Order(?: [↑↓])?$/ })
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()
@@ -137,7 +137,7 @@ async function runWorkload(path) {
       limit: 10,
     }
     const queryURL = new URL(
-      `/api/v1/semantic-models/${encodeURIComponent(semanticModelID)}/query`,
+      `/api/v1/semantic-models/${semanticModelID}/query`,
       baseURL,
     ).href
     for (let index = 0; index < policy.assumptions.samples.governedQueries; index += 1) {
@@ -162,7 +162,7 @@ async function runWorkload(path) {
     metricSamples.push(await metricSnapshot())
 
     const refreshURL = new URL(
-      `/api/v1/projects/${encodeURIComponent(projectID)}/refresh-runs`,
+      `/api/v1/projects/${projectID}/refresh-runs`,
       baseURL,
     ).href
     for (let index = 0; index < policy.assumptions.samples.refreshRuns; index += 1) {
@@ -177,14 +177,14 @@ async function runWorkload(path) {
       controlled.requests += 1
       if (!response.ok()) {
         controlled.errors += 1
-        controlled.failures.push(`refresh creation returned ${response.status()}`)
+        controlled.failures.push(`refresh creation returned ${response.status()}: ${(await response.text()).slice(0, 500)}`)
         continue
       }
       const refresh = await response.json()
       const terminal = await waitForRefresh(context, refresh.id, credentials.workloadToken, controlled)
       if (terminal.status !== 'succeeded') {
         controlled.errors += 1
-        controlled.failures.push(`refresh ${refresh.id} ended ${terminal.status}`)
+        controlled.failures.push(`refresh ${refresh.id} ended ${terminal.status}: ${terminal.error || 'no error detail'}`)
       }
       refreshMs.push(round(performance.now() - startedAt))
     }
@@ -263,7 +263,7 @@ async function runWorkload(path) {
 }
 
 async function loginAndResolveDashboard(page, credentials) {
-  await page.goto(baseURL, { waitUntil: 'domcontentloaded', timeout: 60_000 })
+  await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(credentials.email)
   await page.getByLabel('Password').fill(credentials.qualificationPassword)
   await page.getByLabel('Password').press('Enter')
@@ -332,7 +332,7 @@ async function waitForTableSort(table, previous, expectedKey, timeoutMs) {
 
 async function waitForRefresh(context, id, token, controlled) {
   const url = new URL(
-    `/api/v1/projects/${encodeURIComponent(projectID)}/refresh-runs/${id}`,
+    `/api/v1/projects/${projectID}/refresh-runs/${id}`,
     baseURL,
   ).href
   const deadline = Date.now() + 60_000

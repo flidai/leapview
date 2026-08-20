@@ -280,6 +280,35 @@ ORDER BY logical_path;
 SELECT * FROM managed_data_environment_pointers
 WHERE collection_id = ? AND environment = ?;
 
+-- name: GetActiveManagedDataServingPointer :one
+SELECT
+  binding.collection_id,
+  target.environment,
+  binding.revision_id,
+  CAST(COALESCE((
+    SELECT publication.id
+    FROM delivery_publications publication
+    WHERE publication.target_id = target.target_id
+      AND publication.generation_id = target.active_generation_id
+      AND publication.status = 'committed'
+    ORDER BY publication.completed_at DESC, publication.id DESC
+    LIMIT 1
+  ), '') AS TEXT) AS deployment_id,
+  target.target_revision AS generation,
+  '' AS updated_by,
+  target.updated_at
+FROM managed_data_collections collection
+JOIN delivery_target_revisions target
+  ON target.project_id = collection.project_id
+ AND target.environment = sqlc.arg(environment)
+ AND target.active_generation_id IS NOT NULL
+JOIN managed_data_serving_state_bindings binding
+  ON binding.project_id = target.project_id
+ AND binding.environment = target.environment
+ AND binding.generation_id = target.active_generation_id
+ AND binding.collection_id = collection.id
+WHERE collection.id = sqlc.arg(collection_id);
+
 -- name: InstallManagedDataServingStateBindingSet :execrows
 INSERT INTO managed_data_serving_state_binding_sets (
   project_id, environment, generation_id, binding_digest, binding_count

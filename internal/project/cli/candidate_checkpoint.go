@@ -28,6 +28,7 @@ var ErrCandidateCheckpointNotFound = errors.New("candidate checkpoint not found"
 type CandidateCheckpoint struct {
 	ProjectPath       string `json:"projectPath"`
 	TargetOrigin      string `json:"targetOrigin"`
+	TargetSelector    string `json:"targetSelector,omitempty"`
 	TargetID          string `json:"targetId"`
 	Environment       string `json:"environment"`
 	ProjectID         string `json:"projectId"`
@@ -56,18 +57,21 @@ type DeliveryPlanCheckpoint struct {
 	TargetID                string `json:"targetId"`
 	Environment             string `json:"environment"`
 	TargetOrigin            string `json:"targetOrigin"`
+	TargetSelector          string `json:"targetSelector,omitempty"`
 	SourceDigest            string `json:"sourceDigest"`
 	SourceAttestationDigest string `json:"sourceAttestationDigest,omitempty"`
 	PlanDigest              string `json:"planDigest"`
 	ExecutionDigest         string `json:"executionDigest,omitempty"`
 	EvidenceDigest          string `json:"evidenceDigest,omitempty"`
+	BuildIdempotencyKey     string `json:"buildIdempotencyKey,omitempty"`
 }
 
 type DeliveryObjectCheckpoint struct {
-	ProjectID    string `json:"projectId"`
-	TargetOrigin string `json:"targetOrigin"`
-	TargetID     string `json:"targetId,omitempty"`
-	Environment  string `json:"environment,omitempty"`
+	ProjectID      string `json:"projectId"`
+	TargetOrigin   string `json:"targetOrigin"`
+	TargetSelector string `json:"targetSelector,omitempty"`
+	TargetID       string `json:"targetId,omitempty"`
+	Environment    string `json:"environment,omitempty"`
 }
 
 // CandidateCheckpointStore atomically persists non-secret authoring state.
@@ -213,6 +217,9 @@ func (store *CandidateCheckpointStore) SavePlan(plan DeliveryPlanCheckpoint) err
 	if err != nil {
 		return err
 	}
+	if existing, ok := document.Plans[plan.PlanID]; ok && plan.BuildIdempotencyKey == "" {
+		plan.BuildIdempotencyKey = existing.BuildIdempotencyKey
+	}
 	document.Plans[plan.PlanID] = plan
 	return store.save(document)
 }
@@ -232,6 +239,46 @@ func (store *CandidateCheckpointStore) LoadPlan(planID string) (DeliveryPlanChec
 		return DeliveryPlanCheckpoint{}, ErrCandidateCheckpointNotFound
 	}
 	return plan, nil
+}
+
+// BindPlanBuildIdempotencyKey atomically creates or compare-and-swaps the
+// operation key used to build a plan. Keeping the key in the non-secret plan
+// checkpoint makes lost-response retries converge on the same sealed attempt,
+// while replace permits an explicit retry after the target proves the prior
+// non-sealed attempt is no longer replayable.
+func (store *CandidateCheckpointStore) BindPlanBuildIdempotencyKey(planID, replace, next string) (string, error) {
+	if store == nil {
+		return "", fmt.Errorf("candidate checkpoint store is required")
+	}
+	planID, replace, next = strings.TrimSpace(planID), strings.TrimSpace(replace), strings.TrimSpace(next)
+	if planID == "" || next == "" {
+		return "", fmt.Errorf("delivery plan build operation requires plan and idempotency identities")
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	lock, err := store.acquireMutationLock()
+	if err != nil {
+		return "", err
+	}
+	defer lock.Release()
+	document, err := store.load()
+	if err != nil {
+		return "", err
+	}
+	plan, ok := document.Plans[planID]
+	if !ok {
+		return "", ErrCandidateCheckpointNotFound
+	}
+	current := strings.TrimSpace(plan.BuildIdempotencyKey)
+	if current == "" || replace != "" && current == replace {
+		plan.BuildIdempotencyKey = next
+		document.Plans[planID] = plan
+		if err := store.save(document); err != nil {
+			return "", err
+		}
+		return next, nil
+	}
+	return current, nil
 }
 
 func (store *CandidateCheckpointStore) SaveObjectIdentity(kind, objectID string, identity DeliveryObjectCheckpoint) error {
@@ -312,6 +359,7 @@ func normalizeCandidateCheckpoint(checkpoint CandidateCheckpoint) (CandidateChec
 		return CandidateCheckpoint{}, err
 	}
 	checkpoint.TargetID = strings.TrimSpace(checkpoint.TargetID)
+	checkpoint.TargetSelector = strings.TrimSpace(checkpoint.TargetSelector)
 	checkpoint.Environment = strings.TrimSpace(checkpoint.Environment)
 	checkpoint.ProjectID = strings.TrimSpace(checkpoint.ProjectID)
 	checkpoint.CandidateID = strings.TrimSpace(checkpoint.CandidateID)

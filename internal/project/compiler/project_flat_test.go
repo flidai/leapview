@@ -1599,6 +1599,9 @@ func TestProjectPlanDiffIsDeterministicAndAggregatesImpact(t *testing.T) {
 	if firstSummary.Changed != 1 || firstSummary.DependencyChanges != 1 || firstSummary.Breaking || !firstSummary.MaterializationImpact {
 		t.Fatalf("summary = %#v, want metadata-only change plus dependency materialization impact", firstSummary)
 	}
+	if len(firstDeps) != 1 || firstDeps[0].Type != "reads_source" || firstDeps[0].ResourceKind != string(projectgraph.KindSource) {
+		t.Fatalf("dependency change = %#v, want reads_source relation targeting a source resource", firstDeps)
+	}
 	removedResources := []projectgraph.Resource{resources[0], resources[2]}
 	removed, err := projectgraph.NewProjectGraph(removedResources, nil)
 	if err != nil {

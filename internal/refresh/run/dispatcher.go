@@ -142,6 +142,14 @@ func (d Dispatcher) dispatchCandidate(ctx context.Context, owner string, candida
 	stopRenew()
 	cancelExecution()
 	if err != nil && !errors.Is(err, ErrLeaseLost) && !errors.Is(err, context.Canceled) {
+		if d.Logger != nil {
+			d.Logger.ErrorContext(ctx, "refresh job execution failed",
+				"project", job.Identity.ProjectID,
+				"generation", job.Identity.GenerationID,
+				"run", job.RunID,
+				"error", err,
+			)
+		}
 		_ = markRunFailedForWorker(context.Background(), d.Runs, job, err.Error())
 	}
 	lease.Release()
