@@ -3,7 +3,6 @@ import { MakerDeb } from "@electron-forge/maker-deb";
 import { MakerDMG } from "@electron-forge/maker-dmg";
 import { MakerSquirrel } from "@electron-forge/maker-squirrel";
 import { MakerZIP } from "@electron-forge/maker-zip";
-import { FusesPlugin } from "@electron-forge/plugin-fuses";
 import { resolve } from "node:path";
 import {
   type FuseConfig,
@@ -14,6 +13,7 @@ import {
 import {
   consumerDistributionContract,
 } from "./installer-contract.js";
+import { ProjectFusesPlugin } from "./fuses-plugin.js";
 
 const desktopRoot = import.meta.dirname;
 const distributionResource = {
@@ -105,7 +105,7 @@ const config: ForgeConfig = {
     ),
     new MakerZIP({}, ["darwin"]),
   ],
-  plugins: [new FusesPlugin(fuseConfig)],
+  plugins: [new ProjectFusesPlugin(fuseConfig)],
 };
 
 export default config;

@@ -11,7 +11,7 @@
         "@electron-forge/maker-dmg": "7.11.2",
         "@electron-forge/maker-squirrel": "7.11.2",
         "@electron-forge/maker-zip": "7.11.2",
-        "@electron-forge/plugin-fuses": "7.11.2",
+        "@electron-forge/plugin-base": "7.11.2",
         "@electron-forge/shared-types": "7.11.2",
         "@electron/asar": "3.4.1",
         "@electron/fuses": "2.1.3",
@@ -52,8 +52,6 @@
     "@electron-forge/maker-zip": ["@electron-forge/maker-zip@7.11.2", "", { "dependencies": { "@electron-forge/maker-base": "7.11.2", "@electron-forge/shared-types": "7.11.2", "cross-zip": "^4.0.0", "fs-extra": "^10.0.0", "got": "^11.8.5" } }, "sha512-FWnOm2MORX/nt8psnEtID3Vnt8Blby1NkzjU3KjXBPF9kave71C3lI8KbBbCeKKyTQ/S00i2FiglKdRWQ1WNTw=="],
 
     "@electron-forge/plugin-base": ["@electron-forge/plugin-base@7.11.2", "", { "dependencies": { "@electron-forge/shared-types": "7.11.2" } }, "sha512-tIFzEE2+D9NnCAn/rLwSkh8H59IqN+G973JNl7xmCzquO6qa7/veitZOQFGO79Zmmgkc8R/fmiCbh7LIdLS9Tg=="],
-
-    "@electron-forge/plugin-fuses": ["@electron-forge/plugin-fuses@7.11.2", "", { "dependencies": { "@electron-forge/plugin-base": "7.11.2", "@electron-forge/shared-types": "7.11.2" }, "peerDependencies": { "@electron/fuses": "^1.0.0" } }, "sha512-Y65MwTmYY0ytwtUy+u9M77rEe8MeMdRR+V2IsjAozIzAVp/38NJXfF7+AqlqE9M/fDENjPuwKnrg2IOj9P1TRg=="],
 
     "@electron-forge/publisher-base": ["@electron-forge/publisher-base@7.11.2", "", { "dependencies": { "@electron-forge/shared-types": "7.11.2" } }, "sha512-YwK4ZF3+uW7PBEV/ho59NVTriP3fCahskORrztUaFIdG0QP3hqMsfmo01euv98FDsBEW9UXo7/EW8t5jpmYZ0Q=="],
 

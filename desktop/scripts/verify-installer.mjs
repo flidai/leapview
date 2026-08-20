@@ -67,7 +67,13 @@ export function validateInstallerContract({
 }
 
 export function squirrelArchiveArguments(archive, destination) {
-  return ["--force-local", "-xf", archive, "-C", destination];
+  const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(destination)} -Force`,
+  ];
 }
 
 async function main() {
@@ -222,11 +228,13 @@ async function inspectWindowsInstaller(artifact, makeRoot) {
       );
     }
     await mkdir(payload);
-    // Git for Windows' GNU tar treats a drive letter in an absolute path as a
-    // remote archive unless --force-local is provided. Without this flag the
-    // post-package verification fails only on the Windows runner, before it
-    // can inspect the Squirrel payload.
-    await runFile("tar.exe", squirrelArchiveArguments(packages[0], payload));
+    // Squirrel's .nupkg is a ZIP archive, not a tar stream. Use the inbox
+    // PowerShell extractor on Windows so absolute drive-letter paths and the
+    // ZIP format are both handled by a platform-native tool.
+    await runFile(
+      "powershell.exe",
+      squirrelArchiveArguments(packages[0], payload),
+    );
     const files = await findFiles(payload, () => true);
     const specification = files.find((path) =>
       path.toLowerCase().endsWith(".nuspec"),

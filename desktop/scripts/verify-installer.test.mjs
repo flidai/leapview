@@ -6,18 +6,17 @@ import {
   validateInstallerContract,
 } from "./verify-installer.mjs";
 
-test("forces Windows tar to treat drive-letter paths as local archives", () => {
+test("uses PowerShell ZIP extraction for Windows Squirrel archives", () => {
   assert.deepEqual(
     squirrelArchiveArguments(
       "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
       "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload",
     ),
     [
-      "--force-local",
-      "-xf",
-      "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
-      "-C",
-      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload",
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Expand-Archive -LiteralPath 'D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg' -DestinationPath 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload' -Force",
     ],
   );
 });
