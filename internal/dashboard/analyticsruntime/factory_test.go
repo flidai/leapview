@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
@@ -56,11 +57,24 @@ func TestProjectRuntimeAdaptsActivatedConcretePlanner(t *testing.T) {
 	}
 }
 
+func TestProjectRuntimeForwardsCatalogStatistics(t *testing.T) {
+	want := []catalogstats.Table{{Schema: "model", Name: "orders", RowCount: 42}}
+	runtime := projectRuntime{modelID: "sales", runtime: concretePlannerProjectStub{statistics: want}}
+	got, err := runtime.CatalogTableStatistics(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("CatalogTableStatistics() = %#v, want %#v", got, want)
+	}
+}
+
 // concretePlannerProjectStub models the analytics-owned activation runtime.
 // Its concrete planner method is intentionally the only source-side shape;
 // projectRuntime is the dashboard boundary that converts it to consumer.Planner.
 type concretePlannerProjectStub struct {
-	planner *semanticquery.Planner
+	planner    *semanticquery.Planner
+	statistics []catalogstats.Table
 }
 
 func (concretePlannerProjectStub) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
@@ -82,6 +96,9 @@ func (concretePlannerProjectStub) DuckLakeSnapshotID() int64 { return 0 }
 func (concretePlannerProjectStub) ReadConcurrency() int      { return 1 }
 func (s concretePlannerProjectStub) Planner(string) (*semanticquery.Planner, bool) {
 	return s.planner, s.planner != nil
+}
+func (s concretePlannerProjectStub) CatalogTableStatistics(context.Context) ([]catalogstats.Table, error) {
+	return s.statistics, nil
 }
 
 var _ analyticscontract.Project = concretePlannerProjectStub{}

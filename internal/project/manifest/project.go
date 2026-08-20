@@ -50,26 +50,46 @@ type DashboardSource struct {
 	Path     string                     `json:"path"`
 }
 
+// AuthoredModelDefinition preserves the non-secret definition union from a
+// Model resource for browser/read-model projections. It is intentionally
+// separate from Project.Models: that map is the runtime execution projection
+// and may be rewritten or target-bound during activation. Keeping the
+// authored shape here lets details show the source SQL without allowing
+// presentation code to treat runtime execution state as authoring input.
+type AuthoredModelDefinition struct {
+	Type   string `json:"type"`
+	Source string `json:"source,omitempty"`
+	SQL    string `json:"sql,omitempty"`
+}
+
 // Project is the mutable, project-wide compiler assembly contract. It is
 // intentionally independent of artifact/bundle storage and contains no
 // serving namespace. Compiler code may populate this value while the
 // artifact capability owns immutable serialization of it.
 type Project struct {
-	ID                   string                                    `json:"id"`
-	Name                 string                                    `json:"name"`
-	Title                string                                    `json:"title,omitempty"`
-	Description          string                                    `json:"description,omitempty"`
-	Connections          map[string]semanticmodel.Connection       `json:"connections,omitempty"`
-	Sources              map[string]semanticmodel.Source           `json:"sources,omitempty"`
-	Models               map[string]semanticmodel.Table            `json:"models,omitempty"`
-	SemanticModels       map[string]*semanticmodel.Model           `json:"semanticModels,omitempty"`
-	DashboardDefinitions map[string]dashboarddefinition.Definition `json:"dashboardDefinitions,omitempty"`
-	DashboardSources     map[string]DashboardSource                `json:"dashboardSources,omitempty"`
-	Publications         map[string]publication.Definition         `json:"publications,omitempty"`
-	Access               AccessPolicy                              `json:"access,omitempty"`
-	RefreshPipelines     map[string]refreshschedule.Definition     `json:"refreshPipelines,omitempty"`
-	NameIndex            NameIndex                                 `json:"nameIndex,omitempty"`
-	ResourceFiles        map[string]string                         `json:"resourceFiles,omitempty"`
+	ID                       string                              `json:"id"`
+	Name                     string                              `json:"name"`
+	Title                    string                              `json:"title,omitempty"`
+	Description              string                              `json:"description,omitempty"`
+	Connections              map[string]semanticmodel.Connection `json:"connections,omitempty"`
+	Sources                  map[string]semanticmodel.Source     `json:"sources,omitempty"`
+	Models                   map[string]semanticmodel.Table      `json:"models,omitempty"`
+	AuthoredModelDefinitions map[string]AuthoredModelDefinition  `json:"authoredModelDefinitions,omitempty"`
+	AuthoredModelSources     map[string]string                   `json:"authoredModelSources,omitempty"`
+	// AuthoredResourceSources retains validated YAML for catalog definition
+	// views. Most entries preserve the exact authored bytes; dashboards retain
+	// canonical expanded YAML so included fragments appear as one complete
+	// definition. Raw Connection resources are deliberately excluded; their
+	// browser definition is rebuilt from the credential-free read model.
+	AuthoredResourceSources map[string]string                         `json:"authoredResourceSources,omitempty"`
+	SemanticModels          map[string]*semanticmodel.Model           `json:"semanticModels,omitempty"`
+	DashboardDefinitions    map[string]dashboarddefinition.Definition `json:"dashboardDefinitions,omitempty"`
+	DashboardSources        map[string]DashboardSource                `json:"dashboardSources,omitempty"`
+	Publications            map[string]publication.Definition         `json:"publications,omitempty"`
+	Access                  AccessPolicy                              `json:"access,omitempty"`
+	RefreshPipelines        map[string]refreshschedule.Definition     `json:"refreshPipelines,omitempty"`
+	NameIndex               NameIndex                                 `json:"nameIndex,omitempty"`
+	ResourceFiles           map[string]string                         `json:"resourceFiles,omitempty"`
 }
 
 // NameIndex preserves authored symbolic names while canonical maps remain

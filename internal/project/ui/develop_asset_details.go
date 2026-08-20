@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,10 +27,6 @@ type assetDetailSection struct {
 	Facts  []definitionFact
 	Code   string
 	Lang   string
-}
-
-func assetDetailUsesCodeBlock(asset projectview.DevelopAssetView) bool {
-	return asset.Type == "model_table" && modelTableSQL(asset.Payload) != ""
 }
 
 func assetDetailModelForAsset(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) assetDetailModel {
@@ -135,14 +132,19 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 }
 
 func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
-	status := strings.TrimSpace(refresh.Latest.Status)
-	if status == "" {
-		status = "not refreshed"
-	}
-	return []definitionFact{
+	status := assetRefreshSignal(refresh).Status
+	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
 		{Label: "Last refreshed", Value: emptyDash(refresh.LatestSuccessful.FinishedAt)},
 	}
+	if refresh.Unavailable {
+		facts = append(facts, definitionFact{
+			Label: "Refresh guidance",
+			Value: "Refresh state could not be loaded. Review Connections and runtime setup, then retry.",
+			Wide:  true,
+		})
+	}
+	return facts
 }
 
 func semanticFieldCount(tables map[string]any) int {
@@ -578,14 +580,19 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
+	if physical := metaMap(asset.Payload, "Physical", "physical"); len(physical) > 0 {
+		model.Overview = append(model.Overview,
+			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
+			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
+			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
+			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
+		)
+	}
 	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
 	)
-	if sql := modelTableSQL(asset.Payload); sql != "" {
-		model.Sections = append(model.Sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
-	}
 }
 
 func modelTableKeyParts(asset projectview.DevelopAssetView) (string, string) {
@@ -647,8 +654,8 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 			"name":          name,
 			"nameHref":      childHref(projectID, child),
 			"label":         firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name)),
-			"physical_type": recordTableBadgeValue(metaString(column, "PhysicalType", "physicalType"), "muted"),
-			"nullable":      nullableLabel(column, "Nullable", "nullable"),
+			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
+			"nullable":      schemaNullableLabel(column, field),
 			"entities":      emptyDash(strings.Join(entityNames[name], ", ")),
 			"grain":         boolLabel(grainFields[name]),
 			"description":   emptyDash(metaString(field, "Description", "description")),
@@ -658,7 +665,7 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 		Columns: []recordTableColumn{
 			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("170px")},
 			{ID: "label", Header: "Label", Width: uisignals.Pointer("180px")},
-			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
 			{ID: "entities", Header: "Entities", Width: uisignals.Pointer("180px")},
 			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
@@ -703,15 +710,15 @@ func sourceFieldsGrid(fields, schema map[string]any) recordTable {
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"description":   emptyDash(metaString(field, "Description", "description")),
-			"physical_type": recordTableBadgeValue(metaString(column, "PhysicalType", "physicalType"), "muted"),
-			"nullable":      nullableLabel(column, "Nullable", "nullable"),
+			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
+			"nullable":      schemaNullableLabel(column, field),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
 			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("170px")},
 			{ID: "description", Header: "Description"},
-			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
 		},
 		Rows:     rows,
@@ -853,6 +860,19 @@ func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAsse
 	pages := childrenByType(asset.ID, "page", assets)
 	filters := childrenByType(asset.ID, "filter", assets)
 	visuals := childrenByType(asset.ID, "visual", assets)
+	// Serving graph rows intentionally contain only graph metadata. When the
+	// selected dashboard was enriched from its typed compiled definition, use
+	// that payload as the fallback child projection so the detail view still
+	// shows pages, filters, and visuals.
+	if len(pages) == 0 {
+		pages = dashboardPayloadChildren(asset, "page")
+	}
+	if len(filters) == 0 {
+		filters = dashboardPayloadChildren(asset, "filter")
+	}
+	if len(visuals) == 0 {
+		visuals = dashboardPayloadChildren(asset, "visual")
+	}
 	model.Overview = append(model.Overview,
 		definitionFact{Label: "Semantic model", Value: metaString(asset.Payload, "SemanticModel", "semantic_model")},
 		definitionFact{Label: "Tags", Value: strings.Join(stringSlice(metaValue(asset.Payload, "Tags", "tags")), ", ")},
@@ -862,6 +882,10 @@ func dashboardDetailModel(model *assetDetailModel, asset projectview.DevelopAsse
 		assetDetailSection{Title: fmt.Sprintf("Filters (%d)", len(filters)), Signal: "assetDetailsFiltersTable", Table: dashboardFiltersTable(asset, filters)},
 		assetDetailSection{Title: fmt.Sprintf("Visuals (%d)", len(visuals)), Signal: "assetDetailsVisualsTable", Table: dashboardVisualsTable(asset, visuals)},
 	)
+	publications := dashboardPayloadChildren(asset, "publication")
+	model.Sections = append(model.Sections,
+		assetDetailSection{Title: fmt.Sprintf("Publications (%d)", len(publications)), Signal: "assetDetailsPublicationsTable", Table: dashboardPublicationsTable(publications)},
+	)
 }
 
 func dashboardPagesTable(parent projectview.DevelopAssetView, pages []projectview.DevelopAssetView) recordTable {
@@ -870,16 +894,15 @@ func dashboardPagesTable(parent projectview.DevelopAssetView, pages []projectvie
 		key := assetChildName(parent, page)
 		rows = append(rows, map[string]any{
 			"page":        assetTitle(page),
-			"pageHref":    assetnav.ProjectAssetSectionHref(page.ID, "details"),
 			"key":         key,
 			"description": emptyDash(page.Description),
 			"runtime":     "Open",
-			"runtimeHref": "/dashboards/" + parent.Key + "/pages/" + key,
+			"runtimeHref": "/dashboards/" + url.PathEscape(parent.ID) + "/pages/" + url.PathEscape(key),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "page", Header: "Page", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("pageHref"), Width: uisignals.Pointer("220px")},
+			{ID: "page", Header: "Page", Width: uisignals.Pointer("220px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("190px")},
 			{ID: "description", Header: "Description"},
 			{ID: "runtime", Header: "Runtime", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("runtimeHref"), Width: uisignals.Pointer("110px")},
@@ -895,16 +918,15 @@ func dashboardFiltersTable(parent projectview.DevelopAssetView, filters []projec
 	rows := make([]map[string]any, 0, len(filters))
 	for _, filter := range filters {
 		rows = append(rows, map[string]any{
-			"filter":     assetTitle(filter),
-			"filterHref": assetnav.ProjectAssetSectionHref(filter.ID, "details"),
-			"key":        assetChildName(parent, filter),
-			"field":      emptyDash(metaString(filter.Payload, "Dimension", "dimension", "Field", "field")),
-			"type":       emptyDash(metaString(filter.Payload, "Type", "type", "Kind", "kind")),
+			"filter": assetTitle(filter),
+			"key":    assetChildName(parent, filter),
+			"field":  emptyDash(metaString(filter.Payload, "Dimension", "dimension", "Field", "field")),
+			"type":   emptyDash(metaString(filter.Payload, "Type", "type", "Kind", "kind")),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "filter", Header: "Filter", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("filterHref"), Width: uisignals.Pointer("190px")},
+			{ID: "filter", Header: "Filter", Width: uisignals.Pointer("190px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("160px")},
 			{ID: "field", Header: "Field", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
 			{ID: "type", Header: "Type", Width: uisignals.Pointer("120px")},
@@ -920,18 +942,20 @@ func dashboardVisualsTable(parent projectview.DevelopAssetView, visuals []projec
 	rows := make([]map[string]any, 0, len(visuals))
 	for _, visual := range visuals {
 		query := metaMap(visual.Payload, "Query", "query")
+		if aggregate := metaMap(query, "Aggregate", "aggregate"); len(aggregate) > 0 {
+			query = aggregate
+		}
 		rows = append(rows, map[string]any{
 			"visual":     assetTitle(visual),
-			"visualHref": assetnav.ProjectAssetSectionHref(visual.ID, "details"),
 			"key":        assetChildName(parent, visual),
-			"type":       emptyDash(firstNonEmpty(metaString(visual.Payload, "Type", "type"), metaString(visual.Payload, "Shape", "shape"))),
+			"type":       emptyDash(firstNonEmpty(metaString(visual.Payload, "Type", "type", "RendererID", "rendererID"), metaString(visual.Payload, "Shape", "shape"))),
 			"metrics":    emptyDash(strings.Join(stringSlice(metaValue(query, "Metrics", "metrics")), ", ")),
 			"dimensions": emptyDash(strings.Join(stringSlice(metaValue(query, "Dimensions", "dimensions")), ", ")),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "visual", Header: "Visual", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("visualHref"), Width: uisignals.Pointer("230px")},
+			{ID: "visual", Header: "Visual", Width: uisignals.Pointer("230px")},
 			{ID: "key", Header: "Key", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
 			{ID: "type", Header: "Type", Width: uisignals.Pointer("120px")},
 			{ID: "metrics", Header: "Metrics", Kind: uisignals.Pointer("expression"), Width: uisignals.Pointer("220px")},
@@ -1184,8 +1208,16 @@ func metaMap(meta map[string]any, keys ...string) map[string]any {
 }
 
 func metaSlice(meta map[string]any, keys ...string) []any {
-	if typed, ok := metaValue(meta, keys...).([]any); ok {
+	value := metaValue(meta, keys...)
+	if typed, ok := value.([]any); ok {
 		return typed
+	}
+	if typed, ok := value.([]map[string]any); ok {
+		values := make([]any, len(typed))
+		for index := range typed {
+			values[index] = typed[index]
+		}
+		return values
 	}
 	return nil
 }
@@ -1473,4 +1505,139 @@ func labelFromKey(key string) string {
 		return "Refreshes semantic model"
 	}
 	return strings.Title(strings.ReplaceAll(key, "_", " "))
+}
+
+func formatCatalogCount(value int64) string {
+	if value < 0 {
+		return "-"
+	}
+	digits := strconv.FormatInt(value, 10)
+	for index := len(digits) - 3; index > 0; index -= 3 {
+		digits = digits[:index] + "," + digits[index:]
+	}
+	return digits
+}
+
+func formatCatalogBytes(value int64) string {
+	if value < 0 {
+		return "-"
+	}
+	const unit = int64(1024)
+	if value < unit {
+		return fmt.Sprintf("%d B", value)
+	}
+	divisor, exponent := unit, 0
+	for quotient := value / unit; quotient >= unit && exponent < 4; quotient /= unit {
+		divisor *= unit
+		exponent++
+	}
+	return fmt.Sprintf("%.1f %ciB", float64(value)/float64(divisor), "KMGTPE"[exponent])
+}
+
+func schemaFieldType(column, field map[string]any) string {
+	return firstNonEmpty(
+		metaString(column, "PhysicalType", "physicalType"),
+		metaString(field, "Datatype", "datatype", "Type", "type"),
+		metaString(column, "Datatype", "datatype", "Type", "type"),
+		"Not profiled",
+	)
+}
+
+func schemaNullableLabel(column, field map[string]any) string {
+	if value := metaValue(column, "Nullable", "nullable"); value != nil {
+		return nullableValueLabel(value)
+	}
+	if value := metaValue(field, "Nullable", "nullable"); value != nil {
+		return nullableValueLabel(value)
+	}
+	return "Not profiled"
+}
+
+func dashboardPayloadChildren(parent projectview.DevelopAssetView, typ string) []projectview.DevelopAssetView {
+	var values []projectview.DevelopAssetView
+	appendValue := func(key string, value any) {
+		payload := asMap(value)
+		title := metaString(payload, "Title", "title", "Label", "label")
+		if title == "" {
+			title = key
+		}
+		values = append(values, projectview.DevelopAssetView{
+			ID: parent.ID + ":" + typ + ":" + key, ProjectID: parent.ProjectID, ServingStateID: parent.ServingStateID,
+			Type: typ, Key: parent.Key + "." + key, ParentID: parent.ID, Title: title,
+			Description: metaString(payload, "Description", "description"), Payload: payload,
+		})
+	}
+	switch typ {
+	case "page":
+		for _, value := range metaSlice(parent.Payload, "Pages", "pages") {
+			entry := asMap(value)
+			appendValue(metaString(entry, "ID", "id"), entry)
+		}
+	case "filter":
+		for key, value := range metaMap(parent.Payload, "FilterDefinitions", "filterDefinitions") {
+			appendValue(key, value)
+		}
+	case "visual":
+		for key, value := range metaMap(parent.Payload, "Visualizations", "visualizations") {
+			appendValue(key, value)
+		}
+	case "publication":
+		for _, value := range metaSlice(parent.Payload, "Publications", "publications") {
+			entry := asMap(value)
+			appendValue(metaString(entry, "Name", "name"), entry)
+		}
+	}
+	sortAssetChildren(parent, values)
+	return values
+}
+
+func dashboardPublicationsTable(publications []projectview.DevelopAssetView) recordTable {
+	rows := make([]map[string]any, 0, len(publications))
+	for _, publication := range publications {
+		rows = append(rows, map[string]any{
+			"publication":  publication.Title,
+			"dashboard":    emptyDash(metaString(publication.Payload, "Dashboard", "dashboard")),
+			"default_page": emptyDash(metaString(publication.Payload, "DefaultPage", "defaultPage")),
+			"origins":      emptyDash(strings.Join(stringSlice(metaValue(publication.Payload, "AllowedOrigins", "allowedOrigins")), ", ")),
+			"config_hash":  emptyDash(metaString(publication.Payload, "ConfigurationDigest", "configurationDigest")),
+		})
+	}
+	return recordTable{
+		Columns: []recordTableColumn{
+			{ID: "publication", Header: "Publication", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
+			{ID: "dashboard", Header: "Dashboard", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
+			{ID: "default_page", Header: "Default page", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
+			{ID: "origins", Header: "Allowed origins", Width: uisignals.Pointer("260px")},
+			{ID: "config_hash", Header: "Config digest", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("180px")},
+		},
+		Rows: rows, Empty: "No dashboard publications are configured.", MinWidth: uisignals.Pointer("1060px"),
+	}
+}
+
+func metaInt64(meta map[string]any, keys ...string) int64 {
+	switch typed := metaValue(meta, keys...).(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+func nullableValueLabel(value any) string {
+	switch typed := value.(type) {
+	case bool:
+		return boolLabel(typed)
+	case string:
+		if strings.EqualFold(typed, "true") || strings.EqualFold(typed, "yes") {
+			return "Yes"
+		}
+		if strings.EqualFold(typed, "false") || strings.EqualFold(typed, "no") {
+			return "No"
+		}
+	}
+	return "Not profiled"
 }

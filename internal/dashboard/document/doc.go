@@ -55,6 +55,7 @@ func EncodeYAML(value DashboardDocument) ([]byte, error) {
 	if err := yaml.Unmarshal(encoded, &node); err != nil {
 		return nil, fmt.Errorf("normalize dashboard document: %w", err)
 	}
+	useBlockYAMLStyle(&node)
 	var output bytes.Buffer
 	encoder := yaml.NewEncoder(&output)
 	if err := encoder.Encode(&node); err != nil {
@@ -65,6 +66,20 @@ func EncodeYAML(value DashboardDocument) ([]byte, error) {
 		return nil, fmt.Errorf("close dashboard document: %w", err)
 	}
 	return output.Bytes(), nil
+}
+
+// useBlockYAMLStyle removes the flow-style presentation inherited when the
+// generated JSON contract is decoded into a YAML node. The node tags and
+// ordering remain intact, while maps and sequences render as reviewable YAML
+// instead of JSON-compatible inline objects.
+func useBlockYAMLStyle(node *yaml.Node) {
+	if node == nil {
+		return
+	}
+	node.Style = 0
+	for _, child := range node.Content {
+		useBlockYAMLStyle(child)
+	}
 }
 
 // ValidateSchema validates the complete generated Dashboard DTO at the

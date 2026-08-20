@@ -1,6 +1,8 @@
 package project
 
 import (
+	"encoding/json"
+	"strings"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -12,6 +14,10 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		Name:        "sales",
 		Title:       "Sales",
 		Description: "Sales model",
+		Connections: map[string]semanticmodel.Connection{"warehouse": {
+			Kind: "managed", Root: "/private/managed/root", Host: "private.internal", Database: "finance", Username: "analyst",
+			Credentials: semanticmodel.ConnectionCredentials{Provider: "infisical", Secret: "prod/warehouse"},
+		}},
 		Tables: map[string]semanticmodel.Table{
 			"orders": {
 				ModelName: "orders",
@@ -57,6 +63,15 @@ func TestSemanticModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	}
 	if _, exists := payload["StructuredRelationships"]; exists {
 		t.Fatalf("asset payload leaked authored relationship representation: %#v", payload["StructuredRelationships"])
+	}
+	encoded, err := json.Marshal(payload["Connections"])
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"/private/managed/root", "private.internal", "finance", "analyst", "infisical", "prod/warehouse"} {
+		if strings.Contains(string(encoded), forbidden) {
+			t.Fatalf("semantic model connections exposed target field %q: %s", forbidden, encoded)
+		}
 	}
 	orders, ok := datasetDetails["orders"].(map[string]any)
 	if !ok || orders["GrainEntity"] != "order_id" {

@@ -26,6 +26,36 @@ func TestRepositoryCreateRejectsMalformedProjectIdentity(t *testing.T) {
 	}
 }
 
+func TestRepositoryAssetVersionsReturnsDistinctPublishedHashes(t *testing.T) {
+	store, repo := openRepo(t)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status, source, digest, created_by, created_at, activated_at)
+VALUES
+  ('state_old', 'project_sales', 'dev', 'inactive', 'publish', 'digest_old', 'alice', '2026-08-18T10:00:00Z', '2026-08-18T10:01:00Z'),
+  ('state_dup', 'project_sales', 'dev', 'inactive', 'publish', 'digest_dup', 'bob', '2026-08-19T10:00:00Z', '2026-08-19T10:01:00Z'),
+  ('state_new', 'project_sales', 'dev', 'active', 'publish', 'digest_new', 'carol', '2026-08-20T10:00:00Z', '2026-08-20T10:01:00Z');
+INSERT INTO assets (snapshot_id, logical_asset_id, serving_state_id, asset_type, asset_key, source_file, payload_schema, payload_json, content_hash)
+VALUES
+  ('snapshot_old', 'model_sales', 'state_old', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
+  ('snapshot_dup', 'model_sales', 'state_dup', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
+  ('snapshot_new', 'model_sales', 'state_new', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_new');`); err != nil {
+		t.Fatalf("seed asset versions: %v", err)
+	}
+	versions, err := repo.AssetVersions(t.Context(), "project_sales", "dev", "model_sales")
+	if err != nil {
+		t.Fatalf("AssetVersions() error: %v", err)
+	}
+	if len(versions) != 2 {
+		t.Fatalf("AssetVersions() returned %d rows, want 2: %#v", len(versions), versions)
+	}
+	if versions[0].ServingStateID != "state_new" || versions[0].ContentHash != "hash_new" || versions[0].CreatedBy != "carol" {
+		t.Fatalf("latest version = %#v", versions[0])
+	}
+	if versions[1].ServingStateID != "state_dup" || versions[1].ContentHash != "hash_old" {
+		t.Fatalf("deduplicated historical version = %#v", versions[1])
+	}
+}
+
 func TestRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T) {
 	store, repo := openRepo(t)
 	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: "project", Environment: servingstate.DefaultEnvironment})

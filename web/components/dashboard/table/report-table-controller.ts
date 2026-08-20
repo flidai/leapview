@@ -59,7 +59,7 @@ export class ReportTableVirtualizationController {
     const total = table.cardinality.value.toLocaleString()
     const cardinality = table.cardinality.kind === 'exact' ? total
       : table.cardinality.kind === 'estimated' ? `~${total}`
-        : table.cardinality.kind === 'lower_bound' ? `${total}+` : total
+        : table.cardinality.kind === 'lower_bound' ? `${total}+` : 'unknown'
     return `${(firstIndex + 1).toLocaleString()}-${lastIndex.toLocaleString()} of ${cardinality}`
   }
 }

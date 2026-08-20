@@ -51,7 +51,7 @@ func TestExportDashboardConvertsCanonicalResourceIDs(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(encoded)
-	if !strings.Contains(text, `"id": "dashboard_sales"`) || !strings.Contains(text, `"name": "sales_dashboard"`) || !strings.Contains(text, `"semanticModel": "semantic_sales"`) {
+	if !strings.Contains(text, "id: dashboard_sales") || !strings.Contains(text, "name: sales_dashboard") || !strings.Contains(text, "semanticModel: semantic_sales") {
 		t.Fatalf("canonical dashboard omitted ResourceID strings: %s", text)
 	}
 }
@@ -108,6 +108,10 @@ spec:
 	if source.Metadata.Domain != "revenue" {
 		t.Fatalf("compiled dashboard source domain = %q, want revenue", source.Metadata.Domain)
 	}
+	configuration := compiled.Manifest.AuthoredResourceSources["dashboard:sales"]
+	if json.Valid([]byte(configuration)) || !strings.Contains(configuration, "kind: Dashboard") || !strings.Contains(configuration, "semanticModel: sales") {
+		t.Fatalf("manifest canonical dashboard source = %q, want expanded authored Dashboard YAML", configuration)
+	}
 	displayName := source.Metadata.Title
 	domain := source.Metadata.Domain
 	encoded, err := ExportDashboard(dashboarddocument.DashboardDocument{
@@ -121,7 +125,7 @@ spec:
 	if err != nil {
 		t.Fatalf("ExportDashboard() error = %v", err)
 	}
-	if !strings.Contains(string(encoded), `"domain": "revenue"`) {
+	if !strings.Contains(string(encoded), "domain: revenue") {
 		t.Fatalf("canonical dashboard export omitted authored domain: %s", encoded)
 	}
 }
@@ -1116,6 +1120,21 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 	}
 	if got := first.Manifest.ResourceFiles["model:orders"]; got != "models/orders.yaml" {
 		t.Fatalf("manifest model resource path = %q, want relative path", got)
+	}
+	if got := first.Manifest.AuthoredModelSources["model:orders"]; got != files["models/orders.yaml"] {
+		t.Fatalf("manifest authored model source = %q, want exact YAML", got)
+	}
+	for id, path := range map[string]string{
+		"source:orders":  "sources/orders.yaml",
+		"model:orders":   "models/orders.yaml",
+		"semantic:sales": "semantic-models/sales.yaml",
+	} {
+		if got := first.Manifest.AuthoredResourceSources[id]; got != files[path] {
+			t.Fatalf("manifest authored resource source %s = %q, want exact YAML from %s", id, got, path)
+		}
+	}
+	if _, ok := first.Manifest.AuthoredResourceSources["connection:warehouse"]; ok {
+		t.Fatal("manifest retained raw connection YAML; connection definitions must be projected through the redacted read model")
 	}
 	if got := first.Manifest.NameIndex.Models["orders_model"]; got != "model:orders" {
 		t.Fatalf("manifest model name index = %q, want stable ID", got)

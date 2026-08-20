@@ -173,3 +173,38 @@ spec:
 		})
 	}
 }
+
+func TestTypedModelLoweringRetainsAuthoredSQLForDetailProjection(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sql  string
+	}{
+		{name: "zip_geolocations", sql: `WITH normalized AS (SELECT * FROM source."olist.geolocation") SELECT * FROM normalized`},
+		{name: "sales_orders", sql: `SELECT order_id, revenue FROM source."olist.orders"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			document := `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:` + tc.name + `, name: ` + tc.name + `}
+spec:
+  definition:
+    type: sql
+    sql: |-
+      ` + strings.ReplaceAll(tc.sql, "\n", "\n      ") + `
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`
+			table, _, authored, err := decodeModelResourceWithDefinition("model.yaml", []byte(document), metadata{})
+			if err != nil {
+				t.Fatalf("decode model: %v", err)
+			}
+			if authored.Type != "sql" || authored.SQL != tc.sql {
+				t.Fatalf("authored definition = %#v, want SQL %q", authored, tc.sql)
+			}
+			if table.Execution.SQL != tc.sql {
+				t.Fatalf("runtime execution SQL = %q, want authored SQL", table.Execution.SQL)
+			}
+		})
+	}
+}

@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"bytes"
+	"encoding/json"
 	"sort"
 	"strings"
 
@@ -38,11 +40,7 @@ func ProjectPageForEnvironment(catalog catalog.Catalog, project projectview.Deve
 // canonical Develop resource areas. The project identity remains server-bound
 // in the page signal; area only controls navigation and filtering.
 func ProjectAreaPage(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
-	area = canonicalProjectArea(area)
-	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
-	attrs := []g.Node{g.Attr("slot", "page")}
-	attrs = append(attrs, projectAssetFilterRouteBridge(area)...)
-	return projectRouteDocument(project.Title, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-page", attrs...), projectDocumentExtras{CSRFToken: csrfToken, Area: area}, chromeOptions)
+	return ProjectAreaPageWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, csrfToken, chromeOptions...)
 }
 
 func ProjectBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, activeType, query, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
@@ -54,16 +52,11 @@ func ProjectBootstrapSignalsForEnvironment(catalog catalog.Catalog, project proj
 }
 
 func ProjectBootstrapSignalsForArea(catalog catalog.Catalog, project projectview.DevelopView, assets []projectview.DevelopAssetView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
-	area = canonicalProjectArea(area)
-	page := projectPageSignal(project, assets, nil, area, activeType, query, environment)
-	return projectRouteBootstrapSignals(catalog, area, roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	return ProjectBootstrapSignalsForAreaWithContext(catalog, project, assets, assets, nil, area, activeType, query, environment, roleLabel, chromeOptions...)
 }
 
 func ProjectAssetListResultsPatch(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
-	list := projectAssetListSignal(projectID, assets, edges, "", "", nil, "", "")
-	return map[string]any{"page": map[string]any{
-		"assetList": map[string]any{"assets": list.Assets},
-	}}
+	return ProjectAssetListResultsPatchWithContext(projectID, assets, assets, edges)
 }
 
 func ConnectionsPage(catalog catalog.Catalog, projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, roleLabel string, chromeOptions ...webpage.Provider) g.Node {
@@ -161,26 +154,7 @@ func projectAssetFilterRouteBridge(area string) []g.Node {
 }
 
 func projectPageSignal(project projectview.DevelopView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment string) uisignals.ResourcePageSignal {
-	area = canonicalProjectArea(area)
-	assetType := projectAssetTypeForArea(area)
-	// Each route owns one resource type. Keep the signal scoped even when a
-	// stale query or client event supplies a different type.
-	activeType = assetType
-	return uisignals.ResourcePageSignal{
-		Kind:        uisignals.RouteKindData,
-		Title:       projectAreaLabel(area),
-		Environment: uisignals.Optional(environment),
-		AssetList: uisignals.Pointer(projectAssetListSignal(
-			project.ID,
-			assets,
-			edges,
-			activeType,
-			query,
-			nil,
-			"No assets match this view.",
-			projectAssetBaseHref(area),
-		)),
-	}
+	return projectPageSignalWithContext(project, assets, assets, edges, area, activeType, query, environment)
 }
 
 func connectionsPageSignal(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, query, environment string, administration ConnectionAdministrationView) uisignals.ConnectionsPageSignal {
@@ -237,20 +211,7 @@ func connectionSourceCount(connectionID string, edges []projectview.DevelopEdgeV
 }
 
 func projectAssetListSignal(projectID string, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeType, query string, tabs []uisignals.ResourceTabSignal, empty, searchHref string) uisignals.ResourceAssetListSignal {
-	items := make([]uisignals.ResourceAssetSummarySignal, 0, len(assets))
-	sortedAssets := sortedProjectAssetList(assets)
-	assetIndex := assetsByID(sortedAssets)
-	for _, asset := range sortedAssets {
-		items = append(items, projectAssetSummarySignal(projectID, asset, assetIndex, edges))
-	}
-	return uisignals.ResourceAssetListSignal{
-		Query:      uisignals.Optional(query),
-		ActiveType: uisignals.Optional(activeType),
-		SearchHref: searchHref,
-		Tabs:       tabs,
-		Assets:     items,
-		Empty:      empty,
-	}
+	return projectAssetListSignalWithContext(projectID, assets, assets, edges, activeType, query, tabs, empty, searchHref)
 }
 
 func sortedProjectAssetList(assets []projectview.DevelopAssetView) []projectview.DevelopAssetView {
@@ -328,6 +289,7 @@ func projectAssetPageSignalWithRefresh(project projectview.DevelopView, asset pr
 }
 
 func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection string, lineage assetLineageModel, refresh AssetRefreshState, versions AssetVersionsState) uisignals.ResourceAssetPageSignal {
+	activeSection = normalizeProjectAssetSection(activeSection)
 	page := baseProjectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
 	area := projectAreaForAssetType(asset.Type)
 	areaHref := projectAssetBaseHref(area)
@@ -338,13 +300,20 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		{Label: assetTitle(asset), Current: uisignals.Pointer(true)},
 	}
 	actions := []uisignals.ResourceActionSignal{{Label: "Back to " + strings.ToLower(areaLabel), Href: uisignals.Pointer(areaHref), Icon: uisignals.Pointer("back")}}
-	if assetRefreshable(asset.Type) {
+	if assetRefreshable(asset.Type) && activeSection != "definition" {
+		runLabel := "Run now"
+		if refresh.Unavailable {
+			runLabel = "Run now unavailable; review connections"
+		}
 		actions = append([]uisignals.ResourceActionSignal{{
-			Label:    "Run now",
+			Label:    runLabel,
 			Icon:     uisignals.Pointer("refresh"),
 			Command:  uisignals.Pointer("run-refresh-pipeline"),
-			Disabled: uisignals.Optional(assetRefreshSignal(refresh).Running),
+			Disabled: uisignals.Optional(refresh.Unavailable || assetRefreshSignal(refresh).Running),
 		}}, actions...)
+		if refresh.Unavailable {
+			actions = append(actions, uisignals.ResourceActionSignal{Label: "Review connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("open")})
+		}
 	}
 	if asset.Href != "" {
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})
@@ -352,6 +321,7 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	page.Actions = uisignals.OptionalSlice(actions)
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.CanonicalAssetSectionHref(asset, "details"), Active: activeSection == "details"},
+		{ID: "definition", Label: "Definition", Href: assetnav.CanonicalAssetSectionHref(asset, "definition"), Active: activeSection == "definition"},
 	}
 	if assetDataInspectable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
@@ -375,6 +345,7 @@ func connectionAssetPageSignal(project projectview.DevelopView, asset projectvie
 }
 
 func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection string, lineage assetLineageModel, versions AssetVersionsState, administration ...ConnectionAdministrationView) uisignals.ResourceAssetPageSignal {
+	activeSection = normalizeProjectAssetSection(activeSection)
 	page := baseProjectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, AssetRefreshState{}, versions)
 	admin := ConnectionAdministrationView{}
 	if len(administration) > 0 {
@@ -390,6 +361,7 @@ func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asse
 	page.Actions = uisignals.Pointer([]uisignals.ResourceActionSignal{{Label: "Back to connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("back")}})
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
+		{ID: "definition", Label: "Definition", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "definition"), Active: activeSection == "definition"},
 		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))},
 	}
 	return page
@@ -417,6 +389,9 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))
 	}
+	if activeSection == "definition" {
+		page.Definition = uisignals.Pointer(projectAssetDefinitionSignal(asset))
+	}
 	if activeSection == "lineage" {
 		page.Lineage = uisignals.Pointer(uisignals.ResourceAssetLineageSignal{
 			Count:       int64(lineage.Count),
@@ -442,19 +417,9 @@ func projectAssetDetailsSignal(project projectview.DevelopView, asset projectvie
 
 func projectAssetDetailsSignalWithRefresh(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState) uisignals.ResourceAssetDetailsSignal {
 	model := assetDetailModelForAssetWithRefresh(project, asset, assets, edges, refresh)
-	sections := make([]uisignals.ResourceDetailSectionSignal, 0, len(model.Sections))
-	for _, section := range model.Sections {
-		sections = append(sections, uisignals.ResourceDetailSectionSignal{
-			Title: section.Title,
-			Facts: uisignals.OptionalSlice(definitionFactSignals(section.Facts)),
-			Table: uisignals.Pointer(section.Table),
-			Code:  uisignals.Optional(section.Code),
-			Lang:  uisignals.Optional(section.Lang),
-		})
-	}
 	return uisignals.ResourceAssetDetailsSignal{
 		Overview:           definitionFactSignals(model.Overview),
-		Sections:           sections,
+		Sections:           assetDetailSectionSignals(model.Sections),
 		SemanticModelGraph: model.SemanticModelGraph,
 	}
 }
@@ -468,4 +433,107 @@ func definitionFactSignals(facts []definitionFact) []uisignals.DefinitionFactSig
 		out = append(out, uisignals.DefinitionFactSignal{Label: fact.Label, Value: fact.Value, Code: uisignals.Optional(fact.Code), Wide: uisignals.Optional(fact.Wide)})
 	}
 	return out
+}
+
+func ProjectAreaPageWithContext(catalog catalog.Catalog, project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment, roleLabel, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
+	area = canonicalProjectArea(area)
+	page := projectPageSignalWithContext(project, assets, contextAssets, edges, area, activeType, query, environment)
+	attrs := []g.Node{g.Attr("slot", "page")}
+	attrs = append(attrs, projectAssetFilterRouteBridge(area)...)
+	return projectRouteDocument(project.Title, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-page", attrs...), projectDocumentExtras{CSRFToken: csrfToken, Area: area}, chromeOptions)
+}
+
+func ProjectBootstrapSignalsForAreaWithContext(catalog catalog.Catalog, project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment, roleLabel string, chromeOptions ...webpage.Provider) map[string]any {
+	area = canonicalProjectArea(area)
+	page := projectPageSignalWithContext(project, assets, contextAssets, edges, area, activeType, query, environment)
+	return projectRouteBootstrapSignals(catalog, area, roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+}
+
+func ProjectAssetListResultsPatchWithContext(projectID string, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView) map[string]any {
+	list := projectAssetListSignalWithContext(projectID, assets, contextAssets, edges, "", "", nil, "", "")
+	return map[string]any{"page": map[string]any{
+		"assetList": map[string]any{"assets": list.Assets},
+	}}
+}
+
+func projectPageSignalWithContext(project projectview.DevelopView, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, area, activeType, query, environment string) uisignals.ResourcePageSignal {
+	area = canonicalProjectArea(area)
+	assetType := projectAssetTypeForArea(area)
+	// Each route owns one resource type. Keep the signal scoped even when a
+	// stale query or client event supplies a different type.
+	activeType = assetType
+	return uisignals.ResourcePageSignal{
+		Kind:        uisignals.RouteKindData,
+		Title:       projectAreaLabel(area),
+		Environment: uisignals.Optional(environment),
+		AssetList: uisignals.Pointer(projectAssetListSignalWithContext(
+			project.ID,
+			assets,
+			contextAssets,
+			edges,
+			activeType,
+			query,
+			nil,
+			"No assets match this view.",
+			projectAssetBaseHref(area),
+		)),
+	}
+}
+
+func projectAssetListSignalWithContext(projectID string, assets, contextAssets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeType, query string, tabs []uisignals.ResourceTabSignal, empty, searchHref string) uisignals.ResourceAssetListSignal {
+	items := make([]uisignals.ResourceAssetSummarySignal, 0, len(assets))
+	sortedAssets := sortedProjectAssetList(assets)
+	assetIndex := assetsByID(contextAssets)
+	for _, asset := range sortedAssets {
+		items = append(items, projectAssetSummarySignal(projectID, asset, assetIndex, edges))
+	}
+	return uisignals.ResourceAssetListSignal{
+		Query:      uisignals.Optional(query),
+		ActiveType: uisignals.Optional(activeType),
+		SearchHref: searchHref,
+		Tabs:       tabs,
+		Assets:     items,
+		Empty:      empty,
+	}
+}
+
+func projectAssetDefinitionSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetDefinitionSignal {
+	sections := []assetDetailSection{}
+	if configuration := metaString(asset.Payload, "Configuration", "configuration"); configuration != "" {
+		lang, code := formattedResourceConfiguration(configuration)
+		sections = append(sections, assetDetailSection{Title: "Configuration", Lang: lang, Code: code})
+	}
+	if asset.Type == string(projectview.AssetTypeModelTable) {
+		if sql := modelTableSQL(asset.Payload); sql != "" {
+			sections = append(sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
+		}
+	}
+	return uisignals.ResourceAssetDefinitionSignal{Sections: assetDetailSectionSignals(sections)}
+}
+
+func formattedResourceConfiguration(configuration string) (string, string) {
+	trimmed := strings.TrimSpace(configuration)
+	if !json.Valid([]byte(trimmed)) {
+		return "yaml", configuration
+	}
+	var formatted bytes.Buffer
+	if err := json.Indent(&formatted, []byte(trimmed), "", "  "); err != nil {
+		return "json", configuration
+	}
+	formatted.WriteByte('\n')
+	return "json", formatted.String()
+}
+
+func assetDetailSectionSignals(input []assetDetailSection) []uisignals.ResourceDetailSectionSignal {
+	sections := make([]uisignals.ResourceDetailSectionSignal, 0, len(input))
+	for _, section := range input {
+		sections = append(sections, uisignals.ResourceDetailSectionSignal{
+			Title: section.Title,
+			Facts: uisignals.OptionalSlice(definitionFactSignals(section.Facts)),
+			Table: uisignals.Pointer(section.Table),
+			Code:  uisignals.Optional(section.Code),
+			Lang:  uisignals.Optional(section.Lang),
+		})
+	}
+	return sections
 }

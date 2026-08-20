@@ -18,7 +18,9 @@ func ProjectAssetRefreshSignals(project projectview.DevelopView, asset projectvi
 
 func assetRefreshSignal(refresh AssetRefreshState) uisignals.ResourceAssetRefreshSignal {
 	status := strings.TrimSpace(refresh.Latest.Status)
-	if status == "" {
+	if refresh.Unavailable {
+		status = "unavailable"
+	} else if status == "" {
 		status = "not refreshed"
 	}
 	return uisignals.ResourceAssetRefreshSignal{
@@ -209,7 +211,8 @@ func projectAssetDataHref(asset projectview.DevelopAssetView) string {
 }
 
 func normalizeProjectAssetSection(section string) string {
-	if ValidProjectAssetSection(section) {
+	section = strings.TrimSpace(section)
+	if validProjectAssetSectionName(section) {
 		return section
 	}
 	return "details"

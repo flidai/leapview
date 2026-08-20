@@ -73,8 +73,8 @@ func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectvie
 	return ConnectionAssetBootstrapSignalsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
 }
 
-func ConnectionAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState) map[string]any {
-	return ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{})
+func ConnectionAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) map[string]any {
+	return ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, chromeOptions...)
 }
 
 func ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, administration ConnectionAdministrationView, chromeOptions ...webpage.Provider) map[string]any {
@@ -91,8 +91,8 @@ func ConnectionAssetPageWithVersions(catalog catalog.Catalog, project projectvie
 	return ConnectionAssetPageWithVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, versions)
 }
 
-func ConnectionAssetPageWithVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState) g.Node {
-	return ConnectionAssetPageWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, ConnectionCommandBindings{}, "", nil)
+func ConnectionAssetPageWithVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
+	return ConnectionAssetPageWithAdministrationForEnvironment(catalog, project, asset, assets, edges, activeSection, environment, roleLabel, versions, ConnectionAdministrationView{}, ConnectionCommandBindings{}, "", chromeOptions)
 }
 
 func ConnectionAssetPageWithAdministrationForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, versions AssetVersionsState, administration ConnectionAdministrationView, commands ConnectionCommandBindings, csrfToken string, chromeOptions []webpage.Provider) g.Node {
@@ -223,6 +223,8 @@ func canonicalProjectArea(area string) string {
 		return "models"
 	case "semantic-models":
 		return "semantic-models"
+	case "dashboards":
+		return "dashboards"
 	case "pipelines":
 		return "pipelines"
 	case "connections":
@@ -234,6 +236,8 @@ func canonicalProjectArea(area string) string {
 
 func projectAreaForAssetType(assetType string) string {
 	switch assetType {
+	case string(projectview.AssetTypeDashboard):
+		return "dashboards"
 	case string(projectview.AssetTypeModelTable):
 		return "models"
 	case string(projectview.AssetTypeSemanticModel):
@@ -249,6 +253,8 @@ func projectAreaForAssetType(assetType string) string {
 
 func projectAreaLabel(area string) string {
 	switch canonicalProjectArea(area) {
+	case "dashboards":
+		return "Dashboards"
 	case "models":
 		return "Models"
 	case "semantic-models":
@@ -264,6 +270,8 @@ func projectAreaLabel(area string) string {
 
 func projectAssetTypeForArea(area string) string {
 	switch canonicalProjectArea(area) {
+	case "dashboards":
+		return string(projectview.AssetTypeDashboard)
 	case "models":
 		return string(projectview.AssetTypeModelTable)
 	case "semantic-models":
@@ -273,10 +281,15 @@ func projectAssetTypeForArea(area string) string {
 	}
 }
 
-func ValidProjectAssetSection(section string) bool {
+func ValidProjectAssetSection(assetType, section string) bool {
+	section = strings.TrimSpace(section)
 	switch section {
-	case "details", "data", "lineage", "refreshes", "versions":
+	case "details", "definition", "lineage", "versions":
 		return true
+	case "data":
+		return assetDataInspectable(assetType)
+	case "refreshes":
+		return assetRefreshable(assetType)
 	default:
 		return false
 	}
@@ -284,6 +297,7 @@ func ValidProjectAssetSection(section string) bool {
 
 type AssetRefreshState struct {
 	CSRFToken        string
+	Unavailable      bool
 	RunCommand       uicommand.Binding
 	CancelCommand    uicommand.Binding
 	Runs             []AssetRefreshRun
@@ -333,4 +347,13 @@ type AssetVersionState struct {
 	ActivatedAt    string
 	SourceFile     string
 	ContentHash    string
+}
+
+func validProjectAssetSectionName(section string) bool {
+	switch strings.TrimSpace(section) {
+	case "details", "definition", "data", "lineage", "refreshes", "versions":
+		return true
+	default:
+		return false
+	}
 }

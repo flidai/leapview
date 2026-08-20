@@ -52,7 +52,7 @@ func TestCanonicalAssetSectionHrefUsesResourceAreas(t *testing.T) {
 		{name: "semantic model", asset: project.DevelopAssetView{ID: "semantic_model:sales", Type: string(project.AssetTypeSemanticModel)}, section: "lineage", want: "/semantic-models/semantic_model:sales/lineage"},
 		{name: "pipeline", asset: project.DevelopAssetView{ID: "refresh_pipeline:daily", Type: string(project.AssetTypeRefreshPipeline)}, section: "refreshes", want: "/pipelines/refresh_pipeline:daily/refreshes"},
 		{name: "connection", asset: project.DevelopAssetView{ID: "connection:warehouse", Type: string(project.AssetTypeConnection)}, section: "details", want: "/connections/connection:warehouse/details"},
-		{name: "dashboard", asset: project.DevelopAssetView{ID: "dashboard:exec", Type: string(project.AssetTypeDashboard), Href: "/dashboards/exec"}, section: "details", want: "/dashboards/exec"},
+		{name: "dashboard", asset: project.DevelopAssetView{ID: "dashboard:exec", Type: string(project.AssetTypeDashboard), Href: "/dashboards/exec"}, section: "details", want: "/dashboards/dashboard:exec/details"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

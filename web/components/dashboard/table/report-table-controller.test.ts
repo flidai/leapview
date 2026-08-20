@@ -1,4 +1,5 @@
 import { expect, test } from 'bun:test'
+import { emptyTable } from './block-source'
 import { ReportTableColumnController, ReportTableFormattingController, ReportTableSelectionController, ReportTableVirtualizationController } from './report-table-controller'
 
 test('report table virtualization computes bounded windows and block starts', () => {
@@ -7,6 +8,12 @@ test('report table virtualization computes bounded windows and block starts', ()
   expect(controller.visibleRange(1000, 32)).toEqual({ first: 8, last: 16 })
   expect(controller.desiredStarts(300, 1000, 100)).toEqual([200, 300, 400])
   expect(controller.allBlockStarts(300, 100)).toEqual([200, 300, 400])
+})
+
+test('report table virtualization does not present unknown cardinality as an exact zero', () => {
+  const controller = new ReportTableVirtualizationController()
+  controller.setViewport(0, 128)
+  expect(controller.rowRangeText({ ...emptyTable, cardinality: { kind: 'unknown', value: 0 } }, 100, 32)).toBe('1-4 of unknown')
 })
 
 test('report table column sizing preserves configured minimums', () => {

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -237,6 +238,28 @@ func TestGovernedDataRuntimeForwardsDuckLakeSnapshotID(t *testing.T) {
 	if got := snapshot.DuckLakeSnapshotID(); got != 42 {
 		t.Fatalf("DuckLakeSnapshotID = %d, want 42", got)
 	}
+}
+
+func TestServiceForwardsCatalogStatisticsThroughGovernedRuntime(t *testing.T) {
+	want := []catalogstats.Table{{Schema: "model", Name: "orders", SizeBytes: 4096}}
+	governed := newGovernedDataRuntime("sales", "sales", catalogStatisticsDataRuntime{snapshotDataRuntime: snapshotDataRuntime{snapshotID: 42}, statistics: want})
+	service := &Service{runtimes: map[projectgraph.ResourceID]*modelRuntime{"sales": {data: governed}}}
+	got, err := service.CatalogTableStatistics(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != want[0] {
+		t.Fatalf("CatalogTableStatistics() = %#v, want %#v", got, want)
+	}
+}
+
+type catalogStatisticsDataRuntime struct {
+	snapshotDataRuntime
+	statistics []catalogstats.Table
+}
+
+func (r catalogStatisticsDataRuntime) CatalogTableStatistics(context.Context) ([]catalogstats.Table, error) {
+	return r.statistics, nil
 }
 
 type snapshotDataRuntime struct {

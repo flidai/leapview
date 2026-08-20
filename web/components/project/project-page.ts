@@ -34,7 +34,6 @@ import type {
   ResourceTabSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
-import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { checkSignalContract } from '../shared/signal-contract'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -178,7 +177,7 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   static get styles() {
-    return [entityDetailStyles, projectStyles]
+    return [projectStyles]
   }
 
   updated(): void {
@@ -245,33 +244,33 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         .administration=${administration}
       ></lv-connection-administration>
     ` : nothing
-    const details = page.activeSection === 'lineage'
-      ? this.renderLineage(page)
-      : html`
-          ${renderFacts('Overview', page.details?.overview ?? [], true)}
-          ${(page.details?.sections ?? []).map(renderDetailSection)}
-        `
     return html`
-      <div class="connection-detail-route">
-        ${renderEntityDetail({
-          label: 'Connection administration',
-          feedback,
-          backHref: '/connections',
-          backLabel: 'All connections',
-          avatar: lucideIcon(Plug, { size: 28, strokeWidth: 1.75 }),
-          title: page.title,
-          subtitle: page.asset.description || 'Connection used by published sources.',
-          badges: html`
-            <span class="badge">${lifecycle?.connectorKind || page.asset.typeLabel}</span>
-            ${lifecycle?.objectScope ? html`<span class="badge">${lifecycle.objectScope}</span>` : nothing}
-          `,
-          actions,
-          sections: html`
-            <div class="connection-detail-tabs">${renderTabs(page.tabs, 'Connection sections')}</div>
-            ${details}
-          `,
-        })}
-      </div>
+      <section class="asset-page connection-asset-page" aria-label="Connection detail">
+        <header class="breadcrumb-header">
+          <nav aria-label="Breadcrumb">
+            <ol>
+              ${page.breadcrumbs.map((crumb) => html`
+                <li>
+                  ${crumb.current
+                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'inline')}<span>${crumb.label}</span></h1>`
+                    : html`<a href=${crumb.href}>${crumb.label}</a>`}
+                </li>
+              `)}
+            </ol>
+          </nav>
+          <div class="actions">
+            ${actions}
+            ${page.actions?.map((action) => this.renderAction(action, page))}
+          </div>
+        </header>
+        <div class="asset-body">
+          ${renderTabs(page.tabs, 'Connection sections')}
+          <div class=${page.activeSection === 'lineage' ? 'section-body lineage-body' : 'section-body'}>
+            ${feedback}
+            ${this.renderSection(page)}
+          </div>
+        </div>
+      </section>
     `
   }
 
@@ -317,6 +316,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       ? this.renderLineage(page)
       : page.activeSection === 'data'
         ? html`<lv-data-explorer embedded></lv-data-explorer>`
+      : page.activeSection === 'definition'
+        ? this.renderDefinition(page)
       : page.activeSection === 'refreshes'
         ? this.renderRefreshes(page)
         : page.activeSection === 'versions'
@@ -339,10 +340,17 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         </button>
       `
     }
-    const icon = action.icon === 'open' ? ExternalLink : ArrowLeft
+    if (action.icon === 'open') {
+      return html`
+        <a class="action-link" href=${action.href ?? '#'}>
+          ${lucideIcon(ExternalLink)}
+          <span>${action.label}</span>
+        </a>
+      `
+    }
     return html`
       <a class="icon-link" href=${action.href ?? '#'} title=${action.label} aria-label=${action.label}>
-        ${lucideIcon(icon)}
+        ${lucideIcon(ArrowLeft)}
       </a>
     `
   }
@@ -354,6 +362,19 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         <div class="details-content">
           ${renderFacts('Overview', page.details?.overview ?? [], true)}
           ${(page.details?.sections ?? []).map(renderDetailSection)}
+        </div>
+      </section>
+    `
+  }
+
+  private renderDefinition(page: ResourceAssetPageSignal) {
+    const sections = page.definition?.sections ?? []
+    return html`
+      <section class="details definition" id="definition" aria-label="Asset definition">
+        <div class="details-content">
+          ${sections.length > 0
+            ? sections.map(renderDetailSection)
+            : html`<div class="empty">No authored definition is available.</div>`}
         </div>
       </section>
     `
@@ -432,25 +453,33 @@ function preventSubmit(event: Event) {
 
 function renderAssetTable(assets: ResourceAssetSummarySignal[], empty: string) {
   if (!assets.length) return html`<div class="panel"><div class="empty">${empty}</div></div>`
+  const hasParent = assets.some((asset) => asset.parentTitle && asset.parentTitle !== '-')
+  const hasOpenAction = assets.some((asset) => asset.openHref && asset.openHref !== asset.detailHref)
   const table: RecordTableSignal = {
     columns: [
       { id: 'name', header: 'Name', kind: 'entity' },
       { id: 'type', header: 'Type', width: '150px' },
-      { id: 'actions', header: 'Actions', kind: 'actions', align: 'right', width: '104px', sortable: false } as any,
+      ...(hasParent ? [{ id: 'parent', header: 'Parent', kind: 'link', hrefKey: 'parentHref', width: '180px' }] : []),
+      { id: 'key', header: 'Identifier', kind: 'code', width: '220px' },
+      ...(hasOpenAction ? [{ id: 'actions', header: 'Actions', kind: 'actions', align: 'right', width: '104px', sortable: false } as any] : []),
     ],
     rows: assets.map((asset) => {
-      const actions = [{ label: 'View details', href: asset.detailHref, icon: 'details' }]
+      const actions = []
       if (asset.openHref && asset.openHref !== asset.detailHref) {
         actions.push({ label: 'Open asset', href: asset.openHref, icon: 'open' })
       }
       return {
         name: {
           label: asset.title,
+          description: asset.description,
           href: asset.detailHref,
           icon: asset.type,
           iconTreatment: 'plain',
         },
         type: asset.typeLabel,
+        parent: asset.parentTitle,
+        parentHref: asset.parentHref,
+        key: asset.key,
         actions,
       }
     }),
@@ -648,39 +677,6 @@ const projectStyles = css`
     overflow: hidden;
   }
 
-  .connection-detail-route {
-    width: min(calc(100% - var(--base-size-48)), var(--lv-page-content-max-width));
-    min-width: 0;
-    min-height: 100svh;
-    box-sizing: border-box;
-    margin-inline: auto;
-    padding-block: var(--base-size-24);
-  }
-
-  .connection-detail-route .muted {
-    margin: 0;
-    overflow: visible;
-    text-overflow: clip;
-    white-space: normal;
-  }
-
-  .connection-detail-route .detail-section {
-    gap: var(--base-size-16);
-    border-top: var(--lv-border-muted);
-    border-bottom: 0;
-    padding: var(--base-size-24) 0;
-  }
-
-  .connection-detail-route .facts,
-  .connection-detail-route .facts.overview {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: var(--base-size-16) var(--base-size-48);
-  }
-
-  .connection-detail-tabs {
-    padding-top: var(--base-size-8);
-  }
-
   .connection-feedback {
     margin-bottom: var(--base-size-16);
     border: var(--lv-border-muted);
@@ -782,7 +778,7 @@ const projectStyles = css`
     background: var(--lv-bg-page);
   }
 
-  .primary-link,
+  .action-link,
   .icon-link,
   .icon-button {
     display: inline-grid;
@@ -791,16 +787,35 @@ const projectStyles = css`
     text-decoration: none;
   }
 
-  .primary-link {
-    min-height: var(--lv-button-height-sm);
-    grid-auto-flow: column;
+  .action-link {
+    display: inline-flex;
+    min-height: var(--lv-button-height);
+    align-items: center;
+    justify-content: center;
     gap: var(--base-size-6);
     border: var(--borderWidth-default) solid var(--lv-button-accent-border-rest);
+    border-radius: var(--lv-button-radius);
     background: var(--lv-button-accent-bg-rest);
     color: var(--lv-button-accent-fg-rest);
     padding: 0 var(--lv-button-padding-inline-sm);
-    font: var(--lv-type-caption);
-    font-weight: var(--base-text-weight-medium);
+    cursor: pointer;
+    font: var(--lv-type-body);
+    white-space: nowrap;
+  }
+
+  .action-link:hover {
+    border-color: var(--lv-button-accent-border-hover);
+    background: var(--lv-button-accent-bg-hover);
+  }
+
+  .action-link:active {
+    border-color: var(--lv-button-accent-border-active);
+    background: var(--lv-button-accent-bg-active);
+  }
+
+  .action-link:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
   }
 
   .icon-link,
@@ -1091,7 +1106,7 @@ const projectStyles = css`
     color: var(--lv-fg-muted);
   }
 
-  .breadcrumb-header a {
+  .breadcrumb-header nav a {
     color: var(--lv-fg-muted);
     text-decoration: none;
   }
@@ -1323,16 +1338,6 @@ const projectStyles = css`
       height: 100svh;
       min-height: 0;
       overflow: hidden;
-    }
-
-    .connection-detail-route {
-      width: 100%;
-      padding: var(--base-size-16);
-    }
-
-    .connection-detail-route .facts,
-    .connection-detail-route .facts.overview {
-      grid-template-columns: minmax(0, 1fr);
     }
 
     .section-body {

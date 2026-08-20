@@ -9,6 +9,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -354,6 +355,31 @@ func (m *Service) DuckLakeSnapshotID() int64 {
 		}
 	}
 	return snapshotID
+}
+
+// CatalogTableStatistics forwards the snapshot-bound physical catalog owned
+// by the shared analytical project runtime. All semantic-model entries use
+// the same project runtime, so one admitted reader is sufficient.
+func (m *Service) CatalogTableStatistics(ctx context.Context) ([]catalogstats.Table, error) {
+	if m == nil {
+		return nil, fmt.Errorf("dashboard runtime is unavailable")
+	}
+	m.mu.RLock()
+	var reader catalogstats.Reader
+	for _, runtime := range m.runtimes {
+		if runtime == nil || runtime.data == nil {
+			continue
+		}
+		if candidate, ok := runtime.data.(catalogstats.Reader); ok {
+			reader = candidate
+			break
+		}
+	}
+	m.mu.RUnlock()
+	if reader == nil {
+		return nil, fmt.Errorf("dashboard runtime does not expose catalog statistics")
+	}
+	return reader.CatalogTableStatistics(ctx)
 }
 
 func (m *Service) DashboardTargetConcurrency() int {

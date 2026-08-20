@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -122,6 +123,14 @@ func (r projectRuntime) Distribution(ctx context.Context, request reportdef.RawV
 }
 func (r projectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	return r.runtime.ExecuteDataQuery(ctx, request)
+}
+
+func (r projectRuntime) CatalogTableStatistics(ctx context.Context) ([]catalogstats.Table, error) {
+	reader, ok := r.runtime.(catalogstats.Reader)
+	if !ok {
+		return nil, fmt.Errorf("analytical project runtime does not expose catalog statistics")
+	}
+	return reader.CatalogTableStatistics(ctx)
 }
 func (r projectRuntime) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
 	return r.runtime.ExecuteDataQueryArrow(ctx, request, sink)

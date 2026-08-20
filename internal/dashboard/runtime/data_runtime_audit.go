@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -227,6 +228,14 @@ func (r *governedDataRuntime) DuckLakeSnapshotID() int64 {
 		return 0
 	}
 	return snapshot.DuckLakeSnapshotID()
+}
+
+func (r *governedDataRuntime) CatalogTableStatistics(ctx context.Context) ([]catalogstats.Table, error) {
+	reader, ok := r.DataRuntime.(catalogstats.Reader)
+	if !ok {
+		return nil, fmt.Errorf("dashboard data runtime does not expose catalog statistics")
+	}
+	return reader.CatalogTableStatistics(ctx)
 }
 
 func (r *governedDataRuntime) ReadConcurrency() int {

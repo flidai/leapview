@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"gopkg.in/yaml.v3"
 )
 
 // SourceAssetReadModel is the credential-free source definition used by the
@@ -56,6 +58,14 @@ type RefreshPipelineAssetReadModel struct {
 	Schedules       []RefreshPipelineScheduleReadModel `json:"Schedules,omitempty"`
 }
 
+// DashboardAssetPayload exposes the compiler-owned dashboard definition to
+// the Develop detail surface. The serving graph intentionally stores only
+// generic graph metadata; this projection keeps the existing dashboard detail
+// renderer useful without exposing authoring internals or runtime state.
+func DashboardAssetPayload(dashboard dashboarddefinition.Definition) map[string]any {
+	return encodeAssetReadModel(dashboard)
+}
+
 func SourceAssetPayload(source semanticmodel.Source) map[string]any {
 	return encodeAssetReadModel(SourceAssetReadModel{
 		Format: source.Format, Description: source.Description, Path: source.Path,
@@ -75,6 +85,41 @@ func ConnectionAssetPayload(connection semanticmodel.Connection) map[string]any 
 		// binding as healthy on the browser list.
 		CredentialsRequired: strings.TrimSpace(connection.Credentials.Provider) != "none",
 	})
+}
+
+// ConnectionAssetConfiguration produces an authored-shape YAML definition
+// from the same explicit allowlist as ConnectionAssetPayload. Raw connection
+// documents must never enter the compiled manifest because they may contain
+// target identifiers, credential-provider paths, or future secret fields.
+func ConnectionAssetConfiguration(id, name string, connection semanticmodel.Connection) string {
+	type safeMetadata struct {
+		ID          string `yaml:"id"`
+		Name        string `yaml:"name"`
+		Description string `yaml:"description,omitempty"`
+	}
+	type safeSpec struct {
+		Type     string                           `yaml:"type"`
+		Access   semanticmodel.ConnectionAccess   `yaml:"access,omitempty"`
+		Defaults *projectcontracts.ReaderDefaults `yaml:"defaults,omitempty"`
+	}
+	type safeResource struct {
+		APIVersion string       `yaml:"apiVersion"`
+		Kind       string       `yaml:"kind"`
+		Metadata   safeMetadata `yaml:"metadata"`
+		Spec       safeSpec     `yaml:"spec"`
+	}
+	encoded, err := yaml.Marshal(safeResource{
+		APIVersion: "leapview.dev/v1",
+		Kind:       "Connection",
+		Metadata:   safeMetadata{ID: id, Name: name, Description: connection.Description},
+		Spec: safeSpec{
+			Type: connection.Kind, Access: connection.Access, Defaults: connection.ReaderDefaults,
+		},
+	})
+	if err != nil {
+		return ""
+	}
+	return "# Sensitive endpoint and credential settings are redacted.\n" + string(encoded)
 }
 
 func RefreshPipelineAssetPayload(pipeline refreshschedule.Definition) map[string]any {

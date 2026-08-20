@@ -131,6 +131,17 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 }
 
+func TestProjectRejectsRawConnectionSourceFromCompiledManifest(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.AuthoredResourceSources = map[string]string{
+		"connection:warehouse": "kind: Connection\nspec:\n  credentials: leaked\n",
+	}
+	_, err := NewProject(graphValue, projectManifest)
+	if err == nil || !strings.Contains(err.Error(), "forbidden graph kind") {
+		t.Fatalf("NewProject() error = %v, want raw connection source rejection", err)
+	}
+}
+
 func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
 	graphValue, projectManifest := projectFixture(t)
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed", Access: semanticmodel.ConnectionAccessPublic}
@@ -202,6 +213,9 @@ func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T)
 	projectManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "managed"}
 	projectManifest.Sources["source:orders"] = semanticmodel.Source{Connection: "connection:warehouse", Format: "csv", Path: "orders.csv", PathLocation: pathLocation, EffectivePathLocation: pathLocation}
 	projectManifest.Models["model:orders"] = semanticmodel.Table{Execution: semanticmodel.ExecutionDefinition{Source: "source:orders"}, SourceDependencies: []string{"source:orders"}}
+	projectManifest.AuthoredModelDefinitions = map[string]manifest.AuthoredModelDefinition{
+		"model:orders": {Type: "sql", SQL: `SELECT * FROM source."orders"`},
+	}
 	model := projectManifest.SemanticModels["semantic:sales"]
 	model.DefaultConnection = "warehouse"
 	model.Connections = map[string]semanticmodel.Connection{"warehouse": projectManifest.Connections["connection:warehouse"]}
@@ -256,6 +270,9 @@ func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T)
 	manifestCopy := decoded.Manifest()
 	if manifestCopy.Models["model:orders"].Execution.Source != "source:orders" || manifestCopy.SemanticModels["semantic:sales"].Sources["orders"].PathLocation == nil {
 		t.Fatalf("manifest accessor dropped private runtime projection: %#v", manifestCopy)
+	}
+	if got := manifestCopy.AuthoredModelDefinitions["model:orders"].SQL; got != `SELECT * FROM source."orders"` {
+		t.Fatalf("manifest accessor dropped authored model SQL: %q", got)
 	}
 	manifestTable := manifestCopy.Models["model:orders"]
 	manifestTable.Execution.Source = "changed"
