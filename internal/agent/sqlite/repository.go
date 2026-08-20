@@ -15,14 +15,15 @@ import (
 
 	"github.com/flidai/leapview/internal/agent"
 	platformdb "github.com/flidai/leapview/internal/agent/internal/db"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct {
 	db       *sql.DB
 	q        *platformdb.Queries
 	events   jobs.Repository
-	workflow jobs.WorkflowRecorder
+	workflow jobplatform.WorkflowRecorder
 }
 
 func NewRepository(sqlDB *sql.DB) *Repository {
@@ -33,7 +34,7 @@ func NewRepositoryWithEvents(sqlDB *sql.DB, events jobs.Repository) *Repository 
 	return &Repository{db: sqlDB, q: platformdb.New(sqlDB), events: events}
 }
 
-func NewRepositoryWithWorkflow(sqlDB *sql.DB, events jobs.Repository, workflow jobs.WorkflowRecorder) *Repository {
+func NewRepositoryWithWorkflow(sqlDB *sql.DB, events jobs.Repository, workflow jobplatform.WorkflowRecorder) *Repository {
 	return &Repository{db: sqlDB, q: platformdb.New(sqlDB), events: events, workflow: workflow}
 }
 
@@ -43,7 +44,7 @@ func (r *Repository) RunWorkflowAvailable() bool {
 
 // ConfigureRunWorkflow wires the shared transaction-capable workflow recorder
 // into repositories used to construct an agent service outside the module.
-func (r *Repository) ConfigureRunWorkflow(workflow jobs.WorkflowRecorder) {
+func (r *Repository) ConfigureRunWorkflow(workflow jobplatform.WorkflowRecorder) {
 	if r != nil {
 		r.workflow = workflow
 		if events, ok := workflow.(jobs.Repository); ok {

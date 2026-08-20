@@ -865,8 +865,8 @@ func filtersFromAPIGen(value *dashboardgen.DashboardAuthoringPreviewFilters) (da
 		if selection.SourceKind != "visual" {
 			return dashboard.Filters{}, fmt.Errorf("%w: preview selection sourceKind must be visual", authoring.ErrInvalidAuthoring)
 		}
-		if selection.InteractionKind != "point_selection" && selection.InteractionKind != "row_selection" {
-			return dashboard.Filters{}, fmt.Errorf("%w: unsupported preview interactionKind %q", authoring.ErrInvalidAuthoring, selection.InteractionKind)
+		if strings.TrimSpace(selection.InteractionKind) == "" {
+			return dashboard.Filters{}, fmt.Errorf("%w: preview interactionKind must reference a compiled interaction ID", authoring.ErrInvalidAuthoring)
 		}
 		for _, entry := range selection.Entries {
 			for _, mapping := range entry.Mappings {

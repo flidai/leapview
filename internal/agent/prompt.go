@@ -11,8 +11,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type PromptInput struct {

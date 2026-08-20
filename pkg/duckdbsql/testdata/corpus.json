@@ -1,0 +1,221 @@
+{
+  "corpus": "duckdbsql-phase-1-select",
+  "corpus_version": 1,
+  "engine": {
+    "name": "duckdb",
+    "version": "v1.5.4",
+    "source_commit": "08e34c447bae34eaee3723cac61f2878b6bdf787"
+  },
+  "cases": [
+    {
+      "id": "duckdb-select-constant",
+      "sql": "SELECT 1",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 0, "functions": 0, "columns": 0}
+    },
+    {
+      "id": "duckdb-select-filter",
+      "sql": "SELECT a, b FROM tbl WHERE a > 2",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["tbl"], "columns": 3}
+    },
+    {
+      "id": "duckdb-cte",
+      "sql": "WITH x AS (SELECT 1 AS a) SELECT a FROM x",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["x"], "ctes": ["x"], "columns": 1}
+    },
+    {
+      "id": "duckdb-cte-physical-and-reference",
+      "sql": "WITH x AS (SELECT id FROM source.orders) SELECT id FROM x",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 2, "relation_names": ["orders", "x"], "ctes": ["x"], "columns": 2}
+    },
+    {
+      "id": "duckdb-join-using",
+      "sql": "SELECT a FROM t1 JOIN t2 USING (a)",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 2, "relation_names": ["t1", "t2"], "columns": 1}
+    },
+    {
+      "id": "duckdb-window",
+      "sql": "SELECT row_number() OVER (PARTITION BY a ORDER BY b) FROM t",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["t"], "functions": 1, "function_names": ["row_number"], "columns": 2}
+    },
+    {
+      "id": "duckdb-list-index",
+      "sql": "SELECT [1, 2][1]",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 0, "functions": 1, "function_names": ["list_value"]}
+    },
+    {
+      "id": "duckdb-qualify",
+      "sql": "SELECT * FROM t QUALIFY row_number() OVER () = 1",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["t"], "functions": 1, "function_names": ["row_number"]}
+    },
+    {
+      "id": "duckdb-pivot",
+      "sql": "SELECT * FROM t PIVOT (sum(v) FOR k IN ('a'))",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["t"], "functions": 1, "function_names": ["sum"]}
+    },
+    {
+      "id": "duckdb-table-function",
+      "sql": "SELECT * FROM range(3)",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "functions": 1, "function_names": ["range"]}
+    },
+    {
+      "id": "duckdb-set-operation",
+      "sql": "SELECT 1 UNION ALL SELECT 2",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "set_operation", "statements": 1, "relations": 0, "columns": 0}
+    },
+    {
+      "id": "duckdb-multi-select",
+      "sql": "SELECT 1; SELECT 2",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 2, "relations": 0}
+    },
+    {
+      "id": "docs-with-query",
+      "sql": "WITH regional_sales AS (SELECT region, SUM(amount) AS total_sales FROM orders GROUP BY region) SELECT region FROM regional_sales WHERE total_sales > (SELECT SUM(total_sales) / 10 FROM regional_sales)",
+      "source": {"kind": "duckdb-docs", "repository": "https://github.com/duckdb/duckdb-web", "commit": "0f4f64ac3c12c139edfd57947ceed142178c9419", "path": "docs/current/sql/query_syntax/with.md", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 3, "ctes": ["regional_sales"], "functions": 3}
+    },
+    {
+      "id": "docs-window-query",
+      "sql": "SELECT depname, empno, salary, rank() OVER (PARTITION BY depname ORDER BY salary DESC) FROM empsalary",
+      "source": {"kind": "duckdb-docs", "repository": "https://github.com/duckdb/duckdb-web", "commit": "0f4f64ac3c12c139edfd57947ceed142178c9419", "path": "docs/current/sql/functions/window_functions.md", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["empsalary"], "functions": 1, "function_names": ["rank"]}
+    },
+    {
+      "id": "docs-filter-query",
+      "sql": "SELECT * FROM orders WHERE order_date >= DATE '1998-01-01'",
+      "source": {"kind": "duckdb-docs", "repository": "https://github.com/duckdb/duckdb-web", "commit": "0f4f64ac3c12c139edfd57947ceed142178c9419", "path": "docs/current/sql/statements/select.md", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["orders"]}
+    },
+    {
+      "id": "leapsql-group-by-all",
+      "sql": "SELECT category, region, SUM(sales) FROM orders GROUP BY ALL",
+      "source": {"kind": "leapsql", "repository": "https://github.com/leapstacklabs/leapsql", "commit": "e6c4605252eac2aefe3cf502c9b156edee05a42d", "path": "pkg/dialects/duckdb/clause_test.go", "license": "Apache-2.0"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["orders"], "functions": 1, "function_names": ["sum"], "columns": 3}
+    },
+    {
+      "id": "leapsql-qualify",
+      "sql": "SELECT category, SUM(sales), ROW_NUMBER() OVER (ORDER BY SUM(sales) DESC) AS rn FROM orders GROUP BY ALL QUALIFY rn <= 3",
+      "source": {"kind": "leapsql", "repository": "https://github.com/leapstacklabs/leapsql", "commit": "e6c4605252eac2aefe3cf502c9b156edee05a42d", "path": "pkg/dialects/duckdb/clause_test.go", "license": "Apache-2.0"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["orders"], "functions": 3}
+    },
+    {
+      "id": "leapsql-lambda",
+      "sql": "SELECT list_transform([1, 2, 3], x -> x * 2)",
+      "source": {"kind": "leapsql", "repository": "https://github.com/leapstacklabs/leapsql", "commit": "e6c4605252eac2aefe3cf502c9b156edee05a42d", "path": "pkg/dialects/duckdb/expr_test.go", "license": "Apache-2.0"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 0, "functions": 3}
+    },
+    {
+      "id": "leapsql-pivot",
+      "sql": "SELECT * FROM sales PIVOT (SUM(amount) FOR month IN ('Jan', 'Feb'))",
+      "source": {"kind": "leapsql", "repository": "https://github.com/leapstacklabs/leapsql", "commit": "e6c4605252eac2aefe3cf502c9b156edee05a42d", "path": "pkg/dialects/duckdb/pivot_test.go", "license": "Apache-2.0"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["sales"], "functions": 1, "function_names": ["sum"]}
+    },
+    {
+      "id": "sqlglot-qualified-window",
+      "sql": "SELECT schema_name, function_name, ROW_NUMBER() OVER (PARTITION BY schema_name ORDER BY function_name) FROM duckdb_functions() QUALIFY ROW_NUMBER() OVER () < 3",
+      "source": {"kind": "sqlglot", "repository": "https://github.com/tobymao/sqlglot", "commit": "1ba7b2715dd9aba896edc7dc69fcc41bbb601b90d", "path": "tests/dialects/test_duckdb.py", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "functions": 3}
+    },
+    {
+      "id": "sqlglot-pivot",
+      "sql": "SELECT * FROM produce PIVOT(SUM(sales) FOR quarter IN ('Q1', 'Q2'))",
+      "source": {"kind": "sqlglot", "repository": "https://github.com/tobymao/sqlglot", "commit": "1ba7b2715dd9aba896edc7dc69fcc41bbb601b90d", "path": "tests/dialects/test_duckdb.py", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["produce"], "functions": 1, "function_names": ["sum"]}
+    },
+    {
+      "id": "sqlglot-table-function",
+      "sql": "SELECT * FROM duckdb_functions() WHERE schema_name = 'main'",
+      "source": {"kind": "sqlglot", "repository": "https://github.com/tobymao/sqlglot", "commit": "1ba7b2715dd9aba896edc7dc69fcc41bbb601b90d", "path": "tests/dialects/test_duckdb.py", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "functions": 1, "function_names": ["duckdb_functions"]}
+    },
+    {
+      "id": "sqlglot-list-transform",
+      "sql": "SELECT list_transform([1, 2], x -> x * 2)",
+      "source": {"kind": "sqlglot", "repository": "https://github.com/tobymao/sqlglot", "commit": "1ba7b2715dd9aba896edc7dc69fcc41bbb601b90d", "path": "tests/dialects/test_duckdb.py", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 0, "functions": 3}
+    },
+    {
+      "id": "duckdb-quoted-shadowed-cte",
+      "sql": "WITH \"shadow\" AS (SELECT 1 AS x) SELECT \"x\" FROM \"shadow\"",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["shadow"], "ctes": ["shadow"], "columns": 1}
+    },
+    {
+      "id": "duckdb-comments",
+      "sql": "SELECT 1 /* planner comment */ -- trailing comment\n",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 0, "functions": 0, "columns": 0}
+    },
+    {
+      "id": "duckdb-distinct-on",
+      "sql": "SELECT DISTINCT ON (id) id FROM tbl",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["tbl"], "columns": 2}
+    },
+    {
+      "id": "duckdb-limit-percent",
+      "sql": "SELECT * FROM tbl LIMIT 10%",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["tbl"], "columns": 0}
+    },
+    {
+      "id": "duckdb-qualified-identifiers",
+      "sql": "SELECT c.s.\"table\".id FROM c.s.\"table\"",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "relation_names": ["table"], "columns": 1}
+    },
+    {
+      "id": "duckdb-read-csv-table-function",
+      "sql": "SELECT * FROM read_csv('file.csv')",
+      "source": {"kind": "duckdb-docs", "repository": "https://github.com/duckdb/duckdb-web", "commit": "0f4f64ac3c12c139edfd57947ceed142178c9419", "path": "docs/current/data/csv/overview.md", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "functions": 1, "function_names": ["read_csv"]}
+    },
+    {
+      "id": "duckdb-read-parquet-table-function",
+      "sql": "SELECT * FROM read_parquet('file.parquet')",
+      "source": {"kind": "duckdb-docs", "repository": "https://github.com/duckdb/duckdb-web", "commit": "0f4f64ac3c12c139edfd57947ceed142178c9419", "path": "docs/current/data/parquet/overview.md", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "accept", "statement": "select", "statements": 1, "relations": 1, "functions": 1, "function_names": ["read_parquet"]}
+    },
+    {
+      "id": "duckdb-attach-unsupported",
+      "sql": "ATTACH 'db.duckdb' AS other",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "reject", "error_kind": "unsupported_statement"}
+    },
+    {
+      "id": "duckdb-extension-management-unsupported",
+      "sql": "INSTALL httpfs",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "reject", "error_kind": "unsupported_statement"}
+    },
+    {
+      "id": "generic-syntax-error",
+      "sql": "SELECT (",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "reject", "error_kind": "syntax"}
+    },
+    {
+      "id": "generic-unsupported-ddl",
+      "sql": "CREATE TABLE x(i INTEGER)",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "reject", "error_kind": "unsupported_statement"}
+    },
+    {
+      "id": "generic-unsupported-dml",
+      "sql": "INSERT INTO target SELECT 1",
+      "source": {"kind": "duckdb", "repository": "https://github.com/duckdb/duckdb", "commit": "08e34c447bae34eaee3723cac61f2878b6bdf787", "path": "test/sql/json/test_json_serialize_sql.test", "license": "MIT"},
+      "admission": "not_evaluated", "expect": {"parse": "reject", "error_kind": "unsupported_statement"}
+    }
+  ]
+}

@@ -1,14 +1,13 @@
 package access
 
 import (
-	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"strings"
 
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 var (
@@ -570,88 +569,13 @@ func (grant CanonicalGrant) GrantKey() string {
 }
 
 func decodeCanonicalJSON(data []byte, target any, label string) error {
-	if err := rejectDuplicateCanonicalJSONKeys(data); err != nil {
+	if err := strictjson.Decode(data, target); err != nil {
 		return fmt.Errorf("decode %s: %w", label, err)
-	}
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return fmt.Errorf("decode %s: %w", label, err)
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return fmt.Errorf("decode %s: trailing JSON value", label)
-	} else if !errors.Is(err, io.EOF) {
-		return fmt.Errorf("decode %s: trailing data: %w", label, err)
 	}
 	return nil
 }
 
 func rejectDuplicateCanonicalJSONKeys(data []byte) error {
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	if err := walkCanonicalJSONValue(decoder); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); err == nil {
-		return errors.New("trailing JSON value")
-	} else if !errors.Is(err, io.EOF) {
-		return fmt.Errorf("trailing data: %w", err)
-	}
-	return nil
-}
-
-func walkCanonicalJSONValue(decoder *json.Decoder) error {
-	token, err := decoder.Token()
-	if err != nil {
-		return err
-	}
-	switch delimiter := token.(type) {
-	case json.Delim:
-		switch delimiter {
-		case '{':
-			keys := make(map[string]struct{})
-			for decoder.More() {
-				keyToken, err := decoder.Token()
-				if err != nil {
-					return err
-				}
-				key, ok := keyToken.(string)
-				if !ok {
-					return errors.New("JSON object key is not a string")
-				}
-				canonicalKey := strings.ToLower(key)
-				if _, exists := keys[canonicalKey]; exists {
-					return fmt.Errorf("duplicate JSON object key %q", key)
-				}
-				keys[canonicalKey] = struct{}{}
-				if err := walkCanonicalJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			if end != json.Delim('}') {
-				return fmt.Errorf("JSON object ended with %v", end)
-			}
-		case '[':
-			for decoder.More() {
-				if err := walkCanonicalJSONValue(decoder); err != nil {
-					return err
-				}
-			}
-			end, err := decoder.Token()
-			if err != nil {
-				return err
-			}
-			if end != json.Delim(']') {
-				return fmt.Errorf("JSON array ended with %v", end)
-			}
-		default:
-			return fmt.Errorf("unexpected JSON delimiter %q", delimiter)
-		}
-	}
-	return nil
+	var value any
+	return strictjson.DecodeWithOptions(data, &value, strictjson.Options{AllowUnknownFields: true})
 }

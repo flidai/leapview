@@ -137,10 +137,17 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if !ok {
 			return "", nil, fmt.Errorf("aggregate node %q is nil", id)
 		}
+		argStart := len(r.args)
 		ctx, err := r.source(n.Input)
 		if err != nil {
 			return "", nil, err
 		}
+		// Source predicates are emitted after metric-local FILTER expressions in
+		// the aggregate SQL, even though the source must be rendered first to
+		// resolve fields and relationship aliases. Hold their arguments aside so
+		// the final argument slice follows textual placeholder order.
+		sourceArgs := append([]any(nil), r.args[argStart:]...)
+		r.args = r.args[:argStart]
 		parts := make([]string, 0, len(n.GroupBy)+len(n.Metrics))
 		for _, field := range n.GroupBy {
 			expr, err := r.fieldExpr(field, ctx)
@@ -171,6 +178,7 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if len(parts) == 0 {
 			return "", nil, fmt.Errorf("aggregate node %q has no projection", id)
 		}
+		r.args = append(r.args, sourceArgs...)
 		from := ctx.from
 		if len(ctx.where) > 0 {
 			from += " WHERE " + strings.Join(ctx.where, " AND ")
@@ -230,11 +238,17 @@ func (r *duckRenderer) renderNode(id string) (string, []string, error) {
 		if err != nil {
 			return "", nil, err
 		}
+		// Render the child first so its predicate arguments precede literals in
+		// this derived expression, matching the emitted CTE placeholder order.
+		child, columns, err := r.renderNode(n.Input)
+		if err != nil {
+			return "", nil, err
+		}
 		expr, err := renderScalarWithResolverAndTypes(n.Expression, &r.args, func(name string) (string, error) { return quoteName(name), nil }, metricTypes)
 		if err != nil {
 			return "", nil, err
 		}
-		return r.renderCompute(id, n.Input, n.Output, expr)
+		return r.renderComputed(id, child, columns, n.Output, expr)
 	case SortLimit, *SortLimit:
 		n, ok := asSortLimit(value)
 		if !ok {
@@ -761,6 +775,10 @@ func (r *duckRenderer) renderCompute(id, input, output, expression string) (stri
 	if err != nil {
 		return "", nil, err
 	}
+	return r.renderComputed(id, child, columns, output, expression)
+}
+
+func (r *duckRenderer) renderComputed(id, child string, columns []string, output, expression string) (string, []string, error) {
 	name := r.cteName(id)
 	r.ctes = append(r.ctes, name+" AS (SELECT *, "+expression+" AS "+quoteName(output)+" FROM "+quoteName(child)+")")
 	r.names[id] = name

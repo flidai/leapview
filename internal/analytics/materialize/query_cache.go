@@ -8,9 +8,9 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 var localCacheID atomic.Uint64

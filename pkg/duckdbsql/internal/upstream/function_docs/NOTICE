@@ -1,0 +1,8 @@
+This directory vendors the DuckDB v1.5.4 core function documentation
+descriptors from the DuckDB source tree at commit
+08e34c447bae34eaee3723cac61f2878b6bdf787.
+
+The JSON files are copied from extension/core_functions/{scalar,aggregate} and
+are used only to generate LeapView's SQL documentation metadata. DuckDB is
+distributed under the MIT License. The complete license text and source are
+available at https://github.com/duckdb/duckdb/tree/08e34c447bae34eaee3723cac61f2878b6bdf787.

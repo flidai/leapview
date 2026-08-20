@@ -6,10 +6,11 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/arrowresult"
+	"github.com/flidai/leapview/internal/analytics/arrowdecode"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
 type bundleStage string
@@ -320,7 +321,7 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		if err != nil {
 			return bundleExecution{}, err
 		}
-		values, decodeErr := arrowresult.DecodeRows(branchLease)
+		values, decodeErr := arrowdecode.DecodeRows(branchLease)
 		branchLease.Release()
 		if decodeErr != nil {
 			return bundleExecution{}, decodeErr

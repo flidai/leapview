@@ -312,7 +312,7 @@ func selectedHighlights(runtime *modelRuntime, report *dashboarddefinition.Defin
 		if len(selection.Entries) == 0 {
 			continue
 		}
-		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID)
+		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID, selection.InteractionKind)
 		if err != nil {
 			return nil, err
 		}

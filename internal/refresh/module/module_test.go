@@ -16,7 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -25,6 +25,7 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type generatedRefreshAPI interface {
@@ -35,7 +36,7 @@ type generatedRefreshAPI interface {
 	ListRefreshRunEvents(http.ResponseWriter, *http.Request, string, string, *int32, *string)
 }
 
-var testRefreshWorkflow = jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
+var testRefreshWorkflow = jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
 
 func testAuthorization() AuthorizationConfig {
 	return AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) {

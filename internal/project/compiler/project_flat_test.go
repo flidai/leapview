@@ -19,8 +19,11 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
+	"github.com/flidai/leapview/internal/dashboard"
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -831,10 +834,11 @@ spec:
 }
 
 func TestCompileProjectGraphShowcase(t *testing.T) {
-	graph, err := CompileProjectGraph(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
+	project, err := LoadProject(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
 	if err != nil {
 		t.Fatal(err)
 	}
+	graph := project.Graph
 	if graph.ProjectID() != "project:leapview-showcase" {
 		t.Fatalf("project id = %q", graph.ProjectID())
 	}
@@ -857,6 +861,38 @@ func TestCompileProjectGraphShowcase(t *testing.T) {
 		if !seenKinds[kind] {
 			t.Fatalf("project graph omitted project resource kind %q", kind)
 		}
+	}
+	showcase := project.Manifest.DashboardDefinitions["dashboard:visual-showcase"]
+	categories, ok := showcase.Visualizations["categories"]
+	if !ok {
+		t.Fatal("compiled showcase omitted categories visual")
+	}
+	base, err := visualizationir.SpecificationBase(categories.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := base.Datasets[0].Fields[0].Role; got != visualizationir.VisualizationFieldRoleIdentity {
+		t.Fatalf("compiled categories selection source role = %q, want identity", got)
+	}
+	envelope, err := visualizationruntime.EnvelopeFromFrame(categories, visualizationruntime.Frame{
+		Columns: []string{"category", "revenue"}, Rows: [][]any{{"books", "10"}},
+	}, []dashboard.InteractionSelectionEntry{{Mappings: []dashboard.InteractionSelectionMapping{{Field: "category", Value: "books"}}}}, 1, 1)
+	if err != nil {
+		t.Fatalf("project selected categories envelope: %v", err)
+	}
+	if len(envelope.Selection) != 1 || envelope.Selection[0].Datum.Identity["category"] != "books" {
+		t.Fatalf("project selected categories envelope selection = %#v", envelope.Selection)
+	}
+	formattedMatrix, ok := showcase.Visualizations["state_status_matrix_formatted"]
+	if !ok {
+		t.Fatal("compiled showcase omitted formatted matrix visual")
+	}
+	formattedMatrixBase, err := visualizationir.SpecificationBase(formattedMatrix.Spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := formattedMatrixBase.DataBudget.MaxRows; got != 5000 {
+		t.Fatalf("compiled formatted matrix maxRows = %d, want 5000", got)
 	}
 }
 
@@ -1221,7 +1257,7 @@ spec:
   fields: {id: {datatype: String}}
 `,
 	})
-	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
+	if _, err := LoadProject(projectPath); err == nil || (!strings.Contains(err.Error(), `relation schema "raw" is not governed`) && !strings.Contains(err.Error(), "raw namespace relations are not allowed") && !strings.Contains(err.Error(), "raw.<name> is internal")) {
 		t.Fatalf("LoadProject() accepted hidden raw import: %v", err)
 	}
 	projectBytes, err := os.ReadFile(projectPath)

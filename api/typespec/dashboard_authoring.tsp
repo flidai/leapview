@@ -350,7 +350,9 @@ model DashboardAuthoringPreviewSelection {
   id: string;
   sourceKind: "visual";
   sourceId: string;
-  interactionKind: "point_selection" | "row_selection";
+  @doc("Stable interaction ID from the source visualization specification. The legacy field name is retained for wire compatibility.")
+  @minLength(1)
+  interactionKind: string;
   entries: DashboardAuthoringPreviewSelectionEntry[];
   label: string;
   order: int32;

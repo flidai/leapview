@@ -308,6 +308,7 @@ tasks:
   generate:
     desc: Generate all checked-out derived code needed for local development
     cmds:
+      - task: duckdbsql:generate
       - task: db:generate
       - task: config:generate
       - task: api:generate
@@ -325,6 +326,34 @@ tasks:
       - task: agent-tool-docs:generate
       - task: node:deps
       - task: docs:render
+
+  duckdbsql:generate:
+    desc: Generate pinned DuckDB SQL runtime, AST, enum, and documentation metadata
+    cmds:
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen
+
+  duckdbsql:generated:check:
+    desc: Verify pinned DuckDB SQL metadata is current without network access
+    cmds:
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen -check
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen -check
+
+  duckdbsql:source:check:
+    desc: Verify generated DuckDB SQL metadata against the exact pinned source checkout
+    requires:
+      vars: [DUCKDB_SOURCE]
+    cmds:
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqlgen -check -source {{.DUCKDB_SOURCE | quote}}
+      - go run ./pkg/duckdbsql/internal/cmd/duckdbsqldocsgen -check -source {{printf "%s/extension/core_functions" .DUCKDB_SOURCE | quote}}
+
+  duckdbsql:qualification:
+    desc: Run the independent Phase-1 DuckDB SQL qualification lane
+    cmds:
+      - task: duckdbsql:generated:check
+      - go test ./pkg/duckdbsql -count=1 -run '^(TestPhase1QualificationCorpus|TestQualification|TestPinnedDuckDBModifierAST|TestDuckDBSQLArchitectureBoundary)$'
+      - go test -race ./pkg/duckdbsql -count=1 -run '^(TestPhase1QualificationCorpus|TestQualification|TestPinnedDuckDBModifierAST|TestDuckDBSQLArchitectureBoundary)$'
+      - go test ./pkg/duckdbsql -run '^$' -fuzz=FuzzDecodeDocumentQualification -fuzztime=2s -count=1
 
   lucide-icons:generate:
     desc: Generate the canonical Lucide icon catalog and server validator
@@ -526,10 +555,11 @@ tasks:
     deps:
       - generate
     cmds:
+      - task: duckdbsql:generated:check
       - task: generated:git-check
       - task: config:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json web/generated/data-resources schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
@@ -873,6 +903,17 @@ tasks:
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
 
+  test:workload:qualify:
+    desc: Qualify the reusable workload scheduler independently of LeapView
+    cmds:
+      - go test ./pkg/workload -count=1
+      - go test -race ./pkg/workload -count=1
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationConfigValidation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationIdentityCanonicalization$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationRequestValidation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -fuzz '^FuzzQualificationBoundedSchedulerOperation$' -fuzztime=3s
+      - go test ./pkg/workload -run '^$' -bench 'Workload$' -benchmem -benchtime=100ms -count=1
+
   test:go:minio-conformance:
     desc: Run the object-backed candidate-catalog, shared-pool, and GC namespace MinIO conformance tests
     deps:
@@ -981,6 +1022,7 @@ tasks:
       - task: desktop:test
       - go vet ./...
       - go test -race ./pkg/... ./internal/access ./internal/runtimehost
+      - task: test:workload:qualify
       - task: qa:ui-framework
       - task: deploy:check
       - task: test:go:minio-conformance

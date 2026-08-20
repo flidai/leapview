@@ -33,7 +33,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
 	"github.com/flidai/leapview/internal/platform/observability"
@@ -51,6 +50,7 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -310,6 +310,7 @@ type workloadControl interface {
 	Stats() workloadmodule.Stats
 	SetObserver(workloadmodule.Observer)
 	Close()
+	Drain(context.Context) error
 }
 
 func buildApplicationSurfaces(
@@ -330,24 +331,12 @@ func buildApplicationSurfaces(
 		telemetry.Register(capabilities.AnalyticsModule.Collector())
 	}
 	controller := workflow.Workload
-	ownsController := false
 	workloadTelemetry := workloadmodule.NewTelemetryObserver(telemetry.Registry())
 	if controller == nil {
-		var err error
-		controller, err = workloadmodule.Build(ctx, workloadmodule.Config{
-			Policy: workloadmodule.DefaultConfig(), Observer: workloadTelemetry,
-		})
-		if err != nil {
-			return nil, nil, nil, nil, fmt.Errorf("build workload module: %w", err)
-		}
-		ownsController = true
-	} else {
-		controller.SetObserver(workloadTelemetry)
+		return nil, nil, nil, nil, errors.New("workload admission is not configured")
 	}
+	controller.SetObserver(workloadTelemetry)
 	fail := func(err error) (*capabilityRoutes, *runtimeServices, *platformServices, *httpPolicy, error) {
-		if ownsController && controller != nil {
-			controller.Close()
-		}
 		return nil, nil, nil, nil, err
 	}
 	if metrics != nil {

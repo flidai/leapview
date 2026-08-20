@@ -8,9 +8,10 @@ import (
 	"strings"
 
 	_ "github.com/duckdb/duckdb-go/v2"
-	"github.com/flidai/leapview/internal/analytics/duckdb/queryjson"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/modelsql"
+	"github.com/flidai/leapview/pkg/duckdbsql"
 )
 
 const rowPresenceColumn = "__leapview_row_present"
@@ -56,12 +57,9 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err := prepareSQLAnalysisDatabase(ctx, plannerDB); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	sqlAnalysis, err := analyzeSQLWithDuckDB(ctx, plannerDB, sqlText)
+	sqlAnalysis, err := modelsql.Analyze(ctx, sqlText)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning model table %q SQL AST: %w", tableName, err)
-	}
-	if err := validateSQLAnalysis(tableName, table, sqlAnalysis); err != nil {
-		return analyticsmaterialize.ModelTablePlan{}, err
 	}
 	if evidence := table.SQLAnalysisEvidence; evidence != nil {
 		if !evidence.Validated || !sameStringSet(sortedStrings(evidence.SourceRefs), sortedStrings(sqlAnalysis.SourceRefs)) || !sameStringSet(sortedStrings(evidence.ModelRefs), sortedStrings(sqlAnalysis.ModelRefs)) {
@@ -103,7 +101,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err := validateModelOutput(ctx, plannerDB, tableName, table, sqlText); err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	explainAnalysis, err := explainSQLWithDuckDB(ctx, plannerDB, sqlText)
+	explainAnalysis, err := duckdbsql.AnalyzePlan(ctx, plannerDB, sqlText)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning model table %q source reads: %w", tableName, err)
 	}
@@ -115,7 +113,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, err
 	}
-	rewritten, err := queryjson.RewriteSourceRefsWithOptions(sqlText, sqlAnalysis.TableRefs, replacements, queryjson.RewriteOptions{AliasUnaliasedSourceRefs: true})
+	rewritten, err := modelsql.RewriteSources(sqlText, sqlAnalysis, replacements, true)
 	if err != nil {
 		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("rewriting model table %q source refs: %w", tableName, err)
 	}
@@ -327,64 +325,6 @@ func planningLiteral(columnType string) string {
 	}
 }
 
-func analyzeSQLWithDuckDB(ctx context.Context, db *sql.DB, sqlText string) (queryjson.SQLAnalysis, error) {
-	rows, err := db.QueryContext(ctx, "SELECT CAST(json_serialize_sql(CAST(? AS VARCHAR), skip_default := true, skip_empty := true, skip_null := true) AS VARCHAR)", sqlText)
-	if err != nil {
-		return queryjson.SQLAnalysis{}, err
-	}
-	defer rows.Close()
-	payload, err := singleStringResult(rows, "json_serialize_sql")
-	if err != nil {
-		return queryjson.SQLAnalysis{}, err
-	}
-	return queryjson.AnalyzeSQL([]byte(payload))
-}
-
-func explainSQLWithDuckDB(ctx context.Context, db *sql.DB, sqlText string) (queryjson.ExplainAnalysis, error) {
-	rows, err := db.QueryContext(ctx, "EXPLAIN (FORMAT json) "+sqlText)
-	if err != nil {
-		return queryjson.ExplainAnalysis{}, err
-	}
-	defer rows.Close()
-	payload, err := singleStringResult(rows, "explain_value")
-	if err != nil {
-		return queryjson.ExplainAnalysis{}, err
-	}
-	return queryjson.AnalyzeExplain([]byte(payload))
-}
-
-func singleStringResult(rows *sql.Rows, preferredColumn string) (string, error) {
-	columns, err := rows.Columns()
-	if err != nil {
-		return "", err
-	}
-	if !rows.Next() {
-		return "", sql.ErrNoRows
-	}
-	values := make([]sql.NullString, len(columns))
-	scan := make([]any, len(values))
-	for index := range values {
-		scan[index] = &values[index]
-	}
-	if err := rows.Scan(scan...); err != nil {
-		return "", err
-	}
-	if err := rows.Err(); err != nil {
-		return "", err
-	}
-	index := len(values) - 1
-	for columnIndex, column := range columns {
-		if strings.EqualFold(column, preferredColumn) {
-			index = columnIndex
-			break
-		}
-	}
-	if index < 0 || index >= len(values) || !values[index].Valid {
-		return "", fmt.Errorf("query returned no %s payload", preferredColumn)
-	}
-	return values[index].String, nil
-}
-
 func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, table semanticmodel.Table, sqlText string) error {
 	if len(table.Columns) == 0 {
 		return nil
@@ -434,14 +374,7 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 	return nil
 }
 
-func validateSQLAnalysis(tableName string, table semanticmodel.Table, analysis queryjson.SQLAnalysis) error {
-	if len(analysis.QualifiedSourceColumnRefs) > 0 {
-		return fmt.Errorf("model table %q column reference %q must use a table alias; source.<name> is only valid in FROM/JOIN relations", tableName, analysis.QualifiedSourceColumnRefs[0])
-	}
-	return nil
-}
-
-func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sourceSchemas map[string][]semanticmodel.ColumnSchema, analysis queryjson.ExplainAnalysis) ([]sourceReadPlan, error) {
+func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sourceSchemas map[string][]semanticmodel.ColumnSchema, analysis duckdbsql.Plan) ([]sourceReadPlan, error) {
 	type accumulator struct {
 		fields          map[string]struct{}
 		rowPresenceOnly bool

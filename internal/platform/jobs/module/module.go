@@ -4,14 +4,16 @@ package module
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Config struct {
@@ -50,7 +52,16 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	}
 	runner, err := jobs.NewRunner(jobs.RunnerConfig{
 		Repository: m.repository, Admission: m.config.Admission, Handlers: handlers,
+		Classes:      []string{jobpolicy.WorkloadClassControl, jobpolicy.WorkloadClassBackground},
 		LeaseTimeout: m.config.LeaseTimeout, PollInterval: m.config.PollInterval, Logger: m.config.Logger,
+		OwnerFactory: func() string { return jobpolicy.WorkerOwner(time.Now().UnixNano()) },
+		FailureEncoder: func(err error) []byte {
+			payload, marshalErr := json.Marshal(map[string]string{"code": "ASYNC_JOB_FAILED", "detail": err.Error()})
+			if marshalErr != nil {
+				return []byte(`{"code":"ASYNC_JOB_FAILED","detail":"job failed"}`)
+			}
+			return payload
+		},
 	})
 	if err != nil {
 		return err

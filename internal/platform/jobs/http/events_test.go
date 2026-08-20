@@ -12,8 +12,8 @@ import (
 
 	"github.com/flidai/leapview/internal/platform"
 	apigenapi "github.com/flidai/leapview/internal/platform/http/api/gen"
-	"github.com/flidai/leapview/internal/platform/jobs"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func eventRepository(t *testing.T) jobs.Repository {

@@ -9,7 +9,7 @@ import (
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	"github.com/flidai/leapview/internal/manageddata/control"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type FinalizeUploadJob struct {

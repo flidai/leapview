@@ -4,7 +4,7 @@ import (
 	"context"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var ErrNotFound = apigenfailure.New("not_found", "agent record not found")

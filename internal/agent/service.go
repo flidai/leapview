@@ -11,8 +11,9 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (
@@ -70,11 +71,13 @@ func (s *Service) SetPromptWorkflow(factory func(PromptInput, string, PromptDisp
 
 // ConfigureRunWorkflow connects an externally constructed service to the
 // application workflow recorder before prompt execution begins.
-func (s *Service) ConfigureRunWorkflow(recorder jobs.WorkflowRecorder) error {
+func (s *Service) ConfigureRunWorkflow(recorder jobplatform.WorkflowRecorder) error {
 	if s == nil || s.repo == nil || recorder == nil {
 		return fmt.Errorf("agent run workflow recorder is required")
 	}
-	configurer, ok := s.repo.(interface{ ConfigureRunWorkflow(jobs.WorkflowRecorder) })
+	configurer, ok := s.repo.(interface {
+		ConfigureRunWorkflow(jobplatform.WorkflowRecorder)
+	})
 	if ok {
 		configurer.ConfigureRunWorkflow(recorder)
 	} else if !s.runWorkflowAvailable() {

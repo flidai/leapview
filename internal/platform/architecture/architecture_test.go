@@ -161,6 +161,7 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 		{path: "internal/access/cli", capability: "access", layer: LayerAdapter},
 		{path: "internal/project/devloop", capability: "project", layer: LayerUseCase},
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
+		{path: "internal/analytics/modelsql", capability: "analytics", layer: LayerContract},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
@@ -175,6 +176,30 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 				t.Fatalf("%s classification = %#v, want %s %s", test.path, rule, test.capability, test.layer)
 			}
 		})
+	}
+}
+
+func TestPublicJobsPackageIsPlatformOwned(t *testing.T) {
+	for _, path := range []string{"pkg/jobs", "pkg/jobs/queue"} {
+		rule, ok := ClassifyPackage(path)
+		if !ok {
+			t.Fatalf("%s is not classified", path)
+		}
+		if rule.Capability != "platform" || rule.Layer != LayerPlatform {
+			t.Fatalf("%s classification = %#v, want platform platform-layer", path, rule)
+		}
+	}
+}
+
+func TestPublicArrowResultPackageIsAnalyticsOwned(t *testing.T) {
+	for _, path := range []string{"pkg/arrowresult", "pkg/arrowresult/internalcopy"} {
+		rule, ok := ClassifyPackage(path)
+		if !ok {
+			t.Fatalf("%s is not classified", path)
+		}
+		if rule.Capability != "analytics" || rule.Layer != LayerContract {
+			t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+		}
 	}
 }
 
@@ -1573,6 +1598,17 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 	}
 }
 
+func TestProductionDoesNotImportSupersededDuckDBQueryJSON(t *testing.T) {
+	const superseded = modulePath + "/internal/analytics/duckdb/queryjson"
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if imported == superseded {
+				t.Errorf("%s imports superseded DuckDB SQL analyzer %s", file.path, imported)
+			}
+		}
+	}
+}
+
 func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 	runtimehostModule, ok := ClassifyPackage("internal/runtimehost/module")
 	if !ok || runtimehostModule.Layer != LayerModule {
@@ -1846,6 +1882,129 @@ func TestWorkloadImportsNoProductCapabilities(t *testing.T) {
 	}
 }
 
+func TestReusableWorkloadPackageContainsOnlyGenericMechanisms(t *testing.T) {
+	root := repoRoot(t)
+	if !packageDirExists(root, "pkg/workload") {
+		t.Fatal("reusable workload contract package does not exist")
+	}
+	packageRoot := filepath.Join(root, "pkg", "workload")
+	err := filepath.WalkDir(packageRoot, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if !entry.IsDir() && entry.Name() == "go.mod" {
+			t.Errorf("%s creates a nested module; pkg/workload must remain in the root Go module", path)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("inspect pkg/workload module boundary: %v", err)
+	}
+	rule, ok := ClassifyPackage("pkg/workload")
+	if !ok || rule.Capability != "workload" || rule.Layer != LayerContract {
+		t.Fatalf("pkg/workload classification = %#v, want workload contract", rule)
+	}
+
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != "pkg/workload" && !strings.HasPrefix(file.pkgDir, "pkg/workload/") {
+			continue
+		}
+		for _, imported := range file.imports {
+			if strings.HasPrefix(imported, modulePath+"/internal/") {
+				t.Errorf("%s imports application-private package %s", file.path, imported)
+			}
+		}
+
+		parsed, err := parser.ParseFile(token.NewFileSet(), filepath.Join(root, filepath.FromSlash(file.path)), nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", file.path, err)
+		}
+		forbiddenDeclarations := map[string]struct{}{
+			"Interactive":   {},
+			"Background":    {},
+			"Refresh":       {},
+			"Control":       {},
+			"Maintenance":   {},
+			"DefaultConfig": {},
+		}
+		forbiddenClassValues := map[string]struct{}{
+			"interactive": {},
+			"background":  {},
+			"refresh":     {},
+			"control":     {},
+			"maintenance": {},
+		}
+		for _, declaration := range parsed.Decls {
+			switch value := declaration.(type) {
+			case *ast.FuncDecl:
+				if _, forbidden := forbiddenDeclarations[value.Name.Name]; forbidden {
+					t.Errorf("%s declares LeapView workload policy identifier %s", file.path, value.Name.Name)
+				}
+			case *ast.GenDecl:
+				for _, specification := range value.Specs {
+					switch item := specification.(type) {
+					case *ast.TypeSpec:
+						if _, forbidden := forbiddenDeclarations[item.Name.Name]; forbidden {
+							t.Errorf("%s declares LeapView workload policy identifier %s", file.path, item.Name.Name)
+						}
+					case *ast.ValueSpec:
+						for _, name := range item.Names {
+							if _, forbidden := forbiddenDeclarations[name.Name]; forbidden {
+								t.Errorf("%s declares LeapView workload policy identifier %s", file.path, name.Name)
+							}
+						}
+					}
+				}
+			}
+		}
+		ast.Inspect(parsed, func(node ast.Node) bool {
+			literal, ok := node.(*ast.BasicLit)
+			if !ok || literal.Kind != token.STRING {
+				return true
+			}
+			value, err := strconv.Unquote(literal.Value)
+			if err == nil {
+				if _, forbidden := forbiddenClassValues[value]; forbidden {
+					t.Errorf("%s embeds LeapView workload class value %q", file.path, value)
+				}
+			}
+			return true
+		})
+	}
+}
+
+func TestReusableWorkloadPackageHasSingleProductionAdapter(t *testing.T) {
+	const reusableWorkload = modulePath + "/pkg/workload"
+	adapterFound := false
+	forbiddenSchedulerSymbols := []string{"type classQueue", "type waiter struct", "scheduleLocked(", "nextClassLocked(", "canGrantLocked("}
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir == "pkg/workload" || strings.HasPrefix(file.pkgDir, "pkg/workload/") {
+			continue
+		}
+		if file.pkgDir == "internal/workload" {
+			for _, symbol := range forbiddenSchedulerSymbols {
+				if strings.Contains(file.body, symbol) {
+					t.Errorf("%s retains superseded scheduler mechanism %q", file.path, symbol)
+				}
+			}
+			for _, imported := range file.imports {
+				if imported == reusableWorkload || strings.HasPrefix(imported, reusableWorkload+"/") {
+					adapterFound = true
+				}
+			}
+			continue
+		}
+		for _, imported := range file.imports {
+			if imported == reusableWorkload || strings.HasPrefix(imported, reusableWorkload+"/") {
+				t.Errorf("%s consumes pkg/workload outside the sole internal/workload adapter", file.path)
+			}
+		}
+	}
+	if !adapterFound {
+		t.Fatal("internal/workload does not adapt the generic pkg/workload scheduler")
+	}
+}
+
 func TestOnlyWorkloadAdaptersAndCompositionDependOnWorkload(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
@@ -1862,12 +2021,13 @@ func TestOnlyWorkloadAdaptersAndCompositionDependOnWorkload(t *testing.T) {
 func TestArrowImportsStayInsideAnalyticalDataPlaneAndExplicitEncoders(t *testing.T) {
 	allowed := []string{
 		"internal/analytics/arrowquery",
-		"internal/analytics/arrowresult",
+		"internal/analytics/arrowdecode",
 		"internal/analytics/resultcache",
 		"internal/analytics/materialize",
 		"internal/analytics/ducklake",
 		"internal/dashboard/semanticapi",
 		"internal/dashboard/http",
+		"pkg/arrowresult",
 	}
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
@@ -3149,10 +3309,13 @@ func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 	root := repoRoot(t)
 	const prepareWatchdog = "node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare"
-	for workflow, wantPrepareCount := range map[string]int{
-		"ci.yml":               3,
-		"merge-validation.yml": 4,
-		"nightly.yml":          4,
+	for workflow, contract := range map[string]struct {
+		prepareCount    int
+		frontendTimeout string
+	}{
+		"ci.yml":               {prepareCount: 3, frontendTimeout: "timeout-minutes: 30"},
+		"merge-validation.yml": {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
+		"nightly.yml":          {prepareCount: 4, frontendTimeout: "timeout-minutes: 20"},
 	} {
 		data, err := os.ReadFile(filepath.Join(root, ".github", "workflows", workflow))
 		require.NoError(t, err)
@@ -3160,13 +3323,13 @@ func TestGitHubHostedCIRecoversFromHungBunProcesses(t *testing.T) {
 		if strings.Contains(text, "run: task ci:prepare") {
 			t.Fatalf("%s contains repository preparation without the Bun hang watchdog", workflow)
 		}
-		if got := strings.Count(text, prepareWatchdog); got != wantPrepareCount {
-			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, wantPrepareCount)
+		if got := strings.Count(text, prepareWatchdog); got != contract.prepareCount {
+			t.Fatalf("%s wraps %d preparation steps, want %d", workflow, got, contract.prepareCount)
 		}
 
 		frontend := workflowJobBlock(t, text, "frontend-validation")
 		for _, want := range []string{
-			"timeout-minutes: 20",
+			contract.frontendTimeout,
 			prepareWatchdog,
 			"node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend",
 		} {
@@ -4109,12 +4272,6 @@ func isForbiddenUseCaseImport(imported string) bool {
 	}
 	packagePath := strings.TrimPrefix(imported, modulePath+"/")
 	if rule, ok := ClassifyPackage(packagePath); ok && rule.Layer == LayerPlatform {
-		return false
-	}
-	// Query JSON is a typed analytical contract shared with the compiler. Its
-	// implementation lives below the DuckDB adapter tree, but the contract
-	// package itself is safe for use-case consumers.
-	if packagePath == "internal/analytics/duckdb/queryjson" {
 		return false
 	}
 	for _, segment := range []string{"/sqlite", "/filesystem", "/s3", "/tus", "/duckdb", "/ducklake", "/datastar", "/http", "/openai"} {

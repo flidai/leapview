@@ -16,18 +16,19 @@ import (
 
 	"github.com/flidai/leapview/internal/manageddata"
 	platformdb "github.com/flidai/leapview/internal/manageddata/internal/db"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct {
 	db       *sql.DB
 	q        *platformdb.Queries
-	workflow jobs.WorkflowRecorder
+	workflow jobplatform.WorkflowRecorder
 }
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, q: platformdb.New(db)} }
-func NewRepositoryWithWorkflow(db *sql.DB, workflow jobs.WorkflowRecorder) *Repository {
+func NewRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder) *Repository {
 	return &Repository{db: db, q: platformdb.New(db), workflow: workflow}
 }
 

@@ -11,7 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	graph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -35,7 +35,7 @@ type Repository struct {
 }
 type ActivationHooks struct {
 	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
-	RecordWorkflow jobs.WorkflowRecorder
+	RecordWorkflow jobplatform.WorkflowRecorder
 	// CommitPublication replaces the final SQLite commit only in tests or
 	// controlled adapters. A hook may commit and return an error to model a
 	// lost activation acknowledgement; production leaves it nil and commits

@@ -1163,6 +1163,7 @@ model DashboardInteractionCommand {
   `action`: string;
   `dataRevision`: int64;
   `filterRevision`: int64;
+  @doc("Stable interaction ID from the source visualization specification. The legacy field name is retained for wire compatibility.")
   `interactionKind`: string;
   `interactionRevision`: int64;
   `mappings`: DashboardInteractionCommandMapping[];
@@ -1235,6 +1236,7 @@ model DashboardInteractionConfigMapping {
 model DashboardInteractionSelection {
   `entries`: DashboardInteractionSelectionEntry[];
   `id`: string;
+  @doc("Stable interaction ID from the source visualization specification. The legacy field name is retained for wire compatibility.")
   `interactionKind`: string;
   `label`: string;
   `order`: int64;

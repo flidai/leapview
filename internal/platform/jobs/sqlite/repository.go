@@ -13,9 +13,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	platformdb "github.com/flidai/leapview/internal/platform/jobs/sqlite/jobdb"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct{ q *platformdb.Queries }
@@ -25,7 +26,7 @@ func NewRepository(db platformdb.DBTX) *Repository { return &Repository{q: platf
 func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
 	groups, actorErr := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
 	if !canonicalLiteral(input.ID, 256) || !canonicalLiteral(input.Kind, 128) ||
-		(input.WorkloadClass != jobs.WorkloadClassBackground && input.WorkloadClass != jobs.WorkloadClassControl) ||
+		(input.WorkloadClass != jobpolicy.WorkloadClassBackground && input.WorkloadClass != jobpolicy.WorkloadClassControl) ||
 		!canonicalLiteral(input.ResourceKind, 128) || !canonicalLiteral(input.ResourceID, 256) || input.EstimatedMemoryBytes <= 0 || actorErr != nil || !json.Valid(input.Payload) {
 		return jobs.Job{}, fmt.Errorf("invalid async job")
 	}
@@ -70,7 +71,7 @@ func (r *Repository) Get(ctx context.Context, id string) (jobs.Job, error) {
 }
 
 func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit int) ([]jobs.Job, error) {
-	if (workloadClass != jobs.WorkloadClassBackground && workloadClass != jobs.WorkloadClassControl) || limit < 1 || limit > 200 {
+	if (workloadClass != jobpolicy.WorkloadClassBackground && workloadClass != jobpolicy.WorkloadClassControl) || limit < 1 || limit > 200 {
 		return nil, fmt.Errorf("workload class and candidate limit are required")
 	}
 	rows, err := r.q.ListAPIAsyncJobCandidates(ctx, platformdb.ListAPIAsyncJobCandidatesParams{WorkloadClass: workloadClass, ResultLimit: int64(limit)})
@@ -89,7 +90,7 @@ func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit
 }
 
 func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	if !canonicalLiteral(id, 256) || (workloadClass != jobs.WorkloadClassBackground && workloadClass != jobs.WorkloadClassControl) || !canonicalLiteral(owner, 256) || lease <= 0 {
+	if !canonicalLiteral(id, 256) || (workloadClass != jobpolicy.WorkloadClassBackground && workloadClass != jobpolicy.WorkloadClassControl) || !canonicalLiteral(owner, 256) || lease <= 0 {
 		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
 	}
 	modifier := fmt.Sprintf("+%d seconds", max(1, int(lease.Seconds())))
@@ -261,7 +262,7 @@ func decodeGroups(encoded string) ([]string, error) {
 
 func validateJob(job jobs.Job) error {
 	if !canonicalLiteral(job.ID, 256) || !canonicalLiteral(job.Kind, 128) ||
-		job.WorkloadClass != jobs.WorkloadClassBackground && job.WorkloadClass != jobs.WorkloadClassControl ||
+		job.WorkloadClass != jobpolicy.WorkloadClassBackground && job.WorkloadClass != jobpolicy.WorkloadClassControl ||
 		!canonicalLiteral(job.ResourceKind, 128) || !canonicalLiteral(job.ResourceID, 256) ||
 		job.EstimatedMemoryBytes <= 0 || job.Attempts < 0 || job.LeaseGeneration < 0 {
 		return fmt.Errorf("invalid persisted async job")

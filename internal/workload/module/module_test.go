@@ -5,8 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func TestBuildOwnsAdmissionLifecycle(t *testing.T) {
@@ -29,13 +30,13 @@ func TestBuildOwnsAdmissionLifecycle(t *testing.T) {
 func TestSystemRequestsCarryIdentityAndMemoryEstimate(t *testing.T) {
 	control := ControlRequest("control")
 	maintenance := MaintenanceRequest("maintenance")
-	background := Request{Class: BackgroundClass, PrincipalID: jobs.SystemPrincipalID, Operation: "background", EstimatedMemoryBytes: 64 << 20}
+	background := Request{Class: BackgroundClass, PrincipalID: jobplatform.SystemPrincipalID, Operation: "background", EstimatedMemoryBytes: 64 << 20}
 	for _, request := range []Request{control, maintenance, background} {
 		if request.PrincipalID == "" || request.EstimatedMemoryBytes <= 0 {
 			t.Fatalf("system request missing admission identity/estimate: %#v", request)
 		}
 	}
-	if control.PrincipalID != jobs.SystemPrincipalID || maintenance.PrincipalID != jobs.SystemPrincipalID || background.PrincipalID != jobs.SystemPrincipalID {
+	if control.PrincipalID != jobplatform.SystemPrincipalID || maintenance.PrincipalID != jobplatform.SystemPrincipalID || background.PrincipalID != jobplatform.SystemPrincipalID {
 		t.Fatalf("system jobs must use the reserved actor: control=%q maintenance=%q background=%q", control.PrincipalID, maintenance.PrincipalID, background.PrincipalID)
 	}
 }
@@ -43,7 +44,7 @@ func TestSystemRequestsCarryIdentityAndMemoryEstimate(t *testing.T) {
 func TestJobAdmitterMapsToSystemRequest(t *testing.T) {
 	capture := &captureAdmitter{}
 	adapter := JobAdmitter(capture)
-	if _, err := adapter.Acquire(context.Background(), jobs.AdmissionRequest{Class: jobs.WorkloadClassBackground, PrincipalID: "principal-1", EstimatedMemoryBytes: 1, Operation: "job.run"}); err != nil {
+	if _, err := adapter.Acquire(context.Background(), jobs.AdmissionRequest{Class: jobplatform.WorkloadClassBackground, PrincipalID: "principal-1", EstimatedMemoryBytes: 1, Operation: "job.run"}); err != nil {
 		t.Fatal(err)
 	}
 	if capture.request.PrincipalID != "principal-1" || capture.request.EstimatedMemoryBytes != 1 || capture.request.Operation != "job.run" {

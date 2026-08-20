@@ -11,10 +11,11 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/manageddata"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
@@ -109,7 +110,7 @@ func TestBeginUploadFinalizationRollsBackWhenWorkflowCannotBeRecorded(t *testing
 		t.Fatal(err)
 	}
 	injected := errors.New("injected workflow failure")
-	repo := NewRepositoryWithWorkflow(db, jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
+	repo := NewRepositoryWithWorkflow(db, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error {
 		return injected
 	}))
 	_, err = repo.BeginUploadFinalization(ctx, session.ID, jobs.WorkflowIntent{
@@ -135,7 +136,7 @@ func TestAbortUploadSessionWithWorkflowRollsBackStateOnEventFailure(t *testing.T
 		t.Fatal(err)
 	}
 	injected := errors.New("injected workflow failure")
-	repo := NewRepositoryWithWorkflow(db, jobs.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return injected }))
+	repo := NewRepositoryWithWorkflow(db, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return injected }))
 	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID, jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
 	if !errors.Is(err, injected) {
 		t.Fatalf("abort error=%v", err)

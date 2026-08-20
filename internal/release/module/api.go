@@ -13,7 +13,7 @@ import (
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	projectapi "github.com/flidai/leapview/internal/project/api"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
@@ -23,6 +23,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	releasefilesystem "github.com/flidai/leapview/internal/release/filesystem"
 	releasehttp "github.com/flidai/leapview/internal/release/http"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Principal struct {
@@ -195,7 +196,7 @@ type APIConfig struct {
 	ProjectSearchCatalog projectcatalogSearcher
 	AuthorizeConnection  func(context.Context, string, string, string, access.Capability) (bool, error)
 	Jobs                 JobStore
-	Workflow             jobs.WorkflowRecorder
+	Workflow             jobplatform.WorkflowRecorder
 }
 
 // SetProjectSearchCatalog binds the one active-lease catalog assembled by application

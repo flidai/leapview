@@ -119,17 +119,10 @@ func (s *FilterService) semanticFilters(ctx context.Context, runtime *modelRunti
 		if selection.SourceKind == "" || selection.SourceID == "" || len(selection.Entries) == 0 {
 			continue
 		}
-		if isUIOnlyRowSelection(selection) {
+		if isUIOnlyRowSelection(report, selection) {
 			continue
 		}
-		wantInteractionKind := "point_selection"
-		if source, ok := report.Visualizations[selection.SourceID]; ok && isGridQuery(source.Query.Kind) && selection.SourceKind == "visual" {
-			wantInteractionKind = "row_selection"
-		}
-		if selection.InteractionKind != wantInteractionKind {
-			return nil, fmt.Errorf("selection source %s %q has invalid interaction kind %q", selection.SourceKind, selection.SourceID, selection.InteractionKind)
-		}
-		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID)
+		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID, selection.InteractionKind)
 		if err != nil {
 			return nil, fmt.Errorf("resolve interaction selection: %w", err)
 		}
@@ -183,17 +176,10 @@ func (s *FilterService) semanticFilters(ctx context.Context, runtime *modelRunti
 
 func (s *FilterService) validateSelections(runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters) error {
 	for _, selection := range filters.Selections {
-		if selection.SourceKind == "" || selection.SourceID == "" || len(selection.Entries) == 0 || isUIOnlyRowSelection(selection) {
+		if selection.SourceKind == "" || selection.SourceID == "" || len(selection.Entries) == 0 || isUIOnlyRowSelection(report, selection) {
 			continue
 		}
-		wantInteractionKind := "point_selection"
-		if source, ok := report.Visualizations[selection.SourceID]; ok && isGridQuery(source.Query.Kind) && selection.SourceKind == "visual" {
-			wantInteractionKind = "row_selection"
-		}
-		if selection.InteractionKind != wantInteractionKind {
-			return fmt.Errorf("selection source %s %q has invalid interaction kind %q", selection.SourceKind, selection.SourceID, selection.InteractionKind)
-		}
-		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID)
+		resolved, err := reportmodel.ResolveCompiledSelectionInteraction(report, runtime.model, selection.SourceKind, selection.SourceID, selection.InteractionKind)
 		if err != nil {
 			return fmt.Errorf("resolve interaction selection: %w", err)
 		}
@@ -335,8 +321,16 @@ func selectionMappingFilters(mapping reportmodel.ResolvedSelectionMapping, value
 	}, nil
 }
 
-func isUIOnlyRowSelection(selection dashboard.InteractionSelection) bool {
+func isUIOnlyRowSelection(report *dashboarddefinition.Definition, selection dashboard.InteractionSelection) bool {
 	if selection.SourceKind != "visual" || selection.InteractionKind != "row_selection" || len(selection.Entries) == 0 {
+		return false
+	}
+	source, ok := report.Visualizations[selection.SourceID]
+	if !ok || !isGridQuery(source.Query.Kind) {
+		return false
+	}
+	base, err := visualizationir.SpecificationBase(source.Spec)
+	if err != nil || len(base.Interactions) != 0 {
 		return false
 	}
 	for _, entry := range selection.Entries {

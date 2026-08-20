@@ -9,8 +9,9 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 func testAdmission(controller workload.Admitter) jobs.Admitter {
@@ -56,7 +57,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := first.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "release:one:finalize", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ID: "release:one:finalize", Kind: "release.finalize", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
 		ResourceKind: "release", ResourceID: "one", Payload: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -223,7 +224,7 @@ func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "restartable-one", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ID: "restartable-one", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
 		ResourceKind: "test", ResourceID: "one", Payload: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -254,7 +255,7 @@ func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
 	}
 	defer module.Stop(context.Background())
 	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "restartable-two", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ID: "restartable-two", Kind: "restartable", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
 		ResourceKind: "test", ResourceID: "two", Payload: []byte(`{}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -325,7 +326,7 @@ func TestModuleCommitsWorkflowAtomically(t *testing.T) {
 	}
 	intent := jobs.WorkflowIntent{
 		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
-		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "deployment.activate", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
+		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "deployment.activate", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
 	}
 	if err := module.CommitWorkflow(t.Context(), intent); err != nil {
 		t.Fatal(err)
@@ -359,7 +360,7 @@ func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing
 	}
 	err = module.CommitWorkflow(t.Context(), jobs.WorkflowIntent{
 		Event: jobs.EventInput{Key: "deployment.queued", ResourceKind: "deployment", ResourceID: "deployment-1", EventType: "deployment.queued", Data: []byte(`{"status":"queued"}`)},
-		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
+		Job:   jobs.EnqueueInput{ID: "deployment:deployment-1:activate", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, ResourceKind: "deployment", ResourceID: "deployment-1", Payload: []byte(`{}`)},
 	})
 	if !errors.Is(err, jobs.ErrUnknownKind) {
 		t.Fatalf("CommitWorkflow() error = %v, want unknown kind", err)
@@ -390,7 +391,7 @@ func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err = module.Enqueue(t.Context(), jobs.EnqueueInput{
-		ID: "unknown-1", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobs.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ID: "unknown-1", Kind: "unknown", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
 		ResourceKind: "test", ResourceID: "unknown-1", Payload: []byte(`{}`),
 	})
 	if !errors.Is(err, jobs.ErrUnknownKind) {

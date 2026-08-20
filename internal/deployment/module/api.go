@@ -18,12 +18,13 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	"github.com/flidai/leapview/internal/platform/jobs"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 )
 
 var (
@@ -69,7 +70,7 @@ type JobStore interface {
 type APIConfig struct {
 	Releases  ReleasePort
 	Jobs      JobStore
-	Workflow  jobs.WorkflowRecorder
+	Workflow  jobplatform.WorkflowRecorder
 	Committer jobs.WorkflowCommitter
 }
 

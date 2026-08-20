@@ -2187,6 +2187,8 @@ spec:
         striped: false
     state_status_matrix_formatted:
       type: matrix
+      dataBudget:
+        maxRows: 5000
       query:
         type: pivot
         rows:
