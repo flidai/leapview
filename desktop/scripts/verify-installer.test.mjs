@@ -1,7 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateInstallerContract } from "./verify-installer.mjs";
+import {
+  squirrelArchiveArguments,
+  validateInstallerContract,
+} from "./verify-installer.mjs";
+
+test("forces Windows tar to treat drive-letter paths as local archives", () => {
+  assert.deepEqual(
+    squirrelArchiveArguments(
+      "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload",
+    ),
+    [
+      "--force-local",
+      "-xf",
+      "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
+      "-C",
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload",
+    ],
+  );
+});
 
 test("installer verification accepts only the selected consumer formats", () => {
   for (const [platform, format, scope, updateMechanism, updateArtifacts] of [

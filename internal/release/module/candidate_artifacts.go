@@ -664,6 +664,12 @@ func requiredExtensionNames(activations []projectartifact.ConnectionActivation, 
 			set[format.RequiredExtension] = struct{}{}
 		}
 	}
+	// DuckDB's Iceberg extension loads the official Avro dependency when it is
+	// initialized. Admit both artifacts in sorted order so the dependency is
+	// present before the offline Iceberg LOAD runs.
+	if _, ok := set["iceberg"]; ok {
+		set["avro"] = struct{}{}
+	}
 	values := make([]string, 0, len(set))
 	for name := range set {
 		values = append(values, name)
