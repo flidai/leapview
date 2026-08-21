@@ -491,7 +491,8 @@ func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
 		ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh",
 		Payload: projectview.RefreshPipelineAssetPayload(refreshschedule.Definition{
 			ID: "pipeline:sales", Name: "sales", SemanticModelID: projectgraph.ResourceID("semantic:sales"),
-			Schedules: []refreshschedule.Schedule{{Expression: "0 * * * *", Timezone: "UTC"}},
+			Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+			Schedules: []refreshschedule.Schedule{{Expression: "0 * * * *"}},
 		}),
 	}
 	pipelineDetails := assetDetailModelForAsset(projectview.DevelopView{ID: "project:test"}, pipeline, []projectview.DevelopAssetView{pipeline}, nil)

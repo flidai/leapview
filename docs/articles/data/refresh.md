@@ -2,6 +2,30 @@
 
 A refresh rebuilds project analytical tables from the sources and revisions selected by the active deployment. It creates replacement analytical state and activates it only after the complete candidate succeeds.
 
+## Define a Pipeline
+
+A Pipeline selects one governed semantic model. LeapView compiles that selection into the ordered Model closure and Source inputs; authors do not repeat the dependency graph as workflow steps.
+
+```yaml
+apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:sales-refresh
+  name: sales_refresh
+spec:
+  selection:
+    semanticModel: sales
+  schedules:
+    weekdays-0600: "0 6 * * 1-5"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
+```
+
+Schedule map keys are durable evidence identities and must be unique within the Pipeline. Schedule values use the Argo-compatible five-field cron profile (including the documented macros). Scheduled Pipelines require one explicit IANA `timezone`, `startingDeadlineSeconds`, and `concurrencyPolicy`: `Forbid` records an overlapping occurrence as skipped while another scheduled run is nonterminal; `Replace` supersedes the earlier scheduled run and revokes its publication authority. Manual-only Pipelines omit these scheduling fields entirely.
+
+GitHub Actions and other orchestrators may call the LeapView API or CLI, but their workflow syntax is not the Pipeline contract.
+
 ## What a refresh uses
 
 At refresh start, LeapView resolves:
@@ -18,7 +42,7 @@ That resolved input should remain consistent for the run. A later project deploy
 
 The expected lifecycle is:
 
-1. Create a refresh run and record its target generation.
+1. Create a refresh run and record its trigger, target generation, immutable plan digest, and materialization scope.
 2. Resolve and validate source bindings.
 3. Execute model-table transformations into isolated replacement state.
 4. Validate schemas and required analytical metadata.
@@ -32,7 +56,7 @@ Queries that began against the previous active snapshot continue using that snap
 
 Use the project asset refresh surface or the generated [Refresh Runs API](/docs/api/refresh-runs) according to the caller. Track the returned run identity and generation rather than assuming every transient loading state will be observed.
 
-Refresh state should distinguish queued, running, succeeded, failed, and cancelled or superseded outcomes. Inspect the latest relevant run when a user starts several refreshes quickly; an older run may be cancelled so it cannot overwrite newer state.
+Refresh state distinguishes queued, running, succeeded, failed, skipped, cancelled, and superseded outcomes. Inspect the latest relevant run when a user starts several refreshes quickly; an older run may be superseded so it cannot overwrite newer state.
 
 ## Write deterministic transformations
 

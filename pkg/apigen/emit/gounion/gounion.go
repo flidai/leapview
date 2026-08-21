@@ -181,6 +181,73 @@ func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema i
 	return nil
 }
 
+// EmitObject emits a strict untagged union containing object-model branches.
+// Each branch is decoded with DisallowUnknownFields; exactly one branch must
+// accept the authored object. This permits a clean YAML object whose required
+// field sets express a conditional contract without leaking a discriminator
+// tag into the public document.
+func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, typeName func(string) string) error {
+	unionName := typeName(name)
+	if len(schema.OneOf) < 2 {
+		return fmt.Errorf("untagged object union %q requires at least two variants", name)
+	}
+	variants := make([]string, 0, len(schema.OneOf))
+	for _, ref := range schema.OneOf {
+		if ref.Ref == "" {
+			return fmt.Errorf("untagged object union %q variant must reference a named object-model schema", name)
+		}
+		variantName, ok := ir.NormalizedSchemaRefName(ref)
+		if !ok {
+			return fmt.Errorf("untagged object union %q has invalid variant reference", name)
+		}
+		variant, ok := doc.Schemas[variantName]
+		if !ok || variant.Type != "object" {
+			return fmt.Errorf("untagged object union %q variant %q must reference an object-model schema", name, variantName)
+		}
+		variants = append(variants, variantName)
+	}
+
+	b.WriteString("type " + unionName + "Variant interface {\n\tis" + unionName + "Variant()\n}\n\n")
+	b.WriteString("type " + unionName + " struct {\n\tValue " + unionName + "Variant\n}\n\n")
+	for _, variant := range variants {
+		b.WriteString("func (*" + typeName(variant) + ") is" + unionName + "Variant() {}\n")
+	}
+	b.WriteString("\nfunc (value " + unionName + ") MarshalJSON() ([]byte, error) {\n")
+	b.WriteString("\tswitch variant := value.Value.(type) {\n")
+	for _, variant := range variants {
+		b.WriteString("\tcase *" + typeName(variant) + ":\n\t\tif variant == nil { return nil, fmt.Errorf(\"" + unionName + " variant is nil\") }; return json.Marshal(variant)\n")
+	}
+	b.WriteString("\tcase nil:\n\t\treturn nil, fmt.Errorf(\"" + unionName + " variant is required\")\n\tdefault:\n\t\treturn nil, fmt.Errorf(\"unsupported " + unionName + " variant %T\", variant)\n\t}\n}\n\n")
+
+	b.WriteString("func (value *" + unionName + ") UnmarshalJSON(data []byte) error {\n")
+	b.WriteString("\tif value == nil { return fmt.Errorf(\"cannot unmarshal " + unionName + " into nil receiver\") }\n")
+	b.WriteString("\tvar fields map[string]json.RawMessage\n")
+	b.WriteString("\tif err := json.Unmarshal(data, &fields); err != nil { return fmt.Errorf(\"decode " + unionName + " object: %w\", err) }\n")
+	b.WriteString("\t*value = " + unionName + "{}\n")
+	b.WriteString("\tvar matched string\n")
+	b.WriteString("\tvar decoded any\n")
+	b.WriteString("\tvar failures []string\n")
+	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	for _, variant := range variants {
+		fmt.Fprintf(b, "\t{ valid := true\n")
+		variantSchema := doc.Schemas[variant]
+		for _, required := range variantSchema.Required {
+			fmt.Fprintf(b, "\t\tif _, ok := fields[%q]; !ok { valid = false; failures = append(failures, %q) }\n", required, variant+": required property "+required+" is missing")
+		}
+		fmt.Fprintf(b, "\t\tif valid { var candidate %s; if err := decode(&candidate); err == nil {\n", typeName(variant))
+		fmt.Fprintf(b, "\t\t\tif matched != \"\" { return fmt.Errorf(\"decode %s: object matches both %%s and %s\", matched) }\n", unionName, variant)
+		fmt.Fprintf(b, "\t\t\tmatched = %q; decoded = &candidate\n", variant)
+		fmt.Fprintf(b, "\t\t} else { failures = append(failures, %q + err.Error()) } } }\n", variant+": ")
+	}
+	b.WriteString("\tif matched == \"\" { return fmt.Errorf(\"decode " + unionName + ": no object variant matched (fields=%v, errors=%s)\", fields, strings.Join(failures, \"; \")) }\n")
+	b.WriteString("\tswitch matched {\n")
+	for _, variant := range variants {
+		b.WriteString("\tcase \"" + variant + "\": value.Value = decoded.(*" + typeName(variant) + ")\n")
+	}
+	b.WriteString("\t}\n\treturn nil\n}\n\n")
+	return nil
+}
+
 func isScalarUnionVariant(variant ir.SchemaRef) bool {
 	if variant.Ref != "" || variant.Items != nil || variant.AdditionalProperties != nil {
 		return false

@@ -18,7 +18,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
-	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
 func copySources(in map[string]semanticmodel.Source) map[string]semanticmodel.Source {
@@ -206,22 +205,15 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		var spec refreshPipelineSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
-			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
-		}
 		id, name, err := flatResourceIdentity(project, envelope, path, "pipeline")
 		if err != nil {
 			return err
 		}
-		pipeline := refreshschedule.Definition{ID: projectgraph.ResourceID(id), Name: name, SemanticModelID: projectgraph.ResourceID(strings.TrimSpace(spec.SemanticModel))}
-		for _, authored := range spec.On.Schedule {
-			schedule, err := refreshschedule.ParseSchedule(authored.Cron, authored.Timezone)
-			if err != nil {
-				return resourceError(path, id, "spec.on.schedule", "Pipeline %q schedule: %v", name, err)
-			}
-			pipeline.Schedules = append(pipeline.Schedules, schedule)
+		pipeline, err := LoadRefreshPipeline(path)
+		if err != nil {
+			return resourceError(path, id, "spec", "Pipeline %q: %v", name, err)
 		}
+		pipeline.ID, pipeline.Name = projectgraph.ResourceID(id), name
 		project.RefreshPipelines[name] = pipeline
 		project.ResourceSources[id] = string(content)
 		project.PipelineIDs[name], project.PipelinePaths[name] = id, path
@@ -482,8 +474,9 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, pipeline := range project.RefreshPipelines {
-		if _, err := resolver.resolve(pipeline.SemanticModelID.String(), projectgraph.KindSemanticModel); err != nil {
-			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.semanticModel", "Pipeline %q: %v", name, err)
+		selection := pipeline.SemanticModelID.String()
+		if project.SemanticModelIDs[selection] == "" {
+			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.selection.semanticModel", "Pipeline %q references unknown authored SemanticModel name %q", name, selection)
 		}
 	}
 	for name, pub := range project.Publications {

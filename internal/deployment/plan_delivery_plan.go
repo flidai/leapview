@@ -40,6 +40,7 @@ type DeliveryPlan struct {
 	Provenance         DeliveryProvenance      `json:"provenance"`
 	Governance         DeliveryGovernance      `json:"governance"`
 	Evidence           DeliveryPlanEvidence    `json:"evidence"`
+	PipelinePlan       *PipelinePlan           `json:"pipelinePlan,omitempty"`
 	ExecutionDigest    string                  `json:"executionDigest"`
 	ProvenanceDigest   string                  `json:"provenanceDigest"`
 	GovernanceDigest   string                  `json:"governanceDigest"`
@@ -64,6 +65,20 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 		plan.Execution.DataInputs[i] = plan.Execution.DataInputs[i].canonical()
 	}
 	plan.Evidence = plan.Evidence.canonical()
+	if plan.PipelinePlan != nil {
+		canonical := plan.PipelinePlan.Canonical()
+		if err := canonical.Validate(); err != nil {
+			return DeliveryPlan{}, err
+		}
+		plan.PipelinePlan = &canonical
+		plan.Evidence.PipelinePlan = &canonical
+	} else if plan.Evidence.PipelinePlan != nil {
+		canonical := plan.Evidence.PipelinePlan.Canonical()
+		if err := canonical.Validate(); err != nil {
+			return DeliveryPlan{}, err
+		}
+		plan.PipelinePlan = &canonical
+	}
 	if err := plan.validateWithoutDigests(); err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -85,6 +100,7 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
+		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
 	})
 	if err != nil {
 		return DeliveryPlan{}, err
@@ -109,6 +125,14 @@ type deliveryPlanCanonical struct {
 	ProvenanceDigest   string                `json:"provenanceDigest"`
 	GovernanceDigest   string                `json:"governanceDigest"`
 	EvidenceDigest     string                `json:"evidenceDigest"`
+	PipelinePlanDigest string                `json:"pipelinePlanDigest,omitempty"`
+}
+
+func pipelinePlanDigest(plan *PipelinePlan) string {
+	if plan == nil {
+		return ""
+	}
+	return plan.Digest
 }
 
 func (plan DeliveryPlan) validateWithoutDigests() error {
@@ -160,6 +184,17 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 	if err := plan.Evidence.Validate(); err != nil {
 		return err
 	}
+	if plan.PipelinePlan != nil {
+		if err := plan.PipelinePlan.Validate(); err != nil {
+			return err
+		}
+		if plan.BaseGenerationID == "" || plan.PipelinePlan.ServingGenerationID != plan.BaseGenerationID {
+			return fmt.Errorf("%w: pipeline plan generation does not match delivery base", ErrDeliveryStale)
+		}
+		if plan.Evidence.PipelinePlan == nil || plan.Evidence.PipelinePlan.Digest != plan.PipelinePlan.Digest {
+			return fmt.Errorf("%w: pipeline plan evidence differs from execution contract", ErrDeliveryConflict)
+		}
+	}
 	if !plan.Governance.ObservedInputsAllowed {
 		for _, input := range plan.Execution.DataInputs {
 			if input.Mode == DeliveryDataObserved {
@@ -209,6 +244,7 @@ func (plan DeliveryPlan) Validate() error {
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
+		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
 	})
 	if err != nil || expectedPlan != plan.Digest {
 		return fmt.Errorf("%w: plan digest does not match canonical inputs", ErrDeliveryConflict)

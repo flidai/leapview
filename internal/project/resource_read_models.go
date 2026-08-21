@@ -45,17 +45,19 @@ type ConnectionAssetReadModel struct {
 // by the pipeline list/detail surfaces. The schedule's parsed cron internals
 // are intentionally not serialized.
 type RefreshPipelineScheduleReadModel struct {
-	Cron     string `json:"Cron,omitempty"`
-	Timezone string `json:"Timezone,omitempty"`
+	Cron string `json:"Cron,omitempty"`
 }
 
 // RefreshPipelineAssetReadModel is the public refresh-pipeline projection.
 type RefreshPipelineAssetReadModel struct {
-	ID              string                             `json:"ID,omitempty"`
-	Name            string                             `json:"Name,omitempty"`
-	SemanticModel   string                             `json:"SemanticModel,omitempty"`
-	SemanticModelID string                             `json:"SemanticModelID,omitempty"`
-	Schedules       []RefreshPipelineScheduleReadModel `json:"Schedules,omitempty"`
+	ID                      string                             `json:"ID,omitempty"`
+	Name                    string                             `json:"Name,omitempty"`
+	SemanticModel           string                             `json:"SemanticModel,omitempty"`
+	SemanticModelID         string                             `json:"SemanticModelID,omitempty"`
+	Timezone                string                             `json:"Timezone,omitempty"`
+	StartingDeadlineSeconds int64                              `json:"StartingDeadlineSeconds,omitempty"`
+	ConcurrencyPolicy       string                             `json:"ConcurrencyPolicy,omitempty"`
+	Schedules               []RefreshPipelineScheduleReadModel `json:"Schedules,omitempty"`
 }
 
 // DashboardAssetPayload exposes the compiler-owned dashboard definition to
@@ -125,11 +127,12 @@ func ConnectionAssetConfiguration(id, name string, connection semanticmodel.Conn
 func RefreshPipelineAssetPayload(pipeline refreshschedule.Definition) map[string]any {
 	schedules := make([]RefreshPipelineScheduleReadModel, 0, len(pipeline.Schedules))
 	for _, schedule := range pipeline.Schedules {
-		schedules = append(schedules, RefreshPipelineScheduleReadModel{Cron: schedule.Expression, Timezone: schedule.Timezone})
+		schedules = append(schedules, RefreshPipelineScheduleReadModel{Cron: schedule.Expression})
 	}
 	return encodeAssetReadModel(RefreshPipelineAssetReadModel{
 		ID: pipeline.ID.String(), Name: pipeline.Name,
 		SemanticModel: pipeline.SemanticModelID.String(), SemanticModelID: pipeline.SemanticModelID.String(),
+		Timezone: pipeline.Timezone, StartingDeadlineSeconds: pipeline.StartingDeadlineSeconds, ConcurrencyPolicy: pipeline.ConcurrencyPolicy,
 		Schedules: schedules,
 	})
 }

@@ -200,6 +200,46 @@ describe("APIGen TypeSpec emitter", () => {
     `, "Invalid @apigen.propertyNames usage");
   });
 
+  it("emits minimum property constraints for authored maps", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Map constraints" })
+      namespace MapConstraints;
+
+      model Payload {
+        @apigen.minProperties(1)
+        values: Record<string>;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `);
+    expect(doc.schemas.Payload.properties.values.schema).toEqual({
+      type: "object",
+      additional_properties: { schema: { type: "string" } },
+      min_properties: 1,
+    });
+  });
+
+  it("rejects minimum property decoration on non-maps and repeats", async () => {
+    await expectCompileFails(`
+      using Http;
+
+      @service(#{ title: "Invalid map constraints" })
+      namespace InvalidMapConstraints;
+
+      model Payload {
+        @apigen.minProperties(1)
+        @apigen.minProperties(2)
+        value: string;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `, "Invalid @apigen.minProperties usage");
+  });
+
   it("rejects repeated property-name decoration", async () => {
     await expectCompileFails(`
       using Http;

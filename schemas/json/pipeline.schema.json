@@ -1,10 +1,56 @@
 {
   "$defs": {
-    "#APIVersion": {
-      "const": "leapview.dev/v1"
+    "ManualPipelineSpec": {
+      "description": "Manual-only form: schedule policy is not meaningful without schedules.",
+      "properties": {
+        "selection": {
+          "$ref": "#/$defs/PipelineSelection"
+        }
+      },
+      "required": [
+        "selection"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
-    "#Metadata": {
-      "additionalProperties": false,
+    "PipelineApiVersion": {
+      "enum": [
+        "leapview.dev/v1"
+      ],
+      "type": "string"
+    },
+    "PipelineConcurrencyPolicy": {
+      "enum": [
+        "Forbid",
+        "Replace"
+      ],
+      "type": "string"
+    },
+    "PipelineDocument": {
+      "properties": {
+        "apiVersion": {
+          "$ref": "#/$defs/PipelineApiVersion"
+        },
+        "kind": {
+          "$ref": "#/$defs/PipelineResourceKind"
+        },
+        "metadata": {
+          "$ref": "#/$defs/PipelineMetadata"
+        },
+        "spec": {
+          "$ref": "#/$defs/PipelineSpec"
+        }
+      },
+      "required": [
+        "apiVersion",
+        "kind",
+        "metadata",
+        "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PipelineMetadata": {
       "properties": {
         "description": {
           "type": "string"
@@ -19,16 +65,19 @@
           "type": "string"
         },
         "id": {
-          "$ref": "#/$defs/%23ResourceID"
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "type": "string"
         },
         "name": {
-          "$ref": "#/$defs/%23ResourceName"
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
         },
         "owner": {
           "type": "string"
-        },
-        "provenance": {
-          "$ref": "#/$defs/%23Provenance"
         },
         "tags": {
           "items": {
@@ -41,92 +90,106 @@
         "id",
         "name"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
     },
-    "#Provenance": {
-      "additionalProperties": false,
-      "properties": {
-        "origin": {
-          "type": "string"
-        },
-        "path": {
-          "type": "string"
-        },
-        "source": {
-          "type": "string"
-        }
-      },
-      "type": "object"
-    },
-    "#ResourceID": {
-      "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+    "PipelineResourceKind": {
+      "enum": [
+        "Pipeline"
+      ],
       "type": "string"
     },
-    "#ResourceName": {
-      "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
-      "type": "string"
-    }
-  },
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "additionalProperties": false,
-  "properties": {
-    "apiVersion": {
-      "$ref": "#/$defs/%23APIVersion"
-    },
-    "kind": {
-      "const": "Pipeline"
-    },
-    "metadata": {
-      "$ref": "#/$defs/%23Metadata"
-    },
-    "spec": {
-      "additionalProperties": false,
+    "PipelineSelection": {
       "properties": {
-        "on": {
-          "additionalProperties": false,
-          "properties": {
-            "schedule": {
-              "items": {
-                "additionalProperties": false,
-                "properties": {
-                  "cron": {
-                    "not": {
-                      "const": ""
-                    },
-                    "type": "string"
-                  },
-                  "timezone": {
-                    "not": {
-                      "const": ""
-                    },
-                    "type": "string"
-                  }
-                },
-                "required": [
-                  "cron"
-                ],
-                "type": "object"
-              },
-              "type": "array"
-            }
-          },
-          "type": "object"
-        },
         "semanticModel": {
-          "$ref": "#/$defs/%23ResourceID"
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
+          "type": "string"
         }
       },
       "required": [
         "semanticModel"
       ],
-      "type": "object"
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "PipelineSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/ManualPipelineSpec"
+        },
+        {
+          "$ref": "#/$defs/ScheduledPipelineSpec"
+        }
+      ]
+    },
+    "ScheduledPipelineSpec": {
+      "description": "Scheduled form: all Pipeline-wide schedule policy is explicit.",
+      "properties": {
+        "concurrencyPolicy": {
+          "$ref": "#/$defs/PipelineConcurrencyPolicy",
+          "description": "Argo-compatible scheduled overlap policy, required when schedules is non-empty."
+        },
+        "schedules": {
+          "additionalProperties": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "description": "Named schedule IDs are evidence-only keys; values are cron expressions.",
+          "minProperties": 1,
+          "propertyNames": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "type": "object"
+        },
+        "selection": {
+          "$ref": "#/$defs/PipelineSelection"
+        },
+        "startingDeadlineSeconds": {
+          "description": "Argo-compatible late-start deadline, required when schedules is non-empty.",
+          "format": "int64",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "timezone": {
+          "description": "Required when schedules is non-empty; omitted for manual-only Pipelines.",
+          "minLength": 1,
+          "type": "string"
+        }
+      },
+      "required": [
+        "concurrencyPolicy",
+        "schedules",
+        "selection",
+        "startingDeadlineSeconds",
+        "timezone"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     }
   },
-  "required": [
-    "apiVersion",
-    "kind",
-    "metadata",
-    "spec"
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "anyOf": [
+    {
+      "$ref": "#/$defs/PipelineDocument"
+    }
   ],
-  "type": "object"
+  "description": "The canonical asset-selected refresh Pipeline resource document.",
+  "title": "LeapView Pipeline Document",
+  "x-apigen-contracts": [
+    {
+      "kind": "pipeline",
+      "name": "PipelineDocument",
+      "schema": {
+        "$ref": "#/$defs/PipelineDocument"
+      },
+      "tags": [
+        "pipeline",
+        "authoring",
+        "resource"
+      ]
+    }
+  ]
 }

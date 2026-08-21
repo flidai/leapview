@@ -847,7 +847,7 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 		appendKeyValue(node, "$ref", stringNode("#/components/schemas/"+ref.Ref))
 		return node
 	}
-	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Pattern == "" && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil {
+	if ref.Ref == "" && ref.Type == "" && ref.Format == "" && ref.Pattern == "" && ref.MinProperties == nil && ref.Items == nil && ref.AdditionalProperties == nil && ref.PropertyNames == nil {
 		return mappingNode()
 	}
 
@@ -879,6 +879,9 @@ func schemaRefNode(ref ir.SchemaRef) *yaml.Node {
 	}
 	if ref.MaxLength != nil {
 		appendKeyValue(node, "maxLength", intNode(*ref.MaxLength))
+	}
+	if ref.MinProperties != nil {
+		appendKeyValue(node, "minProperties", intNode(*ref.MinProperties))
 	}
 	if ref.Pattern != "" {
 		appendKeyValue(node, "pattern", stringNode(ref.Pattern))

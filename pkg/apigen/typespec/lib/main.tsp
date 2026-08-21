@@ -193,3 +193,4 @@ extern dec `metadata`(target: Model | ModelProperty, value: valueof unknown);
 extern dec tool(target: Operation, options: valueof ToolOptions);
 extern dec transportErrors(target: Namespace, schema: Model, options: valueof TransportErrorsOptions);
 extern dec propertyNames(target: ModelProperty, key: Scalar);
+extern dec minProperties(target: ModelProperty, value: int32);

@@ -706,7 +706,7 @@ func projectRefreshRun(run refreshpresentation.AssetRefreshRun) projectui.AssetR
 	return projectui.AssetRefreshRun{
 		ID: run.ID, Environment: run.Environment, ModelID: run.ModelID, ServingStateID: run.ServingStateID,
 		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName,
-		TriggerType: run.TriggerType, ParentRunID: run.ParentRunID, RetryOf: run.RetryOf,
+		TriggerType: run.TriggerType, ParentRunID: run.ParentRunID,
 		TargetGeneration: run.TargetGeneration, Status: run.Status, CreatedAt: run.CreatedAt,
 		UpdatedAt: run.UpdatedAt, StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
 	}

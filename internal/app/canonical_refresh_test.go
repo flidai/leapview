@@ -26,7 +26,7 @@ func TestCanonicalRefreshExecutorBuildsRestatementFromExactActiveSource(t *testi
 	mutations := &canonicalRefreshMutationStub{planBaseGenerationID: "delivery-base"}
 	execute := canonicalRefreshExecutor(mutations, reader, "target-evaluation")
 	result, err := execute(t.Context(), refreshrun.JobRecord{
-		RunID: "run-refresh", PrincipalID: "principal-refresh",
+		RunID: "run-refresh", PrincipalID: "principal-refresh", LeaseOwner: "worker-refresh", LeaseRevision: 2, TargetRevision: 3,
 		Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-active"},
 	})
 	if err != nil {
@@ -40,6 +40,9 @@ func TestCanonicalRefreshExecutorBuildsRestatementFromExactActiveSource(t *testi
 	}
 	if mutations.buildPrincipal != "principal-refresh" || mutations.publishedCandidate != "candidate-refresh" {
 		t.Fatalf("build principal/candidate = %q/%q", mutations.buildPrincipal, mutations.publishedCandidate)
+	}
+	if mutations.refreshFence != (deployment.RefreshPublicationFence{RunID: "run-refresh", LeaseOwner: "worker-refresh", LeaseRevision: 2, TargetRevision: 3}) {
+		t.Fatalf("refresh publication fence = %#v", mutations.refreshFence)
 	}
 }
 
@@ -177,6 +180,7 @@ type canonicalRefreshMutationStub struct {
 	buildPrincipal       string
 	publishedCandidate   string
 	planBaseGenerationID string
+	refreshFence         deployment.RefreshPublicationFence
 }
 
 func (s *canonicalRefreshMutationStub) CreatePlan(_ context.Context, intent deploymentmodule.DeliveryPlanIntent, key string) (deployment.DeliveryPlan, error) {
@@ -191,6 +195,12 @@ func (s *canonicalRefreshMutationStub) BuildPlan(_ context.Context, _, _ string,
 
 func (s *canonicalRefreshMutationStub) PublishCandidate(_ context.Context, _, candidate, _, _ string) (deployment.DeliveryPublication, error) {
 	s.publishedCandidate = candidate
+	return deployment.DeliveryPublication{GenerationID: "delivery-generation-refresh", Status: deployment.DeliveryPublicationCommitted}, nil
+}
+
+func (s *canonicalRefreshMutationStub) PublishCandidateFenced(_ context.Context, _, candidate, _, _ string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
+	s.publishedCandidate = candidate
+	s.refreshFence = fence
 	return deployment.DeliveryPublication{GenerationID: "delivery-generation-refresh", Status: deployment.DeliveryPublicationCommitted}, nil
 }
 

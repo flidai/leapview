@@ -230,6 +230,10 @@ type DeliveryPlanEvidence struct {
 	StalePolicy           DeliveryStalePolicy           `json:"stalePolicy,omitempty"`
 	Rollback              DeliveryRollbackEvidence      `json:"rollback,omitempty"`
 	Restatement           *DeliveryRestatementEvidence  `json:"restatement,omitempty"`
+	// PipelinePlan is duplicated in evidence JSON so older delivery storage
+	// rows can persist the immutable refresh selection without a migration.
+	// DeliveryPlan mirrors this pointer as the execution-facing contract.
+	PipelinePlan *PipelinePlan `json:"pipelinePlan,omitempty"`
 }
 
 func canonicalTextList(values []string) []string {
@@ -291,6 +295,10 @@ func (e DeliveryPlanEvidence) canonical() DeliveryPlanEvidence {
 		r := *e.Restatement
 		r.DownstreamScope = canonicalTextList(r.DownstreamScope)
 		e.Restatement = &r
+	}
+	if e.PipelinePlan != nil {
+		canonical := e.PipelinePlan.Canonical()
+		e.PipelinePlan = &canonical
 	}
 	return e
 }

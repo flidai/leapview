@@ -97,6 +97,33 @@ func TestEmit_GeneratesStrictScalarObjectUnion(t *testing.T) {
 	require.NotContains(t, content, "type Selection = any")
 }
 
+func TestEmit_GeneratesStrictObjectUnion(t *testing.T) {
+	doc := ir.Document{
+		Info: ir.Info{Namespace: "Pipeline"},
+		Schemas: map[string]ir.Schema{
+			"Spec": {Type: "union", OneOf: []ir.SchemaRef{{Ref: "ManualSpec"}, {Ref: "ScheduledSpec"}}},
+			"Selection": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"semanticModel": {Schema: ir.SchemaRef{Type: "string"}},
+			}, Required: []string{"semanticModel"}},
+			"ManualSpec": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"selection": {Schema: ir.SchemaRef{Ref: "Selection"}},
+			}, Required: []string{"selection"}},
+			"ScheduledSpec": {Type: "object", Properties: map[string]ir.SchemaProperty{
+				"selection": {Schema: ir.SchemaRef{Ref: "Selection"}},
+				"schedules": {Schema: ir.SchemaRef{Type: "object"}},
+			}, Required: []string{"selection", "schedules"}},
+		},
+		Contracts: []ir.Contract{{Name: "spec", Schema: ir.SchemaRef{Ref: "Spec"}}},
+	}
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	content := string(b)
+	require.Contains(t, content, "type SpecVariant interface")
+	require.Contains(t, content, `fields["schedules"]`)
+	require.Contains(t, content, "decoder.DisallowUnknownFields()")
+	require.Contains(t, content, "object matches both")
+}
+
 func TestEmit_RejectsUnsupportedScalarObjectUnions(t *testing.T) {
 	tests := []struct {
 		name   string

@@ -323,7 +323,6 @@ type AssetRefreshRun struct {
 	PrincipalDisplayName string
 	TriggerType          string
 	ParentRunID          string
-	RetryOf              string
 	TargetGeneration     int64
 	Status               string
 	CreatedAt            string

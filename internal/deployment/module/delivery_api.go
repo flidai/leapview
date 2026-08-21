@@ -101,6 +101,13 @@ type DeliveryMutationPort interface {
 	RollbackGeneration(context.Context, string, string, string, string) (deployment.DeliveryPublication, error)
 }
 
+// RefreshFencedDeliveryMutationPort binds canonical refresh publication to the
+// exact worker lease that built the candidate. The delivery repository checks
+// this authority in the same transaction as its target CAS.
+type RefreshFencedDeliveryMutationPort interface {
+	PublishCandidateFenced(context.Context, string, string, string, string, deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error)
+}
+
 // DeliveryPlanIntent contains only portable authoring intent. The canonical
 // coordinator resolves target bindings, policies, qualification, and the
 // authoritative base fence before persisting a DeliveryPlan.
@@ -113,6 +120,7 @@ type DeliveryPlanIntent struct {
 	Operation               deployment.DeliveryOperationKind
 	SourceDigest            string
 	SourceAttestationDigest string
+	PipelinePlan            *deployment.PipelinePlan
 }
 
 func decodePlanIntent(project, environment, principalID string, body deploymentgen.DeliveryPlanRequest) (DeliveryPlanIntent, error) {

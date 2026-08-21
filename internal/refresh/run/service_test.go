@@ -39,8 +39,8 @@ func TestServiceExecuteClaimedJobActivatesAfterMaterializeAndPrepare(t *testing.
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
 		ID:       "job_1",
 		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
-		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
-		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"), TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 		Kind: JobKindRefreshPipeline,
 	})
 	if err != nil {
@@ -81,8 +81,8 @@ func TestServiceExecuteClaimedJobMaterializeFailureDoesNotActivate(t *testing.T)
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
 		ID:       "job_1",
 		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
-		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
-		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"), TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 		Kind: JobKindRefreshPipeline,
 	})
 	if err == nil {
@@ -113,8 +113,8 @@ func TestServiceExecuteClaimedJobRuntimePrepareFailureDoesNotActivate(t *testing
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
 		ID:       "job_1",
 		Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root",
-		SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline,
-		TargetID: "sales-refresh", TriggerType: TriggerManual,
+		SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"), TargetType: TargetRefreshPipeline,
+		TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 		Kind: JobKindRefreshPipeline,
 	})
 	if err == nil {
@@ -145,7 +145,7 @@ func TestServiceExecuteClaimedJobRuntimeActivationFailureDoesNotPublishOrActivat
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline,
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"), TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual", Kind: JobKindRefreshPipeline,
 	})
 	if !errors.Is(err, wantErr) {
 		t.Fatalf("execute claimed job error = %v, want %v", err, wantErr)
@@ -172,7 +172,7 @@ func TestServiceExecuteClaimedJobRequiresAtomicRuntimeHost(t *testing.T) {
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
-		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, Kind: JobKindRefreshPipeline,
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20, RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"), TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual", Kind: JobKindRefreshPipeline,
 	})
 	if err == nil || !strings.Contains(err.Error(), "runtime host is required") {
 		t.Fatalf("execute claimed job error = %v, want required runtime host", err)
@@ -198,8 +198,8 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	}
 	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
 		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
-		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh",
-		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
 	})
 	if err != nil {
@@ -207,6 +207,28 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	}
 	if !executed || repo.runStatuses["run_root"] != RunStatusSucceeded || repo.runStatuses["run_child"] != RunStatusSucceeded {
 		t.Fatalf("executed/statuses = %v/%#v", executed, repo.runStatuses)
+	}
+}
+
+func TestServiceExecuteClaimedJobSupersedesStaleCanonicalTree(t *testing.T) {
+	repo := newFakeRepo()
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, ErrRunStale
+		},
+	}
+	job := JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	}
+	if err := service.ExecuteClaimedJob(t.Context(), job); !errors.Is(err, ErrRunStale) {
+		t.Fatalf("ExecuteClaimedJob() error = %v, want stale", err)
+	}
+	if repo.runStatuses["run_root"] != RunStatusSuperseded || repo.runStatuses["run_child"] != RunStatusSuperseded {
+		t.Fatalf("stale statuses = %#v, want superseded tree", repo.runStatuses)
 	}
 }
 
@@ -233,6 +255,30 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
 	}
+	if repo.createdRuns[0].TriggerID != "" || repo.createdRuns[0].PipelinePlan == nil || repo.createdRuns[0].PipelinePlan.ServingGenerationID != serviceIdentity.GenerationID || repo.createdRuns[0].PipelinePlan.Digest == "" {
+		t.Fatalf("root plan evidence = %#v, want manual generation-bound plan", repo.createdRuns[0])
+	}
+	if repo.createdRuns[0].PipelinePlan.InvocationSource != TriggerManual || repo.createdRuns[0].PipelinePlan.ConcurrencyPolicy != "" {
+		t.Fatalf("root effective policy = %#v", repo.createdRuns[0].PipelinePlan)
+	}
+	if got, want := repo.createdRuns[0].PipelinePlan.MaterializationScope, []string{"customers", "orders"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("materialization scope = %#v, want %#v", got, want)
+	}
+}
+
+func TestServiceQueuePipelineRefreshAcceptsImplicitManualInvocation(t *testing.T) {
+	repo := newFakeRepo()
+	service := Service{ServingStates: repo, Runs: repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()}}
+	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+	})
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v, want implicit manual admission", err)
+	}
+	if len(repo.createdRuns) != 3 {
+		t.Fatalf("created runs = %#v, want implicit manual root plus dependencies", repo.createdRuns)
+	}
 }
 
 func TestServiceQueuePipelineRefreshUsesExactActiveResolver(t *testing.T) {
@@ -255,7 +301,7 @@ func TestServiceQueuePipelineRefreshUsesExactActiveResolver(t *testing.T) {
 	}
 	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 	})
 	if err != nil {
 		t.Fatalf("QueuePipelineRefresh() error = %v", err)
@@ -279,7 +325,7 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	}
 	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 	})
 	if err != nil {
 		t.Fatalf("QueuePipelineRefresh() error = %v", err)
@@ -304,7 +350,7 @@ func TestServiceQueuePipelineRefreshRejectsMismatchedActiveResolver(t *testing.T
 	}
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 	})
 	if err == nil || !strings.Contains(err.Error(), "does not match") {
 		t.Fatalf("QueuePipelineRefresh() error = %v, want exact identity mismatch", err)
@@ -329,7 +375,7 @@ func TestServiceQueuePipelineRefreshPinsCandidateManagedDataRevisions(t *testing
 
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 	})
 	if err != nil {
 		t.Fatalf("QueuePipelineRefresh() error = %v", err)
@@ -357,7 +403,7 @@ func TestServiceQueuePipelineRefreshFailsCandidateWhenManagedDataPinningFails(t 
 
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
-		PipelineID: "sales-refresh", TriggerType: TriggerManual,
+		PipelineID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
 	})
 	if err == nil || !strings.Contains(err.Error(), "pin failed") {
 		t.Fatalf("QueuePipelineRefresh() error = %v, want pin failure", err)
@@ -435,7 +481,10 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 
 func refreshTestDefinition() *artifact.Definition {
 	return &artifact.Definition{Pipelines: map[string]refreshschedule.Definition{
-		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales"},
+		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales", SelectionDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{{ID: "daily", Expression: "0 6 * * *"}}},
+	}, ModelTables: map[string]semanticmodel.Table{
+		"customers": {},
+		"orders":    {ModelDependencies: []string{"customers"}},
 	}, Models: map[string]*semanticmodel.Model{
 		"sales": {
 			Name: "sales",
@@ -484,12 +533,12 @@ func newFakeRepo() *fakeRepo {
 			AccessPolicyJSON: "{}",
 			Environment:      servingstate.DefaultEnvironment,
 			Status:           servingstate.StatusActive,
-			Digest:           "digest",
+			Digest:           "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			ManifestJSON:     "{}",
 		},
 		activeArtifact: servingstate.Artifact{
 			ServingStateID: "dep_active",
-			Digest:         "digest",
+			Digest:         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			Format:         "tar.gz",
 			Path:           "/tmp/artifact.tar.gz",
 			ManifestJSON:   "{}",
@@ -499,12 +548,12 @@ func newFakeRepo() *fakeRepo {
 			ProjectID:    "project",
 			Environment:  servingstate.DefaultEnvironment,
 			Status:       servingstate.StatusValidated,
-			Digest:       "digest",
+			Digest:       "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			ManifestJSON: "{}",
 		},
 		candidateArtifact: servingstate.Artifact{
 			ServingStateID: "dep_candidate",
-			Digest:         "digest",
+			Digest:         "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 			Format:         "tar.gz",
 			Path:           "/tmp/artifact.tar.gz",
 			ManifestJSON:   "{}",
@@ -569,7 +618,12 @@ func (r *fakeRepo) CreateRun(_ context.Context, input RunInput) (RunRecord, erro
 		id = "run_child"
 	}
 	r.runStatuses[id] = RunStatusQueued
-	return RunRecord{ID: id, Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID, PrincipalID: input.PrincipalID, TargetType: input.TargetType, TargetID: input.TargetID, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID}, nil
+	result := RunRecord{ID: id, Identity: input.Identity, SemanticModelID: input.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: input.PipelinePlan, TriggerID: input.TriggerID, NominalTime: input.NominalTime, PrincipalID: input.PrincipalID, TargetType: input.TargetType, TargetID: input.TargetID, TriggerType: input.TriggerType, ParentRunID: input.ParentRunID}
+	if input.PipelinePlan != nil {
+		result.PlanDigest = input.PipelinePlan.Digest
+		result.MaterializationScope = append([]string(nil), input.PipelinePlan.MaterializationScope...)
+	}
+	return result, nil
 }
 
 func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
@@ -599,6 +653,12 @@ func (r *fakeRepo) MarkRunTreeFailedClaimed(ctx context.Context, job JobRecord, 
 	_, err := r.MarkRunFailedClaimed(ctx, job, message)
 	r.runStatuses["run_child"] = RunStatusFailed
 	return err
+}
+
+func (r *fakeRepo) MarkRunTreeSupersededClaimed(_ context.Context, job JobRecord, _ string) error {
+	r.runStatuses[job.RunID] = RunStatusSuperseded
+	r.runStatuses["run_child"] = RunStatusSuperseded
+	return nil
 }
 
 func (r *fakeRepo) MarkRunSucceededClaimed(ctx context.Context, job JobRecord) (RunRecord, error) {

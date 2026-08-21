@@ -285,6 +285,9 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.MinProperties != nil {
+		out["minProperties"] = *ref.MinProperties
+	}
 	if ref.Pattern != "" {
 		out["pattern"] = ref.Pattern
 	}
