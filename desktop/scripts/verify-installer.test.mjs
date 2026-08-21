@@ -16,7 +16,7 @@ test("uses .NET ZIP extraction for Windows Squirrel archives", () => {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload', $true)",
+      "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload')",
     ],
   );
 });
