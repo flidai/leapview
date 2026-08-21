@@ -637,7 +637,10 @@ func modelTableSourceNames(meta map[string]any) []string {
 }
 
 func modelTableSQL(meta map[string]any) string {
-	return metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql")
+	if sql := metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql"); sql != "" {
+		return sql
+	}
+	return metaString(metaMap(metaMap(meta, "AuthoredModel", "authoredModel"), "Query", "query"), "Code", "code")
 }
 
 func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {
