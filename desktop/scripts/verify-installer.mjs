@@ -72,7 +72,7 @@ export function squirrelArchiveArguments(archive, destination) {
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(destination)}, $true)`,
+    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(destination)})`,
   ];
 }
 
