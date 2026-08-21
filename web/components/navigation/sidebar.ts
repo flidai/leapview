@@ -292,9 +292,13 @@ class LeapViewSidebar extends LitElement {
     }
 
     .brand {
+      position: relative;
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       gap: var(--base-size-12);
-      padding: var(--base-size-12);
+      padding: var(--base-size-12) var(--base-size-12) var(--base-size-8);
     }
 
     .brand-row {
@@ -308,17 +312,17 @@ class LeapViewSidebar extends LitElement {
 			display: grid;
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 			gap: var(--base-size-2);
-			border: 0;
+			border: var(--lv-border-muted);
 			border-radius: var(--lv-radius-default);
-			background: transparent;
-			padding: 0;
+			background: var(--lv-bg-panel-muted, var(--control-bgColor-hover));
+			padding: var(--base-size-2);
     }
 
     .area-item {
       display: grid;
       min-width: 0;
       min-height: var(--control-small-size);
-      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
+      grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr);
       align-items: center;
       justify-content: center;
       gap: var(--base-size-4);
@@ -327,6 +331,10 @@ class LeapViewSidebar extends LitElement {
       padding: 0 var(--base-size-6);
       text-decoration: none;
       font: var(--lv-type-body-compact);
+      transition:
+        background-color var(--motion-transition-stateChange),
+        box-shadow var(--motion-transition-stateChange),
+        color var(--motion-transition-stateChange);
     }
 
     .area-item:hover,
@@ -338,14 +346,50 @@ class LeapViewSidebar extends LitElement {
     }
 
 		.area-item[aria-current='page'] {
-			background: var(--control-bgColor-hover);
-			box-shadow: none;
+			background: var(--lv-bg-accent-muted, var(--control-bgColor-hover));
+			box-shadow: var(--lv-shadow-floating-sm, var(--lv-shadow-floating, none));
 			color: var(--lv-fg-default);
 			font-weight: var(--base-text-weight-medium);
     }
 
-    .collapsed-area-switch {
+    .area-item[aria-current='page'] .area-icon {
+      color: var(--lv-fg-accent);
+    }
+
+    .collapsed-area-switcher {
       display: none;
+      position: relative;
+      justify-self: center;
+    }
+
+    .collapsed-area-switch {
+      position: relative;
+      box-sizing: border-box;
+      display: grid;
+      width: var(--base-size-36);
+      min-height: var(--base-size-36);
+      place-items: center;
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-accent-muted, var(--control-bgColor-hover));
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      padding: 0;
+      text-decoration: none;
+    }
+
+    .collapsed-area-switch .area-icon {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+      color: var(--lv-fg-accent);
+    }
+
+    .collapsed-area-switch:hover,
+    .collapsed-area-switch:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .area-icon {
@@ -527,7 +571,10 @@ class LeapViewSidebar extends LitElement {
     }
 
     nav {
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       align-content: start;
       gap: var(--base-size-8);
       min-height: 0;
@@ -537,7 +584,7 @@ class LeapViewSidebar extends LitElement {
       padding: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
       scrollbar-color: var(--lv-scrollbar-thumb) transparent;
-      scrollbar-gutter: stable;
+      scrollbar-gutter: auto;
       scrollbar-width: thin;
     }
 
@@ -627,7 +674,7 @@ class LeapViewSidebar extends LitElement {
         0
         var(--control-xsmall-paddingInline-normal)
         0
-        calc(var(--control-xsmall-paddingInline-normal) + var(--lv-border-width));
+        calc(var(--base-size-12) + var(--lv-border-width));
       color: var(--fgColor-disabled);
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -654,7 +701,7 @@ class LeapViewSidebar extends LitElement {
     }
 
     .history-empty {
-      padding: var(--base-size-4) var(--control-xsmall-paddingInline-normal);
+      padding: var(--base-size-4) var(--base-size-12);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
     }
@@ -682,6 +729,11 @@ class LeapViewSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
       font: var(--lv-type-body);
+    }
+
+    nav .nav-item {
+      gap: var(--base-size-4);
+      padding-inline: var(--base-size-12);
     }
 
     .nav-text {
@@ -740,7 +792,10 @@ class LeapViewSidebar extends LitElement {
     }
 
     .footer {
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       grid-template-columns: minmax(0, 1fr);
       gap: var(--base-size-6);
       align-items: center;
@@ -750,14 +805,16 @@ class LeapViewSidebar extends LitElement {
     }
 
     .user-card {
+      box-sizing: border-box;
       display: grid;
+      min-width: 0;
       grid-template-columns: var(--control-small-size) minmax(0, 1fr) var(--control-xsmall-size);
       min-height: calc(var(--control-medium-size) + var(--base-size-2));
       align-items: center;
-      gap: var(--base-size-8);
+      gap: var(--base-size-4);
       border-radius: var(--lv-radius-default);
       color: var(--lv-fg-default);
-      padding: 0 var(--control-xsmall-paddingInline-normal);
+      padding: 0 var(--base-size-12);
       text-decoration: none;
     }
 
@@ -801,8 +858,8 @@ class LeapViewSidebar extends LitElement {
 
     :host([data-collapsed]) .brand {
       justify-items: center;
-      gap: 0;
-      padding: var(--base-size-8) var(--base-size-6);
+      gap: var(--base-size-4);
+      padding: var(--base-size-8) var(--base-size-4);
     }
 
     :host([data-collapsed]) .brand-row {
@@ -828,24 +885,8 @@ class LeapViewSidebar extends LitElement {
       display: none;
     }
 
-    :host([data-collapsed]) .collapsed-area-switch {
+    :host([data-collapsed]) .collapsed-area-switcher {
       display: grid;
-      width: var(--base-size-36);
-      min-height: var(--base-size-36);
-      place-items: center;
-      justify-self: center;
-      border: var(--lv-border-transparent);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      text-decoration: none;
-    }
-
-    :host([data-collapsed]) .collapsed-area-switch:hover,
-    :host([data-collapsed]) .collapsed-area-switch:focus-visible {
-      background: var(--control-bgColor-hover);
-      color: var(--lv-fg-default);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
     }
 
     :host([data-collapsed]) .area-item {
@@ -1211,7 +1252,8 @@ class LeapViewSidebar extends LitElement {
   }
 
   private onKeyDown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape' || !this.mobileOpen) return
+    if (event.key !== 'Escape') return
+    if (!this.mobileOpen) return
     event.preventDefault()
     this.closeMobileNavigation(true)
   }
@@ -1469,7 +1511,7 @@ class LeapViewSidebar extends LitElement {
     const areas = Array.isArray(this.config.areas) ? this.config.areas : []
     if (areas.length < 2) return null
     return html`
-      <div class=${mobile ? 'area-switcher mobile-area-switcher' : 'area-switcher'} role="group" aria-label="Product area">
+      <div class=${mobile ? 'area-switcher mobile-area-switcher' : 'area-switcher'} role="navigation" aria-label="Product mode">
         ${areas.map((area) => {
           const current = area.id === this.config.area
           const href = this.areaHref(area, current)
@@ -1494,20 +1536,21 @@ class LeapViewSidebar extends LitElement {
   private renderCollapsedAreaSwitch() {
     const areas = Array.isArray(this.config.areas) ? this.config.areas : []
     if (areas.length < 2) return null
-    const destination = areas.find((area) => area.id !== this.config.area)
-    if (!destination) return null
+    const current = areas.find((area) => area.id === this.config.area) ?? areas[0]
+    const destination = areas.find((area) => area.id !== current.id) ?? areas[0]
     const href = this.areaHref(destination, false)
-    const label = `Switch to ${destination.label}`
     return html`
-      <a
-        class="collapsed-area-switch"
-        href=${href}
-        aria-label=${label}
-        title=${label}
-        @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
-      >
-        <span class="area-icon" aria-hidden="true">${icon(destination.icon)}</span>
-      </a>
+      <div class="collapsed-area-switcher">
+        <a
+          class="collapsed-area-switch"
+          href=${href}
+          aria-label=${`Switch to ${destination.label}`}
+          title=${`Switch to ${destination.label}`}
+          @click=${(event: MouseEvent) => this.followInternalLink(event, href)}
+        >
+          <span class="area-icon" aria-hidden="true">${icon(current.icon)}</span>
+        </a>
+      </div>
     `
   }
 
