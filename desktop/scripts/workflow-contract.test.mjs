@@ -12,6 +12,8 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
   ]);
 
   for (const required of [
+    "merge_group:",
+    "types: [checks_requested]",
     "name: macOS Apple silicon",
     "os: macos-15",
     "artifact: macos-arm64",
@@ -23,6 +25,11 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
     "architecture: Intel",
     "sbom=\"$(find candidate/out/evidence -type f -name '*.spdx.json' -print -quit)\"",
     "sbom-path: ${{ steps.evidence.outputs.sbom_path }}",
+    "name: Electron gate",
+    "needs: [contract, packages, macos, windows, linux]",
+    "EVENT_NAME: ${{ github.event_name }}",
+    "MACOS_RESULT: ${{ needs.macos.result }}",
+    "WINDOWS_RESULT: ${{ needs.windows.result }}",
   ]) {
     assert.ok(workflow.includes(required), `workflow is missing ${required}`);
   }
