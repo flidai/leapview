@@ -6,7 +6,7 @@ import {
   validateInstallerContract,
 } from "./verify-installer.mjs";
 
-test("uses PowerShell ZIP extraction for Windows Squirrel archives", () => {
+test("uses .NET ZIP extraction for Windows Squirrel archives", () => {
   assert.deepEqual(
     squirrelArchiveArguments(
       "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
@@ -16,7 +16,7 @@ test("uses PowerShell ZIP extraction for Windows Squirrel archives", () => {
       "-NoProfile",
       "-NonInteractive",
       "-Command",
-      "Expand-Archive -LiteralPath 'D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg' -DestinationPath 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload' -Force",
+      "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload', $true)",
     ],
   );
 });

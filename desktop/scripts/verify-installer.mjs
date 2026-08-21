@@ -72,7 +72,7 @@ export function squirrelArchiveArguments(archive, destination) {
     "-NoProfile",
     "-NonInteractive",
     "-Command",
-    `Expand-Archive -LiteralPath ${quote(archive)} -DestinationPath ${quote(destination)} -Force`,
+    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(destination)}, $true)`,
   ];
 }
 
@@ -228,9 +228,9 @@ async function inspectWindowsInstaller(artifact, makeRoot) {
       );
     }
     await mkdir(payload);
-    // Squirrel's .nupkg is a ZIP archive, not a tar stream. Use the inbox
-    // PowerShell extractor on Windows so absolute drive-letter paths and the
-    // ZIP format are both handled by a platform-native tool.
+    // Squirrel's .nupkg is a ZIP archive, not a tar stream. Use .NET's ZIP
+    // reader because Expand-Archive rejects the .nupkg extension even though
+    // the payload is a valid ZIP file.
     await runFile(
       "powershell.exe",
       squirrelArchiveArguments(packages[0], payload),
