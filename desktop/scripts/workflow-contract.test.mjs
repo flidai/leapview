@@ -21,6 +21,8 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
     "name: Policy integration (macOS ${{ matrix.architecture }})",
     "architecture: Apple silicon",
     "architecture: Intel",
+    "sbom=\"$(find candidate/out/evidence -type f -name '*.spdx.json' -print -quit)\"",
+    "sbom-path: ${{ steps.evidence.outputs.sbom_path }}",
   ]) {
     assert.ok(workflow.includes(required), `workflow is missing ${required}`);
   }

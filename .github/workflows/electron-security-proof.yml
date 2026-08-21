@@ -129,6 +129,14 @@ jobs:
             --sbom "$sbom" \
             "${update_arguments[@]}"
 
+      - name: Resolve candidate SBOM
+        id: evidence
+        shell: bash
+        run: |
+          sbom="$(find candidate/out/evidence -type f -name '*.spdx.json' -print -quit)"
+          test -n "$sbom"
+          printf 'sbom_path=%s\n' "$sbom" >> "$GITHUB_OUTPUT"
+
       - name: Attest candidate provenance
         uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
         with:
@@ -147,7 +155,7 @@ jobs:
             candidate/out/make/**/*.zip
             candidate/out/make/**/*.nupkg
             candidate/out/make/**/RELEASES
-          sbom-path: candidate/out/evidence/*.spdx.json
+          sbom-path: ${{ steps.evidence.outputs.sbom_path }}
 
   macos:
     name: Policy integration (macOS ${{ matrix.architecture }})
