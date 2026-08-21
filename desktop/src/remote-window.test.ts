@@ -71,6 +71,8 @@ describe("createRemoteWindow", () => {
       new URL("./main.ts", import.meta.url),
       "utf8",
     );
-    expect(entrypoint).toBe('import "./application.js";\n');
+    expect(entrypoint.replace(/\r\n?/gu, "\n")).toBe(
+      'import "./application.js";\n',
+    );
   });
 });

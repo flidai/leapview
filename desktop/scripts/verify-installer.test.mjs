@@ -1,7 +1,25 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { validateInstallerContract } from "./verify-installer.mjs";
+import {
+  squirrelArchiveArguments,
+  validateInstallerContract,
+} from "./verify-installer.mjs";
+
+test("uses .NET ZIP extraction for Windows Squirrel archives", () => {
+  assert.deepEqual(
+    squirrelArchiveArguments(
+      "D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg",
+      "C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload",
+    ),
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory('D:\\a\\leapview\\leapview\\desktop\\out\\make\\package.nupkg', 'C:\\Users\\runneradmin\\AppData\\Local\\Temp\\payload')",
+    ],
+  );
+});
 
 test("installer verification accepts only the selected consumer formats", () => {
   for (const [platform, format, scope, updateMechanism, updateArtifacts] of [

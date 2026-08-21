@@ -276,7 +276,13 @@ type runtimeAssemblyInputs struct {
 	AllowedHosts            []string
 	Assets                  staticasset.Resolver
 	RequireActiveDeployment bool
-	SealedServing           bool
+	// RequireQueryAuthorization makes governed query construction fail closed
+	// when the serving authorization snapshot or access subject resolver is not
+	// available. Development/test composition leaves this false explicitly so
+	// its local principal bypass remains intentional and observable.
+	RequireQueryAuthorization bool
+	AllowDevAuthBypass        bool
+	SealedServing             bool
 	// DeliveryStartup is the production-only control-plane admission and
 	// migration check. It keeps a fresh target administrable while readiness
 	// fails closed until an operator admits a physical pool and repairs any
@@ -438,6 +444,23 @@ type workloadControl interface {
 	Drain(context.Context) error
 }
 
+// validateQueryAuthorizationDependencies is the production composition gate
+// for governed queries. The query decorator itself deliberately remains
+// reusable in persistence-free fixtures; production must reject an incomplete
+// snapshot/access bundle before exposing any query surface.
+func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool, snapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error), accessModule *accessmodule.Module) error {
+	if !required || metrics == nil {
+		return nil
+	}
+	if snapshot == nil {
+		return errors.New("governed query authorization snapshot is unavailable")
+	}
+	if accessModule == nil {
+		return errors.New("governed query authorization access module is unavailable")
+	}
+	return nil
+}
+
 func buildApplicationSurfaces(
 	ctx context.Context,
 	metrics QueryMetrics,
@@ -489,13 +512,20 @@ func buildApplicationSurfaces(
 		}
 	}
 	canonicalAuditRecorder, _ := data.AccessRepo.(access.CanonicalAuditRecorder)
+	if err := validateQueryAuthorizationDependencies(metrics, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
+		return fail(err)
+	}
 	if metrics != nil && authorizationSnapshot != nil && capabilities.AccessModule != nil {
 		metrics = dashboardmodule.WithQueryAuthorization(metrics, dashboardmodule.QueryAuthorizationConfig{
 			SnapshotFromContext: authorizationSnapshot,
 			SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 			PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 				principal, ok := accessmodule.PrincipalFromContext(ctx)
-				return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
+				devBypass := principal.DevBypass
+				if runtimeConfig.AllowDevAuthBypass && workflow.Auth == nil {
+					devBypass = true
+				}
+				return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: devBypass}, ok
 			},
 			CredentialFromContext: accessmodule.APICredentialFromContext,
 			AuditRecorder:         canonicalAuditRecorder,
@@ -539,13 +569,20 @@ func buildApplicationSurfaces(
 		}
 		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
+		if err := validateQueryAuthorizationDependencies(candidate, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
+			return nil
+		}
 		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
 				SnapshotFromContext: authorizationSnapshot,
 				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
-					return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: principal.DevBypass || workflow.Auth == nil}, ok
+					devBypass := principal.DevBypass
+					if runtimeConfig.AllowDevAuthBypass && workflow.Auth == nil {
+						devBypass = true
+					}
+					return dashboardmodule.QueryPrincipal{ID: principal.ID, DevBypass: devBypass}, ok
 				},
 				CredentialFromContext: accessmodule.APICredentialFromContext,
 				AuditRecorder:         canonicalAuditRecorder,

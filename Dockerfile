@@ -44,6 +44,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 FROM oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4 AS web
 WORKDIR /src
 
+COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt
 COPY package.json bun.lock tsconfig.json ./
 COPY scripts ./scripts
 COPY static ./static
@@ -119,7 +120,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
       -X github.com/flidai/leapview/internal/platform/buildinfo.dirty=${BUILD_DIRTY} \
       -X github.com/flidai/leapview/internal/platform/buildinfo.release=${BUILD_RELEASE}" && \
     CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapview ./cmd/leapview && \
-    CGO_ENABLED=0 go build -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapviewctl ./cmd/leapviewctl
+    CGO_ENABLED=1 go build -tags=duckdb_arrow -trimpath -ldflags="$BUILD_LDFLAGS" -o /out/leapviewctl ./cmd/leapviewctl
 
 # The production image carries a complete, target-native, offline extension
 # supply. This stage performs the only upstream acquisition during packaging;

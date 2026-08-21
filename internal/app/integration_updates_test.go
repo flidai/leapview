@@ -75,7 +75,18 @@ func TestUpdatesStreamsSetupRequiredPatchForMissingData(t *testing.T) {
 		return setupRequiredMetrics{integrationMetrics: metrics}
 	}))
 
-	patches := h.getUpdatesSignals(t, "executive-sales", "overview", map[string]any{})
+	// The setup-required path performs the first dashboard refresh through the
+	// full runtime harness; give it the same bounded budget as the other
+	// integration stream assertions so cold CI runners do not cancel before
+	// the patch is published.
+	patches := h.getUpdatesSignalsWithQueryTimeout(
+		t,
+		"executive-sales",
+		"overview",
+		map[string]any{},
+		nil,
+		time.Second,
+	)
 
 	requireFirstStatusLoading(t, patches)
 	requirePatch(t, patches, func(patch map[string]any) bool {

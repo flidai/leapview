@@ -9,7 +9,6 @@ import (
 	"strconv"
 	"strings"
 
-	agenttoolemit "github.com/Yacobolo/toolbelt/apigen/emit/agenttool"
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 	"go.yaml.in/yaml/v4"
@@ -23,12 +22,9 @@ type Options struct {
 
 // Emit renders Go server scaffolding from IR.
 func Emit(doc ir.Document, opts Options) ([]byte, error) {
-	if err := ir.Validate(doc); err != nil {
-		return nil, fmt.Errorf("validate ir document: %w", err)
-	}
-	normalized := cloneDocumentForEmit(doc)
-	if err := ir.Normalize(&normalized); err != nil {
-		return nil, fmt.Errorf("normalize ir document: %w", err)
+	normalized, err := prepareDocumentForEmit(doc)
+	if err != nil {
+		return nil, err
 	}
 	return emit(normalized, opts)
 }
@@ -135,57 +131,19 @@ func cloneSecurityRequirements(requirements []ir.SecurityRequirement) []ir.Secur
 	return clone
 }
 
-func emit(doc ir.Document, opts Options) ([]byte, error) {
-	toolContracts, err := agenttoolemit.Build(doc)
-	if err != nil {
-		return nil, err
-	}
-	toolContractsJSON, err := json.Marshal(toolContracts)
-	if err != nil {
-		return nil, fmt.Errorf("marshal agent tool contracts: %w", err)
-	}
-	specJSON := opts.EmbeddedOpenAPISpecJSON
-	if specJSON == "" {
-		var err error
-		specJSON, err = emitSpecJSON(doc)
-		if err != nil {
-			return nil, err
-		}
-	}
-
+func renderGeneratedServer(doc ir.Document, opts Options, plan emissionPlan) ([]byte, error) {
 	var b strings.Builder
-	packageName := packageName(opts)
-	usesTime := docUsesTimeTypes(doc)
-	// The generated registration surface always exposes strict dispatch and its
-	// injected error responder, including health-only APIs.
-	hasStrictOperations := true
-	hasRequestBodies := false
-	hasMultipartBodies := false
-	hasFileBodies := docUsesFileBodies(doc)
-	usesFmt := hasFileBodies
-	hasTools := len(toolContracts) > 0
-	hasCommands := false
-	for _, endpoint := range doc.Endpoints {
-		if endpoint.Command != nil {
-			hasCommands = true
-			usesFmt = true
-		}
-		if endpoint.OperationID != "getHealth" {
-			hasStrictOperations = true
-		}
-		if endpoint.RequestBody != nil {
-			hasRequestBodies = true
-			usesFmt = true
-			if content, ok := ir.PrimaryRequestBodyContent(endpoint); ok && content.BodyKind == "multipart" {
-				hasMultipartBodies = true
-			}
-		}
-		for _, response := range endpoint.Responses {
-			if len(responseHeaderFieldsWithDefaults(response)) > 0 {
-				usesFmt = true
-			}
-		}
-	}
+	packageName := plan.packageName
+	usesTime := plan.usesTime
+	hasStrictOperations := plan.hasStrictOperations
+	hasRequestBodies := plan.hasRequestBodies
+	hasMultipartBodies := plan.hasMultipartBodies
+	hasFileBodies := plan.hasFileBodies
+	usesFmt := plan.usesFmt
+	hasTools := plan.hasTools
+	hasCommands := plan.hasCommands
+	toolContractsJSON := plan.toolContractsJSON
+	specJSON := plan.specJSON
 	b.WriteString("package ")
 	b.WriteString(packageName)
 	b.WriteString("\n\n")
@@ -233,7 +191,7 @@ func emit(doc ir.Document, opts Options) ([]byte, error) {
 	b.WriteString("}\n\n")
 	if hasTools {
 		b.WriteString("const embeddedAPIGenToolContractsJSON = `")
-		b.Write(toolContractsJSON)
+		b.WriteString(toolContractsJSON)
 		b.WriteString("`\n\n")
 		b.WriteString("var genAPIGenToolContracts = func() map[string]apigenagenttool.Contract {\n")
 		b.WriteString("\tcontracts, err := apigenagenttool.DecodeContracts([]byte(embeddedAPIGenToolContractsJSON))\n")
@@ -1441,43 +1399,6 @@ func emitResponseBodyWrite(b *strings.Builder, content ir.BodyContent) {
 	}
 }
 
-func exportedName(operationID string) string {
-	parts := splitIdentifier(operationID)
-	if len(parts) == 0 {
-		return "Operation"
-	}
-	for i := range parts {
-		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
-	}
-	return strings.Join(parts, "")
-}
-
-func splitIdentifier(value string) []string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return nil
-	}
-	replacer := strings.NewReplacer("-", " ", "_", " ", ".", " ", "/", " ")
-	value = replacer.Replace(value)
-	chunks := strings.Fields(value)
-	if len(chunks) > 0 {
-		return chunks
-	}
-	return []string{value}
-}
-
-func lowerCamelName(value string) string {
-	parts := splitIdentifier(value)
-	if len(parts) == 0 {
-		return "value"
-	}
-	parts[0] = strings.ToLower(parts[0][:1]) + parts[0][1:]
-	for i := 1; i < len(parts); i++ {
-		parts[i] = strings.ToUpper(parts[i][:1]) + parts[i][1:]
-	}
-	return strings.Join(parts, "")
-}
-
 func renderGoStringSlice(values []string) string {
 	if len(values) == 0 {
 		return "nil"
@@ -2213,15 +2134,7 @@ func normalizedSchemaRefName(schema ir.SchemaRef) (string, bool) {
 
 // ValidateOperationIDs checks for exported handler name collisions.
 func ValidateOperationIDs(doc ir.Document) error {
-	seen := make(map[string]string, len(doc.Endpoints))
-	for _, endpoint := range doc.Endpoints {
-		exported := exportedName(endpoint.OperationID)
-		if prev, exists := seen[exported]; exists {
-			return fmt.Errorf("operation name collision %q for %q and %q", exported, prev, endpoint.OperationID)
-		}
-		seen[exported] = endpoint.OperationID
-	}
-	return nil
+	return validateOperationIDsByName(doc)
 }
 
 // SortedOperationIDs returns operation IDs in deterministic order.
@@ -2232,13 +2145,6 @@ func SortedOperationIDs(doc ir.Document) []string {
 	}
 	sort.Strings(ids)
 	return ids
-}
-
-func packageName(opts Options) string {
-	if strings.TrimSpace(opts.PackageName) == "" {
-		return "api"
-	}
-	return opts.PackageName
 }
 
 func emitCommandExecutionEntryPoints(b *strings.Builder, endpoint ir.Endpoint) {

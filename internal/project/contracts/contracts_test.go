@@ -297,7 +297,7 @@ func TestGeneratedConnectorRegistryIsComplete(t *testing.T) {
 }
 
 func TestRequiredExtensionNamesDeriveConnectorAndFormatProfiles(t *testing.T) {
-	want := []string{"azure", "delta", "ducklake", "excel", "httpfs", "iceberg", "lance", "mysql", "postgres", "quack", "spatial", "sqlite", "vortex"}
+	want := []string{"avro", "azure", "delta", "ducklake", "excel", "httpfs", "iceberg", "lance", "mysql", "postgres", "quack", "spatial", "sqlite", "vortex"}
 	got := contracts.RequiredExtensionNames()
 	if len(got) != len(want) {
 		t.Fatalf("required extension set = %#v, want %#v", got, want)

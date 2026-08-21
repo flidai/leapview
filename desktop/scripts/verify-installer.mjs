@@ -66,6 +66,16 @@ export function validateInstallerContract({
   };
 }
 
+export function squirrelArchiveArguments(archive, destination) {
+  const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+  return [
+    "-NoProfile",
+    "-NonInteractive",
+    "-Command",
+    `Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(${quote(archive)}, ${quote(destination)})`,
+  ];
+}
+
 async function main() {
   const desktopRoot = resolve(import.meta.dirname, "..");
   const out = join(desktopRoot, "out");
@@ -218,7 +228,13 @@ async function inspectWindowsInstaller(artifact, makeRoot) {
       );
     }
     await mkdir(payload);
-    await runFile("tar.exe", ["-xf", packages[0], "-C", payload]);
+    // Squirrel's .nupkg is a ZIP archive, not a tar stream. Use .NET's ZIP
+    // reader because Expand-Archive rejects the .nupkg extension even though
+    // the payload is a valid ZIP file.
+    await runFile(
+      "powershell.exe",
+      squirrelArchiveArguments(packages[0], payload),
+    );
     const files = await findFiles(payload, () => true);
     const specification = files.find((path) =>
       path.toLowerCase().endsWith(".nuspec"),

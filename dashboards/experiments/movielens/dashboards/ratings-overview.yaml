@@ -255,7 +255,7 @@ spec:
     - id: rating-count
       placement:
         column: 1
-        row: 4
+        row: 3
         columnSpan: 3
         rowSpan: 3
       type: visual
@@ -263,7 +263,7 @@ spec:
     - id: average-rating
       placement:
         column: 4
-        row: 4
+        row: 3
         columnSpan: 3
         rowSpan: 3
       type: visual
@@ -271,7 +271,7 @@ spec:
     - id: active-users
       placement:
         column: 7
-        row: 4
+        row: 3
         columnSpan: 3
         rowSpan: 3
       type: visual
@@ -279,7 +279,7 @@ spec:
     - id: rated-movies
       placement:
         column: 10
-        row: 4
+        row: 3
         columnSpan: 3
         rowSpan: 3
       type: visual
@@ -287,7 +287,7 @@ spec:
     - id: ratings-trend
       placement:
         column: 1
-        row: 8
+        row: 6
         columnSpan: 8
         rowSpan: 6
       type: visual
@@ -295,7 +295,7 @@ spec:
     - id: rating-distribution
       placement:
         column: 9
-        row: 8
+        row: 6
         columnSpan: 4
         rowSpan: 6
       type: visual
@@ -303,7 +303,7 @@ spec:
     - id: top-movies
       placement:
         column: 1
-        row: 15
+        row: 12
         columnSpan: 6
         rowSpan: 7
       type: visual
@@ -311,7 +311,7 @@ spec:
     - id: decade-average
       placement:
         column: 7
-        row: 15
+        row: 12
         columnSpan: 6
         rowSpan: 7
       type: visual
@@ -319,7 +319,7 @@ spec:
     - id: movie-table
       placement:
         column: 1
-        row: 23
+        row: 19
         columnSpan: 12
         rowSpan: 8
       type: visual
@@ -327,7 +327,7 @@ spec:
     - id: tags-per-rating
       placement:
         column: 1
-        row: 32
+        row: 27
         columnSpan: 3
         rowSpan: 3
       type: visual
@@ -335,7 +335,7 @@ spec:
     - id: activity-by-month
       placement:
         column: 4
-        row: 32
+        row: 27
         columnSpan: 9
         rowSpan: 7
       type: visual
@@ -343,7 +343,7 @@ spec:
     - id: tags-per-rating-by-decade
       placement:
         column: 1
-        row: 40
+        row: 34
         columnSpan: 12
         rowSpan: 7
       type: visual

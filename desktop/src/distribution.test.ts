@@ -42,6 +42,23 @@ describe("resolveDesktopDistribution", () => {
     ).toBe("preview");
   });
 
+  test("recognizes packaged markers checked out with Windows line endings", () => {
+    expect(
+      resolveDesktopDistribution({
+        packaged: true,
+        resourcesPath: "/application/resources",
+        readFile: (path) => {
+          if (path.endsWith(PREVIEW_DISTRIBUTION_MARKER)) {
+            return '{"schemaVersion":1,"channel":"preview","updates":false}\r\n';
+          }
+          const error = new Error("missing") as NodeJS.ErrnoException;
+          error.code = "ENOENT";
+          throw error;
+        },
+      }),
+    ).toBe("preview");
+  });
+
   test("recognizes only the exact packaged stable marker", () => {
     expect(
       resolveDesktopDistribution({
