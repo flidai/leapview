@@ -5,13 +5,16 @@ import test from "node:test";
 
 test("desktop workflow builds and qualifies both native macOS architectures", async () => {
   const root = resolve(import.meta.dirname, "..", "..");
-  const [workflow, candidateAction, readme] = await Promise.all([
+  const [workflow, mergeWorkflow, candidateAction, readme] = await Promise.all([
     readFile(resolve(root, ".github/workflows/electron-security-proof.yml"), "utf8"),
+    readFile(resolve(root, ".github/workflows/merge-validation.yml"), "utf8"),
     readFile(resolve(root, ".github/actions/desktop-preview-candidate/action.yml"), "utf8"),
     readFile(resolve(root, "desktop/README.md"), "utf8"),
   ]);
 
   for (const required of [
+    "merge_group:",
+    "types: [checks_requested]",
     "name: macOS Apple silicon",
     "os: macos-15",
     "artifact: macos-arm64",
@@ -23,6 +26,11 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
     "architecture: Intel",
     "sbom=\"$(find candidate/out/evidence -type f -name '*.spdx.json' -print -quit)\"",
     "sbom-path: ${{ steps.evidence.outputs.sbom_path }}",
+    "name: Electron gate",
+    "needs: [contract, packages, macos, windows, linux]",
+    "EVENT_NAME: ${{ github.event_name }}",
+    "MACOS_RESULT: ${{ needs.macos.result }}",
+    "WINDOWS_RESULT: ${{ needs.windows.result }}",
   ]) {
     assert.ok(workflow.includes(required), `workflow is missing ${required}`);
   }
@@ -37,6 +45,18 @@ test("desktop workflow builds and qualifies both native macOS architectures", as
     workflow.includes("uses: ./.github/actions/desktop-preview-candidate"),
     "security workflow does not reuse the candidate action",
   );
+  for (const required of [
+    "name: Require native desktop merge proof",
+    "actions: read",
+    "electron-security-proof.yml/runs?head_sha=$REVISION&event=merge_group",
+    "for _ in $(seq 1 240)",
+    "test \"$conclusion\" = success",
+  ]) {
+    assert.ok(
+      mergeWorkflow.includes(required),
+      `merge validation is missing ${required}`,
+    );
+  }
   assert.doesNotMatch(
     workflow,
     /^ {4}if:.*matrix\./mu,
