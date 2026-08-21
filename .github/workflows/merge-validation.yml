@@ -147,7 +147,10 @@ jobs:
     if: ${{ always() }}
     needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, full-validation]
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 45
+    permissions:
+      actions: read
+      contents: read
     steps:
       - name: Require full merge validation
         env:
@@ -177,3 +180,26 @@ jobs:
             printf 'Full merge validation: %s\n' "${FULL_VALIDATION_RESULT}" >&2
             exit 1
           }
+
+      - name: Require native desktop merge proof
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          REVISION: ${{ github.sha }}
+        run: |
+          endpoint="/repos/$REPOSITORY/actions/workflows/electron-security-proof.yml/runs?head_sha=$REVISION&event=merge_group&per_page=1"
+          for _ in $(seq 1 240); do
+            proof="$(gh api "$endpoint")"
+            status="$(jq -r '.workflow_runs[0].status // "missing"' <<<"$proof")"
+            conclusion="$(jq -r '.workflow_runs[0].conclusion // ""' <<<"$proof")"
+            if [[ "$status" == completed ]]; then
+              test "$conclusion" = success || {
+                printf 'Native desktop merge proof: %s\n' "$conclusion" >&2
+                exit 1
+              }
+              exit 0
+            fi
+            sleep 10
+          done
+          printf 'Native desktop merge proof did not complete within the gate budget\n' >&2
+          exit 1
