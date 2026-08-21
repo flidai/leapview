@@ -17,6 +17,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -936,6 +937,31 @@ type qualificationTestWriteCloser struct{ bytes.Buffer }
 
 func (*qualificationTestWriteCloser) Close() error { return nil }
 
+type qualificationTestRoundTrip struct {
+	response io.Reader
+	request  chan struct{}
+	once     sync.Once
+}
+
+func newQualificationTestRoundTrip(response string) *qualificationTestRoundTrip {
+	return &qualificationTestRoundTrip{
+		response: strings.NewReader(response),
+		request:  make(chan struct{}),
+	}
+}
+
+func (t *qualificationTestRoundTrip) Read(contents []byte) (int, error) {
+	<-t.request
+	return t.response.Read(contents)
+}
+
+func (t *qualificationTestRoundTrip) Write(contents []byte) (int, error) {
+	t.once.Do(func() { close(t.request) })
+	return len(contents), nil
+}
+
+func (*qualificationTestRoundTrip) Close() error { return nil }
+
 func TestQualificationJSONWorkerRejectsMalformedAndMismatchedResponses(t *testing.T) {
 	for name, response := range map[string]struct {
 		response string
@@ -951,14 +977,12 @@ func TestQualificationJSONWorkerRejectsMalformedAndMismatchedResponses(t *testin
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
+			transport := newQualificationTestRoundTrip(response.response)
 			worker := &qualificationJSONWorker{
 				stderr: &boundedQualificationBuffer{maxBytes: 1024},
 			}
 			worker.client = jrpc2.NewClient(
-				newQualificationRPCChannel(
-					strings.NewReader(response.response),
-					&qualificationTestWriteCloser{},
-				),
+				newQualificationRPCChannel(transport, transport),
 				&jrpc2.ClientOptions{
 					OnNotify:   worker.handleNotification,
 					OnCallback: worker.handleCallback,
