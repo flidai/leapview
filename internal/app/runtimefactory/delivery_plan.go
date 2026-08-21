@@ -83,17 +83,28 @@ func finalizeReuseEvidence(evidence *deployment.DeliveryPlanEvidence, decisions 
 	}
 }
 
-// pipelineScopeContains accepts canonical relation IDs as well as authored
-// model-table names. The refresh compiler owns the latter while delivery
-// relation evidence is keyed by graph resource ID; matching both forms keeps
-// the boundary explicit without weakening exact reuse checks.
-func pipelineScopeContains(scope []string, relationID string) bool {
-	for _, selected := range scope {
-		if selected == relationID || strings.HasSuffix(relationID, ":"+selected) || strings.HasSuffix(relationID, "_"+selected) {
-			return true
+// pipelineScopeRelationIDs resolves the refresh compiler's authored model names
+// through the project graph. Resource IDs are opaque and must never be inferred
+// from a name by string convention.
+func pipelineScopeRelationIDs(scope []string, graph projectgraph.ProjectGraph, relationExecution map[string]string) (map[string]string, error) {
+	modelIDsByName := make(map[string]string)
+	for _, resource := range graph.Resources() {
+		if resource.Kind == projectgraph.KindModel {
+			modelIDsByName[resource.Name] = resource.ID.String()
 		}
 	}
-	return false
+	resolved := make(map[string]string, len(scope))
+	for _, selected := range scope {
+		relationID := modelIDsByName[selected]
+		if relationID == "" {
+			return nil, fmt.Errorf("pipeline materialization scope relation %q is absent from the compiled model graph", selected)
+		}
+		if _, ok := relationExecution[relationID]; !ok {
+			return nil, fmt.Errorf("pipeline materialization scope relation %q is absent from compiled relation evidence", selected)
+		}
+		resolved[relationID] = selected
+	}
+	return resolved, nil
 }
 
 // materializationIdentity is the execution identity for physical relations.
@@ -347,6 +358,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	if reuse != nil || artifacts.Generation.DataMode == release.GenerationDataReuseBase {
 		decision := deployment.DeliveryReuseDecision{ResourceID: input.Candidate.ID, Reusable: false, Reason: "retained base reuse identity is unavailable"}
 		if operation != deployment.DeliveryOperationCodeChange && input.PipelinePlan != nil && reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
+			scopedRelationIDs, err := pipelineScopeRelationIDs(input.PipelinePlan.MaterializationScope, artifacts.Compiler.Artifact.Graph(), artifacts.Compiler.RelationExecution)
+			if err != nil {
+				return deployment.DeliveryPlanRequest{}, err
+			}
 			candidateReuse := *reuse
 			if candidateReuse.BaseContextDigest != "" {
 				candidateReuse.ContextDigest = currentContextDigest
@@ -366,19 +381,13 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			}
 			sort.Strings(ids)
 			decisions := make([]deployment.DeliveryReuseDecision, 0, len(ids))
-			matchedScope := make(map[string]struct{}, len(input.PipelinePlan.MaterializationScope))
 			for _, id := range ids {
 				baseDigest := artifacts.Compiler.BaseRelationExecution[id]
 				if baseDigest == "" {
 					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reason: "base relation execution identity is unavailable"})
 					continue
 				}
-				if pipelineScopeContains(input.PipelinePlan.MaterializationScope, id) {
-					for _, selected := range input.PipelinePlan.MaterializationScope {
-						if pipelineScopeContains([]string{selected}, id) {
-							matchedScope[selected] = struct{}{}
-						}
-					}
+				if _, scoped := scopedRelationIDs[id]; scoped {
 					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reusable: false, RetainBase: true, Reason: "pipeline materialization scope requires refresh"})
 					continue
 				}
@@ -392,11 +401,6 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 					return deployment.DeliveryPlanRequest{}, fmt.Errorf("evaluate scoped relation reuse %q: %w", id, reuseErr)
 				}
 				decisions = append(decisions, decision)
-			}
-			for _, selected := range input.PipelinePlan.MaterializationScope {
-				if _, ok := matchedScope[selected]; !ok {
-					return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline materialization scope relation %q is absent from compiled relation evidence", selected)
-				}
 			}
 			request.Evidence.Reuse = decisions
 			finalizeReuseEvidence(&request.Evidence, decisions)

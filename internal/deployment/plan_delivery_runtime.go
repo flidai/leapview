@@ -228,28 +228,55 @@ const (
 	DeliveryPublicationIndeterminate DeliveryPublicationStatus = "indeterminate"
 )
 
+type RefreshPublicationFence struct {
+	RunID          string
+	LeaseOwner     string
+	LeaseRevision  int64
+	TargetRevision int64
+}
+
+func (fence RefreshPublicationFence) Validate() error {
+	if err := ValidateDeliveryID(fence.RunID); err != nil {
+		return fmt.Errorf("refresh run id: %w", err)
+	}
+	if fence.LeaseOwner == "" || fence.LeaseOwner != strings.TrimSpace(fence.LeaseOwner) {
+		return fmt.Errorf("%w: refresh lease owner is not canonical", ErrDeliveryInvalid)
+	}
+	if fence.LeaseRevision <= 0 || fence.TargetRevision <= 0 {
+		return fmt.Errorf("%w: refresh publication revisions must be positive", ErrDeliveryInvalid)
+	}
+	return nil
+}
+
 // DeliveryPublication records the exact candidate and both sides of the
 // target CAS. Publication never rebuilds or mutates a candidate.
 type DeliveryPublication struct {
 	ID string `json:"id"`
 	// ActorID is authenticated command evidence retained in the event ledger;
 	// it is not part of publication CAS identity.
-	ActorID                  string                    `json:"actorId,omitempty"`
-	RequestDigest            string                    `json:"requestDigest"`
-	TargetID                 string                    `json:"targetId"`
-	ProjectID                graph.ResourceID          `json:"projectId"`
-	Environment              string                    `json:"environment"`
-	PlanID                   string                    `json:"planId"`
-	PlanDigest               string                    `json:"planDigest"`
-	CandidateID              string                    `json:"candidateId"`
-	GenerationID             string                    `json:"generationId"`
-	ExpectedBaseGenerationID string                    `json:"expectedBaseGenerationId,omitempty"`
-	ExpectedTargetRevision   int64                     `json:"expectedTargetRevision"`
-	ResultTargetRevision     int64                     `json:"resultTargetRevision"`
-	Status                   DeliveryPublicationStatus `json:"status"`
-	Reason                   string                    `json:"reason,omitempty"`
-	CreatedAt                time.Time                 `json:"createdAt"`
-	CompletedAt              time.Time                 `json:"completedAt"`
+	ActorID                  string           `json:"actorId,omitempty"`
+	RequestDigest            string           `json:"requestDigest"`
+	TargetID                 string           `json:"targetId"`
+	ProjectID                graph.ResourceID `json:"projectId"`
+	Environment              string           `json:"environment"`
+	PlanID                   string           `json:"planId"`
+	PlanDigest               string           `json:"planDigest"`
+	CandidateID              string           `json:"candidateId"`
+	GenerationID             string           `json:"generationId"`
+	ExpectedBaseGenerationID string           `json:"expectedBaseGenerationId,omitempty"`
+	ExpectedTargetRevision   int64            `json:"expectedTargetRevision"`
+	// Refresh publication authority is optional for ordinary deployments. A
+	// canonical refresh persists the exact worker lease on the publication so
+	// the delivery target CAS can reject superseded or reclaimed work atomically.
+	RefreshRunID          string                    `json:"-"`
+	RefreshLeaseOwner     string                    `json:"-"`
+	RefreshLeaseRevision  int64                     `json:"-"`
+	RefreshTargetRevision int64                     `json:"-"`
+	ResultTargetRevision  int64                     `json:"resultTargetRevision"`
+	Status                DeliveryPublicationStatus `json:"status"`
+	Reason                string                    `json:"reason,omitempty"`
+	CreatedAt             time.Time                 `json:"createdAt"`
+	CompletedAt           time.Time                 `json:"completedAt"`
 }
 
 func (publication DeliveryPublication) Validate() error {
@@ -285,6 +312,15 @@ func (publication DeliveryPublication) Validate() error {
 	}
 	if publication.ExpectedTargetRevision < 0 || publication.ResultTargetRevision < 0 {
 		return fmt.Errorf("%w: target revision cannot be negative", ErrDeliveryInvalid)
+	}
+	hasRefreshFence := publication.RefreshRunID != "" || publication.RefreshLeaseOwner != "" || publication.RefreshLeaseRevision != 0 || publication.RefreshTargetRevision != 0
+	if hasRefreshFence {
+		if err := (RefreshPublicationFence{
+			RunID: publication.RefreshRunID, LeaseOwner: publication.RefreshLeaseOwner,
+			LeaseRevision: publication.RefreshLeaseRevision, TargetRevision: publication.RefreshTargetRevision,
+		}).Validate(); err != nil {
+			return err
+		}
 	}
 	if publication.Status == DeliveryPublicationCommitted && publication.ResultTargetRevision != publication.ExpectedTargetRevision+1 {
 		return fmt.Errorf("%w: committed publication must advance target revision exactly once", ErrDeliveryInvalid)

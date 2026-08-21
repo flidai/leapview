@@ -127,6 +127,11 @@ func TestSQLRunRepositoryAdmissionCollisionMatrix(t *testing.T) {
 		if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET trigger_type='schedule' WHERE id='run_1'`); err != nil {
 			t.Fatal(err)
 		}
+		priorAt := time.Date(2026, 8, 20, 7, 0, 0, 0, time.UTC)
+		insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", priorAt, []string{"daily"})
+		if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_pipeline_occurrences SET run_id='run_1', status='attached', outcome='admitted' WHERE project_id=? AND environment=? AND pipeline_id=? AND scheduled_at=?`, testRunIdentity.ProjectID.String(), testRunIdentity.Environment, "pipeline_daily", priorAt.Format(time.RFC3339Nano)); err != nil {
+			t.Fatal(err)
+		}
 		at := time.Date(2026, 8, 20, 8, 0, 0, 0, time.UTC)
 		insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", at, []string{"daily"})
 		input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
@@ -145,7 +150,45 @@ func TestSQLRunRepositoryAdmissionCollisionMatrix(t *testing.T) {
 		if prior != refreshrun.RunStatusSuperseded {
 			t.Fatalf("prior scheduled status = %q", prior)
 		}
+		var occurrenceStatus, occurrenceOutcome string
+		if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status, outcome FROM refresh_pipeline_occurrences WHERE project_id=? AND environment=? AND pipeline_id=? AND scheduled_at=?`, testRunIdentity.ProjectID.String(), testRunIdentity.Environment, "pipeline_daily", priorAt.Format(time.RFC3339Nano)).Scan(&occurrenceStatus, &occurrenceOutcome); err != nil {
+			t.Fatal(err)
+		}
+		if occurrenceStatus != "superseded" || occurrenceOutcome != "superseded" {
+			t.Fatalf("prior occurrence status/outcome = %q/%q", occurrenceStatus, occurrenceOutcome)
+		}
 	})
+}
+
+func TestSQLRunRepositoryPersistsInvocationSourceIndependentlyFromTriggerType(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'validated');
+INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test');`); err != nil {
+		t.Fatal(err)
+	}
+	repository := NewSQLRunRepository(store.SQLDB())
+	input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
+	input.TriggerType = refreshrun.TriggerManual
+	input.InvocationSource = "backfill"
+	run, err := repository.CreateRun(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if run.TriggerType != refreshrun.TriggerManual || run.InvocationSource != "backfill" {
+		t.Fatalf("persisted invocation trigger/source = %q/%q", run.TriggerType, run.InvocationSource)
+	}
+	claimed, ok, err := repository.ClaimNextExecutableJob(t.Context(), testRunIdentity, "worker-1", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim persisted invocation ok=%v err=%v", ok, err)
+	}
+	if claimed.TriggerType != refreshrun.TriggerManual || claimed.InvocationSource != "backfill" {
+		t.Fatalf("claimed invocation trigger/source = %q/%q", claimed.TriggerType, claimed.InvocationSource)
+	}
 }
 
 func insertClaimedOccurrence(t *testing.T, store *platform.Store, identity projectgraph.ServingIdentity, pipeline string, at time.Time, ids []string) {
@@ -513,7 +556,8 @@ func TestMaterializationRunMappingRejectsCorruptPersistedIdentity(t *testing.T) 
 		ID: "run_1", ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a",
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", TargetType: refreshrun.TargetRefreshPipeline,
 		TargetID: "pipeline_daily", TargetRevision: 1, TriggerType: refreshrun.TriggerManual,
-		PlanDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MaterializationScopeJSON: `["model_orders"]`,
+		InvocationSource: refreshrun.TriggerManual,
+		PlanDigest:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", MaterializationScopeJSON: `["model_orders"]`,
 		Status: refreshrun.RunStatusQueued,
 	}
 	if _, err := materializationRunFromDB(base); err != nil {
@@ -571,7 +615,7 @@ INSERT INTO refresh_job_runs (
 	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_jobs SET payload_json = ? WHERE id = 'job_1';`, string(payload)); err != nil {
 		t.Fatalf("seed refresh plan payload: %v", err)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET project_id = 'project_sales', trigger_id = 'manual', plan_digest = ?, materialization_scope_json = ? WHERE id = 'run_1';`, plan.Digest, string(scope)); err != nil {
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET project_id = 'project_sales', trigger_id = 'manual', invocation_source = 'manual', plan_digest = ?, materialization_scope_json = ? WHERE id = 'run_1';`, plan.Digest, string(scope)); err != nil {
 		t.Fatalf("seed refresh run plan: %v", err)
 	}
 	if _, err := store.SQLDB().ExecContext(t.Context(),

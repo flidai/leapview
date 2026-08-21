@@ -54,7 +54,7 @@ func TestRepositoryReconcileAndClaimDueCoalescesCatchUp(t *testing.T) {
 	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest,
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", Name: "sales-refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", Name: "sales-refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 4 * 60 * 60, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 		Now:       deployedAt,
 	}); err != nil {
 		t.Fatalf("Reconcile() error = %v", err)
@@ -110,7 +110,7 @@ func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 			Identity: item.identity, ArtifactDigest: validDigest("a"), Now: deployedAt,
-			Pipelines: []refreshschedule.Definition{{ID: item.pipeline.ID, SemanticModelID: item.pipeline.SemanticModelID, Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+			Pipelines: []refreshschedule.Definition{{ID: item.pipeline.ID, SemanticModelID: item.pipeline.SemanticModelID, Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -139,7 +139,7 @@ func TestRepositoryCoalescesOverlappingScheduleEntries(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{morning, later}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{morning, later}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -167,7 +167,7 @@ func TestRepositoryReleaseOccurrenceMakesQueueFailureRetryable(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -191,7 +191,10 @@ WHERE project_id = 'project_sales' AND environment = 'prod'
 	if status != "pending" || outcome != "dispatch_failed" {
 		t.Fatalf("released occurrence status=%q outcome=%q, want pending/dispatch_failed", status, outcome)
 	}
-	second, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), now)
+	// A dispatcher outage can last past newer nominal ticks. The exact pending
+	// occurrence still owns the retry; catch-up must not advance over it.
+	delayedRetry := now.Add(25 * time.Hour)
+	second, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), delayedRetry)
 	if err != nil || len(second) != 1 {
 		t.Fatalf("second ClaimDue() = %#v, %v, want retry", second, err)
 	}
@@ -212,7 +215,7 @@ func TestRepositoryRecoversAbandonedOccurrenceClaim(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -246,7 +249,7 @@ func TestRepositoryClaimDueDeduplicatesConcurrentDispatchers(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -327,8 +330,8 @@ func TestRepositoryGenerationIsolationAcrossScheduleOperations(t *testing.T) {
 		pipeline refreshschedule.Definition
 		digest   string
 	}{
-		{testIdentity("prod", "generation_a"), refreshschedule.Definition{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("a")},
-		{testIdentity("prod", "generation_b"), refreshschedule.Definition{ID: "pipeline_b", SemanticModelID: "semantic_b", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("b")},
+		{testIdentity("prod", "generation_a"), refreshschedule.Definition{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("a")},
+		{testIdentity("prod", "generation_b"), refreshschedule.Definition{ID: "pipeline_b", SemanticModelID: "semantic_b", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}, validDigest("b")},
 	} {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{Identity: item.identity, ArtifactDigest: item.digest, Pipelines: []refreshschedule.Definition{item.pipeline}, Now: now}); err != nil {
 			t.Fatal(err)
@@ -345,12 +348,9 @@ func TestRepositoryGenerationIsolationAcrossScheduleOperations(t *testing.T) {
 	if err != nil || len(dueB) != 1 || dueB[0].Identity.GenerationID != "generation_b" {
 		t.Fatalf("generation B due = %#v, %v; want one generation-B occurrence", dueB, err)
 	}
-	// A forged generation-A occurrence cannot attach or release B's row.
+	// A forged generation-A occurrence cannot release B's row.
 	forged := dueB[0]
 	forged.Identity = testIdentity("prod", "generation_a")
-	if err := repo.AttachRun(t.Context(), forged, "run_forged"); err == nil {
-		t.Fatal("AttachRun forged generation = nil, want isolation error")
-	}
 	if err := repo.ReleaseOccurrence(t.Context(), forged); err == nil {
 		t.Fatal("ReleaseOccurrence forged generation = nil, want isolation error")
 	}
@@ -416,7 +416,7 @@ func TestRepositoryOccurrenceIdentityExcludesGeneration(t *testing.T) {
 		if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 			Identity: testIdentity("prod", generation), ArtifactDigest: testArtifactDigest, Now: now,
 			Pipelines: []refreshschedule.Definition{{
-				ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+				ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
 				Schedules: []refreshschedule.Schedule{schedule},
 			}},
 		}); err != nil {
@@ -465,8 +465,8 @@ func TestRepositoryClaimDueOrdersNominalThenPipeline(t *testing.T) {
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: now,
 		Pipelines: []refreshschedule.Definition{
-			{ID: "pipeline_z", SemanticModelID: "semantic_z", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{firstTrigger}},
-			{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{secondTrigger}},
+			{ID: "pipeline_z", SemanticModelID: "semantic_z", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{firstTrigger}},
+			{ID: "pipeline_a", SemanticModelID: "semantic_a", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{secondTrigger}},
 		},
 	}); err != nil {
 		t.Fatal(err)
@@ -483,7 +483,7 @@ func TestRepositoryClaimDueOrdersNominalThenPipeline(t *testing.T) {
 	}
 }
 
-func TestRepositoryDeadlineZeroStillDispatchesNormalTick(t *testing.T) {
+func TestRepositoryDeadlineZeroStillDispatchesNormalControllerTick(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -500,7 +500,7 @@ func TestRepositoryDeadlineZeroStillDispatchesNormalTick(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), deployedAt.Add(2*time.Hour))
+	due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), time.Date(2026, 7, 18, 6, 0, 30, 0, time.UTC))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,6 +510,44 @@ func TestRepositoryDeadlineZeroStillDispatchesNormalTick(t *testing.T) {
 	next, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_a"), "pipeline_sales_refresh")
 	if err != nil || !ok || !next.Equal(time.Date(2026, 7, 19, 6, 0, 0, 0, time.UTC)) {
 		t.Fatalf("next run=%s found=%v err=%v, want next day", next, ok, err)
+	}
+}
+
+func TestRepositoryClaimDueSkipsOccurrenceOutsideDeadlineWithoutReconcile(t *testing.T) {
+	for _, deadline := range []int64{0, 1800} {
+		t.Run(fmt.Sprintf("deadline_%d", deadline), func(t *testing.T) {
+			store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			seedRefreshGenerations(t, store)
+			repo := NewRepository(store.SQLDB())
+			schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
+			schedule.ID = "morning"
+			deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+			if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+				Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: deployedAt,
+				Pipelines: []refreshschedule.Definition{{
+					ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC",
+					StartingDeadlineSeconds: deadline, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+					Schedules: []refreshschedule.Schedule{schedule},
+				}},
+			}); err != nil {
+				t.Fatal(err)
+			}
+			due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_a"), time.Date(2026, 7, 18, 9, 0, 0, 0, time.UTC))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(due) != 0 {
+				t.Fatalf("ClaimDue() = %#v, want expired occurrence skipped", due)
+			}
+			next, ok, err := repo.NextRun(t.Context(), testIdentity("prod", "generation_a"), "pipeline_sales_refresh")
+			if err != nil || !ok || !next.Equal(time.Date(2026, 7, 19, 6, 0, 0, 0, time.UTC)) {
+				t.Fatalf("next run=%s found=%v err=%v, want next scheduled day", next, ok, err)
+			}
+		})
 	}
 }
 

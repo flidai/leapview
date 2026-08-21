@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -20,6 +21,11 @@ type Repository struct {
 }
 
 const occurrenceClaimTimeout = 5 * time.Minute
+
+// The scheduler polls once per minute by default. A zero starting deadline
+// still admits the controller tick that observes the nominal time, but does not
+// recover an occurrence after that polling window has elapsed.
+const normalScheduleTickWindow = time.Minute
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, q: platformdb.New(db)} }
 
@@ -52,6 +58,11 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 	queries := repository.q.WithTx(tx)
 	existing, err := loadPersistedSchedules(ctx, queries, input.Identity)
 	if err != nil {
+		return err
+	}
+	if err := queries.SupersedeStaleRefreshPipelineOccurrences(ctx, platformdb.SupersedeStaleRefreshPipelineOccurrencesParams{
+		ProjectID: input.Identity.ProjectID.String(), Environment: input.Identity.Environment, GenerationID: input.Identity.GenerationID,
+	}); err != nil {
 		return err
 	}
 	if err := queries.DeleteRefreshPipelineSchedules(ctx, platformdb.DeleteRefreshPipelineSchedulesParams{ProjectID: input.Identity.ProjectID.String(), Environment: input.Identity.Environment, GenerationID: input.Identity.GenerationID}); err != nil {
@@ -136,6 +147,17 @@ func deadlineDuration(seconds int64) time.Duration {
 	return time.Duration(seconds) * time.Second
 }
 
+func withinStartingDeadline(now, scheduledAt time.Time, seconds int64) bool {
+	lateBy := now.Sub(scheduledAt)
+	if lateBy <= 0 {
+		return true
+	}
+	if seconds == 0 {
+		return lateBy <= normalScheduleTickWindow
+	}
+	return lateBy <= deadlineDuration(seconds)
+}
+
 func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, identity projectgraph.ServingIdentity) (map[string]persistedSchedule, error) {
 	rows, err := queries.ListRefreshPipelineSchedules(ctx, platformdb.ListRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
 	if err != nil {
@@ -191,6 +213,11 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 	if err := queries.RequeueAbandonedRefreshPipelineOccurrences(ctx, platformdb.RequeueAbandonedRefreshPipelineOccurrencesParams{ProjectID: identity.ProjectID.String(), ClaimedBefore: sql.NullString{String: claimedBefore, Valid: true}, Environment: identity.Environment}); err != nil {
 		return nil, err
 	}
+	if err := queries.SupersedeStaleRefreshPipelineOccurrences(ctx, platformdb.SupersedeStaleRefreshPipelineOccurrencesParams{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID,
+	}); err != nil {
+		return nil, err
+	}
 	rows, err := queries.ListDueRefreshPipelineSchedules(ctx, platformdb.ListDueRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, NextRunAt: formatTime(now)})
 	if err != nil {
 		return nil, err
@@ -214,6 +241,7 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 	type dueOccurrence struct {
 		occurrence refreshschedule.Occurrence
 		deadline   int64
+		retry      bool
 	}
 	grouped := map[string]dueOccurrence{}
 	for _, item := range due {
@@ -222,10 +250,24 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 			return nil, err
 		}
 		scheduledAt := item.nextRunAt
+		retry := false
+		stored, lookupErr := queries.GetRefreshPipelineOccurrence(ctx, platformdb.GetRefreshPipelineOccurrenceParams{
+			ProjectID: item.identity.ProjectID.String(), Environment: item.identity.Environment,
+			PipelineID: item.pipelineID.String(), ScheduledAt: formatTime(scheduledAt),
+		})
+		if lookupErr == nil && stored.Status == "pending" {
+			retry = true
+		} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
+			return nil, lookupErr
+		}
 		next := schedule.Next(scheduledAt)
-		for !next.IsZero() && !next.After(now) {
-			scheduledAt = next
-			next = schedule.Next(next)
+		if retry {
+			next = schedule.Next(now)
+		} else {
+			for !next.IsZero() && !next.After(now) {
+				scheduledAt = next
+				next = schedule.Next(next)
+			}
 		}
 		if next.IsZero() {
 			return nil, fmt.Errorf("refresh pipeline %q schedule %q has no next occurrence", item.pipelineID, item.expression)
@@ -245,17 +287,22 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 				ArtifactDigest: item.artifactDigest, Timezone: item.timezone, ScheduledAt: scheduledAt,
 			}
 			current.deadline = item.startingDeadlineSeconds
+			current.retry = retry
 			grouped[key] = current
 		} else if scheduledAt.Equal(current.occurrence.ScheduledAt) {
 			current.occurrence.MatchingScheduleIDs = append(current.occurrence.MatchingScheduleIDs, item.triggerID)
 			if item.startingDeadlineSeconds < current.deadline {
 				current.deadline = item.startingDeadlineSeconds
 			}
+			current.retry = current.retry || retry
 			grouped[key] = current
 		}
 	}
 	out := make([]refreshschedule.Occurrence, 0, len(grouped))
 	for _, item := range grouped {
+		if !item.retry && !withinStartingDeadline(now, item.occurrence.ScheduledAt, item.deadline) {
+			continue
+		}
 		sort.Strings(item.occurrence.MatchingScheduleIDs)
 		out = append(out, item.occurrence)
 	}
@@ -338,33 +385,6 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 	return claimed, nil
 }
 
-func (repository *Repository) AttachRun(ctx context.Context, occurrence refreshschedule.Occurrence, runID string) error {
-	if err := validateOccurrence(occurrence); err != nil {
-		return err
-	}
-	if err := refreshschedule.ValidateOperationalID(runID); err != nil {
-		return err
-	}
-	if err := repository.verifyStoredOccurrence(ctx, occurrence); err != nil {
-		return err
-	}
-	result, err := repository.q.AttachRefreshPipelineRun(ctx, platformdb.AttachRefreshPipelineRunParams{
-		RunID: sql.NullString{String: runID, Valid: true}, ProjectID: occurrence.Identity.ProjectID.String(),
-		Environment: occurrence.Identity.Environment, PipelineID: occurrence.PipelineID.String(), ScheduledAt: formatTime(occurrence.ScheduledAt),
-	})
-	if err != nil {
-		return err
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if affected != 1 {
-		return fmt.Errorf("refresh pipeline occurrence no longer exists")
-	}
-	return nil
-}
-
 func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence refreshschedule.Occurrence) error {
 	if err := validateOccurrence(occurrence); err != nil {
 		return err
@@ -399,14 +419,6 @@ func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence 
 		return err
 	}
 	return tx.Commit()
-}
-
-func (repository *Repository) verifyStoredOccurrence(ctx context.Context, occurrence refreshschedule.Occurrence) error {
-	row, err := repository.q.GetRefreshPipelineOccurrence(ctx, platformdb.GetRefreshPipelineOccurrenceParams{ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment, PipelineID: occurrence.PipelineID.String(), ScheduledAt: formatTime(occurrence.ScheduledAt)})
-	if err != nil {
-		return fmt.Errorf("refresh pipeline occurrence lookup: %w", err)
-	}
-	return verifyStoredOccurrenceRow(row, occurrence)
 }
 
 func verifyStoredOccurrenceTx(ctx context.Context, queries *platformdb.Queries, occurrence refreshschedule.Occurrence) error {

@@ -145,10 +145,10 @@ INSERT INTO refresh_jobs (
   67108864, 'refresh_pipeline', 'succeeded'
 );
 INSERT INTO refresh_job_runs (
-  id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type,
-  status, created_sequence
-) VALUES (
-  'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 3, 'manual',
+	  id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, invocation_source,
+	  status, created_sequence
+	) VALUES (
+	  'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 3, 'manual', 'manual',
   'succeeded', 1
 );`); err != nil {
 		t.Fatalf("seed refresh state: %v", err)

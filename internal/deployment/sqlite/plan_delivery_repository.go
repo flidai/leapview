@@ -1355,7 +1355,14 @@ func (r *Repository) CreatePublication(ctx context.Context, input deployment.Del
 			return deployment.DeliveryPublication{}, fmt.Errorf("%w: generation identity conflict", deployment.ErrDeliveryConflict)
 		}
 	}
-	err = deploydb.New(tx).CreateDeliveryPublication(ctx, deploydb.CreateDeliveryPublicationParams{ID: publication.ID, RequestDigest: publication.RequestDigest, TargetID: publication.TargetID, ProjectID: publication.ProjectID.String(), Environment: publication.Environment, PlanID: publication.PlanID, PlanDigest: publication.PlanDigest, CandidateID: publication.CandidateID, GenerationID: publication.GenerationID, NULLIF: publication.ExpectedBaseGenerationID, ExpectedTargetRevision: publication.ExpectedTargetRevision, CreatedAt: deliveryTime(publication.CreatedAt)})
+	err = deploydb.New(tx).CreateDeliveryPublication(ctx, deploydb.CreateDeliveryPublicationParams{
+		ID: publication.ID, RequestDigest: publication.RequestDigest, TargetID: publication.TargetID, ProjectID: publication.ProjectID.String(), Environment: publication.Environment,
+		PlanID: publication.PlanID, PlanDigest: publication.PlanDigest, CandidateID: publication.CandidateID, GenerationID: publication.GenerationID,
+		NULLIF: publication.ExpectedBaseGenerationID, ExpectedTargetRevision: publication.ExpectedTargetRevision,
+		RefreshRunID: publication.RefreshRunID, RefreshLeaseOwner: publication.RefreshLeaseOwner,
+		RefreshLeaseRevision: publication.RefreshLeaseRevision, RefreshTargetRevision: publication.RefreshTargetRevision,
+		CreatedAt: deliveryTime(publication.CreatedAt),
+	})
 	if err != nil {
 		if existing, readErr := deliveryPublicationByRequestTx(ctx, tx, publication.TargetID, publication.RequestDigest); readErr == nil {
 			if samePublicationIdentity(existing, publication) {
@@ -1419,7 +1426,7 @@ func (r *Repository) CreatePublicationIntent(ctx context.Context, input deployme
 }
 
 func samePublicationIdentity(a, b deployment.DeliveryPublication) bool {
-	return a.ID == b.ID && a.RequestDigest == b.RequestDigest && a.TargetID == b.TargetID && a.ProjectID == b.ProjectID && a.Environment == b.Environment && a.PlanID == b.PlanID && a.PlanDigest == b.PlanDigest && a.CandidateID == b.CandidateID && a.GenerationID == b.GenerationID && a.ExpectedBaseGenerationID == b.ExpectedBaseGenerationID && a.ExpectedTargetRevision == b.ExpectedTargetRevision
+	return a.ID == b.ID && a.RequestDigest == b.RequestDigest && a.TargetID == b.TargetID && a.ProjectID == b.ProjectID && a.Environment == b.Environment && a.PlanID == b.PlanID && a.PlanDigest == b.PlanDigest && a.CandidateID == b.CandidateID && a.GenerationID == b.GenerationID && a.ExpectedBaseGenerationID == b.ExpectedBaseGenerationID && a.ExpectedTargetRevision == b.ExpectedTargetRevision && a.RefreshRunID == b.RefreshRunID && a.RefreshLeaseOwner == b.RefreshLeaseOwner && a.RefreshLeaseRevision == b.RefreshLeaseRevision && a.RefreshTargetRevision == b.RefreshTargetRevision
 }
 
 func (r *Repository) DeliveryPublicationByID(ctx context.Context, id string) (deployment.DeliveryPublication, error) {
@@ -1443,7 +1450,12 @@ func deliveryPublicationByIDTx(ctx context.Context, q deploydb.DBTX, id string) 
 	if err != nil {
 		return deployment.DeliveryPublication{}, err
 	}
-	p := deployment.DeliveryPublication{ID: row.ID, RequestDigest: row.RequestDigest, TargetID: row.TargetID, Environment: row.Environment, PlanID: row.PlanID, PlanDigest: row.PlanDigest, CandidateID: row.CandidateID, GenerationID: row.GenerationID, ExpectedTargetRevision: row.ExpectedTargetRevision, ResultTargetRevision: row.ResultTargetRevision, Status: deployment.DeliveryPublicationStatus(row.Status), Reason: row.Reason}
+	p := deployment.DeliveryPublication{
+		ID: row.ID, RequestDigest: row.RequestDigest, TargetID: row.TargetID, Environment: row.Environment, PlanID: row.PlanID, PlanDigest: row.PlanDigest,
+		CandidateID: row.CandidateID, GenerationID: row.GenerationID, ExpectedTargetRevision: row.ExpectedTargetRevision,
+		RefreshRunID: row.RefreshRunID, RefreshLeaseOwner: row.RefreshLeaseOwner, RefreshLeaseRevision: row.RefreshLeaseRevision, RefreshTargetRevision: row.RefreshTargetRevision,
+		ResultTargetRevision: row.ResultTargetRevision, Status: deployment.DeliveryPublicationStatus(row.Status), Reason: row.Reason,
+	}
 	p.ProjectID, err = projectgraph.NewResourceID(row.ProjectID)
 	if err != nil {
 		return deployment.DeliveryPublication{}, err
@@ -1522,6 +1534,9 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 	}
 	if p.Status != deployment.DeliveryPublicationPending && p.Status != deployment.DeliveryPublicationIndeterminate {
 		return deployment.DeliveryPublication{}, fmt.Errorf("%w: publication is %s", deployment.ErrDeliveryTransition, p.Status)
+	}
+	if err := refreshPublicationFenceActive(ctx, tx, p); err != nil {
+		return deployment.DeliveryPublication{}, err
 	}
 	actor := "delivery"
 	if persistedActor, actorErr := deploydb.New(tx).GetDeliveryPublicationRequestActor(ctx, p.ID); actorErr == nil {
@@ -1666,6 +1681,27 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 		return r.reconcilePublicationCommitError(ctx, id, now.UTC(), err)
 	}
 	return committed, nil
+}
+
+func refreshPublicationFenceActive(ctx context.Context, tx *sql.Tx, publication deployment.DeliveryPublication) error {
+	if publication.RefreshRunID == "" {
+		return nil
+	}
+	active, err := deploydb.New(tx).IsActiveRefreshPublicationFence(ctx, deploydb.IsActiveRefreshPublicationFenceParams{
+		RunID:          publication.RefreshRunID,
+		ProjectID:      publication.ProjectID.String(),
+		Environment:    publication.Environment,
+		TargetRevision: publication.RefreshTargetRevision,
+		LeaseOwner:     publication.RefreshLeaseOwner,
+		LeaseRevision:  publication.RefreshLeaseRevision,
+	})
+	if err != nil {
+		return err
+	}
+	if active != 1 {
+		return fmt.Errorf("%w: refresh publication authority was revoked", deployment.ErrDeliveryStale)
+	}
+	return nil
 }
 
 func (r *Repository) reconcilePublicationCommitError(ctx context.Context, id string, now time.Time, commitErr error) (deployment.DeliveryPublication, error) {

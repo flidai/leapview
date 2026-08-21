@@ -3,18 +3,28 @@
 -- ADR-0014: pipeline-wide scheduling policy and logical occurrence identity.
 -- Occurrences are unique by project, environment, pipeline, and nominal UTC
 -- instant. Captured generation and matching schedule IDs are evidence only.
+-- Pre-contract refresh execution and scheduler rows are intentionally reset.
+-- They do not contain the immutable plan, invocation provenance, or publication
+-- authority required by ADR-0014 and therefore cannot be resumed safely.
+DELETE FROM refresh_pipeline_occurrences;
+DELETE FROM refresh_pipeline_schedules;
+DELETE FROM refresh_jobs;
+
 DROP INDEX IF EXISTS refresh_pipeline_active_run_idx;
 ALTER TABLE refresh_job_runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
-UPDATE refresh_job_runs
-SET project_id = COALESCE((SELECT project_id FROM refresh_jobs WHERE refresh_jobs.id = refresh_job_runs.job_id), '')
-WHERE project_id = '';
 ALTER TABLE refresh_job_runs ADD COLUMN trigger_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE refresh_job_runs ADD COLUMN invocation_source TEXT NOT NULL DEFAULT '';
 ALTER TABLE refresh_job_runs ADD COLUMN nominal_time TEXT NOT NULL DEFAULT '';
 ALTER TABLE refresh_job_runs ADD COLUMN plan_digest TEXT NOT NULL DEFAULT '';
 ALTER TABLE refresh_job_runs ADD COLUMN materialization_scope_json TEXT NOT NULL DEFAULT '[]'
   CHECK (json_valid(materialization_scope_json) AND json_type(materialization_scope_json) = 'array');
 ALTER TABLE refresh_job_runs ADD COLUMN matching_schedule_ids_json TEXT NOT NULL DEFAULT '[]'
   CHECK (json_valid(matching_schedule_ids_json) AND json_type(matching_schedule_ids_json) = 'array');
+
+ALTER TABLE delivery_publications ADD COLUMN refresh_run_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE delivery_publications ADD COLUMN refresh_lease_owner TEXT NOT NULL DEFAULT '';
+ALTER TABLE delivery_publications ADD COLUMN refresh_lease_revision INTEGER NOT NULL DEFAULT 0 CHECK (refresh_lease_revision >= 0);
+ALTER TABLE delivery_publications ADD COLUMN refresh_target_revision INTEGER NOT NULL DEFAULT 0 CHECK (refresh_target_revision >= 0);
 
 CREATE UNIQUE INDEX refresh_pipeline_active_run_idx
   ON refresh_job_runs(project_id, environment, target_type, target_id)
@@ -40,17 +50,6 @@ CREATE TABLE refresh_pipeline_schedules_v2 (
   FOREIGN KEY (generation_id, project_id, environment)
     REFERENCES serving_states(id, project_id, environment) ON DELETE CASCADE
 );
-
-INSERT INTO refresh_pipeline_schedules_v2 (
-  project_id, environment, pipeline_id, trigger_id, semantic_model_id,
-  generation_id, artifact_digest, cron, timezone, starting_deadline_seconds,
-  concurrency_policy, next_run_at, updated_at
-)
-SELECT project_id, environment, pipeline_id,
-       'legacy:' || cron || ':' || timezone,
-       semantic_model_id, generation_id, artifact_digest, cron, timezone,
-       0, 'Forbid', next_run_at, updated_at
-FROM refresh_pipeline_schedules;
 
 DROP TABLE refresh_pipeline_schedules;
 ALTER TABLE refresh_pipeline_schedules_v2 RENAME TO refresh_pipeline_schedules;
@@ -78,21 +77,6 @@ CREATE TABLE refresh_pipeline_occurrences_v2 (
   created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
   PRIMARY KEY (project_id, environment, pipeline_id, scheduled_at)
 );
-
-INSERT OR IGNORE INTO refresh_pipeline_occurrences_v2 (
-  project_id, environment, pipeline_id, generation_id, artifact_digest,
-  scheduled_at, run_id, status, outcome, claimed_at, outcome_at, created_at,
-  matching_schedule_ids_json
-)
-SELECT project_id, environment, pipeline_id, generation_id, artifact_digest,
-       scheduled_at, run_id,
-       CASE WHEN run_id IS NULL THEN 'pending' ELSE 'attached' END,
-       CASE WHEN run_id IS NULL THEN 'pending' ELSE 'admitted' END,
-       CASE WHEN run_id IS NULL THEN claimed_at ELSE NULL END,
-       CASE WHEN run_id IS NULL THEN NULL ELSE claimed_at END,
-       claimed_at, '[]'
-FROM refresh_pipeline_occurrences
-ORDER BY claimed_at, generation_id;
 
 DROP TABLE refresh_pipeline_occurrences;
 ALTER TABLE refresh_pipeline_occurrences_v2 RENAME TO refresh_pipeline_occurrences;
@@ -155,10 +139,15 @@ CREATE INDEX refresh_pipeline_schedules_due_idx
   ON refresh_pipeline_schedules(next_run_at, project_id, environment, pipeline_id);
 
 DROP INDEX IF EXISTS refresh_pipeline_active_run_idx;
+ALTER TABLE delivery_publications DROP COLUMN refresh_target_revision;
+ALTER TABLE delivery_publications DROP COLUMN refresh_lease_revision;
+ALTER TABLE delivery_publications DROP COLUMN refresh_lease_owner;
+ALTER TABLE delivery_publications DROP COLUMN refresh_run_id;
 ALTER TABLE refresh_job_runs DROP COLUMN materialization_scope_json;
 ALTER TABLE refresh_job_runs DROP COLUMN matching_schedule_ids_json;
 ALTER TABLE refresh_job_runs DROP COLUMN plan_digest;
 ALTER TABLE refresh_job_runs DROP COLUMN nominal_time;
+ALTER TABLE refresh_job_runs DROP COLUMN invocation_source;
 ALTER TABLE refresh_job_runs DROP COLUMN trigger_id;
 ALTER TABLE refresh_job_runs DROP COLUMN project_id;
 CREATE UNIQUE INDEX refresh_pipeline_active_run_idx

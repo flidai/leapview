@@ -64,6 +64,16 @@ WHERE project_id = sqlc.arg(project_id)
   AND environment = sqlc.arg(environment)
   AND status = 'claimed' AND claimed_at <= sqlc.arg(claimed_before);
 
+-- name: SupersedeStaleRefreshPipelineOccurrences :exec
+UPDATE refresh_pipeline_occurrences
+SET status = 'superseded', outcome = 'superseded',
+    terminal_reason = 'captured generation is no longer active',
+    claimed_at = NULL, outcome_at = CURRENT_TIMESTAMP
+WHERE project_id = sqlc.arg(project_id)
+  AND environment = sqlc.arg(environment)
+  AND generation_id <> sqlc.arg(generation_id)
+  AND status IN ('pending', 'claimed');
+
 -- name: AdvanceRefreshPipelineSchedule :exec
 UPDATE refresh_pipeline_schedules SET next_run_at = ?, updated_at = CURRENT_TIMESTAMP
 WHERE project_id = ? AND environment = ? AND pipeline_id = ? AND generation_id = ? AND trigger_id = ?;
@@ -99,11 +109,6 @@ SET status = 'pending', outcome = 'dispatch_failed', terminal_reason = ?,
     claimed_at = NULL, outcome_at = CURRENT_TIMESTAMP
 WHERE project_id = ? AND environment = ? AND pipeline_id = ?
   AND scheduled_at = ? AND status = 'claimed' AND run_id IS NULL;
-
--- name: MarkRefreshPipelineOccurrenceOutcome :execresult
-UPDATE refresh_pipeline_occurrences
-SET status = ?, outcome = ?, terminal_reason = ?, outcome_at = CURRENT_TIMESTAMP
-WHERE project_id = ? AND environment = ? AND pipeline_id = ? AND scheduled_at = ?;
 
 -- name: RetryRefreshPipelineSchedules :exec
 UPDATE refresh_pipeline_schedules SET next_run_at = sqlc.arg(retry_at), updated_at = CURRENT_TIMESTAMP

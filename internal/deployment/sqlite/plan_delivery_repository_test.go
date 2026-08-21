@@ -58,6 +58,53 @@ func insertDeliveryPool(t *testing.T, store *platform.Store, id string) {
 	}
 }
 
+func TestRefreshPublicationFenceRejectsSupersededRunInCommitTransaction(t *testing.T) {
+	store, _ := openDeliveryRepository(t)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation-refresh', 'project-repo-1', 'prod', 'validated');
+INSERT INTO refresh_jobs (
+  id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id,
+  group_ids_json, estimated_memory_bytes, kind, status, lease_owner, lease_revision, lease_expires_at
+) VALUES (
+  'job-refresh', 'project-repo-1', 'generation-refresh', 'semantic-sales', 'pipeline-sales',
+  'worker-refresh', '[]', 1, 'refresh_pipeline', 'running', 'worker-refresh', 4, datetime('now', '+5 minutes')
+);
+INSERT INTO refresh_job_runs (
+  id, job_id, project_id, environment, target_type, target_id, target_revision,
+  trigger_type, invocation_source, status, created_sequence
+) VALUES (
+  'run-refresh', 'job-refresh', 'project-repo-1', 'prod', 'refresh_pipeline',
+  'pipeline-sales', 7, 'schedule', 'schedule', 'prepared', 1
+);`); err != nil {
+		t.Fatal(err)
+	}
+	publication := deployment.DeliveryPublication{
+		ProjectID: "project-repo-1", Environment: "prod", RefreshRunID: "run-refresh",
+		RefreshLeaseOwner: "worker-refresh", RefreshLeaseRevision: 4, RefreshTargetRevision: 7,
+	}
+	tx, err := store.SQLDB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := refreshPublicationFenceActive(t.Context(), tx, publication); err != nil {
+		t.Fatalf("active refresh publication fence: %v", err)
+	}
+	_ = tx.Rollback()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+UPDATE refresh_job_runs SET status='superseded' WHERE id='run-refresh';
+UPDATE refresh_jobs SET status='superseded', lease_owner='', lease_expires_at=NULL WHERE id='job-refresh';`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = store.SQLDB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := refreshPublicationFenceActive(t.Context(), tx, publication); !errors.Is(err, deployment.ErrDeliveryStale) {
+		t.Fatalf("superseded refresh publication fence error = %v, want ErrDeliveryStale", err)
+	}
+}
+
 func TestDeliveryRepositoryAcceptsFreshBuildAgainstActivePlanBase(t *testing.T) {
 	store, repo := openDeliveryRepository(t)
 	now := time.Now().UTC().Truncate(time.Second)

@@ -103,8 +103,13 @@ func canonicalRefreshExecutor(
 		if attempt.QualifiedSnapshotID <= 0 {
 			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh build omitted qualified snapshot evidence")
 		}
-		publication, err := mutations.PublishCandidate(
+		publisher, ok := mutations.(deploymentmodule.RefreshFencedDeliveryMutationPort)
+		if !ok {
+			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh publication fence is unavailable")
+		}
+		publication, err := publisher.PublishCandidateFenced(
 			ctx, job.Identity.ProjectID.String(), attempt.CandidateID, job.PrincipalID, "refresh-publish-"+job.RunID,
+			deployment.RefreshPublicationFence{RunID: job.RunID, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision, TargetRevision: job.TargetRevision},
 		)
 		if err != nil {
 			// Publication can be durably committed before the prepared-runtime

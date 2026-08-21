@@ -221,10 +221,10 @@ INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipe
 VALUES ('root_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_daily', 'user:test', '[]', 67108864, 'refresh_pipeline', 'running', 'worker-1', 1, datetime('now', '+5 minutes'));
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status)
 VALUES ('child_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_daily', 'user:test', '[]', 67108864, 'child_run', 'queued');
-INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, status, created_sequence)
-VALUES ('root_run', 'root_job', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', 'prepared', 1);
-INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'root_run', ?, 2);`, childStatus); err != nil {
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, invocation_source, status, created_sequence)
+VALUES ('root_run', 'root_job', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', 'manual', 'prepared', 1);
+INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, invocation_source, parent_run_id, status, created_sequence)
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'manual', 'root_run', ?, 2);`, childStatus); err != nil {
 		t.Fatal(err)
 	}
 	version := refreshschedule.DataVersion{Identity: publicationIdentity, SemanticModelID: "semantic_sales", SnapshotID: 42, RefreshedAt: time.Now().UTC(), Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_daily", RunID: "root_run", TargetRevision: 1, LeaseOwner: "worker-1", LeaseRevision: 1}

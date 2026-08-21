@@ -59,7 +59,6 @@ type DataVersion struct {
 type Repository interface {
 	Reconcile(context.Context, ReconcileInput) error
 	ClaimDue(context.Context, projectgraph.ServingIdentity, time.Time) ([]Occurrence, error)
-	AttachRun(context.Context, Occurrence, string) error
 	ReleaseOccurrence(context.Context, Occurrence) error
 	NextRun(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID) (time.Time, bool, error)
 	SaveDataVersion(context.Context, DataVersion) error
@@ -74,7 +73,10 @@ type RealClock struct{}
 
 func (RealClock) Now() time.Time { return time.Now() }
 
-type Trigger func(context.Context, Occurrence) (string, error)
+// Trigger atomically admits a claimed occurrence and attaches its run. A nil
+// error means the occurrence is already durable; the scheduler must not write
+// a second attachment after this boundary.
+type Trigger func(context.Context, Occurrence) error
 
 // ValidateScope checks that a schedule record is bound to one immutable
 // project/environment/generation scope.  A serving generation is never
@@ -177,7 +179,7 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 	}
 	var dispatchErrors []error
 	for _, occurrence := range occurrences {
-		runID, triggerErr := scheduler.Trigger(ctx, occurrence)
+		triggerErr := scheduler.Trigger(ctx, occurrence)
 		if triggerErr != nil {
 			if errors.Is(triggerErr, ErrOccurrenceSkipped) {
 				continue
@@ -187,9 +189,6 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 				dispatchErrors = append(dispatchErrors, releaseErr)
 			}
 			continue
-		}
-		if err := scheduler.Repository.AttachRun(ctx, occurrence, runID); err != nil {
-			dispatchErrors = append(dispatchErrors, err)
 		}
 	}
 	return errors.Join(dispatchErrors...)

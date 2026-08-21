@@ -98,6 +98,74 @@ func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	assertDeliveryMigrationTail(t, ctx, store)
 }
 
+func TestRefreshPipelineContractMigrationDropsLegacyExecutionState(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "occurrence-identity-upgrade.db")
+	legacy, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacy.SetMaxOpenConns(1)
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		legacy.Close()
+		t.Fatal(err)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 89); err != nil {
+		legacy.Close()
+		t.Fatalf("seed migration 089: %v", err)
+	}
+	for _, generation := range []string{"generation-old", "generation-new"} {
+		if _, err := legacy.ExecContext(ctx, `INSERT INTO serving_states (id, project_id, environment, status) VALUES (?, 'project-sales', 'prod', 'superseded')`, generation); err != nil {
+			legacy.Close()
+			t.Fatalf("insert serving state %s: %v", generation, err)
+		}
+	}
+	if _, err := legacy.ExecContext(ctx, `INSERT INTO refresh_jobs (
+		id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id,
+		group_ids_json, estimated_memory_bytes, status
+	) VALUES ('job-attached', 'project-sales', 'generation-new', 'semantic-sales',
+		'pipeline-sales', 'scheduler', '[]', 1, 'completed')`); err != nil {
+		legacy.Close()
+		t.Fatalf("insert refresh job: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx, `INSERT INTO refresh_job_runs (
+		id, job_id, status, target_type, target_id, environment, created_sequence
+	) VALUES ('run-attached', 'job-attached', 'completed', 'refresh_pipeline',
+		'pipeline-sales', 'prod', 1)`); err != nil {
+		legacy.Close()
+		t.Fatalf("insert refresh run: %v", err)
+	}
+	if _, err := legacy.ExecContext(ctx, `INSERT INTO refresh_pipeline_occurrences (
+		project_id, environment, pipeline_id, generation_id, artifact_digest,
+		scheduled_at, run_id, claimed_at
+	) VALUES
+		('project-sales', 'prod', 'pipeline-sales', 'generation-old', 'sha256:old', '2026-08-20T06:00:00Z', NULL, '2026-08-20T06:00:01Z'),
+		('project-sales', 'prod', 'pipeline-sales', 'generation-new', 'sha256:new', '2026-08-20T06:00:00Z', 'run-attached', '2026-08-20T06:00:02Z')`); err != nil {
+		legacy.Close()
+		t.Fatalf("insert duplicate logical occurrences: %v", err)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 90); err != nil {
+		legacy.Close()
+		t.Fatalf("apply occurrence identity migration: %v", err)
+	}
+	for table, want := range map[string]int{"refresh_jobs": 0, "refresh_job_runs": 0, "refresh_pipeline_occurrences": 0, "refresh_pipeline_schedules": 0} {
+		var count int
+		if err := legacy.QueryRowContext(ctx, `SELECT COUNT(*) FROM `+table).Scan(&count); err != nil {
+			legacy.Close()
+			t.Fatal(err)
+		}
+		if count != want {
+			legacy.Close()
+			t.Fatalf("%s rows after refresh contract migration = %d, want %d", table, count, want)
+		}
+	}
+	if err := legacy.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store) {
 	t.Helper()
 	var latest int64
@@ -143,6 +211,11 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 		{table: "delivery_build_attempts", column: "idempotency_key"},
 		{table: "delivery_plans", column: "actor_id"},
 		{table: "delivery_plans", column: "source_owner_id"},
+		{table: "delivery_publications", column: "refresh_run_id"},
+		{table: "delivery_publications", column: "refresh_lease_owner"},
+		{table: "delivery_publications", column: "refresh_lease_revision"},
+		{table: "delivery_publications", column: "refresh_target_revision"},
+		{table: "refresh_job_runs", column: "invocation_source"},
 	} {
 		var count int
 		if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM pragma_table_info(?) WHERE name = ?`, field.table, field.column).Scan(&count); err != nil {

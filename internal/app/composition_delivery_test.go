@@ -140,6 +140,30 @@ func TestDeliveryMaterializationDeltaAddsPipelineScopeWithoutGraphImpact(t *test
 	}
 }
 
+func TestDeliveryMaterializationDeltaUsesSemanticDatasetAlias(t *testing.T) {
+	base := materializationDeltaFixture(t)
+	manifest := base.Manifest()
+	model := manifest.SemanticModels["semantic:sales"]
+	delete(model.Tables, "customers")
+	model.Tables["customer_accounts"] = semanticmodel.Table{
+		ModelName: "customers",
+		Execution: semanticmodel.ExecutionDefinition{Source: "customers"},
+	}
+	artifact, err := projectartifact.NewProject(base.Graph(), manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{Artifact: artifact, Graph: artifact.Graph(), Plan: projectcompiler.ProjectPlan{Project: "delta"}}}
+	plan := deployment.DeliveryPlan{PipelinePlan: &deployment.PipelinePlan{MaterializationScope: []string{"customers"}}}
+	changed, removed, refreshAll := deliveryMaterializationDelta(artifacts, plan)
+	if refreshAll || len(removed) != 0 {
+		t.Fatalf("pipeline scope widened unexpectedly: changed=%#v removed=%#v refreshAll=%v", changed, removed, refreshAll)
+	}
+	if got := changed["semantic:sales"]; len(got) != 1 || got[0] != "customer_accounts" {
+		t.Fatalf("pipeline scope = %#v, want semantic:sales/customer_accounts", changed)
+	}
+}
+
 func materializationDeltaFixture(t *testing.T) projectartifact.Project {
 	t.Helper()
 	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{

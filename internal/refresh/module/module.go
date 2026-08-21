@@ -197,7 +197,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		m.scheduler = refreshschedule.Scheduler{
 			Repository: m.schedules, Clock: config.Clock, ResolveIdentity: config.ResolveIdentity,
-			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) (string, error) {
+			Trigger: func(ctx context.Context, occurrence refreshschedule.Occurrence) error {
 				result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 					Identity: occurrence.Identity, PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
 					PipelineID: occurrence.PipelineID, TriggerType: refreshrun.TriggerSchedule,
@@ -205,11 +205,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 				})
 				if err == nil {
 					if result.Run.Status == refreshrun.RunStatusSkipped {
-						return result.Run.ID, refreshschedule.ErrOccurrenceSkipped
+						return refreshschedule.ErrOccurrenceSkipped
 					}
 					m.Dispatch(ctx)
 				}
-				return result.Run.ID, err
+				return err
 			},
 		}
 	}

@@ -20,6 +20,31 @@ import (
 	"github.com/flidai/leapview/internal/release"
 )
 
+func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
+	graphValue, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project:delivery", Kind: projectgraph.KindProject, Name: "delivery"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders_model"},
+		{ID: "model:customer_orders", Kind: projectgraph.KindModel, Name: "customer_orders"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resolved, err := pipelineScopeRelationIDs(
+		[]string{"orders_model"},
+		graphValue,
+		map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customer_orders": deliveryPlanDigest('2')},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resolved["model:orders"]; got != "orders_model" || len(resolved) != 1 {
+		t.Fatalf("resolved scope = %#v, want exact model:orders identity", resolved)
+	}
+	if _, err := pipelineScopeRelationIDs([]string{"orders"}, graphValue, map[string]string{"model:customer_orders": deliveryPlanDigest('2')}); err == nil {
+		t.Fatal("suffix-only model name unexpectedly resolved")
+	}
+}
+
 func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_delivery")
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_1")

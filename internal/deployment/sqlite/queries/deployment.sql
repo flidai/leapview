@@ -520,15 +520,17 @@ VALUES (?,?,?,?,?,?,?,?,?,?,?, ?,?,?,?,?,'prepared',?,?,NULL,?);
 -- name: CreateDeliveryPublication :exec
 INSERT INTO delivery_publications
  (id,request_digest,target_id,project_id,environment,plan_id,plan_digest,candidate_id,generation_id,
-  expected_base_generation_id,expected_target_revision,result_target_revision,status,reason,created_at,completed_at)
-VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,0,'pending','',?,NULL);
+  expected_base_generation_id,expected_target_revision,refresh_run_id,refresh_lease_owner,
+  refresh_lease_revision,refresh_target_revision,result_target_revision,status,reason,created_at,completed_at)
+VALUES (?,?,?,?,?,?,?,?,?,NULLIF(?,''),?,?,?,?,?,0,'pending','',?,NULL);
 
 -- name: GetDeliveryPublicationIDByTargetDigest :one
 SELECT id FROM delivery_publications WHERE target_id=? AND request_digest=?;
 
 -- name: GetDeliveryPublication :one
 SELECT id,request_digest,target_id,project_id,environment,plan_id,plan_digest,candidate_id,generation_id,
-       expected_base_generation_id,expected_target_revision,result_target_revision,status,reason,created_at,completed_at
+       expected_base_generation_id,expected_target_revision,refresh_run_id,refresh_lease_owner,
+       refresh_lease_revision,refresh_target_revision,result_target_revision,status,reason,created_at,completed_at
 FROM delivery_publications WHERE id=?;
 
 -- name: GetDeliveryGeneration :one
@@ -753,6 +755,23 @@ SELECT count(*) FROM delivery_pool_fences WHERE physical_pool_id=? AND gc_lease_
 
 -- name: IsCurrentDeliveryWriterFence :one
 SELECT count(*) FROM delivery_writer_leases WHERE physical_pool_id=? AND id=? AND attempt_id=? AND owner_id=? AND epoch=? AND status='active' AND julianday(expires_at)>julianday(?);
+
+-- name: IsActiveRefreshPublicationFence :one
+SELECT EXISTS(
+  SELECT 1
+  FROM refresh_job_runs run
+  JOIN refresh_jobs job ON job.id = run.job_id
+  WHERE run.id = sqlc.arg(run_id)
+    AND job.project_id = sqlc.arg(project_id)
+    AND run.environment = sqlc.arg(environment)
+    AND run.target_revision = sqlc.arg(target_revision)
+    AND run.status = 'prepared'
+    AND job.status = 'running'
+    AND job.lease_owner = sqlc.arg(lease_owner)
+    AND job.lease_revision = sqlc.arg(lease_revision)
+    AND job.lease_expires_at IS NOT NULL
+    AND job.lease_expires_at > CURRENT_TIMESTAMP
+);
 
 -- name: GetDeliveryWriterFence :one
 SELECT id,attempt_id,physical_pool_id,owner_id,epoch,created_at,expires_at FROM delivery_writer_leases WHERE id=?;

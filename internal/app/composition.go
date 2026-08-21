@@ -260,23 +260,22 @@ func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, delive
 				if model == nil {
 					continue
 				}
-				if _, ok := model.Tables[selected]; !ok {
-					foundAlias := false
-					for _, table := range model.Tables {
-						if table.ModelName == selected {
-							foundAlias = true
-							break
-						}
+				aliases := make([]string, 0, 1)
+				for alias, table := range model.Tables {
+					if alias == selected || table.ModelName == selected {
+						aliases = append(aliases, alias)
 					}
-					if !foundAlias {
-						continue
-					}
+				}
+				if len(aliases) == 0 {
+					continue
 				}
 				matched = true
 				if changedByModel[modelID] == nil {
 					changedByModel[modelID] = make(map[string]struct{})
 				}
-				changedByModel[modelID][selected] = struct{}{}
+				for _, alias := range aliases {
+					changedByModel[modelID][alias] = struct{}{}
+				}
 			}
 			if !matched {
 				refreshAll = true
@@ -1326,7 +1325,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
 		}
-		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
+		publishCanonicalCandidate := func(publishCtx context.Context, project, candidate, actor string, refreshFence *deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
 			if candidateErr != nil {
 				return deployment.DeliveryPublication{}, candidateErr
@@ -1337,6 +1336,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, instanceID)
 			if err != nil {
 				return deployment.DeliveryPublication{}, err
+			}
+			if refreshFence != nil {
+				if err := refreshFence.Validate(); err != nil {
+					return deployment.DeliveryPublication{}, err
+				}
+				request.Publication.RefreshRunID = refreshFence.RunID
+				request.Publication.RefreshLeaseOwner = refreshFence.LeaseOwner
+				request.Publication.RefreshLeaseRevision = refreshFence.LeaseRevision
+				request.Publication.RefreshTargetRevision = refreshFence.TargetRevision
 			}
 			request.ActorID = actor
 			if _, err := sealedCoordinator.PublishWithActivation(publishCtx, request, func(activationCtx context.Context, commit func() error) error {
@@ -1364,6 +1372,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Generation.ServingStateID)
 			}
 			return sealedDelivery.DeliveryPublicationByID(publishCtx, request.Publication.ID)
+		}
+		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
+			return publishCanonicalCandidate(publishCtx, project, candidate, actor, nil)
 		}, Rollback: func(rollbackCtx context.Context, project, generation, actor, key string) (deployment.DeliveryPublication, error) {
 			generationRecord, generationErr := sealedDelivery.DeliveryGenerationByID(rollbackCtx, generation)
 			if generationErr != nil {
@@ -1445,7 +1456,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			BuildRequest: canonicalDelivery.BuildRequest,
 			Adapter:      canonicalDelivery,
 			Publish:      canonicalDelivery.Publish,
-			Rollback:     canonicalDelivery.Rollback,
+			PublishFenced: func(publishCtx context.Context, project, candidate, actor, _ string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
+				return publishCanonicalCandidate(publishCtx, project, candidate, actor, &fence)
+			},
+			Rollback: canonicalDelivery.Rollback,
 		}
 	}
 	deploymentConfig := deploymentmodule.Config{

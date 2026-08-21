@@ -38,10 +38,11 @@ type CanonicalDeliveryMutations struct {
 	// PlanPreview is the non-persisting form used when Build rechecks durable
 	// compiler evidence. Keeping it separate prevents a retry from attempting
 	// a second CreatePlan write with a new time-based governance digest.
-	PlanPreview  func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryPlan, error)
-	BuildRequest func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error)
-	Publish      func(context.Context, string, string, string, string) (deployment.DeliveryPublication, error)
-	Rollback     func(context.Context, string, string, string, string) (deployment.DeliveryPublication, error)
+	PlanPreview   func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryPlan, error)
+	BuildRequest  func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryBuildRequest, error)
+	Publish       func(context.Context, string, string, string, string) (deployment.DeliveryPublication, error)
+	PublishFenced func(context.Context, string, string, string, string, deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error)
+	Rollback      func(context.Context, string, string, string, string) (deployment.DeliveryPublication, error)
 }
 
 type candidateArtifactInspector interface {
@@ -288,6 +289,16 @@ func (m *CanonicalDeliveryMutations) PublishCandidate(ctx context.Context, proje
 		return deployment.DeliveryPublication{}, fmt.Errorf("canonical delivery publication coordinator is unavailable")
 	}
 	return m.Publish(ctx, projectID, candidateID, principalID, idempotencyKey)
+}
+
+func (m *CanonicalDeliveryMutations) PublishCandidateFenced(ctx context.Context, projectID, candidateID, principalID, idempotencyKey string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
+	if m == nil || m.PublishFenced == nil {
+		return deployment.DeliveryPublication{}, fmt.Errorf("canonical refresh publication coordinator is unavailable")
+	}
+	if err := fence.Validate(); err != nil {
+		return deployment.DeliveryPublication{}, err
+	}
+	return m.PublishFenced(ctx, projectID, candidateID, principalID, idempotencyKey, fence)
 }
 
 func (m *CanonicalDeliveryMutations) RollbackGeneration(ctx context.Context, projectID, generationID, principalID, idempotencyKey string) (deployment.DeliveryPublication, error) {
