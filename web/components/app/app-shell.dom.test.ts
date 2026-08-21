@@ -276,6 +276,7 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
           return button ? { label: button.getAttribute('aria-label'), disabled: button.disabled } : null
         })(),
         collapsedAttribute: sidebar.hasAttribute('data-collapsed'),
+        brandGap: getComputedStyle(root.querySelector('.brand') as HTMLElement).gap,
         visibleAreaSwitcherCount: Array.from(root.querySelectorAll('.area-switcher')).filter((item) => {
           const rect = item.getBoundingClientRect()
           const style = getComputedStyle(item)
@@ -310,6 +311,7 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
       markCount: 0,
       collapseControl: { label: 'Expand navigation', disabled: false },
       collapsedAttribute: true,
+      brandGap: '4px',
       visibleAreaSwitcherCount: 0,
       collapsedAreaSwitch: {
         visible: true,
@@ -339,6 +341,43 @@ test('compact app shell keeps the primary sidebar collapsible', async () => {
     })
     expect(expanded).toEqual({ width: expect.any(Number), name: 'LeapView', label: 'Collapse navigation', collapsedAttribute: false })
     expect(expanded.width).toBeGreaterThan(48)
+  } finally {
+    await page.close()
+  }
+})
+
+test('sidebar keeps navigation aligned in expanded and collapsed layouts', async () => {
+  const page = await browser.newPage({ viewport: { width: 861, height: 828 } })
+  try {
+    await page.goto(`${baseURL}/sidebar-history`)
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'false'))
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+
+    const expanded = await sidebarAlignment(page)
+    expect(expanded.collapsed).toBe(false)
+    expect(expanded.rowCenters.length).toBeGreaterThan(1)
+    expect(expanded.rowCenters.every((center) => Math.abs(center - expanded.railCenter) <= 1)).toBe(true)
+    expect(expanded.navIconCenters.every((center) => Math.abs(center - expanded.modeCenter) <= 1)).toBe(true)
+    expect(Math.abs(expanded.avatarCenter - expanded.modeCenter)).toBeLessThanOrEqual(1)
+    expect(expanded.navTextLefts.every((left) => Math.abs(left - expanded.footerTextLeft) <= 1)).toBe(true)
+
+    await page.evaluate(() => localStorage.setItem('leapview-sidebar-collapsed', 'true'))
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    await page.waitForFunction(() => {
+      const shell = document.querySelector('lv-app-shell') as HTMLElement | null
+      const sidebar = shell?.shadowRoot?.querySelector('lv-sidebar') as HTMLElement | null
+      return sidebar?.hasAttribute('data-collapsed') && sidebar.getBoundingClientRect().width <= 50
+    })
+
+    const collapsed = await sidebarAlignment(page)
+    expect(collapsed.collapsed).toBe(true)
+    expect(collapsed.rowCenters.every((center) => Math.abs(center - collapsed.railCenter) <= 1)).toBe(true)
+    expect(collapsed.navIconCenters.every((center) => Math.abs(center - collapsed.modeCenter) <= 1)).toBe(true)
+    expect(collapsed.rowCenters.every((center) => Math.abs(center - collapsed.modeCenter) <= 1)).toBe(true)
+    expect(Math.abs(collapsed.collapseCenter - collapsed.modeCenter)).toBeLessThanOrEqual(1)
+    expect(Math.abs(collapsed.avatarCenter - collapsed.modeCenter)).toBeLessThanOrEqual(1)
   } finally {
     await page.close()
   }
@@ -779,6 +818,9 @@ test('sidebar switches between Insights and Develop and remembers the last area 
     expect(developState.settings).toEqual({ href: '/admin/profile', label: 'Open settings for Current User' })
     expect(developState.visibleAreaSwitcherCount).toBe(1)
     expect(developState.currentAreaClickPrevented).toBe(true)
+    expect(developState.navigationItemStyle).toEqual({ gap: '4px', paddingInlineStart: '12px' })
+    expect(developState.areaItemStyle).toEqual({ firstColumn: '26px', paddingInlineStart: '6px' })
+    expect(developState.brandStyle).toEqual({ gap: '12px', paddingBottom: '8px' })
     expect(developState.switcherStyle.display).toBe('grid')
     expect(developState.switcherStyle.borderTopWidth).toBe('1px')
     expect(developState.switcherStyle.backgroundColor).not.toBe('rgba(0, 0, 0, 0)')
@@ -1281,6 +1323,18 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
         current.dispatchEvent(event)
         return event.defaultPrevented
       })(),
+      navigationItemStyle: (() => {
+        const style = getComputedStyle(root.querySelector('#mobile-navigation .nav-item') as HTMLElement)
+        return { gap: style.gap, paddingInlineStart: style.paddingInlineStart }
+      })(),
+      areaItemStyle: (() => {
+        const style = getComputedStyle(root.querySelector('.brand .area-item') as HTMLElement)
+        return { firstColumn: style.gridTemplateColumns.split(' ')[0], paddingInlineStart: style.paddingInlineStart }
+      })(),
+      brandStyle: (() => {
+        const style = getComputedStyle(root.querySelector('.brand') as HTMLElement)
+        return { gap: style.gap, paddingBottom: style.paddingBottom }
+      })(),
       switcherStyle: (() => {
         const style = getComputedStyle(root.querySelector('.brand .area-switcher') as HTMLElement)
         return { display: style.display, borderTopWidth: style.borderTopWidth, backgroundColor: style.backgroundColor }
@@ -1290,6 +1344,32 @@ async function sidebarAreaState(page: import('@playwright/test').Page) {
         return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow }
       })(),
       areaIconDisplay: getComputedStyle(root.querySelector('.brand .area-icon') as HTMLElement).display,
+    }
+  })
+}
+
+async function sidebarAlignment(page: import('@playwright/test').Page) {
+  return page.locator('lv-app-shell').evaluate((element: any) => {
+    const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+    const root = sidebar.shadowRoot!
+    const center = (target: Element | null): number => {
+      const box = (target as HTMLElement).getBoundingClientRect()
+      return box.left + box.width / 2
+    }
+    const left = (target: Element | null): number => (target as HTMLElement).getBoundingClientRect().left
+    const rows = Array.from(root.querySelectorAll('#mobile-navigation .nav-group .nav-item:not(.history-item)'))
+      .filter((row) => (row as HTMLElement).getClientRects().length > 0)
+    const collapsed = sidebar.hasAttribute('data-collapsed')
+    return {
+      collapsed,
+      railCenter: center(sidebar),
+      rowCenters: rows.map(center),
+      navIconCenters: rows.map((row) => center(row.querySelector('.nav-icon'))),
+      navTextLefts: rows.map((row) => left(row.querySelector('.nav-text'))),
+      modeCenter: center(root.querySelector(collapsed ? '.collapsed-area-switch' : '.brand .area-item .area-icon')),
+      collapseCenter: center(root.querySelector('.collapse-button')),
+      avatarCenter: center(root.querySelector('.footer lv-user-avatar')),
+      footerTextLeft: left(root.querySelector('.footer .user-text')),
     }
   })
 }

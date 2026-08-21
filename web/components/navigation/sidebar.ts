@@ -293,9 +293,12 @@ class LeapViewSidebar extends LitElement {
 
     .brand {
       position: relative;
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       gap: var(--base-size-12);
-      padding: var(--base-size-12);
+      padding: var(--base-size-12) var(--base-size-12) var(--base-size-8);
     }
 
     .brand-row {
@@ -319,7 +322,7 @@ class LeapViewSidebar extends LitElement {
       display: grid;
       min-width: 0;
       min-height: var(--control-small-size);
-      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
+      grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr);
       align-items: center;
       justify-content: center;
       gap: var(--base-size-4);
@@ -361,6 +364,7 @@ class LeapViewSidebar extends LitElement {
 
     .collapsed-area-switch {
       position: relative;
+      box-sizing: border-box;
       display: grid;
       width: var(--base-size-36);
       min-height: var(--base-size-36);
@@ -567,7 +571,10 @@ class LeapViewSidebar extends LitElement {
     }
 
     nav {
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       align-content: start;
       gap: var(--base-size-8);
       min-height: 0;
@@ -577,7 +584,7 @@ class LeapViewSidebar extends LitElement {
       padding: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
       scrollbar-color: var(--lv-scrollbar-thumb) transparent;
-      scrollbar-gutter: stable;
+      scrollbar-gutter: auto;
       scrollbar-width: thin;
     }
 
@@ -667,7 +674,7 @@ class LeapViewSidebar extends LitElement {
         0
         var(--control-xsmall-paddingInline-normal)
         0
-        calc(var(--control-xsmall-paddingInline-normal) + var(--lv-border-width));
+        calc(var(--base-size-12) + var(--lv-border-width));
       color: var(--fgColor-disabled);
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -694,7 +701,7 @@ class LeapViewSidebar extends LitElement {
     }
 
     .history-empty {
-      padding: var(--base-size-4) var(--control-xsmall-paddingInline-normal);
+      padding: var(--base-size-4) var(--base-size-12);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
     }
@@ -722,6 +729,11 @@ class LeapViewSidebar extends LitElement {
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-decoration: none;
       font: var(--lv-type-body);
+    }
+
+    nav .nav-item {
+      gap: var(--base-size-4);
+      padding-inline: var(--base-size-12);
     }
 
     .nav-text {
@@ -780,7 +792,10 @@ class LeapViewSidebar extends LitElement {
     }
 
     .footer {
+      box-sizing: border-box;
       display: grid;
+      width: 100%;
+      min-width: 0;
       grid-template-columns: minmax(0, 1fr);
       gap: var(--base-size-6);
       align-items: center;
@@ -790,14 +805,16 @@ class LeapViewSidebar extends LitElement {
     }
 
     .user-card {
+      box-sizing: border-box;
       display: grid;
+      min-width: 0;
       grid-template-columns: var(--control-small-size) minmax(0, 1fr) var(--control-xsmall-size);
       min-height: calc(var(--control-medium-size) + var(--base-size-2));
       align-items: center;
-      gap: var(--base-size-8);
+      gap: var(--base-size-4);
       border-radius: var(--lv-radius-default);
       color: var(--lv-fg-default);
-      padding: 0 var(--control-xsmall-paddingInline-normal);
+      padding: 0 var(--base-size-12);
       text-decoration: none;
     }
 
@@ -841,8 +858,8 @@ class LeapViewSidebar extends LitElement {
 
     :host([data-collapsed]) .brand {
       justify-items: center;
-      gap: 0;
-      padding: var(--base-size-8) var(--base-size-6);
+      gap: var(--base-size-4);
+      padding: var(--base-size-8) var(--base-size-4);
     }
 
     :host([data-collapsed]) .brand-row {
