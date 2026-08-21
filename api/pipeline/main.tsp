@@ -17,10 +17,9 @@ scalar PipelineResourceID extends string;
 @pattern("^[A-Za-z_][A-Za-z0-9_.-]*$")
 scalar PipelineResourceName extends string;
 
+/** Evidence-only schedule key. Its spelling has no scheduling semantics. */
 @minLength(1)
-@maxLength(128)
-@pattern("^[A-Za-z_][A-Za-z0-9_-]*$")
-scalar PipelineIdentifier extends string;
+scalar PipelineScheduleID extends string;
 
 /** A five-field Argo-compatible cron expression supplied by an author. */
 @minLength(1)
@@ -55,7 +54,7 @@ model PipelineMetadata {
 }
 
 model PipelineSelection {
-  semanticModel: PipelineResourceID;
+  semanticModel: PipelineResourceName;
 }
 
 /** Manual-only form: schedule policy is not meaningful without schedules. */
@@ -68,7 +67,7 @@ model ScheduledPipelineSpec {
   selection: PipelineSelection;
   /** Named schedule IDs are evidence-only keys; values are cron expressions. */
   @apigen.minProperties(1)
-  @apigen.propertyNames(PipelineIdentifier)
+  @apigen.propertyNames(PipelineScheduleID)
   schedules: Record<PipelineCronExpression>;
   /** Required when schedules is non-empty; omitted for manual-only Pipelines. */
   timezone: PipelineTimezone;

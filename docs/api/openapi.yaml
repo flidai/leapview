@@ -49083,7 +49083,6 @@ paths:
                     planDigest: example
                     principalDisplayName: example
                     principalId: example
-                    retryOf: example
                     semanticModel: example
                     startedAt: "2026-01-02T15:04:05Z"
                     status: example
@@ -49378,7 +49377,6 @@ paths:
                 planDigest: example
                 principalDisplayName: example
                 principalId: example
-                retryOf: example
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
@@ -49626,7 +49624,6 @@ paths:
               $ref: '#/components/schemas/RefreshRunCreateRequest'
             example:
               pipelineId: example
-              retryOf: example
       x-apigen-operation-kind: command
       x-apigen-command:
         additional_exposures:
@@ -49644,8 +49641,6 @@ paths:
               - name: pipelineId
                 sensitivity: internal
               - name: planDigest
-                sensitivity: internal
-              - name: retryOf
                 sensitivity: internal
               - name: semanticModel
                 sensitivity: internal
@@ -49738,7 +49733,6 @@ paths:
                 planDigest: example
                 principalDisplayName: example
                 principalId: example
-                retryOf: example
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
@@ -50038,7 +50032,6 @@ paths:
                 planDigest: example
                 principalDisplayName: example
                 principalId: example
-                retryOf: example
                 semanticModel: example
                 startedAt: "2026-01-02T15:04:05Z"
                 status: example
@@ -80490,7 +80483,6 @@ components:
         - invocationSource
         - matchingScheduleIds
         - planDigest
-        - retryOf
         - status
       properties:
         id:
@@ -80520,9 +80512,6 @@ components:
         planDigest:
           type: string
           example: example
-        retryOf:
-          type: string
-          example: example
         status:
           type: string
           example: example
@@ -80533,7 +80522,6 @@ components:
           - example
         pipelineId: example
         planDigest: example
-        retryOf: example
         semanticModel: example
         status: example
     RefreshRunCreateRequest:
@@ -80547,12 +80535,8 @@ components:
           maxLength: 200
           pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
           example: example
-        retryOf:
-          type: string
-          example: example
       example:
         pipelineId: example
-        retryOf: example
     RefreshRunListResponse:
       type: object
       required:
@@ -80582,7 +80566,6 @@ components:
               planDigest: example
               principalDisplayName: example
               principalId: example
-              retryOf: example
               semanticModel: example
               startedAt: "2026-01-02T15:04:05Z"
               status: example
@@ -80608,7 +80591,6 @@ components:
             planDigest: example
             principalDisplayName: example
             principalId: example
-            retryOf: example
             semanticModel: example
             startedAt: "2026-01-02T15:04:05Z"
             status: example
@@ -80672,9 +80654,6 @@ components:
             type: string
           example:
             - example
-        retryOf:
-          type: string
-          example: example
         status:
           type: string
           example: example
@@ -80712,7 +80691,6 @@ components:
         planDigest: example
         principalDisplayName: example
         principalId: example
-        retryOf: example
         semanticModel: example
         startedAt: "2026-01-02T15:04:05Z"
         status: example

@@ -175,7 +175,7 @@ func (p Plan) ValidateWithoutDigest() error {
 	}
 	if p.InvocationSource != "" {
 		switch p.InvocationSource {
-		case "manual", "schedule", "retry", "backfill", "external":
+		case "manual", "schedule", "backfill", "external":
 		default:
 			return fmt.Errorf("%w: unsupported invocation source %q", ErrInvalid, p.InvocationSource)
 		}
@@ -197,7 +197,7 @@ func (p Plan) ValidateWithoutDigest() error {
 		return fmt.Errorf("%w: schedule policy belongs to scheduled invocations", ErrInvalid)
 	}
 	for _, scheduleID := range p.MatchingScheduleIDs {
-		if err := validateID(scheduleID); err != nil {
+		if err := validateEvidenceLabel(scheduleID); err != nil {
 			return fmt.Errorf("matching schedule id: %w", err)
 		}
 	}
@@ -293,6 +293,16 @@ func digestJSON(value any) (string, error) {
 func validateID(value string) error {
 	if !idPattern.MatchString(value) {
 		return fmt.Errorf("%w: id must be 1-128 canonical identifier characters", ErrInvalid)
+	}
+	return nil
+}
+
+// Schedule IDs are opaque evidence labels from authored map keys. They do not
+// inherit resource-ID grammar or length limits because their spelling has no
+// execution semantics.
+func validateEvidenceLabel(value string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return fmt.Errorf("%w: evidence label must be non-empty and canonical", ErrInvalid)
 	}
 	return nil
 }

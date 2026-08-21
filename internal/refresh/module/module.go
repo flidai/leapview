@@ -218,18 +218,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
 	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
-	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf string) (refreshrun.RunRecord, error) {
-		trigger := refreshrun.TriggerManual
-		if retryOf != "" {
-			trigger = refreshrun.TriggerRetry
-		}
+	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID string) (refreshrun.RunRecord, error) {
 		pipelineIDValue, parseErr := projectgraph.NewResourceID(pipelineID)
 		if parseErr != nil {
 			return refreshrun.RunRecord{}, parseErr
 		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
-			PipelineID: pipelineIDValue, TriggerType: trigger, InvocationSource: trigger, RetryOf: retryOf,
+			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
 		})
 		if err != nil {
 			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",
@@ -383,7 +379,7 @@ func assetRefreshRun(run refreshrun.RunRecord) AssetRefreshRun {
 		ID: run.ID, Environment: run.Identity.Environment, ModelID: run.SemanticModelID.String(),
 		ServingStateID: run.Identity.GenerationID, PrincipalID: run.PrincipalID,
 		PrincipalDisplayName: run.PrincipalDisplayName, TriggerType: run.TriggerType,
-		ParentRunID: run.ParentRunID, RetryOf: run.RetryOf, TargetGeneration: run.TargetRevision,
+		ParentRunID: run.ParentRunID, TargetGeneration: run.TargetRevision,
 		Status: run.Status, CreatedAt: run.CreatedAt, UpdatedAt: run.UpdatedAt,
 		StartedAt: run.StartedAt, FinishedAt: run.FinishedAt, Error: run.Error,
 	}

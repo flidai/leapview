@@ -30,11 +30,7 @@ const normalScheduleTickWindow = time.Minute
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, q: platformdb.New(db)} }
 
 type persistedSchedule struct {
-	triggerID      string
-	artifactDigest string
-	cron           string
-	timezone       string
-	nextRunAt      time.Time
+	nextRunAt time.Time
 }
 
 func (repository *Repository) Reconcile(ctx context.Context, input refreshschedule.ReconcileInput) error {
@@ -88,18 +84,17 @@ func (repository *Repository) Reconcile(ctx context.Context, input refreshschedu
 				return fmt.Errorf("refresh pipeline %q has duplicate trigger id %q", pipeline.ID, triggerID)
 			}
 			seenTriggers[triggerID] = struct{}{}
-			key := scheduleKey(pipeline.ID.String(), triggerID)
+			key := scheduleCursorKey(pipeline.ID.String(), schedule.Expression, pipeline.Timezone)
 			parsed, err := refreshschedule.ParseSchedule(schedule.Expression, pipeline.Timezone)
 			if err != nil {
 				return err
 			}
 			parsed.ID = schedule.ID
 			next := parsed.Next(input.Now)
-			if prior, ok := existing[key]; ok && prior.artifactDigest == input.ArtifactDigest &&
-				prior.cron == schedule.Expression && prior.timezone == pipeline.Timezone {
+			if prior, ok := existing[key]; ok {
 				// Reconcile is the Argo controller's startup/recovery boundary.
-				// Apply the deadline only to an unchanged persisted cursor; a new
-				// or changed schedule always starts strictly after deployment time.
+				// Cursor identity follows cron semantics, not evidence-only schedule
+				// keys, serving generation, or the surrounding artifact digest.
 				next = prior.nextRunAt
 				if next.Before(input.Now) {
 					if pipeline.StartingDeadlineSeconds > 0 {
@@ -159,7 +154,7 @@ func withinStartingDeadline(now, scheduledAt time.Time, seconds int64) bool {
 }
 
 func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, identity projectgraph.ServingIdentity) (map[string]persistedSchedule, error) {
-	rows, err := queries.ListRefreshPipelineSchedules(ctx, platformdb.ListRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID})
+	rows, err := queries.ListRefreshPipelineSchedules(ctx, platformdb.ListRefreshPipelineSchedulesParams{ProjectID: identity.ProjectID.String(), Environment: identity.Environment})
 	if err != nil {
 		return nil, err
 	}
@@ -169,9 +164,13 @@ func loadPersistedSchedules(ctx context.Context, queries *platformdb.Queries, id
 		if err != nil {
 			return nil, err
 		}
-		out[scheduleKey(row.PipelineID, row.TriggerID)] = persistedSchedule{
-			triggerID: row.TriggerID, artifactDigest: row.ArtifactDigest, cron: row.Cron,
-			timezone: row.Timezone, nextRunAt: next,
+		key := scheduleCursorKey(row.PipelineID, row.Cron, row.Timezone)
+		// Multiple generation rows and duplicate authored expressions represent
+		// one Argo-equivalent cursor. The furthest durable cursor has already
+		// accounted for every earlier nominal instant and prevents replays when a
+		// generation activates or an evidence key is renamed.
+		if prior, ok := out[key]; !ok || next.After(prior.nextRunAt) {
+			out[key] = persistedSchedule{nextRunAt: next}
 		}
 	}
 	return out, nil
@@ -251,12 +250,17 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 		}
 		scheduledAt := item.nextRunAt
 		retry := false
+		matchingScheduleIDs := []string{item.triggerID}
 		stored, lookupErr := queries.GetRefreshPipelineOccurrence(ctx, platformdb.GetRefreshPipelineOccurrenceParams{
 			ProjectID: item.identity.ProjectID.String(), Environment: item.identity.Environment,
 			PipelineID: item.pipelineID.String(), ScheduledAt: formatTime(scheduledAt),
 		})
 		if lookupErr == nil && stored.Status == "pending" {
 			retry = true
+			matchingScheduleIDs, err = decodeOccurrenceScheduleIDs(stored.MatchingScheduleIdsJson)
+			if err != nil {
+				return nil, err
+			}
 		} else if lookupErr != nil && !errors.Is(lookupErr, sql.ErrNoRows) {
 			return nil, lookupErr
 		}
@@ -280,17 +284,20 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 		}
 		key := item.identity.ProjectID.String() + "\x00" + item.identity.Environment + "\x00" + item.pipelineID.String()
 		current := grouped[key]
-		if current.occurrence.ScheduledAt.IsZero() || scheduledAt.After(current.occurrence.ScheduledAt) {
+		replace := current.occurrence.ScheduledAt.IsZero() ||
+			(retry && !current.retry) ||
+			(retry == current.retry && scheduledAt.After(current.occurrence.ScheduledAt))
+		if replace {
 			current.occurrence = refreshschedule.Occurrence{
 				Identity:   item.identity,
-				PipelineID: item.pipelineID, MatchingScheduleIDs: []string{item.triggerID}, SemanticModelID: item.semanticModelID,
+				PipelineID: item.pipelineID, MatchingScheduleIDs: append([]string(nil), matchingScheduleIDs...), SemanticModelID: item.semanticModelID,
 				ArtifactDigest: item.artifactDigest, Timezone: item.timezone, ScheduledAt: scheduledAt,
 			}
 			current.deadline = item.startingDeadlineSeconds
 			current.retry = retry
 			grouped[key] = current
-		} else if scheduledAt.Equal(current.occurrence.ScheduledAt) {
-			current.occurrence.MatchingScheduleIDs = append(current.occurrence.MatchingScheduleIDs, item.triggerID)
+		} else if retry == current.retry && scheduledAt.Equal(current.occurrence.ScheduledAt) {
+			current.occurrence.MatchingScheduleIDs = append(current.occurrence.MatchingScheduleIDs, matchingScheduleIDs...)
 			if item.startingDeadlineSeconds < current.deadline {
 				current.deadline = item.startingDeadlineSeconds
 			}
@@ -303,7 +310,7 @@ func (repository *Repository) ClaimDue(ctx context.Context, identity projectgrap
 		if !item.retry && !withinStartingDeadline(now, item.occurrence.ScheduledAt, item.deadline) {
 			continue
 		}
-		sort.Strings(item.occurrence.MatchingScheduleIDs)
+		item.occurrence.MatchingScheduleIDs = sortedUnique(item.occurrence.MatchingScheduleIDs)
 		out = append(out, item.occurrence)
 	}
 	// Dispatch order is part of the contract: nominal UTC time first, then
@@ -412,13 +419,28 @@ func (repository *Repository) ReleaseOccurrence(ctx context.Context, occurrence 
 	if affected != 1 {
 		return fmt.Errorf("refresh pipeline occurrence no longer exists in serving generation")
 	}
-	if err := queries.RetryRefreshPipelineSchedules(ctx, platformdb.RetryRefreshPipelineSchedulesParams{
-		RetryAt: formatTime(occurrence.ScheduledAt), ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
-		PipelineID: occurrence.PipelineID.String(),
-	}); err != nil {
-		return err
+	for _, triggerID := range occurrence.MatchingScheduleIDs {
+		if err := queries.RetryRefreshPipelineSchedule(ctx, platformdb.RetryRefreshPipelineScheduleParams{
+			RetryAt: formatTime(occurrence.ScheduledAt), ProjectID: occurrence.Identity.ProjectID.String(), Environment: occurrence.Identity.Environment,
+			PipelineID: occurrence.PipelineID.String(), TriggerID: triggerID,
+		}); err != nil {
+			return err
+		}
 	}
 	return tx.Commit()
+}
+
+func sortedUnique(values []string) []string {
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		seen[value] = struct{}{}
+	}
+	result := make([]string, 0, len(seen))
+	for value := range seen {
+		result = append(result, value)
+	}
+	sort.Strings(result)
+	return result
 }
 
 func verifyStoredOccurrenceTx(ctx context.Context, queries *platformdb.Queries, occurrence refreshschedule.Occurrence) error {
@@ -553,8 +575,8 @@ func validateOccurrence(occurrence refreshschedule.Occurrence) error {
 	return nil
 }
 
-func scheduleKey(pipelineID, triggerID string) string {
-	return pipelineID + "\x00" + triggerID
+func scheduleCursorKey(pipelineID, expression, timezone string) string {
+	return pipelineID + "\x00" + expression + "\x00" + timezone
 }
 
 func encodeScheduleIDs(ids []string) (string, error) {

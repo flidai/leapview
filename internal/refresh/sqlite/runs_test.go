@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -188,6 +189,49 @@ INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@exam
 	}
 	if claimed.TriggerType != refreshrun.TriggerManual || claimed.InvocationSource != "backfill" {
 		t.Fatalf("claimed invocation trigger/source = %q/%q", claimed.TriggerType, claimed.InvocationSource)
+	}
+}
+
+func TestMarkRunTreeSupersededClaimedTerminatesAttachedOccurrence(t *testing.T) {
+	store, repo, job := seedRefreshJob(t, refreshrun.RunStatusPrepared, "+5 minutes")
+	at := time.Date(2026, 8, 20, 6, 0, 0, 0, time.UTC)
+	insertClaimedOccurrence(t, store, testRunIdentity, "pipeline_daily", at, []string{"daily"})
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+UPDATE refresh_pipeline_occurrences
+SET run_id = 'run_1', status = 'attached', outcome = 'admitted'
+WHERE project_id = ? AND environment = ? AND pipeline_id = ? AND scheduled_at = ?`,
+		testRunIdentity.ProjectID.String(), testRunIdentity.Environment, "pipeline_daily", at.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.MarkRunTreeSupersededClaimed(t.Context(), job, "captured generation is stale"); err != nil {
+		t.Fatalf("mark stale run tree superseded: %v", err)
+	}
+	var status, outcome, reason string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `
+SELECT status, outcome, terminal_reason
+FROM refresh_pipeline_occurrences
+WHERE project_id = ? AND environment = ? AND pipeline_id = ? AND scheduled_at = ?`,
+		testRunIdentity.ProjectID.String(), testRunIdentity.Environment, "pipeline_daily", at.Format(time.RFC3339Nano)).Scan(&status, &outcome, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if status != "superseded" || outcome != "superseded" || reason != "captured generation is stale" {
+		t.Fatalf("occurrence = %q/%q/%q, want superseded terminal evidence", status, outcome, reason)
+	}
+}
+
+func TestRunScheduleEvidenceAcceptsOpaqueAuthoredLabels(t *testing.T) {
+	scheduleID := "weekdays 06:00 · " + strings.Repeat("evidence", 40)
+	encoded, err := json.Marshal([]string{scheduleID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decoded, err := decodeRunScheduleIDs(string(encoded))
+	if err != nil {
+		t.Fatalf("decode opaque schedule evidence: %v", err)
+	}
+	if len(decoded) != 1 || decoded[0] != scheduleID {
+		t.Fatalf("decoded schedule evidence = %#v, want %q", decoded, scheduleID)
 	}
 }
 

@@ -5,6 +5,7 @@ package openlineage
 
 import (
 	"context"
+	"crypto/sha1"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,8 +27,8 @@ const (
 	SchemaURL = "https://openlineage.io/spec/2-0-2/OpenLineage.json"
 	// Facet schema URLs are version-pinned and identify the corresponding
 	// LeapView facet type; the mutable refresh.json alias is never emitted.
-	PipelineFacetSchemaURL   = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json"
-	InvocationFacetSchemaURL = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json"
+	PipelineFacetSchemaURL   = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json#/$defs/LeapViewPipelineJobFacet"
+	InvocationFacetSchemaURL = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json#/$defs/LeapViewInvocationRunFacet"
 
 	PipelineFacetKey   = "leapView_pipeline"
 	InvocationFacetKey = "leapView_invocation"
@@ -228,7 +229,7 @@ func EventForPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
 		runFacets["nominalTime"] = mustFacet(nominalTimeFacet(*r.NominalTime))
 	}
 	if r.ParentRunID != "" {
-		runFacets["parent"] = mustFacet(parentFacet(p, r.ParentRunID))
+		runFacets["parent"] = mustFacet(parentFacet(p, openLineageRunID(r.ParentRunID)))
 	}
 	invocationSource := r.InvocationSource
 	if invocationSource == "" {
@@ -238,19 +239,23 @@ func EventForPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
 	if scheduleIDs == nil {
 		scheduleIDs = append([]string(nil), p.MatchingScheduleIDs...)
 	}
-	if invocationSource != "" || len(scheduleIDs) > 0 {
-		policy := map[string]any{
-			"_producer": Producer, "_schemaURL": InvocationFacetSchemaURL,
-			"invocationSource": invocationSource, "matchingScheduleIds": scheduleIDs,
-		}
-		if p.StartingDeadlineSeconds > 0 {
-			policy["startingDeadlineSeconds"] = p.StartingDeadlineSeconds
-		}
-		if p.ConcurrencyPolicy != "" {
-			policy["concurrencyPolicy"] = p.ConcurrencyPolicy
-		}
-		runFacets[InvocationFacetKey] = mustFacet(policy)
+	policy := map[string]any{
+		"_producer": Producer, "_schemaURL": InvocationFacetSchemaURL,
+		"leapViewRunId": r.ID,
 	}
+	if invocationSource != "" {
+		policy["invocationSource"] = invocationSource
+	}
+	if len(scheduleIDs) > 0 {
+		policy["matchingScheduleIds"] = scheduleIDs
+	}
+	if p.StartingDeadlineSeconds > 0 {
+		policy["startingDeadlineSeconds"] = p.StartingDeadlineSeconds
+	}
+	if p.ConcurrencyPolicy != "" {
+		policy["concurrencyPolicy"] = p.ConcurrencyPolicy
+	}
+	runFacets[InvocationFacetKey] = mustFacet(policy)
 
 	inputs := r.Inputs
 	if inputs == nil && r.ParentRunID == "" {
@@ -263,13 +268,29 @@ func EventForPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
 	return Event{
 		EventType: eventType,
 		EventTime: eventTime,
-		Run:       Run{RunID: r.ID, Facets: runFacets},
+		Run:       Run{RunID: openLineageRunID(r.ID), Facets: runFacets},
 		Job:       job,
 		Inputs:    datasets(job.Namespace, inputs),
 		Outputs:   datasets(job.Namespace, outputs),
 		Producer:  Producer,
 		SchemaURL: SchemaURL,
 	}, nil
+}
+
+// openLineageRunID maps LeapView's stable operational IDs into the UUID shape
+// required by the OpenLineage Run contract. The mapping is deterministic so
+// every lifecycle event and parent reference for the same internal run joins
+// to the same OpenLineage run.
+func openLineageRunID(internalID string) string {
+	// Fixed LeapView namespace UUID: 687c3b49-794f-5e12-8e2f-d742c7e46de3.
+	namespace := [...]byte{0x68, 0x7c, 0x3b, 0x49, 0x79, 0x4f, 0x5e, 0x12, 0x8e, 0x2f, 0xd7, 0x42, 0xc7, 0xe4, 0x6d, 0xe3}
+	hash := sha1.New()
+	_, _ = hash.Write(namespace[:])
+	_, _ = hash.Write([]byte(internalID))
+	value := hash.Sum(nil)[:16]
+	value[6] = (value[6] & 0x0f) | 0x50
+	value[8] = (value[8] & 0x3f) | 0x80
+	return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", value[0:4], value[4:6], value[6:8], value[8:10], value[10:16])
 }
 
 // MapPipelineRun is an alias with an action-oriented name.

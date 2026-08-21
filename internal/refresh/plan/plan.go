@@ -14,6 +14,7 @@ import (
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
 type Plan struct {
@@ -58,18 +59,13 @@ func (p Plan) DeliveryPipelinePlan(policy ...InvocationPolicy) (projectpipelinep
 	if len(policy) == 1 {
 		effective = policy[0]
 	}
-	selectionDigest := p.SelectionDigest
-	if selectionDigest == "" {
-		selectionDigest = digestPlan(struct {
-			SemanticModel string   `json:"semanticModel"`
-			Scope         []string `json:"scope"`
-			Sources       []string `json:"sources"`
-		}{p.SemanticModelID.String(), p.MaterializationScope, p.SourceInputs})
+	if err := refreshschedule.ValidateArtifactDigest(p.SelectionDigest); err != nil {
+		return projectpipelineplan.Plan{}, fmt.Errorf("pipeline authored selection digest: %w", err)
 	}
 	return projectpipelineplan.New(projectpipelineplan.Plan{
 		ID: "pipeline-plan-" + strings.TrimPrefix(p.Digest, "sha256:"), PipelineID: p.TargetID.String(), ProjectID: p.ProjectID.String(), Environment: p.Environment,
 		SemanticModelID: p.SemanticModelID.String(), SelectedResourceType: "semanticModel", SelectedResourceID: p.SemanticModelID.String(), ServingGenerationID: p.ServingGenerationID,
-		ArtifactDigest: p.ArtifactDigest, SelectionDigest: selectionDigest, MaterializationScope: append([]string(nil), p.MaterializationScope...),
+		ArtifactDigest: p.ArtifactDigest, SelectionDigest: p.SelectionDigest, MaterializationScope: append([]string(nil), p.MaterializationScope...),
 		ModelExecutionOrder: append([]string(nil), p.MaterializationScope...), SourceInputs: append([]string(nil), p.SourceInputs...),
 		InvocationSource: effective.InvocationSource, MatchingScheduleIDs: append([]string(nil), effective.MatchingScheduleIDs...), StartingDeadlineSeconds: effective.StartingDeadlineSeconds, ConcurrencyPolicy: effective.ConcurrencyPolicy,
 	})
@@ -93,7 +89,7 @@ func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID p
 	if !ok {
 		return Plan{}, fmt.Errorf("refresh pipeline %q references unknown semantic model %q", pipelineID, pipeline.SemanticModelID)
 	}
-	order, err := modelTableOrder(model)
+	order, err := modelTableOrder(model, definition.ModelTables)
 	if err != nil {
 		return Plan{}, err
 	}
@@ -104,13 +100,12 @@ func ForPipeline(definition *refreshartifact.Definition, projectID, pipelineID p
 		SemanticModelID:  pipeline.SemanticModelID,
 		Tables:           order,
 		DependencyTables: append([]string(nil), order...), MaterializationScope: append([]string(nil), order...),
-		SourceInputs: modelSourceInputs(model, order),
+		SourceInputs: modelSourceInputs(definition.ModelTables, order),
 	}
-	result.SelectionDigest = digestPlan(struct {
-		SemanticModel string   `json:"semanticModel"`
-		Scope         []string `json:"scope"`
-		Sources       []string `json:"sources"`
-	}{result.SemanticModelID.String(), result.MaterializationScope, result.SourceInputs})
+	if err := refreshschedule.ValidateArtifactDigest(pipeline.SelectionDigest); err != nil {
+		return Plan{}, fmt.Errorf("refresh pipeline %q authored selection digest: %w", pipelineID, err)
+	}
+	result.SelectionDigest = pipeline.SelectionDigest
 	return result, nil
 }
 
@@ -149,19 +144,7 @@ func digestPlan(value any) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func modelSourceInputs(model *semanticmodel.Model, order []string) []string {
-	compiled, err := semanticquery.CompileDatasetBindings(model)
-	if err != nil {
-		return nil
-	}
-	tables := make(map[string]semanticmodel.Table, len(order))
-	for _, datasetName := range compiled.DatasetNames() {
-		dataset, ok := compiled.Dataset(datasetName)
-		if !ok {
-			continue
-		}
-		tables[dataset.ModelName()] = dataset.Table()
-	}
+func modelSourceInputs(tables map[string]semanticmodel.Table, order []string) []string {
 	seen := map[string]struct{}{}
 	for _, name := range order {
 		table, ok := tables[name]
@@ -182,9 +165,12 @@ func modelSourceInputs(model *semanticmodel.Model, order []string) []string {
 	return result
 }
 
-func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
+func modelTableOrder(model *semanticmodel.Model, modelTables map[string]semanticmodel.Table) ([]string, error) {
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
+	}
+	if len(modelTables) == 0 {
+		return nil, fmt.Errorf("project Model catalog is required")
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -193,33 +179,18 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 	// Semantic dataset names are aliases. Refresh execution is project-scoped
 	// and therefore orders the physical authored Model tables, deduplicating
 	// aliases that point at the same Model.
-	physicalTables := map[string]semanticmodel.Table{}
+	roots := map[string]struct{}{}
 	for _, name := range compiled.DatasetNames() {
 		dataset, _ := compiled.Dataset(name)
 		physical := dataset.ModelName()
-		table := dataset.Table()
-		table.ModelDependencies = append([]string(nil), table.ModelDependencies...)
-		for index, dependency := range table.ModelDependencies {
-			physical, err := compiled.ResolvePhysicalModelName(dependency)
-			if err != nil {
-				return nil, fmt.Errorf("dataset %q dependency %q: %w", name, dependency, err)
-			}
-			table.ModelDependencies[index] = physical
+		if _, ok := modelTables[physical]; !ok {
+			return nil, fmt.Errorf("semantic dataset %q references unknown project Model %q", name, physical)
 		}
-		if existing, ok := physicalTables[physical]; ok {
-			// Equivalent aliases are expected to share one authored Model. Keep
-			// the first deterministic projection; runtime conflict checks enforce
-			// physical signature equality across semantic models.
-			if len(existing.ModelDependencies) == 0 && len(table.ModelDependencies) > 0 {
-				physicalTables[physical] = table
-			}
-			continue
-		}
-		physicalTables[physical] = table
+		roots[physical] = struct{}{}
 	}
 	temporary := map[string]bool{}
 	permanent := map[string]bool{}
-	order := make([]string, 0, len(physicalTables))
+	order := make([]string, 0, len(modelTables))
 	var visit func(string) error
 	visit = func(name string) error {
 		if permanent[name] {
@@ -228,9 +199,9 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 		if temporary[name] {
 			return fmt.Errorf("model table dependency cycle includes %q", name)
 		}
-		table, ok := physicalTables[name]
+		table, ok := modelTables[name]
 		if !ok {
-			return fmt.Errorf("unknown model table %q", name)
+			return fmt.Errorf("unknown model dependency %q", name)
 		}
 		temporary[name] = true
 		for _, dependency := range table.ModelDependencies {
@@ -243,8 +214,8 @@ func modelTableOrder(model *semanticmodel.Model) ([]string, error) {
 		order = append(order, name)
 		return nil
 	}
-	names := make([]string, 0, len(physicalTables))
-	for name := range physicalTables {
+	names := make([]string, 0, len(roots))
+	for name := range roots {
 		names = append(names, name)
 	}
 	sort.Strings(names)

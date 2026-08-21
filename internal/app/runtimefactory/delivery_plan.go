@@ -382,14 +382,13 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			sort.Strings(ids)
 			decisions := make([]deployment.DeliveryReuseDecision, 0, len(ids))
 			for _, id := range ids {
-				baseDigest := artifacts.Compiler.BaseRelationExecution[id]
-				if baseDigest == "" {
-					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reason: "base relation execution identity is unavailable"})
-					continue
-				}
 				if _, scoped := scopedRelationIDs[id]; scoped {
 					decisions = append(decisions, deployment.DeliveryReuseDecision{ResourceID: id, Reusable: false, RetainBase: true, Reason: "pipeline materialization scope requires refresh"})
 					continue
+				}
+				baseDigest := artifacts.Compiler.BaseRelationExecution[id]
+				if baseDigest == "" {
+					return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline relation %q is outside materialization scope and has no exact base execution identity", id)
 				}
 				relationReuse := candidateReuse
 				relationReuse.RelationScoped = true
@@ -399,6 +398,9 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				decision, reuseErr := deployment.EvaluateDeliveryReuse(relationReuse)
 				if reuseErr != nil {
 					return deployment.DeliveryPlanRequest{}, fmt.Errorf("evaluate scoped relation reuse %q: %w", id, reuseErr)
+				}
+				if !decision.Reusable {
+					return deployment.DeliveryPlanRequest{}, fmt.Errorf("pipeline relation %q is outside materialization scope and cannot be reused exactly: %s", id, decision.Reason)
 				}
 				decisions = append(decisions, decision)
 			}

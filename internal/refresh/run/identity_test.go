@@ -1,6 +1,7 @@
 package run
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/deployment"
@@ -19,6 +20,29 @@ func testPipelinePlan(identity projectgraph.ServingIdentity, pipelineID, semanti
 		panic(err)
 	}
 	return &plan
+}
+
+func TestScheduledRunAcceptsOpaqueAuthoredScheduleEvidence(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
+	scheduleID := "weekdays 06:00 · " + strings.Repeat("evidence", 40)
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_scheduled", PipelineID: "pipeline_sales", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: "semantic_sales",
+		ServingGenerationID: identity.GenerationID, ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SelectionDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", MaterializationScope: []string{"model_orders"},
+		InvocationSource: "schedule", MatchingScheduleIDs: []string{scheduleID}, StartingDeadlineSeconds: 3600, ConcurrencyPolicy: "Replace",
+	})
+	if err != nil {
+		t.Fatalf("construct scheduled plan with opaque evidence label: %v", err)
+	}
+	input := RunInput{
+		Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PipelinePlan: &plan,
+		InvocationSource: TriggerSchedule, MatchingScheduleIDs: []string{scheduleID}, NominalTime: "2026-08-21T06:00:00Z",
+		ConcurrencyPolicy: "Replace", PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
+		TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerSchedule, JobKind: JobKindRefreshPipeline,
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("scheduled run rejected authored schedule evidence: %v", err)
+	}
 }
 
 func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {

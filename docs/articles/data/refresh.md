@@ -14,7 +14,7 @@ metadata:
   name: sales_refresh
 spec:
   selection:
-    semanticModel: semantic-model:sales
+    semanticModel: sales
   schedules:
     weekdays-0600: "0 6 * * 1-5"
   timezone: Europe/Copenhagen

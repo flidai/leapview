@@ -22,7 +22,7 @@ var (
 )
 
 var validTargetTypes = map[string]struct{}{TargetModelTable: {}, TargetRefreshPipeline: {}}
-var validTriggerTypes = map[string]struct{}{TriggerDependency: {}, TriggerManual: {}, TriggerSchedule: {}, TriggerRetry: {}}
+var validTriggerTypes = map[string]struct{}{TriggerDependency: {}, TriggerManual: {}, TriggerSchedule: {}}
 var validJobKinds = map[string]struct{}{JobKindRefreshPipeline: {}, JobKindChildRun: {}}
 
 const (
@@ -44,7 +44,6 @@ const (
 	TriggerDependency = "dependency"
 	TriggerManual     = "manual"
 	TriggerSchedule   = "schedule"
-	TriggerRetry      = "retry"
 
 	JobKindRefreshPipeline = "refresh_pipeline"
 	JobKindChildRun        = "child_run"
@@ -74,7 +73,6 @@ type RunRecord struct {
 	TargetRevision int64                   `json:"targetRevision"`
 	TriggerType    string                  `json:"triggerType"`
 	ParentRunID    string                  `json:"parentRunId,omitempty"`
-	RetryOf        string                  `json:"retryOf,omitempty"`
 	Status         string                  `json:"status"`
 	CreatedAt      string                  `json:"createdAt"`
 	UpdatedAt      string                  `json:"updatedAt"`
@@ -101,7 +99,6 @@ type RunInput struct {
 	TargetRevision       int64
 	TriggerType          string
 	ParentRunID          string
-	RetryOf              string
 	JobKind              string
 	PayloadJSON          string
 }
@@ -238,7 +235,7 @@ func (input RunInput) Validate() error {
 		if input.InvocationSource == "" {
 			input.InvocationSource = input.TriggerType
 		}
-		if input.InvocationSource != TriggerManual && input.InvocationSource != TriggerSchedule && input.InvocationSource != TriggerRetry && input.InvocationSource != "backfill" && input.InvocationSource != "external" {
+		if input.InvocationSource != TriggerManual && input.InvocationSource != TriggerSchedule && input.InvocationSource != "backfill" && input.InvocationSource != "external" {
 			return errors.New("refresh invocation source is unsupported")
 		}
 		if input.InvocationSource == TriggerSchedule && len(input.MatchingScheduleIDs) == 0 {
@@ -271,7 +268,7 @@ func (input RunInput) Validate() error {
 	if err := validateScheduleIDs(input.MatchingScheduleIDs); err != nil {
 		return err
 	}
-	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID, "retry of": input.RetryOf} {
+	for name, value := range map[string]string{"principal id": input.PrincipalID, "parent run id": input.ParentRunID} {
 		required := name == "principal id"
 		if err := validateOperational(value, name, required); err != nil {
 			return err
@@ -292,8 +289,8 @@ func (input RunInput) Validate() error {
 func validateScheduleIDs(ids []string) error {
 	previous := ""
 	for _, id := range ids {
-		if err := validateOperational(id, "matching schedule id", true); err != nil {
-			return err
+		if id == "" || id != strings.TrimSpace(id) {
+			return errors.New("refresh matching schedule id must be non-empty and canonical")
 		}
 		if previous != "" && id <= previous {
 			return errors.New("matching schedule ids must be sorted canonically")

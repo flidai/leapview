@@ -474,8 +474,9 @@ func validateFlatProject(project Project) error {
 		}
 	}
 	for name, pipeline := range project.RefreshPipelines {
-		if _, err := resolver.resolve(pipeline.SemanticModelID.String(), projectgraph.KindSemanticModel); err != nil {
-			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.semanticModel", "Pipeline %q: %v", name, err)
+		selection := pipeline.SemanticModelID.String()
+		if project.SemanticModelIDs[selection] == "" {
+			return resourceError(project.PipelinePaths[name], project.PipelineIDs[name], "spec.selection.semanticModel", "Pipeline %q references unknown authored SemanticModel name %q", name, selection)
 		}
 	}
 	for name, pub := range project.Publications {

@@ -90,6 +90,59 @@ func TestRepositoryReconcileAndClaimDueCoalescesCatchUp(t *testing.T) {
 	}
 }
 
+func TestRepositoryReconcileCarriesCronCursorAcrossGenerationArtifactAndScheduleRename(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	seedRefreshGenerations(t, store)
+	repo := NewRepository(store.SQLDB())
+
+	oldSchedule, err := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldSchedule.ID = "daily"
+	deployedAt := time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC)
+	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: validDigest("a"), Now: deployedAt,
+		Pipelines: []refreshschedule.Definition{{
+			ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC",
+			StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+			Schedules: []refreshschedule.Schedule{oldSchedule},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	renamedSchedule, err := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	renamedSchedule.ID = "every weekday at 06:00"
+	restartedAt := time.Date(2026, 7, 18, 6, 30, 0, 0, time.UTC)
+	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
+		Identity: testIdentity("prod", "generation_b"), ArtifactDigest: validDigest("b"), Now: restartedAt,
+		Pipelines: []refreshschedule.Definition{{
+			ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC",
+			StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+			Schedules: []refreshschedule.Schedule{renamedSchedule},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	due, err := repo.ClaimDue(t.Context(), testIdentity("prod", "generation_b"), restartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantNominal := time.Date(2026, 7, 18, 6, 0, 0, 0, time.UTC)
+	if len(due) != 1 || !due[0].ScheduledAt.Equal(wantNominal) || strings.Join(due[0].MatchingScheduleIDs, ",") != renamedSchedule.ID || due[0].ArtifactDigest != validDigest("b") {
+		t.Fatalf("generation recovery occurrence = %#v, want nominal %s with renamed evidence and new artifact", due, wantNominal)
+	}
+}
+
 func TestRepositoryClaimDueDoesNotAdvanceAnotherGeneration(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
@@ -164,10 +217,12 @@ func TestRepositoryReleaseOccurrenceMakesQueueFailureRetryable(t *testing.T) {
 	seedRefreshGenerations(t, store)
 	schedule, _ := refreshschedule.ParseSchedule("0 6 * * *", "UTC")
 	schedule.ID = "daily"
+	unrelated, _ := refreshschedule.ParseSchedule("0 8 * * *", "UTC")
+	unrelated.ID = "morning-report"
 	repo := NewRepository(store.SQLDB())
 	if err := repo.Reconcile(t.Context(), refreshschedule.ReconcileInput{
 		Identity: testIdentity("prod", "generation_a"), ArtifactDigest: testArtifactDigest, Now: time.Date(2026, 7, 18, 5, 0, 0, 0, time.UTC),
-		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule}}},
+		Pipelines: []refreshschedule.Definition{{ID: "pipeline_sales_refresh", SemanticModelID: "semantic_sales", Timezone: "UTC", StartingDeadlineSeconds: 7200, ConcurrencyPolicy: refreshschedule.ConcurrencyForbid, Schedules: []refreshschedule.Schedule{schedule, unrelated}}},
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -191,6 +246,16 @@ WHERE project_id = 'project_sales' AND environment = 'prod'
 	if status != "pending" || outcome != "dispatch_failed" {
 		t.Fatalf("released occurrence status=%q outcome=%q, want pending/dispatch_failed", status, outcome)
 	}
+	var unrelatedCursor string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `
+SELECT next_run_at FROM refresh_pipeline_schedules
+WHERE project_id = 'project_sales' AND environment = 'prod'
+  AND pipeline_id = 'pipeline_sales_refresh' AND trigger_id = 'morning-report'`).Scan(&unrelatedCursor); err != nil {
+		t.Fatal(err)
+	}
+	if want := time.Date(2026, 7, 18, 8, 0, 0, 0, time.UTC).Format(time.RFC3339Nano); unrelatedCursor != want {
+		t.Fatalf("unrelated schedule cursor = %q, want %q", unrelatedCursor, want)
+	}
 	// A dispatcher outage can last past newer nominal ticks. The exact pending
 	// occurrence still owns the retry; catch-up must not advance over it.
 	delayedRetry := now.Add(25 * time.Hour)
@@ -200,6 +265,9 @@ WHERE project_id = 'project_sales' AND environment = 'prod'
 	}
 	if second[0].ArtifactDigest != testArtifactDigest || !second[0].ScheduledAt.Equal(first[0].ScheduledAt) {
 		t.Fatalf("retry occurrence = %#v, want %#v", second[0], first[0])
+	}
+	if got := strings.Join(second[0].MatchingScheduleIDs, ","); got != "daily" {
+		t.Fatalf("retry matching schedule IDs = %q, want exact stored evidence", got)
 	}
 }
 

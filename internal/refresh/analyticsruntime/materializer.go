@@ -41,7 +41,7 @@ func (m RefreshMaterializer) Materialize(ctx context.Context, input refresh.Mate
 		return 0, fmt.Errorf("analytical refresh materializer is unavailable")
 	}
 	return m.Executor.Materialize(ctx, analyticsmaterialization.Request{
-		Models: input.Definition.Models, Identity: identity,
+		Models: input.Definition.Models, ModelTables: input.Definition.ModelTables, Identity: identity,
 		ConnectionEvidenceServingStateID: input.Active.ID,
 		Environment:                      input.Environment, TargetType: input.Plan.TargetType, TargetID: input.Plan.TargetID,
 		SemanticDigest: input.Candidate.Digest, ArtifactDigest: input.Artifact.Digest,

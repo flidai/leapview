@@ -104,7 +104,7 @@
         "semanticModel": {
           "maxLength": 128,
           "minLength": 1,
-          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$",
+          "pattern": "^[A-Za-z_][A-Za-z0-9_.-]*$",
           "type": "string"
         }
       },
@@ -139,9 +139,7 @@
           "description": "Named schedule IDs are evidence-only keys; values are cron expressions.",
           "minProperties": 1,
           "propertyNames": {
-            "maxLength": 128,
             "minLength": 1,
-            "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
             "type": "string"
           },
           "type": "object"

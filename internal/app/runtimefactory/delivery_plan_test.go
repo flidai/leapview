@@ -45,6 +45,43 @@ func TestPipelineScopeRelationIDsUsesOpaqueGraphIdentity(t *testing.T) {
 	}
 }
 
+func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
+	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	projectID := projectgraph.ResourceID("project:dashboard")
+	sourceDigest := deliveryPlanDigest('a')
+	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-sales", PipelineID: "pipeline:sales", ProjectID: projectID.String(), Environment: "prod",
+		SemanticModelID: "semantic:sales", ServingGenerationID: "generation_0", ArtifactDigest: sourceDigest,
+		SelectionDigest: deliveryPlanDigest('b'), MaterializationScope: []string{"orders_model"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_pipeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := release.CandidateArtifactSet{
+		Artifact:   release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
+		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
+		Compiler: release.CandidateCompilerEvidence{
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
+			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1')},
+		},
+	}
+	input := deployment.DeliveryCandidateBuildInput{
+		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: sourceDigest, Operation: deployment.DeliveryOperationRestatement, PipelinePlan: &pipelinePlan,
+		Candidate: deployment.Candidate{ID: "candidate_pipeline", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}},
+	}
+	_, err = CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
+		CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), `relation "model:customers" is outside materialization scope`) {
+		t.Fatalf("pipeline plan error = %v, want exact-scope rejection", err)
+	}
+}
+
 func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_delivery")
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_1")

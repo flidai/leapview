@@ -30,9 +30,12 @@ const (
 // pipeline.  Scheduling policy is pipeline-wide: individual schedules carry
 // only an evidence ID and cron expression.
 type Definition struct {
-	ID                      projectgraph.ResourceID
-	Name                    string
-	SemanticModelID         projectgraph.ResourceID
+	ID              projectgraph.ResourceID
+	Name            string
+	SemanticModelID projectgraph.ResourceID
+	// SelectionDigest is computed from the canonical authored selection before
+	// the compiler resolves its name to a canonical resource ID.
+	SelectionDigest         string
 	Timezone                string
 	StartingDeadlineSeconds int64
 	ConcurrencyPolicy       string

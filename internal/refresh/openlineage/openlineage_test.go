@@ -2,6 +2,7 @@ package openlineage
 
 import (
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -53,8 +54,14 @@ func TestEventForPipelineRunMapsRunAndMaterialization(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.EventType != EventComplete || !event.EventTime.Equal(eventTime) || event.Run.RunID != "run-1" {
+	if event.EventType != EventComplete || !event.EventTime.Equal(eventTime) || event.Run.RunID != openLineageRunID("run-1") {
 		t.Fatalf("event = %#v", event)
+	}
+	if !regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-5[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`).MatchString(event.Run.RunID) {
+		t.Fatalf("OpenLineage run id = %q, want UUID v5", event.Run.RunID)
+	}
+	if got := facet(t, event.Run.Facets, InvocationFacetKey)["leapViewRunId"]; got != "run-1" {
+		t.Fatalf("LeapView run identity = %v, want run-1", got)
 	}
 	if len(event.Inputs) != 2 || event.Inputs[0].Name != "source:orders" || len(event.Outputs) != 2 || event.Outputs[1].Name != "model:orders" {
 		t.Fatalf("datasets inputs=%#v outputs=%#v", event.Inputs, event.Outputs)
@@ -89,7 +96,7 @@ func TestModelRunEmitsParentFacet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Job.Name != "model:orders" || event.Run.RunID != "model-run-1" {
+	if event.Job.Name != "model:orders" || event.Run.RunID != openLineageRunID("model-run-1") {
 		t.Fatalf("model event identity = %#v %#v", event.Job, event.Run)
 	}
 	parent := facet(t, event.Run.Facets, "parent")
@@ -98,7 +105,7 @@ func TestModelRunEmitsParentFacet(t *testing.T) {
 		t.Fatalf("parent facet = %#v", parent)
 	}
 	parentRunID, ok := parentRun["run"].(map[string]any)
-	if !ok || parentRunID["runId"] != "pipeline-run-1" {
+	if !ok || parentRunID["runId"] != openLineageRunID("pipeline-run-1") {
 		t.Fatalf("parent run = %#v", parentRun)
 	}
 	parentJob, ok := parentRun["job"].(map[string]any)
@@ -115,10 +122,10 @@ func TestModelRunConvenienceDerivesChildID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if event.Run.RunID != "pipeline-run-1/model/model:orders" {
+	if event.Run.RunID != openLineageRunID("pipeline-run-1/model/model:orders") {
 		t.Fatalf("derived child run id = %q", event.Run.RunID)
 	}
-	if got := facet(t, event.Run.Facets, "parent")["parent"].(map[string]any)["run"].(map[string]any)["runId"]; got != "pipeline-run-1" {
+	if got := facet(t, event.Run.Facets, "parent")["parent"].(map[string]any)["run"].(map[string]any)["runId"]; got != openLineageRunID("pipeline-run-1") {
 		t.Fatalf("derived parent = %v", got)
 	}
 }

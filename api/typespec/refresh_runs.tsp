@@ -6,7 +6,6 @@ namespace LeapViewAPI.Refresh;
 
 model RefreshRunCreateRequest {
   pipelineId: ResourceId;
-  retryOf?: string;
 }
 
 model RefreshRunResponse {
@@ -21,7 +20,6 @@ model RefreshRunResponse {
   nominalTime?: utcDateTime;
   planDigest: string;
   materializationScope: string[];
-  retryOf?: string;
   status: string;
   error?: string;
   createdAt: utcDateTime;
@@ -54,8 +52,6 @@ model RefreshQueuedAuditPayload {
   matchingScheduleIds: string[];
   @apigen.auditInternal
   planDigest: string;
-  @apigen.auditInternal
-  retryOf: string;
   @apigen.auditPublic
   status: string;
 }

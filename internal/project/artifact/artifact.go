@@ -548,7 +548,56 @@ func (p Project) RefreshDefinition() *refreshartifact.Definition {
 
 // RefreshProjection narrows a project manifest to refresh-owned resources.
 func RefreshProjection(value manifest.Project) *refreshartifact.Definition {
-	return &refreshartifact.Definition{Models: cloneRuntimeModels(value.SemanticModels), Pipelines: cloneValue(value.RefreshPipelines), ConnectionIDs: cloneValue(value.NameIndex.Connections)}
+	return &refreshartifact.Definition{
+		Models:        cloneRuntimeModels(value.SemanticModels),
+		ModelTables:   refreshModelTables(value),
+		Pipelines:     cloneValue(value.RefreshPipelines),
+		ConnectionIDs: cloneValue(value.NameIndex.Connections),
+	}
+}
+
+func refreshModelTables(value manifest.Project) map[string]semanticmodel.Table {
+	modelNames := make(map[string]string, len(value.NameIndex.Models))
+	for name, id := range value.NameIndex.Models {
+		modelNames[id] = name
+	}
+	sourceNames := make(map[string]string, len(value.NameIndex.Sources))
+	sourceAliases := make(map[string]string, len(value.NameIndex.Sources))
+	for name, id := range value.NameIndex.Sources {
+		sourceNames[id] = name
+		sourceAliases[name] = manifest.RuntimeSourceAlias(name)
+	}
+	result := make(map[string]semanticmodel.Table, len(value.Models))
+	for id, table := range value.Models {
+		table = semanticmodel.CloneTable(table)
+		name := modelNames[id]
+		if name == "" {
+			name = table.ModelName
+		}
+		if name == "" {
+			continue
+		}
+		table.ModelName = name
+		if sourceName := sourceNames[table.Execution.Source]; sourceName != "" {
+			table.Execution.Source = sourceAliases[sourceName]
+		}
+		for index, dependency := range table.SourceDependencies {
+			if sourceName := sourceNames[dependency]; sourceName != "" {
+				table.SourceDependencies[index] = sourceAliases[sourceName]
+			}
+		}
+		for index, dependency := range table.ModelDependencies {
+			if dependencyName := modelNames[dependency]; dependencyName != "" {
+				table.ModelDependencies[index] = dependencyName
+			}
+		}
+		for sourceName, alias := range sourceAliases {
+			table.Execution.SQL = strings.ReplaceAll(table.Execution.SQL, `source."`+sourceName+`"`, "source."+alias)
+			table.Execution.SQL = strings.ReplaceAll(table.Execution.SQL, "source."+sourceName, "source."+alias)
+		}
+		result[name] = table
+	}
+	return cloneRuntimeTables(result)
 }
 
 func cloneManifest(value manifest.Project) manifest.Project {

@@ -250,7 +250,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		ID: runID, JobID: jobID, PrincipalID: normalized.PrincipalID, Environment: normalized.Identity.Environment, TargetType: normalized.TargetType,
 		TargetID: normalized.TargetID.String(), TriggerType: normalized.TriggerType, TriggerID: normalized.TriggerID, InvocationSource: normalized.InvocationSource, NominalTime: normalized.NominalTime,
 		PlanDigest: normalized.PlanDigest, MaterializationScopeJson: normalized.MaterializationScopeJSON, MatchingScheduleIdsJson: string(matchingScheduleIDsJSON), ParentRunID: normalized.ParentRunID,
-		RetryOf: normalized.RetryOf, Status: admissionStatus, TargetRevision: normalized.TargetRevision,
+		Status: admissionStatus, TargetRevision: normalized.TargetRevision,
 	}); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: refresh_job_runs") {
 			return refreshrun.RunRecord{}, refreshrun.ErrTargetActive
@@ -296,7 +296,6 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			InvocationSource:    normalized.InvocationSource,
 			MatchingScheduleIds: append([]string{}, normalized.MatchingScheduleIDs...),
 			PlanDigest:          normalized.PlanDigest,
-			RetryOf:             normalized.RetryOf,
 			Status:              admissionStatus,
 		})
 		if encodeErr != nil {
@@ -817,6 +816,12 @@ func (r *SQLRunRepository) MarkRunTreeSupersededClaimed(ctx context.Context, job
 	if expectedRuns < 1 || expectedJobs < 1 {
 		return refreshrun.ErrLeaseLost
 	}
+	if _, err := q.SupersedeRefreshPipelineOccurrenceClaimed(ctx, platformdb.SupersedeRefreshPipelineOccurrenceClaimedParams{
+		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
+		Environment: job.Identity.Environment, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision, ErrorMessage: message,
+	}); err != nil {
+		return err
+	}
 	changedRuns, err := q.MarkRefreshRunTreeSupersededClaimed(ctx, platformdb.MarkRefreshRunTreeSupersededClaimedParams{
 		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
 		Environment: job.Identity.Environment, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision, ErrorMessage: message,
@@ -1069,7 +1074,6 @@ type materializationRunDBRow struct {
 	MaterializationScopeJSON string
 	MatchingScheduleIDsJSON  string
 	ParentRunID              sql.NullString
-	RetryOf                  sql.NullString
 	Status                   string
 	CreatedAt                string
 	UpdatedAt                string
@@ -1082,7 +1086,7 @@ func materializationRunFromGetRow(row platformdb.GetMaterializationRunRow) (refr
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
 	})
 }
@@ -1091,7 +1095,7 @@ func materializationRunFromChildRow(row platformdb.ListChildMaterializationRunsR
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
 	})
 }
@@ -1100,7 +1104,7 @@ func materializationRunFromLatestRow(row platformdb.LatestSuccessfulMaterializat
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
 	})
 }
@@ -1109,7 +1113,7 @@ func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) (r
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
 	})
 }
@@ -1118,7 +1122,7 @@ func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializatio
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, RetryOf: row.RetryOf, Status: row.Status,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
 	})
 }
@@ -1139,7 +1143,7 @@ func materializationRunFromDB(row materializationRunDBRow) (refreshrun.RunRecord
 	run := refreshrun.RunRecord{
 		ID: row.ID, Identity: identity, SemanticModelID: projectgraph.ResourceID(row.SemanticModelID), PipelineID: projectgraph.ResourceID(row.PipelineID),
 		InvocationSource: row.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, PrincipalID: row.PrincipalID.String, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
-		TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScope: scope, ParentRunID: row.ParentRunID.String, RetryOf: row.RetryOf.String, Status: row.Status,
+		TargetID: projectgraph.ResourceID(row.TargetID), TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScope: scope, ParentRunID: row.ParentRunID.String, Status: row.Status,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt.String, Error: row.Error,
 	}
 	if run.Status == refreshrun.RunStatusQueued {
@@ -1170,10 +1174,10 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 	if run.TargetType != refreshrun.TargetModelTable && run.TargetType != refreshrun.TargetRefreshPipeline {
 		return fmt.Errorf("unsupported refresh target type %q", run.TargetType)
 	}
-	if run.TriggerType != refreshrun.TriggerDependency && run.TriggerType != refreshrun.TriggerManual && run.TriggerType != refreshrun.TriggerSchedule && run.TriggerType != refreshrun.TriggerRetry {
+	if run.TriggerType != refreshrun.TriggerDependency && run.TriggerType != refreshrun.TriggerManual && run.TriggerType != refreshrun.TriggerSchedule {
 		return fmt.Errorf("unsupported refresh trigger type %q", run.TriggerType)
 	}
-	if run.InvocationSource != refreshrun.TriggerDependency && run.InvocationSource != refreshrun.TriggerManual && run.InvocationSource != refreshrun.TriggerSchedule && run.InvocationSource != refreshrun.TriggerRetry && run.InvocationSource != "backfill" && run.InvocationSource != "external" {
+	if run.InvocationSource != refreshrun.TriggerDependency && run.InvocationSource != refreshrun.TriggerManual && run.InvocationSource != refreshrun.TriggerSchedule && run.InvocationSource != "backfill" && run.InvocationSource != "external" {
 		return fmt.Errorf("unsupported refresh invocation source %q", run.InvocationSource)
 	}
 	if err := validateRunScheduleIDs(run.MatchingScheduleIDs); err != nil {
@@ -1201,9 +1205,6 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 		return err
 	}
 	if err := validateStoredID(run.ParentRunID, "parent run id", false); err != nil {
-		return err
-	}
-	if err := validateStoredID(run.RetryOf, "retry of", false); err != nil {
 		return err
 	}
 	if run.TargetRevision < 0 {
@@ -1257,7 +1258,6 @@ type normalizedRunInput struct {
 	PlanDigest               string
 	MaterializationScopeJSON string
 	ParentRunID              string
-	RetryOf                  string
 	JobKind                  string
 	PayloadJSON              string
 	GroupIDs                 []string
@@ -1270,7 +1270,7 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 	// sources and materialize the discriminator before validation/persistence.
 	if input.TriggerType == "" {
 		switch input.InvocationSource {
-		case refreshrun.TriggerManual, refreshrun.TriggerSchedule, refreshrun.TriggerRetry:
+		case refreshrun.TriggerManual, refreshrun.TriggerSchedule:
 			input.TriggerType = input.InvocationSource
 		}
 	}
@@ -1292,15 +1292,6 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 		if input.TargetType != refreshrun.TargetModelTable || input.TriggerType != refreshrun.TriggerDependency || input.JobKind != refreshrun.JobKindChildRun {
 			return normalizedRunInput{}, fmt.Errorf("child refresh tasks must be model-table dependencies")
 		}
-		if input.RetryOf != "" {
-			return normalizedRunInput{}, fmt.Errorf("child refresh tasks cannot be retries")
-		}
-	}
-	if input.RetryOf != "" && input.TriggerType != refreshrun.TriggerRetry {
-		return normalizedRunInput{}, fmt.Errorf("retry refresh runs must use retry trigger")
-	}
-	if input.TriggerType == refreshrun.TriggerRetry && input.RetryOf == "" {
-		return normalizedRunInput{}, fmt.Errorf("retry trigger requires retry_of")
 	}
 	invocationSource := input.InvocationSource
 	if invocationSource == "" {
@@ -1322,7 +1313,7 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 		TargetType: input.TargetType, TargetID: input.TargetID,
 		TargetRevision: input.TargetRevision, TriggerType: input.TriggerType, TriggerID: input.TriggerID, InvocationSource: invocationSource, MatchingScheduleIDs: canonicalRunScheduleIDs(input.MatchingScheduleIDs), NominalTime: input.NominalTime, ConcurrencyPolicy: input.ConcurrencyPolicy,
 		PlanDigest: planDigest, MaterializationScopeJSON: materializationScopeJSON, ParentRunID: input.ParentRunID,
-		RetryOf: input.RetryOf, JobKind: input.JobKind, PayloadJSON: payloadJSON,
+		JobKind: input.JobKind, PayloadJSON: payloadJSON,
 	}, nil
 }
 
@@ -1356,7 +1347,7 @@ func canonicalRunScheduleIDs(ids []string) []string {
 func validateRunScheduleIDs(ids []string) error {
 	previous := ""
 	for _, id := range ids {
-		if id == "" || id != strings.TrimSpace(id) || strings.IndexFunc(id, unicode.IsControl) >= 0 {
+		if id == "" || id != strings.TrimSpace(id) {
 			return fmt.Errorf("matching schedule id is not canonical")
 		}
 		if previous != "" && id <= previous {

@@ -481,7 +481,10 @@ func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T)
 
 func refreshTestDefinition() *artifact.Definition {
 	return &artifact.Definition{Pipelines: map[string]refreshschedule.Definition{
-		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{{ID: "daily", Expression: "0 6 * * *"}}},
+		"sales-refresh": {ID: "sales-refresh", Name: "sales-refresh", SemanticModelID: "sales", SelectionDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", Timezone: "UTC", ConcurrencyPolicy: refreshschedule.ConcurrencyReplace, Schedules: []refreshschedule.Schedule{{ID: "daily", Expression: "0 6 * * *"}}},
+	}, ModelTables: map[string]semanticmodel.Table{
+		"customers": {},
+		"orders":    {ModelDependencies: []string{"customers"}},
 	}, Models: map[string]*semanticmodel.Model{
 		"sales": {
 			Name: "sales",

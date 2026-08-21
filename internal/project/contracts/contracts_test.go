@@ -173,7 +173,7 @@ metadata:
   name: sales_refresh
 spec:
   selection:
-    semanticModel: semantic:sales
+    semanticModel: sales
   schedules:
     weekdays-0600: "0 6 * * 1-5"
   timezone: Europe/Copenhagen
@@ -188,7 +188,7 @@ spec:
 	if !ok {
 		t.Fatalf("spec variant = %T, want scheduled variant", pipeline.Spec.Value)
 	}
-	if scheduled.Selection.SemanticModel != "semantic:sales" || len(scheduled.Schedules) != 1 || scheduled.Schedules["weekdays-0600"] != "0 6 * * 1-5" {
+	if scheduled.Selection.SemanticModel != "sales" || len(scheduled.Schedules) != 1 || scheduled.Schedules["weekdays-0600"] != "0 6 * * 1-5" {
 		t.Fatalf("scheduled spec = %#v, want selection and schedule", scheduled)
 	}
 	if scheduled.Timezone != "Europe/Copenhagen" || scheduled.StartingDeadlineSeconds != 3600 || scheduled.ConcurrencyPolicy != contracts.PipelineConcurrencyPolicyReplace {

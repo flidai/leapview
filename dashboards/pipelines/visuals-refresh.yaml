@@ -5,4 +5,4 @@ metadata:
   name: visuals-refresh
 spec:
   selection:
-    semanticModel: semantic-model:visuals
+    semanticModel: visuals

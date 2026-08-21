@@ -141,7 +141,6 @@ type QueuePipelineInput struct {
 	InvocationSource     string
 	TriggerID            string
 	MatchingScheduleIDs  []string
-	RetryOf              string
 	ArtifactDigest       string
 	Occurrence           *refreshschedule.Occurrence
 }
@@ -183,7 +182,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.InvocationSource == "" {
 		input.InvocationSource = input.TriggerType
 	}
-	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule && input.TriggerType != TriggerRetry {
+	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule {
 		return QueueAssetResult{}, fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
 	}
 	active, err := s.activeForIdentity(ctx, input.Identity)
@@ -261,7 +260,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.Occurrence != nil {
 		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
 	}
-	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, RetryOf: input.RetryOf, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
+	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload)}
 	var root RunRecord
 	if input.Occurrence != nil {
 		creator, ok := s.Runs.(interface {
@@ -332,10 +331,7 @@ func validatePipelineInvocation(pipeline refreshschedule.Definition, input *Queu
 		input.MatchingScheduleIDs = nil
 		return nil
 	}
-	if input.TriggerID == "" {
-		input.TriggerID = "retry"
-	}
-	return nil
+	return fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
 }
 
 func (s Service) activeForIdentity(ctx context.Context, identity projectgraph.ServingIdentity) (ServingState, error) {

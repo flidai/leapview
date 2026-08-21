@@ -2,7 +2,7 @@
 SELECT pipeline_id, trigger_id, semantic_model_id, cron, timezone,
        starting_deadline_seconds, concurrency_policy, artifact_digest, next_run_at
 FROM refresh_pipeline_schedules
-WHERE project_id = ? AND environment = ? AND generation_id = ?;
+WHERE project_id = ? AND environment = ?;
 
 -- name: DeleteRefreshPipelineSchedules :exec
 DELETE FROM refresh_pipeline_schedules
@@ -43,6 +43,10 @@ SET next_run_at = COALESCE((
     AND occurrence.pipeline_id = refresh_pipeline_schedules.pipeline_id
     AND occurrence.status = 'claimed'
     AND occurrence.claimed_at <= sqlc.arg(claimed_before)
+    AND EXISTS (
+      SELECT 1 FROM json_each(occurrence.matching_schedule_ids_json)
+      WHERE json_each.value = refresh_pipeline_schedules.trigger_id
+    )
 ), next_run_at), updated_at = CURRENT_TIMESTAMP
 WHERE refresh_pipeline_schedules.project_id = sqlc.arg(project_id)
   AND refresh_pipeline_schedules.environment = sqlc.arg(environment)
@@ -54,6 +58,10 @@ WHERE refresh_pipeline_schedules.project_id = sqlc.arg(project_id)
       AND occurrence.pipeline_id = refresh_pipeline_schedules.pipeline_id
       AND occurrence.status = 'claimed'
       AND occurrence.claimed_at <= sqlc.arg(claimed_before)
+      AND EXISTS (
+        SELECT 1 FROM json_each(occurrence.matching_schedule_ids_json)
+        WHERE json_each.value = refresh_pipeline_schedules.trigger_id
+      )
   );
 
 -- name: RequeueAbandonedRefreshPipelineOccurrences :exec
@@ -110,10 +118,11 @@ SET status = 'pending', outcome = 'dispatch_failed', terminal_reason = ?,
 WHERE project_id = ? AND environment = ? AND pipeline_id = ?
   AND scheduled_at = ? AND status = 'claimed' AND run_id IS NULL;
 
--- name: RetryRefreshPipelineSchedules :exec
+-- name: RetryRefreshPipelineSchedule :exec
 UPDATE refresh_pipeline_schedules SET next_run_at = sqlc.arg(retry_at), updated_at = CURRENT_TIMESTAMP
 WHERE project_id = sqlc.arg(project_id) AND environment = sqlc.arg(environment)
-  AND pipeline_id = sqlc.arg(pipeline_id) AND next_run_at > sqlc.arg(retry_at);
+  AND pipeline_id = sqlc.arg(pipeline_id) AND next_run_at > sqlc.arg(retry_at)
+  AND trigger_id = sqlc.arg(trigger_id);
 
 -- name: UpsertSemanticModelDataVersion :exec
 INSERT INTO semantic_model_data_versions (

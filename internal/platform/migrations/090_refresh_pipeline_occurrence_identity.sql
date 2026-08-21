@@ -10,6 +10,9 @@ DELETE FROM refresh_pipeline_occurrences;
 DELETE FROM refresh_pipeline_schedules;
 DELETE FROM refresh_jobs;
 
+DROP INDEX IF EXISTS refresh_job_runs_retry_idx;
+ALTER TABLE refresh_job_runs DROP COLUMN retry_of;
+
 DROP INDEX IF EXISTS refresh_pipeline_active_run_idx;
 ALTER TABLE refresh_job_runs ADD COLUMN project_id TEXT NOT NULL DEFAULT '';
 ALTER TABLE refresh_job_runs ADD COLUMN trigger_id TEXT NOT NULL DEFAULT '';
@@ -150,6 +153,8 @@ ALTER TABLE refresh_job_runs DROP COLUMN nominal_time;
 ALTER TABLE refresh_job_runs DROP COLUMN invocation_source;
 ALTER TABLE refresh_job_runs DROP COLUMN trigger_id;
 ALTER TABLE refresh_job_runs DROP COLUMN project_id;
+ALTER TABLE refresh_job_runs ADD COLUMN retry_of TEXT REFERENCES refresh_job_runs(id) ON DELETE SET NULL;
+CREATE INDEX refresh_job_runs_retry_idx ON refresh_job_runs(retry_of);
 CREATE UNIQUE INDEX refresh_pipeline_active_run_idx
   ON refresh_job_runs(environment, target_type, target_id)
   WHERE parent_run_id IS NULL

@@ -1,6 +1,9 @@
 package compiler
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"sort"
@@ -42,6 +45,7 @@ func lowerRefreshPipeline(authored projectcontracts.PipelineDocument) (refreshsc
 		ID:                      projectgraph.ResourceID(authored.Metadata.ID),
 		Name:                    authored.Metadata.Name,
 		SemanticModelID:         projectgraph.ResourceID(selection),
+		SelectionDigest:         authoredPipelineSelectionDigest(selection),
 		Timezone:                timezone,
 		StartingDeadlineSeconds: deadline,
 		ConcurrencyPolicy:       policy,
@@ -51,6 +55,14 @@ func lowerRefreshPipeline(authored projectcontracts.PipelineDocument) (refreshsc
 		return refreshschedule.Definition{}, err
 	}
 	return definition, nil
+}
+
+func authoredPipelineSelectionDigest(semanticModel string) string {
+	encoded, _ := json.Marshal(struct {
+		SemanticModel string `json:"semanticModel"`
+	}{SemanticModel: semanticModel})
+	sum := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 func lowerPipelineSpec(spec projectcontracts.PipelineSpec) (string, string, int64, string, []refreshschedule.Schedule, error) {
