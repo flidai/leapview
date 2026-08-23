@@ -427,6 +427,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hadSession := hasSessionCookie(r)
 		principal, credential, ok := a.authenticate(r)
 		if !ok {
 			if a.apiTokenOnly {
@@ -440,7 +441,14 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			if target := authenticationReturnTarget(r); target != "" {
 				http.SetCookie(w, a.authReturnCookie(target))
 			}
-			http.Redirect(w, r, a.defaultLoginRedirect(), http.StatusFound)
+			redirect := a.defaultLoginRedirect()
+			if hadSession {
+				http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
+				if a.localAuth {
+					redirect = "/login?error=session_expired"
+				}
+			}
+			http.Redirect(w, r, redirect, http.StatusFound)
 			return
 		}
 		if a.mustChangeLocalPassword(r, principal.ID, credential) {
@@ -801,7 +809,18 @@ func (a *Auth) decodeAuthReturn(value string, now time.Time) (string, error) {
 }
 
 func isAuthenticationReturnPath(path string) bool {
-	return path == "/oauth/authorize" || path == DesktopAuthorizePath
+	if path == "/" || path == "/oauth/authorize" || path == DesktopAuthorizePath {
+		return true
+	}
+	for _, prefix := range []string{
+		"/dashboards", "/explore", "/sources", "/models", "/semantic-models",
+		"/pipelines", "/connections", "/chats", "/admin", "/candidates",
+	} {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *Auth) consumeOIDCState(w http.ResponseWriter, r *http.Request) (string, string, error) {

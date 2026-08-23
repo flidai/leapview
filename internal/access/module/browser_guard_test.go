@@ -90,6 +90,37 @@ func TestAuthenticateRejectsMissingPrincipal(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
+	request.AddCookie(&http.Cookie{Name: "lv_session", Value: "expired-session"})
+	auth.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler ran for an invalid session")
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/login?error=session_expired" {
+		t.Fatalf("expired session response = %d location %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	var cleared, returned bool
+	for _, cookie := range recorder.Result().Cookies() {
+		switch cookie.Name {
+		case "lv_session":
+			cleared = cookie.MaxAge == -1 && cookie.Value == ""
+		case AuthReturnCookieName:
+			returned = cookie.Value != ""
+		}
+	}
+	if !cleared || !returned {
+		t.Fatalf("expired session cookies cleared=%t return-target=%t", cleared, returned)
+	}
+}
+
 func TestAuthenticateInstallsInjectedPrincipalInRequestContext(t *testing.T) {
 	principal := Principal{ID: "principal", Kind: access.PrincipalKindUser}
 	module := browserGuardModule(nil, principal, true)
