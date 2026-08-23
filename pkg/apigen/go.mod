@@ -1,6 +1,6 @@
 module github.com/Yacobolo/toolbelt/apigen
 
-go 1.25.8
+go 1.25.14
 
 require (
 	github.com/getkin/kin-openapi v0.133.0

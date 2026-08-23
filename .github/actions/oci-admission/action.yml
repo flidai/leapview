@@ -1,0 +1,76 @@
+name: Admit immutable OCI artifact
+description: Fail-closed digest, provenance, SBOM, and vulnerability admission.
+
+inputs:
+  image:
+    description: OCI image reference. Must be repository@sha256:<64 lowercase hex>.
+    required: true
+  repository:
+    description: Expected OCI repository (for example ghcr.io/flidai/leapview).
+    required: true
+  expected-workflow:
+    description: GitHub Actions workflow identity that must have signed the image.
+    required: true
+  source-revision:
+    description: Full 40-character source commit recorded by the attestation.
+    required: true
+  policy:
+    description: Pinned container vulnerability policy JSON.
+    required: false
+    default: .github/security/container-vulnerability-policy.json
+  mode:
+    description: live performs registry verification; hermetic validates evidence.
+    required: false
+    default: live
+  evidence:
+    description: Hermetic evidence JSON (required when mode is hermetic).
+    required: false
+  output:
+    description: Optional path for the verified admission record.
+    required: false
+
+outputs:
+  image:
+    description: Exact digest reference that passed admission.
+    value: ${{ steps.admit.outputs.image }}
+  digest:
+    description: Exact sha256 digest that passed admission.
+    value: ${{ steps.admit.outputs.digest }}
+
+runs:
+  using: composite
+  steps:
+    - name: Verify immutable OCI artifact admission
+      id: admit
+      shell: bash
+      env:
+        IMAGE: ${{ inputs.image }}
+        OCI_REPOSITORY: ${{ inputs.repository }}
+        EXPECTED_WORKFLOW: ${{ inputs.expected-workflow }}
+        SOURCE_REVISION: ${{ inputs.source-revision }}
+        POLICY: ${{ inputs.policy }}
+        MODE: ${{ inputs.mode }}
+        EVIDENCE: ${{ inputs.evidence }}
+        ADMISSION_OUTPUT: ${{ inputs.output }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        output_path="$ADMISSION_OUTPUT"
+        if [[ -z "$output_path" ]]; then
+          output_path="$RUNNER_TEMP/oci-admission.json"
+        fi
+        evidence_args=()
+        if [[ -n "$EVIDENCE" ]]; then
+          evidence_args+=(--evidence "$EVIDENCE")
+        fi
+        GITHUB_OUTPUT="" "$GITHUB_ACTION_PATH/../../../scripts/admit_oci_artifact.sh" \
+          --image "$IMAGE" \
+          --repository "$OCI_REPOSITORY" \
+          --expected-workflow "$EXPECTED_WORKFLOW" \
+          --source-revision "$SOURCE_REVISION" \
+          --policy "$POLICY" \
+          --mode "$MODE" \
+          "${evidence_args[@]}" \
+          --output "$output_path" > "$RUNNER_TEMP/oci-admission-image.txt"
+        printf 'image=%s\n' "$(cat "$RUNNER_TEMP/oci-admission-image.txt")" >> "$GITHUB_OUTPUT"
+        printf 'digest=%s\n' "${IMAGE##*@}" >> "$GITHUB_OUTPUT"

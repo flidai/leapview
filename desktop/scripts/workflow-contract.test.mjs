@@ -97,6 +97,11 @@ test("desktop preview publication is manual, unsigned, immutable, and attested",
     "--prerelease",
     "--target \"$source_sha\"",
     "This build is unsigned",
+    "Re-download and verify published desktop evidence",
+    "sha256sum --check SHA256SUMS",
+    "test \"$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)\" -eq 4",
+    "gh attestation verify \"$evidence\"",
+    "--source-digest \"$SOURCE_SHA\"",
   ]) {
     assert.ok(workflow.includes(required), `preview workflow is missing ${required}`);
   }

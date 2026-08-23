@@ -34,6 +34,9 @@
     "tailwindcss": "4.3.1",
     "typescript": "5.9.3"
   },
+  "overrides": {
+    "tar": "7.5.21"
+  },
   "trustedDependencies": [
     "@bitdisaster/exe-icon-extractor",
     "electron",

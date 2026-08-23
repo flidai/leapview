@@ -111,7 +111,7 @@ jobs:
           provenance: mode=max
 
       - name: Attest native site image provenance
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.publish.outputs.digest }}
@@ -143,8 +143,8 @@ jobs:
       attestations: write
       id-token: write
     outputs:
-      image_reference: ${{ steps.assemble.outputs.image_reference }}
-      image_digest: ${{ steps.assemble.outputs.digest }}
+      image_reference: ${{ steps.admission.outputs.image }}
+      image_digest: ${{ steps.admission.outputs.digest }}
       revision: ${{ needs.identity.outputs.revision }}
 
     steps:
@@ -183,15 +183,24 @@ jobs:
           echo "image_reference=$image_reference" >> "$GITHUB_OUTPUT"
 
       - name: Attest multi-platform site image provenance
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.assemble.outputs.digest }}
           push-to-registry: true
 
+      - name: Admit the exact public-site image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ steps.assemble.outputs.image_reference }}
+          repository: ${{ env.IMAGE_NAME }}
+          expected-workflow: flidai/leapview/.github/workflows/site-image.yml
+          source-revision: ${{ needs.identity.outputs.revision }}
+
       - name: Verify anonymous multi-platform image access
         env:
-          IMAGE_REFERENCE: ${{ steps.assemble.outputs.image_reference }}
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
         run: |
           docker logout ghcr.io
           inspected=false
@@ -216,7 +225,7 @@ jobs:
         env:
           EXPECTED_VERSION: ${{ needs.identity.outputs.version }}
           EXPECTED_REVISION: ${{ needs.identity.outputs.revision }}
-          IMAGE_REFERENCE: ${{ steps.assemble.outputs.image_reference }}
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
         run: |
           docker pull "$IMAGE_REFERENCE"
           label_version="$(docker image inspect "$IMAGE_REFERENCE" --format '{{index .Config.Labels "org.opencontainers.image.version"}}')"

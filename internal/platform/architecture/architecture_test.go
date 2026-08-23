@@ -3066,7 +3066,11 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"node:audit:",
 		"bun audit",
 		"vuln:",
-		"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...",
+		"golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
+		"security:policy:",
+		"security:dependencies:",
+		"security:source:",
+		"security:check:",
 		"ci:prepare:frontend:",
 		"ci:test:docs-site:",
 		"go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...",
@@ -3199,7 +3203,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		}
 	}
 	nightlyExtras := taskfileTaskBlock(t, taskfile, "ci:nightly:extras")
-	for _, want := range []string{"- task: generate", "- task: node:audit", "- task: vuln"} {
+	for _, want := range []string{"- task: generate", "- task: security:check"} {
 		if !strings.Contains(nightlyExtras, want) {
 			t.Fatalf("ci:nightly:extras missing %q", want)
 		}

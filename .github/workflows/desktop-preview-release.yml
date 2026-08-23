@@ -190,7 +190,7 @@ jobs:
             --version "${{ needs.identity.outputs.version }}"
 
       - name: Attest preview provenance
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/*
 
@@ -231,3 +231,28 @@ jobs:
         run: |
           gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
             --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected preview release") end'
+
+      - name: Re-download and verify published desktop evidence
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          download="$RUNNER_TEMP/published-desktop-evidence"
+          mkdir -p "$download"
+          gh release download "$RELEASE_TAG" --dir "$download"
+          cd "$download"
+          test "$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -type f -name '*.release.json' | wc -l)" -eq 4
+          sha256sum --check SHA256SUMS
+          for sbom in ./*.spdx.json; do
+            jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type == "array")' "$sbom" >/dev/null
+          done
+          for evidence in ./*; do
+            [[ "$(basename "$evidence")" == SHA256SUMS ]] && continue
+            gh attestation verify "$evidence" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow flidai/leapview/.github/workflows/desktop-preview-release.yml \
+              --source-digest "$SOURCE_SHA" >/dev/null
+          done
