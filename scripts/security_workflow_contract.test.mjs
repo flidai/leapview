@@ -46,6 +46,13 @@ test("aggregate Security gate rejects every non-success dependency result", () =
   assert.equal(missing.status, 64);
 });
 
+test("aggregate job checks out the candidate-owned result contract", async () => {
+  const workflow = await repositoryFile(".github/workflows/security.yml");
+  const aggregateJob = workflow.slice(workflow.indexOf("  security-gate:"));
+  assert.match(aggregateJob, /uses: actions\/checkout@[0-9a-f]{40}/);
+  assert.match(aggregateJob, /\.\/scripts\/require_security_results\.sh/);
+});
+
 test("source and dependency scanners are pinned, redacted, and bounded", async () => {
   const [dependencies, secrets, source] = await Promise.all([
     repositoryFile("scripts/security_dependencies.sh"),

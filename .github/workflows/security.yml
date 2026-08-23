@@ -123,6 +123,9 @@ jobs:
     timeout-minutes: 5
 
     steps:
+      - name: Check out the aggregate gate contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
       - name: Require every security lane
         env:
           POLICY_RESULT: ${{ needs.policy-validation.result }}
