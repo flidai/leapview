@@ -3,6 +3,8 @@ name: Security gates
 on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, stacked]
+  push:
+    branches: [main]
   merge_group:
     types: [checks_requested]
   workflow_dispatch:
@@ -79,7 +81,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: false
-          trivy-version: 0.74.0
+          version: 0.74.0
 
   sast-validation:
     name: Selected SAST (${{ matrix.language }})
