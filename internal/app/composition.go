@@ -350,6 +350,7 @@ func authorizeSealedPublication(
 	delivery sealedDeliveryAuthorizationReader,
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
+	devBypass bool,
 ) error {
 	if binding.ActorID == "" || binding.CandidateID == "" || binding.GenerationID == "" || binding.ProjectID == "" || binding.Environment == "" || binding.TargetID != targetID {
 		return fmt.Errorf("sealed publication actor and root scope are required")
@@ -384,6 +385,13 @@ func authorizeSealedPublication(
 		if resourceErr != nil {
 			return fmt.Errorf("sealed publication graph impact: %w", resourceErr)
 		}
+		// Non-production local development still validates the exact immutable
+		// candidate, plan, target, and graph-impact tuple above. It bypasses only
+		// the active project's authored grants so repeated `task dev` publication
+		// remains possible after the first generation activates.
+		if devBypass {
+			return nil
+		}
 		var allowed bool
 		if len(resources) == 0 {
 			allowed, err = authorizeProjectRole(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, capability)
@@ -401,6 +409,9 @@ func authorizeSealedPublication(
 	resource, err := access.NewResourceRef(requestedProject, projectgraph.KindProject)
 	if err != nil {
 		return fmt.Errorf("sealed publication resource: %w", err)
+	}
+	if devBypass {
+		return nil
 	}
 	allowed, err := authorizeProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, []access.ResourceRef{resource}, capability)
 	if err != nil {
@@ -732,7 +743,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 						return nil
 					}
 				}
-				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule)
+				devBypass := !production && accessModule.Auth() != nil && accessModule.Auth().DevBypass() && binding.ActorID == accessmodule.LocalDeveloperPrincipal().ID
+				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule, devBypass)
 			},
 			VerifySeal: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
 				slog.Default().InfoContext(ctx, "sealed publication seal verification started", "deployment", binding.DeploymentID, "candidate", binding.CandidateID, "bootstrap", binding.Bootstrap)

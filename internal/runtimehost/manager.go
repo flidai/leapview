@@ -578,6 +578,37 @@ func (m *Manager) validateGeneration(state servingstate.State, artifact servings
 }
 
 func (m *Manager) prepare(ctx context.Context, state servingstate.State, artifact servingstate.Artifact, candidate *candidatePreparationContext) (*Prepared, error) {
+	if err := m.validateGeneration(state, artifact); err != nil {
+		return nil, errors.Join(err, closeCandidatePreparationLifetime(candidate))
+	}
+	// A content-addressed serving state can be published again by a distinct
+	// reviewed candidate. Keep the active runtime and its cache scope, but
+	// return a consumable preparation so the caller can still commit the
+	// publication metadata under the normal activation fence.
+	if candidate == nil {
+		m.mu.RLock()
+		current := m.current
+		if current != nil && current.servingStateID == state.ID {
+			if current.digest != artifact.Digest {
+				m.mu.RUnlock()
+				return nil, fmt.Errorf("active serving state %s digest = %q, requested artifact digest = %q", state.ID, current.digest, artifact.Digest)
+			}
+			prepared := &Prepared{
+				owner:           m,
+				servingStateID:  state.ID,
+				digest:          current.digest,
+				managedRevision: current.managedRevision,
+				snapshotID:      current.snapshotID,
+				sealed:          current.sealed,
+				authorization:   current.authorization,
+				noChange:        true,
+				baseActiveID:    current.servingStateID,
+			}
+			m.mu.RUnlock()
+			return prepared, nil
+		}
+		m.mu.RUnlock()
+	}
 	var data ManagedDataResolution
 	var err error
 	if m.managedData != nil {

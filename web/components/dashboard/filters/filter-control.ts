@@ -63,6 +63,12 @@ export class DashboardFilterLeaf extends LitElement {
   static styles = css`
     :host { display: block; min-width: 0; font: inherit; }
     fieldset { display: grid; min-width: 0; gap: var(--base-size-6); border: 0; margin: 0; padding: 0; }
+    fieldset.list.bounded {
+      height: 100%;
+      min-height: 0;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      box-sizing: border-box;
+    }
     legend.visually-hidden {
       position: absolute;
       width: 1px;
@@ -111,6 +117,7 @@ export class DashboardFilterLeaf extends LitElement {
       color: inherit; padding-inline: var(--base-size-8); box-sizing: border-box;
     }
     .options { display: grid; max-height: 220px; gap: 2px; overflow: auto; }
+    fieldset.list.bounded .options { min-height: 0; max-height: 100%; }
     .option { display: flex; align-items: center; gap: 8px; border-radius: 4px; padding: 4px; }
     .option[data-unavailable='true'] { color: var(--lv-fg-muted); }
     .option input { width: auto; min-height: 0; }
@@ -213,6 +220,7 @@ export class DashboardFilterLeaf extends LitElement {
     const active = this.expression.kind !== 'unfiltered'
     return html`
       <fieldset
+        class=${`${presentation.style} ${this.autoHeight ? 'auto-height' : 'bounded'}`}
         ?disabled=${!binding.readerEditable}
         aria-busy=${String(this.pending || this.optionLoading)}
         @focusout=${this.onFilterFocusOut}

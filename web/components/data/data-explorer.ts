@@ -1101,6 +1101,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   <span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span>
                   <input
                     type="search"
+                    aria-label="Search data"
                     .value=${this.search}
                     @input=${(event: Event) => this.search = (event.target as HTMLInputElement).value}
                     placeholder="Search data"

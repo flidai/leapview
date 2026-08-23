@@ -375,7 +375,7 @@ publish_project() {
 		echo "Development candidate publication did not return a canonical candidate ID." >&2
 		return 1
 	}
-	go run ./cmd/leapview publish "$candidate_id" --token dev
+	go run ./cmd/leapview publish "$candidate_id" --token dev || return 1
 	mcp_smoke "$port"
 }
 

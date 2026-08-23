@@ -297,7 +297,15 @@ func canonicalPublicationResourceID(id string) access.ResourceRef {
 	if len(parts) != 2 {
 		return access.ResourceRef{}
 	}
-	return canonicalPublicationResource(id, projectgraph.Kind(parts[0]))
+	kind := projectgraph.Kind(parts[0])
+	// Stable resource IDs use the authored `semantic-model:` prefix, while the
+	// graph's descriptive kind is `semantic_model`. Keep identity and kind
+	// separate when reconstructing the publication capability so the semantic
+	// model is not silently dropped from its dependency closure.
+	if parts[0] == "semantic-model" {
+		kind = projectgraph.KindSemanticModel
+	}
+	return canonicalPublicationResource(id, kind)
 }
 
 func publicationPageExists(pages []dashboard.Page, pageID string) bool {

@@ -235,6 +235,7 @@ test('data explorer renders object browser and emits preview commands', async ()
         hasSelectedHeader: Boolean(root.querySelector('.selected-header')),
         badgeCount: root.querySelectorAll('.badge').length,
         hasSearch: Boolean(root.querySelector('.search input')),
+        searchLabel: root.querySelector('.search input')?.getAttribute('aria-label'),
         tabs: Array.from(root.querySelectorAll('.object-tab')).map((tab) => tab.textContent?.trim()),
         selectedColumns: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button > span:nth-child(3)') ?? []).map((item) => item.textContent?.trim()),
         selectedFieldStates: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button') ?? []).map((item) => item.getAttribute('aria-pressed')),
@@ -280,6 +281,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.hasSelectedHeader).toBe(false)
     expect(state.badgeCount).toBe(0)
     expect(state.hasSearch).toBe(true)
+    expect(state.searchLabel).toBe('Search data')
     expect(state.tabs).toEqual([])
     expect(state.selectedColumns).toEqual(['order_id', 'status'])
     expect(state.selectedFieldStates).toEqual(['true', 'true'])

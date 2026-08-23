@@ -2142,6 +2142,53 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
   }
 })
 
+test('bounded list slicers keep every option inside the authored frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const result = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.style.display = 'block'
+      leaf.style.width = '340px'
+      leaf.style.height = '190px'
+      leaf.definition = {
+        id: 'status', label: 'Order status', field: 'orders.status', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: {
+          kind: 'static', limit: 50,
+          values: ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable'],
+        },
+      }
+      leaf.binding = {
+        key: 'status', id: 'status', filter: 'status', scope: 'page', pageID: 'overview',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'list', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      document.body.append(leaf)
+      await leaf.updateComplete
+      await new Promise(requestAnimationFrame)
+
+      const leafRect = leaf.getBoundingClientRect()
+      const options = leaf.shadowRoot.querySelector('.options') as HTMLElement
+      const optionsRect = options.getBoundingClientRect()
+      return {
+        scrollable: options.scrollHeight > options.clientHeight,
+        contained: optionsRect.bottom <= leafRect.bottom,
+        overflow: getComputedStyle(options).overflowY,
+      }
+    })
+
+    expect(result).toEqual({ scrollable: true, contained: true, overflow: 'auto' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('slicer layout resolution ignores report canvas transforms', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

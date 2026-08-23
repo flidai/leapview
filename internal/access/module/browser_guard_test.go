@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -39,6 +40,23 @@ func TestPrincipalIsHumanExcludesServicePrincipals(t *testing.T) {
 				t.Fatalf("IsHuman() = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestLoginErrorCodeRejectsUnknownValues(t *testing.T) {
+	for _, test := range []struct {
+		query string
+		want  string
+	}{
+		{query: "invalid_credentials", want: "invalid_credentials"},
+		{query: "session_expired", want: "session_expired"},
+		{query: "forbidden", want: "forbidden"},
+		{query: "<script>alert(1)</script>"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/login?error="+url.QueryEscape(test.query), nil)
+		if got := loginErrorCode(request); got != test.want {
+			t.Fatalf("loginErrorCode(%q) = %q, want %q", test.query, got, test.want)
+		}
 	}
 }
 

@@ -23,6 +23,10 @@ type LoginPageOptions struct {
 	// this field (or in a URL); it is intentionally a short presentation
 	// string sourced from a closed set of login outcomes.
 	Error string
+	// ErrorCode is the corresponding closed, non-sensitive outcome identifier.
+	// It is carried into the canonical updates URL so the stream can rebuild the
+	// same login presentation without placing the user-facing message in a URL.
+	ErrorCode string
 }
 
 type LoginPageSignal = signalcontracts.LoginPageSignal
@@ -33,7 +37,7 @@ func LoginPage(options ...LoginPageOptions) g.Node {
 	return webpage.Render(webpage.Layout{Presentation: opts.Presentation, Assets: opts.Assets}, webpage.Spec{
 		Title: opts.Presentation.ProductName + " Login", CSRFToken: opts.CSRFToken,
 		Scripts:    []string{"/static/login-page.js", "/static/login-background-loader.js"},
-		UpdatesURL: loginUpdatesURL(),
+		UpdatesURL: loginUpdatesURL(opts.ErrorCode),
 		Content:    g.El("lv-login-page", g.Attr("background-module-src", opts.Assets.URL("/static/topology-background.js"))),
 	})
 }
@@ -70,8 +74,12 @@ func normalizedLoginOptions(options []LoginPageOptions) LoginPageOptions {
 	return opts
 }
 
-func loginUpdatesURL() string {
+func loginUpdatesURL(errorCode string) string {
 	values := url.Values{}
 	values.Set("route", "login")
+	switch strings.TrimSpace(errorCode) {
+	case "invalid_credentials", "session_expired", "forbidden":
+		values.Set("error", strings.TrimSpace(errorCode))
+	}
 	return "/updates?" + values.Encode()
 }

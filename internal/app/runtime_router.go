@@ -1528,10 +1528,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if !ok {
 				return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
 			}
-			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
-			if err != nil {
-				return false, err
-			}
 			snapshot := authorizedLease.AuthorizationSnapshot()
 			if snapshot.Identity() != lease.Identity() {
 				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
@@ -1541,6 +1537,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return false, fmt.Errorf("delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
+				// Local development skips authored snapshot grants only after the
+				// active runtime identity and target-owned reader are validated.
+				if principal.DevBypass {
+					return true, nil
+				}
+				subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+				if err != nil {
+					return false, err
+				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
 			plan, err := deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
@@ -1554,9 +1559,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if plan.ProjectID != projectID {
 					return false, nil
 				}
+				// The immutable plan/project binding remains mandatory for local dev.
+				if principal.DevBypass {
+					return true, nil
+				}
+				subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+				if err != nil {
+					return false, err
+				}
 				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
 			}
 			resources, err := deliveryAuthorizationResources(plan)
+			if err != nil {
+				return false, err
+			}
+			// Local development skips only authored grants; candidate, plan, and
+			// graph-impact validation above still fail closed.
+			if principal.DevBypass {
+				return true, nil
+			}
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
 			if err != nil {
 				return false, err
 			}

@@ -31,6 +31,22 @@ func (m *Module) ListDashboardFilterValues(w http.ResponseWriter, r *http.Reques
 	m.handler.ListDashboardFilterOptions(w, r)
 }
 
+// ListDashboards resolves the active serving snapshot before dispatching the
+// catalog list. Lists are paginated against an immutable snapshot just like
+// dashboard query endpoints, so they must not bypass the module boundary.
+func (m *Module) ListDashboards(w http.ResponseWriter, r *http.Request) {
+	m.setServingSnapshot(r, "")
+	m.handler.ListDashboards(w, r)
+}
+
+// ListSemanticModels resolves the active serving snapshot before dispatching
+// the semantic-model catalog list. Keeping this on Module prevents callers
+// from selecting an arbitrary snapshot through the transport header.
+func (m *Module) ListSemanticModels(w http.ResponseWriter, r *http.Request) {
+	m.setServingSnapshot(r, "")
+	m.semantic.ListSemanticModels(w, r)
+}
+
 func (m *Module) setServingSnapshot(r *http.Request, _ string) {
 	r.Header.Del("X-Serving-Snapshot")
 	if m == nil || m.snapshot == nil {

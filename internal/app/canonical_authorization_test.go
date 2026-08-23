@@ -415,7 +415,7 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: test.snapshot}}
-			err := authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime)
+			err := authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime, false)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("authorizeSealedPublication() error=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -437,12 +437,25 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 				t.Fatal(err)
 			}
 			runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: snapshot}}
-			err = authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: projectImpactPlan}, accessModule, runtime)
+			err = authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: projectImpactPlan}, accessModule, runtime, false)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("authorizeSealedPublication() error=%v, wantErr=%t", err, test.wantErr)
 			}
 		})
 	}
+	t.Run("local developer bypass retains immutable candidate and plan validation", func(t *testing.T) {
+		devBinding := binding
+		devBinding.ActorID = accessmodule.LocalDeveloperPrincipal().ID
+		runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: newSnapshot()}}
+		if err := authorizeSealedPublication(context.Background(), devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime, true); err != nil {
+			t.Fatalf("local developer publication bypass error = %v", err)
+		}
+		mismatched := candidate
+		mismatched.PlanDigest = "sha256:" + strings.Repeat("b", 64)
+		if err := authorizeSealedPublication(context.Background(), devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: mismatched, plan: plan}, accessModule, runtime, true); err == nil {
+			t.Fatal("local developer publication bypass accepted mismatched candidate evidence")
+		}
+	})
 }
 
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {
