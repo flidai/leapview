@@ -3311,10 +3311,12 @@ func TestDependencySecurityContractCoversEveryDependencyGraph(t *testing.T) {
 	}
 
 	for task, fragments := range map[string][]string{
-		"node:audit":    {"bun audit"},
-		"desktop:audit": {"dir: desktop", "bun audit"},
-		"apigen:audit":  {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit"},
-		"vuln":          {"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./..."},
+		"node:audit":            {"bun audit"},
+		"desktop:audit":         {"dir: desktop", "bun audit"},
+		"apigen:audit":          {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit"},
+		"vuln":                  {"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./..."},
+		"security:report":       {"dependency-security", "dependencyreport report", ".tmp/release-security/dependency-clearance.json"},
+		"security:report:check": {"dependencyreport check", ".tmp/release-security/dependency-clearance.json"},
 	} {
 		block := taskfileTaskBlock(t, taskfile, task)
 		for _, fragment := range fragments {

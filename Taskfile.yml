@@ -1074,6 +1074,23 @@ tasks:
       - task: apigen:audit
       - task: vuln
 
+  security:report:
+    desc: Generate content-bound dependency clearance evidence from a clean checkout
+    deps:
+      - dependency-security
+    cmds:
+      - mkdir -p .tmp/release-security
+      - >-
+        go run ./internal/app/tools/dependencyreport report
+        --output .tmp/release-security/dependency-clearance.json
+
+  security:report:check:
+    desc: Re-scan and validate retained dependency clearance evidence
+    cmds:
+      - >-
+        go run ./internal/app/tools/dependencyreport check
+        --input .tmp/release-security/dependency-clearance.json
+
   ci:local:
     desc: Compatibility alias for the full current-environment contract
     cmds:

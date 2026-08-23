@@ -153,6 +153,28 @@ jobs:
       - name: Run dependency security scans
         run: task ci:nightly:extras
 
+      - name: Build dependency security clearance report
+        run: >-
+          go run ./internal/app/tools/dependencyreport report
+          --output dependency-security-report.json
+
+      - name: Validate dependency security clearance report
+        env:
+          EXPECTED_COMMIT: ${{ github.sha }}
+        run: >-
+          go run ./internal/app/tools/dependencyreport check
+          --input dependency-security-report.json
+          --expected-commit "${EXPECTED_COMMIT}"
+
+      - name: Upload dependency security clearance report
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-security-report
+          retention-days: 30
+          if-no-files-found: warn
+          path: dependency-security-report.json
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}
