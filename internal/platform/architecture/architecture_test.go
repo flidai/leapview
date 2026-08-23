@@ -2370,7 +2370,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25-bookworm@sha256:",
+		"FROM golang:1.25.13-bookworm@sha256:",
 		"AS go-deps",
 		"FROM go-deps AS sourcegen",
 		"COPY --from=node /usr/local/bin/node /usr/local/bin/node",
@@ -2585,7 +2585,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25-bookworm@sha256:",
+		"FROM golang:1.25.13-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
@@ -2596,7 +2596,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"RUN bun install --frozen-lockfile --no-cache",
 		"bun scripts/generate_visualization_validator.ts",
 		"bun run build:site",
-		"FROM golang:1.25-bookworm@sha256:",
+		"FROM golang:1.25.13-bookworm@sha256:",
 		"CGO_ENABLED=0 go build -trimpath",
 		"./cmd/leapview-site",
 		"FROM gcr.io/distroless/static-debian12:nonroot@sha256:",
@@ -3250,6 +3250,77 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	} {
 		if !strings.Contains(nightlyWorkflow, want) {
 			t.Fatalf("nightly workflow missing %q", want)
+		}
+	}
+}
+
+func TestDependencySecurityContractCoversEveryDependencyGraph(t *testing.T) {
+	root := repoRoot(t)
+	taskfileBytes, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	if err != nil {
+		t.Fatalf("read Taskfile.yml: %v", err)
+	}
+	taskfile := string(taskfileBytes)
+
+	nightlyExtras := taskfileTaskBlock(t, taskfile, "ci:nightly:extras")
+	if !strings.Contains(nightlyExtras, "- task: dependency-security") {
+		t.Fatal("ci:nightly:extras must delegate to the canonical dependency-security contract")
+	}
+
+	security := taskfileTaskBlock(t, taskfile, "dependency-security")
+	for _, want := range []string{
+		"- task: node:deps",
+		"- task: desktop:deps",
+		"npm --prefix pkg/apigen/typespec ci",
+		"- task: generate",
+		"- task: node:audit",
+		"- task: desktop:audit",
+		"- task: apigen:audit",
+		"- task: vuln",
+	} {
+		if !strings.Contains(security, want) {
+			t.Fatalf("dependency-security is missing %q", want)
+		}
+	}
+	ordered := []string{
+		"- task: node:deps",
+		"- task: desktop:deps",
+		"npm --prefix pkg/apigen/typespec ci",
+		"- task: generate",
+		"- task: vuln",
+	}
+	previous := -1
+	for _, fragment := range ordered {
+		at := strings.Index(security, fragment)
+		if at < 0 {
+			t.Fatalf("dependency-security is missing ordered fragment %q", fragment)
+		}
+		if at <= previous {
+			t.Fatalf("dependency-security runs %q out of order", fragment)
+		}
+		previous = at
+	}
+
+	nodeDeps := taskfileTaskBlock(t, taskfile, "node:deps")
+	if !strings.Contains(nodeDeps, "bun install --frozen-lockfile") {
+		t.Fatal("root Bun security preparation must use the frozen lockfile")
+	}
+	desktopDeps := taskfileTaskBlock(t, taskfile, "desktop:deps")
+	if !strings.Contains(desktopDeps, "bun install --frozen-lockfile") {
+		t.Fatal("desktop Bun security preparation must use the frozen lockfile")
+	}
+
+	for task, fragments := range map[string][]string{
+		"node:audit":    {"bun audit"},
+		"desktop:audit": {"dir: desktop", "bun audit"},
+		"apigen:audit":  {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit --audit-level=low"},
+		"vuln":          {"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./..."},
+	} {
+		block := taskfileTaskBlock(t, taskfile, task)
+		for _, fragment := range fragments {
+			if !strings.Contains(block, fragment) {
+				t.Errorf("%s is missing dependency security command %q", task, fragment)
+			}
 		}
 	}
 }

@@ -6,7 +6,7 @@ FROM node:24-bookworm@sha256:392e1e23f34da768d8d1f4e502b64f200d3be3465934d4b7930
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
 FROM scratch AS mapassetseed
 
-FROM golang:1.25-bookworm@sha256:a9c020ee3d1508c7be5435c262434e3d3fc1d0e76a11afeb9ddae7d60bc86aa4 AS go-deps
+FROM golang:1.25.13-bookworm@sha256:e401dae1bf814e29204a8cb7915682e1780951e609ca0dd8865ee1937f510c48 AS go-deps
 WORKDIR /src
 
 COPY go.mod go.sum ./
