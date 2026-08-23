@@ -81,7 +81,7 @@ jobs:
           severity: HIGH,CRITICAL
           exit-code: "1"
           ignore-unfixed: false
-          version: 0.74.0
+          version: v0.74.0
 
   sast-validation:
     name: Selected SAST (${{ matrix.language }})

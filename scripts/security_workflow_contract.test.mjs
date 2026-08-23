@@ -61,7 +61,7 @@ test("source and dependency scanners are pinned, redacted, and bounded", async (
   assert.match(secrets, /origin\/main/);
   assert.match(source, /aquasec\/trivy:0\.74\.0@sha256:[0-9a-f]{64}/);
   assert.match(source, /--severity HIGH,CRITICAL/);
-  assert.match(await repositoryFile(".github/workflows/security.yml"), /version: 0\.74\.0/);
+  assert.match(await repositoryFile(".github/workflows/security.yml"), /version: v0\.74\.0/);
 });
 
 test("security workflow contains no mutable third-party action refs", async () => {
