@@ -267,6 +267,66 @@ test("SPDX document covers every locked dependency and packaged runtime file", (
   );
 });
 
+test("SPDX document binds vendored compatibility packages to the source commit", () => {
+  const sourceSha = "d".repeat(40);
+  const document = buildSpdxDocument({
+    artifactSha256: "c".repeat(64),
+    createdAt: "2026-07-29T12:00:00.000Z",
+    files: [],
+    lock: {
+      workspaces: {
+        "": {
+          devDependencies: {
+            "brace-expansion": "file:vendor/brace-expansion-compat",
+          },
+        },
+      },
+      packages: {
+        "brace-expansion": [
+          "brace-expansion@file:vendor/brace-expansion-compat",
+          { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+        ],
+        "brace-expansion-next": [
+          "brace-expansion@5.0.9",
+          "",
+          {},
+          "sha512-YnJhY2Vz",
+        ],
+      },
+    },
+    packageDocument,
+    packageVerification,
+    sourceSha,
+  });
+  const compatibilityPackage = document.packages.find(
+    (entry) => entry.name === "brace-expansion" && entry.versionInfo.startsWith("file:"),
+  );
+  assert.equal(
+    compatibilityPackage?.versionInfo,
+    `file:vendor/brace-expansion-compat#${sourceSha}`,
+  );
+  assert.equal(compatibilityPackage?.externalRefs, undefined);
+
+  assert.throws(
+    () =>
+      buildSpdxDocument({
+        artifactSha256: "c".repeat(64),
+        createdAt: "2026-07-29T12:00:00.000Z",
+        files: [],
+        lock: {
+          workspaces: { "": { devDependencies: {} } },
+          packages: {
+            escape: ["escape@file:../outside", "", {}],
+          },
+        },
+        packageDocument,
+        packageVerification,
+        sourceSha,
+      }),
+    /mutable resolution/,
+  );
+});
+
 test("Squirrel RELEASES binds the exact nupkg identity", () => {
   const nupkg = {
     bytes: 140201271,
