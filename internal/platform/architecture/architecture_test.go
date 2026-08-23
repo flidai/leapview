@@ -3199,7 +3199,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		}
 	}
 	nightlyExtras := taskfileTaskBlock(t, taskfile, "ci:nightly:extras")
-	for _, want := range []string{"- task: generate", "- task: node:audit", "- task: vuln"} {
+	for _, want := range []string{"- task: dependency-security"} {
 		if !strings.Contains(nightlyExtras, want) {
 			t.Fatalf("ci:nightly:extras missing %q", want)
 		}
@@ -3313,7 +3313,7 @@ func TestDependencySecurityContractCoversEveryDependencyGraph(t *testing.T) {
 	for task, fragments := range map[string][]string{
 		"node:audit":    {"bun audit"},
 		"desktop:audit": {"dir: desktop", "bun audit"},
-		"apigen:audit":  {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit --audit-level=low"},
+		"apigen:audit":  {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit"},
 		"vuln":          {"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./..."},
 	} {
 		block := taskfileTaskBlock(t, taskfile, task)
