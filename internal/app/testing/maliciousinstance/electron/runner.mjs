@@ -14,7 +14,7 @@ import {
 import {
   createRemoteWindow,
 } from "../../../../../desktop/src/security/remote-window.mjs";
-import { runProofLifecycle } from "./proof-lifecycle.mjs";
+import { startProofLifecycle } from "./proof-lifecycle.mjs";
 import { writeJSONAtomic } from "./result-file.mjs";
 
 app.enableSandbox();
@@ -38,7 +38,7 @@ const result = {
   decisions: [],
 };
 
-await runProofLifecycle({
+await startProofLifecycle({
   app,
   result,
   runProof: () => withTimeout(runProof(), 40_000, "policy integration"),

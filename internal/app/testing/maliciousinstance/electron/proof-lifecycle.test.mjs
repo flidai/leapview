@@ -2,17 +2,30 @@ import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
 
-import { runProofLifecycle } from "./proof-lifecycle.mjs";
+import { startProofLifecycle } from "./proof-lifecycle.mjs";
 
 class FakeApplication extends EventEmitter {
   constructor(events) {
     super();
     this.events = events;
     this.exited = false;
+    this.readyPromise = new Promise((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+    });
   }
 
-  async whenReady() {
+  whenReady() {
+    return this.readyPromise;
+  }
+
+  becomeReady() {
     this.events.push("ready");
+    this.resolveReady();
+  }
+
+  failReady(error) {
+    this.rejectReady(error);
   }
 
   closeLastWindow() {
@@ -41,7 +54,7 @@ test("last-window closure cannot exit before the complete result is durable", as
   const app = new FakeApplication(events);
   const result = { passed: false, phase: "bootstrap" };
 
-  await runProofLifecycle({
+  const lifecycle = await startProofLifecycle({
     app,
     result,
     runProof: async () => {
@@ -54,6 +67,9 @@ test("last-window closure cannot exit before the complete result is durable", as
       events.push(`write:${result.phase}`);
     },
   });
+  assert.deepEqual(events, ["write:bootstrap"]);
+  app.becomeReady();
+  await lifecycle.completion;
 
   assert.deepEqual(events, [
     "write:bootstrap",
@@ -71,7 +87,7 @@ test("last-window closure cannot hide a failed proof result", async () => {
   const app = new FakeApplication(events);
   const result = { passed: false, phase: "bootstrap" };
 
-  await runProofLifecycle({
+  const lifecycle = await startProofLifecycle({
     app,
     result,
     runProof: async () => {
@@ -83,6 +99,9 @@ test("last-window closure cannot hide a failed proof result", async () => {
       events.push(`write:${result.phase}`);
     },
   });
+  assert.deepEqual(events, ["write:bootstrap"]);
+  app.becomeReady();
+  await lifecycle.completion;
 
   assert.deepEqual(events, [
     "write:bootstrap",
@@ -94,4 +113,26 @@ test("last-window closure cannot hide a failed proof result", async () => {
   assert.equal(result.passed, false);
   assert.equal(result.phase, "failed");
   assert.equal(result.error, "policy proof failed");
+});
+
+test("application readiness rejection is persisted as a proof failure", async () => {
+  const events = [];
+  const app = new FakeApplication(events);
+  const result = { passed: false, phase: "bootstrap" };
+
+  const lifecycle = await startProofLifecycle({
+    app,
+    result,
+    runProof: async () => {
+      assert.fail("proof ran after readiness failed");
+    },
+    writeResult: async () => {
+      events.push(`write:${result.phase}`);
+    },
+  });
+  app.failReady(new Error("Electron readiness failed"));
+  await lifecycle.completion;
+
+  assert.deepEqual(events, ["write:bootstrap", "write:failed", "exit:1"]);
+  assert.equal(result.error, "Electron readiness failed");
 });
