@@ -1,23 +1,15 @@
 import { LitElement, css, html } from 'lit'
-import { property, state } from 'lit/decorators.js'
+import { property } from 'lit/decorators.js'
 import type { CatalogPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
-import './dashboard-icon-picker'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
-
-type ActiveAppearance = { id: string; dashboardId: string; title: string; left: number; top: number }
-type AppearanceValue = { icon: string; color: string }
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
   private freshnessTimer: number | undefined
-  @state() private activeAppearance: ActiveAppearance | null = null
-  @state() private appearanceOverrides: Record<string, AppearanceValue> = {}
-  @state() private appearanceError = ''
-  private pendingAppearanceID = ''
   static styles = [pageHeaderStyles, css`
     :host {
       display: block;
@@ -46,21 +38,16 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       }
     }
 
-    .appearance-scrim { position: fixed; inset: 0; z-index: 30; }
-    .appearance-popover { position: fixed; z-index: 31; }
-    .appearance-error { position: fixed; right: var(--base-size-24); bottom: var(--base-size-24); z-index: 40; padding: var(--base-size-8) var(--base-size-12); border: var(--borderWidth-default) solid var(--display-red-borderColor-muted); border-radius: var(--lv-radius-default); background: var(--display-red-bgColor-muted); color: var(--display-red-fgColor); font: var(--lv-type-caption); }
     .catalog-create-draft { display: inline-flex; align-items: center; min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); text-decoration: none; font: var(--lv-type-body-compact); }
 
   `]
 
   override connectedCallback(): void {
     super.connectedCallback()
-    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
 	this.freshnessTimer = window.setInterval(() => this.requestUpdate(), 60_000)
   }
 
   override disconnectedCallback(): void {
-    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
 	if (this.freshnessTimer !== undefined) window.clearInterval(this.freshnessTimer)
 	this.freshnessTimer = undefined
     super.disconnectedCallback()
@@ -70,14 +57,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const page = this.page
     if (!page) return
     checkSignalContract('catalog page', page, { kind: 'required', dashboards: 'required' })
-    const pendingID = this.pendingAppearanceID
-    const optimistic = this.appearanceOverrides[pendingID]
-    const persisted = page.dashboards.find((dashboard) => dashboard.id === pendingID)
-    if (pendingID && optimistic && persisted && persisted.appearanceIcon === optimistic.icon && persisted.appearanceColor === optimistic.color) {
-      const { [pendingID]: _, ...remaining } = this.appearanceOverrides
-      this.appearanceOverrides = remaining
-      this.pendingAppearanceID = ''
-    }
   }
 
   get page(): CatalogPageSignal | null {
@@ -91,9 +70,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref}>Create draft</a>` : undefined)}
         <lv-entity-list
-          @lv-entity-list-icon-activate=${this.openAppearancePicker}
           .items=${page.dashboards.map((dashboard) => {
-            const appearance = this.appearanceOverrides[dashboard.id] ?? { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
+            const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             return ({
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
@@ -108,7 +86,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             }] : [],
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
-            iconButtonLabel: `Customize ${dashboard.title}`,
             iconTreatment: 'framed' as const,
             columns: {
               popularity: dashboard.popularity ? capitalize(dashboard.popularity) : '—',
@@ -132,69 +109,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           search-placeholder="Search dashboards"
           empty-text="No dashboards are available."
         ></lv-entity-list>
-        ${this.activeAppearance ? this.renderAppearancePicker() : ''}
-        ${this.appearanceError ? html`<div class="appearance-error" role="alert">${this.appearanceError}</div>` : ''}
       </section>
     `
-  }
-
-  private renderAppearancePicker() {
-    const active = this.activeAppearance!
-    const appearance = this.appearanceOverrides[active.id] ?? this.dashboardAppearance(active.id)
-    return html`
-      <div class="appearance-scrim" @click=${this.closeAppearancePicker}></div>
-      <div class="appearance-popover" style=${`left:${active.left}px;top:${active.top}px`} @click=${(event: Event) => event.stopPropagation()} @lv-dashboard-appearance-select=${this.selectAppearance}>
-        <lv-dashboard-icon-picker .icon=${appearance.icon} .color=${appearance.color} .label=${active.title}></lv-dashboard-icon-picker>
-      </div>
-    `
-  }
-
-  private dashboardAppearance(id: string): AppearanceValue {
-    const dashboard = this.page?.dashboards.find((item) => item.id === id)
-    return { icon: dashboard?.appearanceIcon ?? 'layout-dashboard', color: dashboard?.appearanceColor ?? 'purple' }
-  }
-
-  private openAppearancePicker = (event: CustomEvent<{ item: { id: string; title: string; dashboardId?: string }; anchor: HTMLElement }>) => {
-    const { item, anchor } = event.detail
-    if (!item.dashboardId) return
-    const bounds = anchor.getBoundingClientRect()
-    const width = Math.min(360, window.innerWidth - 32)
-    const left = Math.max(16, Math.min(bounds.left, window.innerWidth - width - 16))
-    const estimatedHeight = 390
-    const top = Math.max(16, Math.min(bounds.bottom + 8, window.innerHeight - estimatedHeight - 16))
-    this.activeAppearance = { id: item.id, dashboardId: item.dashboardId, title: item.title, left, top }
-  }
-
-  private closeAppearancePicker = () => { this.activeAppearance = null }
-
-  private selectAppearance = (event: CustomEvent<{ icon?: string; color?: string }>) => {
-    const active = this.activeAppearance
-    if (!active) return
-    const prior = this.appearanceOverrides[active.id] ?? this.dashboardAppearance(active.id)
-    const detail = event.detail
-    const optimistic = {
-      icon: detail.icon === 'default' ? 'layout-dashboard' : detail.icon ?? prior.icon,
-      color: detail.color === 'default' ? 'purple' : detail.color ?? prior.color,
-    }
-    this.appearanceError = ''
-    this.pendingAppearanceID = active.id
-    this.appearanceOverrides = { ...this.appearanceOverrides, [active.id]: optimistic }
-    this.dispatchEvent(new CustomEvent('lv-dashboard-appearance-change', {
-      bubbles: true,
-      composed: true,
-      detail: { dashboardId: active.dashboardId, ...detail },
-    }))
-  }
-
-  private handleDatastarFetch = (event: Event): void => {
-    if (!this.pendingAppearanceID) return
-    const detail = (event as CustomEvent<{ type?: string }>).detail
-    if (detail?.type !== 'error' && detail?.type !== 'retries-failed') return
-    const failedID = this.pendingAppearanceID
-    const { [failedID]: _, ...remaining } = this.appearanceOverrides
-    this.appearanceOverrides = remaining
-    this.pendingAppearanceID = ''
-    this.appearanceError = 'Dashboard appearance could not be saved. Please try again.'
   }
 }
 

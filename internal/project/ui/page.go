@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -210,9 +211,10 @@ func catalogPageBase(query string) uisignals.CatalogPageSignal {
 }
 
 func catalogDashboardSignal(_ catalog.Project, report catalog.Dashboard, id string, metadata CatalogDashboardMetadata) uisignals.CatalogDashboardSignal {
+	appearance := dashboardappearance.Resolve(report.Appearance)
 	return uisignals.CatalogDashboardSignal{
-		AppearanceColor: "",
-		AppearanceIcon:  "",
+		AppearanceColor: appearance.Color,
+		AppearanceIcon:  appearance.Icon,
 		DashboardID:     report.ID,
 		ID:              id,
 		Title:           report.Title,

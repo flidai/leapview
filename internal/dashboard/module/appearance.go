@@ -2,14 +2,20 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	appearancesqlite "github.com/flidai/leapview/internal/dashboard/appearance/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func NewAppearanceStore(database *sql.DB) dashboardappearance.Store {
+	return appearancesqlite.NewRepository(database)
+}
 
 // ApplyAppearancePatches applies only fields explicitly authored in a
 // deployment. Omitted fields retain the last UI value; "default" clears a

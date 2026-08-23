@@ -697,7 +697,8 @@ func buildApplicationSurfaces(
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
-		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID, Trace: runtime.pageStreamTrace,
+		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),
+		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID, Trace: runtime.pageStreamTrace,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -928,6 +929,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return false, err
 			}
 			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
+		}
+		routes.projectBrowser.AuthorizeDashboard = func(r *http.Request, dashboardID string, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			projectID, err := runtime.resolveProjectID(r.Context())
+			if err != nil {
+				return false, err
+			}
+			dashboard, err := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, capability)
 		}
 		routes.projectBrowser.AuthorizeConnection = func(r *http.Request, connectionID string, capability access.Capability) (bool, error) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)

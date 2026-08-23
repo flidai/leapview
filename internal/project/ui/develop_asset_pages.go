@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -25,18 +26,24 @@ func ProjectAssetPageWithRefresh(catalog catalog.Catalog, project projectview.De
 }
 
 func ProjectAssetPageWithRefreshAndVersions(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, chromeOptions...)
+	return ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, "", chromeOptions...)
 }
 
-func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
+func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
+	attachDashboardAppearance(&page, catalog, asset)
 	page.Environment = uisignals.Optional(environment)
 	area := projectAreaForAssetType(asset.Type)
 	extras := projectDocumentExtras{}
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
+	}
+	if activeSection == "details" && asset.Type == string(projectview.AssetTypeDashboard) {
+		extras.CSRFToken = csrfToken
+		commandPath := "/dashboards/" + url.PathEscape(asset.ID) + "/appearance"
+		attrs = append(attrs, g.Attr("data-on:lv-dashboard-appearance-change", "$dashboardAppearanceCommand = evt.detail; "+uiactions.CommandPost(dashboardappearance.UpdateCommandBinding(), commandPath, "dashboardAppearanceCommand")))
 	}
 	if activeSection == "data" && assetDataInspectable(asset.Type) {
 		extras.CSRFToken = refresh.CSRFToken
@@ -66,6 +73,7 @@ func ProjectAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
+	attachDashboardAppearance(&page, catalog, asset)
 	page.Environment = uisignals.Optional(environment)
 	patch := projectRouteBootstrapSignals(catalog, projectAreaForAssetType(asset.Type), roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
 	if assetRefreshable(asset.Type) {
@@ -73,6 +81,22 @@ func ProjectAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project
 		patch["pipelineCommandStatus"] = uisignals.PipelineCommandStatusSignal{}
 	}
 	return patch
+}
+
+func attachDashboardAppearance(page *uisignals.ResourceAssetPageSignal, projectCatalog catalog.Catalog, asset projectview.DevelopAssetView) {
+	if page == nil || asset.Type != string(projectview.AssetTypeDashboard) {
+		return
+	}
+	appearance, revision := dashboardappearance.Default(), int64(0)
+	for _, dashboard := range projectCatalog.Dashboards {
+		if dashboard.ID != asset.ID {
+			continue
+		}
+		appearance = dashboardappearance.Resolve(dashboard.Appearance)
+		revision = dashboard.AppearanceRevision
+		break
+	}
+	page.DashboardAppearance = &uisignals.DashboardAppearanceSignal{Icon: appearance.Icon, Color: appearance.Color, Revision: revision}
 }
 
 func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, versions AssetVersionsState) map[string]any {

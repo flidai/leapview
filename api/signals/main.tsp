@@ -1981,6 +1981,7 @@ model ResourceAssetPageSignal {
   `assetId`: string;
   `breadcrumbs`: ResourceBreadcrumbSignal[];
   `connectionLifecycle`?: ConnectionLifecycleSignal;
+  `dashboardAppearance`?: DashboardAppearanceSignal;
   `definition`?: ResourceAssetDefinitionSignal;
   `details`?: ResourceAssetDetailsSignal;
   `drawerParent`?: ResourceAssetPageSignal;
@@ -1991,6 +1992,14 @@ model ResourceAssetPageSignal {
   `tabs`: ResourceTabSignal[];
   `title`: string;
   `versions`?: ResourceAssetVersionsSignal;
+}
+
+@apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "appearance", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model DashboardAppearanceSignal {
+  `color`: string;
+  `icon`: string;
+  `revision`: int64;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })

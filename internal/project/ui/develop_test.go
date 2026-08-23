@@ -9,6 +9,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -127,7 +128,7 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		}
 	}
 	var rendered bytes.Buffer
-	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{}).Render(&rendered); err != nil {
+	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{}, "").Render(&rendered); err != nil {
 		t.Fatal(err)
 	}
 	dom := rendered.String()
@@ -364,10 +365,33 @@ func factValue(facts []uisignals.DefinitionFactSignal, label string) string {
 func TestDevelopCatalogUsesStableDashboardLinksWithoutProjectPicker(t *testing.T) {
 	page := catalogPageSignal(catalog.Catalog{
 		Project:    catalog.Project{ID: "sales", Title: "Sales"},
-		Dashboards: []catalog.Dashboard{{ID: "executive", Title: "Executive"}},
+		Dashboards: []catalog.Dashboard{{ID: "executive", Title: "Executive", Appearance: dashboardappearance.Value{Icon: "house", Color: "orange"}}},
 	}, "")
 	if len(page.Dashboards) != 1 || page.Dashboards[0].Href != "/dashboards/executive" {
 		t.Fatalf("dashboard link = %#v, want stable dashboard route", page.Dashboards)
+	}
+	if page.Dashboards[0].AppearanceIcon != "house" || page.Dashboards[0].AppearanceColor != "orange" {
+		t.Fatalf("dashboard appearance = %#v", page.Dashboards[0])
+	}
+}
+
+func TestDashboardDetailOwnsAppearanceSignalAndTypedCommand(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Title: "Sales"}
+	projectCatalog := catalog.Catalog{Project: catalog.Project{ID: "project:test"}, Dashboards: []catalog.Dashboard{{
+		ID: asset.ID, Appearance: dashboardappearance.Value{Icon: "house", Color: "orange"}, AppearanceRevision: 4,
+	}}}
+	page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", assetLineageModel{})
+	attachDashboardAppearance(&page, projectCatalog, asset)
+	if page.DashboardAppearance == nil || page.DashboardAppearance.Icon != "house" || page.DashboardAppearance.Color != "orange" || page.DashboardAppearance.Revision != 4 {
+		t.Fatalf("dashboard appearance signal = %#v", page.DashboardAppearance)
+	}
+	var rendered bytes.Buffer
+	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(projectCatalog, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{}, "csrf-test").Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	document := rendered.String()
+	if !strings.Contains(document, "lv-dashboard-appearance-change") || !strings.Contains(document, "updateDashboardAppearance") || !strings.Contains(document, "csrf-test") {
+		t.Fatalf("dashboard appearance command bridge is missing: %s", document)
 	}
 }
 
@@ -592,7 +616,7 @@ func TestPipelineDetailUsesCanonicalPipelineCommandBridge(t *testing.T) {
 	asset := projectview.DevelopAssetView{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh"}
 	refresh := AssetRefreshState{CanRun: true, RunCommand: refreshgen.GenUIActionCreateRefreshRun()}
 	var rendered bytes.Buffer
-	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", refresh, AssetVersionsState{}).Render(&rendered); err != nil {
+	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", refresh, AssetVersionsState{}, "").Render(&rendered); err != nil {
 		t.Fatal(err)
 	}
 	dom := rendered.String()

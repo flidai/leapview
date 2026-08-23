@@ -18,7 +18,7 @@ class DashboardIconPicker extends LitElement {
   @state() private viewportScrollTop = 0
 
   static styles = css`
-    :host { display: block; width: min(22.5rem, calc(100vw - 2rem)); }
+    :host { display: block; width: min(22.5rem, 100%); }
     .picker { overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); box-shadow: var(--shadow-floating-large); color: var(--lv-fg-default); }
     .title { padding: var(--base-size-8) var(--base-size-12); border-bottom: var(--lv-border-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
     .colors { display: flex; align-items: center; gap: var(--base-size-8); padding: var(--base-size-12); border-bottom: var(--lv-border-muted); }

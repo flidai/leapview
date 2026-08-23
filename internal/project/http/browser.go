@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
@@ -75,6 +76,11 @@ type ProjectDefinitionReader interface {
 	ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error)
 }
 
+type DashboardAppearanceStore interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardappearance.Record, error)
+	ApplyPatch(context.Context, dashboardappearance.Key, string, dashboardappearance.Patch) (dashboardappearance.Record, error)
+}
+
 // ErrSemanticModelUnavailable indicates that the active generation could not
 // provide the compiled definition required to render semantic-model detail.
 // A graph metadata payload is not a valid substitute because it would render
@@ -112,6 +118,7 @@ type BrowserHandler struct {
 	RefreshState             AssetRefreshStateReader
 	PhysicalCatalog          PhysicalCatalogReader
 	ProjectDefinitionReader  ProjectDefinitionReader
+	DashboardAppearances     DashboardAppearanceStore
 	QueryExecutor            DataQueryExecutor
 	Catalog                  CatalogAuthorizer
 	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
@@ -136,6 +143,7 @@ type BrowserHandler struct {
 	// to expose the browser's new-draft affordance. The catalog remains usable
 	// for read-only principals when this decision is denied.
 	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeDashboard       func(*stdhttp.Request, string, access.Capability) (bool, error)
 	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
 	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
 	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
@@ -191,6 +199,7 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/definition", wrap(h.DashboardAsset))
 	r.Get("/dashboards/{asset}/versions", wrap(h.DashboardAsset))
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
+	r.Post("/dashboards/{asset}/appearance", wrapMutation(h.DashboardAppearanceCommand))
 	r.Get("/pipelines", wrap(h.Pipelines))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
 	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))
@@ -400,7 +409,7 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
 	}
 	refresh.CSRFToken = h.csrf(r)
-	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r)))
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
@@ -1222,7 +1231,49 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 			out.Dashboards = append(out.Dashboards, projectnavigation.Dashboard{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
 		}
 	}
+	h.enrichDashboardAppearances(r.Context(), projectID, &out)
 	return out
+}
+
+func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, projectID projectgraph.ResourceID, catalog *projectnavigation.Catalog) {
+	if catalog == nil {
+		return
+	}
+	byID := make(map[string]*projectnavigation.Dashboard, len(catalog.Dashboards))
+	for index := range catalog.Dashboards {
+		byID[catalog.Dashboards[index].ID] = &catalog.Dashboards[index]
+	}
+	if h.ProjectDefinitionReader != nil {
+		if project, _, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx); err == nil {
+			for _, source := range project.DashboardSources {
+				dashboard := byID[source.Document.Metadata.ID]
+				if dashboard == nil || source.Document.Spec.Appearance == nil {
+					continue
+				}
+				if source.Document.Spec.Appearance.Icon != nil {
+					dashboard.Appearance.Icon = strings.TrimSpace(*source.Document.Spec.Appearance.Icon)
+				}
+				if source.Document.Spec.Appearance.Color != nil {
+					dashboard.Appearance.Color = strings.TrimSpace(string(*source.Document.Spec.Appearance.Color))
+				}
+			}
+		}
+	}
+	if h.DashboardAppearances == nil {
+		return
+	}
+	overrides, err := h.DashboardAppearances.ListProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+	for dashboardID, record := range overrides {
+		dashboard := byID[dashboardID.String()]
+		if dashboard == nil {
+			continue
+		}
+		dashboard.Appearance = dashboardappearance.Resolve(record.Value)
+		dashboard.AppearanceRevision = record.Revision
+	}
 }
 
 func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind) (projectcatalog.Page, error) {

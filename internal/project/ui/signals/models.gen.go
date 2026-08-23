@@ -282,6 +282,12 @@ type ConnectionsPageSignal struct {
 	Title       string                    `json:"title" yaml:"title"`
 }
 
+type DashboardAppearanceSignal struct {
+	Color    string `json:"color" yaml:"color"`
+	Icon     string `json:"icon" yaml:"icon"`
+	Revision int64  `json:"revision" yaml:"revision"`
+}
+
 type DashboardAppliedFilterState struct {
 	Expression         DashboardFilterExpression `json:"expression" yaml:"expression"`
 	ResolvedExpression DashboardFilterExpression `json:"resolvedExpression" yaml:"resolvedExpression"`
@@ -1388,6 +1394,7 @@ type ResourceAssetPageSignal struct {
 	AssetID             string                         `json:"assetId" yaml:"assetId"`
 	Breadcrumbs         []ResourceBreadcrumbSignal     `json:"breadcrumbs" yaml:"breadcrumbs"`
 	ConnectionLifecycle *ConnectionLifecycleSignal     `json:"connectionLifecycle,omitempty" yaml:"connectionLifecycle,omitempty"`
+	DashboardAppearance *DashboardAppearanceSignal     `json:"dashboardAppearance,omitempty" yaml:"dashboardAppearance,omitempty"`
 	Definition          *ResourceAssetDefinitionSignal `json:"definition,omitempty" yaml:"definition,omitempty"`
 	Details             *ResourceAssetDetailsSignal    `json:"details,omitempty" yaml:"details,omitempty"`
 	DrawerParent        *ResourceAssetPageSignal       `json:"drawerParent,omitempty" yaml:"drawerParent,omitempty"`

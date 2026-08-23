@@ -279,6 +279,60 @@ test('unavailable pipeline shows visible recovery guidance and connections actio
   }
 })
 
+test('dashboard detail owns the persisted appearance editor and emits complete updates', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=dashboard-detail`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const host = page.locator('lv-project-asset-page')
+    const initial = await host.evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        current: root.querySelector('.dashboard-appearance-current')?.textContent?.trim(),
+        editor: Boolean(root.querySelector('lv-dashboard-icon-picker')),
+      }
+    })
+    expect(initial.current).toContain('chart-no-axes-combined')
+    expect(initial.current).toContain('purple')
+    expect(initial.editor).toBe(false)
+
+    const detail = await host.evaluate(async (element: any) => {
+      const selected = new Promise<unknown>((resolve) => element.addEventListener('lv-dashboard-appearance-change', (event: Event) => resolve((event as CustomEvent).detail), { once: true }))
+      element.shadowRoot!.querySelector<HTMLButtonElement>('.dashboard-appearance-edit')!.click()
+      await element.updateComplete
+      const picker = element.shadowRoot!.querySelector('lv-dashboard-icon-picker') as any
+      await picker.updateComplete
+      picker.shadowRoot!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
+      return selected
+    })
+    expect(detail).toEqual({ icon: 'chart-no-axes-combined', color: 'orange' })
+    const optimistic = await host.evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
+        status: root.querySelector('[role="status"]')?.textContent?.trim(),
+      }
+    })
+    expect(optimistic.previewClass).toContain('appearance-color-orange')
+    expect(optimistic.status).toBe('Saving appearance…')
+    const failed = await host.evaluate(async (element: any) => {
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      await element.updateComplete
+      const root = element.shadowRoot!
+      return {
+        previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
+        error: root.querySelector('[role="alert"]')?.textContent?.trim(),
+      }
+    })
+    expect(failed.previewClass).toContain('appearance-color-purple')
+    expect(failed.error).toBe('Dashboard appearance could not be saved. Please try again.')
+  } finally {
+    await page.close()
+  }
+})
+
 test('pipeline detail run action emits canonical pipeline command detail', async () => {
   const page = await browser.newPage()
   try {
@@ -383,6 +437,8 @@ function testDocument(rootName: string): string {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'succeeded', running: false, canRun: true }, actions: [{ label: 'Run now', command: 'run-refresh-pipeline', disabled: false }], details: { overview: [{ label: 'Refresh status', value: 'succeeded' }], sections: [] },
   } : rootName === 'pipeline-unavailable' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable; review connections', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }, { label: 'Review connections', href: '/connections', icon: 'open' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Review Connections and runtime setup, then retry.', wide: true }], sections: [] },
+  } : rootName === 'dashboard-detail' ? {
+    kind: 'data', title: 'Executive Sales', assetId: 'dashboard:executive-sales', activeSection: 'details', asset: { id: 'dashboard:executive-sales', key: 'executive-sales', title: 'Executive Sales', type: 'dashboard', typeLabel: 'Dashboard', detailHref: '/dashboards/dashboard:executive-sales/details', openHref: '/dashboards/dashboard:executive-sales' }, breadcrumbs: [{ label: 'Dashboards', href: '/dashboards' }, { label: 'Executive Sales', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/dashboards/dashboard:executive-sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/dashboards/dashboard:executive-sales/definition' }], dashboardAppearance: { icon: 'chart-no-axes-combined', color: 'purple', revision: 2 }, details: { overview: [{ label: 'Semantic model', value: 'semantic-model:sales' }], sections: [] },
   } : rootName === 'detail' ? {
     kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details', active: true }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'semantic-detail' ? {
@@ -396,7 +452,7 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'pipeline-detail' || rootName === 'pipeline-unavailable' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'pipeline-detail' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' ? 'lv-project-asset-page' : 'lv-project-page'
   const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
   const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
   const signals = {
