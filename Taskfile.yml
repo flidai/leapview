@@ -1058,8 +1058,20 @@ tasks:
   ci:nightly:extras:
     desc: Run the security scans added by the nightly CI tier
     cmds:
+      - task: dependency-security
+
+  dependency-security:
+    desc: Prepare and scan every checked-in JavaScript and Go dependency graph
+    cmds:
+      # Recreate each package-manager graph from its checked-in lockfile before
+      # generation. The security lane must not inherit an incomplete workspace.
+      - task: node:deps
+      - task: desktop:deps
+      - npm --prefix pkg/apigen/typespec ci
       - task: generate
       - task: node:audit
+      - task: desktop:audit
+      - task: apigen:audit
       - task: vuln
 
   ci:local:
@@ -1103,6 +1115,20 @@ tasks:
       - node:deps
     cmds:
       - bun audit
+
+  desktop:audit:
+    desc: Scan LeapView Desktop dependencies for known vulnerabilities
+    deps:
+      - desktop:deps
+    dir: desktop
+    cmds:
+      - bun audit
+
+  apigen:audit:
+    desc: Scan the vendored APIGen TypeSpec dependencies for known vulnerabilities
+    cmds:
+      - npm --prefix pkg/apigen/typespec ci
+      - npm --prefix pkg/apigen/typespec audit
 
   vuln:
     desc: Scan Go dependencies and call paths for known vulnerabilities
