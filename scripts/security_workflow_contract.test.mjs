@@ -38,6 +38,7 @@ test("source and dependency scanners are pinned, redacted, and bounded", async (
   assert.match(dependencies, /-not -path '\*\/node_modules\/\*'/);
   assert.match(secrets, /GITLEAKS_VERSION="v8\.30\.1"/);
   assert.equal((secrets.match(/--redact=100/g) ?? []).length, 2);
+  assert.match(secrets, /git ls-files --cached --others --exclude-standard -z/);
   assert.match(secrets, /origin\/main/);
   assert.match(source, /aquasec\/trivy:0\.74\.0@sha256:[0-9a-f]{64}/);
   assert.match(source, /--severity HIGH,CRITICAL/);
