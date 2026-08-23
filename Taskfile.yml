@@ -1157,6 +1157,7 @@ tasks:
     cmds:
       - task: security:policy
       - node --test scripts/security_workflow_contract.test.mjs
+      - node --test scripts/security_scanner_contract.test.mjs
       - task: security:promotion-contracts
       - task: security:governance:test
       - bash -n scripts/security_dependencies.sh scripts/security_secrets.sh scripts/security_source.sh scripts/admit_oci_artifact.sh
