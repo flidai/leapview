@@ -129,10 +129,6 @@ jobs:
           DEPENDENCY_RESULT: ${{ needs.dependency-validation.result }}
           SOURCE_RESULT: ${{ needs.source-validation.result }}
           SAST_RESULT: ${{ needs.sast-validation.result }}
-        run: |
-          for result in "$POLICY_RESULT" "$DEPENDENCY_RESULT" "$SOURCE_RESULT" "$SAST_RESULT"; do
-            test "$result" = success || {
-              printf 'Security validation result: %s\n' "$result" >&2
-              exit 1
-            }
-          done
+        run: >-
+          ./scripts/require_security_results.sh
+          "$POLICY_RESULT" "$DEPENDENCY_RESULT" "$SOURCE_RESULT" "$SAST_RESULT"

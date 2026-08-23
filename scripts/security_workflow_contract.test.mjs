@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { resolve } from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
@@ -26,10 +27,23 @@ test("required Security gate aggregates every fail-closed lane", async () => {
     "name: Security gate",
     "if: ${{ always() }}",
     "needs: [policy-validation, dependency-validation, source-validation, sast-validation]",
-    'test "$result" = success',
+    "./scripts/require_security_results.sh",
   ]) {
     assert.match(workflow, new RegExp(fragment.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
   }
+});
+
+test("aggregate Security gate rejects every non-success dependency result", () => {
+  const aggregate = resolve(root, "scripts/require_security_results.sh");
+  const passing = spawnSync(aggregate, ["success", "success", "success", "success"], { encoding: "utf8" });
+  assert.equal(passing.status, 0, passing.stderr);
+  for (const state of ["failure", "cancelled", "skipped", "timed_out", "", "unknown"]) {
+    const result = spawnSync(aggregate, ["success", state, "success", "success"], { encoding: "utf8" });
+    assert.notEqual(result.status, 0, `aggregate accepted ${JSON.stringify(state)}`);
+    assert.match(result.stderr, /Security validation result:/);
+  }
+  const missing = spawnSync(aggregate, ["success", "success", "success"], { encoding: "utf8" });
+  assert.equal(missing.status, 64);
 });
 
 test("source and dependency scanners are pinned, redacted, and bounded", async () => {
