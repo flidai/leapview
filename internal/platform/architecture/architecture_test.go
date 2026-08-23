@@ -3509,13 +3509,18 @@ func TestGitHubHostedCIRunsAPIGenAsAnIndependentLeanLane(t *testing.T) {
 
 	taskfile := read("Taskfile.yml")
 	apigenLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:apigen")
+	if !strings.Contains(apigenLane, "- task: apigen:test") {
+		t.Fatal("APIGen CI lane must delegate to the complete vendored APIGen contract")
+	}
+	apigenTest := taskfileTaskBlock(t, taskfile, "apigen:test")
 	for _, want := range []string{
-		"- task: apigen:test",
+		"npm --prefix pkg/apigen/typespec ci",
+		"npm --prefix pkg/apigen/typespec test",
 		"npm --prefix pkg/apigen/typespec run typecheck",
 		"npm --prefix pkg/apigen/typespec run check:dist",
 	} {
-		if !strings.Contains(apigenLane, want) {
-			t.Fatalf("APIGen CI lane is missing %q", want)
+		if !strings.Contains(apigenTest, want) {
+			t.Fatalf("APIGen test contract is missing %q", want)
 		}
 	}
 	packagesLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:packages")

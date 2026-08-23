@@ -534,6 +534,8 @@ tasks:
       - go -C pkg/apigen test ./...
       - npm --prefix pkg/apigen/typespec ci
       - npm --prefix pkg/apigen/typespec test
+      - npm --prefix pkg/apigen/typespec run typecheck
+      - npm --prefix pkg/apigen/typespec run check:dist
 
   apigen:build:
     desc: Build the vendored APIGen TypeSpec emitter used by generation
@@ -987,8 +989,6 @@ tasks:
     desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:
       - task: apigen:test
-      - npm --prefix pkg/apigen/typespec run typecheck
-      - npm --prefix pkg/apigen/typespec run check:dist
 
   ci:lane:go:application:
     desc: Run sharded application and external-service Go tests
