@@ -37,28 +37,27 @@ import (
 )
 
 type Module struct {
-	handler                       dashboardhttp.Handler
-	authoring                     *dashboardauthoringapplication.Application
-	semantic                      semanticapi.Handler
-	snapshot                      func(context.Context) (string, error)
-	publications                  *publicationsqlite.Repository
-	publicationService            *publication.Service
-	publicURL                     string
-	currentActor                  func(*http.Request) string
-	recordAudit                   func(context.Context, access.AuditEventInput) error
-	recordPublicationCommandAudit func(context.Context, publicationCommandAuditInput) error
-	streams                       publication.StreamRegistry
-	publicBroker                  dashboardhttp.SignalBroker
-	publicTelemetry               PublicTelemetry
-	dashboardTelemetry            DashboardTelemetry
-	logger                        *slog.Logger
-	runtimeMetrics                queryruntime.Metrics
-	coordinators                  *dashboardstream.Registry
-	usageReader                   usage.Reader
-	usageNow                      func() time.Time
-	lifecycleMu                   sync.Mutex
-	lifecycleCancel               context.CancelFunc
-	lifecycleWG                   sync.WaitGroup
+	handler                    dashboardhttp.Handler
+	authoring                  *dashboardauthoringapplication.Application
+	semantic                   semanticapi.Handler
+	snapshot                   func(context.Context) (string, error)
+	publications               *publicationsqlite.Repository
+	publicationService         *publication.Service
+	publicURL                  string
+	currentActor               func(*http.Request) string
+	publicationAuditConfigured bool
+	streams                    publication.StreamRegistry
+	publicBroker               dashboardhttp.SignalBroker
+	publicTelemetry            PublicTelemetry
+	dashboardTelemetry         DashboardTelemetry
+	logger                     *slog.Logger
+	runtimeMetrics             queryruntime.Metrics
+	coordinators               *dashboardstream.Registry
+	usageReader                usage.Reader
+	usageNow                   func() time.Time
+	lifecycleMu                sync.Mutex
+	lifecycleCancel            context.CancelFunc
+	lifecycleWG                sync.WaitGroup
 }
 
 type Config struct {
@@ -75,11 +74,13 @@ type Config struct {
 	Trace           *pagestream.TraceStore
 	PublicURL       string
 	CurrentActor    func(*http.Request) string
-	RecordAudit     func(context.Context, access.AuditEventInput) error
-	UsageRecorder   usage.Recorder
-	UsageReader     usage.Reader
-	UsageNow        func() time.Time
-	RuntimeMetrics  queryruntime.Metrics
+	// AuditIntentRecorder is the narrow Access-owned port used by publication
+	// SQLite transactions. It must be supplied whenever Database is configured.
+	AuditIntentRecorder access.AuditIntentRecorder
+	UsageRecorder       usage.Recorder
+	UsageReader         usage.Reader
+	UsageNow            func() time.Time
+	RuntimeMetrics      queryruntime.Metrics
 }
 
 type HTTPConfig struct {
@@ -151,13 +152,15 @@ type Telemetry interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	var publicationCommandAudit func(context.Context, publicationCommandAuditInput) error
+	publicationAuditConfigured := false
 	if config.Database != nil {
-		var err error
-		publicationCommandAudit, err = buildPublicationCommandAuditRecorder(config.RecordAudit)
-		if err != nil {
+		if config.AuditIntentRecorder == nil {
+			return nil, errPublicationCommandAuditUnavailable
+		}
+		if err := validatePublicationCommandAuditContracts(); err != nil {
 			return nil, err
 		}
+		publicationAuditConfigured = true
 	}
 	coordinators := dashboardstream.NewRegistry()
 	optionCursorSecret := make([]byte, 32)
@@ -284,16 +287,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			QueryFreshness:        config.Semantic.QueryFreshness,
 		},
 		snapshot:  config.ServingSnapshot,
-		publicURL: config.PublicURL, currentActor: config.CurrentActor, recordAudit: config.RecordAudit,
-		recordPublicationCommandAudit: publicationCommandAudit,
-		streams:                       publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
+		publicURL: config.PublicURL, currentActor: config.CurrentActor,
+		publicationAuditConfigured: publicationAuditConfigured,
+		streams:                    publication.NewMemoryStreamRegistry(), publicBroker: config.HTTP.Broker,
 		publicTelemetry: config.PublicTelemetry, dashboardTelemetry: config.HTTP.Telemetry, logger: config.Logger,
 		runtimeMetrics: config.RuntimeMetrics,
 		coordinators:   coordinators,
 		usageReader:    usageReader, usageNow: usageNow,
 	}
 	if config.Database != nil {
-		module.publications = publicationsqlite.NewRepository(config.Database)
+		module.publications = publicationsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 		module.streams = publicationsqlite.NewStreamRegistry(config.Database)
 		module.publicBroker = publicationsqlite.NewBroker(config.Database, config.Trace, config.Logger)
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)

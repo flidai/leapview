@@ -117,7 +117,7 @@ type Config struct {
 	Jobs                JobStore
 	Workflow            jobplatform.WorkflowRecorder
 	ServingStates       ServingStateReader
-	RecordAudit         func(context.Context, CommandAuditEvent) error
+	AuditIntentRecorder access.AuditIntentRecorder
 }
 
 type ProductConfig struct {
@@ -148,9 +148,12 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	var commandAudit func(context.Context, manageddatahttp.CommandAuditInput) error
+	var buildAuditIntent func(context.Context, manageddatahttp.CommandAuditInput) (*access.AuditIntent, error)
 	if !cfg.Disabled {
-		commandAudit, err = buildManagedDataCommandAuditRecorder(cfg.RecordAudit)
+		if cfg.AuditIntentRecorder == nil {
+			return nil, errors.New("managed-data audit intent recorder is required")
+		}
+		buildAuditIntent, err = buildManagedDataAuditIntentBuilder()
 		if err != nil {
 			return nil, err
 		}
@@ -167,14 +170,14 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		module.handler = manageddatahttp.NewHandler(manageddatahttp.Options{
 			CurrentPrincipal: currentPrincipal, MaxJSONBodyBytes: cfg.MaxJSONBodyBytes,
 			Environment: cfg.Environment, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
-			RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
+			BuildAuditIntent: buildAuditIntent, Logger: cfg.Worker.Logger,
 		})
 		return module, nil
 	}
 	if cfg.Database == nil {
 		return nil, errors.New("managed-data database is required")
 	}
-	repository := manageddatasqlite.NewRepositoryWithWorkflow(cfg.Database, cfg.Workflow)
+	repository := manageddatasqlite.NewRepositoryWithWorkflowAndAudit(cfg.Database, cfg.Workflow, cfg.AuditIntentRecorder)
 	services, err := newManagedDataStorage(ctx, cfg.Product)
 	if err != nil {
 		return nil, err
@@ -235,7 +238,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		Repository: apiRepository, Uploads: uploads, Multipart: multipart,
 		CurrentPrincipal: currentPrincipal, AuthorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection), Environment: cfg.Environment,
 		BeginFinalize: module.beginFinalize, RecordUploadCreated: module.recordUploadCreated,
-		AbortUpload: module.abortUpload, RecordCommandAudit: commandAudit, Logger: cfg.Worker.Logger,
+		AbortUpload: module.abortUpload, BuildAuditIntent: buildAuditIntent, Logger: cfg.Worker.Logger,
 	})
 	module.maintenanceWorker = newMaintenanceWorker(module.maintenance, cfg.Worker)
 	if err := validateFinalizeUploadJobHandlers(finalizeExecution, module.JobHandlers(cfg.Jobs)); err != nil {

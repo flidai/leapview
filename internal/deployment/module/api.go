@@ -12,6 +12,7 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
@@ -198,7 +199,23 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	created, err := m.jobs.Coordinator.Create(r.Context(), createRequest)
+	ctx := r.Context()
+	migratedAudit := m.auditIntentConfigured && deploymentAuditIntentOperation(operationIDValue)
+	if migratedAudit {
+		deploymentID := apiadapter.DeploymentID(project, principal.ID, idempotencyKey)
+		requestID, correlationID := deploymentAuditRequestIdentity(r)
+		intent, intentErr := buildDeploymentAuditIntent(deploymentAuditCommandInput{
+			OperationID: operationIDValue, ProjectID: project, DeploymentID: deploymentID, ReleaseID: releaseID,
+			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,
+			Status: execution.InitialState,
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, operationID, intentErr)
+			return
+		}
+		ctx = deployment.WithAuditIntent(ctx, intent)
+	}
+	created, err := m.jobs.Coordinator.Create(ctx, createRequest)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
@@ -218,9 +235,33 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 		mapped := approvalResponse(approval)
 		response.Approval = &mapped
 	}
-	m.completePersistedExecution(r.Context(), operationIDValue, created.ID)
+	m.completePersistedExecution(ctx, operationIDValue, created.ID)
 	w.Header().Set("Location", deploymentLocation(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusAccepted, response)
+}
+
+func deploymentAuditIntentOperation(operationID string) bool {
+	switch operationID {
+	case string(deploymentgen.GenOperationCreateDeployment), string(deploymentgen.GenOperationRetryDeployment), string(deploymentgen.GenOperationRollbackDeployment):
+		return true
+	default:
+		return false
+	}
+}
+
+func deploymentAuditRequestIdentity(r *http.Request) (string, string) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	}
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(r.Header.Get("X-Correlation-Id"))
+	}
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	return requestID, correlationID
 }
 
 func publishEvidence(
@@ -334,6 +375,11 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("service_unavailable", "Deployment service is unavailable"))
 		return
 	}
+	principal, ok := m.principal(r)
+	if !ok {
+		m.writeCommandFailure(w, r, operationID, apigenfailure.New("authentication_required", "Bearer authentication is required"))
+		return
+	}
 	releaseID, _, err := m.api.Releases.DeploymentRelease(r.Context(), project, deploymentID)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
@@ -348,15 +394,32 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.writeCommandFailure(w, r, operationID, apigenfailure.Wrap("queue_unavailable", err))
 		return
 	}
-	row, err := m.jobs.Coordinator.Cancel(r.Context(), apiadapter.Scope{Project: project, DeploymentID: deploymentID})
+	ctx := r.Context()
+	if m.auditIntentConfigured {
+		requestID, correlationID := deploymentAuditRequestIdentity(r)
+		intent, intentErr := buildDeploymentAuditIntent(deploymentAuditCommandInput{
+			OperationID: operationID.APIGenOperationID(), ProjectID: project, DeploymentID: deploymentID, ReleaseID: releaseID,
+			IdempotencyKey: r.Header.Get("Idempotency-Key"), PrincipalID: principal.ID,
+			RequestID: requestID, CorrelationID: correlationID, Status: string(apiadapter.StatusCancelled),
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, operationID, intentErr)
+			return
+		}
+		ctx = deployment.WithAuditIntent(ctx, intent)
+	}
+	row, err := m.jobs.Coordinator.Cancel(ctx, apiadapter.Scope{Project: project, DeploymentID: deploymentID})
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	m.recordBestEffortAPIEvent(
-		r.Context(), operationID.APIGenOperationID(), deploymentID,
-		deploymentCancelledAuditAction, map[string]any{"deploymentId": deploymentID, "status": "cancelled"},
-	)
+	m.completePersistedExecution(ctx, operationID.APIGenOperationID(), deploymentID)
+	if !m.auditIntentConfigured {
+		m.recordBestEffortAPIEvent(
+			r.Context(), operationID.APIGenOperationID(), deploymentID,
+			deploymentCancelledAuditAction, map[string]any{"deploymentId": deploymentID, "status": "cancelled"},
+		)
+	}
 	w.Header().Set("Location", deploymentLocation(project, deploymentID))
 	apitransport.WriteJSON(w, http.StatusAccepted, deploymentResponse(row, targetRelease))
 }
@@ -437,7 +500,7 @@ func (m *Module) RequestDeploymentApproval(
 	r *http.Request,
 	project,
 	deploymentID,
-	_ string,
+	idempotencyKey string,
 ) {
 	principal, ok := m.principal(r)
 	if !ok {
@@ -453,15 +516,32 @@ func (m *Module) RequestDeploymentApproval(
 	if !ok {
 		return
 	}
-	approval, err := m.requestApproval(r.Context(), row, releaseID, actor)
+	ctx := r.Context()
+	migratedAudit := m.auditIntentConfigured
+	if migratedAudit {
+		requestID, correlationID := deploymentAuditRequestIdentity(r)
+		intent, intentErr := buildDeploymentAuditIntent(deploymentAuditCommandInput{
+			OperationID: string(deploymentgen.GenOperationRequestDeploymentApproval), ProjectID: project, DeploymentID: deploymentID,
+			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeploymentApproval(), intentErr)
+			return
+		}
+		ctx = deployment.WithAuditIntent(ctx, intent)
+	}
+	approval, err := m.requestApproval(ctx, row, releaseID, actor)
 	if err != nil {
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeploymentApproval(), err)
 		return
 	}
-	m.recordBestEffortAPIEvent(r.Context(), deploymentgen.GenCommandOperationRequestDeploymentApproval().APIGenOperationID(), deploymentID, deploymentApprovalRequestedAuditAction, map[string]any{
-		"deploymentId": deploymentID,
-		"approvalId":   approval.ID,
-	})
+	m.completePersistedExecution(ctx, deploymentgen.GenCommandOperationRequestDeploymentApproval().APIGenOperationID(), deploymentID)
+	if !migratedAudit {
+		m.recordBestEffortAPIEvent(r.Context(), deploymentgen.GenCommandOperationRequestDeploymentApproval().APIGenOperationID(), deploymentID, deploymentApprovalRequestedAuditAction, map[string]any{
+			"deploymentId": deploymentID,
+			"approvalId":   approval.ID,
+		})
+	}
 	w.Header().Set("Location", approvalLocation(project, deploymentID, approval.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, approvalResponse(approval))
 }
@@ -472,9 +552,9 @@ func (m *Module) ApproveDeployment(
 	project,
 	deploymentID,
 	approvalID,
-	_ string,
+	idempotencyKey string,
 ) {
-	m.transitionApproval(w, r, project, deploymentID, approvalID, approvalDecisionApprove)
+	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionApprove)
 }
 
 func (m *Module) DenyDeploymentApproval(
@@ -483,9 +563,9 @@ func (m *Module) DenyDeploymentApproval(
 	project,
 	deploymentID,
 	approvalID,
-	_ string,
+	idempotencyKey string,
 ) {
-	m.transitionApproval(w, r, project, deploymentID, approvalID, approvalDecisionDeny)
+	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionDeny)
 }
 
 func (m *Module) RevokeDeploymentApproval(
@@ -494,9 +574,9 @@ func (m *Module) RevokeDeploymentApproval(
 	project,
 	deploymentID,
 	approvalID,
-	_ string,
+	idempotencyKey string,
 ) {
-	m.transitionApproval(w, r, project, deploymentID, approvalID, approvalDecisionRevoke)
+	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionRevoke)
 }
 
 func (m *Module) ActivateDeployment(
@@ -547,8 +627,35 @@ func (m *Module) ActivateDeployment(
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("queue_unavailable", "Deployment activation queue is unavailable"))
 		return
 	}
-	if err := m.api.Committer.CommitWorkflow(r.Context(), workflow); err != nil && !errors.Is(err, jobs.ErrConflict) {
-		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.Wrap("queue_unavailable", err))
+	var activationAudit *access.AuditIntent
+	if m.auditIntentConfigured {
+		requestID, correlationID := deploymentAuditRequestIdentity(r)
+		intent, intentErr := buildDeploymentAuditIntent(deploymentAuditCommandInput{
+			OperationID: deploymentgen.GenCommandOperationActivateDeployment().APIGenOperationID(), ProjectID: project,
+			DeploymentID: deploymentID, ReleaseID: releaseID, IdempotencyKey: idempotencyKey, PrincipalID: principal.ID,
+			RequestID: requestID, CorrelationID: correlationID, Status: execution.InitialState, Outcome: "accepted",
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), intentErr)
+			return
+		}
+		activationAudit = &intent
+	}
+	var commitErr error
+	if activationAudit != nil {
+		committer, ok := m.api.Committer.(interface {
+			CommitWorkflowWithAudit(context.Context, jobs.WorkflowIntent, access.AuditIntent) error
+		})
+		if !ok {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("queue_unavailable", "Deployment activation audit is unavailable"))
+			return
+		}
+		commitErr = committer.CommitWorkflowWithAudit(r.Context(), workflow, *activationAudit)
+	} else {
+		commitErr = m.api.Committer.CommitWorkflow(r.Context(), workflow)
+	}
+	if commitErr != nil && !errors.Is(commitErr, jobs.ErrConflict) {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.Wrap("queue_unavailable", commitErr))
 		return
 	}
 	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
@@ -788,6 +895,7 @@ func (m *Module) transitionApproval(
 	project,
 	deploymentID,
 	approvalID string,
+	idempotencyKey string,
 	decision approvalDecision,
 ) {
 	operationID := operationIDForDecision(decision)
@@ -815,17 +923,32 @@ func (m *Module) transitionApproval(
 		ExpectedRevision: body.ExpectedRevision,
 		Actor:            actor,
 	}
+	ctx := r.Context()
+	migratedAudit := m.auditIntentConfigured
+	if migratedAudit {
+		requestID, correlationID := deploymentAuditRequestIdentity(r)
+		intent, intentErr := buildDeploymentAuditIntent(deploymentAuditCommandInput{
+			OperationID: operationID.APIGenOperationID(), ProjectID: project, DeploymentID: deploymentID, ApprovalID: approvalID,
+			ApprovalRev: body.ExpectedRevision + 1, IdempotencyKey: idempotencyKey, PrincipalID: principal.ID,
+			RequestID: requestID, CorrelationID: correlationID,
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, operationID, intentErr)
+			return
+		}
+		ctx = deployment.WithAuditIntent(ctx, intent)
+	}
 	var (
 		approval deployment.Approval
 		err      error
 	)
 	switch decision {
 	case approvalDecisionApprove:
-		approval, err = m.approvals.Approve(r.Context(), transition)
+		approval, err = m.approvals.Approve(ctx, transition)
 	case approvalDecisionDeny:
-		approval, err = m.approvals.Deny(r.Context(), transition)
+		approval, err = m.approvals.Deny(ctx, transition)
 	case approvalDecisionRevoke:
-		approval, err = m.approvals.Revoke(r.Context(), transition)
+		approval, err = m.approvals.Revoke(ctx, transition)
 	default:
 		err = deployment.ErrApprovalInvalid
 	}
@@ -833,6 +956,7 @@ func (m *Module) transitionApproval(
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
+	m.completePersistedExecution(ctx, operationID.APIGenOperationID(), deploymentID)
 	eventType := deploymentApprovalRevokedAuditAction
 	switch decision {
 	case approvalDecisionApprove:
@@ -840,11 +964,13 @@ func (m *Module) transitionApproval(
 	case approvalDecisionDeny:
 		eventType = deploymentDeniedAuditAction
 	}
-	m.recordBestEffortAPIEvent(r.Context(), operationID.APIGenOperationID(), deploymentID, eventType, map[string]any{
-		"deploymentId":     deploymentID,
-		"approvalId":       approval.ID,
-		"approvalRevision": approval.Revision,
-	})
+	if !migratedAudit {
+		m.recordBestEffortAPIEvent(r.Context(), operationID.APIGenOperationID(), deploymentID, eventType, map[string]any{
+			"deploymentId":     deploymentID,
+			"approvalId":       approval.ID,
+			"approvalRevision": approval.Revision,
+		})
+	}
 	apitransport.WriteJSON(w, http.StatusOK, approvalResponse(approval))
 }
 
@@ -1027,6 +1153,7 @@ func (m *Module) completePersistedExecution(ctx context.Context, operationID, de
 		return
 	}
 	err = executor.Execute(ctx, operationID, apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
 			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
 				return fmt.Errorf("deployment command %q audit and initial lifecycle event disagree", operationID)

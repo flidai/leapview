@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	platformdb "github.com/flidai/leapview/internal/manageddata/internal/db"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
@@ -25,11 +26,33 @@ type Repository struct {
 	db       *sql.DB
 	q        *platformdb.Queries
 	workflow jobplatform.WorkflowRecorder
+	audit    access.AuditIntentRecorder
 }
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, q: platformdb.New(db)} }
 func NewRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder) *Repository {
 	return &Repository{db: db, q: platformdb.New(db), workflow: workflow}
+}
+
+// NewRepositoryWithWorkflowAndAudit wires the source-owned SQLite repository
+// to Access' narrow durable audit-intent port. The recorder participates in
+// transactions opened here and never commits or rolls them back.
+func NewRepositoryWithWorkflowAndAudit(db *sql.DB, workflow jobplatform.WorkflowRecorder, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: db, q: platformdb.New(db), workflow: workflow, audit: audit}
+}
+
+func NewRepositoryWithAudit(db *sql.DB, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: db, q: platformdb.New(db), audit: audit}
+}
+
+func (r *Repository) recordAuditIntent(ctx context.Context, tx *sql.Tx, intent *access.AuditIntent) error {
+	if intent == nil {
+		return nil
+	}
+	if r.audit == nil {
+		return fmt.Errorf("managed-data audit intent recorder is required")
+	}
+	return r.audit.RecordAuditIntent(ctx, tx, *intent)
 }
 
 func (r *Repository) CreateCollection(ctx context.Context, input manageddata.CreateCollectionInput) (manageddata.Collection, error) {
@@ -149,12 +172,24 @@ func (r *Repository) CreateUploadSession(ctx context.Context, input manageddata.
 			return manageddata.UploadSession{}, err
 		}
 	}
-	err = r.q.CreateManagedDataUploadSession(ctx, platformdb.CreateManagedDataUploadSessionParams{
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	defer tx.Rollback()
+	q := r.q.WithTx(tx)
+	err = q.CreateManagedDataUploadSession(ctx, platformdb.CreateManagedDataUploadSessionParams{
 		ID: id, CollectionID: input.CollectionID.String(), BaseRevisionID: nullable(string(input.BaseRevisionID)), ManifestJson: string(manifestJSON),
 		ExpectedFileCount: fileCount, ExpectedSizeBytes: sizeBytes, StorageBackend: input.StorageBackend,
 		StagingPrefix: input.StagingPrefix, CreatedBy: strings.TrimSpace(input.CreatedBy), ExpiresAt: timestamp(input.ExpiresAt),
 	})
 	if err != nil {
+		return manageddata.UploadSession{}, mapError(err)
+	}
+	if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
 	return r.UploadSessionByID(ctx, manageddata.UploadID(id))
@@ -212,6 +247,16 @@ func (r *Repository) UpdateUploadProgress(ctx context.Context, id manageddata.Up
 }
 
 func (r *Repository) BeginUploadFinalization(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) (manageddata.UploadSession, error) {
+	return r.beginUploadFinalization(ctx, id, workflow, nil)
+}
+
+// BeginUploadFinalizationWithAudit records the command intent in the same
+// transaction as the committing state transition and workflow enqueue.
+func (r *Repository) BeginUploadFinalizationWithAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) (manageddata.UploadSession, error) {
+	return r.beginUploadFinalization(ctx, id, workflow, intent)
+}
+
+func (r *Repository) beginUploadFinalization(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) (manageddata.UploadSession, error) {
 	idString := id.String()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -238,6 +283,9 @@ func (r *Repository) BeginUploadFinalization(ctx context.Context, id manageddata
 	if err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
+	if err := r.recordAuditIntent(ctx, tx, intent); err != nil {
+		return manageddata.UploadSession{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
@@ -263,6 +311,20 @@ func (r *Repository) AbortUploadSession(ctx context.Context, id manageddata.Uplo
 }
 
 func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) error {
+	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, workflow, nil, true)
+}
+
+// AbortUploadSessionWithAudit records a cancellation intent in the same
+// transaction as the terminal upload transition.
+func (r *Repository) AbortUploadSessionWithAudit(ctx context.Context, id manageddata.UploadID, intent *access.AuditIntent) error {
+	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, jobs.WorkflowIntent{}, intent, false)
+}
+
+func (r *Repository) AbortUploadSessionWithWorkflowAndAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) error {
+	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, workflow, intent, true)
+}
+
+func (r *Repository) abortUploadSessionWithWorkflowAndAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent, requireWorkflow bool) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -273,10 +335,15 @@ func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id mana
 	if err := expectOne(result, err, "upload session is not open"); err != nil {
 		return err
 	}
-	if r.workflow == nil {
-		return fmt.Errorf("managed-data workflow recorder is required")
+	if requireWorkflow || workflow.Job.ID != "" {
+		if r.workflow == nil {
+			return fmt.Errorf("managed-data workflow recorder is required")
+		}
+		if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
+			return err
+		}
 	}
-	if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, intent); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -313,17 +380,29 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, input managedd
 	if err := validateHexIdentity("multipart idempotency identity", input.IdempotencyIdentity); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	err := r.q.CreateManagedDataS3MultipartUpload(ctx, platformdb.CreateManagedDataS3MultipartUploadParams{
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	defer tx.Rollback()
+	q := r.q.WithTx(tx)
+	err = q.CreateManagedDataS3MultipartUpload(ctx, platformdb.CreateManagedDataS3MultipartUploadParams{
 		ID: inputID, UploadSessionID: inputSessionID, LogicalPath: input.LogicalPath, Sha256: input.SHA256,
 		SizeBytes: input.SizeBytes, IdempotencyIdentity: input.IdempotencyIdentity,
 	})
 	if err == nil {
+		if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
+			return manageddata.S3MultipartUpload{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return manageddata.S3MultipartUpload{}, mapError(err)
+		}
 		return r.S3MultipartUploadByID(ctx, input.ID)
 	}
-	if row, lookupErr := r.q.GetManagedDataS3MultipartUpload(ctx, inputID); lookupErr == nil {
+	if row, lookupErr := q.GetManagedDataS3MultipartUpload(ctx, inputID); lookupErr == nil {
 		return idempotentS3MultipartUpload(mapS3MultipartUpload(row), input)
 	}
-	if _, lookupErr := r.q.GetManagedDataS3MultipartUploadByIdentity(ctx, platformdb.GetManagedDataS3MultipartUploadByIdentityParams{
+	if _, lookupErr := q.GetManagedDataS3MultipartUploadByIdentity(ctx, platformdb.GetManagedDataS3MultipartUploadByIdentityParams{
 		UploadSessionID: inputSessionID, IdempotencyIdentity: input.IdempotencyIdentity,
 	}); lookupErr == nil {
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: multipart idempotency identity is already in use", manageddata.ErrConflict)
@@ -365,6 +444,14 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input mana
 	current := mapS3MultipartUpload(row)
 	if current.Status != manageddata.S3MultipartStatusCreating {
 		if sameS3MultipartInitialization(current, input) {
+			if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
+				return manageddata.S3MultipartUpload{}, err
+			}
+			if input.AuditIntent != nil {
+				if err := tx.Commit(); err != nil {
+					return manageddata.S3MultipartUpload{}, mapError(err)
+				}
+			}
 			return current, nil
 		}
 		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: multipart upload is %s", manageddata.ErrConflict, current.Status)
@@ -380,6 +467,9 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, input mana
 	}
 	row, err = q.GetManagedDataS3MultipartUpload(ctx, inputID)
 	if err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -457,6 +547,10 @@ func (r *Repository) ListS3MultipartParts(ctx context.Context, id manageddata.Mu
 	return parts, nil
 }
 
+// BeginS3MultipartCompletion durably accepts a completion request and records
+// its audit intent before the external provider call. Provider completion and
+// the terminal SQLite transition are recoverable but cannot share this
+// transaction, so callers must classify the intent as accepted/requested.
 func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error) {
 	if input.ID.String() != strings.TrimSpace(input.ID.String()) {
 		return manageddata.S3MultipartCompletion{}, fmt.Errorf("multipart upload id must be canonical")
@@ -518,6 +612,9 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, input manag
 	for _, part := range partRows {
 		parts = append(parts, mapS3MultipartPart(part))
 	}
+	if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
+		return manageddata.S3MultipartCompletion{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return manageddata.S3MultipartCompletion{}, mapError(err)
 	}
@@ -528,6 +625,9 @@ func (r *Repository) FinishS3MultipartCompletion(ctx context.Context, id managed
 	return r.finishS3Multipart(ctx, id.String(), manageddata.S3MultipartStatusCompleting, manageddata.S3MultipartStatusCompleted)
 }
 
+// BeginS3MultipartAbort has the same mixed boundary as completion: the
+// accepted abort request and audit intent are atomic with SQLite state, while
+// provider cancellation is performed and recovered separately.
 func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error) {
 	if input.ID.String() != strings.TrimSpace(input.ID.String()) {
 		return manageddata.S3MultipartAbort{}, fmt.Errorf("multipart upload id must be canonical")
@@ -574,6 +674,9 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, input manageddat
 		execute = false
 	default:
 		return manageddata.S3MultipartAbort{}, fmt.Errorf("%w: multipart upload is %s", manageddata.ErrConflict, upload.Status)
+	}
+	if err := r.recordAuditIntent(ctx, tx, input.AuditIntent); err != nil {
+		return manageddata.S3MultipartAbort{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return manageddata.S3MultipartAbort{}, mapError(err)

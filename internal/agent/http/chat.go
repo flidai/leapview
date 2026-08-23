@@ -232,12 +232,18 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 		nethttp.Error(w, err.Error(), nethttp.StatusForbidden)
 		return
 	}
+	if withIntent, intentErr := h.withAuditIntent(r.WithContext(createCtx), createAgentConversationOperation, scope, "conversation", ""); intentErr != nil {
+		nethttp.Error(w, intentErr.Error(), nethttp.StatusServiceUnavailable)
+		return
+	} else {
+		createCtx = withIntent.Context()
+	}
 	conversation, err := service.CreateConversation(createCtx, scope, "New conversation")
 	if err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
 		return
 	}
-	h.recordCommandAudit(r.WithContext(createCtx), createAgentConversationOperation, scope, "conversation", conversation.ID)
+	h.recordLegacyCommandAudit(r.WithContext(createCtx), createAgentConversationOperation, scope, "conversation", conversation.ID)
 	prompt := agent.PromptInput{
 		Scope:          scope,
 		ConversationID: conversation.ID,
@@ -249,6 +255,12 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 	if invocationErr != nil {
 		nethttp.Error(w, invocationErr.Error(), nethttp.StatusForbidden)
 		return
+	}
+	if withIntent, intentErr := h.withAuditIntent(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID); intentErr != nil {
+		nethttp.Error(w, intentErr.Error(), nethttp.StatusServiceUnavailable)
+		return
+	} else {
+		runCtx = withIntent.Context()
 	}
 	if embedded {
 		started, err = service.StartPrompt(runCtx, prompt)
@@ -265,11 +277,11 @@ func (h *Handler) startDraftChatTurn(w nethttp.ResponseWriter, r *nethttp.Reques
 			nethttp.Error(w, "durable chat turn queue is unavailable", nethttp.StatusServiceUnavailable)
 			return
 		}
-		h.recordCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
+		h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
 		_ = pagestream.Redirect(w, r, chatRoutePath(conversation.ID))
 		return
 	}
-	h.recordCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
+	h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversation.ID)
 	if h.options.ExecuteStartedChatTurn == nil {
 		nethttp.Error(w, "chat turn executor is not configured", nethttp.StatusServiceUnavailable)
 		return
@@ -307,6 +319,12 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(invocationErr), false), embedded))
 		return
 	}
+	if withIntent, intentErr := h.withAuditIntent(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversationID); intentErr != nil {
+		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(intentErr), false), embedded))
+		return
+	} else {
+		runCtx = withIntent.Context()
+	}
 	started, err := service.StartPrompt(runCtx, agent.PromptInput{
 		Scope:          scope,
 		ConversationID: conversationID,
@@ -317,7 +335,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 		_ = updates.Patch(chatSignalPatch(h.chatSignalWith(r.Context(), scope, conversationID, transcript, streamArtifacts, chatTurnStatusError(err), false), embedded))
 		return
 	}
-	h.recordCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversationID)
+	h.recordLegacyCommandAudit(r.WithContext(runCtx), createAgentRunOperation, scope, "conversation", conversationID)
 	if h.options.ExecuteStartedChatTurn == nil {
 		nethttp.Error(w, "chat turn executor is not configured", nethttp.StatusServiceUnavailable)
 		return

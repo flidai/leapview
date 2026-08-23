@@ -5,14 +5,14 @@ import (
 	"database/sql"
 	"errors"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 )
 
-type ActivationHooks struct {
-}
+type ActivationHooks struct{}
 
 // NewBootstrapPersistence constructs the durable bootstrap policy and project
 // claim ports owned by the deployment module. Callers receive contracts only;
@@ -29,6 +29,7 @@ func newPersistence(
 	hooks ActivationHooks,
 	releases ReleasePort,
 	workflow jobplatform.WorkflowRecorder,
+	audit access.AuditIntentRecorder,
 ) (
 	deployment.Repository,
 	deployment.ActivationUnitOfWork,
@@ -36,6 +37,7 @@ func newPersistence(
 	deployment.ApprovalRepository,
 ) {
 	sqliteHooks := deploymentsqlite.ActivationHooks{}
+	sqliteHooks.Audit = audit
 	if releases != nil {
 		sqliteHooks.LinkRelease = func(ctx context.Context, tx transaction.Transaction, input deployment.CreateInput) error {
 			return releases.LinkDeploymentTx(ctx, tx, input.ServingIdentity.ProjectID.String(), input.ID, input.ReleaseID, input.RollbackOf)

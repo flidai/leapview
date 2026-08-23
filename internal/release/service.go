@@ -184,6 +184,24 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 		return Artifact{}, ErrDigest
 	}
 	item := Artifact{ReleaseID: current.ID, ServingIdentity: current.ServingIdentity, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
+	// The upload bytes are written to the external artifact store before the
+	// SQLite transition. Refresh the source-built audit handoff with the
+	// authoritative size observed by the verifier so RecordArtifact can commit
+	// the complete payload atomically with the release row update.
+	if intent, ok := AuditIntentFromContext(ctx); ok {
+		var metadata map[string]any
+		if err := json.Unmarshal([]byte(intent.MetadataJSON), &metadata); err != nil {
+			return Artifact{}, err
+		}
+		metadata["digest"] = item.ActualDigest
+		metadata["sizeBytes"] = item.SizeBytes
+		encoded, err := json.Marshal(metadata)
+		if err != nil {
+			return Artifact{}, err
+		}
+		intent.MetadataJSON = string(encoded)
+		ctx = WithAuditIntent(ctx, intent)
+	}
 	if err := s.releases.RecordArtifact(ctx, item); err != nil {
 		return Artifact{}, err
 	}
@@ -288,6 +306,13 @@ func canonicalProjectID(value string) (projectgraph.ResourceID, error) {
 func stableID(prefix string, values ...string) string {
 	h := ocidigest.FromBytes([]byte(strings.Join(values, "\x00"))).String()
 	return prefix + "_" + strings.TrimPrefix(h, "sha256:")[:24]
+}
+
+// IDFor returns the immutable release identity derived from a project and its
+// idempotency key. Command producers use this before opening persistence so
+// audit metadata can bind to the same aggregate that the service creates.
+func IDFor(projectID projectgraph.ResourceID, idempotencyKey string) string {
+	return stableID("rel", projectID.String(), idempotencyKey)
 }
 
 func cloneProvenance(value Provenance) (Provenance, error) {

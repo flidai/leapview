@@ -110,6 +110,20 @@ type fakeRetention struct {
 	result RetentionResult
 }
 
+type fakeAuditOutbox struct {
+	status   AuditOutboxStatus
+	requeued string
+}
+
+func (outbox *fakeAuditOutbox) Status(context.Context) (AuditOutboxStatus, error) {
+	return outbox.status, nil
+}
+
+func (outbox *fakeAuditOutbox) Requeue(_ context.Context, eventID string) error {
+	outbox.requeued = eventID
+	return nil
+}
+
 func (retention *fakeRetention) Prune(_ context.Context, policy RetentionPolicy) (RetentionResult, error) {
 	retention.calls++
 	retention.policy = policy
@@ -228,7 +242,7 @@ func TestInitializeReplaysPreparedCredentialsWithoutMutatingAccess(t *testing.T)
 func TestMaintenanceOwnsPolicyAndExclusiveApplySemantics(t *testing.T) {
 	locker := &fakeLocker{}
 	retention := &fakeRetention{result: RetentionResult{
-		AuditEventsDeleted: 1, QueryEventsDeleted: 2, ArchivedAgentConversationsDeleted: 3,
+		AuditEventsDeleted: 1, DeliveredAuditIntentsDeleted: 8, QueryEventsDeleted: 2, ArchivedAgentConversationsDeleted: 3,
 		ExpiredOAuthStatesDeleted: 4, StaleSessionsDeleted: 5,
 		StaleAPITokensDeleted: 6, StaleServicePrincipalSecretsDeleted: 7,
 	}}
@@ -243,7 +257,7 @@ func TestMaintenanceOwnsPolicyAndExclusiveApplySemantics(t *testing.T) {
 		retention.policy.AuthStateMaxAge != 13*24*time.Hour {
 		t.Fatalf("dry-run policy = %#v lock=%d", retention.policy, locker.acquired)
 	}
-	if !strings.Contains(out.String(), "mode: dry-run") || !strings.Contains(out.String(), "stale service principal secrets: 7") {
+	if !strings.Contains(out.String(), "mode: dry-run") || !strings.Contains(out.String(), "delivered audit intents: 8") || !strings.Contains(out.String(), "stale service principal secrets: 7") {
 		t.Fatalf("maintenance output = %q", out.String())
 	}
 	request.Apply = true
@@ -252,6 +266,28 @@ func TestMaintenanceOwnsPolicyAndExclusiveApplySemantics(t *testing.T) {
 	}
 	if locker.acquired != 1 || locker.lock.released != 1 || retention.policy.DryRun {
 		t.Fatalf("apply policy = %#v lock=%d/%d", retention.policy, locker.acquired, locker.lock.released)
+	}
+}
+
+func TestAuditOutboxStatusAndExactRecovery(t *testing.T) {
+	locker := &fakeLocker{}
+	outbox := &fakeAuditOutbox{status: AuditOutboxStatus{Pending: 2, Poison: 1, OldestUndeliveredAge: 3 * time.Minute}}
+	service := New(Config{}, Dependencies{Locker: locker, AuditOutbox: outbox})
+	var out bytes.Buffer
+	if err := service.AuditOutbox(context.Background(), AuditOutboxRequest{}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if locker.acquired != 0 || !strings.Contains(out.String(), "pending: 2") || !strings.Contains(out.String(), "poison: 1") {
+		t.Fatalf("status output=%q lock=%d", out.String(), locker.acquired)
+	}
+	if err := service.AuditOutbox(context.Background(), AuditOutboxRequest{RequeueEventID: "event-1"}, io.Discard); err == nil {
+		t.Fatal("requeue without apply succeeded")
+	}
+	if err := service.AuditOutbox(context.Background(), AuditOutboxRequest{RequeueEventID: " event-1 ", Apply: true}, &out); err != nil {
+		t.Fatal(err)
+	}
+	if locker.acquired != 1 || outbox.requeued != "event-1" || !strings.Contains(out.String(), "requeued event: event-1") {
+		t.Fatalf("requeue=%q lock=%d output=%q", outbox.requeued, locker.acquired, out.String())
 	}
 }
 

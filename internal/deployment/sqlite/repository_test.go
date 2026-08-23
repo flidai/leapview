@@ -8,7 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -50,6 +53,52 @@ func TestCreateDeploymentRequiresExactActivatableGeneration(t *testing.T) {
 	input = deploymentCreateInput(t, "deployment_failed_generation", "project", "prod", "generation_failed", "")
 	if _, err := repository.CreateDeployment(t.Context(), input); !errors.Is(err, deployment.ErrConflict) {
 		t.Fatalf("failed generation error = %v, want ErrConflict", err)
+	}
+}
+
+func TestCreateDeploymentAuditIntentIsAtomicAndIdempotent(t *testing.T) {
+	store, _ := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_audit", "validated", deploymentDigest("a"))
+	intent := access.AuditIntent{EventID: "deployment-create-audit", Source: "deployment", Operation: "createDeployment", PrincipalID: "principal_1", Action: "deployment.queued", ResourceKind: "project", ResourceID: "project", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:deployment_audit", AggregateSequence: 1, MetadataJSON: `{"deploymentId":"deployment_audit","projectId":"project","releaseId":"release_1","status":"queued"}`}
+	repository := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{Audit: accesssqlite.NewRepository(store.SQLDB())})
+	input := deploymentCreateInput(t, "deployment_audit", "project", "prod", "generation_audit", "")
+	if _, err := repository.CreateDeployment(deployment.WithAuditIntent(t.Context(), intent), input); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("audit outbox count = %d, want 1", count)
+	}
+	if _, err := repository.CreateDeployment(deployment.WithAuditIntent(t.Context(), intent), input); err != nil {
+		t.Fatalf("idempotent deployment replay: %v", err)
+	}
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("replayed audit outbox count = %d, want 1", count)
+	}
+}
+
+func TestCreateDeploymentRollsBackWhenAuditIntentFails(t *testing.T) {
+	store, _ := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_audit_failure", "validated", deploymentDigest("a"))
+	injected := errors.New("injected audit failure")
+	repository := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return injected })})
+	input := deploymentCreateInput(t, "deployment_audit_rollback", "project", "prod", "generation_audit_failure", "")
+	intent := access.AuditIntent{EventID: "deployment-create-rollback", Source: "deployment", Operation: "createDeployment", Action: "deployment.queued", Outcome: "success", AggregateKey: "deployment:deployment_audit_rollback", AggregateSequence: 1, MetadataJSON: `{}`}
+	if _, err := repository.CreateDeployment(deployment.WithAuditIntent(t.Context(), intent), input); !errors.Is(err, injected) {
+		t.Fatalf("CreateDeployment error = %v, want injected audit failure", err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM project_deployments WHERE id = ?`, input.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled-back deployment count = %d, want 0", count)
 	}
 }
 
@@ -121,6 +170,59 @@ func TestActivateDeploymentAtomicallySwapsOneProjectGeneration(t *testing.T) {
 	replayed, err := repository.ActivateDeployment(t.Context(), activation)
 	if err != nil || replayed.ID != active.ID || replayed.Status != deployment.StatusActive {
 		t.Fatalf("activation replay = %#v, err=%v", replayed, err)
+	}
+}
+
+func TestCancelDeploymentAuditIsAtomicAndIdempotent(t *testing.T) {
+	store, _ := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_cancel_audit", "validated", deploymentDigest("a"))
+	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{Audit: accesssqlite.NewRepository(store.SQLDB())})
+	input := deploymentCreateInput(t, "deployment_cancel_audit", "project", "prod", "generation_cancel_audit", "")
+	created, err := repo.CreateDeployment(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata, err := deploymentgen.EncodeGenCancelDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentCancelledAuditPayload{DeploymentId: created.ID, Status: "cancelled"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := access.AuditIntent{EventID: "deployment-cancel-audit", Source: "deployment", Operation: "cancelDeployment", PrincipalID: "principal_1", Action: "deployment.cancelled", ResourceKind: "project", ResourceID: "project", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:" + created.ID, AggregateSequence: 2, MetadataJSON: metadata}
+	if _, err := repo.CancelDeployment(deployment.WithAuditIntent(t.Context(), intent), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("cancel audit outbox count = %d, want 1", count)
+	}
+	if _, err := repo.CancelDeployment(deployment.WithAuditIntent(t.Context(), intent), created.ID); !errors.Is(err, deployment.ErrConflict) {
+		t.Fatalf("cancel replay error = %v, want ErrConflict", err)
+	}
+}
+
+func TestCancelDeploymentAuditFailureRollsBackStatus(t *testing.T) {
+	store, _ := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_cancel_rollback", "validated", deploymentDigest("a"))
+	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return errors.New("injected cancel audit failure")
+	})})
+	input := deploymentCreateInput(t, "deployment_cancel_rollback", "project", "prod", "generation_cancel_rollback", "")
+	created, err := repo.CreateDeployment(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := access.AuditIntent{EventID: "deployment-cancel-rollback", Source: "deployment", Operation: "cancelDeployment", PrincipalID: "principal_1", Action: "deployment.cancelled", ResourceKind: "project", ResourceID: "project", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:" + created.ID, AggregateSequence: 2, MetadataJSON: `{}`}
+	if _, err := repo.CancelDeployment(deployment.WithAuditIntent(t.Context(), intent), created.ID); err == nil {
+		t.Fatal("cancel transition unexpectedly succeeded")
+	}
+	row, err := repo.DeploymentByID(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if row.Status != deployment.StatusPending {
+		t.Fatalf("deployment status after audit rollback = %q, want pending", row.Status)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -236,6 +237,14 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	contract, ok := dashboardgen.GetAPIGenOperationContract(dashboardgen.GenOperationSuspendDashboardPublication)
 	if !ok || contract.Command == nil {
 		t.Fatal("generated suspend publication command contract is missing")
+	}
+	outbox := accesssqlite.NewRepository(store.SQLDB())
+	dispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{Store: outbox})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := dispatcher.DispatchOne(t.Context(), "publication-test"); err != nil || !delivered {
+		t.Fatalf("dispatch publication audit delivered=%v err=%v", delivered, err)
 	}
 	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
 		ResourceKind: "project", ResourceID: "project:test", Action: contract.Command.Audit.SuccessAction,

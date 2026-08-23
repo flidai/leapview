@@ -8,12 +8,10 @@ import (
 	"log/slog"
 	"net/http"
 	"path/filepath"
-	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/deployment"
@@ -66,47 +64,31 @@ func (s *refreshEventStore) ListEvents(context.Context, string, string, int64, i
 	return append([]jobs.Event(nil), s.events...), s.err
 }
 
-func TestRefreshCreateVerifiesPersistedLifecycleWithoutAppendingDuplicate(t *testing.T) {
+func TestRefreshCreateDurableAuditDoesNotAppendPostCommitDuplicate(t *testing.T) {
 	contract, ok := refreshgen.GetAPIGenCommandRuntimeContract(string(refreshgen.GenOperationCreateRefreshRun))
 	if !ok || contract.Execution == nil {
 		t.Fatal("generated refresh execution contract is unavailable")
 	}
 	store := &refreshEventStore{events: []jobs.Event{{EventType: contract.Execution.InitialEvent}}}
-	module, err := Build(t.Context(), Config{Events: store, Authorization: testAuthorization()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	ctx, guard, err := apigencommand.Begin(t.Context(), contract)
-	if err != nil {
-		t.Fatal(err)
-	}
+	module := &Module{events: store, durableAudit: true}
 	run := refreshrun.RunRecord{ID: "run-1", Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, SemanticModelID: "orders", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
-	if err := module.verifyRunCreated(ctx, run); err != nil {
+	if err := module.verifyRunCreated(t.Context(), run); err != nil {
 		t.Fatal(err)
 	}
-	if !guard.Completed() || store.appends != 0 {
-		t.Fatalf("guard completed=%t, duplicate appends=%d", guard.Completed(), store.appends)
+	if store.appends != 0 {
+		t.Fatalf("duplicate appends=%d", store.appends)
 	}
 }
 
-func TestRefreshCreatePersistedAuditVerificationFailureIsBestEffort(t *testing.T) {
+func TestRefreshCreateDurableAuditSkipsLegacyVerificationFailure(t *testing.T) {
 	var logs bytes.Buffer
-	module, err := Build(t.Context(), Config{
-		Events:        &refreshEventStore{err: errors.New("event store unavailable")},
-		Logger:        slog.New(slog.NewTextHandler(&logs, nil)),
-		Authorization: testAuthorization(),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	module := &Module{events: &refreshEventStore{err: errors.New("event store unavailable")}, logger: slog.New(slog.NewTextHandler(&logs, nil)), durableAudit: true}
 	run := refreshrun.RunRecord{ID: "run-audit-failure", Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, SemanticModelID: "orders", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
 	if err := module.verifyRunCreated(t.Context(), run); err != nil {
-		t.Fatalf("best-effort verification changed command result: %v", err)
+		t.Fatalf("durable audit verification changed command result: %v", err)
 	}
-	for _, expected := range []string{"refresh persisted audit verification failed", "operation_id=createRefreshRun", "event store unavailable"} {
-		if !strings.Contains(logs.String(), expected) {
-			t.Fatalf("verification log = %q, missing %q", logs.String(), expected)
-		}
+	if logs.Len() != 0 {
+		t.Fatalf("legacy verification log = %q", logs.String())
 	}
 }
 

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/manageddata"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobssqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
@@ -19,6 +21,37 @@ import (
 	"github.com/pressly/goose/v3"
 	_ "modernc.org/sqlite"
 )
+
+type failingAuditIntentRecorder struct{ err error }
+
+func (r failingAuditIntentRecorder) RecordAuditIntent(context.Context, transaction.Transaction, access.AuditIntent) error {
+	return r.err
+}
+
+func validManagedDataAuditIntent() *access.AuditIntent {
+	return &access.AuditIntent{
+		EventID: "managed-data-upload-created", Source: "managed-data", Operation: "managed_data.upload_session.create",
+		Action: "managed_data.upload_session.created", Outcome: "success", AggregateKey: "managed_data_upload_session:upload-audit",
+		AggregateSequence: 1, Capability: access.CapabilityResourceEdit, MetadataJSON: `{"connection_id":"warehouse","project_id":"project-a"}`,
+	}
+}
+
+func TestCreateUploadSessionRollsBackWhenAuditIntentCannotBeRecorded(t *testing.T) {
+	ctx, db, base := testRepository(t)
+	collection := createCollection(t, ctx, base, "audit-atomic", "project-a", "warehouse")
+	injected := errors.New("injected audit failure")
+	repo := NewRepositoryWithAudit(db, failingAuditIntentRecorder{err: injected})
+	_, err := repo.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{
+		ID: "upload-audit", CollectionID: collection.ID, Manifest: manageddata.Manifest{}, StorageBackend: "local",
+		StagingPrefix: "staging/upload-audit", ExpiresAt: time.Now().Add(time.Hour), AuditIntent: validManagedDataAuditIntent(),
+	})
+	if !errors.Is(err, injected) {
+		t.Fatalf("CreateUploadSession() error = %v, want injected audit error", err)
+	}
+	if _, err := base.UploadSessionByID(ctx, "upload-audit"); !errors.Is(err, manageddata.ErrNotFound) {
+		t.Fatalf("upload session after audit rollback = %v, want not found", err)
+	}
+}
 
 func TestCollectionIdentityUsesProjectAndConnection(t *testing.T) {
 	ctx, _, repo := testRepository(t)
@@ -125,6 +158,57 @@ func TestBeginUploadFinalizationRollsBackWhenWorkflowCannotBeRecorded(t *testing
 	}
 	if current.Status != manageddata.UploadStatusOpen {
 		t.Fatalf("status after workflow failure = %q, want open", current.Status)
+	}
+}
+
+func TestBeginUploadFinalizationRollsBackWhenAuditIntentCannotBeRecorded(t *testing.T) {
+	ctx, db, base := testRepository(t)
+	collection := createCollection(t, ctx, base, "audit-finalize", "project-a", "audit-finalize")
+	session, err := base.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{
+		ID: "upload-audit-finalize", CollectionID: collection.ID, Manifest: manageddata.Manifest{},
+		StorageBackend: "local", StagingPrefix: "staging/upload-audit-finalize", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	repo := NewRepositoryWithWorkflowAndAudit(db, nil, failingAuditIntentRecorder{err: errors.New("injected audit failure")})
+	_, err = repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, validManagedDataAuditIntent())
+	if err == nil || !strings.Contains(err.Error(), "injected audit failure") {
+		t.Fatalf("audited finalization error = %v, want injected audit failure", err)
+	}
+	current, err := base.UploadSessionByID(ctx, session.ID)
+	if err != nil || current.Status != manageddata.UploadStatusOpen {
+		t.Fatalf("session after audit rollback = %#v err=%v", current, err)
+	}
+}
+
+func TestBeginUploadFinalizationAuditIntentIsIdempotent(t *testing.T) {
+	ctx, db, base := testRepository(t)
+	collection := createCollection(t, ctx, base, "audit-idempotent", "project-a", "audit-idempotent")
+	session, err := base.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{
+		ID: "upload-audit-idempotent", CollectionID: collection.ID, Manifest: manageddata.Manifest{},
+		StorageBackend: "local", StagingPrefix: "staging/upload-audit-idempotent", ExpiresAt: time.Now().Add(time.Hour),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := validManagedDataAuditIntent()
+	intent.EventID = "managed-data-finalize"
+	intent.Operation = "managed_data.upload_session.finalize"
+	intent.AggregateKey = "managed_data_upload_session:" + session.ID.String()
+	repo := NewRepositoryWithAudit(db, accesssqlite.NewRepository(db))
+	if _, err := repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, intent); err != nil {
+		t.Fatalf("first audited finalization: %v", err)
+	}
+	if _, err := repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, intent); err != nil {
+		t.Fatalf("idempotent audited finalization: %v", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT count(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("audit intent count = %d, want one", count)
 	}
 }
 

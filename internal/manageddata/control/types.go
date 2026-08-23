@@ -6,6 +6,7 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -62,14 +63,16 @@ type BeginUploadRequest struct {
 	BaseRevisionID string
 	Actor          string
 	IdempotencyKey string
+	AuditIntent    *access.AuditIntent
 }
 
 type UploadRequest struct {
-	Project    string
-	Connection string
-	UploadID   string
-	Actor      string
-	Workflow   jobs.WorkflowIntent
+	Project     string
+	Connection  string
+	UploadID    string
+	Actor       string
+	Workflow    jobs.WorkflowIntent
+	AuditIntent *access.AuditIntent
 }
 
 type CollectionResult struct {

@@ -127,6 +127,8 @@ func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.Re
 type platformServices struct {
 	asyncJobs               jobs.Repository
 	jobModule               *jobsmodule.Module
+	auditDispatcher         *access.AuditDispatcher
+	auditOutbox             access.AuditOutboxStore
 	auth                    *accessmodule.Auth
 	assets                  staticasset.Resolver
 	buildIdentity           buildinfo.Identity
@@ -611,8 +613,8 @@ func buildApplicationSurfaces(
 	persistence.productStatus = capabilities.ProductStatus
 	if data.Database != nil {
 		platform.jobModule = capabilities.JobModule
+		var err error
 		if platform.jobModule == nil {
-			var err error
 			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
 				Database: data.Database, Admission: workloadmodule.JobAdmitter(runtime.workloads),
 				LeaseTimeout: httpConfig.JobLeaseTimeout, Logger: httpConfig.Logger,
@@ -622,6 +624,18 @@ func buildApplicationSurfaces(
 			}
 		}
 		platform.asyncJobs = platform.jobModule
+		// Access audit intents share the platform SQL database. Keep the
+		// dispatcher repository private to the lifecycle worker rather than
+		// widening the Access module's construction surface.
+		platform.auditOutbox = accessmodule.NewAuditStore(data.Database)
+		platform.auditDispatcher, err = access.NewAuditDispatcher(access.AuditDispatcherConfig{
+			Store:  platform.auditOutbox,
+			Logger: platform.logger,
+		})
+		if err != nil {
+			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
+		}
+		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, data.Database); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}
@@ -803,6 +817,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
+				AuditIntentRecorder: accessmodule.NewAuditStore(database), RequireAuditIntent: true,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -946,9 +961,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		agentUICommands := routes.agentModule.UICommandBindings()
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database:    database,
-			Authoring:   routes.dashboardAuthoring,
-			RecordAudit: accessAuditRecorder(routes.accessModule),
+			Database:            database,
+			Authoring:           routes.dashboardAuthoring,
+			AuditIntentRecorder: accessmodule.NewAuditStore(database),
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
@@ -1096,7 +1111,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if err != nil {
 			return err
 		}
-		routes.agentModule, err = agentmodule.Build(ctx, agentmodule.Config{
+		agentConfig := agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			ProductName:        brand.Name,
@@ -1273,7 +1288,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return platform.auth.APICredential(r)
 				},
 			},
-		})
+		}
+		if database != nil {
+			agentConfig.AuditIntentRecorder = accessmodule.NewAuditStore(database)
+		}
+		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
 		if err != nil {
 			return fmt.Errorf("build agent module: %w", err)
 		}
@@ -1571,6 +1590,23 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}
 	configurePageStream(routes, runtime, platform, policy)
+	healthChecks := map[string]func(context.Context) error{
+		"apiIdempotency": func(context.Context) error {
+			return platform.apiProtocol.LeaseRenewalError()
+		},
+		"mapAssets": func(ctx context.Context) error {
+			if routes.dashboardAssets == nil {
+				return nil
+			}
+			return routes.dashboardAssets.Verify(ctx)
+		},
+		"deliveryStartup": runtimeConfig.DeliveryStartup,
+	}
+	if platform.auditOutbox != nil {
+		healthChecks["auditOutbox"] = func(ctx context.Context) error {
+			return auditOutboxReadiness(ctx, platform.auditOutbox)
+		}
+	}
 	platform.health = newHealth(healthConfig{
 		Platform: func(ctx context.Context) error {
 			if runtime.platformHealth == nil {
@@ -1590,18 +1626,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			return runtime.runtimeHostModule.LeaseRenewalError()
 		},
-		Checks: map[string]func(context.Context) error{
-			"apiIdempotency": func(context.Context) error {
-				return platform.apiProtocol.LeaseRenewalError()
-			},
-			"mapAssets": func(ctx context.Context) error {
-				if routes.dashboardAssets == nil {
-					return nil
-				}
-				return routes.dashboardAssets.Verify(ctx)
-			},
-			"deliveryStartup": runtimeConfig.DeliveryStartup,
-		},
+		Checks: healthChecks,
 		ActiveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			if runtime.runtimeHostModule == nil {
 				return "", errors.New("runtime host is missing")
@@ -1638,7 +1663,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
-	platform.workers = platformlifecycle.New(
+	workerComponents := make([]platformlifecycle.Component, 0, 5)
+	if platform.auditDispatcher != nil {
+		// Start the dispatcher before audit producers and stop it after them, so
+		// shutdown does not strand intents emitted while workers are draining.
+		workerComponents = append(workerComponents, platformlifecycle.Component{Start: platform.auditDispatcher.Start, Stop: platform.auditDispatcher.Stop})
+	}
+	workerComponents = append(workerComponents,
 		platformlifecycle.Component{Start: routes.refreshModule.Start, Stop: routes.refreshModule.Stop},
 		platformlifecycle.Component{
 			Start: func(ctx context.Context) error { routes.managedDataModule.Start(ctx); return nil },
@@ -1647,6 +1678,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	platform.workers = platformlifecycle.New(workerComponents...)
 	return nil
 }
 

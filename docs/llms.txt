@@ -90,6 +90,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Roles, grants, and policies](/docs/security/authorization): Assign least-privilege access to securable resources.
 - [Service principals and API tokens](/docs/security/tokens): Authenticate non-human workloads with scoped credentials.
 - [Audit events](/docs/security/audit): Inspect security and administrative activity.
+- [Audit privacy and retention](/docs/security/audit-privacy): Minimize, retain, and protect audit records and exports.
 
 ### Integrate
 
@@ -237,6 +238,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
 - [GitHub-hosted CI](/docs/architecture/github-hosted-ci): Understand LeapView's ephemeral runners, bounded caches, and portable validation contract.
+- [Durable audit and compliance controls](/docs/architecture/durable-audit-compliance): Understand audit guarantee classes, evidence boundaries, and compliance controls.
 - [Storage architecture](/docs/storage-architecture): Understand DuckLake, DuckDB, snapshots, and serving pointers.
 - [Datastar signal flow](/docs/architecture/datastar): Understand server-owned state and SSE response contracts.
 - [Filter and slicer target architecture](/docs/architecture/filters-slicers): Understand semantic filter definitions, scoped bindings, canonical state, pane controls, slicers, and governed option queries.

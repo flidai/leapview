@@ -1,7 +1,6 @@
 package module
 
 import (
-	"context"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -12,7 +11,7 @@ import (
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 )
 
-func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
+func TestBuildAuditIntentDerivesGeneratedActionAndCapability(t *testing.T) {
 	wantActions := map[string]string{
 		"createAgentConversation":  "agent.conversation.created",
 		"archiveAgentConversation": "agent.conversation.archived",
@@ -20,21 +19,19 @@ func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
 		"createAgentRun":           "agent.run.created",
 		"cancelAgentRun":           "agent.run.cancelled",
 	}
-	var recorded []access.AuditEventInput
-	m := &Module{recordAudit: func(_ context.Context, input access.AuditEventInput) error {
-		recorded = append(recorded, input)
-		return nil
-	}}
+	var recorded []access.AuditIntent
 	for operationID := range wantActions {
-		if err := m.recordCommandAudit(t.Context(), agenthttp.CommandAuditInput{
+		intent, err := BuildAuditIntent(t.Context(), agenthttp.CommandAuditInput{
 			OperationID: operationID,
 			Scope:       agent.Scope{ProjectID: "sales", PrincipalID: "principal-1"},
 			TargetType:  "conversation",
 			TargetID:    "conversation-1",
 			RequestID:   "request-1",
-		}); err != nil {
+		})
+		if err != nil {
 			t.Fatalf("record %s: %v", operationID, err)
 		}
+		recorded = append(recorded, *intent)
 	}
 	if len(recorded) != len(wantActions) {
 		t.Fatalf("recorded audits = %#v", recorded)
@@ -47,7 +44,7 @@ func TestRecordCommandAuditDerivesGeneratedActionAndCapability(t *testing.T) {
 				break
 			}
 		}
-		if !operationMatched || event.Capability != access.CapabilityResourceUse || event.Status != "success" || event.PrincipalID != "principal-1" || event.RequestID != "request-1" {
+		if !operationMatched || event.Capability != access.CapabilityResourceUse || event.Outcome == "" || event.PrincipalID != "principal-1" || event.RequestID != "request-1" {
 			t.Fatalf("derived agent command audit = %#v", event)
 		}
 		var envelope struct {

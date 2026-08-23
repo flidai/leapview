@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -71,6 +72,9 @@ func (r *Repository) CreateApproval(
 		return deployment.Approval{}, err
 	}
 	if err := appendApprovalEventTx(ctx, tx, approval, "approval_requested", approval.RequestedBy, approval.RequestedAt); err != nil {
+		return deployment.Approval{}, err
+	}
+	if err := r.recordApprovalAuditIntent(ctx, tx, approval); err != nil {
 		return deployment.Approval{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -172,10 +176,44 @@ func (r *Repository) SaveApproval(
 			return deployment.Approval{}, err
 		}
 	}
+	if err := r.recordApprovalAuditIntent(ctx, tx, approval); err != nil {
+		return deployment.Approval{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return deployment.Approval{}, err
 	}
 	return approval, nil
+}
+
+func (r *Repository) recordApprovalAuditIntent(ctx context.Context, tx *sql.Tx, approval deployment.Approval) error {
+	intent, ok := deployment.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r.hooks.Audit == nil {
+		return fmt.Errorf("deployment audit intent recorder is required")
+	}
+	intent.AggregateSequence = approval.Revision
+	if approval.ID != "" {
+		// Request-approval intents are built before the repository allocates its
+		// random approval identity. Fill only that generated metadata field here;
+		// all other metadata remains transport-owned and canonical.
+		intent.MetadataJSON = setAuditMetadataString(intent.MetadataJSON, "approvalId", approval.ID)
+	}
+	return r.hooks.Audit.RecordAuditIntent(ctx, tx, intent)
+}
+
+func setAuditMetadataString(raw, key, value string) string {
+	var metadata map[string]any
+	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
+		return raw
+	}
+	metadata[key] = value
+	encoded, err := json.Marshal(metadata)
+	if err != nil {
+		return raw
+	}
+	return string(encoded)
 }
 
 // appendApprovalEventTx bridges the deployment approval projection to the

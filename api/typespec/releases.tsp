@@ -200,7 +200,7 @@ interface Releases {
   @apigen.failsWith(ReleaseConflictFailure)
   @apigen.command(#{
     auditAction: "release.created",
-    guarantee: "best-effort",
+    guarantee: "transactional",
     failures: #[#{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release request is invalid." }],
   })
   @apigen.auditPayload(ReleaseCreatedAuditPayload)
@@ -223,7 +223,7 @@ interface Releases {
   @apigen.failsWith(ReleaseArtifactDigestMismatchFailure)
   @apigen.command(#{
     auditAction: "release.artifact_uploaded",
-    guarantee: "best-effort",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "invalid", statusCode: 422, code: "INVALID_RELEASE", publicDetail: "The release artifact request is invalid." },
       #{ kind: "not_found", statusCode: 404, code: "RELEASE_NOT_FOUND", publicDetail: "Release artifact not found." },

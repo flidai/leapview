@@ -3,42 +3,36 @@ package module
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	manageddatahttp "github.com/flidai/leapview/internal/manageddata/http"
 )
 
-func TestManagedDataCommandAuditsDerivePolicyFromGeneratedContracts(t *testing.T) {
-	var events []CommandAuditEvent
-	recorder, err := buildManagedDataCommandAuditRecorder(func(_ context.Context, input CommandAuditEvent) error {
-		events = append(events, input)
-		return nil
-	})
+func TestManagedDataAuditIntentsDerivePolicyFromGeneratedContracts(t *testing.T) {
+	builder, err := buildManagedDataAuditIntentBuilder()
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	for _, operationID := range managedDataCommandOperationIDs {
-		if err := recorder(t.Context(), manageddatahttp.CommandAuditInput{
+		intent, err := builder(t.Context(), manageddatahttp.CommandAuditInput{
 			OperationID: operationID, PrincipalID: "principal-a", ProjectID: "project-a", ConnectionID: "orders",
 			TargetType: "managed_data_resource", TargetID: "resource-a",
 			RequestID: "request-a", CorrelationID: "correlation-a", Surface: "cli",
-		}); err != nil {
-			t.Fatalf("record %s: %v", operationID, err)
+		})
+		if err != nil {
+			t.Fatalf("build %s: %v", operationID, err)
 		}
-	}
-	if len(events) != len(managedDataCommandOperationIDs) {
-		t.Fatalf("events = %d, want %d", len(events), len(managedDataCommandOperationIDs))
-	}
-	for index, event := range events {
-		operationID := managedDataCommandOperationIDs[index]
 		generated, _ := manageddatagen.GetAPIGenOperationContract(operationID)
-		if event.Action != generated.Command.Audit.SuccessAction || event.Privilege != generated.Command.Privilege ||
-			event.PrincipalID != "principal-a" || event.TargetType != "managed_data_resource" || event.TargetID != "resource-a" ||
-			event.Status != "success" || event.RequestID != "request-a" || event.CorrelationID != "correlation-a" {
-			t.Errorf("%s event = %#v", operationID, event)
+		if intent.EventID == "" || intent.Source != generated.Command.Owner || intent.Operation != operationID ||
+			intent.PrincipalID != "principal-a" || intent.Action != generated.Command.Audit.SuccessAction ||
+			intent.ResourceKind != "managed_data_resource" || intent.ResourceID != "resource-a" ||
+			intent.Capability != access.CapabilityResourceEdit || intent.RequestID != "request-a" ||
+			intent.CorrelationID != "correlation-a" || intent.AggregateKey != "managed_data_resource:resource-a" ||
+			intent.AggregateSequence != managedDataAuditSequence(operationID) {
+			t.Errorf("%s intent = %#v", operationID, intent)
 		}
 		var envelope struct {
 			SchemaVersion int               `json:"schemaVersion"`
@@ -46,10 +40,9 @@ func TestManagedDataCommandAuditsDerivePolicyFromGeneratedContracts(t *testing.T
 			PayloadSchema string            `json:"payloadSchema"`
 			Payload       map[string]string `json:"payload"`
 		}
-		if err := json.Unmarshal([]byte(event.MetadataJSON), &envelope); err != nil ||
-			envelope.SchemaVersion != 1 || envelope.Retention != "security" ||
-			envelope.PayloadSchema == "" || envelope.Payload["operationId"] != operationID ||
-			envelope.Payload["owner"] != generated.Command.Owner ||
+		if err := json.Unmarshal([]byte(intent.MetadataJSON), &envelope); err != nil ||
+			envelope.SchemaVersion != 1 || envelope.Retention != "security" || envelope.PayloadSchema == "" ||
+			envelope.Payload["operationId"] != operationID || envelope.Payload["owner"] != generated.Command.Owner ||
 			envelope.Payload["projectId"] != "project-a" || envelope.Payload["connectionId"] != "orders" ||
 			envelope.Payload["surface"] != "cli" {
 			t.Errorf("%s metadata = %#v, err = %v", operationID, envelope, err)
@@ -57,20 +50,12 @@ func TestManagedDataCommandAuditsDerivePolicyFromGeneratedContracts(t *testing.T
 	}
 }
 
-func TestManagedDataCommandAuditRejectsUnknownOperation(t *testing.T) {
-	recorder, err := buildManagedDataCommandAuditRecorder(discardManagedDataAudit)
+func TestManagedDataAuditIntentBuilderRejectsUnknownOperation(t *testing.T) {
+	builder, err := buildManagedDataAuditIntentBuilder()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := recorder(t.Context(), manageddatahttp.CommandAuditInput{OperationID: "unknown"}); err == nil {
-		t.Fatal("unknown operation was audited")
+	if _, err := builder(context.Background(), manageddatahttp.CommandAuditInput{OperationID: "unknown"}); err == nil {
+		t.Fatal("unknown operation was accepted")
 	}
 }
-
-func TestManagedDataCommandAuditRejectsMissingSink(t *testing.T) {
-	if recorder, err := buildManagedDataCommandAuditRecorder(nil); !errors.Is(err, errManagedDataCommandAuditUnavailable) || recorder != nil {
-		t.Fatalf("recorder nil = %t, err = %v", recorder == nil, err)
-	}
-}
-
-func discardManagedDataAudit(context.Context, CommandAuditEvent) error { return nil }

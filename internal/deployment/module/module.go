@@ -38,6 +38,7 @@ type Module struct {
 	instanceID                string
 	executions                map[string]apigencommand.AsyncExecutionContract
 	protected                 bool
+	auditIntentConfigured     bool
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
@@ -167,7 +168,10 @@ type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, 
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
 type Config struct {
-	Database                  *sql.DB
+	Database *sql.DB
+	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
+	// It is required whenever deployment SQLite persistence is configured.
+	AuditIntentRecorder       access.AuditIntentRecorder
 	States                    ServingStatePort
 	Runtime                   deployment.Runtime
 	ManagedData               deployment.ManagedDataResolver
@@ -265,17 +269,28 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
 	if config.Database != nil {
+		if config.AuditIntentRecorder == nil {
+			return nil, errors.New("deployment audit intent recorder is required")
+		}
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
 			return nil, errors.New("deployment states, runtime, and managed data are required")
 		}
 		if config.BindClaimedProject == nil {
 			return nil, errors.New("candidate project claim binder is required")
 		}
+		if config.API.Workflow != nil {
+			config.API.Committer = workflowAuditCommitter{
+				database: config.Database,
+				workflow: config.API.Workflow,
+				audit:    config.AuditIntentRecorder,
+			}
+		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
 			config.ActivationHooks,
 			config.API.Releases,
 			config.API.Workflow,
+			config.AuditIntentRecorder,
 		)
 		if config.DeliveryReader == nil {
 			if reader, ok := repository.(deployment.DeliveryReader); ok {
@@ -367,8 +382,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
-		logger:                   config.Logger,
-		jobs:                     jobs, api: config.API, protected: config.Protected,
+		logger:                   config.Logger, auditIntentConfigured: config.Database != nil && config.AuditIntentRecorder != nil,
+		jobs: jobs, api: config.API, protected: config.Protected,
 		instanceID: config.InstanceID, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,

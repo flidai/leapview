@@ -210,7 +210,18 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 					if !ok {
 						return nil, ErrRequestConflict
 					}
-					if _, activateErr := unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, runID, s.promptWorkflow(input, runID, *dispatch)); activateErr != nil {
+					workflow := s.promptWorkflow(input, runID, *dispatch)
+					var activateErr error
+					if intent, present := AuditIntentFromContext(ctx); present {
+						if audited, ok := s.repo.(RunWorkflowAuditUnitOfWork); ok {
+							_, activateErr = audited.ActivateRunWorkflowWithAudit(ctx, input.Scope.PrincipalID, input.ConversationID, runID, workflow, &intent)
+						} else {
+							_, activateErr = unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, runID, workflow)
+						}
+					} else {
+						_, activateErr = unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, runID, workflow)
+					}
+					if activateErr != nil {
 						return nil, activateErr
 					}
 				}
@@ -262,7 +273,16 @@ func (s *Service) startPrompt(ctx context.Context, input PromptInput, dispatch *
 			err := fmt.Errorf("agent run workflow unit of work is unavailable")
 			return s.startFailure(ctx, input, run.ID, err)
 		}
-		run, err = unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, run.ID, s.promptWorkflow(input, run.ID, *dispatch))
+		workflow := s.promptWorkflow(input, run.ID, *dispatch)
+		if intent, present := AuditIntentFromContext(ctx); present {
+			if audited, ok := s.repo.(RunWorkflowAuditUnitOfWork); ok {
+				run, err = audited.ActivateRunWorkflowWithAudit(ctx, input.Scope.PrincipalID, input.ConversationID, run.ID, workflow, &intent)
+			} else {
+				run, err = unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, run.ID, workflow)
+			}
+		} else {
+			run, err = unit.ActivateRunWorkflow(ctx, input.Scope.PrincipalID, input.ConversationID, run.ID, workflow)
+		}
 		if err != nil {
 			return s.startFailure(ctx, input, run.ID, err)
 		}

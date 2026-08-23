@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,6 +54,64 @@ func TestApprovalRepositoryPersistsImmutableScopeAndOptimisticTransitions(t *tes
 	}
 	if _, err := restarted.SaveApproval(ctx, approved, approval.Revision); !errors.Is(err, deployment.ErrApprovalConflict) {
 		t.Fatalf("stale SaveApproval() error = %v", err)
+	}
+}
+
+func TestApprovalAuditIntentTracksAtomicRequestAndDecision(t *testing.T) {
+	ctx, db, _ := testRepository(t)
+	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	insertApprovalPrincipalsAndDeployment(t, ctx, db)
+	repository := NewRepositoryWithHooks(db, ActivationHooks{Audit: accesssqlite.NewRepository(db)})
+	pending := deployment.Approval{ID: "approval-audit", ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1", Status: deployment.ApprovalPending, RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1", RequestedAt: now, ExpiresAt: now.Add(time.Hour), Revision: 1}
+	requestIntent := access.AuditIntent{EventID: "approval-request-audit", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", ResourceKind: "project", ResourceID: "finance", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0, MetadataJSON: `{"approvalId":""}`}
+	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, requestIntent), pending); err != nil {
+		t.Fatal(err)
+	}
+	var metadata string
+	if err := db.QueryRowContext(ctx, `SELECT metadata_json FROM audit_outbox WHERE event_id = ?`, requestIntent.EventID).Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metadata, pending.ID) {
+		t.Fatalf("request audit metadata = %q, missing approval id", metadata)
+	}
+	approved := pending
+	approved.Status = deployment.ApprovalApproved
+	approved.ApprovedBy = "reviewer"
+	approved.ApprovalCredentialClass = deployment.CredentialClassHuman
+	approved.ApprovalCredentialID = "session-review"
+	approved.ApprovalCredentialExpiresAt = now.Add(time.Hour)
+	approved.ApprovedAt = now.Add(time.Minute)
+	approved.Revision = 2
+	decisionIntent := access.AuditIntent{EventID: "approval-decision-audit", Source: "deployment", Operation: "approveDeployment", Action: "deployment.approved", ResourceKind: "project", ResourceID: "finance", Capability: access.CapabilityProjectAdmin, Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0, MetadataJSON: `{"approvalId":"approval-audit","approvalRevision":2}`}
+	if _, err := repository.SaveApproval(deployment.WithAuditIntent(ctx, decisionIntent), approved, 1); err != nil {
+		t.Fatal(err)
+	}
+	var sequence int64
+	if err := db.QueryRowContext(ctx, `SELECT aggregate_sequence FROM audit_outbox WHERE event_id = ?`, decisionIntent.EventID).Scan(&sequence); err != nil {
+		t.Fatal(err)
+	}
+	if sequence != 2 {
+		t.Fatalf("decision aggregate sequence = %d, want 2", sequence)
+	}
+}
+
+func TestApprovalCreateRollsBackWhenAuditIntentFails(t *testing.T) {
+	ctx, db, _ := testRepository(t)
+	insertApprovalPrincipalsAndDeployment(t, ctx, db)
+	injected := errors.New("injected audit failure")
+	repository := NewRepositoryWithHooks(db, ActivationHooks{Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return injected })})
+	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	pending := deployment.Approval{ID: "approval-audit-rollback", ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1", Status: deployment.ApprovalPending, RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1", RequestedAt: now, ExpiresAt: now.Add(time.Hour), Revision: 1}
+	intent := access.AuditIntent{EventID: "approval-create-rollback", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 1, MetadataJSON: `{}`}
+	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, intent), pending); !errors.Is(err, injected) {
+		t.Fatalf("CreateApproval error = %v, want injected audit failure", err)
+	}
+	var count int
+	if err := db.QueryRowContext(ctx, `SELECT COUNT(*) FROM deployment_approvals WHERE id = ?`, pending.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled-back approval count = %d, want 0", count)
 	}
 }
 

@@ -320,6 +320,11 @@ sections:
         type: how-to
         summary: Inspect security and administrative activity.
         source: articles/security/audit.md
+      - slug: security/audit-privacy
+        title: Audit privacy and retention
+        type: explanation
+        summary: Minimize, retain, and protect audit records and exports.
+        source: articles/security/audit-privacy.md
 
   - id: integrate
     title: Integrate
@@ -520,6 +525,11 @@ sections:
             type: explanation
             summary: Understand LeapView's ephemeral runners, bounded caches, and portable validation contract.
             source: articles/architecture/github-hosted-ci.md
+          - slug: architecture/durable-audit-compliance
+            title: Durable audit and compliance controls
+            type: explanation
+            summary: Understand audit guarantee classes, evidence boundaries, and compliance controls.
+            source: articles/architecture/durable-audit-compliance.md
           - slug: storage-architecture
             title: Storage architecture
             type: explanation

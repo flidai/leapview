@@ -30,6 +30,11 @@ FROM dashboard_publication_events
 WHERE publication_id = sqlc.arg(publication_id)
 ORDER BY id DESC;
 
+-- name: CountDashboardPublicationEvents :one
+SELECT COUNT(*)
+FROM dashboard_publication_events
+WHERE publication_id = sqlc.arg(publication_id);
+
 -- name: SuspendDashboardPublication :execresult
 UPDATE dashboard_publications
 SET suspended_at = COALESCE(suspended_at, CURRENT_TIMESTAMP),

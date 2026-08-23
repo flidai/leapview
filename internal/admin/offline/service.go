@@ -149,12 +149,60 @@ func (service *Service) Maintenance(ctx context.Context, request MaintenanceRequ
 	}
 	fmt.Fprintf(out, "mode: %s\n", mode)
 	fmt.Fprintf(out, "audit events: %d\n", result.AuditEventsDeleted)
+	fmt.Fprintf(out, "delivered audit intents: %d\n", result.DeliveredAuditIntentsDeleted)
 	fmt.Fprintf(out, "query events: %d\n", result.QueryEventsDeleted)
 	fmt.Fprintf(out, "archived agent conversations: %d\n", result.ArchivedAgentConversationsDeleted)
 	fmt.Fprintf(out, "expired oauth states: %d\n", result.ExpiredOAuthStatesDeleted)
 	fmt.Fprintf(out, "stale sessions: %d\n", result.StaleSessionsDeleted)
 	fmt.Fprintf(out, "stale api tokens: %d\n", result.StaleAPITokensDeleted)
 	fmt.Fprintf(out, "stale service principal secrets: %d\n", result.StaleServicePrincipalSecretsDeleted)
+	return nil
+}
+
+func (service *Service) AuditOutbox(ctx context.Context, request AuditOutboxRequest, out io.Writer) error {
+	if service == nil || service.deps.AuditOutbox == nil {
+		return fmt.Errorf("audit outbox control is unavailable")
+	}
+	eventID := strings.TrimSpace(request.RequeueEventID)
+	if eventID != "" {
+		if !request.Apply {
+			return fmt.Errorf("--apply is required to requeue an audit intent")
+		}
+		lock, err := service.acquire(ctx)
+		if err != nil {
+			return err
+		}
+		defer lock.Release()
+		request.RequeueEventID = eventID
+		if exact, ok := service.deps.AuditOutbox.(AuditOutboxExactRecovery); ok &&
+			(request.ExpectedState != "" || request.ExpectedAttempts != nil || request.ExpectedFailureCode != "" || request.ExpectedPayloadDigest != "") {
+			if err := exact.RequeueExact(ctx, request); err != nil {
+				return fmt.Errorf("requeue audit intent: %w", err)
+			}
+		} else {
+			if request.ExpectedState != "" || request.ExpectedAttempts != nil || request.ExpectedFailureCode != "" || request.ExpectedPayloadDigest != "" {
+				return fmt.Errorf("exact audit outbox recovery is unavailable")
+			}
+			if err := service.deps.AuditOutbox.Requeue(ctx, eventID); err != nil {
+				return fmt.Errorf("requeue audit intent: %w", err)
+			}
+		}
+		fmt.Fprintf(out, "requeued event: %s\n", eventID)
+	}
+	status, err := service.deps.AuditOutbox.Status(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect audit outbox: %w", err)
+	}
+	fmt.Fprintf(out, "pending: %d\nretry: %d\nleased: %d\ndelivered: %d\npoison: %d\nquarantined: %d\nattempts: %d\ncapacity: %d\ncapacity remaining: %d\noldest undelivered: %s\n",
+		status.Pending, status.Retry, status.Leased, status.Delivered, status.Poison, status.Quarantined,
+		status.AttemptCount, status.Capacity, status.CapacityRemaining, status.OldestUndeliveredAge.Round(time.Second))
+	for _, terminal := range status.Terminals {
+		fmt.Fprintf(out, "terminal event: %s\nstate: %s\nattempts: %d\nfailure_code: %s\npayload_digest: %s\ncreated_at: %s\n",
+			terminal.EventID, terminal.State, terminal.AttemptCount, terminal.LastErrorCode, terminal.PayloadDigest, terminal.CreatedAt.Format(time.RFC3339Nano))
+	}
+	if status.TerminalsTruncated {
+		fmt.Fprintf(out, "terminal events: truncated at %d; rerun after resolving earlier rows\n", len(status.Terminals))
+	}
 	return nil
 }
 

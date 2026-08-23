@@ -166,8 +166,18 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	if !ok {
 		return
 	}
+	targetID, err := control.DeterministicUploadID(project, connection, headers.IdempotencyKey)
+	if err != nil {
+		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
+		return
+	}
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", targetID)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
+		return
+	}
 	result, err := h.options.Uploads.BeginUpload(r.Context(), control.BeginUploadRequest{
-		Project: project, Connection: connection, Manifest: manifest, Actor: actor, IdempotencyKey: headers.IdempotencyKey,
+		Project: project, Connection: connection, Manifest: manifest, Actor: actor, IdempotencyKey: headers.IdempotencyKey, AuditIntent: auditIntent,
 	})
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
@@ -184,7 +194,7 @@ func (h *Handler) CreateManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession()); err != nil {
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataUploadSession(), err)
 		return
 	}
@@ -199,6 +209,10 @@ func (h *Handler) GetManagedDataUploadSession(w stdhttp.ResponseWriter, r *stdht
 	response, err := uploadResponse(result, project, connection, uploadSession)
 	if err != nil {
 		h.writeError(w, r, err)
+		return
+	}
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession()); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -262,11 +276,16 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	if !ok {
 		return
 	}
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", uploadSession)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
+		return
+	}
 	abort := h.options.Uploads.AbortUpload
 	if h.options.AbortUpload != nil {
 		abort = h.options.AbortUpload
 	}
-	result, err := abort(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession})
+	result, err := abort(r.Context(), control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession, Actor: actor, AuditIntent: auditIntent})
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
@@ -285,10 +304,6 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	response, err := uploadResponse(result, project, connection, uploadSession)
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
-		return
-	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
@@ -310,9 +325,13 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 	if !ok {
 		return
 	}
-	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession, Actor: actor}
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", uploadSession)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
+		return
+	}
+	request := control.UploadRequest{Project: project, Connection: connection, UploadID: uploadSession, Actor: actor, AuditIntent: auditIntent}
 	var result control.UploadResult
-	var err error
 	if h.options.BeginFinalize != nil {
 		result, err = h.options.BeginFinalize(r.Context(), request)
 	} else {
@@ -338,7 +357,7 @@ func (h *Handler) FinalizeManagedDataUploadSession(w stdhttp.ResponseWriter, r *
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), actor, project, connection, "managed_data_upload_session", result.ID); err != nil {
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession()); err != nil {
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationFinalizeManagedDataUploadSession(), err)
 		return
 	}
@@ -377,9 +396,15 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 	if !ok {
 		return
 	}
+	targetID := s3multipart.DeterministicMultipartUploadID(uploadSession, headers.IdempotencyKey)
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", targetID)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
+		return
+	}
 	result, err := h.options.Multipart.Create(r.Context(), s3multipart.CreateRequest{
 		Project: project, Connection: connection, UploadSessionID: uploadSession,
-		Path: body.Path, IdempotencyKey: headers.IdempotencyKey,
+		Path: body.Path, IdempotencyKey: headers.IdempotencyKey, AuditIntent: auditIntent,
 	})
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
@@ -390,7 +415,7 @@ func (h *Handler) CreateManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload()); err != nil {
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCreateManagedDataS3MultipartUpload(), err)
 		return
 	}
@@ -477,9 +502,14 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 	if !ok {
 		return
 	}
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", multipartUpload)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
+		return
+	}
 	result, err := h.options.Multipart.Complete(r.Context(), s3multipart.CompleteRequest{
 		Project: project, Connection: connection, UploadSessionID: uploadSession, MultipartUploadID: multipartUpload,
-		IdempotencyKey: headers.IdempotencyKey, Parts: parts,
+		IdempotencyKey: headers.IdempotencyKey, Parts: parts, AuditIntent: auditIntent,
 	})
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
@@ -490,7 +520,7 @@ func (h *Handler) CompleteManagedDataS3MultipartUpload(w stdhttp.ResponseWriter,
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload()); err != nil {
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCompleteManagedDataS3MultipartUpload(), err)
 		return
 	}
@@ -514,9 +544,14 @@ func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r 
 	if !ok {
 		return
 	}
+	auditIntent, err := h.buildAuditIntent(r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", multipartUpload)
+	if err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
+		return
+	}
 	result, err := h.options.Multipart.Abort(r.Context(), s3multipart.AbortRequest{
 		Project: project, Connection: connection, UploadSessionID: uploadSession,
-		MultipartUploadID: multipartUpload, IdempotencyKey: headers.IdempotencyKey,
+		MultipartUploadID: multipartUpload, IdempotencyKey: headers.IdempotencyKey, AuditIntent: auditIntent,
 	})
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
@@ -527,7 +562,7 @@ func (h *Handler) AbortManagedDataS3MultipartUpload(w stdhttp.ResponseWriter, r 
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
 		return
 	}
-	if err := h.recordCommandAudit(r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), actor, project, connection, "managed_data_s3_multipart_upload", result.ID); err != nil {
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload()); err != nil {
 		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationAbortManagedDataS3MultipartUpload(), err)
 		return
 	}

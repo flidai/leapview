@@ -202,6 +202,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.ui("connection.binding.configure")
   @apigen.command(#{
+    guarantee: "transactional",
     auditAction: "connection.binding.created",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
@@ -252,6 +253,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.ui("connection.binding.update")
   @apigen.command(#{
+    guarantee: "transactional",
     auditAction: "connection.binding.updated",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
@@ -326,6 +328,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.ui("connection.binding.enable")
   @apigen.command(#{
+    guarantee: "transactional",
     auditAction: "connection.binding.enabled",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })
@@ -350,6 +353,7 @@ interface TargetConnectionBindings {
   @apigen.failsWith(ConnectionProviderUnavailableFailure)
   @apigen.ui("connection.binding.disable")
   @apigen.command(#{
+    guarantee: "transactional",
     auditAction: "connection.binding.disabled",
     failures: #[#{ kind: "audit_unavailable", statusCode: 503, code: "AUDIT_UNAVAILABLE", publicDetail: "Connection binding audit could not be persisted." }],
   })

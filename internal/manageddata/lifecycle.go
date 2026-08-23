@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -160,6 +161,7 @@ type CreateUploadSessionInput struct {
 	StagingPrefix  string
 	CreatedBy      string
 	ExpiresAt      time.Time
+	AuditIntent    *access.AuditIntent
 }
 
 type UploadProgress struct {
@@ -207,6 +209,7 @@ type CreateS3MultipartUploadInput struct {
 	SHA256              string
 	SizeBytes           int64
 	IdempotencyIdentity string
+	AuditIntent         *access.AuditIntent
 }
 
 type InitializeS3MultipartUploadInput struct {
@@ -214,6 +217,7 @@ type InitializeS3MultipartUploadInput struct {
 	ObjectKey        string
 	ProviderUploadID string
 	Existing         bool
+	AuditIntent      *access.AuditIntent
 }
 
 type S3MultipartPart struct {
@@ -227,6 +231,7 @@ type BeginS3MultipartCompletionInput struct {
 	ID                  MultipartUploadID
 	IdempotencyIdentity string
 	RequestHash         string
+	AuditIntent         *access.AuditIntent
 }
 
 type S3MultipartCompletion struct {
@@ -238,6 +243,7 @@ type S3MultipartCompletion struct {
 type BeginS3MultipartAbortInput struct {
 	ID                  MultipartUploadID
 	IdempotencyIdentity string
+	AuditIntent         *access.AuditIntent
 }
 
 type S3MultipartAbort struct {

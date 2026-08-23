@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -31,7 +32,10 @@ const (
 )
 
 type Config struct {
-	Database              *sql.DB
+	Database *sql.DB
+	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
+	// consumed by connection-binding SQLite mutations.
+	AuditIntentRecorder   access.AuditIntentRecorder
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
@@ -168,7 +172,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	var connectionBindings connectionbinding.BindingCatalog
 	if config.Database != nil {
 		queryAudit = queryauditsqlite.NewRepository(config.Database)
-		connectionBindings = analyticssqlite.NewConnectionBindingRepository(config.Database)
+		if config.AuditIntentRecorder != nil {
+			connectionBindings = analyticssqlite.NewConnectionBindingRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
+		} else {
+			connectionBindings = analyticssqlite.NewConnectionBindingRepository(config.Database)
+		}
 	}
 	targetClass := connectionbinding.TargetProduction
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
@@ -218,11 +226,21 @@ func (m *Module) NewConnectionAdministration(
 	if m == nil || m.connectionBindings == nil {
 		return nil, connectionbinding.ErrProviderUnavailable
 	}
-	if err := requireConnectionBindingAuditSinks(
-		config.Audit,
-		config.AdministrationAudit,
-	); err != nil {
+	config.RequireAuditIntent = config.RequireAuditIntent || config.AuditIntentRecorder != nil
+	if config.RequireAuditIntent && config.AuditIntentRecorder != nil {
+		// Transactional administration intents replace the legacy cross-domain
+		// recorder. Credential rotation remains a separate best-effort sink.
+		if err := requireConnectionRotationAuditSink(config.Audit); err != nil {
+			return nil, err
+		}
+	} else if err := requireConnectionBindingAuditSinks(config.Audit, config.AdministrationAudit); err != nil {
 		return nil, err
+	}
+	if config.RequireAuditIntent && config.AuditIntentRecorder == nil {
+		return nil, fmt.Errorf(
+			"%w: command-facing connection administration requires an audit-intent recorder",
+			connectionbinding.ErrAdministrationAuditUnavailable,
+		)
 	}
 	if config.Pools == nil {
 		pools, err := m.ensureConnectionPools(
@@ -252,7 +270,8 @@ func (m *Module) NewConnectionAdministration(
 			return authorize(ctx, actor, permission, binding)
 		},
 		Dependencies: config.Dependencies, Pools: config.Pools,
-		Audit: config.AdministrationAudit, Now: config.Now,
+		RequireAuditIntent: config.RequireAuditIntent,
+		Audit:              config.AdministrationAudit, Now: config.Now,
 	})
 }
 

@@ -37,9 +37,10 @@ type AuthorizeResource func(context.Context, string, projectgraph.ResourceID, ac
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
-	Database          *sql.DB
-	AuthorizeResource AuthorizeResource
-	AcquireRuntime    func(context.Context) (runtimehost.Lease, error)
+	Database            *sql.DB
+	AuditIntentRecorder access.AuditIntentRecorder
+	AuthorizeResource   AuthorizeResource
+	AcquireRuntime      func(context.Context) (runtimehost.Lease, error)
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -54,7 +55,10 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.AcquireRuntime == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
 	}
-	repository := authoringsqlite.NewRepository(config.Database)
+	if config.AuditIntentRecorder == nil {
+		return nil, fmt.Errorf("dashboard authoring audit intent recorder is required")
+	}
+	repository := authoringsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.AuthorizeResource(config.AuthorizeResource))
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring access adapter: %w", err)

@@ -1,0 +1,145 @@
+package sqlite_test
+
+import (
+	"context"
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
+	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/transaction"
+)
+
+func authoringAuditIntent(operation, action string) access.AuditIntent {
+	return access.AuditIntent{
+		EventID: "dashboard-authoring:pending", Source: "dashboard.authoring", Operation: operation,
+		PrincipalID: "actor", Action: action, Capability: access.CapabilityResourceEdit, Outcome: "success",
+		RequestID: "request-1", CorrelationID: "request-1",
+		MetadataJSON: `{"operationId":"` + operation + `","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"agent"}`,
+	}
+}
+
+type failingAuthoringAuditRecorder struct{ err error }
+
+func (r failingAuthoringAuditRecorder) RecordAuditIntent(context.Context, transaction.Transaction, access.AuditIntent) error {
+	return r.err
+}
+
+func openAuthoringAuditStore(t *testing.T) (*platform.Store, context.Context) {
+	t.Helper()
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "authoring-audit.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO principals (id, email, display_name) VALUES ('owner', 'owner@example.test', 'Owner')`); err != nil {
+		t.Fatal(err)
+	}
+	return store, ctx
+}
+
+func TestAuthoringCreateAuditIntentRollsBackAndReplaysIdempotently(t *testing.T) {
+	store, ctx := openAuthoringAuditStore(t)
+	input, _ := canonicalSQLiteInput(t, "project:sales", "dashboard:audit", "revision-1", authoring.CreateOperation{
+		ProjectID: "project:sales", ActorID: "actor", Kind: "create", IdempotencyKey: "create-audit", Fingerprint: "fingerprint-audit",
+	})
+	intent := authoringAuditIntent("createDashboardAuthoringDraft", "dashboard_authoring.draft_created")
+	boom := errors.New("audit unavailable")
+	failing := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), failingAuthoringAuditRecorder{err: boom})
+	if _, err := failing.Create(authoring.WithAuditIntent(ctx, intent), input); !errors.Is(err, boom) {
+		t.Fatalf("create error = %v, want audit failure", err)
+	}
+	var dashboards, outbox int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_dashboards`).Scan(&dashboards); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox`).Scan(&outbox); err != nil {
+		t.Fatal(err)
+	}
+	if dashboards != 0 || outbox != 0 {
+		t.Fatalf("rolled back state dashboards=%d outbox=%d", dashboards, outbox)
+	}
+
+	repository := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repository.Create(authoring.WithAuditIntent(ctx, intent), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var firstEvent, aggregate, metadata string
+	var firstSequence int64
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT event_id, aggregate_key, aggregate_sequence, metadata_json FROM audit_outbox`).Scan(&firstEvent, &aggregate, &firstSequence, &metadata); err != nil {
+		t.Fatal(err)
+	}
+	if aggregate != "dashboard_authoring:project:sales:dashboard:audit" || firstSequence != 1 {
+		t.Fatalf("aggregate = %q sequence=%d", aggregate, firstSequence)
+	}
+	if firstEvent == "" {
+		t.Fatal("audit event id is empty")
+	}
+	if strings.Contains(metadata, "pending-dashboard") || strings.Contains(metadata, "pending-draft") || !strings.Contains(metadata, `"dashboardId":"dashboard:audit"`) {
+		t.Fatalf("audit metadata did not bind revision identity: %s", metadata)
+	}
+	replayed, err := repository.Create(authoring.WithAuditIntent(ctx, intent), input)
+	if err != nil || replayed.ID != created.ID {
+		t.Fatalf("replay = %#v err=%v", replayed, err)
+	}
+	var outboxAfter int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox`).Scan(&outboxAfter); err != nil {
+		t.Fatal(err)
+	}
+	if outboxAfter != 1 {
+		t.Fatalf("outbox rows after replay=%d, want 1", outboxAfter)
+	}
+}
+
+func TestAuthoringAppendAuditIntentRollsBackRevisionAndDraftPointer(t *testing.T) {
+	store, ctx := openAuthoringAuditStore(t)
+	createInput, first := canonicalSQLiteInput(t, "project:sales", "dashboard:append-audit", "revision-1", authoring.CreateOperation{
+		ProjectID: "project:sales", ActorID: "actor", Kind: "create", IdempotencyKey: "append-create", Fingerprint: "append-create-fingerprint",
+	})
+	createIntent := authoringAuditIntent("createDashboardAuthoringDraft", "dashboard_authoring.draft_created")
+	repository := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repository.Create(authoring.WithAuditIntent(ctx, createIntent), createInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	documentValue := canonicalSQLiteDocument(created.ID.String())
+	documentValue.Metadata.DisplayName = stringPointer("Sales append")
+	second, err := authoring.NewRevision("revision-2", created.ID, 2, time.Date(2026, 8, 18, 11, 0, 0, 0, time.UTC), documentValue, first.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := created
+	next.Title = "Sales append"
+	next.Draft = &authoring.Draft{ID: created.Draft.ID, DashboardID: created.ID, Revision: second.Token(), Provenance: second.Provenance}
+	evidence := authoring.CommandEvidence{ID: "append-edit", Fingerprint: "append-fingerprint", Action: authoring.AuthorizationActionEdit, Provenance: first.Provenance, OccurredAt: second.CreatedAt}
+	failing := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), failingAuthoringAuditRecorder{err: errors.New("audit write failed")})
+	appendIntent := authoringAuditIntent("executeDashboardAuthoringCommand", "dashboard_authoring.command_executed")
+	if _, err := failing.AppendDraft(authoring.WithAuditIntent(ctx, appendIntent), authoring.AppendDraftInput{ProjectID: "project:sales", DashboardID: created.ID, ExpectedDraftRevision: first.Token(), Revision: second, Next: next, Evidence: evidence}); err == nil {
+		t.Fatal("append unexpectedly succeeded with failing audit recorder")
+	}
+	var revisionRows, commandRows int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_revisions WHERE dashboard_id = ?`, created.ID.String()).Scan(&revisionRows); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM dashboard_authoring_commands WHERE dashboard_id = ?`, created.ID.String()).Scan(&commandRows); err != nil {
+		t.Fatal(err)
+	}
+	if revisionRows != 1 || commandRows != 0 {
+		t.Fatalf("rolled back append revisions=%d commands=%d", revisionRows, commandRows)
+	}
+	current, err := repository.Get(ctx, "project:sales", created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Draft == nil || current.Draft.Revision != first.Token() {
+		t.Fatalf("draft pointer after rollback=%#v", current.Draft)
+	}
+}

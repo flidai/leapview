@@ -566,7 +566,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
 	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{
-		Database: store.SQLDB(), CredentialMode: credentialMode,
+		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()), CredentialMode: credentialMode,
 		CredentialTarget: instanceID, CredentialProject: projectID, Environment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
 			InfisicalBaseURL: cfg.InfisicalBaseURL, InfisicalUniversalClientID: cfg.InfisicalUniversalClientID,
@@ -691,7 +691,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		},
 		AuthorizeConnection: manageddatamodule.ConnectionAuthorizer(authorizeConnection),
 		Jobs:                jobModule, Workflow: jobModule,
-		RecordAudit: managedDataCommandAuditRecorder(accessModule),
+		AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
 			Interval: cfg.ManagedDataGCInterval,
 			Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
@@ -704,7 +704,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database:        store.SQLDB(),
+		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ExtensionPreparation: extensionSupply,
@@ -1001,7 +1001,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return runtimeHostModule.Acquire(ctx)
 	}
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database: store.SQLDB(),
+		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
@@ -1463,7 +1463,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 	}
 	deploymentConfig := deploymentmodule.Config{
-		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
+		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()), States: servingStateRepo, Runtime: deploymentRuntime,
 		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,

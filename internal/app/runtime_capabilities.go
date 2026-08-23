@@ -42,26 +42,27 @@ type workloadCapabilityBundle struct {
 }
 
 type analyticsCapabilityConfig struct {
-	Database          *sql.DB
-	CredentialMode    analyticsmodule.CredentialMode
-	CredentialTarget  string
-	CredentialProject projectgraph.ResourceID
-	Environment       string
-	TargetCredentials analyticsmodule.TargetCredentialConfig
-	RootDir           string
-	ExtensionSupply   *extensionsupply.Supply
-	CatalogPath       string
-	DataPath          string
-	MaxConnections    int
-	MemoryMaxBytes    int64
-	TempMaxBytes      int64
-	MaxThreads        int
-	TempDir           string
-	DisableProcessEnv bool
-	RuntimeCacheItems int
-	RuntimeCacheBytes int64
-	NodeCacheItems    int
-	NodeCacheBytes    int64
+	Database            *sql.DB
+	AuditIntentRecorder access.AuditIntentRecorder
+	CredentialMode      analyticsmodule.CredentialMode
+	CredentialTarget    string
+	CredentialProject   projectgraph.ResourceID
+	Environment         string
+	TargetCredentials   analyticsmodule.TargetCredentialConfig
+	RootDir             string
+	ExtensionSupply     *extensionsupply.Supply
+	CatalogPath         string
+	DataPath            string
+	MaxConnections      int
+	MemoryMaxBytes      int64
+	TempMaxBytes        int64
+	MaxThreads          int
+	TempDir             string
+	DisableProcessEnv   bool
+	RuntimeCacheItems   int
+	RuntimeCacheBytes   int64
+	NodeCacheItems      int
+	NodeCacheBytes      int64
 }
 
 func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig) (analyticsCapabilityBundle, error) {
@@ -72,7 +73,7 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 		return analyticsCapabilityBundle{}, errors.New("analytics extension supply is required")
 	}
 	module, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
-		Database: cfg.Database, CredentialMode: cfg.CredentialMode,
+		Database: cfg.Database, AuditIntentRecorder: cfg.AuditIntentRecorder, CredentialMode: cfg.CredentialMode,
 		CredentialTargetID: cfg.CredentialTarget, CredentialProjectID: cfg.CredentialProject, CredentialEnvironment: cfg.Environment,
 		TargetCredentials: cfg.TargetCredentials,
 		RootDir:           cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,

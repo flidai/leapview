@@ -468,7 +468,9 @@ func handlerOptions(repo managedhttp.Repository, uploads managedhttp.UploadCoord
 		Repository: repo, Uploads: uploads, Multipart: multipart, Environment: "prod",
 		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) { return true, nil },
 		EnqueueFinalize:     func(context.Context, control.UploadRequest) error { return nil },
-		RecordCommandAudit:  func(context.Context, managedhttp.CommandAuditInput) error { return nil },
+		BuildAuditIntent: func(context.Context, managedhttp.CommandAuditInput) (*access.AuditIntent, error) {
+			return &access.AuditIntent{}, nil
+		},
 		CurrentPrincipal: func(*http.Request) (managedhttp.Principal, bool) {
 			return managedhttp.Principal{ID: "principal-a"}, true
 		},

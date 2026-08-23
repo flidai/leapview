@@ -1,0 +1,203 @@
+{
+  "schemaVersion": 1,
+  "updated": "2026-08-23",
+  "guarantees": {
+    "transactional": "The state transition and audit event commit in one durable transaction; an audit failure aborts the transition.",
+    "durable-before-stream": "The access identity is persisted before a governed stream can release bytes. A later completion event may be best-effort.",
+    "best-effort": "The operation may complete before the audit append. The producer logs a structured failure and does not undo the completed operation.",
+    "mixed": "The producer owns operation families with different guarantees; each operation-level TypeSpec contract remains authoritative."
+  },
+  "producers": [
+    {
+      "id": "access.transactional-mutations",
+      "owner": "access",
+      "kind": "administrative-audit",
+      "events": ["principal", "group", "grant", "policy", "token", "session", "SCIM mutation"],
+      "guarantee": "transactional",
+      "failureBehavior": "The mutation and one or more audit rows roll back together.",
+      "implementation": [
+        "internal/access/sqlite/repository.go",
+        "internal/access/sqlite/authoring_auth.go",
+        "internal/access/http/handler.go",
+        "internal/admin/settings/commands.go",
+        "internal/admin/personalsettings/service.go"
+      ],
+      "contractSources": ["internal/access/access.go"],
+      "evidence": ["internal/access/sqlite/repository_test.go", "internal/access/sqlite/authoring_auth_test.go"]
+    },
+    {
+      "id": "access.authentication-observations",
+      "owner": "access",
+      "kind": "authentication-and-denial-audit",
+      "events": ["authentication failure", "authorization denial", "MCP OAuth observation", "SCIM rejection"],
+      "guarantee": "best-effort",
+      "failureBehavior": "The request result is preserved; persistence retries are bounded and a structured error is logged.",
+      "implementation": [
+        "internal/access/module/auth.go",
+        "internal/access/module/mcp_oauth.go",
+        "internal/access/http/principal_admin_handler.go",
+        "internal/access/scimprov/server.go",
+        "internal/access/audit.go"
+      ],
+      "contractSources": ["internal/access/access.go"],
+      "evidence": ["internal/access/audit_test.go", "internal/access/module/browser_guard_test.go"]
+    },
+    {
+      "id": "access.avatar-command",
+      "owner": "access",
+      "kind": "generated-command-audit",
+      "events": ["principal.avatar.updated", "principal.avatar.deleted"],
+      "guarantee": "best-effort",
+      "failureBehavior": "Avatar storage success is not undone by an audit append failure; the command guard exposes the failure.",
+      "implementation": ["internal/access/http/avatar.go"],
+      "contractSources": ["api/typespec/current_user.tsp"],
+      "evidence": ["internal/access/http/current_user_test.go"]
+    },
+    {
+      "id": "dashboard.authoring-command",
+      "owner": "dashboard",
+      "kind": "generated-command-audit",
+      "events": ["dashboard_authoring.draft_created", "dashboard_authoring.command_executed", "dashboard_authoring.draft_forked"],
+      "guarantee": "transactional",
+      "failureBehavior": "The authoring mutation and durable audit intent commit together; failure to persist the intent rolls back the mutation.",
+      "implementation": ["internal/dashboard/http/authoring_api.go", "internal/dashboard/authoring/sqlite/repository.go", "internal/dashboard/authoring/audit.go"],
+      "contractSources": ["api/typespec/dashboard_authoring.tsp"],
+      "evidence": ["internal/dashboard/authoring/sqlite/audit_intent_test.go", "internal/dashboard/http/authoring_api_test.go"]
+    },
+    {
+      "id": "dashboard.publication-command",
+      "owner": "dashboard",
+      "kind": "generated-command-audit",
+      "events": ["dashboard publication lifecycle"],
+      "guarantee": "transactional",
+      "failureBehavior": "Publication state and its durable audit intent commit together; failure to persist either aborts the command.",
+      "implementation": ["internal/dashboard/module/publications.go", "internal/dashboard/publication/sqlite/repository.go", "internal/dashboard/publication/command.go"],
+      "contractSources": ["api/typespec/dashboard_publications.tsp"],
+      "evidence": ["internal/dashboard/publication/sqlite/repository_test.go", "internal/dashboard/module/publication_command_audit_test.go"]
+    },
+    {
+      "id": "dashboard.data-access",
+      "owner": "dashboard",
+      "kind": "governed-data-access-audit",
+      "events": ["governed query started", "governed query success", "governed query denied", "governed query error"],
+      "guarantee": "durable-before-stream",
+      "completionGuarantee": "best-effort",
+      "failureBehavior": "Publication/candidate/view-as streams require a durable started identity before release; completion persistence failure is logged after execution.",
+      "implementation": ["internal/dashboard/queryauthz/data_authorization.go", "internal/access/canonical_audit.go"],
+      "contractSources": ["internal/dashboard/queryauthz/canonical_test.go"],
+      "evidence": ["internal/dashboard/queryauthz/canonical_test.go"]
+    },
+    {
+      "id": "analytics.query-events",
+      "owner": "analytics",
+      "kind": "query-audit",
+      "events": ["governed query execution and diagnostics"],
+      "guarantee": "best-effort",
+      "failureBehavior": "Query results are returned; a query-event append is redacted, bounded to the local store, and its error is not allowed to change the result.",
+      "implementation": ["internal/analytics/dataquery/audit.go", "internal/dashboard/module/audited_metrics.go", "internal/analytics/queryaudit/sqlite/repository.go"],
+      "contractSources": ["internal/analytics/queryaudit/queryaudit.go"],
+      "evidence": ["internal/analytics/dataquery/audit_test.go", "internal/analytics/queryaudit/sqlite/repository_test.go"]
+    },
+    {
+      "id": "connection.binding-administration",
+      "owner": "analytics",
+      "kind": "generated-command-audit",
+      "events": ["connection.binding.created", "connection.binding.updated", "connection.binding.enabled", "connection.binding.disabled"],
+      "guarantee": "transactional",
+      "failureBehavior": "Binding state and its durable audit intent commit together; audit failure rolls the binding mutation back.",
+      "implementation": ["internal/analytics/connectionbinding/administration_audit.go", "internal/analytics/connectionbinding/administration.go", "internal/analytics/sqlite/connection_binding.go"],
+      "contractSources": ["api/typespec/connection_bindings.tsp"],
+      "evidence": ["internal/analytics/connectionbinding/audit_intent_test.go", "internal/analytics/sqlite/connection_binding_test.go"]
+    },
+    {
+      "id": "connection.credential-rotation",
+      "owner": "analytics",
+      "kind": "credential-lifecycle-audit",
+      "events": ["credential.refresh.scheduled", "credential.refresh.requested", "credential.test.requested", "credential.runtime.acquire"],
+      "guarantee": "best-effort",
+      "failureBehavior": "Credential rotation outcome is preserved; audit failure is logged with non-secret identity and reason metadata.",
+      "implementation": ["internal/analytics/connectionbinding/rotation.go", "internal/analytics/connectionbinding/rotation_audit.go"],
+      "contractSources": ["api/typespec/connection_bindings.tsp"],
+      "evidence": ["internal/analytics/connectionbinding/rotation_test.go"]
+    },
+    {
+      "id": "agent.commands",
+      "owner": "agent",
+      "kind": "generated-command-audit",
+      "events": ["agent configuration, conversation, and run lifecycle"],
+      "guarantee": "mixed",
+      "members": {
+        "transactional": ["conversation create/update/archive and run create/cancel"],
+        "best-effort": ["agent configuration update and tool observations"]
+      },
+      "failureBehavior": "Conversation and run mutations fail closed when the durable audit intent cannot commit; configuration and tool observations preserve their result and log a redacted failure.",
+      "implementation": ["internal/agent/http/command_audit.go", "internal/agent/module/command_audit.go", "internal/agent/sqlite/repository.go"],
+      "contractSources": ["api/typespec/agent.tsp"],
+      "evidence": ["internal/agent/http/command_audit_test.go", "internal/agent/module/command_audit_test.go"]
+    },
+    {
+      "id": "managed-data.commands",
+      "owner": "manageddata",
+      "kind": "generated-command-audit",
+      "events": ["managed-data upload-session and S3 multipart lifecycle"],
+      "guarantee": "transactional",
+      "failureBehavior": "Managed-data and multipart state transitions commit with their durable audit intent; audit failure rolls the transition back and payloads exclude file and credential secrets.",
+      "implementation": ["internal/manageddata/http/command_audit.go", "internal/manageddata/module/command_audit.go", "internal/manageddata/sqlite/repository.go"],
+      "contractSources": ["api/typespec/managed_data.tsp", "api/typespec/upload_s3_multipart.tsp"],
+      "evidence": ["internal/manageddata/module/command_audit_test.go", "internal/manageddata/sqlite/repository_test.go"]
+    },
+    {
+      "id": "deployment.commands",
+      "owner": "deployment",
+      "kind": "delivery-and-lifecycle-audit",
+      "events": ["candidate source and blob operations", "candidate lifecycle", "deployment approval and cancellation"],
+      "guarantee": "mixed",
+      "members": {
+        "transactional": ["deployment create/retry/rollback/cancel", "approval request/approve/deny/revoke", "activation workflow acceptance", "delivery plan/build/publication lifecycle"],
+        "best-effort": ["candidate source/blob command callbacks", "candidate ready/failed/retried observations"]
+      },
+      "failureBehavior": "Durable lifecycle transitions fail closed in their repository; best-effort callbacks preserve the committed delivery result and log failures.",
+      "implementation": ["internal/deployment/candidate_service.go", "internal/deployment/module/candidate_sync.go", "internal/deployment/module/api.go", "internal/deployment/sqlite/repository.go", "internal/deployment/sqlite/approval_repository.go"],
+      "contractSources": ["api/typespec/deployments.tsp"],
+      "evidence": ["internal/deployment/sqlite/repository_test.go", "internal/deployment/sqlite/approval_repository_test.go", "internal/deployment/module/operation_contracts_test.go"]
+    },
+    {
+      "id": "release.commands",
+      "owner": "release",
+      "kind": "release-lifecycle-audit",
+      "events": ["release.created", "release.artifact_uploaded", "release.validating"],
+      "guarantee": "transactional",
+      "failureBehavior": "Release create, artifact upload, and finalization state commit with their durable audit intent; audit failure rolls the transition back.",
+      "implementation": ["internal/release/module/api.go", "internal/release/service.go", "internal/release/sqlite/repository.go"],
+      "contractSources": ["api/typespec/releases.tsp"],
+      "evidence": ["internal/release/sqlite/repository_test.go", "internal/release/module/operation_contracts_test.go"]
+    },
+    {
+      "id": "refresh.commands",
+      "owner": "refresh",
+      "kind": "refresh-lifecycle-audit",
+      "events": ["refresh.queued", "refresh.cancelled", "refresh terminal status"],
+      "guarantee": "mixed",
+      "members": {
+        "transactional": ["refresh run creation/queue and cancellation"],
+        "best-effort": ["terminal execution observations"]
+      },
+      "failureBehavior": "The durable run lifecycle is authoritative; audit verification or terminal observation failures are logged and do not fabricate a run result.",
+      "implementation": ["internal/refresh/module/api.go", "internal/refresh/sqlite/runs.go"],
+      "contractSources": ["api/typespec/refresh_runs.tsp"],
+      "evidence": ["internal/refresh/module/operation_contracts_test.go", "internal/refresh/module/module_test.go"]
+    },
+    {
+      "id": "dashboard.appearance-contract",
+      "owner": "dashboard",
+      "kind": "generated-command-contract",
+      "events": ["dashboard.appearance.updated"],
+      "guarantee": "best-effort",
+      "implementationStatus": "contract declared; current route adapter is unavailable",
+      "failureBehavior": "When implemented, the generated command must preserve the committed appearance mutation and make audit failure observable.",
+      "implementation": ["internal/dashboard/module/apigen.go"],
+      "contractSources": ["api/typespec/bi.tsp"],
+      "evidence": ["internal/app/api_apigen_test.go"]
+    }
+  ]
+}
