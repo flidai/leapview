@@ -327,6 +327,88 @@ test("SPDX document binds vendored compatibility packages to the source commit",
   );
 });
 
+test("SPDX relationships preserve Bun alias install paths and wrapper edges", () => {
+  const sourceSha = "d".repeat(40);
+  const lock = {
+    workspaces: {
+      "": {
+        devDependencies: {
+          "brace-expansion": "file:vendor/brace-expansion-compat",
+          "image-size": "file:vendor/image-size-next-compat",
+          "minimatch-modern": "npm:minimatch@10.2.6",
+        },
+      },
+    },
+    packages: {
+      "brace-expansion": [
+        "brace-expansion@file:vendor/brace-expansion-compat",
+        { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+      ],
+      "brace-expansion-next": ["brace-expansion@5.0.9", "", {}],
+      "image-size": [
+        "image-size@file:vendor/image-size-next-compat",
+        { dependencies: { "image-size-next": "1.2.2" } },
+      ],
+      "image-size-next": ["image-size-next@1.2.2", "", {}],
+      "minimatch-modern": [
+        "minimatch@10.2.6",
+        "",
+        { dependencies: { "brace-expansion": "^5.0.8" } },
+      ],
+      "minimatch-modern/brace-expansion": [
+        "brace-expansion@file:vendor/brace-expansion-compat",
+        { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+      ],
+      "minimatch/brace-expansion": [
+        "brace-expansion@file:vendor/brace-expansion-compat",
+        { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+      ],
+      wrapper: [
+        "wrapper@1.0.0",
+        "",
+        { dependencies: { shared: "1.0.0" } },
+      ],
+      "wrappe/shared": ["shared@1.0.0", "", {}],
+      "elsewhere/shared": ["shared@1.0.0", "", {}],
+    },
+  };
+  const document = buildSpdxDocument({
+    artifactSha256: "c".repeat(64),
+    createdAt: "2026-07-29T12:00:00.000Z",
+    files: [],
+    lock,
+    packageDocument,
+    packageVerification,
+    sourceSha,
+  });
+  const packageIdForPath = (installPath) =>
+    installPath === ""
+      ? "SPDXRef-Package-LeapView-Desktop"
+      : document.packages.find((entry) =>
+          entry.comment?.endsWith(`install path: ${installPath}`),
+        )?.SPDXID;
+  const dependsOn = (parentInstallPath, childInstallPath) =>
+    document.relationships.some(
+      (entry) =>
+        entry.relationshipType === "DEPENDS_ON" &&
+        entry.spdxElementId === packageIdForPath(parentInstallPath) &&
+        entry.relatedSpdxElement === packageIdForPath(childInstallPath),
+    );
+
+  assert.ok(dependsOn("", "minimatch-modern"));
+  assert.ok(dependsOn("minimatch-modern", "minimatch-modern/brace-expansion"));
+  assert.ok(dependsOn("brace-expansion", "brace-expansion-next"));
+  assert.ok(dependsOn("image-size", "image-size-next"));
+  assert.equal(
+    document.relationships.some(
+      (entry) =>
+        entry.relationshipType === "DEPENDS_ON" &&
+        entry.spdxElementId === packageIdForPath("wrapper"),
+    ),
+    false,
+  );
+});
+
 test("Squirrel RELEASES binds the exact nupkg identity", () => {
   const nupkg = {
     bytes: 140201271,

@@ -63,7 +63,12 @@ func newFixture(t *testing.T) string {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatal(err)
 		}
-		if err := os.WriteFile(path, []byte("fixture-"+file+"\n"), 0o644); err != nil {
+		contents := []byte("fixture-" + file + "\n")
+		if file == "bun.lock" || file == "desktop/bun.lock" {
+			contents = []byte(`{"lockfileVersion":1,"packages":{"fixture":["fixture@1.0.0"]}}
+`)
+		}
+		if err := os.WriteFile(path, contents, 0o644); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -392,5 +397,79 @@ func TestParseGoRetainsNonReachableAdvisoriesAsNotices(t *testing.T) {
 func TestParseNPMRequiresAuditEnvelope(t *testing.T) {
 	if _, _, _, err := parseNPM([]byte(`{"vulnerabilities":{}}`)); err == nil {
 		t.Fatal("npm output without metadata decoded")
+	}
+}
+
+func TestParseBunRejectsNullAdvisoryGroups(t *testing.T) {
+	for _, input := range []string{`null`, `{"example":null}`, `{"example":[]}`} {
+		if _, _, err := parseBun([]byte(input)); err == nil {
+			t.Fatalf("bun output %s unexpectedly decoded", input)
+		}
+	}
+}
+
+func TestParseNPMRejectsEmptyMetadataIdentity(t *testing.T) {
+	inputs := []string{
+		`{"vulnerabilities":{},"metadata":null}`,
+		`{"vulnerabilities":{},"metadata":{"dependencies":{}}}`,
+		`{"vulnerabilities":{},"metadata":{"dependencies":{"total":0}}}`,
+		`{"vulnerabilities":{},"metadata":{"dependencies":{"total":-1}}}`,
+	}
+	for _, input := range inputs {
+		if _, _, _, err := parseNPM([]byte(input)); err == nil {
+			t.Fatalf("npm output %s unexpectedly decoded", input)
+		}
+	}
+}
+
+func TestParseGoRejectsEmptyConfigAndGraph(t *testing.T) {
+	if _, _, _, _, err := parseGo([]byte(`{"config":{}}
+{"SBOM":{"modules":[{"path":"example.test/one"}]}}`)); err == nil {
+		t.Fatal("govulncheck empty config unexpectedly decoded")
+	}
+	if _, _, _, _, err := parseGo([]byte(`{"config":{"scanner_name":"govulncheck","scanner_version":"v1.5.0","go_version":"go1.25.13"}}
+{"SBOM":{}}`)); err == nil {
+		t.Fatal("govulncheck empty SBOM unexpectedly decoded")
+	}
+	if _, _, _, _, err := parseGo([]byte(`{"config":{"scanner_name":"govulncheck","scanner_version":"v1.5.0","go_version":"go1.25.13"}}
+{"SBOM":{"modules":[{}]}}`)); err == nil {
+		t.Fatal("govulncheck empty module identity unexpectedly decoded")
+	}
+}
+
+func TestParseBunLockfileCountsResolvedGraph(t *testing.T) {
+	data := []byte(`{
+  "packages": {
+    "one": ["one@1.0.0",],
+    "two": ["two@2.0.0"]
+  },
+}`)
+	if got, err := parseBunLockfile(data); err != nil || got != 2 {
+		t.Fatalf("bun lock graph count = %d, err = %v", got, err)
+	}
+}
+
+func TestParseBunLockfileRejectsEmptyGraph(t *testing.T) {
+	if _, err := parseBunLockfile([]byte(`{"packages":{}}`)); err == nil {
+		t.Fatal("empty Bun package graph unexpectedly decoded")
+	}
+}
+
+func TestParseBunLockfileRejectsCommentTokenConcatenation(t *testing.T) {
+	data := []byte(`{"packages":{"one":["one@1.0.0"/*comment*/"two@2.0.0"]}}`)
+	if _, err := parseBunLockfile(data); err == nil {
+		t.Fatal("invalid JSONC token boundary unexpectedly decoded")
+	}
+}
+
+func TestScanBunPackageCountUsesLockGraph(t *testing.T) {
+	root := newFixture(t)
+	lock := filepath.Join(root, "bun.lock")
+	if err := os.WriteFile(lock, []byte(`{"packages":{"one":["one@1.0.0"],"two":["two@2.0.0"],"three":["three@3.0.0"]}}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	graph := scanBun(context.Background(), root, "root-bun", "package.json", "bun.lock", fixtureDeps(fakeScan{mode: "vulnerable"}).Run)
+	if graph.Result.Status != "vulnerable" || graph.Result.PackageCount != 3 {
+		t.Fatalf("bun scan result = %#v", graph.Result)
 	}
 }

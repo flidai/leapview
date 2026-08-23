@@ -545,6 +545,16 @@ func validateWaivers(waivers []Waiver, now time.Time) error {
 
 func scanBun(ctx context.Context, dir, id, manifest, lockfile string, run Runner) GraphResult {
 	result := GraphResult{ID: id, Manager: "bun", Manifest: manifest, Lockfile: lockfile}
+	lockData, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(lockfile)))
+	if err != nil {
+		result.Result = scannerError(fmt.Sprintf("read bun lockfile: %v", err))
+		return result
+	}
+	packageCount, err := parseBunLockfile(lockData)
+	if err != nil {
+		result.Result = scannerError("malformed bun lockfile: " + err.Error())
+		return result
+	}
 	version, versionErr := run(ctx, dir, "bun", "--version")
 	if versionErr != nil || version.ExitCode != 0 {
 		result.Result = scannerError("bun version command failed")
@@ -561,12 +571,12 @@ func scanBun(ctx context.Context, dir, id, manifest, lockfile string, run Runner
 		result.Result = scannerError("bun audit returned empty output")
 		return result
 	}
-	findings, packages, err := parseBun(audit.Stdout)
+	findings, _, err := parseBun(audit.Stdout)
 	if err != nil {
 		result.Result = scannerError("malformed bun audit output: " + err.Error())
 		return result
 	}
-	result.Result = makeResult(findings, packages, audit.ExitCode)
+	result.Result = makeResult(findings, packageCount, audit.ExitCode)
 	return result
 }
 
@@ -580,9 +590,21 @@ func parseBun(data []byte) ([]Finding, int, error) {
 	if err := json.Unmarshal(bytes.TrimSpace(data), &groups); err != nil {
 		return nil, 0, err
 	}
+	if groups == nil {
+		return nil, 0, errors.New("bun audit output must be an object")
+	}
 	var findings []Finding
 	for dependency, advisories := range groups {
+		if strings.TrimSpace(dependency) == "" {
+			return nil, 0, errors.New("bun audit output contains an empty dependency")
+		}
+		if advisories == nil || len(advisories) == 0 {
+			return nil, 0, fmt.Errorf("bun audit advisory group for %q is empty", dependency)
+		}
 		for _, advisory := range advisories {
+			if advisory.ID == nil && strings.TrimSpace(advisory.Severity) == "" && strings.TrimSpace(advisory.Title) == "" && strings.TrimSpace(advisory.URL) == "" {
+				return nil, 0, fmt.Errorf("bun audit advisory group for %q contains an empty advisory", dependency)
+			}
 			id := normalizeAdvisoryID(advisory.ID)
 			if id == "<nil>" || id == "" {
 				id = dependency
@@ -594,6 +616,143 @@ func parseBun(data []byte) ([]Finding, int, error) {
 		return findings[i].Dependency+findings[i].Advisory < findings[j].Dependency+findings[j].Advisory
 	})
 	return findings, len(groups), nil
+}
+
+// parseBunLockfile validates Bun's JSONC lockfile and counts resolved graph
+// entries.  Counting lockfile packages is deterministic and content-bound to
+// the lockfile digest retained in the report; counting vulnerable audit groups
+// is not a dependency graph size.
+func parseBunLockfile(data []byte) (int, error) {
+	normalized, err := normalizeJSONC(data)
+	if err != nil {
+		return 0, err
+	}
+	var lock struct {
+		Packages map[string]json.RawMessage `json:"packages"`
+	}
+	if err := json.Unmarshal(normalized, &lock); err != nil {
+		return 0, err
+	}
+	if lock.Packages == nil {
+		return 0, errors.New("bun lockfile omitted packages")
+	}
+	if len(lock.Packages) == 0 {
+		return 0, errors.New("bun lockfile contains an empty package graph")
+	}
+	for name, raw := range lock.Packages {
+		if strings.TrimSpace(name) == "" {
+			return 0, errors.New("bun lockfile contains an empty package key")
+		}
+		var tuple []json.RawMessage
+		if err := json.Unmarshal(raw, &tuple); err != nil {
+			return 0, fmt.Errorf("package %q: %w", name, err)
+		}
+		if len(tuple) == 0 {
+			return 0, fmt.Errorf("package %q has an empty resolution", name)
+		}
+		var resolution string
+		if err := json.Unmarshal(tuple[0], &resolution); err != nil || strings.TrimSpace(resolution) == "" {
+			return 0, fmt.Errorf("package %q has no resolution identity", name)
+		}
+	}
+	return len(lock.Packages), nil
+}
+
+// normalizeJSONC removes the comments and trailing commas emitted by Bun's
+// lockfile writer while preserving string contents.  The resulting bytes are
+// decoded by encoding/json, which remains the authority for syntax validation.
+func normalizeJSONC(data []byte) ([]byte, error) {
+	var noComments bytes.Buffer
+	inString, escaped, lineComment, blockComment := false, false, false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if lineComment {
+			if c == '\n' {
+				lineComment = false
+				noComments.WriteByte(c)
+			}
+			continue
+		}
+		if blockComment {
+			if c == '*' && i+1 < len(data) && data[i+1] == '/' {
+				blockComment = false
+				i++
+				continue
+			}
+			if c == '\n' {
+				noComments.WriteByte(c)
+			}
+			continue
+		}
+		if inString {
+			noComments.WriteByte(c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		switch c {
+		case '"':
+			inString = true
+			noComments.WriteByte(c)
+		case '/':
+			if i+1 < len(data) && data[i+1] == '/' {
+				lineComment = true
+				i++
+			} else if i+1 < len(data) && data[i+1] == '*' {
+				blockComment = true
+				// Keep a token boundary: removing the comment from `1/*x*/2`
+				// must not turn invalid input into the valid number `12`.
+				noComments.WriteByte(' ')
+				i++
+			} else {
+				noComments.WriteByte(c)
+			}
+		default:
+			noComments.WriteByte(c)
+		}
+	}
+	if blockComment {
+		return nil, errors.New("unterminated lockfile comment")
+	}
+
+	data = noComments.Bytes()
+	var normalized bytes.Buffer
+	inString, escaped = false, false
+	for i := 0; i < len(data); i++ {
+		c := data[i]
+		if inString {
+			normalized.WriteByte(c)
+			if escaped {
+				escaped = false
+			} else if c == '\\' {
+				escaped = true
+			} else if c == '"' {
+				inString = false
+			}
+			continue
+		}
+		if c == '"' {
+			inString = true
+			normalized.WriteByte(c)
+			continue
+		}
+		if c == ',' {
+			j := i + 1
+			for j < len(data) && (data[j] == ' ' || data[j] == '\t' || data[j] == '\r' || data[j] == '\n') {
+				j++
+			}
+			if j < len(data) && (data[j] == ']' || data[j] == '}') {
+				continue
+			}
+		}
+		normalized.WriteByte(c)
+	}
+	return normalized.Bytes(), nil
 }
 
 func normalizeAdvisoryID(value any) string {
@@ -643,6 +802,9 @@ func parseNPM(data []byte) ([]Finding, int, int, error) {
 	if err := json.Unmarshal(bytes.TrimSpace(data), &envelope); err != nil {
 		return nil, 0, 0, err
 	}
+	if envelope == nil {
+		return nil, 0, 0, errors.New("npm audit output must be an object")
+	}
 	if _, ok := envelope["vulnerabilities"]; !ok {
 		return nil, 0, 0, errors.New("npm audit output omitted vulnerabilities")
 	}
@@ -655,9 +817,9 @@ func parseNPM(data []byte) ([]Finding, int, int, error) {
 			Severity string            `json:"severity"`
 			Via      []json.RawMessage `json:"via"`
 		} `json:"vulnerabilities"`
-		Metadata struct {
-			Dependencies struct {
-				Total int `json:"total"`
+		Metadata *struct {
+			Dependencies *struct {
+				Total *int `json:"total"`
 			} `json:"dependencies"`
 		} `json:"metadata"`
 	}
@@ -666,6 +828,12 @@ func parseNPM(data []byte) ([]Finding, int, int, error) {
 	}
 	if report.Vulnerabilities == nil {
 		return nil, 0, 0, errors.New("npm audit output omitted vulnerabilities")
+	}
+	if report.Metadata == nil || report.Metadata.Dependencies == nil || report.Metadata.Dependencies.Total == nil {
+		return nil, 0, 0, errors.New("npm audit output omitted metadata dependencies total")
+	}
+	if *report.Metadata.Dependencies.Total <= 0 {
+		return nil, 0, 0, errors.New("npm audit metadata dependencies total must be positive")
 	}
 	var findings []Finding
 	for dependency, vulnerability := range report.Vulnerabilities {
@@ -691,7 +859,7 @@ func parseNPM(data []byte) ([]Finding, int, int, error) {
 	sort.Slice(findings, func(i, j int) bool {
 		return findings[i].Dependency+findings[i].Advisory < findings[j].Dependency+findings[j].Advisory
 	})
-	return findings, len(report.Vulnerabilities), report.Metadata.Dependencies.Total, nil
+	return findings, len(report.Vulnerabilities), *report.Metadata.Dependencies.Total, nil
 }
 
 func scanGo(ctx context.Context, root string, run Runner) GraphResult {
@@ -742,6 +910,9 @@ func parseGo(data []byte) ([]Finding, []Finding, int, ToolIdentity, error) {
 			if err := json.Unmarshal(raw, &config); err != nil {
 				return nil, nil, 0, identity, err
 			}
+			if strings.TrimSpace(config.ScannerName) == "" || strings.TrimSpace(config.ScannerVersion) == "" {
+				return nil, nil, 0, identity, errors.New("govulncheck config has empty scanner identity")
+			}
 			identity.ScannerName, identity.ScannerVersion = config.ScannerName, config.ScannerVersion
 			identity.DatabaseLastModified, identity.RuntimeVersion = config.DBLastModified, config.GoVersion
 			seenConfig = true
@@ -756,13 +927,22 @@ func parseGo(data []byte) ([]Finding, []Finding, int, ToolIdentity, error) {
 			if err := json.Unmarshal(raw, &sbom); err != nil {
 				return nil, nil, 0, identity, err
 			}
+			if len(sbom.Modules) == 0 {
+				return nil, nil, 0, identity, errors.New("govulncheck SBOM has empty module graph")
+			}
 			if identity.RuntimeVersion == "" {
 				identity.RuntimeVersion = sbom.GoVersion
 			}
+			moduleCount := 0
 			for _, module := range sbom.Modules {
-				if module.Path != "" {
-					packages[module.Path] = true
+				if strings.TrimSpace(module.Path) == "" {
+					return nil, nil, 0, identity, errors.New("govulncheck SBOM contains an empty module identity")
 				}
+				packages[module.Path] = true
+				moduleCount++
+			}
+			if moduleCount == 0 {
+				return nil, nil, 0, identity, errors.New("govulncheck SBOM has empty module graph")
 			}
 			seenGraph = true
 		}
@@ -806,6 +986,12 @@ func parseGo(data []byte) ([]Finding, []Finding, int, ToolIdentity, error) {
 	}
 	if !seenConfig || !seenGraph {
 		return nil, nil, 0, identity, errors.New("govulncheck output omitted config or SBOM")
+	}
+	if strings.TrimSpace(identity.ScannerName) == "" || strings.TrimSpace(identity.ScannerVersion) == "" || strings.TrimSpace(identity.RuntimeVersion) == "" {
+		return nil, nil, 0, identity, errors.New("govulncheck output has incomplete scanner identity")
+	}
+	if len(packages) == 0 {
+		return nil, nil, 0, identity, errors.New("govulncheck output has empty module graph")
 	}
 	var findings, notices []Finding
 	for _, finding := range observed {

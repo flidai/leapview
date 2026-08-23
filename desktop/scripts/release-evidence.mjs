@@ -216,7 +216,7 @@ export function buildSpdxDocument({
       relatedSpdxElement: file.SPDXID,
     })),
   ];
-  const dependencyNameIndex = buildDependencyNameIndex(lockPackages, sourceSha);
+  const dependencyInstallPaths = buildDependencyInstallPathIndex(lockPackages);
   for (const [installPath, entry] of lockPackages) {
     const dependencyObject = entry?.find(
       (candidate) =>
@@ -230,7 +230,8 @@ export function buildSpdxDocument({
     ).sort()) {
       const relatedInstallPath = resolveLockedDependency(
         dependencyName,
-        dependencyNameIndex,
+        installPath,
+        dependencyInstallPaths,
       );
       if (relatedInstallPath !== undefined) {
         relationships.push({
@@ -246,7 +247,8 @@ export function buildSpdxDocument({
   ).sort()) {
     const relatedInstallPath = resolveLockedDependency(
       dependencyName,
-      dependencyNameIndex,
+      "",
+      dependencyInstallPaths,
     );
     if (relatedInstallPath !== undefined) {
       relationships.push({
@@ -796,20 +798,21 @@ function resolveChannel() {
   return "local-candidate";
 }
 
-function buildDependencyNameIndex(lockPackages, sourceSha) {
-  const index = new Map();
-  for (const [installPath, entry] of lockPackages) {
-    const { name } = parseResolution(entry?.[0], installPath, sourceSha);
-    const candidates = index.get(name) ?? [];
-    candidates.push(installPath);
-    index.set(name, candidates.sort());
-  }
-  return index;
+function buildDependencyInstallPathIndex(lockPackages) {
+  return new Set(lockPackages.map(([installPath]) => installPath));
 }
 
-function resolveLockedDependency(name, index) {
-  const candidates = index.get(name);
-  return candidates?.includes(name) ? name : candidates?.[0];
+function resolveLockedDependency(name, parentInstallPath, index) {
+  let scope = parentInstallPath;
+  while (scope.length > 0) {
+    const scopedInstallPath = `${scope}/${name}`;
+    if (index.has(scopedInstallPath)) {
+      return scopedInstallPath;
+    }
+    const separator = scope.lastIndexOf("/");
+    scope = separator >= 0 ? scope.slice(0, separator) : "";
+  }
+  return index.has(name) ? name : undefined;
 }
 
 function parseResolution(resolution, installPath, sourceSha) {
