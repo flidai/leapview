@@ -48,6 +48,10 @@ if [[ "\${SECURITY_TEST_FAILURE:-}" == "bun-operational" && "$tool" == "bun" ]];
   printf 'bun scanner unavailable\\n' >&2
   exit 70
 fi
+if [[ "\${SECURITY_TEST_FAILURE:-}" == "bun-nonblocking" && "$tool" == "bun" ]]; then
+  printf '{"example-package":[{"id":123,"severity":"moderate"}]}\\n'
+  exit 1
+fi
 if [[ "\${SECURITY_TEST_FAILURE:-}" == "crash" && "$tool" == "go" ]]; then
   printf 'dependency scanner unavailable\\n' >&2
   exit 70
@@ -116,6 +120,14 @@ test("covered Bun audit rejects valid JSON from an operational scanner failure",
   assert.doesNotMatch(result.stderr, /no Critical findings/);
   const log = await readFile(fixture.log, "utf8");
   assert.match(log, /bun\|.*audit --audit-level critical --json/);
+});
+
+test("covered Bun audit accepts decoded advisories below the blocking threshold", async (t) => {
+  const fixture = await coveredFixtureRepository(t);
+  const result = run(dependencyScript, fixture, { SECURITY_TEST_FAILURE: "bun-nonblocking" });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /no Critical findings \(1 below threshold\)/);
+  assert.doesNotMatch(result.stderr, /scanner failed/);
 });
 
 async function sourceFixture(t) {

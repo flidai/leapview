@@ -89,12 +89,19 @@ all_dependency_findings_waived() {
   esac
 }
 
-bun_blocking_finding_count() {
+bun_finding_counts() {
   local output="$1"
   jq -er '
-    [ to_entries[] | (.value // [])[] |
-      select(type == "object" and ((.severity // "" | ascii_downcase) == "critical"))
-    ] | length
+    if type != "object" or any(to_entries[]; (.value | type) != "array") then
+      error("unexpected bun audit result")
+    else
+      [to_entries[] | .value[]] as $findings |
+      if any($findings[]; type != "object" or (.severity | type) != "string") then
+        error("unexpected bun audit finding")
+      else
+        [$findings | length, [$findings[] | select((.severity | ascii_downcase) == "critical")] | length] | @tsv
+      end
+    end
   ' "$output"
 }
 
@@ -138,18 +145,24 @@ scan_bun_lock() {
     (cd "$package_dir" && bun audit --audit-level "$AUDIT_LEVEL")
     return
   fi
-  local output diagnostics status=0 blocking_count
+  local output diagnostics status=0 finding_counts finding_count blocking_count
   output="$(mktemp)"
   diagnostics="$(mktemp)"
   (cd "$package_dir" && bun audit --audit-level "$AUDIT_LEVEL" --json) >"$output" 2>"$diagnostics" || status=$?
-  if ! blocking_count="$(bun_blocking_finding_count "$output")"; then
+  if ! finding_counts="$(bun_finding_counts "$output")"; then
     cat "$diagnostics" "$output"
     rm -f "$output" "$diagnostics"
     printf 'bun audit %s: scanner output is not valid JSON\n' "$package_dir" >&2
     return 1
   fi
+  IFS=$'\t' read -r finding_count blocking_count <<<"$finding_counts"
   if ((blocking_count == 0)); then
     if ((status != 0)); then
+      if ((status == 1 && finding_count > 0)); then
+        printf 'bun audit %s: no Critical findings (%d below threshold)\n' "$package_dir" "$finding_count"
+        rm -f "$output" "$diagnostics"
+        return
+      fi
       cat "$diagnostics" "$output"
       rm -f "$output" "$diagnostics"
       printf 'bun audit %s: scanner failed without decoded blocking findings\n' "$package_dir" >&2
