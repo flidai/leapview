@@ -18,6 +18,11 @@ type LoginPageOptions struct {
 	CSRFToken          string
 	Presentation       webpage.Presentation
 	Assets             staticasset.Resolver
+	// Error is a safe, user-facing message rendered in the branded login
+	// surface. Authentication handlers must never put credential details in
+	// this field (or in a URL); it is intentionally a short presentation
+	// string sourced from a closed set of login outcomes.
+	Error string
 }
 
 type LoginPageSignal = signalcontracts.LoginPageSignal
@@ -41,7 +46,7 @@ func LoginBootstrapSignalsForOptions(options LoginPageOptions) map[string]any {
 			Kind:                "login", LocalAuth: opts.LocalAuth, MustChangePassword: opts.MustChangePassword,
 			ProviderLabel: opts.ProviderLabel, SSOAuth: opts.SSOAuth, Title: opts.Presentation.ProductName,
 		},
-		"status": StatusSignal{},
+		"status": StatusSignal{Error: opts.Error},
 	}
 }
 

@@ -9,6 +9,7 @@ import type {
   PersonalTokenSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import '../shared/user-avatar'
@@ -407,12 +408,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private handleDatastarFetch = (event: Event): void => {
     if (!this.tokenCreatePending) return
-    const detail = (event as CustomEvent<{ type?: string, argsRaw?: { status?: string } }>).detail
-    if (detail?.type !== 'error' && detail?.type !== 'retries-failed') return
+    const failure = browserCommandFailure(event, 'Token creation')
+    if (!failure) return
     this.tokenCreatePending = false
-    this.error = detail.argsRaw?.status === '403'
-      ? 'Token creation failed because this page expired. Reload the page and try again.'
-      : 'Token creation failed. Your selections were kept; please try again.'
+    this.error = failure.message
   }
   private uploadAvatar = async (event: Event): Promise<void> => {
     const input = event.currentTarget as HTMLInputElement

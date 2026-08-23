@@ -181,6 +181,9 @@ func (h *Handler) mutation(r *http.Request) product.Mutation {
 }
 
 func (h *Handler) problem(w http.ResponseWriter, r *http.Request, err error) {
+	if h.patchError(w, r, err) {
+		return
+	}
 	switch {
 	case errors.Is(err, product.ErrInvalid):
 		h.writeProblem(w, r, http.StatusUnprocessableEntity, "INVALID_PRODUCT_IDENTITY", err.Error())
@@ -189,6 +192,39 @@ func (h *Handler) problem(w http.ResponseWriter, r *http.Request, err error) {
 	default:
 		h.writeProblem(w, r, http.StatusInternalServerError, "PRODUCT_SETTINGS_FAILED", "The product settings command could not be completed")
 	}
+}
+
+// patchError follows the access-administration command contract: expected
+// domain failures are returned as a complete typed signal patch so the page
+// keeps its draft values and controls can leave their busy state. Transport
+// failures are retained for cases where the read model itself is unavailable.
+func (h *Handler) patchError(w http.ResponseWriter, r *http.Request, err error) bool {
+	if h == nil || h.config.ReadModel.Service == nil || r == nil {
+		return false
+	}
+	active := strings.TrimSpace(r.URL.Query().Get("section"))
+	if active == "" {
+		active = "general"
+	}
+	canManage := true
+	if h.config.CanManage != nil {
+		canManage = h.config.CanManage(r)
+	}
+	data, loadErr := h.config.ReadModel.Data(r.Context(), active, canManage)
+	if loadErr != nil {
+		return false
+	}
+	state := Signal(data)
+	detail := "The product settings command could not be completed. Your previous state was kept; retry."
+	switch {
+	case errors.Is(err, product.ErrInvalid):
+		detail = err.Error()
+	case errors.Is(err, product.ErrPrecondition):
+		detail = "The product settings changed elsewhere. Reload the latest state before retrying."
+	}
+	state.Error = &detail
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"productSettings": Payload(state)})
+	return true
 }
 
 func (h *Handler) writeProblem(w http.ResponseWriter, r *http.Request, status int, code, detail string) {

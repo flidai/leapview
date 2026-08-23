@@ -341,7 +341,10 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, errUnauthorized, http.StatusUnauthorized)
 			return
 		}
-		http.Error(w, errUnauthorized.Error(), http.StatusUnauthorized)
+		// Browser login failures return to the access-owned, branded login
+		// surface. The closed error key is rendered as an accessible alert by
+		// the login page and does not expose credential or repository details.
+		http.Redirect(w, r, "/login?error=invalid_credentials", http.StatusSeeOther)
 		return
 	}
 	var token string

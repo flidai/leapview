@@ -118,6 +118,9 @@ func Signal(data Data) signals.ProductSettingsSignal {
 // explicit null required to remove a logo from Datastar's merge-patched state.
 type productSettingsWire struct {
 	signals.ProductSettingsSignal
+	// Error is explicit rather than omitted so a successful command clears a
+	// prior domain-error patch in Datastar's merge-patched signal tree.
+	Error   *string            `json:"error"`
 	General productGeneralWire `json:"general"`
 }
 
@@ -129,6 +132,7 @@ type productGeneralWire struct {
 func Payload(signal signals.ProductSettingsSignal) productSettingsWire {
 	return productSettingsWire{
 		ProductSettingsSignal: signal,
+		Error:                 signal.Error,
 		General: productGeneralWire{
 			ProductGeneralSignal: signal.General,
 			Logo:                 signal.General.Logo,

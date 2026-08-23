@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { CircleSlash2, Info, Pencil, UserPlus, X } from 'lucide'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
@@ -570,24 +571,59 @@ function projectTimestamp(value = ''): number {
 
 class LeapViewServiceAccounts extends DatastarLit(LitElement) {
   static styles = tableStyles
+  @state() private busy = false
+  @state() private commandError = ''
+  private pendingSignalKey = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
+  }
+
   get accounts(): ServiceAccountsSignal { return this.signal('adminServiceAccounts', { items: [], secrets: [], loading: false, hasMore: false }) }
-  private emit(detail: Record<string, unknown>) { this.dispatchEvent(new CustomEvent('lv-service-account-command', { bubbles: true, composed: true, detail })) }
+  override updated(): void {
+    const key = JSON.stringify(this.accounts)
+    if (this.busy && key !== this.pendingSignalKey) this.busy = false
+    this.pendingSignalKey = key
+  }
+
+  private emit(detail: Record<string, unknown>) {
+    this.commandError = ''
+    this.busy = true
+    this.pendingSignalKey = JSON.stringify(this.accounts)
+    this.dispatchEvent(new CustomEvent('lv-service-account-command', { bubbles: true, composed: true, detail }))
+  }
+
+  private handleDatastarFetch = (event: Event): void => {
+    if (!this.busy) return
+    const failure = browserCommandFailure(event, 'Service account update')
+    if (!failure) return
+    this.busy = false
+    this.commandError = failure.message
+  }
+
   render() {
     const signal = this.accounts
     return html`<section class="surface" aria-label="Service accounts">
       <h2>Service accounts</h2>
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
+      ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
       <form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const input = form.elements.namedItem('displayName') as HTMLInputElement; this.emit({ action: 'create', displayName: input.value }); input.value = '' }}>
-        <label>New account<input name="displayName" required placeholder="Display name"></label><button type="submit">Create</button>
+        <label>New account<input name="displayName" required placeholder="Display name" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create</button>
       </form>
       ${signal.createdSecret ? html`<p role="status"><strong>Copy this secret now:</strong> <code>${signal.createdSecret}</code></p>` : nothing}
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Account</th><th>Status</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>
         ${signal.items.map((account) => html`<tr>
           <td><strong>${account.displayName || account.id}</strong><div class="muted">${account.id}</div></td><td>${account.disabledAt ? 'Disabled' : 'Active'}</td>
           <td>${account.id === signal.selectedId ? (signal.secrets?.length || 0) : '—'}</td>
-          <td class="actions"><button @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button><button @click=${() => this.deleteAccount(account)}>Delete</button></td>
+          <td class="actions"><button ?disabled=${this.busy} @click=${() => this.emit({ action: 'select', accountId: account.id })}>Secrets</button><button ?disabled=${this.busy} @click=${() => this.deleteAccount(account)}>Delete</button></td>
         </tr>`)}</tbody></table></div>` : html`<p class="empty">No service accounts have been created.</p>`}
-      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const name = (form.elements.namedItem('secretName') as HTMLInputElement).value; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); }}><label>Secret name<input name="secretName" required placeholder="CI pipeline"></label><button type="submit">Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
+      ${signal.selectedId ? html`<div><h3>Secrets</h3><form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const name = (form.elements.namedItem('secretName') as HTMLInputElement).value; this.emit({ action: 'create_secret', accountId: signal.selectedId, secretName: name }); }}><label>Secret name<input name="secretName" required placeholder="CI pipeline" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create secret</button></form>${signal.secrets?.length ? html`<div class="table-wrap"><table><thead><tr><th>Name</th><th>Created</th><th>Expires</th><th></th></tr></thead><tbody>${signal.secrets.map((secret) => html`<tr><td>${secret.name}</td><td>${secret.createdAt || '—'}</td><td>${secret.expiresAt || 'Never'}</td><td><button ?disabled=${this.busy || Boolean(secret.revokedAt)} @click=${() => this.emit({ action: 'revoke_secret', accountId: signal.selectedId, secretId: secret.id })}>${secret.revokedAt ? 'Revoked' : 'Revoke'}</button></td></tr>`)}</tbody></table></div>` : html`<p class="empty">No secrets have been created.</p>`}</div>` : nothing}
     </section>`
   }
 
@@ -600,16 +636,50 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
 
 class LeapViewAuditLog extends DatastarLit(LitElement) {
   static styles = tableStyles
+  @state() private busy = false
+  @state() private commandError = ''
+  private pendingSignalKey = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
+  }
+
   get audit(): AuditLogSignal { return this.signal('adminAuditLog', { items: [], filters: {}, loadedCount: 0, loading: false, hasMore: false }) }
-  private emit(detail: Record<string, unknown>) { this.dispatchEvent(new CustomEvent('lv-audit-log-command', { bubbles: true, composed: true, detail })) }
+  override updated(): void {
+    const key = JSON.stringify(this.audit)
+    if (this.busy && key !== this.pendingSignalKey) this.busy = false
+    this.pendingSignalKey = key
+  }
+
+  private emit(detail: Record<string, unknown>) {
+    this.commandError = ''
+    this.busy = true
+    this.pendingSignalKey = JSON.stringify(this.audit)
+    this.dispatchEvent(new CustomEvent('lv-audit-log-command', { bubbles: true, composed: true, detail }))
+  }
+
+  private handleDatastarFetch = (event: Event): void => {
+    if (!this.busy) return
+    const failure = browserCommandFailure(event, 'Audit log update')
+    if (!failure) return
+    this.busy = false
+    this.commandError = failure.message
+  }
+
   render() {
     const signal = this.audit
     const filters = signal.filters || {}
     const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
-    return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''}></label><label>Actor<input name="principalId" value=${filters.principalId || ''}></label><label>Action<input name="action" value=${filters.action || ''}></label><label>Resource kind<input name="resourceKind" value=${filters.resourceKind || ''}></label><label>Resource ID<input name="resourceId" value=${filters.resourceId || ''}></label><button type="submit">Filter</button><button type="button" @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
+    return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
+      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.resourceKind} / ${event.resourceId}</td><td>${event.capability || '—'}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
-      ${signal.hasMore ? html`<button @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
+      ${signal.hasMore ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
     </section>`
   }
 }
