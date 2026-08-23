@@ -108,6 +108,21 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 			return resourceDiagnostic(filename, nil, "schema.decode", "Model destination requires kind model")
 		}
 		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.PipelineDocument:
+		if kind != KindPipeline {
+			return resourceDiagnostic(filename, nil, "schema.decode", "Pipeline destination requires kind pipeline")
+		}
+		if err := validatePipelineDocument(filename, content); err != nil {
+			return err
+		}
+		normalized, err := NormalizeJSONDocument(filename, content)
+		if err != nil {
+			return err
+		}
+		if err := json.Unmarshal(normalized, destination); err != nil {
+			return resourceDiagnostic(filename, nil, "schema.decode", err.Error())
+		}
+		return nil
 	}
 	normalized, err := NormalizeResource(kind, filename, content)
 	if err != nil {

@@ -71,9 +71,11 @@ func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 				return errors.New("refresh event store is unavailable")
 			}
 			encoded, err := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
-				Id:         run.ID,
-				PipelineId: run.PipelineID.String(),
-				Status:     run.Status, Trigger: run.TriggerType,
+				Id:                  run.ID,
+				PipelineId:          run.PipelineID.String(),
+				Status:              run.Status,
+				InvocationSource:    run.InvocationSource,
+				MatchingScheduleIds: append([]string{}, run.MatchingScheduleIDs...),
 			})
 			if err != nil {
 				return err

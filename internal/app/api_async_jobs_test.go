@@ -12,7 +12,10 @@ import (
 
 func TestBackgroundLifecycleReclaimsPersistedAPIJobs(t *testing.T) {
 	store := testStore(t)
-	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{JobLeaseTimeout: time.Second}))
+	// This test exercises lifecycle recovery rather than lease expiry. Use the
+	// production default so SQLite's whole-second timestamps cannot expire the
+	// claim at a clock boundary before the worker persists its terminal state.
+	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
 	repo := server.platform.asyncJobs
 	if repo == nil {
 		t.Fatal("async job repository is required")

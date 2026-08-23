@@ -16,12 +16,13 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
-	ErrDeliveryInvalid  = errors.New("invalid delivery contract")
-	ErrDeliveryConflict = errors.New("delivery transition conflict")
+	ErrDeliveryInvalid  = projectpipelineplan.ErrInvalid
+	ErrDeliveryConflict = projectpipelineplan.ErrConflict
 	// ErrDeliveryIdempotencyDrift is returned when a previously bound build
 	// operation key is replayed with a different immutable attempt identity.
 	ErrDeliveryIdempotencyDrift = errors.New("delivery idempotency key drift")
@@ -146,6 +147,14 @@ type DeliveryDataInput struct {
 	Revision    string                `json:"revision,omitempty"`
 	Bound       string                `json:"bound,omitempty"`
 	Explanation string                `json:"explanation,omitempty"`
+}
+
+type PipelinePlan = projectpipelineplan.Plan
+
+// NewPipelinePlan computes the content identity after canonicalizing textual
+// fields. The returned value is immutable evidence suitable for persistence.
+func NewPipelinePlan(plan PipelinePlan) (PipelinePlan, error) {
+	return projectpipelineplan.New(plan)
 }
 
 func (input DeliveryDataInput) canonical() DeliveryDataInput {

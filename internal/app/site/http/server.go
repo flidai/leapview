@@ -92,6 +92,7 @@ func NewHandlerWithOptions(options Options) http.Handler {
 	mux.HandleFunc("GET /sitemap.xml", server.sitemap)
 	mux.HandleFunc("GET /updates", updates)
 	mux.Handle("GET /static/", compressedAssets(http.StripPrefix("/static/", http.FileServer(http.FS(siteassets.Static())))))
+	mux.Handle("GET /openlineage/", compressedAssets(http.FileServer(http.FS(siteassets.Static()))))
 	mux.Handle("GET /shared/", compressedAssets(http.StripPrefix("/shared/", http.FileServer(http.FS(siteassets.Shared())))))
 	mux.Handle("GET /map-assets/", mapassethttp.CacheHandler(http.StripPrefix("/map-assets/", siteMapAssets())))
 	mux.HandleFunc("GET /{path...}", server.notFound)
@@ -156,6 +157,8 @@ func (s *siteServer) productionHeaders(next http.Handler) http.Handler {
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 			w.Header().Set("Accept-Ranges", "bytes")
 		case strings.HasPrefix(r.URL.Path, "/static/chunks/"):
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		case strings.HasPrefix(r.URL.Path, "/openlineage/facets/"):
 			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
 		case strings.HasPrefix(r.URL.Path, "/static/"), strings.HasPrefix(r.URL.Path, "/shared/"):
 			w.Header().Set("Cache-Control", "public, max-age=0, must-revalidate")

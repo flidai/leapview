@@ -54,6 +54,7 @@ import {
   getCommandDefaults,
   getContracts,
   getMetadata,
+  getMinProperties,
   getNamedFailures,
   getPropertyNames,
   getResponseShape,
@@ -293,6 +294,7 @@ interface SchemaRef {
   maximum?: number;
   min_length?: number;
   max_length?: number;
+  min_properties?: number;
   pattern?: string;
   items?: SchemaRef;
   additional_properties?: { any?: boolean; schema?: SchemaRef };
@@ -562,50 +564,74 @@ class IRBuilder {
       };
     }
     const [union, diagnostics] = getDiscriminatedUnion(this.program, type);
-    this.program.reportDiagnostics(diagnostics);
-    if (!union || !type.name) {
+    if (union) {
+      this.program.reportDiagnostics(diagnostics);
+
+      if (!type.name) {
+        this.unsupported(type, `union ${type.name ?? "(anonymous)"}`);
+        return { type: "object" };
+      }
+
+      const oneOf: SchemaRef[] = [];
+      const mapping: Record<string, string> = {};
+      for (const [value, variant] of union.variants) {
+        const name = `${type.name}${schemaNamePart(value)}Variant`;
+        const variantRef = this.schemaRef(variant, `union ${type.name} variant ${value}`);
+        const properties: Record<string, SchemaProperty> = {
+          [union.options.discriminatorPropertyName]: {
+            schema: { type: "string", enum: [value] },
+          },
+        };
+        const required = [union.options.discriminatorPropertyName];
+        const schema: Schema = {
+          type: "object",
+          namespace: namespaceName(type.namespace),
+          properties,
+          property_order: [...required],
+          required: [...required],
+        };
+        if (union.options.envelope === "none") {
+          schema.base = variantRef;
+        } else {
+          properties[union.options.envelopePropertyName] = { schema: variantRef };
+          schema.property_order!.push(union.options.envelopePropertyName);
+          schema.required!.push(union.options.envelopePropertyName);
+        }
+        this.syntheticSchemas.set(name, schema);
+        oneOf.push({ ref: name });
+        mapping[value] = name;
+      }
+      return {
+        type: "union",
+        namespace: namespaceName(type.namespace),
+        one_of: oneOf,
+        discriminator: {
+          property_name: union.options.discriminatorPropertyName,
+          mapping,
+        },
+      };
+    }
+
+    // A structural object union is useful when the authored object remains
+    // tag-free but its required fields encode a conditional contract (for
+    // example, a manual-only versus scheduled PipelineSpec). Keep every
+    // object branch as a direct reference so JSON Schema can enforce the
+    // all-or-none shape and language emitters can dispatch by strict field
+    // decoding. Discriminators remain reserved for explicitly tagged unions.
+    if (scalarVariants.every((variant) => variant.type.kind === "Model")) {
+      return {
+        type: "union",
+        namespace: namespaceName(type.namespace),
+        one_of: scalarVariants.map((variant) => this.schemaRef(variant.type, `union ${type.name} variant`)),
+      };
+    }
+
+    if (!type.name) {
       this.unsupported(type, `union ${type.name ?? "(anonymous)"}`);
       return { type: "object" };
     }
-
-    const oneOf: SchemaRef[] = [];
-    const mapping: Record<string, string> = {};
-    for (const [value, variant] of union.variants) {
-      const name = `${type.name}${schemaNamePart(value)}Variant`;
-      const variantRef = this.schemaRef(variant, `union ${type.name} variant ${value}`);
-      const properties: Record<string, SchemaProperty> = {
-        [union.options.discriminatorPropertyName]: {
-          schema: { type: "string", enum: [value] },
-        },
-      };
-      const required = [union.options.discriminatorPropertyName];
-      const schema: Schema = {
-        type: "object",
-        namespace: namespaceName(type.namespace),
-        properties,
-        property_order: [...required],
-        required: [...required],
-      };
-      if (union.options.envelope === "none") {
-        schema.base = variantRef;
-      } else {
-        properties[union.options.envelopePropertyName] = { schema: variantRef };
-        schema.property_order!.push(union.options.envelopePropertyName);
-        schema.required!.push(union.options.envelopePropertyName);
-      }
-      this.syntheticSchemas.set(name, schema);
-      oneOf.push({ ref: name });
-      mapping[value] = name;
-    }
-    return {
-      type: "union",
-      namespace: namespaceName(type.namespace),
-      one_of: oneOf,
-      discriminator: {
-        property_name: union.options.discriminatorPropertyName,
-        mapping,
-      },
-    };
+    this.unsupported(type, `union ${type.name}`);
+    return { type: "object" };
   }
 
   private enumSchema(type: Enum): Schema {
@@ -630,6 +656,10 @@ class IRBuilder {
     const propertyNames = getPropertyNames({ program: this.program }, property);
     if (propertyNames) {
       schema.property_names = this.schemaRef(propertyNames, `${property.name} key`);
+    }
+    const minProperties = getMinProperties({ program: this.program }, property);
+    if (minProperties !== undefined) {
+      schema.min_properties = minProperties;
     }
     const schemaProperty: SchemaProperty = {
       schema,

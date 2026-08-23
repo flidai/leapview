@@ -1156,6 +1156,15 @@ func validateSchemaDefinition(doc Document, name string, schema Schema) error {
 				}
 				return nil
 			}
+			// Structural object unions keep authored documents tag-free. JSON
+			// Schema oneOf and strict language decoders reject both unmatched and
+			// ambiguous objects, so the union remains closed without a discriminator.
+			if scalarCount == 0 {
+				if objectCount < 2 {
+					return fmt.Errorf("schema %q untagged object union must contain at least two object branches", name)
+				}
+				return nil
+			}
 			if scalarCount != 1 || objectCount != 1 {
 				return fmt.Errorf("schema %q untagged union must contain exactly one scalar branch and exactly one object branch", name)
 			}
@@ -1346,6 +1355,9 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 	}
 	if schemaRef.MinLength != nil && schemaRef.MaxLength != nil && *schemaRef.MinLength > *schemaRef.MaxLength {
 		return fmt.Errorf("%s min_length must not exceed max_length", context)
+	}
+	if schemaRef.MinProperties != nil && *schemaRef.MinProperties < 0 {
+		return fmt.Errorf("%s min_properties must be non-negative", context)
 	}
 	if schemaRef.AdditionalProperties != nil && schemaRef.AdditionalProperties.Schema != nil {
 		if err := validateSchemaRefExists(doc, *schemaRef.AdditionalProperties.Schema, context+" additional_properties"); err != nil {

@@ -31,6 +31,10 @@ type DeliveryCandidateBuildInput struct {
 	Candidate      Candidate
 	Source         project.CandidateSourceSnapshot
 	Plan           *DeliveryPlan
+	// PipelinePlan is immutable refresh selection evidence. It is optional for
+	// ordinary code-change candidate delivery and required by canonical
+	// pipeline restatements.
+	PipelinePlan *PipelinePlan
 }
 
 // DeliveryTarget is the read-only target fence used by planning and build
@@ -68,6 +72,7 @@ type DeliveryPlanRequest struct {
 	Provenance              DeliveryProvenance
 	Governance              DeliveryGovernance
 	Evidence                DeliveryPlanEvidence
+	PipelinePlan            *PipelinePlan
 	CreatedAt               time.Time
 	Persist                 bool
 }

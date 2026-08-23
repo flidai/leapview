@@ -136,8 +136,6 @@ func refreshTriggerLabel(trigger string) string {
 		return "Manual"
 	case "schedule":
 		return "Schedule"
-	case "retry":
-		return "Retry"
 	default:
 		return "-"
 	}

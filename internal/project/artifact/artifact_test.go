@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -118,6 +119,13 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 	if got := decoded.RefreshDefinition().ConnectionIDs["warehouse"]; got != "connection:warehouse" {
 		t.Fatalf("refresh connection ID = %q, want connection:warehouse", got)
+	}
+	refreshTable, ok := decoded.RefreshDefinition().ModelTables["orders_model"]
+	if !ok {
+		t.Fatal("refresh projection dropped project Model catalog")
+	}
+	if refreshTable.ModelName != "orders_model" || !reflect.DeepEqual(refreshTable.SourceDependencies, []string{"orders"}) {
+		t.Fatalf("refresh Model table = %#v, want authored name with runtime source dependencies", refreshTable)
 	}
 	var wire map[string]any
 	if err := json.Unmarshal(first.Canonical(), &wire); err != nil {
@@ -266,6 +274,10 @@ func TestProjectArtifactRoundTripPreservesPrivateRuntimeProjection(t *testing.T)
 	table := decoded.ModelTables()["model:orders"]
 	if table.Execution.Source != "source:orders" {
 		t.Fatalf("physical table execution projection was not restored: %#v", table.Execution)
+	}
+	refreshTable := decoded.RefreshDefinition().ModelTables["orders_model"]
+	if refreshTable.Execution.Source != "orders" || !reflect.DeepEqual(refreshTable.SourceDependencies, []string{"orders"}) {
+		t.Fatalf("refresh Model execution projection was not restored: %#v", refreshTable)
 	}
 	manifestCopy := decoded.Manifest()
 	if manifestCopy.Models["model:orders"].Execution.Source != "source:orders" || manifestCopy.SemanticModels["semantic:sales"].Sources["orders"].PathLocation == nil {
