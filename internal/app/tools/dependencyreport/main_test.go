@@ -280,18 +280,32 @@ func TestParseGoPrettyJSONStream(t *testing.T) {
 {
   "finding": {
     "osv": "GO-2026-1234",
-    "trace": [{"module": "example.test/one", "version": "v1.2.3"}]
+    "trace": [{"module": "example.test/one", "version": "v1.2.3", "package": "example.test/one/pkg", "function": "Vulnerable"}]
   }
 }`)
-	findings, packages, identity, err := parseGo(data)
+	findings, notices, packages, identity, err := parseGo(data)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(findings) != 1 || findings[0].Advisory != "GO-2026-1234" || packages != 2 {
-		t.Fatalf("parsed govulncheck stream = %#v, packages %d", findings, packages)
+	if len(findings) != 1 || findings[0].Advisory != "GO-2026-1234" || findings[0].Reachability != "called" || len(notices) != 0 || packages != 2 {
+		t.Fatalf("parsed govulncheck stream = %#v, notices %#v, packages %d", findings, notices, packages)
 	}
 	if identity.DatabaseLastModified == "" || identity.Command[0] != "go" {
 		t.Fatalf("missing govulncheck identity: %#v", identity)
+	}
+}
+
+func TestParseGoRetainsNonReachableAdvisoriesAsNotices(t *testing.T) {
+	data := []byte(`{"config":{"scanner_name":"govulncheck","scanner_version":"v1.5.0","go_version":"go1.25.13"}}
+{"SBOM":{"go_version":"go1.25.13","modules":[{"path":"example.test/one"}]}}
+{"finding":{"osv":"GO-2026-1234","trace":[{"module":"example.test/one","version":"v1.2.3"}]}}
+{"finding":{"osv":"GO-2026-1234","trace":[{"module":"example.test/one","version":"v1.2.3","package":"example.test/one/pkg"}]}}`)
+	findings, notices, _, _, err := parseGo(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(findings) != 0 || len(notices) != 1 || notices[0].Reachability != "imported" {
+		t.Fatalf("findings = %#v, notices = %#v", findings, notices)
 	}
 }
 

@@ -28,6 +28,11 @@ scanner uses a 4 GiB soft memory limit so the full source analysis remains
 viable on standard CI runners. `check` recomputes the digests, toolchain, scans,
 summaries, and clearance before accepting the artifact.
 
+For Go, module-only and import-only advisories are retained as non-reachable
+notices, deduplicated by advisory and module. They do not satisfy the scanner's
+definition of affected code and therefore do not require a waiver. A finding
+with a symbol-level call trace is recorded as reachable and blocks clearance.
+
 ## Waivers
 
 Waivers are optional JSON in `security/dependency-waivers.json`. Every waiver

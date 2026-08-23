@@ -64,6 +64,7 @@ type Finding struct {
 	Advisory     string `json:"advisory"`
 	Dependency   string `json:"dependency"`
 	Severity     string `json:"severity"`
+	Reachability string `json:"reachability,omitempty"`
 	Title        string `json:"title,omitempty"`
 	URL          string `json:"url,omitempty"`
 	PackageCount int    `json:"package_count,omitempty"`
@@ -73,8 +74,10 @@ type ScanResult struct {
 	Status             string         `json:"status"`
 	PackageCount       int            `json:"package_count"`
 	VulnerablePackages int            `json:"vulnerable_package_count"`
+	AdvisoryNotices    int            `json:"non_reachable_advisory_count,omitempty"`
 	SeverityCounts     map[string]int `json:"severity_counts"`
 	Findings           []Finding      `json:"findings,omitempty"`
+	Notices            []Finding      `json:"non_reachable_notices,omitempty"`
 	Error              string         `json:"error,omitempty"`
 }
 
@@ -102,6 +105,7 @@ type Waiver struct {
 type Counts struct {
 	Packages        int            `json:"packages"`
 	Vulnerabilities int            `json:"vulnerabilities"`
+	AdvisoryNotices int            `json:"non_reachable_advisories"`
 	Severity        map[string]int `json:"severity"`
 }
 
@@ -630,17 +634,19 @@ func scanGo(ctx context.Context, root string, run Runner) GraphResult {
 		result.Result = scannerError(err.Error())
 		return result
 	}
-	findings, packages, identity, err := parseGo(audit.Stdout)
+	findings, notices, packages, identity, err := parseGo(audit.Stdout)
 	if err != nil {
 		result.Result = scannerError("malformed govulncheck output: " + err.Error())
 		return result
 	}
 	result.Identity = identity
 	result.Result = makeResult(findings, packages, audit.ExitCode)
+	result.Result.Notices = notices
+	result.Result.AdvisoryNotices = len(notices)
 	return result
 }
 
-func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
+func parseGo(data []byte) ([]Finding, []Finding, int, ToolIdentity, error) {
 	identity := ToolIdentity{
 		RuntimeName: "go",
 		ScannerName: "govulncheck",
@@ -648,7 +654,7 @@ func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
 		Environment: []string{"GOMEMLIMIT=" + goScannerMemoryLimit},
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
-	var findings []Finding
+	observed := map[string]Finding{}
 	packages := map[string]bool{}
 	seenConfig := false
 	seenGraph := false
@@ -657,7 +663,7 @@ func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
 		if err := decoder.Decode(&envelope); errors.Is(err, io.EOF) {
 			break
 		} else if err != nil {
-			return nil, 0, identity, err
+			return nil, nil, 0, identity, err
 		}
 		if raw, ok := envelope["config"]; ok {
 			var config struct {
@@ -667,7 +673,7 @@ func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
 				GoVersion      string `json:"go_version"`
 			}
 			if err := json.Unmarshal(raw, &config); err != nil {
-				return nil, 0, identity, err
+				return nil, nil, 0, identity, err
 			}
 			identity.ScannerName, identity.ScannerVersion = config.ScannerName, config.ScannerVersion
 			identity.DatabaseLastModified, identity.RuntimeVersion = config.DBLastModified, config.GoVersion
@@ -681,7 +687,7 @@ func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
 				} `json:"modules"`
 			}
 			if err := json.Unmarshal(raw, &sbom); err != nil {
-				return nil, 0, identity, err
+				return nil, nil, 0, identity, err
 			}
 			if identity.RuntimeVersion == "" {
 				identity.RuntimeVersion = sbom.GoVersion
@@ -697,33 +703,69 @@ func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
 			var finding struct {
 				OSV   string `json:"osv"`
 				Trace []struct {
-					Module  string `json:"module"`
-					Version string `json:"version"`
+					Module   string `json:"module"`
+					Version  string `json:"version"`
+					Package  string `json:"package"`
+					Function string `json:"function"`
 				} `json:"trace"`
 			}
 			if err := json.Unmarshal(raw, &finding); err != nil {
-				return nil, 0, identity, err
+				return nil, nil, 0, identity, err
 			}
 			if finding.OSV == "" {
-				return nil, 0, identity, errors.New("finding has no advisory")
+				return nil, nil, 0, identity, errors.New("finding has no advisory")
 			}
 			dependency := ""
-			if len(finding.Trace) > 0 {
-				dependency = finding.Trace[0].Module
+			reachability := "required"
+			for _, frame := range finding.Trace {
+				if dependency == "" && frame.Module != "" {
+					dependency = frame.Module
+				}
+				if frame.Function != "" {
+					reachability = "called"
+				} else if frame.Package != "" && reachability != "called" {
+					reachability = "imported"
+				}
 			}
 			if dependency == "" {
 				dependency = "unknown"
 			}
-			findings = append(findings, Finding{Advisory: finding.OSV, Dependency: dependency, Severity: "unknown"})
+			key := finding.OSV + "\x00" + dependency
+			candidate := Finding{Advisory: finding.OSV, Dependency: dependency, Severity: "unknown", Reachability: reachability}
+			if previous, exists := observed[key]; !exists || reachabilityRank(candidate.Reachability) > reachabilityRank(previous.Reachability) {
+				observed[key] = candidate
+			}
 		}
 	}
 	if !seenConfig || !seenGraph {
-		return nil, 0, identity, errors.New("govulncheck output omitted config or SBOM")
+		return nil, nil, 0, identity, errors.New("govulncheck output omitted config or SBOM")
+	}
+	var findings, notices []Finding
+	for _, finding := range observed {
+		if finding.Reachability == "called" {
+			findings = append(findings, finding)
+		} else {
+			notices = append(notices, finding)
+		}
 	}
 	sort.Slice(findings, func(i, j int) bool {
 		return findings[i].Dependency+findings[i].Advisory < findings[j].Dependency+findings[j].Advisory
 	})
-	return findings, len(packages), identity, nil
+	sort.Slice(notices, func(i, j int) bool {
+		return notices[i].Dependency+notices[i].Advisory < notices[j].Dependency+notices[j].Advisory
+	})
+	return findings, notices, len(packages), identity, nil
+}
+
+func reachabilityRank(value string) int {
+	switch value {
+	case "called":
+		return 3
+	case "imported":
+		return 2
+	default:
+		return 1
+	}
 }
 
 func scannerError(message string) ScanResult {
@@ -766,6 +808,7 @@ func summarize(graphs []GraphResult) Counts {
 	for _, graph := range graphs {
 		counts.Packages += graph.Result.PackageCount
 		counts.Vulnerabilities += len(graph.Result.Findings)
+		counts.AdvisoryNotices += len(graph.Result.Notices)
 		for severity, count := range graph.Result.SeverityCounts {
 			counts.Severity[severity] += count
 		}
