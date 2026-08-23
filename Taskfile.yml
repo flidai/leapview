@@ -1149,6 +1149,8 @@ tasks:
 
   vuln:
     desc: Scan Go dependencies and call paths for known vulnerabilities
+    env:
+      GOMEMLIMIT: 4GiB
     cmds:
       - go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
 

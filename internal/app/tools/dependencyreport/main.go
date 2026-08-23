@@ -25,8 +25,9 @@ import (
 )
 
 const (
-	SchemaVersion = "leapview.dependency-clearance/v1"
-	defaultWaiver = "security/dependency-waivers.json"
+	SchemaVersion        = "leapview.dependency-clearance/v1"
+	defaultWaiver        = "security/dependency-waivers.json"
+	goScannerMemoryLimit = "4GiB"
 )
 
 var requiredFiles = []string{
@@ -51,6 +52,7 @@ type ToolIdentity struct {
 	ScannerVersion       string   `json:"scanner_version"`
 	DatabaseLastModified string   `json:"database_last_modified,omitempty"`
 	Command              []string `json:"command"`
+	Environment          []string `json:"environment,omitempty"`
 }
 
 type ToolchainEvidence struct {
@@ -201,6 +203,9 @@ func runCLI(args []string) error {
 func execRunner(ctx context.Context, dir, name string, args ...string) (CommandResult, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
+	if name == "go" && containsArgument(args, "golang.org/x/vuln/cmd/govulncheck@v1.5.0") {
+		cmd.Env = append(cmd.Environ(), "GOMEMLIMIT="+goScannerMemoryLimit)
+	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	err := cmd.Run()
@@ -214,6 +219,15 @@ func execRunner(ctx context.Context, dir, name string, args ...string) (CommandR
 		return result, nil
 	}
 	return result, err
+}
+
+func containsArgument(args []string, target string) bool {
+	for _, arg := range args {
+		if arg == target {
+			return true
+		}
+	}
+	return false
 }
 
 func generate(ctx context.Context, cfg Config, deps Dependencies) (err error) {
@@ -627,7 +641,12 @@ func scanGo(ctx context.Context, root string, run Runner) GraphResult {
 }
 
 func parseGo(data []byte) ([]Finding, int, ToolIdentity, error) {
-	identity := ToolIdentity{RuntimeName: "go", ScannerName: "govulncheck", Command: []string{"go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.5.0", "-json", "./..."}}
+	identity := ToolIdentity{
+		RuntimeName: "go",
+		ScannerName: "govulncheck",
+		Command:     []string{"go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.5.0", "-json", "./..."},
+		Environment: []string{"GOMEMLIMIT=" + goScannerMemoryLimit},
+	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	var findings []Finding
 	packages := map[string]bool{}

@@ -105,6 +105,9 @@ func TestCollectAndValidateCleanReport(t *testing.T) {
 	if report.Graphs[0].Identity.RuntimeVersion != "1.3.7" || report.Graphs[3].Identity.ScannerVersion != "v1.5.0" {
 		t.Fatalf("scanner identities were not normalized: %#v", report.Graphs)
 	}
+	if got := report.Graphs[3].Identity.Environment; len(got) != 1 || got[0] != "GOMEMLIMIT=4GiB" {
+		t.Fatalf("Go scanner environment = %#v", got)
+	}
 	if got := strings.Join(report.Graphs[2].Identity.Command, " "); got != "npm --prefix pkg/apigen/typespec audit --json" {
 		t.Fatalf("APIGen audit command = %q", got)
 	}

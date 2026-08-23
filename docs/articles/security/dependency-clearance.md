@@ -22,9 +22,11 @@ cleared evidence.
 Each report includes its schema version and UTC generation time, source commit
 and dirty state, Node and Task versions, scanner/runtime versions and exact
 normalized commands, the Go vulnerability database timestamp when supplied by
-govulncheck, SHA-256 digests of all required module lock/manifests, normalized
-results, and severity/package counts. `check` recomputes the digests, toolchain,
-scans, summaries, and clearance before accepting the artifact.
+govulncheck, scanner environment controls, SHA-256 digests of all required
+module lock/manifests, normalized results, and severity/package counts. The Go
+scanner uses a 4 GiB soft memory limit so the full source analysis remains
+viable on standard CI runners. `check` recomputes the digests, toolchain, scans,
+summaries, and clearance before accepting the artifact.
 
 ## Waivers
 
