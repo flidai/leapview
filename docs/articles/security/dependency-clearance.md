@@ -14,8 +14,11 @@ go run ./internal/app/tools/dependencyreport check \
 The equivalent `task security:report` and `task security:report:check` tasks
 may be used in CI. Generation requires a clean checkout and all four scanners,
 Node, and Task. A missing tool, scanner error, malformed result, missing lock
-graph, edited graph, commit mismatch, or expired waiver fails closed. A failed
-run removes an older report rather than leaving stale clean evidence behind.
+graph, edited graph, commit mismatch, or expired waiver fails closed. Scanner
+errors and vulnerable graphs replace any older report with explicit uncleared
+diagnostics while still returning non-zero. When a failure occurs before
+complete evidence can be assembled, generation removes an older report rather
+than leaving stale clearance.
 The `--allow-dirty` flag is reserved for diagnostics and still cannot produce
 cleared evidence.
 
@@ -23,7 +26,8 @@ Each report includes its schema version and UTC generation time, source commit
 and dirty state, Node and Task versions, scanner/runtime versions and exact
 normalized commands, the Go vulnerability database timestamp when supplied by
 govulncheck, scanner environment controls, SHA-256 digests of all required
-module lock/manifests, normalized results, and severity/package counts. The Go
+module lock/manifests, the presence and SHA-256 digest of the repository waiver
+policy, normalized results, and severity/package counts. The Go
 scanner uses a 4 GiB soft memory limit so the full source analysis remains
 viable on standard CI runners. `check` recomputes the digests, toolchain, scans,
 summaries, and clearance before accepting the artifact.
@@ -35,7 +39,9 @@ with a symbol-level call trace is recorded as reachable and blocks clearance.
 
 ## Waivers
 
-Waivers are optional JSON in `security/dependency-waivers.json`. Every waiver
+Waivers are optional JSON in `security/dependency-waivers.json`. Reports bind
+the exact repository policy, including its absence; alternate or report-only
+waiver sources are rejected. Every waiver
 must match an observed advisory and dependency and must include an owner,
 reachability assessment, compensating control, creation time, and a future
 expiry. Unused, malformed, future-dated, or expired waivers are rejected.

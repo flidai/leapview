@@ -987,6 +987,8 @@ tasks:
     desc: Run the vendored APIGen Go module and TypeSpec tests
     cmds:
       - task: apigen:test
+      - npm --prefix pkg/apigen/typespec run typecheck
+      - npm --prefix pkg/apigen/typespec run check:dist
 
   ci:lane:go:application:
     desc: Run sharded application and external-service Go tests

@@ -114,17 +114,38 @@ type Clearance struct {
 	Reasons []string `json:"reasons,omitempty"`
 }
 
-type Report struct {
-	SchemaVersion string            `json:"schema_version"`
-	GeneratedAt   time.Time         `json:"generated_at"`
-	Source        SourceEvidence    `json:"source"`
-	Toolchain     ToolchainEvidence `json:"toolchain"`
-	Digests       map[string]string `json:"digests"`
-	Graphs        []GraphResult     `json:"graphs"`
-	Waivers       []Waiver          `json:"waivers,omitempty"`
-	Counts        Counts            `json:"counts"`
-	Clearance     Clearance         `json:"clearance"`
+// WaiverSourceEvidence binds the embedded waivers to the repository file that
+// was reviewed.  A missing file is evidence too: an omitted waiver source is
+// different from a source that was present but empty.
+type WaiverSourceEvidence struct {
+	Path    string `json:"path"`
+	Present bool   `json:"present"`
+	Digest  string `json:"digest,omitempty"`
 }
+
+type Report struct {
+	SchemaVersion string               `json:"schema_version"`
+	GeneratedAt   time.Time            `json:"generated_at"`
+	Source        SourceEvidence       `json:"source"`
+	Toolchain     ToolchainEvidence    `json:"toolchain"`
+	Digests       map[string]string    `json:"digests"`
+	Graphs        []GraphResult        `json:"graphs"`
+	Waivers       []Waiver             `json:"waivers,omitempty"`
+	WaiverSource  WaiverSourceEvidence `json:"waiver_source"`
+	Counts        Counts               `json:"counts"`
+	Clearance     Clearance            `json:"clearance"`
+}
+
+// reportError carries the complete report produced by a scan that cannot be
+// cleared.  generate persists this report before returning the underlying
+// failure, so a stale cleared artifact can never survive a failed run.
+type reportError struct {
+	report Report
+	err    error
+}
+
+func (e *reportError) Error() string { return e.err.Error() }
+func (e *reportError) Unwrap() error { return e.err }
 
 type CommandResult struct {
 	Stdout   []byte
@@ -248,26 +269,38 @@ func generate(ctx context.Context, cfg Config, deps Dependencies) (err error) {
 		return err
 	}
 	cfg.Output = output
-	// A failed run must not leave an older clean document that an operator could
-	// accidentally upload. Remove it only after resolving the exact target.
-	defer func() {
-		if err != nil {
-			_ = os.Remove(output)
-		}
-	}()
 	report, err := collectReport(ctx, cfg, deps)
 	if err != nil {
+		var reportErr *reportError
+		if errors.As(err, &reportErr) {
+			// Scanner failures and uncleared findings still produce a complete,
+			// explicitly uncleared report. Persist it atomically before returning
+			// the non-zero command result.
+			if writeErr := writeReport(output, reportErr.report); writeErr != nil {
+				_ = os.Remove(output)
+				return fmt.Errorf("%w (write uncleared report: %v)", err, writeErr)
+			}
+			return err
+		}
+		// Collection failures that happen before a complete report exists must
+		// not leave an older cleared artifact behind.
+		_ = os.Remove(output)
 		return err
 	}
+	if err := writeReport(output, report); err != nil {
+		_ = os.Remove(output)
+		return err
+	}
+	return nil
+}
+
+func writeReport(output string, report Report) error {
 	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return err
 	}
 	data = append(data, '\n')
-	if err := writeAtomic(output, data); err != nil {
-		return err
-	}
-	return nil
+	return writeAtomic(output, data)
 }
 
 func collectReport(ctx context.Context, cfg Config, deps Dependencies) (Report, error) {
@@ -294,7 +327,7 @@ func collectReport(ctx context.Context, cfg Config, deps Dependencies) (Report, 
 	if err != nil {
 		return Report{}, err
 	}
-	waivers, err := readWaivers(cfg.Root, cfg.Waivers)
+	waivers, waiverSource, err := readWaiversEvidence(cfg.Root, cfg.Waivers)
 	if err != nil {
 		return Report{}, err
 	}
@@ -306,19 +339,22 @@ func collectReport(ctx context.Context, cfg Config, deps Dependencies) (Report, 
 		return Report{}, err
 	}
 	graphs := scanGraphs(ctx, cfg.Root, deps.Run)
-	for _, graph := range graphs {
-		if graph.Result.Status == "scanner_error" {
-			return Report{}, fmt.Errorf("scanner failed for %s: %s", graph.ID, graph.Result.Error)
-		}
-	}
-	report := Report{SchemaVersion: SchemaVersion, GeneratedAt: deps.Now().UTC(), Source: source, Toolchain: toolchain, Digests: digests, Graphs: graphs, Waivers: waivers}
+	report := Report{SchemaVersion: SchemaVersion, GeneratedAt: deps.Now().UTC(), Source: source, Toolchain: toolchain, Digests: digests, Graphs: graphs, Waivers: waivers, WaiverSource: waiverSource}
 	report.Counts = summarize(graphs)
 	report.Clearance = clearance(graphs, waivers, source, deps.Now())
+	for _, graph := range graphs {
+		if graph.Result.Status == "scanner_error" {
+			return report, &reportError{report: report, err: fmt.Errorf("scanner failed for %s: %s", graph.ID, graph.Result.Error)}
+		}
+	}
 	if err := validateWaiversUsed(graphs, waivers); err != nil {
-		return Report{}, err
+		report.Clearance.Cleared = false
+		report.Clearance.Reasons = append(report.Clearance.Reasons, err.Error())
+		sort.Strings(report.Clearance.Reasons)
+		return report, &reportError{report: report, err: fmt.Errorf("dependency clearance failed: %s", strings.Join(report.Clearance.Reasons, "; "))}
 	}
 	if !report.Clearance.Cleared {
-		return Report{}, fmt.Errorf("dependency clearance failed: %s", strings.Join(report.Clearance.Reasons, "; "))
+		return report, &reportError{report: report, err: fmt.Errorf("dependency clearance failed: %s", strings.Join(report.Clearance.Reasons, "; "))}
 	}
 	return report, nil
 }
@@ -427,32 +463,63 @@ func ensureGraphFiles(root string) error {
 	return nil
 }
 
-func readWaivers(root, name string) ([]Waiver, error) {
+func readWaiversEvidence(root, name string) ([]Waiver, WaiverSourceEvidence, error) {
 	if name == "" {
 		name = defaultWaiver
 	}
-	path := name
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, filepath.FromSlash(path))
+	if err := validateWaiverSourcePath(root, name); err != nil {
+		return nil, WaiverSourceEvidence{}, err
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return nil, WaiverSourceEvidence{}, fmt.Errorf("resolve repository root for waiver source: %w", err)
+	}
+	path := filepath.Join(rootAbs, filepath.FromSlash(defaultWaiver))
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, WaiverSourceEvidence{Path: defaultWaiver, Present: false}, nil
+	} else if err != nil {
+		return nil, WaiverSourceEvidence{}, fmt.Errorf("read waiver file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return nil, WaiverSourceEvidence{}, errors.New("repository-approved waiver source must be a regular file")
 	}
 	data, err := os.ReadFile(path)
-	if errors.Is(err, os.ErrNotExist) && name == defaultWaiver {
-		return nil, nil
-	}
 	if err != nil {
-		return nil, fmt.Errorf("read waiver file: %w", err)
+		return nil, WaiverSourceEvidence{}, fmt.Errorf("read waiver file: %w", err)
 	}
+	sum := sha256.Sum256(data)
+	source := WaiverSourceEvidence{Path: defaultWaiver, Present: true, Digest: hex.EncodeToString(sum[:])}
 	var list []Waiver
 	if err := json.Unmarshal(data, &list); err == nil {
-		return list, nil
+		return list, source, nil
 	}
 	var envelope struct {
 		Waivers []Waiver `json:"waivers"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
-		return nil, fmt.Errorf("malformed waiver file: %w", err)
+		return nil, WaiverSourceEvidence{}, fmt.Errorf("malformed waiver file: %w", err)
 	}
-	return envelope.Waivers, nil
+	return envelope.Waivers, source, nil
+}
+
+func validateWaiverSourcePath(root, name string) error {
+	if name == defaultWaiver {
+		return nil
+	}
+	if !filepath.IsAbs(name) {
+		return fmt.Errorf("waiver source must be repository-approved %s", defaultWaiver)
+	}
+	rootAbs, err := filepath.Abs(root)
+	if err != nil {
+		return fmt.Errorf("resolve repository root for waiver source: %w", err)
+	}
+	approved := filepath.Join(rootAbs, filepath.FromSlash(defaultWaiver))
+	candidate, err := filepath.Abs(name)
+	if err != nil || filepath.Clean(candidate) != filepath.Clean(approved) {
+		return fmt.Errorf("waiver source must be repository-approved %s", defaultWaiver)
+	}
+	return nil
 }
 
 func validateWaivers(waivers []Waiver, now time.Time) error {
@@ -933,6 +1000,22 @@ func validateReport(ctx context.Context, report Report, cfg Config, deps Depende
 			return fmt.Errorf("dependency graph digest mismatch for %s", name)
 		}
 	}
+	approvedWaivers, approvedSource, err := readWaiversEvidence(cfg.Root, defaultWaiver)
+	if err != nil {
+		return err
+	}
+	if report.WaiverSource.Path != defaultWaiver {
+		return fmt.Errorf("waiver source mismatch: report %q, want %q", report.WaiverSource.Path, defaultWaiver)
+	}
+	if report.WaiverSource.Present != approvedSource.Present {
+		return errors.New("waiver source presence changed since report generation")
+	}
+	if report.WaiverSource.Digest != approvedSource.Digest {
+		return errors.New("waiver source digest mismatch")
+	}
+	if !reflect.DeepEqual(normalizeWaiverList(report.Waivers), normalizeWaiverList(approvedWaivers)) {
+		return errors.New("embedded waivers do not match repository-approved waiver source")
+	}
 	if err := validateWaivers(report.Waivers, deps.Now()); err != nil {
 		return err
 	}
@@ -988,6 +1071,13 @@ func validateReport(ctx context.Context, report Report, cfg Config, deps Depende
 		return errors.New("report does not contain clearance")
 	}
 	return nil
+}
+
+func normalizeWaiverList(waivers []Waiver) []Waiver {
+	if len(waivers) == 0 {
+		return nil
+	}
+	return waivers
 }
 
 func writeAtomic(path string, data []byte) error {

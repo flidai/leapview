@@ -151,14 +151,29 @@ jobs:
           browser: "false"
 
       - name: Run dependency security scans
+        id: dependency-scans
         run: task ci:nightly:extras
 
       - name: Build dependency security clearance report
+        id: dependency-report
+        if: ${{ always() }}
+        continue-on-error: true
         run: >-
           go run ./internal/app/tools/dependencyreport report
           --output dependency-security-report.json
 
+      - name: Upload failed dependency security diagnostics
+        if: ${{ always() && steps.dependency-report.outcome == 'failure' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: dependency-security-report-failed
+          retention-days: 30
+          if-no-files-found: warn
+          path: dependency-security-report.json
+
       - name: Validate dependency security clearance report
+        id: dependency-check
+        if: ${{ steps.dependency-report.outcome == 'success' }}
         env:
           EXPECTED_COMMIT: ${{ github.sha }}
         run: >-
@@ -166,14 +181,28 @@ jobs:
           --input dependency-security-report.json
           --expected-commit "${EXPECTED_COMMIT}"
 
-      - name: Upload dependency security clearance report
-        if: ${{ always() }}
+      - name: Upload validated dependency security clearance report
+        if: ${{ steps.dependency-scans.outcome == 'success' && steps.dependency-report.outcome == 'success' && steps.dependency-check.outcome == 'success' }}
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: dependency-security-report
           retention-days: 30
           if-no-files-found: warn
           path: dependency-security-report.json
+
+      - name: Require dependency security clearance
+        if: ${{ always() }}
+        env:
+          SCANS_RESULT: ${{ steps.dependency-scans.outcome }}
+          REPORT_RESULT: ${{ steps.dependency-report.outcome }}
+          CHECK_RESULT: ${{ steps.dependency-check.outcome }}
+        run: |
+          for result in "${SCANS_RESULT}" "${REPORT_RESULT}" "${CHECK_RESULT}"; do
+            test "${result}" = success || {
+              printf 'Dependency security validation result: %s\n' "${result}" >&2
+              exit 1
+            }
+          done
 
   ci-gate:
     name: CI gate

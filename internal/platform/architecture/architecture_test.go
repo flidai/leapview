@@ -3327,6 +3327,49 @@ func TestDependencySecurityContractCoversEveryDependencyGraph(t *testing.T) {
 	}
 }
 
+func TestNightlyDependencySecurityReportArtifactsAreFailClosed(t *testing.T) {
+	root := repoRoot(t)
+	workflowBytes, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "nightly.yml"))
+	if err != nil {
+		t.Fatalf("read nightly workflow: %v", err)
+	}
+	security := workflowJobBlock(t, string(workflowBytes), "security-validation")
+	for _, want := range []string{
+		"id: dependency-scans",
+		"id: dependency-report",
+		"if: ${{ always() }}",
+		"continue-on-error: true",
+		"if: ${{ always() && steps.dependency-report.outcome == 'failure' }}",
+		"name: dependency-security-report-failed",
+		"id: dependency-check",
+		"if: ${{ steps.dependency-report.outcome == 'success' }}",
+		"name: dependency-security-report",
+		"if: ${{ steps.dependency-scans.outcome == 'success' && steps.dependency-report.outcome == 'success' && steps.dependency-check.outcome == 'success' }}",
+		"name: Require dependency security clearance",
+		"SCANS_RESULT: ${{ steps.dependency-scans.outcome }}",
+		"REPORT_RESULT: ${{ steps.dependency-report.outcome }}",
+		"CHECK_RESULT: ${{ steps.dependency-check.outcome }}",
+	} {
+		if !strings.Contains(security, want) {
+			t.Fatalf("nightly dependency security job missing fail-closed report fragment %q", want)
+		}
+	}
+	validatedUpload := strings.Index(security, "name: Upload validated dependency security clearance report")
+	if validatedUpload < 0 {
+		t.Fatal("nightly dependency security job is missing the validated report upload")
+	}
+	validatedUploadBlock := security[validatedUpload:]
+	if next := strings.Index(validatedUploadBlock, "\n      - name:"); next >= 0 {
+		validatedUploadBlock = validatedUploadBlock[:next]
+	}
+	if strings.Contains(validatedUploadBlock, "always()") {
+		t.Fatal("validated dependency security report upload must not use an unconditional always() guard")
+	}
+	if strings.Contains(validatedUploadBlock, "dependency-security-report-failed") {
+		t.Fatal("validated dependency security report upload must not use the failed diagnostic artifact name")
+	}
+}
+
 func TestGitHubHostedCISplitsGoWorkAndWarmsReusableBunCache(t *testing.T) {
 	root := repoRoot(t)
 	read := func(path ...string) string {
@@ -3466,8 +3509,14 @@ func TestGitHubHostedCIRunsAPIGenAsAnIndependentLeanLane(t *testing.T) {
 
 	taskfile := read("Taskfile.yml")
 	apigenLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:apigen")
-	if !strings.Contains(apigenLane, "- task: apigen:test") {
-		t.Fatal("APIGen CI lane must run the vendored APIGen test contract")
+	for _, want := range []string{
+		"- task: apigen:test",
+		"npm --prefix pkg/apigen/typespec run typecheck",
+		"npm --prefix pkg/apigen/typespec run check:dist",
+	} {
+		if !strings.Contains(apigenLane, want) {
+			t.Fatalf("APIGen CI lane is missing %q", want)
+		}
 	}
 	packagesLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:packages")
 	if strings.Contains(packagesLane, "apigen:test") {

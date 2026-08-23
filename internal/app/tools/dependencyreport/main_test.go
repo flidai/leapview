@@ -123,6 +123,55 @@ func TestCollectAndValidateCleanReport(t *testing.T) {
 	}
 }
 
+func TestCheckRejectsReportOnlyWaiver(t *testing.T) {
+	root, report := cleanReport(t, fakeScan{commit: strings.Repeat("a", 40)})
+	report.Waivers = []Waiver{{
+		Advisory:            "1138808",
+		Dependency:          "image-size",
+		Owner:               "security",
+		Reachability:        "not reachable",
+		CompensatingControl: "pinned transitive version",
+		Created:             time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC),
+		Expiry:              time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC),
+	}}
+	report.Clearance = Clearance{Cleared: true}
+	err := validateReport(context.Background(), report, Config{Root: root, Output: filepath.Join(root, "report.json")}, fixtureDeps(fakeScan{commit: strings.Repeat("a", 40)}))
+	if err == nil || !strings.Contains(err.Error(), "waiver") {
+		t.Fatalf("report-only waiver accepted: %v", err)
+	}
+}
+
+func TestRejectsWaiverSourceOutsideRepository(t *testing.T) {
+	root := newFixture(t)
+	outside := filepath.Join(t.TempDir(), "dependency-waivers.json")
+	if err := os.WriteFile(outside, []byte("[]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	_, err := collectReport(context.Background(), Config{Root: root, Output: filepath.Join(root, "report.json"), Waivers: outside}, fixtureDeps(fakeScan{commit: strings.Repeat("a", 40)}))
+	if err == nil || !strings.Contains(err.Error(), "waiver source must be repository-approved") {
+		t.Fatalf("outside waiver source accepted: %v", err)
+	}
+}
+
+func TestRejectsSymlinkedWaiverSource(t *testing.T) {
+	root := newFixture(t)
+	outside := filepath.Join(t.TempDir(), "dependency-waivers.json")
+	if err := os.WriteFile(outside, []byte("[]\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	waiverPath := filepath.Join(root, defaultWaiver)
+	if err := os.MkdirAll(filepath.Dir(waiverPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, waiverPath); err != nil {
+		t.Fatal(err)
+	}
+	_, err := collectReport(context.Background(), fixtureConfig(root), fixtureDeps(fakeScan{commit: strings.Repeat("a", 40)}))
+	if err == nil || !strings.Contains(err.Error(), "regular file") {
+		t.Fatalf("symlinked waiver source accepted: %v", err)
+	}
+}
+
 func TestVulnerableGraphRequiresWaiver(t *testing.T) {
 	root := newFixture(t)
 	err := generate(context.Background(), Config{Root: root, Output: filepath.Join(root, "report.json")}, fixtureDeps(fakeScan{commit: strings.Repeat("a", 40), mode: "vulnerable"}))
@@ -131,7 +180,7 @@ func TestVulnerableGraphRequiresWaiver(t *testing.T) {
 	}
 }
 
-func TestScannerFailureRemovesStaleOutput(t *testing.T) {
+func TestScannerFailurePersistsUnclearedReport(t *testing.T) {
 	root := newFixture(t)
 	output := filepath.Join(root, "report.json")
 	if err := os.WriteFile(output, []byte(`{"clearance":{"cleared":true}}`), 0o644); err != nil {
@@ -141,8 +190,39 @@ func TestScannerFailureRemovesStaleOutput(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "scanner failed") {
 		t.Fatalf("scanner failure = %v, want fail-closed error", err)
 	}
-	if _, statErr := os.Stat(output); !errors.Is(statErr, os.ErrNotExist) {
-		t.Fatalf("stale output survived failed run: %v", statErr)
+	data, readErr := os.ReadFile(output)
+	if readErr != nil {
+		t.Fatalf("uncleared report was not persisted: %v", readErr)
+	}
+	report, decodeErr := decodeReport(data)
+	if decodeErr != nil {
+		t.Fatalf("persisted scanner report malformed: %v", decodeErr)
+	}
+	if report.Clearance.Cleared {
+		t.Fatalf("scanner report unexpectedly cleared: %#v", report.Clearance)
+	}
+	if len(report.Graphs) == 0 || report.Graphs[0].Result.Status != "scanner_error" {
+		t.Fatalf("scanner error was not retained in report: %#v", report.Graphs)
+	}
+}
+
+func TestVulnerablePersistsUnclearedReport(t *testing.T) {
+	root := newFixture(t)
+	output := filepath.Join(root, "report.json")
+	err := generate(context.Background(), Config{Root: root, Output: output}, fixtureDeps(fakeScan{commit: strings.Repeat("a", 40), mode: "vulnerable"}))
+	if err == nil || !strings.Contains(err.Error(), "clearance failed") {
+		t.Fatalf("vulnerable report unexpectedly succeeded: %v", err)
+	}
+	data, readErr := os.ReadFile(output)
+	if readErr != nil {
+		t.Fatalf("uncleared vulnerable report was not persisted: %v", readErr)
+	}
+	report, decodeErr := decodeReport(data)
+	if decodeErr != nil {
+		t.Fatalf("persisted vulnerable report malformed: %v", decodeErr)
+	}
+	if report.Clearance.Cleared || len(report.Graphs[0].Result.Findings) != 1 {
+		t.Fatalf("vulnerable report did not retain uncleared finding: %#v", report)
 	}
 }
 
