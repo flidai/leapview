@@ -539,6 +539,85 @@ test('data explorer builds a governed semantic exploration and filter command', 
   }
 })
 
+test('data preview and semantic query failures expose retry and reset actions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1100, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer') && customElements.get('lv-data-preview-table'))
+
+    const state = await page.evaluate(async () => {
+      const preview = document.createElement('lv-data-preview-table') as any
+      preview.preview = {
+        columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32,
+        resetVersion: 2, blocks: {}, totalRowLabel: 'Unknown', sort: {}, error: 'Preview timed out.',
+      }
+      preview.command = {
+        objectKey: 'orders', offset: 100, limit: 100, block: 'orders:100', start: 100, count: 100,
+        requestSeq: 7, resetVersion: 2, sort: { column: 'created_at', direction: 'desc' },
+        visibleColumns: ['id'], columnWidths: {},
+      }
+      const previewCommands: any[] = []
+      preview.addEventListener('lv-data-preview-table-command', (event: CustomEvent) => previewCommands.push(event.detail))
+      document.body.append(preview)
+      await preview.updateComplete
+      const previewAlert = preview.shadowRoot!.querySelector('[role="alert"]')!.textContent!.replace(/\s+/g, ' ').trim()
+      const previewButtons = Array.from(preview.shadowRoot!.querySelectorAll<HTMLButtonElement>('.failure button'))
+      previewButtons[0].click()
+      previewButtons[1].click()
+
+      const object = {
+        key: 'model_table:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model_table',
+        modelId: 'sales', table: 'orders', title: 'Orders', columnCount: 1,
+        columns: [{ key: 'status', label: 'Status', type: 'string' }],
+      }
+      const exploreCommand = {
+        modelId: 'sales', datasetId: 'orders', dimensions: ['orders.status'], metrics: [], filters: [], sort: [],
+        limit: 100, requestSeq: 4, resetVersion: 3, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects: [object], selectedKey: object.key, selectedObject: object,
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
+          explore: {
+            command: exploreCommand,
+            models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
+            datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }],
+            fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true }],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 4, truncated: false, warnings: [], error: 'Query service is unavailable.' },
+          }, warnings: [],
+        },
+      })
+      const explorer = document.createElement('lv-data-explorer') as any
+      const exploreCommands: any[] = []
+      explorer.addEventListener('lv-data-explorer-command', (event: CustomEvent) => exploreCommands.push(event.detail))
+      document.body.append(explorer)
+      for (let index = 0; index < 20 && !explorer.shadowRoot?.querySelector('.result-failure'); index += 1) {
+        await explorer.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      const failure = explorer.shadowRoot!.querySelector('.result-failure')!
+      const exploreAlert = failure.textContent!.replace(/\s+/g, ' ').trim()
+      const exploreButtons = Array.from(failure.querySelectorAll<HTMLButtonElement>('button'))
+      exploreButtons[0].click()
+      exploreButtons[1].click()
+      await explorer.updateComplete
+      return { previewAlert, previewCommands, exploreAlert, exploreCommands }
+    })
+
+    expect(state.previewAlert).toContain('Preview timed out.')
+    expect(state.previewCommands[0]).toMatchObject({ objectKey: 'orders', requestSeq: 8, resetVersion: 2 })
+    expect(state.previewCommands[1]).toMatchObject({ objectKey: 'orders', offset: 0, start: 0, block: 'all', requestSeq: 8, resetVersion: 3, sort: {} })
+    expect(state.exploreAlert).toContain('Query service is unavailable.')
+    expect(state.exploreCommands[0].explore).toMatchObject({ modelId: 'sales', datasetId: 'orders' })
+    expect(state.exploreCommands[1].explore).toMatchObject({ dimensions: [], metrics: [], filters: [], sort: [] })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument() {
   return `
     <!doctype html>

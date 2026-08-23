@@ -36,6 +36,7 @@
     "test:chat-composer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-composer && bun test web/components/chat/chat-composer.dom.test.ts",
     "test:chat-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-page && bun test web/components/chat/chat-page.dom.test.ts",
     "test:chat-thread": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts chat-thread && bun test web/components/chat/chat-thread.dom.test.ts",
+    "test:command-failure": "bun test web/components/shared/command-failure.test.ts",
     "test:code-block": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts code-block && bun test web/components/shared/code-block.dom.test.ts",
     "test:data-explorer": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts data-explorer && bun test web/components/data/data-explorer.dom.test.ts",
     "test:project-page": "node scripts/ensure_playwright.mjs && bun scripts/build_test_assets.ts project-page && bun test web/components/project/project-page.dom.test.ts",

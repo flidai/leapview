@@ -49,13 +49,45 @@ class DataPreviewTable extends LitElement {
       min-height: 0;
       --lv-windowed-table-surface: var(--lv-bg-app);
     }
+
+    .failure {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--base-size-8);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      padding: var(--base-size-12);
+      background: var(--lv-bg-panel-muted);
+      color: var(--lv-fg-danger);
+      font: var(--lv-type-caption);
+    }
+
+    .failure span { flex: 1 1 18rem; }
+    .failure button {
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      padding: var(--base-size-4) var(--base-size-8);
+      background: var(--lv-bg-panel);
+      color: var(--lv-fg-default);
+      cursor: pointer;
+      font: inherit;
+    }
   `
 
   render() {
+    const error = this.preview?.error?.trim() ?? ''
     return html`
+      ${error ? html`
+        <div class="failure" role="alert">
+          <span>${error}</span>
+          <button type="button" @click=${this.retryPreview}>Retry</button>
+          <button type="button" @click=${this.resetPreview}>Reset view</button>
+        </div>
+      ` : ''}
       <lv-windowed-table
         compact
-        .table=${this.tablePayload()}
+        .table=${this.tablePayload(Boolean(error))}
         @lv-windowed-table-request=${this.forwardWindowCommand}
         @lv-windowed-table-columns=${this.forwardColumnCommand}
         @lv-windowed-table-column-widths=${this.forwardColumnWidthsCommand}
@@ -63,7 +95,7 @@ class DataPreviewTable extends LitElement {
     `
   }
 
-  private tablePayload(): WindowedTablePayload {
+  private tablePayload(suppressError = false): WindowedTablePayload {
     const preview = this.preview ?? emptyPreview
     const command = this.command ?? emptyCommand
     return {
@@ -88,11 +120,40 @@ class DataPreviewTable extends LitElement {
       },
       blocks: preview.blocks ?? {},
       loadingBlock: preview.loadingBlock ?? '',
-      error: preview.error,
+      error: suppressError ? '' : preview.error,
       visibleColumns: command.visibleColumns ?? [],
       columnWidths: command.columnWidths ?? {},
       totalLabel: preview.totalRowLabel,
     }
+  }
+
+  private retryPreview = (): void => {
+    const current = this.command ?? emptyCommand
+    this.emitPreviewCommand({
+      ...current,
+      requestSeq: (current.requestSeq ?? 0) + 1,
+    })
+  }
+
+  private resetPreview = (): void => {
+    const current = this.command ?? emptyCommand
+    this.emitPreviewCommand({
+      ...current,
+      offset: 0,
+      start: 0,
+      block: 'all',
+      requestSeq: (current.requestSeq ?? 0) + 1,
+      resetVersion: (current.resetVersion ?? 0) + 1,
+      sort: {},
+    })
+  }
+
+  private emitPreviewCommand(detail: Partial<DataExplorerCommand>): void {
+    this.dispatchEvent(new CustomEvent('lv-data-preview-table-command', {
+      bubbles: true,
+      composed: true,
+      detail,
+    }))
   }
 
   private forwardWindowCommand = (event: CustomEvent<WindowedTableRequest>): void => {
