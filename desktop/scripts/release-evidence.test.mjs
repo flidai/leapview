@@ -22,7 +22,7 @@ const packageDocument = {
   devDependencies: {
     electron: "43.2.0",
     node: "24.14.0",
-    "@electron-forge/cli": "7.11.2",
+    "@electron-forge/cli": "8.0.0-alpha.9",
   },
 };
 
@@ -55,7 +55,7 @@ const policy = {
     electronMajor: 43,
     chromium: "150.0.7871.129",
     node: "24.14.0",
-    forge: "7.11.2",
+    forge: "8.0.0-alpha.9",
     bun: "1.3.14",
   },
   updates: {
