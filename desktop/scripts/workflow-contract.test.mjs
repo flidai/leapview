@@ -104,6 +104,11 @@ test("desktop preview publication is manual, unsigned, immutable, and attested",
     "test \"$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)\" -eq 4",
     "gh attestation verify \"$evidence\"",
     "--source-digest \"$SOURCE_SHA\"",
+    "name: Remove failed draft preview",
+    "if: ${{ failure() }}",
+    "is_draft=\"$(gh release view \"$RELEASE_TAG\" --json isDraft --jq '.isDraft' 2>/dev/null || true)\"",
+    "if [[ \"$is_draft\" == \"true\" ]]",
+    "gh release delete \"$RELEASE_TAG\" --cleanup-tag --yes",
     'gh release edit "$RELEASE_TAG" --draft=false',
   ]) {
     assert.ok(workflow.includes(required), `preview workflow is missing ${required}`);
@@ -121,7 +126,11 @@ test("desktop preview publication is manual, unsigned, immutable, and attested",
   const draft = workflow.indexOf("--draft");
   const verification = workflow.indexOf("Verify staged draft assets and attestations");
   const publish = workflow.indexOf('gh release edit "$RELEASE_TAG" --draft=false');
-  assert.ok(draft >= 0 && verification > draft && publish > verification);
+  const finalVerification = workflow.indexOf("Verify published prerelease shape");
+  const cleanup = workflow.indexOf("Remove failed draft preview");
+  assert.ok(draft >= 0 && verification > draft && publish > verification && finalVerification > publish && cleanup > finalVerification);
+  assert.match(workflow.slice(cleanup), /if: \$\{\{ failure\(\) \}\}/);
+  assert.match(workflow.slice(cleanup), /is_draft=.*gh release view[\s\S]*if \[\[ "\$is_draft" == "true" \]\]/);
   assert.match(workflow.slice(verification, publish), /isDraft == true/);
   assert.match(workflow.slice(publish), /isDraft == false/);
 });

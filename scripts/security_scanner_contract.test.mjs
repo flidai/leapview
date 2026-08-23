@@ -35,9 +35,18 @@ async function fixtureRepository(t) {
 set -euo pipefail
 tool="$(basename "$0")"
 printf '%s|%s|%s\\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
+if [[ "$tool" == "go" && "$#" -ge 3 && "$1" == "run" && "$2" == "./internal/app/tools/securitypolicy" ]]; then
+  printf '{"exceptions":[]}\\n'
+  exit 0
+fi
 if [[ "\${SECURITY_TEST_FAILURE:-}" == "vulnerable" && "$tool" == "bun" ]]; then
   printf 'critical dependency finding in fixture\\n' >&2
   exit 1
+fi
+if [[ "\${SECURITY_TEST_FAILURE:-}" == "bun-operational" && "$tool" == "bun" ]]; then
+  printf '{}\\n'
+  printf 'bun scanner unavailable\\n' >&2
+  exit 70
 fi
 if [[ "\${SECURITY_TEST_FAILURE:-}" == "crash" && "$tool" == "go" ]]; then
   printf 'dependency scanner unavailable\\n' >&2
@@ -46,6 +55,16 @@ fi
 `;
   for (const tool of ["go", "bun", "npm"]) await executable(join(bin, tool), scannerShim);
   return { root, bin, log: join(root, "scanner.log") };
+}
+
+async function coveredFixtureRepository(t) {
+  const fixture = await fixtureRepository(t);
+  await mkdir(join(fixture.root, ".security"), { recursive: true });
+  await writeFile(join(fixture.root, ".security", "coverage.yaml"), "version: 1\n");
+  const policy = join(fixture.root, "internal", "app", "tools", "securitypolicy");
+  await mkdir(policy, { recursive: true });
+  await writeFile(join(policy, "main.go"), "package main\n\nfunc main() {}\n");
+  return fixture;
 }
 
 function run(script, fixture, extraEnv = {}) {
@@ -85,6 +104,18 @@ test("dependency gate rejects a vulnerable fixture and scanner outage", async (t
   const outage = run(dependencyScript, unavailable, { SECURITY_TEST_FAILURE: "crash" });
   assert.notEqual(outage.status, 0);
   assert.match(outage.stderr, /scanner unavailable/);
+});
+
+test("covered Bun audit rejects valid JSON from an operational scanner failure", async (t) => {
+  const fixture = await coveredFixtureRepository(t);
+  const result = run(dependencyScript, fixture, { SECURITY_TEST_FAILURE: "bun-operational" });
+  assert.notEqual(result.status, 0);
+  const output = `${result.stdout}${result.stderr}`;
+  assert.match(output, /bun scanner unavailable/);
+  assert.match(result.stderr, /scanner failed without decoded blocking findings/);
+  assert.doesNotMatch(result.stderr, /no Critical findings/);
+  const log = await readFile(fixture.log, "utf8");
+  assert.match(log, /bun\|.*audit --audit-level critical --json/);
 });
 
 async function sourceFixture(t) {

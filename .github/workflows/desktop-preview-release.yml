@@ -274,3 +274,15 @@ jobs:
         run: |
           gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
             --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected published preview release") end'
+
+      - name: Remove failed draft preview
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "$is_draft" == "true" ]]; then
+            gh release delete "$RELEASE_TAG" --cleanup-tag --yes
+          fi

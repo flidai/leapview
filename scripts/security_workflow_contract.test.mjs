@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
 
 const root = resolve(import.meta.dirname, "..");
+const exceptionMatcher = resolve(root, "scripts/security_exception_match.sh");
 
 async function repositoryFile(path) {
   return readFile(resolve(root, path), "utf8");
@@ -107,4 +109,28 @@ test("native OCI platform refs are admitted before release and site manifest ass
     assert.match(recordedBlock, /printf '%s\\n' "\$IMAGE_REFERENCE"/);
     assert.match(workflow.slice(assembly), /image_references\[@\]/);
   }
+});
+
+test("security exception matcher resolves relative roots before changing directory", async (t) => {
+  const fixture = await mkdtemp(join(tmpdir(), "leapview-security-match-"));
+  t.after(() => rm(fixture, { recursive: true, force: true }));
+  const bin = join(fixture, "bin");
+  const log = join(fixture, "go-args.log");
+  await mkdir(bin);
+  await writeFile(
+    join(bin, "go"),
+    '#!/usr/bin/env bash\nprintf \'%s\\n\' "$PWD" "$@" > "$SECURITY_MATCH_LOG"\n',
+    { mode: 0o755 },
+  );
+
+  const result = spawnSync("bash", [exceptionMatcher, "--root", relative(root, fixture), "--scanner", "test", "--rule", "test", "--resource", "test"], {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, PATH: `${bin}:${process.env.PATH}`, SECURITY_MATCH_LOG: log },
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const args = (await readFile(log, "utf8")).trim().split("\n");
+  assert.equal(args[0], fixture);
+  assert.ok(args.includes("--root"));
+  assert.equal(args[args.indexOf("--root") + 1], fixture);
 });

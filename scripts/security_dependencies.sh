@@ -149,6 +149,12 @@ scan_bun_lock() {
     return 1
   fi
   if ((blocking_count == 0)); then
+    if ((status != 0)); then
+      cat "$diagnostics" "$output"
+      rm -f "$output" "$diagnostics"
+      printf 'bun audit %s: scanner failed without decoded blocking findings\n' "$package_dir" >&2
+      return "$status"
+    fi
     printf 'bun audit %s: no Critical findings\n' "$package_dir"
     rm -f "$output" "$diagnostics"
     return

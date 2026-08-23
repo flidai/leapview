@@ -92,6 +92,17 @@ func TestExceptionsRejectUnsafeEntries(t *testing.T) {
 		writeExceptions(t, root, Exceptions{Version: 1, Exceptions: []Exception{exception}})
 		assertValidationError(t, root, "is not covered")
 	})
+
+	t.Run("owner and rationale allow selector-like prose", func(t *testing.T) {
+		root := fixtureRepository(t)
+		exception := fixtureException()
+		exception.Owner = "security@example.com [platform]"
+		exception.Rationale = "See https://example.test/waiver?scope=all%2Fmodules [tracking issue]."
+		writeExceptions(t, root, Exceptions{Version: 1, Exceptions: []Exception{exception}})
+		if err := ValidateRepository(root, time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatalf("ValidateRepository() error = %v", err)
+		}
+	})
 }
 
 func TestExceptionMatcherRequiresExactIdentityAndProtectsCriticalFindings(t *testing.T) {
@@ -157,12 +168,32 @@ func TestUpdaterCoverageAndBounds(t *testing.T) {
 func TestGitHubActionsRequireImmutableThirdPartyRefs(t *testing.T) {
 	root := fixtureRepository(t)
 	workflow := filepath.Join(root, ".github/workflows/test.yml")
-	if err := os.WriteFile(workflow, []byte("steps:\n  - uses: actions/checkout@v4\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte("jobs:\n  build:\n    steps:\n      - \"uses\" : \"actions/checkout@v4\"\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	assertValidationError(t, root, "full commit SHA")
 
-	if err := os.WriteFile(workflow, []byte("steps:\n  - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1\n  - uses: ./.github/actions/local\n"), 0o644); err != nil {
+	if err := os.WriteFile(workflow, []byte("jobs:\n  build:\n    steps:\n      - 'uses' : 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1'\n        with:\n          uses: actions/checkout@v4\n      - uses: ./.github/actions/local\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := ValidateRepository(root, time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("ValidateRepository() error = %v", err)
+	}
+}
+
+func TestGitHubActionsRequireImmutableAliasedSteps(t *testing.T) {
+	root := fixtureRepository(t)
+	workflow := filepath.Join(root, ".github/workflows/test.yml")
+	contents := "step: &unpinned\n  uses: actions/checkout@v4\njobs:\n  build:\n    steps:\n      - *unpinned\n"
+	if err := os.WriteFile(workflow, []byte(contents), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assertValidationError(t, root, "full commit SHA")
+}
+
+func TestDockerfileFromInstructionIsCaseInsensitive(t *testing.T) {
+	root := fixtureRepository(t)
+	if err := os.WriteFile(filepath.Join(root, "Dockerfile"), []byte("from alpine:3.20\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	if err := ValidateRepository(root, time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)); err != nil {

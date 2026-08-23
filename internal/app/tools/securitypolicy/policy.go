@@ -97,7 +97,6 @@ type dependabotGroup struct {
 var (
 	stableIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
 	actionSHARef    = regexp.MustCompile(`^[0-9a-f]{40}$`)
-	usesLinePattern = regexp.MustCompile(`^\s*(?:-\s*)?uses:\s*([^\s#]+)`)
 	knownLockNames  = map[string]bool{
 		"bun.lock": true, "bun.lockb": true, "package-lock.json": true,
 		"pnpm-lock.yaml": true, "yarn.lock": true,
@@ -157,12 +156,12 @@ func validatePinnedActions(root string, coverage Coverage) error {
 		if err != nil {
 			return fmt.Errorf("read GitHub Actions surface %q: %w", surface.Path, err)
 		}
-		for index, line := range strings.Split(string(data), "\n") {
-			match := usesLinePattern.FindStringSubmatch(line)
-			if len(match) != 2 {
-				continue
-			}
-			uses := strings.Trim(match[1], `"'`)
+		usesEntries, err := workflowUses(data)
+		if err != nil {
+			return fmt.Errorf("parse GitHub Actions surface %q: %w", surface.Path, err)
+		}
+		for _, entry := range usesEntries {
+			uses := strings.TrimSpace(entry.value)
 			if strings.HasPrefix(uses, "./") {
 				continue
 			}
@@ -171,15 +170,105 @@ func validatePinnedActions(root string, coverage Coverage) error {
 				if len(parts) == 2 && regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(parts[1]) {
 					continue
 				}
-				return fmt.Errorf("GitHub Actions surface %q line %d uses an unpinned container action %q", surface.Path, index+1, uses)
+				return fmt.Errorf("GitHub Actions surface %q line %d uses an unpinned container action %q", surface.Path, entry.line, uses)
 			}
 			at := strings.LastIndexByte(uses, '@')
 			if at <= 0 || !actionSHARef.MatchString(uses[at+1:]) {
-				return fmt.Errorf("GitHub Actions surface %q line %d must pin %q to a full commit SHA", surface.Path, index+1, uses)
+				return fmt.Errorf("GitHub Actions surface %q line %d must pin %q to a full commit SHA", surface.Path, entry.line, uses)
 			}
 		}
 	}
 	return nil
+}
+
+type workflowUsesEntry struct {
+	value string
+	line  int
+}
+
+func dereferenceYAMLNode(node *yaml.Node) *yaml.Node {
+	seen := map[*yaml.Node]bool{}
+	for node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		if seen[node] {
+			return node
+		}
+		seen[node] = true
+		node = node.Alias
+	}
+	return node
+}
+
+// workflowUses parses a workflow or composite action as YAML and returns only
+// action references in schema-defined locations. Traversing parsed nodes
+// handles quoted keys and all YAML whitespace variants without depending on
+// the source spelling of the key.
+func workflowUses(data []byte) ([]workflowUsesEntry, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	var trailing yaml.Node
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, errors.New("multiple YAML documents are not allowed")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	entries := make([]workflowUsesEntry, 0)
+	root := &document
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return entries, nil
+		}
+		root = root.Content[0]
+	}
+	appendUse := func(key, value *yaml.Node) {
+		if key == nil {
+			return
+		}
+		entry := workflowUsesEntry{line: key.Line}
+		if value != nil && value.Kind == yaml.ScalarNode {
+			entry.value = value.Value
+		}
+		entries = append(entries, entry)
+	}
+	mappingEntry := func(mapping *yaml.Node, name string) (*yaml.Node, *yaml.Node) {
+		mapping = dereferenceYAMLNode(mapping)
+		if mapping == nil || mapping.Kind != yaml.MappingNode {
+			return nil, nil
+		}
+		for index := 0; index+1 < len(mapping.Content); index += 2 {
+			key, value := mapping.Content[index], mapping.Content[index+1]
+			if key.Kind == yaml.ScalarNode && key.Value == name {
+				return key, dereferenceYAMLNode(value)
+			}
+		}
+		return nil, nil
+	}
+	collectSteps := func(steps *yaml.Node) {
+		if steps == nil || steps.Kind != yaml.SequenceNode {
+			return
+		}
+		for _, step := range steps.Content {
+			key, value := mappingEntry(step, "uses")
+			appendUse(key, value)
+		}
+	}
+	if _, jobs := mappingEntry(root, "jobs"); jobs != nil && jobs.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(jobs.Content); index += 2 {
+			job := jobs.Content[index+1]
+			usesKey, uses := mappingEntry(job, "uses")
+			appendUse(usesKey, uses)
+			_, steps := mappingEntry(job, "steps")
+			collectSteps(steps)
+		}
+	}
+	if _, runs := mappingEntry(root, "runs"); runs != nil && runs.Kind == yaml.MappingNode {
+		_, steps := mappingEntry(runs, "steps")
+		collectSteps(steps)
+	}
+	return entries, nil
 }
 
 func readYAML[T any](path string) (T, error) {
@@ -378,8 +467,10 @@ func validateExceptions(contract Exceptions, coverage Coverage, now time.Time) e
 			if strings.TrimSpace(value) == "" {
 				return fmt.Errorf("%s %s is required", where, field)
 			}
-			if isOverbroad(value) {
-				return fmt.Errorf("%s %s is overbroad", where, field)
+			if field == "scanner" || field == "rule" || field == "resource" {
+				if isOverbroad(value) {
+					return fmt.Errorf("%s %s is overbroad", where, field)
+				}
 			}
 		}
 		created, err := parseExceptionDate(exception.Created)
@@ -559,10 +650,11 @@ func dockerImages(path string) ([]string, error) {
 	var images []string
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "FROM ") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
 			continue
 		}
-		fields := strings.Fields(strings.TrimPrefix(line, "FROM "))
+		fields = fields[1:]
 		if len(fields) == 0 {
 			return nil, errors.New("FROM has no image")
 		}

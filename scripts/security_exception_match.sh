@@ -34,6 +34,7 @@ done
 
 [[ -n "$scanner" && -n "$rule" && -n "$resource" ]] || usage
 [[ -d "$root" ]] || { printf 'repository root is missing: %s\n' "$root" >&2; exit 1; }
+root="$(cd -- "$root" && pwd -P)"
 cd "$root"
 exec go run ./internal/app/tools/securitypolicy \
   --root "$root" \
