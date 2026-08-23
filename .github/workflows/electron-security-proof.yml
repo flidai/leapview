@@ -34,7 +34,7 @@ jobs:
 
       - name: Run pure security contract tests
         working-directory: internal/app/testing/maliciousinstance/electron
-        run: node --test policy.test.mjs manifest-proof.test.mjs result-file.test.mjs
+        run: node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs
 
   packages:
     name: Hardened package (${{ matrix.name }})

@@ -14,6 +14,7 @@ import {
 import {
   createRemoteWindow,
 } from "../../../../../desktop/src/security/remote-window.mjs";
+import { runProofLifecycle } from "./proof-lifecycle.mjs";
 import { writeJSONAtomic } from "./result-file.mjs";
 
 app.enableSandbox();
@@ -37,26 +38,12 @@ const result = {
   decisions: [],
 };
 
-await writeResult();
-app.whenReady().then(async () => {
-  try {
-    result.phase = "running";
-    await withTimeout(runProof(), 40_000, "policy integration");
-    result.passed = true;
-    result.phase = "complete";
-    await writeResult();
-    app.quit();
-  } catch (error) {
-    await fail(error);
-  }
-}).catch(fail);
-
-async function fail(error) {
-  result.error = error instanceof Error ? error.message : String(error);
-  result.phase = "failed";
-  await writeResult();
-  app.exit(1);
-}
+await runProofLifecycle({
+  app,
+  result,
+  runProof: () => withTimeout(runProof(), 40_000, "policy integration"),
+  writeResult,
+});
 
 async function runProof() {
   result.currentCheck = "manifest";
