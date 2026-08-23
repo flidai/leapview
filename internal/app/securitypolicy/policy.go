@@ -1,7 +1,7 @@
 // Package securitypolicy validates the repository's dependency-security
 // coverage contract.  The contract is deliberately kept in the repository so
 // that adding a new build surface cannot silently bypass dependency updates.
-package main
+package securitypolicy
 
 import (
 	"errors"
@@ -145,6 +145,20 @@ func ValidateRepository(root string, now time.Time) error {
 		return err
 	}
 	return nil
+}
+
+// LoadValidatedExceptions validates the complete repository security contract
+// before returning its canonical exception set. Scanner and admission gates use
+// this entrypoint so expiry and exact-match semantics have one Go owner.
+func LoadValidatedExceptions(root string, now time.Time) (Exceptions, error) {
+	if err := ValidateRepository(root, now); err != nil {
+		return Exceptions{}, err
+	}
+	contract, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
+	if err != nil {
+		return Exceptions{}, fmt.Errorf("read %s: %w", exceptionsFile, err)
+	}
+	return contract, nil
 }
 
 func validatePinnedActions(root string, coverage Coverage) error {

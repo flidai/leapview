@@ -12,6 +12,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/app/securitypolicy"
 )
 
 func main() {
@@ -39,20 +41,22 @@ func main() {
 		fmt.Fprintf(os.Stderr, "security policy: resolve root: %v\n", err)
 		os.Exit(2)
 	}
-	if err := ValidateRepository(absoluteRoot, now); err != nil {
+	matchRequested := anyMatchFlag(*matchScanner, *matchRule, *matchResource, *matchSeverity, *matchClass)
+	var contract securitypolicy.Exceptions
+	if *emitExceptions || matchRequested {
+		contract, err = securitypolicy.LoadValidatedExceptions(absoluteRoot, now)
+	} else {
+		err = securitypolicy.ValidateRepository(absoluteRoot, now)
+	}
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "security policy: %v\n", err)
 		os.Exit(1)
 	}
 
 	if *emitExceptions {
-		if anyMatchFlag(*matchScanner, *matchRule, *matchResource, *matchSeverity, *matchClass) {
+		if matchRequested {
 			fmt.Fprintln(os.Stderr, "security policy: exceptions-json cannot be combined with match flags")
 			os.Exit(2)
-		}
-		contract, err := readYAML[Exceptions](filepath.Join(absoluteRoot, exceptionsFile))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "security policy: read %s: %v\n", exceptionsFile, err)
-			os.Exit(1)
 		}
 		encoder := json.NewEncoder(os.Stdout)
 		encoder.SetEscapeHTML(false)
@@ -62,17 +66,12 @@ func main() {
 		}
 		return
 	}
-	if anyMatchFlag(*matchScanner, *matchRule, *matchResource, *matchSeverity, *matchClass) {
+	if matchRequested {
 		if strings.TrimSpace(*matchScanner) == "" || strings.TrimSpace(*matchRule) == "" || strings.TrimSpace(*matchResource) == "" {
 			fmt.Fprintln(os.Stderr, "security policy: match requires scanner, rule, and resource")
 			os.Exit(2)
 		}
-		contract, err := readYAML[Exceptions](filepath.Join(absoluteRoot, exceptionsFile))
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "security policy: read %s: %v\n", exceptionsFile, err)
-			os.Exit(1)
-		}
-		if exception, ok := contract.Match(Finding{Scanner: *matchScanner, Rule: *matchRule, Resource: *matchResource, Severity: *matchSeverity, Class: *matchClass}); ok {
+		if exception, ok := contract.Match(securitypolicy.Finding{Scanner: *matchScanner, Rule: *matchRule, Resource: *matchResource, Severity: *matchSeverity, Class: *matchClass}); ok {
 			fmt.Println(exception.ID)
 			return
 		}

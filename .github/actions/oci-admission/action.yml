@@ -40,6 +40,12 @@ outputs:
 runs:
   using: composite
   steps:
+    - name: Set up Go for repository-owned admission
+      uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+      with:
+        go-version-file: go.mod
+        cache: false
+
     - name: Verify immutable OCI artifact admission
       id: admit
       shell: bash
@@ -59,18 +65,13 @@ runs:
         if [[ -z "$output_path" ]]; then
           output_path="$RUNNER_TEMP/oci-admission.json"
         fi
-        evidence_args=()
-        if [[ -n "$EVIDENCE" ]]; then
-          evidence_args+=(--evidence "$EVIDENCE")
-        fi
-        GITHUB_OUTPUT="" "$GITHUB_ACTION_PATH/../../../scripts/admit_oci_artifact.sh" \
+        cd "$GITHUB_ACTION_PATH/../../.."
+        go run ./internal/app/tools/ociadmission \
           --image "$IMAGE" \
           --repository "$OCI_REPOSITORY" \
           --expected-workflow "$EXPECTED_WORKFLOW" \
           --source-revision "$SOURCE_REVISION" \
           --policy "$POLICY" \
           --mode "$MODE" \
-          "${evidence_args[@]}" \
-          --output "$output_path" > "$RUNNER_TEMP/oci-admission-image.txt"
-        printf 'image=%s\n' "$(cat "$RUNNER_TEMP/oci-admission-image.txt")" >> "$GITHUB_OUTPUT"
-        printf 'digest=%s\n' "${IMAGE##*@}" >> "$GITHUB_OUTPUT"
+          --evidence "$EVIDENCE" \
+          --output "$output_path"

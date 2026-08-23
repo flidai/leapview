@@ -69,19 +69,8 @@ jobs:
         with:
           browser: "false"
 
-      - name: Scan repository history for secrets
-        run: task security:secrets
-
-      - name: Scan source and infrastructure configuration
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          scan-type: fs
-          scan-ref: .
-          scanners: secret,misconfig
-          severity: HIGH,CRITICAL
-          exit-code: "1"
-          ignore-unfixed: false
-          version: v0.74.0
+      - name: Scan source, infrastructure, and candidate history
+        run: task security:source
 
   sast-validation:
     name: Selected SAST (${{ matrix.language }})
@@ -126,6 +115,12 @@ jobs:
       - name: Check out the aggregate gate contract
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
+      - name: Set up Go for the aggregate contract
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: Require every security lane
         env:
           POLICY_RESULT: ${{ needs.policy-validation.result }}
@@ -133,5 +128,5 @@ jobs:
           SOURCE_RESULT: ${{ needs.source-validation.result }}
           SAST_RESULT: ${{ needs.sast-validation.result }}
         run: >-
-          ./scripts/require_security_results.sh
+          go run ./internal/app/tools/securityresults
           "$POLICY_RESULT" "$DEPENDENCY_RESULT" "$SOURCE_RESULT" "$SAST_RESULT"
