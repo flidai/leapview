@@ -178,6 +178,35 @@ func TestVersionReportsDevelopmentIdentityAsJSON(t *testing.T) {
 	}
 }
 
+func TestRootVersionAndInvalidSubcommandUseConsistentExitSurface(t *testing.T) {
+	version := NewCommand(context.Background())
+	var versionOutput strings.Builder
+	version.SetOut(&versionOutput)
+	version.SetErr(&versionOutput)
+	version.SetArgs([]string{"--version"})
+	if err := version.Execute(); err != nil {
+		t.Fatalf("root --version error = %v", err)
+	}
+	if !strings.Contains(versionOutput.String(), "development") || strings.Contains(versionOutput.String(), "Usage:") {
+		t.Fatalf("root --version output = %q", versionOutput.String())
+	}
+
+	for _, args := range [][]string{{"not-a-command"}, {"admin", "not-a-command"}} {
+		command := NewCommand(context.Background())
+		var output strings.Builder
+		command.SetOut(&output)
+		command.SetErr(&output)
+		command.SetArgs(args)
+		err := command.Execute()
+		if err == nil || !strings.Contains(err.Error(), "unknown command") {
+			t.Fatalf("args %v error = %v", args, err)
+		}
+		if strings.Contains(output.String(), "Usage:") {
+			t.Fatalf("args %v unexpectedly emitted usage: %q", args, output.String())
+		}
+	}
+}
+
 func TestDeployCommandUsesTargetOwnedAtomicCandidatePreparation(t *testing.T) {
 	command := deployCommand(context.Background(), &rootOptions{})
 	if command.Name() != "deploy" {

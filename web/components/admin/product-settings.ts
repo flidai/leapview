@@ -157,9 +157,9 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           </span>
         </div>
         <div class="row">
-          <div class="settings-field"><span class="settings-label">Instance name</span><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
+          <div class="settings-field"><label class="settings-label" for="product-instance-name">Instance name</label><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
           <div class="inline">
-            <input type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
+            <input id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
             <button class="action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
           </div>
         </div>
@@ -169,7 +169,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
             ${general.logo ? html`<div class="logo"><img src=${general.logo.url} alt="Product logo"><span class="hint">${general.logo.width} × ${general.logo.height}</span></div>` : html`<span class="settings-value">No logo configured</span>`}
             <label class=${`file-action ${!canManage || disabled ? 'disabled' : ''}`}>
               <span>${general.logo ? 'Change logo' : 'Upload logo'}</span>
-              <input type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
+              <input id="product-logo-upload" aria-label=${general.logo ? 'Change logo' : 'Upload logo'} type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
             </label>
             ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
           </div>

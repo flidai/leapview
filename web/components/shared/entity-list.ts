@@ -245,6 +245,27 @@ const entityListStyles = `
     min-width: 0;
     overflow-x: auto;
     scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .entity-list-table-wrap:focus-visible {
+    outline: 2px solid var(--lv-fg-accent, currentColor);
+    outline-offset: 2px;
+  }
+
+  .entity-list-scroll-hint {
+    display: none;
+    margin: var(--base-size-4) var(--base-size-8) 0;
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+    text-align: right;
+  }
+
+  @media (max-width: 640px) {
+    .entity-list-scroll-hint {
+      display: block;
+    }
+
   }
 
   .entity-list-table {
@@ -762,7 +783,7 @@ class EntityList extends LitElement {
           ` : ''}
         </div>` : ''}
         ${items.length ? html`
-          <div class="entity-list-items entity-list-table-wrap">
+          <div class="entity-list-items entity-list-table-wrap" role="region" aria-label="Scrollable ${this.listLabel} table" tabindex="0">
             <table class="entity-list-table" aria-label=${this.listLabel} style=${this.minWidth ? `min-width: ${this.minWidth}` : ''}>
               <colgroup>
                 ${columns.map((column) => html`<col style=${column.width ? `width: ${column.width}` : ''}>`)}
@@ -799,6 +820,7 @@ class EntityList extends LitElement {
                 ? this.groupedItems(items).map((group) => this.renderGroup(group, columns))
                 : html`<tbody>${items.map((item) => this.renderItem(item, columns))}</tbody>`}
             </table>
+            <p class="entity-list-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
           </div>
         ` : html`<div class="entity-list-empty" role="status">${this.query.trim() ? 'No results match your search.' : this.emptyText}</div>`}
       </section>

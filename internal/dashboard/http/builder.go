@@ -23,6 +23,7 @@ import (
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
@@ -631,7 +632,7 @@ func (h Handler) traceStore() *pagestream.TraceStore {
 	return h.Broker.TraceStore()
 }
 
-func writeBuilderError(w nethttp.ResponseWriter, _ *nethttp.Request, err error) {
+func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 	status := nethttp.StatusInternalServerError
 	switch {
 	case errors.Is(err, access.ErrForbidden):
@@ -644,6 +645,10 @@ func writeBuilderError(w nethttp.ResponseWriter, _ *nethttp.Request, err error) 
 		status = nethttp.StatusConflict
 	case errors.Is(err, authoring.ErrInvalidAuthoring), errors.Is(err, authoring.ErrInvalidIdentifier), errors.Is(err, authoring.ErrInvalidPayload):
 		status = nethttp.StatusBadRequest
+	}
+	if status == nethttp.StatusForbidden {
+		uitransport.WriteBrowserAuthorizationError(w, r, status)
+		return
 	}
 	message := "dashboard builder unavailable"
 	switch status {

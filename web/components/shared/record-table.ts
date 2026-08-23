@@ -235,7 +235,12 @@ class RecordTable extends LitElement {
     return html`
       <style>${recordTableStyles}</style>
       ${this.hasColumnSelector(table) ? html`<span class="record-table-corner-selector">${this.renderColumnSelector(table, columns)}</span>` : nothing}
-      <div class=${`record-table-wrap variant-${this.variant} density-${table.density}`}>
+      <div
+        class=${`record-table-wrap variant-${this.variant} density-${table.density}`}
+        role="region"
+        aria-label="Scrollable table"
+        tabindex="0"
+      >
         <table class="record-table" style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
           <thead>
             <tr>
@@ -267,6 +272,7 @@ class RecordTable extends LitElement {
           </tbody>
         </table>
       </div>
+      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
     `
   }
 
@@ -298,6 +304,7 @@ class RecordTable extends LitElement {
               <label>
                 <input
                   type="checkbox"
+                  aria-label=${column.header}
                   .checked=${checked}
                   ?disabled=${checked && visibleToggleableIDs.size <= 1}
                   @change=${(event: Event) => this.toggleColumn(table, column.id, (event.currentTarget as HTMLInputElement).checked)}
@@ -814,6 +821,21 @@ const recordTableStyles = `
     min-width: 0;
     max-width: 100%;
     overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  lv-record-table .record-table-wrap:focus-visible {
+    outline: 2px solid var(--lv-fg-accent, currentColor);
+    outline-offset: 2px;
+  }
+
+  lv-record-table .record-table-scroll-hint {
+    display: none;
+    margin: var(--base-size-4) var(--base-size-8) 0;
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+    text-align: right;
   }
 
   lv-record-table .record-table-column-selector {
@@ -889,6 +911,13 @@ const recordTableStyles = `
     width: 100%;
     border-collapse: collapse;
     table-layout: fixed;
+  }
+
+  @media (max-width: 640px) {
+    lv-record-table .record-table-scroll-hint {
+      display: block;
+    }
+
   }
 
   lv-record-table .record-table th,

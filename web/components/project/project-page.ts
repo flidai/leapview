@@ -421,6 +421,7 @@ function renderAssetToolbar(query: string, activeType: string, tabs: ResourceTab
           <input
             type="search"
             name="q"
+            aria-label="Search project assets"
             .value=${query}
             placeholder=${placeholder}
             autocomplete="off"

@@ -51,10 +51,15 @@ test('settings surfaces render typed signals and emit commands', async () => {
       let detail: unknown = null
       element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
       ;(element.shadowRoot.querySelector('tbody button') as HTMLButtonElement).click()
-      return { text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(), detail }
+      return {
+        text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(),
+        detail,
+        displayNameLabel: element.shadowRoot.querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
+      }
     })
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
+    expect(result.displayNameLabel).toBe('New account')
   } finally { await page.close() }
 })
 
@@ -82,6 +87,7 @@ test('service account and audit controls unlock when a no-op command finishes', 
       ;(audit.shadowRoot.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
       await audit.updateComplete
       const auditDisabled = (audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const auditLabels = Array.from(audit.shadowRoot.querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       const unrelatedOwner = document.createElement('lv-other-page')
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
       await accounts.updateComplete; await audit.updateComplete
@@ -95,11 +101,12 @@ test('service account and audit controls unlock when a no-op command finishes', 
         auditDisabled,
         accountStillDisabled,
         auditStillDisabled,
+        auditLabels,
         accountUnlocked: !(accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled,
         auditUnlocked: !(audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
       }
     })
-    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, accountUnlocked: true, auditUnlocked: true })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID'], accountUnlocked: true, auditUnlocked: true })
   } finally { await page.close() }
 })
 
@@ -254,6 +261,7 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
       const form = dialog.querySelector('form') as HTMLFormElement
+      const labels = Array.from(dialog.querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       ;(form.elements.namedItem('email') as HTMLInputElement).value = 'new@example.com'
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'New User'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
@@ -263,12 +271,14 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       return {
         open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
         detail,
+        labels,
         formAfterSuccess: Boolean(element.shadowRoot.querySelector('dialog form')),
         successText: element.shadowRoot.querySelector('dialog')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
     expect(result.open).toBe(true)
     expect(result.detail).toEqual({ action: 'create_principal', email: 'new@example.com', displayName: 'New User' })
+    expect(result.labels).toEqual(['Email', 'Display name'])
     expect(result.formAfterSuccess).toBe(false)
     expect(result.successText).toContain('temporary-password-value')
     expect(result.successText).toContain('Copy password')

@@ -43,10 +43,21 @@ func WriteBrowserAuthorizationError(w http.ResponseWriter, r *http.Request, stat
 // IsHTMLNavigation distinguishes page loads from commands, streams, and API
 // requests so authorization recovery never changes their status semantics.
 func IsHTMLNavigation(r *http.Request) bool {
-	if r == nil || (r.Method != http.MethodGet && r.Method != http.MethodHead) || r.URL == nil || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/updates" || strings.HasSuffix(r.URL.Path, "/updates") {
+	if r == nil || r.URL == nil || strings.HasPrefix(r.URL.Path, "/api/") || r.URL.Path == "/updates" || strings.HasSuffix(r.URL.Path, "/updates") {
 		return false
 	}
 	accept := strings.ToLower(strings.TrimSpace(r.Header.Get("Accept")))
+	if r.Header.Get("Datastar-Request") != "" || strings.Contains(accept, "text/event-stream") {
+		return false
+	}
+	if r.Method != http.MethodGet && r.Method != http.MethodHead {
+		// A native browser form submission is a document navigation even though
+		// it mutates state. JSON/Datastar commands keep their status-only
+		// semantics, including when a browser sends an HTML Accept header.
+		if r.Method != http.MethodPost || !strings.Contains(strings.ToLower(r.Header.Get("Content-Type")), "application/x-www-form-urlencoded") {
+			return false
+		}
+	}
 	return accept == "" || strings.Contains(accept, "text/html") || strings.Contains(accept, "*/*")
 }
 

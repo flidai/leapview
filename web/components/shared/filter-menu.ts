@@ -236,6 +236,7 @@ class FilterMenu extends LitElement {
             ${lucideIcon(Search, { size: 15, strokeWidth: 2 })}
             <input
               type="search"
+              aria-label=${menu.label ? `Search ${menu.label}` : 'Search filter options'}
               placeholder=${menu.placeholder || 'Search'}
               .value=${this.draftSearch}
               @input=${this.handleSearchInput}
@@ -249,6 +250,7 @@ class FilterMenu extends LitElement {
               <label class="option">
                 <input
                   type="checkbox"
+                  aria-label=${option.label || option.value}
                   .checked=${Boolean(option.selected)}
                   ?disabled=${option.disabled}
                   @change=${() => this.emitCommand('toggle', { value: option.value })}

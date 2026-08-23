@@ -124,7 +124,7 @@ for (const viewport of [
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
-        totalListHeight: 240,
+        totalListHeight: viewport.name === 'mobile' ? 259 : 240,
         hasCardGrid: false,
         hasOpenLabel: false,
         sectionWidth: Math.min(viewport.width, 1152),

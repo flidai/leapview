@@ -87,6 +87,20 @@ func TestCommandRequiresOperations(t *testing.T) {
 	}
 }
 
+func TestCommandRejectsInvalidNestedSubcommandsWithoutUsage(t *testing.T) {
+	command := Command(context.Background(), &fakeOperations{})
+	var output strings.Builder
+	command.SetOut(&output)
+	command.SetErr(&output)
+	command.SetArgs([]string{"delivery", "not-a-command"})
+	if err := command.Execute(); err == nil || !strings.Contains(err.Error(), "unknown command") {
+		t.Fatalf("error = %v", err)
+	}
+	if strings.Contains(output.String(), "Usage:") {
+		t.Fatalf("invalid command emitted usage: %q", output.String())
+	}
+}
+
 func TestCommandRoutesBoundedDeliveryRepair(t *testing.T) {
 	operations := &fakeOperations{}
 	command := Command(context.Background(), operations)

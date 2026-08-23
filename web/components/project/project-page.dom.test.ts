@@ -62,6 +62,7 @@ test('project asset list renders current resource signals and filter event', asy
       const table = root.querySelector('lv-record-table') as any
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
+        searchLabel: input.getAttribute('aria-label'),
         rows: root.querySelectorAll('lv-record-table').length,
         columns: table?.table?.columns?.map((column: any) => column.header),
         firstRow: table?.table?.rows?.[0],
@@ -69,6 +70,7 @@ test('project asset list renders current resource signals and filter event', asy
       }
     })
     expect(state.title).toBe('Develop')
+    expect(state.searchLabel).toBe('Search project assets')
     expect(state.rows).toBe(1)
     expect(state.columns).toEqual(['Name', 'Type', 'Identifier'])
     expect(state.firstRow.name.description).toBe('Raw orders.')

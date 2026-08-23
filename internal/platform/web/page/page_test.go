@@ -49,3 +49,28 @@ func TestDocumentTitleIncludesCustomProductIdentity(t *testing.T) {
 		t.Fatalf("branded document title = %q", got)
 	}
 }
+
+func TestRenderIncludesInlineInitialStreamRecovery(t *testing.T) {
+	layout := Layout{Assets: staticasset.New(staticasset.Config{Version: "test"})}
+	var output bytes.Buffer
+	if err := Render(layout, Spec{UpdatesURL: "/updates?route=data", Content: g.El("route-page")}).Render(&output); err != nil {
+		t.Fatal(err)
+	}
+	body := output.String()
+	for _, want := range []string{
+		`data-page-stream-recovery-root`,
+		`data-on:datastar-fetch="evt.detail.el === el &amp;&amp; ($pageStreamRecovery =`,
+		`evt.detail.type === &#39;started&#39; ? false`,
+		`evt.detail.type === &#39;retrying&#39;`,
+		`evt.detail.type === &#39;datastar-patch-signals&#39;`,
+		`data-page-stream-recovery`,
+		`data-show="$pageStreamRecovery"`,
+		`style="display:none"`,
+		"Unable to load this page",
+		">Retry</button>",
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("rendered page missing %q:\n%s", want, body)
+		}
+	}
+}

@@ -312,6 +312,7 @@ export class DashboardFilterLeaf extends LitElement {
           <input
             type=${multiple ? 'checkbox' : 'radio'}
             name=${this.binding?.key ?? 'filter'}
+            aria-label=${option.count === undefined ? option.label : `${option.label} (${option.count})`}
             .checked=${selected.has(filterOptionKey(option))}
             ?disabled=${!option.available && !option.selected}
             @change=${() => this.toggleOption(option, multiple)}

@@ -1067,6 +1067,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                       <label>
                         <input
                           type="checkbox"
+                          aria-label=${column.label || column.key}
                           .checked=${checked}
                           ?disabled=${checked && visibleColumnKeys.length <= 1}
                           @change=${(event: Event) => this.toggleHeaderColumn(column.key, (event.target as HTMLInputElement).checked, columns, semanticActive)}

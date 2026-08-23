@@ -142,6 +142,34 @@ func TestDashboardDraftCreateAndForkRequireFormIdempotencyKey(t *testing.T) {
 	}
 }
 
+func TestDashboardDraftCreateAndForkAuthorizationFailuresRenderBrowserRecovery(t *testing.T) {
+	fake := &builderAuthoringFake{err: access.ErrForbidden}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	for name, request := range map[string]*nethttp.Request{
+		"create": httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&idempotencyKey=create-denied")),
+		"fork":   withBuilderURLParams(httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&idempotencyKey=fork-denied")), "sales", "revenue"),
+	} {
+		t.Run(name, func(t *testing.T) {
+			request.Header.Set("Accept", "text/html")
+			request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			recorder := httptest.NewRecorder()
+			if name == "create" {
+				handler.DashboardDraftCreate(recorder, request)
+			} else {
+				handler.DashboardDraftFork(recorder, request)
+			}
+			if recorder.Code != nethttp.StatusForbidden || !strings.Contains(recorder.Header().Get("Content-Type"), "text/html") {
+				t.Fatalf("response = %d %q body=%s", recorder.Code, recorder.Header().Get("Content-Type"), recorder.Body.String())
+			}
+			for _, want := range []string{"You don't have access to this dashboard", "Return to Insights", "No changes were made"} {
+				if !strings.Contains(recorder.Body.String(), want) {
+					t.Fatalf("response missing %q: %s", want, recorder.Body.String())
+				}
+			}
+		})
+	}
+}
+
 func TestDashboardBuilderCommandRoutesBuilderIntentsWithServerGeneratedIDs(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}

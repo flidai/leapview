@@ -199,7 +199,7 @@ class WindowedTable extends LitElement {
       display: grid;
       min-width: 0;
       min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: auto minmax(0, 1fr) auto auto;
       overflow: hidden;
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
@@ -228,7 +228,7 @@ class WindowedTable extends LitElement {
     }
 
     :host([compact]) .shell {
-      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) auto auto;
     }
 
     :host([compact]) .footer {
@@ -306,6 +306,25 @@ class WindowedTable extends LitElement {
       min-height: 0;
       overflow: auto;
       scrollbar-gutter: stable;
+    }
+
+    .scrollport:focus-visible {
+      outline: 2px solid var(--lv-fg-accent, currentColor);
+      outline-offset: -2px;
+    }
+
+    .scroll-hint {
+      display: none;
+      margin: var(--base-size-4) var(--base-size-8) 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-align: right;
+    }
+
+    @media (max-width: 640px) {
+      .scroll-hint {
+        display: block;
+      }
     }
 
     .plane,
@@ -593,6 +612,7 @@ class WindowedTable extends LitElement {
                   <label>
                     <input
                       type="checkbox"
+                      aria-label=${column.label || column.key}
                       .checked=${checked}
                       ?disabled=${checked && columns.length <= 1}
                       @change=${(event: Event) => this.toggleColumn(table, column.key, (event.target as HTMLInputElement).checked)}
@@ -609,7 +629,7 @@ class WindowedTable extends LitElement {
           ${table.error ? html`<p class="error">${table.error}</p>` : nothing}
           ${!table.error && table.availableRows === 0 && !loading ? html`<p class="empty">No rows to show.</p>` : nothing}
           ${!table.error && (table.availableRows > 0 || loading) ? html`
-            <div class="scrollport" ${ref(this.viewportRef)} @scroll=${this.handleScroll}>
+            <div class="scrollport" role="region" aria-label=${`Scrollable ${table.title || 'data'} table`} tabindex="0" ${ref(this.viewportRef)} @scroll=${this.handleScroll}>
               <div
                 class="plane"
                 style=${`--lv-windowed-table-columns:${widths.map((width) => `${width}px`).join(' ')};--lv-windowed-table-width:${tableWidth}px;--lv-windowed-row-height:${table.rowHeight}px`}
@@ -651,6 +671,7 @@ class WindowedTable extends LitElement {
             </div>
           ` : nothing}
         </div>
+        ${!table.error && (table.availableRows > 0 || loading) ? html`<p class="scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
         <div class="footer">
           ${this.compact
             ? html`<span><strong>${rowRange}</strong>${loading ? ' · loading' : ''}</span>`

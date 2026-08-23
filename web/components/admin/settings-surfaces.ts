@@ -207,8 +207,8 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
           ${this.hasUndismissedTemporaryPassword() ? this.renderTemporaryPasswordSuccess() : html`
             ${this.feedback()}
             <form class="form" @submit=${(event: SubmitEvent) => this.createPrincipal(event)}>
-              <label>Email<input name="email" type="email" required autocomplete="off" placeholder="person@example.com"></label>
-              <label>Display name<input name="displayName" required autocomplete="off" placeholder="Display name"></label>
+              <label>Email<input id="create-local-user-email" aria-label="Email" name="email" type="email" required autocomplete="off" placeholder="person@example.com"></label>
+              <label>Display name<input id="create-local-user-display-name" aria-label="Display name" name="displayName" required autocomplete="off" placeholder="Display name"></label>
               <div class="modal-actions"><button type="button" @click=${this.requestCreateClose}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Create user</button></div>
             </form>
           `}
@@ -333,7 +333,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
         <div class="modal-body">
           ${this.feedback()}
           <form class="form" @submit=${(event: SubmitEvent) => this.createGroup(event)}>
-            <label>Group name<input name="displayName" required autocomplete="off" placeholder="Analytics team"></label>
+            <label>Group name<input id="create-group-display-name" aria-label="Group name" name="displayName" required autocomplete="off" placeholder="Analytics team"></label>
             <div class="modal-actions"><button type="button" @click=${this.requestCreateClose}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Create group</button></div>
           </form>
         </div>
@@ -394,7 +394,7 @@ class LeapViewGroupAdministration extends LeapViewAccessAdministrationBase {
           </header>
           <div class="modal-body">
             <form class="form" @submit=${(event: SubmitEvent) => this.updateGroup(event, group)}>
-              <label>Group name<input name="displayName" required autocomplete="off" .value=${group.name}></label>
+              <label>Group name<input id="rename-group-display-name" aria-label="Group name" name="displayName" required autocomplete="off" .value=${group.name}></label>
               <div class="modal-actions"><button type="button" @click=${this.closeDetailDialog}>Cancel</button><button class="primary" type="submit" ?disabled=${signal.loading}>Rename group</button></div>
             </form>
           </div>
@@ -639,7 +639,7 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
       ${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}
       ${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
       <form class="form" @submit=${(event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const input = form.elements.namedItem('displayName') as HTMLInputElement; this.emit({ action: 'create', displayName: input.value }); input.value = '' }}>
-        <label>New account<input name="displayName" required placeholder="Display name" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create</button>
+        <label>New account<input id="service-account-display-name" aria-label="New account" name="displayName" required placeholder="Display name" ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Create</button>
       </form>
       ${signal.createdSecret ? html`<p role="status"><strong>Copy this secret now:</strong> <code>${signal.createdSecret}</code></p>` : nothing}
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Account</th><th>Status</th><th>Secrets</th><th>Actions</th></tr></thead><tbody>
@@ -710,7 +710,7 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
     const filters = signal.filters || {}
     const submit = (event: SubmitEvent) => { event.preventDefault(); const form = event.currentTarget as HTMLFormElement; const value = (name: string) => (form.elements.namedItem(name) as HTMLInputElement)?.value || ''; this.emit({ action: 'filter', filters: { projectId: value('projectId'), principalId: value('principalId'), action: value('action'), resourceKind: value('resourceKind'), resourceId: value('resourceId'), from: value('from'), to: value('to') } }) }
     return html`<section class="surface" aria-label="Audit log"><h2>Audit log</h2><p class="muted">Read-only product activity.</p>${signal.error ? html`<p class="error" role="alert">${signal.error}</p>` : nothing}${this.commandError ? html`<p class="error" role="alert">${this.commandError}</p>` : nothing}
-      <form class="toolbar" @submit=${submit}><label>Project<input name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
+      <form class="toolbar" @submit=${submit}><label>Project<input id="audit-project-id" aria-label="Project" name="projectId" value=${filters.projectId || ''} ?disabled=${this.busy}></label><label>Actor<input id="audit-principal-id" aria-label="Actor" name="principalId" value=${filters.principalId || ''} ?disabled=${this.busy}></label><label>Action<input id="audit-action" aria-label="Action" name="action" value=${filters.action || ''} ?disabled=${this.busy}></label><label>Resource kind<input id="audit-resource-kind" aria-label="Resource kind" name="resourceKind" value=${filters.resourceKind || ''} ?disabled=${this.busy}></label><label>Resource ID<input id="audit-resource-id" aria-label="Resource ID" name="resourceId" value=${filters.resourceId || ''} ?disabled=${this.busy}></label><button type="submit" ?disabled=${this.busy}>Filter</button><button type="button" ?disabled=${this.busy} @click=${() => this.emit({ action: 'clear', filters: {} })}>Clear</button></form>
       ${signal.items?.length ? html`<div class="table-wrap"><table><thead><tr><th>Time</th><th>Action</th><th>Actor</th><th>Resource</th><th>Capability</th><th>Status</th></tr></thead><tbody>${signal.items.map((event) => html`<tr><td>${event.createdAt}</td><td>${event.action}</td><td>${event.principalId || 'System'}</td><td>${event.resourceKind} / ${event.resourceId}</td><td>${event.capability || '—'}</td><td>${event.status || '—'}</td></tr>`)}</tbody></table></div>` : html`<p class="empty">No audit events match these filters.</p>`}
       ${signal.hasMore ? html`<button ?disabled=${this.busy} @click=${() => this.emit({ action: 'load_more', filters, pageToken: signal.nextCursor })}>Load more</button>` : nothing}
     </section>`

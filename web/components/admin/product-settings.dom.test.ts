@@ -78,6 +78,7 @@ test('product settings renders redacted sections and emits typed identity comman
       let command: unknown = null
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
+      const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Save')?.click()
@@ -93,6 +94,8 @@ test('product settings renders redacted sections and emits typed identity comman
       return {
         generalText,
         inputValue: input.value,
+        inputLabel: input.getAttribute('aria-label'),
+        logoLabel,
         authText: element.shadowRoot.textContent.replace(/\s+/g, ' ').trim(),
         saveCommand,
         resetCommand,
@@ -102,6 +105,8 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.generalText).toContain('Instance identity')
     expect(state.generalText).toContain('Powered by LeapView')
     expect(state.inputValue).toBe('Acme BI')
+    expect(state.inputLabel).toBe('Instance name')
+    expect(state.logoLabel).toBe('Change logo')
     expect(state.generalText).toContain('Instance ID')
     expect(state.authText).toContain('Managed by deployment')
     expect(state.authText).toContain('API and protocol availability')
