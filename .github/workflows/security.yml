@@ -62,11 +62,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Go for the pinned secret scanner
-        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
+      - name: Set up the cached security toolchain
+        uses: ./.github/actions/setup-ci
         with:
-          go-version-file: go.mod
-          cache: true
+          browser: "false"
 
       - name: Scan repository history for secrets
         run: task security:secrets
@@ -93,7 +92,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [go, javascript-typescript]
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
 
     steps:
       - name: Check out the exact candidate
@@ -103,7 +106,7 @@ jobs:
         uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
         with:
           languages: ${{ matrix.language }}
-          build-mode: none
+          build-mode: ${{ matrix.build-mode }}
 
       - name: Analyze selected source language
         uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
