@@ -81,7 +81,7 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 func TestLiveAdmissionRejectsMissingVerifier(t *testing.T) {
 	policyPath, _ := testPolicy(t)
 	var output bytes.Buffer
-	err := runAdmission(liveArgs(policyPath), testEnv(map[string]string{"PATH": "/usr/bin:/bin", "GITHUB_TOKEN": "test"}), &output, &output)
+	err := runAdmission(liveArgs(policyPath), testEnv(map[string]string{"PATH": t.TempDir(), "GITHUB_TOKEN": "test"}), &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "verifier") || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("runAdmission error = %v", err)
 	}
