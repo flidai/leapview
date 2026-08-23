@@ -1,5 +1,4 @@
 import assert from "node:assert/strict";
-import { writeFile } from "node:fs/promises";
 
 import { app, BrowserWindow, session } from "electron";
 
@@ -15,6 +14,7 @@ import {
 import {
   createRemoteWindow,
 } from "../../../../../desktop/src/security/remote-window.mjs";
+import { writeJSONAtomic } from "./result-file.mjs";
 
 app.enableSandbox();
 
@@ -455,9 +455,7 @@ function recordDecision(decision) {
 }
 
 async function writeResult() {
-  await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`, {
-    mode: 0o600,
-  });
+  await writeJSONAtomic(resultPath, result);
 }
 
 function delay(milliseconds) {
