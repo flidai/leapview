@@ -161,6 +161,49 @@ test('mobile record tables expose a horizontal-scroll affordance without changin
   }
 })
 
+test('narrow record tables keep the leading entity column visible while horizontally scrolling', async () => {
+  const page = await browser.newPage({ viewport: { width: 520, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    await page.locator('lv-record-table').evaluate((element: any) => {
+      element.setAttribute('variant', 'primary')
+      element.table = {
+        columns: [
+          { id: 'name', header: 'Name', kind: 'entity' },
+          { id: 'type', header: 'Type', width: '150px' },
+          { id: 'parent', header: 'Parent', width: '180px' },
+          { id: 'key', header: 'Identifier', kind: 'code', width: '220px' },
+        ],
+        rows: [{
+          name: { label: 'Brazilian ZIP Geolocation', href: '/sources/geolocation', icon: 'source' },
+          type: 'Source',
+          parent: 'Olist DuckLake',
+          key: 'olist_geolocation',
+        }],
+        minWidth: '640px',
+      }
+    })
+    await page.locator('lv-record-table').evaluate((element: any) => element.updateComplete)
+
+    const initial = await leadingColumnState(page)
+    await page.locator('lv-record-table .record-table-wrap').evaluate((element) => { element.scrollLeft = 300 })
+    const scrolled = await leadingColumnState(page)
+
+    expect(initial.wrapScrollWidth).toBeGreaterThan(initial.wrapWidth)
+    expect(initial.cellWidth).toBeGreaterThanOrEqual(220)
+    expect(initial.cellWidth).toBeLessThanOrEqual(280)
+    expect(initial.linkWidth).toBeGreaterThan(0)
+    expect(initial.cellPosition).toBe('sticky')
+    expect(scrolled.wrapScrollLeft).toBeGreaterThan(0)
+    expect(scrolled.cellLeft).toBe(initial.cellLeft)
+    expect(scrolled.linkLeft).toBe(initial.linkLeft)
+    expect(scrolled.documentOverflow).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('record table column toggles expose the column header as their accessible name', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
   try {
@@ -583,6 +626,25 @@ async function tableState(page: Page) {
       minWidth: getComputedStyle(table).minWidth,
       headerPosition: getComputedStyle(header).position,
       hasSelector: Boolean(element.querySelector('.record-table-column-selector')),
+    }
+  })
+}
+
+async function leadingColumnState(page: Page) {
+  return page.locator('lv-record-table').evaluate((element) => {
+    const wrap = element.querySelector('.record-table-wrap') as HTMLElement
+    const cell = element.querySelector('tbody td:first-child') as HTMLElement
+    const link = element.querySelector('.record-entity-link') as HTMLElement
+    return {
+      wrapWidth: wrap.clientWidth,
+      wrapScrollWidth: wrap.scrollWidth,
+      wrapScrollLeft: wrap.scrollLeft,
+      cellLeft: Math.round(cell.getBoundingClientRect().left),
+      cellWidth: Math.round(cell.getBoundingClientRect().width),
+      cellPosition: getComputedStyle(cell).position,
+      linkLeft: Math.round(link.getBoundingClientRect().left),
+      linkWidth: Math.round(link.getBoundingClientRect().width),
+      documentOverflow: document.documentElement.scrollWidth - window.innerWidth,
     }
   })
 }
