@@ -87,7 +87,7 @@ scanner disable switch. The security owner validates a record before the
 | Field | Requirement |
 | --- | --- |
 | `id` | Stable unique identifier; never reused |
-| `scanner` | Exact scanner name from the covered surface (for example `osv-scanner` or `govulncheck`) |
+| `scanner` | Exact scanner name from the covered surface (for example `govulncheck`, `bun-audit`, or `trivy`) |
 | `rule` | CVE, GHSA, OSV, or scanner rule identifier |
 | `resource` | One narrow package, module, image layer, or source path |
 | `owner` | Named individual or team accountable for removal |
@@ -191,7 +191,18 @@ The list endpoint is only a summary, so resolve the `main` ruleset ID first:
 ruleset_id=$(gh api --method GET repos/flidai/leapview/rulesets --jq '.[] | select(.name == "main") | .id')
 gh api --method GET "repos/flidai/leapview/rulesets/$ruleset_id" > main-ruleset.json
 for environment in leapview-demo leapview-ephemeral-qualification leapview-site-production; do
-  gh api --method GET "repos/flidai/leapview/environments/$environment" > "$environment.json"
+  environment_file="$environment.json"
+  gh api --method GET "repos/flidai/leapview/environments/$environment" > "$environment_file"
+  if jq -e '.deployment_branch_policy.custom_branch_policies == true' "$environment_file" >/dev/null; then
+    policies_file="$environment.branch-policies.json"
+    gh api --method GET \
+      "repos/flidai/leapview/environments/$environment/deployment-branch-policies" \
+      --jq '.branch_policies' > "$policies_file"
+    jq --slurpfile policies "$policies_file" \
+      '. + {custom_branch_policies: $policies[0]}' "$environment_file" \
+      > "$environment_file.tmp"
+    mv "$environment_file.tmp" "$environment_file"
+  fi
 done
 jq -n --slurpfile ruleset main-ruleset.json \
   --slurpfile demo leapview-demo.json \

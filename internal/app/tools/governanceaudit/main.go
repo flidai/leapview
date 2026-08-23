@@ -109,9 +109,10 @@ type environment struct {
 }
 
 type protectionRule struct {
-	Type              string `json:"type"`
-	WaitTimer         int    `json:"wait_timer"`
-	PreventSelfReview bool   `json:"prevent_self_review"`
+	Type              string            `json:"type"`
+	WaitTimer         int               `json:"wait_timer"`
+	PreventSelfReview bool              `json:"prevent_self_review"`
+	Reviewers         []json.RawMessage `json:"reviewers"`
 }
 
 type deploymentBranchPolicy struct {
@@ -121,6 +122,7 @@ type deploymentBranchPolicy struct {
 
 type customBranchPolicy struct {
 	Name string `json:"name"`
+	Type string `json:"type"`
 }
 
 type customBranchPolicies []customBranchPolicy
@@ -268,6 +270,10 @@ func readLiveSnapshot(ctx context.Context, repo string) (Snapshot, error) {
 		if getErr != nil {
 			return Snapshot{}, fmt.Errorf("read environment %q with gh: %w", contract.Name, getErr)
 		}
+		detail, getErr = readCustomBranchPolicies(ctx, repo, contract.Name, detail)
+		if getErr != nil {
+			return Snapshot{}, fmt.Errorf("read custom deployment branch policies for environment %q with gh: %w", contract.Name, getErr)
+		}
 		environments = append(environments, json.RawMessage(detail))
 	}
 	environmentsJSON, err := json.Marshal(environments)
@@ -275,6 +281,41 @@ func readLiveSnapshot(ctx context.Context, repo string) (Snapshot, error) {
 		return Snapshot{}, fmt.Errorf("encode live environments: %w", err)
 	}
 	return Snapshot{Rulesets: rulesetsJSON, Environments: environmentsJSON}, nil
+}
+
+// readCustomBranchPolicies resolves the subordinate endpoint only when the
+// environment summary says custom policies are enabled. The named policies
+// are copied into the snapshot so offline and live audits use the same shape.
+func readCustomBranchPolicies(ctx context.Context, repo, environmentName string, detail []byte) ([]byte, error) {
+	var summary environment
+	if err := json.Unmarshal(detail, &summary); err != nil {
+		return nil, fmt.Errorf("decode environment detail: %w", err)
+	}
+	if summary.DeploymentBranchPolicy == nil || !summary.DeploymentBranchPolicy.CustomBranchPolicies {
+		return detail, nil
+	}
+	policies, err := ghGet(ctx, repo, "environments/"+environmentName+"/deployment-branch-policies")
+	if err != nil {
+		return nil, err
+	}
+	branchPolicies, err := decodeCustomBranchPolicies(policies)
+	if err != nil {
+		return nil, fmt.Errorf("decode deployment branch policies: %w", err)
+	}
+	var payload map[string]json.RawMessage
+	if err := json.Unmarshal(detail, &payload); err != nil {
+		return nil, fmt.Errorf("decode environment payload: %w", err)
+	}
+	encodedPolicies, err := json.Marshal(branchPolicies)
+	if err != nil {
+		return nil, fmt.Errorf("encode deployment branch policies: %w", err)
+	}
+	payload["custom_branch_policies"] = encodedPolicies
+	enriched, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("encode environment payload: %w", err)
+	}
+	return enriched, nil
 }
 
 func ghGet(ctx context.Context, repo, resource string) ([]byte, error) {
@@ -340,8 +381,8 @@ func Audit(snapshot Snapshot) (Report, error) {
 			findings = append(findings, Finding{"environment.missing", fmt.Sprintf("governed environment %q is missing", contract.Name)})
 			continue
 		}
-		if contract.ReviewRequired && !hasRequiredReviewer(env.ProtectionRules) {
-			findings = append(findings, Finding{"environment.review", fmt.Sprintf("environment %q must require a reviewer", env.Name)})
+		if contract.ReviewRequired {
+			findings = append(findings, requiredReviewerFindings(env)...)
 		}
 		if contract.MainOnly && !mainBranchPolicy(env) {
 			findings = append(findings, Finding{"environment.branch_policy", fmt.Sprintf("environment %q must be restricted to the protected main branch", env.Name)})
@@ -387,9 +428,47 @@ func requiredStatusChecks(value ruleset) map[string]bool {
 	return checks
 }
 
+func requiredReviewerFindings(env environment) []Finding {
+	rules := make([]protectionRule, 0, len(env.ProtectionRules))
+	for _, rule := range env.ProtectionRules {
+		if rule.Type == "required_reviewers" {
+			rules = append(rules, rule)
+		}
+	}
+	if len(rules) == 0 {
+		return []Finding{{"environment.review.missing", fmt.Sprintf("environment %q must configure a required_reviewers protection rule", env.Name)}}
+	}
+	for _, rule := range rules {
+		if rule.PreventSelfReview && len(rule.Reviewers) > 0 {
+			return nil
+		}
+	}
+	findings := make([]Finding, 0, 2)
+	hasPreventSelfReview := false
+	hasReviewer := false
+	for _, rule := range rules {
+		hasPreventSelfReview = hasPreventSelfReview || rule.PreventSelfReview
+		hasReviewer = hasReviewer || len(rule.Reviewers) > 0
+	}
+	if !hasPreventSelfReview {
+		findings = append(findings, Finding{"environment.review.prevent_self_review", fmt.Sprintf("environment %q required_reviewers rule must set prevent_self_review=true", env.Name)})
+	}
+	if !hasReviewer {
+		findings = append(findings, Finding{"environment.review.reviewer", fmt.Sprintf("environment %q required_reviewers rule must include at least one reviewer", env.Name)})
+	}
+	if hasPreventSelfReview && hasReviewer {
+		findings = append(findings, Finding{"environment.review.configuration", fmt.Sprintf("environment %q must configure prevent_self_review=true and reviewers on the same required_reviewers rule", env.Name)})
+	}
+	return findings
+}
+
+// hasRequiredReviewer reports whether one configured rule satisfies the full
+// reviewer contract. Keep this small predicate available to callers that
+// consume the audit helpers directly; a rule with either field missing is not
+// sufficient.
 func hasRequiredReviewer(rules []protectionRule) bool {
 	for _, rule := range rules {
-		if rule.Type == "required_reviewers" {
+		if rule.Type == "required_reviewers" && rule.PreventSelfReview && len(rule.Reviewers) > 0 {
 			return true
 		}
 	}
@@ -397,15 +476,38 @@ func hasRequiredReviewer(rules []protectionRule) bool {
 }
 
 func mainBranchPolicy(env environment) bool {
-	if env.DeploymentBranchPolicy != nil && env.DeploymentBranchPolicy.ProtectedBranches {
-		return true
+	if env.DeploymentBranchPolicy != nil && !env.DeploymentBranchPolicy.CustomBranchPolicies {
+		return false
 	}
-	for _, policy := range env.CustomBranchPolicies {
-		if policy.Name == "main" || policy.Name == mainRef {
-			return true
+	if len(env.CustomBranchPolicies) != 1 {
+		return false
+	}
+	policy := env.CustomBranchPolicies[0]
+	return policy.Type == "branch" && (policy.Name == "main" || policy.Name == mainRef)
+}
+
+func decodeCustomBranchPolicies(raw json.RawMessage) ([]customBranchPolicy, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null")) {
+		return nil, errors.New("deployment branch policies is required")
+	}
+	if bytes.HasPrefix(trimmed, []byte("[")) {
+		var list []customBranchPolicy
+		if err := json.Unmarshal(trimmed, &list); err != nil {
+			return nil, err
 		}
+		return list, nil
 	}
-	return false
+	var wrapper struct {
+		BranchPolicies []customBranchPolicy `json:"branch_policies"`
+	}
+	if err := json.Unmarshal(trimmed, &wrapper); err != nil {
+		return nil, err
+	}
+	if wrapper.BranchPolicies == nil {
+		return nil, errors.New("branch_policies array is missing")
+	}
+	return wrapper.BranchPolicies, nil
 }
 
 func contains(values []string, wanted string) bool {

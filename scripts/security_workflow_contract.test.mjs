@@ -79,3 +79,32 @@ test("security workflow contains no mutable third-party action refs", async () =
     assert.match(value, /@[0-9a-f]{40}$/);
   }
 });
+
+test("native OCI platform refs are admitted before release and site manifest assembly", async () => {
+  const workflows = await Promise.all([
+    repositoryFile(".github/workflows/release.yml"),
+    repositoryFile(".github/workflows/site-image.yml"),
+  ]);
+  for (const workflow of workflows) {
+    const attestation = workflow.indexOf("Attest native");
+    const admission = workflow.indexOf("      - name: Admit exact native");
+    const record = workflow.indexOf("Record admitted native");
+    const assembly = workflow.indexOf("docker buildx imagetools create");
+    const topLevelAdmission = workflow.lastIndexOf("uses: ./.github/actions/oci-admission");
+    assert.ok(attestation >= 0, "native provenance attestation is required");
+    assert.ok(admission > attestation, "native admission must follow provenance attestation");
+    assert.ok(record > admission, "only admitted refs may be recorded");
+    assert.ok(assembly > record, "manifest assembly must follow native admission");
+    assert.ok(topLevelAdmission > assembly, "top-level manifest admission must remain after assembly");
+    const admittedBlock = workflow.slice(admission, record);
+    assert.match(admittedBlock, /uses: \.\/\.github\/actions\/oci-admission/);
+    assert.match(admittedBlock, /image: \$\{\{ env\.IMAGE_NAME \}\}@\$\{\{ steps\.publish\.outputs\.digest \}\}/);
+    assert.match(admittedBlock, /repository: \$\{\{ env\.IMAGE_NAME \}\}/);
+    assert.match(admittedBlock, /expected-workflow: flidai\/leapview\/\.github\/workflows\/(?:release|site-image)\.yml/);
+    assert.match(admittedBlock, /source-revision: \$\{\{ needs\.identity\.outputs\.revision \}\}/);
+    const recordedBlock = workflow.slice(record, assembly);
+    assert.match(recordedBlock, /IMAGE_REFERENCE: \$\{\{ steps\.admission\.outputs\.image \}\}/);
+    assert.match(recordedBlock, /printf '%s\\n' "\$IMAGE_REFERENCE"/);
+    assert.match(workflow.slice(assembly), /image_references\[@\]/);
+  }
+});

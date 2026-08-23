@@ -36,6 +36,25 @@ func TestCoverageDiscoversOmissionsAndDuplicates(t *testing.T) {
 	assertValidationError(t, root, "not a maintained security surface")
 }
 
+func TestCoverageRejectsUnknownAndInapplicableScanners(t *testing.T) {
+	for _, test := range []struct {
+		name    string
+		scanner string
+		want    string
+	}{
+		{name: "unknown", scanner: "made-up", want: "unknown scanner"},
+		{name: "inapplicable", scanner: "npm-audit", want: "does not apply"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root := fixtureRepository(t)
+			coverage := mustReadCoverage(t, root)
+			coverage.Surfaces[0].Scanners = []string{test.scanner}
+			writeCoverage(t, root, coverage)
+			assertValidationError(t, root, test.want)
+		})
+	}
+}
+
 func TestExceptionsRejectUnsafeEntries(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -65,6 +84,53 @@ func TestExceptionsRejectUnsafeEntries(t *testing.T) {
 		writeExceptions(t, root, Exceptions{Version: 1, Exceptions: []Exception{exception, exception}})
 		assertValidationError(t, root, "duplicate exception id")
 	})
+
+	t.Run("scanner must be covered", func(t *testing.T) {
+		root := fixtureRepository(t)
+		exception := fixtureException()
+		exception.Scanner = "action-pin-policy"
+		writeExceptions(t, root, Exceptions{Version: 1, Exceptions: []Exception{exception}})
+		assertValidationError(t, root, "is not covered")
+	})
+}
+
+func TestExceptionMatcherRequiresExactIdentityAndProtectsCriticalFindings(t *testing.T) {
+	contract := Exceptions{Version: 1, Exceptions: []Exception{{
+		ID: "scan-001", Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl",
+	}}}
+	if _, ok := contract.Match(Finding{Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl", Severity: "MEDIUM"}); !ok {
+		t.Fatal("exact exception did not match")
+	}
+	for _, finding := range []Finding{
+		{Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "curl", Severity: "MEDIUM"},
+		{Scanner: "npm-audit", Rule: "CVE-2026-0001", Resource: "openssl", Severity: "MEDIUM"},
+		{Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl"},
+		{Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl", Severity: "HIGH"},
+		{Scanner: "trivy", Rule: "CVE-2026-0001", Resource: "openssl", Class: "provenance"},
+	} {
+		if _, ok := contract.Match(finding); ok {
+			t.Fatalf("finding unexpectedly matched exception: %+v", finding)
+		}
+	}
+}
+
+func TestValidatedExceptionIsUsableOnlyForItsExactFinding(t *testing.T) {
+	root := fixtureRepository(t)
+	exception := fixtureException()
+	writeExceptions(t, root, Exceptions{Version: 1, Exceptions: []Exception{exception}})
+	if err := ValidateRepository(root, time.Date(2026, 8, 23, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("ValidateRepository() error = %v", err)
+	}
+	contract, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := contract.Match(Finding{Scanner: exception.Scanner, Rule: exception.Rule, Resource: exception.Resource, Severity: "MEDIUM"}); !ok {
+		t.Fatal("validated exception did not match its exact finding")
+	}
+	if _, ok := contract.Match(Finding{Scanner: exception.Scanner, Rule: exception.Rule, Resource: "another/module", Severity: "MEDIUM"}); ok {
+		t.Fatal("validated exception matched a different resource")
+	}
 }
 
 func TestUpdaterCoverageAndBounds(t *testing.T) {
@@ -151,14 +217,14 @@ updates:
 
 func fixtureCoverage() Coverage {
 	return Coverage{Version: 1, Surfaces: []Surface{
-		{Path: "go.mod", Kind: "go-module", Updater: Updater{Ecosystem: "gomod", Directory: "/"}, Scanners: []string{"osv-scanner"}},
+		{Path: "go.mod", Kind: "go-module", Updater: Updater{Ecosystem: "gomod", Directory: "/"}, Scanners: []string{"govulncheck"}},
 		{Path: "Dockerfile", Kind: "dockerfile", Updater: Updater{Ecosystem: "docker", Directory: "/"}, Scanners: []string{"trivy"}, Images: []string{"alpine:3.20"}},
 		{Path: ".github/workflows/test.yml", Kind: "github-actions", Updater: Updater{Ecosystem: "github-actions", Directory: "/"}, Scanners: []string{"actionlint"}},
 	}}
 }
 
 func fixtureException() Exception {
-	return Exception{ID: "scan-001", Scanner: "osv-scanner", Rule: "CVE-2026-0001", Resource: "example/module", Owner: "security@example.com", Rationale: "Upstream fix is queued.", Created: "2026-08-01", Expires: "2026-09-01"}
+	return Exception{ID: "scan-001", Scanner: "govulncheck", Rule: "CVE-2026-0001", Resource: "example/module", Owner: "security@example.com", Rationale: "Upstream fix is queued.", Created: "2026-08-01", Expires: "2026-09-01"}
 }
 
 func mustReadCoverage(t *testing.T, root string) Coverage {

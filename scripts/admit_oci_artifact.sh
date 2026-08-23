@@ -68,6 +68,55 @@ jq -e '
   (.maxUnresolved | type == "number" and . >= 0 and floor == .)
 ' <<<"$policy_json" >/dev/null || die "vulnerability policy is not pinned"
 
+# Validate the repository exception contract once, before any scanner result
+# is considered.  OCI admission may also be used outside a checkout; in that
+# case no exception contract is available and every finding remains blocking.
+exception_contract=""
+repository_root=""
+if command -v go >/dev/null 2>&1 &&
+  repository_root="$(git -C "$(dirname "$policy_path")" rev-parse --show-toplevel 2>/dev/null)" &&
+  [[ -f "$repository_root/.security/coverage.yaml" && -f "$repository_root/internal/app/tools/securitypolicy/main.go" ]]; then
+  exception_contract="$(mktemp)"
+  trap 'rm -f "$exception_contract"' EXIT
+  (cd "$repository_root" && go run ./internal/app/tools/securitypolicy --root "$repository_root" --exceptions-json) >"$exception_contract" || die "validated exception contract is unavailable"
+fi
+
+match_exception() {
+  local rule="$1" resource="$2" severity="${3:-}"
+  [[ -n "$exception_contract" ]] || return 1
+  jq -e \
+    --arg scanner trivy \
+    --arg rule "$rule" \
+    --arg resource "$resource" \
+    --arg severity "$severity" \
+    '((($severity | length) == 0) or (($severity | ascii_upcase) == "HIGH") or (($severity | ascii_upcase) == "CRITICAL") or (($scanner | ascii_downcase) == "provenance") or (($scanner | ascii_downcase) == "release-signing")) | not) and
+      any(.exceptions[]?; .scanner == $scanner and .rule == $rule and .resource == $resource)' \
+    "$exception_contract" >/dev/null 2>&1
+}
+
+unresolved_vulnerability_count() {
+  local report="$1" findings rule resource severity unresolved=0
+  findings="$(jq -r '
+    [ .Results[]?.Vulnerabilities[]? |
+      [(.VulnerabilityID // "" | tostring), (.PkgName // .Target // "" | tostring), (.Severity // "" | tostring)] |
+      @tsv ] | .[]
+  ' "$report" 2>/dev/null)" || return 1
+  if [[ -z "$findings" ]]; then
+    printf '0\n'
+    return
+  fi
+  while IFS=$'\t' read -r rule resource severity; do
+    if [[ -z "$rule" || -z "$resource" ]]; then
+      unresolved=$((unresolved + 1))
+      continue
+    fi
+    if ! match_exception "$rule" "$resource" "$severity"; then
+      unresolved=$((unresolved + 1))
+    fi
+  done <<<"$findings"
+  printf '%s\n' "$unresolved"
+}
+
 digest="${image##*@}"
 write_output() {
   local result="$1"
@@ -123,7 +172,7 @@ github_repository="${GITHUB_REPOSITORY:-flidai/leapview}"
 attestation_json="$(mktemp)"
 registry_json="$(mktemp)"
 trivy_json="$(mktemp)"
-trap 'rm -f "$attestation_json" "$registry_json" "$trivy_json"' EXIT
+trap 'rm -f "$attestation_json" "$registry_json" "$trivy_json" "$exception_contract"' EXIT
 
 GH_TOKEN="${GH_TOKEN:-${GITHUB_TOKEN}}" gh attestation verify "oci://$image" \
   --repo flidai/leapview \
@@ -169,9 +218,9 @@ while IFS= read -r severity; do severity_args+=(--severity "$severity"); done < 
 ignore_args=()
 if [[ "$(jq -r '.ignoreUnfixed' <<<"$policy_json")" == true ]]; then ignore_args+=(--ignore-unfixed); fi
 "${trivy_command[@]}" image --quiet --format json --exit-code 0 "${severity_args[@]}" "${ignore_args[@]}" "$image" > "$trivy_json" || die "pinned vulnerability scan could not complete"
-jq -e --argjson max "$(jq '.maxUnresolved' <<<"$policy_json")" '
-  ([.Results[]?.Vulnerabilities[]?] | length) <= $max
-' "$trivy_json" >/dev/null || die "vulnerability evidence exceeds policy"
+max_unresolved="$(jq '.maxUnresolved' <<<"$policy_json")"
+unresolved="$(unresolved_vulnerability_count "$trivy_json")" || die "vulnerability evidence is not machine-readable"
+[[ "$unresolved" -le "$max_unresolved" ]] || die "vulnerability evidence exceeds policy"
 
 write_output "$(jq -n \
   --arg image "$image" \

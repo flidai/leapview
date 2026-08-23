@@ -1160,7 +1160,7 @@ tasks:
       - node --test scripts/security_scanner_contract.test.mjs
       - task: security:promotion-contracts
       - task: security:governance:test
-      - bash -n scripts/security_dependencies.sh scripts/security_secrets.sh scripts/security_source.sh scripts/admit_oci_artifact.sh scripts/require_security_results.sh
+      - bash -n scripts/security_dependencies.sh scripts/security_secrets.sh scripts/security_source.sh scripts/security_exception_match.sh scripts/admit_oci_artifact.sh scripts/require_security_results.sh
 
   security:check:
     desc: Run all required security gates for the current candidate

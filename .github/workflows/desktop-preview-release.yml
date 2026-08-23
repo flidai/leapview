@@ -194,7 +194,7 @@ jobs:
         with:
           subject-path: release/*
 
-      - name: Publish immutable unsigned prerelease
+      - name: Create draft unsigned prerelease with staged assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
@@ -221,27 +221,30 @@ jobs:
             --target "$source_sha" \
             --title "LeapView Desktop $VERSION (unsigned preview)" \
             --notes-file "$notes" \
+            --draft \
             --prerelease \
             release/*
 
-      - name: Verify published prerelease shape
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
-        run: |
-          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
-            --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected preview release") end'
-
-      - name: Re-download and verify published desktop evidence
+      - name: Verify staged draft assets and attestations
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
           SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
         run: |
           set -euo pipefail
-          download="$RUNNER_TEMP/published-desktop-evidence"
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
+            --jq 'if (.isDraft == true and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected draft preview release") end'
+          download="$RUNNER_TEMP/staged-desktop-evidence"
           mkdir -p "$download"
           gh release download "$RELEASE_TAG" --dir "$download"
+          mapfile -t staged_files < <(find release -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t downloaded_files < <(find "$download" -maxdepth 1 -type f -printf '%f\n' | sort)
+          test "${#staged_files[@]}" -eq 13
+          test "${#downloaded_files[@]}" -eq "${#staged_files[@]}"
+          diff -u <(printf '%s\n' "${staged_files[@]}") <(printf '%s\n' "${downloaded_files[@]}")
+          for name in "${staged_files[@]}"; do
+            cmp "release/$name" "$download/$name"
+          done
           cd "$download"
           test "$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)" -eq 4
           test "$(find . -maxdepth 1 -type f -name '*.release.json' | wc -l)" -eq 4
@@ -256,3 +259,18 @@ jobs:
               --signer-workflow flidai/leapview/.github/workflows/desktop-preview-release.yml \
               --source-digest "$SOURCE_SHA" >/dev/null
           done
+
+      - name: Publish verified prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+        run: |
+          gh release edit "$RELEASE_TAG" --draft=false
+
+      - name: Verify published prerelease shape
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+        run: |
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
+            --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected published preview release") end'

@@ -51,19 +51,30 @@ type Updater struct {
 // identify one narrow scanner finding and have a short, dated owner-approved
 // rationale.
 type Exceptions struct {
-	Version    int         `yaml:"version"`
-	Exceptions []Exception `yaml:"exceptions"`
+	Version    int         `yaml:"version" json:"version"`
+	Exceptions []Exception `yaml:"exceptions" json:"exceptions"`
 }
 
 type Exception struct {
-	ID        string `yaml:"id"`
-	Scanner   string `yaml:"scanner"`
-	Rule      string `yaml:"rule"`
-	Resource  string `yaml:"resource"`
-	Owner     string `yaml:"owner"`
-	Rationale string `yaml:"rationale"`
-	Created   string `yaml:"created"`
-	Expires   string `yaml:"expires"`
+	ID        string `yaml:"id" json:"id"`
+	Scanner   string `yaml:"scanner" json:"scanner"`
+	Rule      string `yaml:"rule" json:"rule"`
+	Resource  string `yaml:"resource" json:"resource"`
+	Owner     string `yaml:"owner" json:"owner"`
+	Rationale string `yaml:"rationale" json:"rationale"`
+	Created   string `yaml:"created" json:"created"`
+	Expires   string `yaml:"expires" json:"expires"`
+}
+
+// Finding is the small, machine-readable identity used when deciding whether
+// a scanner result may be covered by an exception.  Scanner output adapters
+// must provide all three identity fields; matching is deliberately exact.
+type Finding struct {
+	Scanner  string `json:"scanner"`
+	Rule     string `json:"rule"`
+	Resource string `json:"resource"`
+	Severity string `json:"severity,omitempty"`
+	Class    string `json:"class,omitempty"`
 }
 
 type dependabotConfig struct {
@@ -91,6 +102,17 @@ var (
 		"bun.lock": true, "bun.lockb": true, "package-lock.json": true,
 		"pnpm-lock.yaml": true, "yarn.lock": true,
 	}
+	// scannerApplicability is the closed vocabulary for coverage.  Keep this
+	// list repository-owned: a typo or a scanner attached to the wrong surface
+	// must fail policy validation instead of silently reducing coverage.
+	scannerApplicability = map[string]map[string]bool{
+		"govulncheck":       {"go-module": true},
+		"bun-audit":         {"js-package": true, "js-lock": true},
+		"npm-audit":         {"js-package": true, "js-lock": true},
+		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true},
+		"action-pin-policy": {"github-actions": true},
+		"actionlint":        {"github-actions": true},
+	}
 )
 
 // ValidateRepository validates all three repository-owned contracts and
@@ -110,7 +132,7 @@ func ValidateRepository(root string, now time.Time) error {
 	if err != nil {
 		return fmt.Errorf("read %s: %w", exceptionsFile, err)
 	}
-	if err := validateExceptions(exceptions, now); err != nil {
+	if err := validateExceptions(exceptions, coverage, now); err != nil {
 		return err
 	}
 	dependabot, err := readYAML[dependabotConfig](filepath.Join(root, dependabotFile))
@@ -230,9 +252,18 @@ func validateCoverage(root string, coverage Coverage) error {
 		}
 		seenScanners := map[string]bool{}
 		for _, scanner := range surface.Scanners {
-			scanner = strings.TrimSpace(scanner)
-			if scanner == "" {
+			trimmed := strings.TrimSpace(scanner)
+			if trimmed == "" {
 				return fmt.Errorf("%s has an empty scanner", where)
+			}
+			if trimmed != scanner {
+				return fmt.Errorf("%s scanner %q must not contain leading or trailing whitespace", where, scanner)
+			}
+			if _, ok := scannerApplicability[scanner]; !ok {
+				return fmt.Errorf("%s has unknown scanner %q", where, scanner)
+			}
+			if !scannerApplicability[scanner][surface.Kind] {
+				return fmt.Errorf("%s scanner %q does not apply to kind %q", where, scanner, surface.Kind)
 			}
 			if seenScanners[scanner] {
 				return fmt.Errorf("%s lists scanner %q more than once", where, scanner)
@@ -310,7 +341,7 @@ func validateUpdater(updater Updater, where string) error {
 	return nil
 }
 
-func validateExceptions(contract Exceptions, now time.Time) error {
+func validateExceptions(contract Exceptions, coverage Coverage, now time.Time) error {
 	if contract.Version != 1 {
 		return fmt.Errorf("exceptions version must be 1, got %d", contract.Version)
 	}
@@ -318,6 +349,12 @@ func validateExceptions(contract Exceptions, now time.Time) error {
 		return errors.New("exceptions must be an explicit list (use [] when empty)")
 	}
 	seen := make(map[string]bool, len(contract.Exceptions))
+	coveredScanners := make(map[string]bool)
+	for _, surface := range coverage.Surfaces {
+		for _, scanner := range surface.Scanners {
+			coveredScanners[scanner] = true
+		}
+	}
 	now = now.UTC()
 	for i, exception := range contract.Exceptions {
 		where := fmt.Sprintf("exception %d", i+1)
@@ -328,6 +365,12 @@ func validateExceptions(contract Exceptions, now time.Time) error {
 			return fmt.Errorf("duplicate exception id %q", exception.ID)
 		}
 		seen[exception.ID] = true
+		if _, known := scannerApplicability[exception.Scanner]; !known {
+			return fmt.Errorf("%s scanner %q is unknown", where, exception.Scanner)
+		}
+		if !coveredScanners[exception.Scanner] {
+			return fmt.Errorf("%s scanner %q is not covered", where, exception.Scanner)
+		}
 		for field, value := range map[string]string{
 			"scanner": exception.Scanner, "rule": exception.Rule, "resource": exception.Resource,
 			"owner": exception.Owner, "rationale": exception.Rationale,
@@ -361,6 +404,32 @@ func validateExceptions(contract Exceptions, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+// Match returns the one exact, currently valid exception for finding.  It is
+// intentionally not a pattern matcher: scanner, rule, and resource must all
+// be equal.  High/critical results and release/provenance classes cannot be
+// waived even when a matching record exists.
+func (contract Exceptions) Match(finding Finding) (Exception, bool) {
+	if protectedFinding(finding) {
+		return Exception{}, false
+	}
+	for _, exception := range contract.Exceptions {
+		if exception.Scanner == finding.Scanner && exception.Rule == finding.Rule && exception.Resource == finding.Resource {
+			return exception, true
+		}
+	}
+	return Exception{}, false
+}
+
+func protectedFinding(finding Finding) bool {
+	severity := strings.ToUpper(strings.TrimSpace(finding.Severity))
+	if severity == "" || severity == "HIGH" || severity == "CRITICAL" {
+		return true
+	}
+	class := strings.ToLower(strings.TrimSpace(finding.Class))
+	scanner := strings.ToLower(strings.TrimSpace(finding.Scanner))
+	return class == "release-signing" || class == "provenance" || scanner == "release-signing" || scanner == "provenance"
 }
 
 func parseExceptionDate(value string) (time.Time, error) {

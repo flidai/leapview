@@ -94,14 +94,17 @@ test("desktop preview publication is manual, unsigned, immutable, and attested",
     "attestations: write",
     "id-token: write",
     'gh release create "$release_tag"',
+    "--draft",
     "--prerelease",
     "--target \"$source_sha\"",
     "This build is unsigned",
-    "Re-download and verify published desktop evidence",
+    "Verify staged draft assets and attestations",
+    'cmp "release/$name" "$download/$name"',
     "sha256sum --check SHA256SUMS",
     "test \"$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)\" -eq 4",
     "gh attestation verify \"$evidence\"",
     "--source-digest \"$SOURCE_SHA\"",
+    'gh release edit "$RELEASE_TAG" --draft=false',
   ]) {
     assert.ok(workflow.includes(required), `preview workflow is missing ${required}`);
   }
@@ -115,4 +118,10 @@ test("desktop preview publication is manual, unsigned, immutable, and attested",
   );
   assert.doesNotMatch(workflow, /^\s{2}(?:push|pull_request):/mu);
   assert.doesNotMatch(workflow, /latest|stable-pointer|auto-update/iu);
+  const draft = workflow.indexOf("--draft");
+  const verification = workflow.indexOf("Verify staged draft assets and attestations");
+  const publish = workflow.indexOf('gh release edit "$RELEASE_TAG" --draft=false');
+  assert.ok(draft >= 0 && verification > draft && publish > verification);
+  assert.match(workflow.slice(verification, publish), /isDraft == true/);
+  assert.match(workflow.slice(publish), /isDraft == false/);
 });
