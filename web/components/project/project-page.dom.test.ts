@@ -252,23 +252,28 @@ test('unavailable pipeline shows visible recovery guidance and connections actio
       await element.updateComplete
       const root = element.shadowRoot!
       const run = root.querySelector('button[aria-label*="Run now unavailable"]') as HTMLButtonElement | null
-      const recovery = root.querySelector('a.action-link[href="/connections"]') as HTMLAnchorElement | null
+      const recovery = root.querySelector('.refresh-recovery-actions a.action-link[href="/connections"]') as HTMLAnchorElement | null
       const recoveryStyle = recovery ? getComputedStyle(recovery) : null
       return {
         runDisabled: run?.disabled,
+        headerHasRecovery: Boolean(root.querySelector('.breadcrumb-header a.action-link[href="/connections"]')),
         recoveryText: recovery?.textContent?.trim(),
         recoveryBackground: recoveryStyle?.backgroundColor,
         recoveryForeground: recoveryStyle?.color,
         recoveryMinHeight: recoveryStyle?.minHeight,
+        recoveryLabel: recovery?.parentElement?.getAttribute('aria-label'),
         overview: root.querySelector('.detail-section[aria-label="Overview"]')?.textContent?.trim(),
       }
     })
     expect(state.runDisabled).toBe(true)
+    expect(state.headerHasRecovery).toBe(false)
     expect(state.recoveryText).toContain('Review connections')
     expect(state.recoveryBackground).toBe('rgb(9, 105, 218)')
     expect(state.recoveryForeground).toBe('rgb(255, 255, 255)')
     expect(state.recoveryMinHeight).toBe('32px')
+    expect(state.recoveryLabel).toBe('Refresh recovery actions')
     expect(state.overview).toContain('Refresh state could not be loaded')
+    expect(state.overview).toContain('Review connections')
   } finally {
     await page.close()
   }

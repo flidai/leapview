@@ -298,7 +298,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
                 .administration=${this.connectionAdmin}
               ></lv-connection-administration>
             ` : nothing}
-            ${page.actions?.map((action) => this.renderAction(action, page))}
+            ${page.actions?.filter((action) => !isRefreshRecoveryAction(action, page)).map((action) => this.renderAction(action, page))}
           </div>
         </header>
         <div class="asset-body">
@@ -360,11 +360,19 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderDetails(page: ResourceAssetPageSignal) {
+    const recoveryActions = page.actions?.filter((action) => isRefreshRecoveryAction(action, page)) ?? []
+    const recovery = recoveryActions.length > 0
+      ? html`
+          <div class="refresh-recovery-actions" aria-label="Refresh recovery actions">
+            ${recoveryActions.map((action) => this.renderAction(action, page))}
+          </div>
+        `
+      : nothing
     return html`
       <section class="details" id="details" aria-label="Asset details">
         ${page.details?.semanticModelGraph ? renderSemanticModelGraph(page.details.semanticModelGraph, page) : nothing}
         <div class="details-content">
-          ${renderFacts('Overview', page.details?.overview ?? [], true)}
+          ${renderFacts('Overview', page.details?.overview ?? [], true, recovery)}
           ${(page.details?.sections ?? []).map(renderDetailSection)}
         </div>
       </section>
@@ -533,7 +541,7 @@ function renderSemanticModelGraph(graph: NonNullable<NonNullable<ResourceAssetPa
   `
 }
 
-function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boolean) {
+function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boolean, footer: unknown = nothing) {
   const filtered = facts.filter((fact) => fact.value?.trim())
   return html`
     <section class="detail-section" aria-label=${title}>
@@ -550,8 +558,16 @@ function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boo
           </div>
         `
         : html`<div class="empty">No details are available.</div>`}
+      ${footer}
     </section>
   `
+}
+
+function isRefreshRecoveryAction(
+  action: NonNullable<ResourceAssetPageSignal['actions']>[number],
+  page: ResourceAssetPageSignal,
+): boolean {
+  return page.refresh?.status === 'unavailable' && action.icon === 'open' && action.href === '/connections'
 }
 
 function renderRecordTableSection(title: string, table?: RecordTableSignal) {
@@ -1272,6 +1288,14 @@ const projectStyles = css`
 
   .facts.overview {
     grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  }
+
+  .refresh-recovery-actions {
+    display: flex;
+    min-width: 0;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--base-size-8);
   }
 
   .facts .wide {
