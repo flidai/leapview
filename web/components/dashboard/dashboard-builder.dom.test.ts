@@ -397,6 +397,40 @@ test('dashboard builder selects a newly added page after the authoritative comma
   }
 })
 
+test('dashboard builder retains the draft and exposes terminal command recovery', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      await element.updateComplete
+      const alert = element.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const buttons = Array.from(alert?.querySelectorAll('button') ?? []) as HTMLButtonElement[]
+      const beforeDismiss = {
+        title: element.shadowRoot?.querySelector('h1')?.textContent?.trim(),
+        pageCount: element.shadowRoot?.querySelectorAll('.page-tab[role="tab"]').length,
+        failureKind: element.terminalFailure?.kind,
+        message: alert?.textContent?.trim(),
+        actions: buttons.map((button) => button.textContent?.trim()),
+      }
+      buttons.find((button) => button.textContent?.includes('Dismiss'))?.click()
+      await element.updateComplete
+      return { ...beforeDismiss, alertAfterDismiss: Boolean(element.shadowRoot?.querySelector('[role="alert"]')) }
+    })
+    expect(state.title).toBe('Revenue draft')
+    expect(state.pageCount).toBe(2)
+    expect(state.failureKind).toBe('unavailable')
+    expect(state.message).toContain('previous state was kept')
+    expect(state.actions).toEqual(['Reload latest draft', 'Dismiss'])
+    expect(state.alertAfterDismiss).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder follows the streamed exact-revision preview href', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

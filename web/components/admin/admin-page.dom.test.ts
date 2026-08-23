@@ -334,7 +334,7 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({
       name: 'Sales automation', selectedPermissions: 1,
-      error: 'Token creation failed because this page expired. Reload the page and try again.',
+      error: 'Token creation is not permitted for your account.',
       createDisabled: false,
     })
     expect(state.succeeded.name).toBe('')

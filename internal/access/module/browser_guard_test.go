@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -121,6 +122,41 @@ func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) 
 	}
 }
 
+func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name, method string
+		wantStatus   int
+		wantLocation string
+	}{
+		{name: "navigation", method: http.MethodGet, wantStatus: http.StatusFound, wantLocation: "/login?error=session_expired"},
+		{name: "command", method: http.MethodPost, wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(test.method, "/models/model:orders/details", nil)
+			request.AddCookie(&http.Cookie{Name: "lv_session", Value: "expired-session"})
+			module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("protected handler ran for expired session")
+			})).ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus || recorder.Header().Get("Location") != test.wantLocation {
+				t.Fatalf("response = %d location %q", recorder.Code, recorder.Header().Get("Location"))
+			}
+		})
+	}
+}
+
 func TestAuthenticateInstallsInjectedPrincipalInRequestContext(t *testing.T) {
 	principal := Principal{ID: "principal", Kind: access.PrincipalKindUser}
 	module := browserGuardModule(nil, principal, true)
@@ -146,6 +182,9 @@ func TestRequirePlatformAdminRejectsNonAdmin(t *testing.T) {
 	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/system", nil))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden administration recovery body = %q", body)
 	}
 }
 

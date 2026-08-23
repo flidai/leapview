@@ -236,6 +236,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
+- [Cross-role journey qualification](/docs/architecture/journey-qualification): Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.
 - [GitHub-hosted CI](/docs/architecture/github-hosted-ci): Understand LeapView's ephemeral runners, bounded caches, and portable validation contract.
 - [Storage architecture](/docs/storage-architecture): Understand DuckLake, DuckDB, snapshots, and serving pointers.
 - [Datastar signal flow](/docs/architecture/datastar): Understand server-owned state and SSE response contracts.

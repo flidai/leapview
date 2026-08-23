@@ -52,11 +52,23 @@ async function verifyDataExplorerRecoveryActions(): Promise<void> {
     if (!response?.ok()) throw new Error(`/explore recovery: status ${response?.status() ?? 'unknown'}`)
     const explorer = page.locator('lv-data-explorer')
     await explorer.waitFor()
-    const firstObject = explorer.locator('.object-button').first()
-    await firstObject.waitFor({ state: 'visible' })
-    await firstObject.click()
+    // /explore opens in semantic-query mode. Preview recovery belongs to the
+    // browse mode of the same canonical route, so switch the typed command
+    // state before selecting a resource instead of clicking a hidden tree.
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ dataExplorer: { command: { mode: 'browse' } } })
+    })
+    await expect(explorer.locator('.route')).not.toHaveClass(/semantic/)
 
     const preview = explorer.locator('lv-data-preview-table')
+    if (!await preview.isVisible()) {
+      const firstGroup = explorer.locator('details.resource-group').first()
+      await firstGroup.locator(':scope > summary').click()
+      const firstObject = firstGroup.locator('.object-button').first()
+      await firstObject.waitFor({ state: 'visible' })
+      await firstObject.click()
+    }
     await preview.waitFor({ state: 'visible' })
     await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any

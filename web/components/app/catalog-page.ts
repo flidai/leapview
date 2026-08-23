@@ -1,5 +1,5 @@
 import { LitElement, css, html } from 'lit'
-import { state } from 'lit/decorators.js'
+import { property, state } from 'lit/decorators.js'
 import type { CatalogPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -12,6 +12,7 @@ type ActiveAppearance = { id: string; dashboardId: string; title: string; left: 
 type AppearanceValue = { icon: string; color: string }
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
+  @property({ attribute: 'create-draft-href' }) createDraftHref = ''
   private freshnessTimer: number | undefined
   @state() private activeAppearance: ActiveAppearance | null = null
   @state() private appearanceOverrides: Record<string, AppearanceValue> = {}
@@ -48,6 +49,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .appearance-scrim { position: fixed; inset: 0; z-index: 30; }
     .appearance-popover { position: fixed; z-index: 31; }
     .appearance-error { position: fixed; right: var(--base-size-24); bottom: var(--base-size-24); z-index: 40; padding: var(--base-size-8) var(--base-size-12); border: var(--borderWidth-default) solid var(--display-red-borderColor-muted); border-radius: var(--lv-radius-default); background: var(--display-red-bgColor-muted); color: var(--display-red-fgColor); font: var(--lv-type-caption); }
+    .catalog-create-draft { display: inline-flex; align-items: center; min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); text-decoration: none; font: var(--lv-type-body-compact); }
 
   `]
 
@@ -87,7 +89,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     return html`
       <section aria-label="LeapView dashboard catalog">
-        ${renderPageHeader(page.title)}
+        ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref}>Create draft</a>` : undefined)}
         <lv-entity-list
           @lv-entity-list-icon-activate=${this.openAppearancePicker}
           .items=${page.dashboards.map((dashboard) => {

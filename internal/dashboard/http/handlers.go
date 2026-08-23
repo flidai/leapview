@@ -122,6 +122,22 @@ type AuthoringApplication interface {
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 }
 
+type browserDraftCreator interface {
+	Create(context.Context, authoringservice.CreateRequest) (authoringservice.Result, error)
+	Fork(context.Context, sourceadapter.ForkRequest) (authoringservice.Result, error)
+}
+
+// ProjectObjectRefs binds browser-level draft creation to the active project
+// selected by composition. It is deliberately exported for the module router
+// so a create action cannot smuggle a project selector through the URL.
+func ProjectObjectRefs(_ *nethttp.Request, projectID projectgraph.ResourceID) []access.ResourceRef {
+	ref, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+	if err != nil {
+		return nil
+	}
+	return []access.ResourceRef{ref}
+}
+
 type SessionKeyFactory func(
 	r *nethttp.Request,
 	report dashboarddefinition.Definition,

@@ -14,6 +14,7 @@ import type {
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
+import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 
@@ -39,6 +40,7 @@ type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visual
  * builder projection delivered by the stream. */
 class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @property({ attribute: 'back-href' }) backHref = ''
+  @property({ attribute: 'fork-href' }) forkHref = ''
   @property({ attribute: 'page-base-href' }) pageBaseHref = ''
   @property({ attribute: 'preview-href' }) previewHref = ''
   @property({ attribute: 'export-yaml-href' }) exportYAMLHref = ''
@@ -47,6 +49,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private localPageID = ''
   @state() private localVisualID = ''
   @state() private visualType = 'bar'
+  @state() private terminalFailure: BrowserCommandFailure | null = null
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
 
   // Add-page uses server-generated identifiers. Keep the page set that was
@@ -54,6 +57,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   // the page created by that intent, even when the response's selectedPageId
   // still reflects the page that was active before the mutation.
   private pendingAddPage: { revision: string; pageIDs: Set<string> } | null = null
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
+  }
 
   static styles = css`
     :host {
@@ -89,6 +102,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-8) var(--base-size-16);
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-panel);
+    }
+
+    .terminal-failure {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: var(--base-size-8);
+      padding: var(--base-size-8) var(--base-size-16);
+      border-bottom: var(--lv-border-muted);
+      background: var(--lv-bg-danger-muted, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-danger, var(--lv-fg-default));
+      font: var(--lv-type-body-compact);
+    }
+
+    .terminal-failure span {
+      min-width: 0;
+      flex: 1 1 18rem;
     }
 
     .back {
@@ -797,6 +827,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visual = page ? this.selectedVisual(page, builder) : undefined
     return html`
       <section class="builder" aria-label="Dashboard builder">
+        ${this.renderTerminalFailure()}
         ${this.renderToolbar(builder)}
         <div class="body">
           ${this.renderFieldPane(builder)}
@@ -809,7 +840,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderToolbar(builder: DashboardBuilderSignal) {
     const saveState = builder.save.state
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || Boolean(this.forkHref)
     return html`
       <header class="toolbar">
         ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboard">Back</a>` : html`<span class="back" aria-label="Back to dashboard">Back</span>`}
@@ -827,6 +858,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
+                ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Fork as draft</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'shared' ? 'Make private' : 'Share'}</button>` : nothing}
                 ${builder.capabilities.canExport
                   ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
@@ -837,6 +869,30 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         </div>
       </header>
     `
+  }
+
+  private renderTerminalFailure() {
+    const failure = this.terminalFailure
+    if (!failure) return nothing
+    return html`<div class="terminal-failure" role="alert" aria-live="assertive">
+      <span>${failure.message}</span>
+      <button type="button" @click=${this.reloadAfterFailure}>Reload latest draft</button>
+      ${failure.retryable ? html`<button type="button" @click=${this.clearTerminalFailure}>Dismiss</button>` : nothing}
+    </div>`
+  }
+
+  private readonly handleDatastarFetch = (event: Event): void => {
+    const failure = browserCommandFailure(event, 'Dashboard builder action')
+    if (!failure) return
+    this.terminalFailure = failure
+  }
+
+  private readonly reloadAfterFailure = (): void => {
+    if (typeof window !== 'undefined') window.location.reload()
+  }
+
+  private readonly clearTerminalFailure = (): void => {
+    this.terminalFailure = null
   }
 
   private renderFieldPane(builder: DashboardBuilderSignal) {

@@ -272,9 +272,81 @@ test('unavailable pipeline shows visible recovery guidance and connections actio
   }
 })
 
+test('pipeline terminal command failure clears loading and offers reload guidance', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=pipelines`)
+    await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
+    const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+      await element.updateComplete
+      const feedback = element.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const retry = feedback?.querySelector('button') as HTMLButtonElement | null
+      return {
+        message: feedback?.textContent?.trim(),
+        failureKind: element.terminalFailure?.kind,
+        retryLabel: retry?.textContent?.trim(),
+        pendingAfterFailure: element.commandPendingFor('pipeline:sales'),
+      }
+    })
+    expect(state.failureKind).toBe('unavailable')
+    expect(state.message).toContain('previous state was kept')
+    expect(state.retryLabel).toBe('Reload latest pipeline state')
+    expect(state.pendingAfterFailure).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('connection terminal command failure keeps the drawer state and offers reload guidance', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=connection-admin`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const admin = element.shadowRoot?.querySelector('lv-connection-administration') as any
+      await admin?.updateComplete
+      const configure = Array.from(admin.shadowRoot?.querySelectorAll('button') ?? []).find((button: any) => button.textContent?.trim() === 'Configure') as HTMLButtonElement | undefined
+      configure?.click()
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+      await admin?.updateComplete
+      const drawerOpenAfterClick = Boolean(admin.shadowRoot?.querySelector('lv-drawer'))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+      await admin?.updateComplete
+      const alert = admin.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
+      const retry = alert?.querySelector('button') as HTMLButtonElement | null
+      const drawerOpenBeforeRetry = Boolean(admin.shadowRoot?.querySelector('lv-drawer'))
+      return {
+        message: alert?.textContent?.trim(),
+        failureKind: admin.terminalFailure?.kind,
+        retryLabel: retry?.textContent?.trim(),
+        drawerOpenAfterClick,
+        drawerOpenStateAfterClick: admin.drawerOpen,
+        drawerOpen: drawerOpenAfterClick && drawerOpenBeforeRetry,
+      }
+    })
+    expect(state.failureKind).toBe('unavailable')
+    expect(state.message).toContain('previous state was kept')
+    expect(state.retryLabel).toBe('Reload latest connection state')
+    expect(state.drawerOpenStateAfterClick).toBe(true)
+    expect(state.drawerOpenAfterClick).toBe(true)
+    expect(state.drawerOpen).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(rootName: string): string {
   const page = rootName === 'connections' ? {
     kind: 'connections', title: 'Connections', description: 'Data connections.', connections: [{ id: 'conn', title: 'Warehouse', description: 'Primary warehouse.', detailHref: '/connections/conn', kind: 'DuckDB', scope: 'Project', sourceCount: 2, credentialStatus: 'Configured', lifecycle: lifecycle() }],
+  } : rootName === 'connection-admin' ? {
+    kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }], connectionLifecycle: lifecycle('missing'), details: { overview: [{ label: 'Kind', value: 'DuckDB' }], sections: [] },
+  } : rootName === 'pipelines' ? {
+    kind: 'pipelines', title: 'Pipelines', description: 'Pipeline monitor.', environment: 'dev', activeTab: 'pipelines', metrics: [], pipelines: [{ assetId: 'pipeline:sales', canRun: true, href: '/pipelines/pipeline:sales/details', id: 'pipeline:sales', pipelineId: 'pipeline:sales', running: false, schedule: 'manual', semanticModel: 'sales', status: 'succeeded', title: 'Sales refresh' }], runsTable: { columns: [], rows: [], empty: 'No runs.' },
   } : rootName === 'connection-detail' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], sections: [] },
   } : rootName === 'model-definition' ? {
@@ -294,14 +366,23 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'pipeline-unavailable' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'pipeline-unavailable' ? 'lv-project-asset-page' : 'lv-project-page'
   const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
   const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
-  return `<!doctype html><html><body style="--lv-button-height:32px;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-border-rest:#0969da"><main data-signals="${escapeHTML(JSON.stringify({ page, dataExplorer, connectionAdmin: { command: {}, status: { loading: false, error: '', message: '' } } }))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  const signals = {
+    page,
+    dataExplorer,
+    connectionAdmin: rootName === 'connection-admin'
+      ? { command: { action: 'create', assetId: 'conn', authenticationMode: 'none', connectorKind: 'DuckDB', logicalConnection: 'warehouse', expectedRevision: 0, host: '', database: '', objectScope: '', options: '', port: '', sourceIdentity: '', tlsMode: '', credentialProjectId: '', credentialEnvironment: '', secretPath: '', secretKey: '', confirmationToken: '', surface: 'detail' }, status: { loading: false, error: '', message: '' } }
+      : { command: {}, status: { loading: false, error: '', message: '' } },
+    pipelineCommand: rootName === 'pipelines' ? { action: 'run', assetId: 'pipeline:sales', pipelineId: 'pipeline:sales', runId: '' } : {},
+    pipelineCommandStatus: rootName === 'pipelines' ? { loading: true, error: '', message: '' } : { loading: false, error: '', message: '' },
+  }
+  return `<!doctype html><html><body style="--lv-button-height:32px;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-border-rest:#0969da"><main data-signals="${escapeHTML(JSON.stringify(signals))}"><${rootTag}></${rootTag}></main><script type="module" src="/project-page-under-test.js"></script>${rootName === 'model-data' ? '<script type="module" src="/data-explorer-under-test.js"></script>' : ''}<script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
-function lifecycle() {
-  return { actions: [], assetId: 'conn', authenticationMode: 'none', bindingId: '', canManage: false, canTest: false, connectorKind: 'DuckDB', credentialEnvironment: '', credentialProjectId: '', database: '', diagnosticCode: '', enabled: true, exists: true, health: 'healthy', host: '', lastValidatedAt: '', logicalConnection: 'warehouse', objectScope: '', options: '', port: '', revision: 1, secretKey: '', secretPath: '', sourceIdentity: '', state: 'ready', statusLabel: 'Configured', tlsMode: '', tone: 'success', validatedVersion: '' }
+function lifecycle(state = 'ready') {
+  return { actions: state === 'missing' ? [{ id: 'configure', label: 'Configure', primary: true, destructive: false }] : [], assetId: 'conn', authenticationMode: 'none', bindingId: '', canManage: state === 'missing', canTest: false, connectorKind: 'DuckDB', credentialEnvironment: '', credentialProjectId: '', database: '', diagnosticCode: '', enabled: true, exists: state !== 'missing', health: 'healthy', host: '', lastValidatedAt: '', logicalConnection: 'warehouse', objectScope: '', options: '', port: '', revision: 1, secretKey: '', secretPath: '', sourceIdentity: '', state, statusLabel: state === 'missing' ? 'Not configured' : 'Configured', tlsMode: '', tone: state === 'missing' ? 'warning' : 'success', validatedVersion: '' }
 }
 
 function escapeHTML(value: string): string {

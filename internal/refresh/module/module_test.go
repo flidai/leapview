@@ -200,6 +200,51 @@ func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
 	}
 }
 
+func TestCancelPipelineRefreshForUIDeniesCrossPipelineRun(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'active');
+INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test');
+INSERT INTO refresh_jobs (
+  id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json,
+  estimated_memory_bytes, kind, status
+) VALUES (
+  'job_1', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'user:test', '[]',
+  67108864, 'refresh_pipeline', 'queued'
+);
+INSERT INTO refresh_job_runs (
+  id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type,
+  status, created_sequence
+) VALUES (
+  'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual',
+  'queued', 1
+);`); err != nil {
+		t.Fatalf("seed refresh run: %v", err)
+	}
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{ID: "generation_a", ProjectID: "project_sales", Environment: "dev"}}},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "dev", GenerationID: "generation_a"}
+	if err := module.CancelPipelineRefreshForUI(t.Context(), identity, "pipeline_other", "run_1", "user:test"); err == nil {
+		t.Fatal("cross-pipeline cancel unexpectedly succeeded")
+	}
+	run, err := module.runs.GetRun(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, "run_1")
+	if err != nil {
+		t.Fatalf("read run after denied cancel: %v", err)
+	}
+	if run.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("cross-pipeline cancel changed run status to %q", run.Status)
+	}
+}
+
 func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {

@@ -13,6 +13,7 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	manageddata "github.com/flidai/leapview/internal/manageddata"
 	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
+	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/go-chi/chi/v5"
@@ -95,7 +96,7 @@ func authorizeProjectResourcesWithCapability(
 	principalID string,
 	projectID projectgraph.ResourceID,
 	resources []access.ResourceRef,
-	deliveryProjectRoleFallback bool,
+	_ bool,
 	capabilityFor func(access.ResourceRef) access.Capability,
 ) (bool, error) {
 	if accessModule == nil || runtimeHost == nil {
@@ -139,13 +140,16 @@ func authorizeProjectResourcesWithCapability(
 	}
 	for _, resource := range resources {
 		capability := capabilityFor(resource)
-		if deliveryProjectRoleFallback {
-			if handled, roleAllowed := deliveryProjectRootRoleDecision(snapshot, subjects, resource, capability); handled {
-				if !roleAllowed {
-					return false, nil
-				}
-				continue
+		// Project-scoped browser operations use resource capabilities from an
+		// explicit project role bundle, just like APIGen. The project kind only
+		// accepts PROJECT_ADMIN as a direct grant, so calling snapshot.Allows for
+		// RESOURCE_EDIT/USE/MANAGE would otherwise reject a valid contributor,
+		// editor, or data-deployer before the feature service can authorize it.
+		if handled, roleAllowed := projectRootRoleDecision(snapshot, subjects, resource, capability); handled {
+			if !roleAllowed {
+				return false, nil
 			}
+			continue
 		}
 		allowed := false
 		for _, subject := range subjects {
@@ -259,7 +263,7 @@ func protectProjectResources(
 			return
 		}
 		if !allowed {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 			return
 		}
 		next(w, r)

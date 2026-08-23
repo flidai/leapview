@@ -1,0 +1,159 @@
+package http
+
+import (
+	"bytes"
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+
+	"github.com/flidai/leapview/internal/analytics/connectionadmin"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
+	projectview "github.com/flidai/leapview/internal/project"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/project/ui/signals"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
+)
+
+func TestConnectionConfigurationCarriesReferencesButNeverSecretValues(t *testing.T) {
+	configuration, err := connectionConfiguration(signals.ConnectionAdministrationCommandSignal{
+		ConnectorKind: "postgres", AuthenticationMode: "external_bundle", Host: "warehouse.internal", Port: "5432",
+		CredentialProjectID: "project:secrets", CredentialEnvironment: "prod", SecretPath: "/connections/warehouse", SecretKey: "bundle",
+		Options: `{"sslmode":"verify-full"}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if configuration.CredentialReference.SecretPath != "/connections/warehouse" || configuration.CredentialReference.SecretKey != "bundle" {
+		t.Fatalf("credential reference = %#v", configuration.CredentialReference)
+	}
+	if configuration.Endpoint.Options["sslmode"] != "verify-full" || configuration.Endpoint.Port != 5432 {
+		t.Fatalf("endpoint = %#v", configuration.Endpoint)
+	}
+	encoded := configuration.CredentialReference.SecretPath + configuration.CredentialReference.SecretKey
+	if strings.Contains(encoded, "password") {
+		t.Fatal("credential value crossed the browser command configuration")
+	}
+}
+
+func TestCreatorInvocationsRequireBrowserRequestIdentity(t *testing.T) {
+	h := &BrowserHandler{BeginConnectionCommand: func(ctx context.Context, invocation CreatorCommandInvocation) (context.Context, error) {
+		if invocation.Action != "create" || invocation.Project != "project:test" || invocation.IdempotencyKey != "ui:ui-command-1" {
+			t.Fatalf("invocation = %#v", invocation)
+		}
+		return context.WithValue(ctx, creatorInvocationTestKey{}, true), nil
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/connections/administration/configuration", nil)
+	if _, err := h.beginConnectionInvocation(request, "create", "project:test", "connection:warehouse", 0); err == nil {
+		t.Fatal("connection command accepted missing X-Request-ID")
+	}
+	request.Header.Set("X-Request-ID", "ui-command-1")
+	request.Header.Set("X-LeapView-Operation-ID", "createTargetConnectionBinding")
+	started, err := h.beginConnectionInvocation(request, "create", "project:test", "connection:warehouse", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started == nil || started.Context() == request.Context() {
+		t.Fatal("connection command did not establish generated invocation context")
+	}
+}
+
+func TestPipelineInvocationUsesGeneratedUIIdempotency(t *testing.T) {
+	h := &BrowserHandler{BeginPipelineCommand: func(ctx context.Context, invocation CreatorCommandInvocation) (context.Context, error) {
+		if invocation.Action != "retry" || invocation.Project != "project:test" || invocation.IdempotencyKey != "ui:pipeline-command-1" {
+			t.Fatalf("invocation = %#v", invocation)
+		}
+		return context.WithValue(ctx, creatorInvocationTestKey{}, true), nil
+	}}
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", nil)
+	request.Header.Set("X-Request-ID", "pipeline-command-1")
+	started, err := h.beginPipelineInvocation(request, "retry", "project:test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if started == nil || started.Context() == request.Context() {
+		t.Fatal("pipeline command did not establish generated invocation context")
+	}
+}
+
+type creatorInvocationTestKey struct{}
+
+func TestPipelineCommandFailsClosedWithoutResourceAuthorizer(t *testing.T) {
+	called := false
+	h := &BrowserHandler{
+		PipelineRunCommand:    refreshgen.GenUIActionCreateRefreshRun(),
+		PipelineCancelCommand: refreshgen.GenUIActionCancelRefreshRun(),
+		CurrentUser: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "user:test"}, true
+		},
+		RunPipeline: func(context.Context, string, string, string) error {
+			called = true
+			return nil
+		},
+	}
+	body := bytes.NewBufferString(`{"pipelineCommand":{"action":"run","assetId":"pipeline:sales","pipelineId":"pipeline:sales","runId":""}}`)
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", body)
+	request.Header.Set("X-LeapView-Operation-ID", refreshgen.GenUIActionCreateRefreshRun().OperationID())
+	recorder := httptest.NewRecorder()
+	h.PipelineCommand(recorder, request)
+	if called {
+		t.Fatal("pipeline command ran without an in-handler resource authorizer")
+	}
+	if !strings.Contains(recorder.Body.String(), "Pipeline operation is unavailable") {
+		t.Fatalf("fail-closed response = %q", recorder.Body.String())
+	}
+}
+
+func TestConnectionAdministrationViewRedactsCredentialReferences(t *testing.T) {
+	h := &BrowserHandler{
+		TargetID:                 "instance:test",
+		Environment:              "prod",
+		ConnectionAdministration: redactionAdministration{},
+		CurrentUser:              func(*http.Request) (Principal, bool) { return Principal{ID: "user:test"}, true },
+	}
+	assets := []projectview.DevelopAssetView{{
+		ID: "connection:warehouse", Type: string(projectview.AssetTypeConnection), Key: "warehouse",
+		Payload: map[string]any{"credentials_required": true},
+	}}
+	view, err := h.connectionAdministrationView(t.Context(), projectgraph.ResourceID("project:test"), assets, nil, httptest.NewRequest(http.MethodGet, "/connections", nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	binding := view.Bindings["connection:warehouse"]
+	if binding.SecretPath != "" || binding.SecretKey != "" || binding.CredentialProjectID != "" || binding.CredentialEnvironment != "" {
+		t.Fatalf("credential reference leaked into browser view: %#v", binding)
+	}
+}
+
+type redactionAdministration struct{}
+
+func (redactionAdministration) List(context.Context, string, connectionadmin.BindingScope, connectionadmin.TargetID) ([]connectionadmin.TargetBinding, error) {
+	return []connectionadmin.TargetBinding{{
+		ConnectionID: "connection:warehouse", ConnectorKind: "postgres", AuthenticationMode: connectionbinding.AuthenticationExternalBundle,
+		CredentialReference: connectionadmin.CredentialReference{ProjectID: "project:secrets", Environment: "prod", SecretPath: "/connections/warehouse", SecretKey: "bundle"},
+		Health:              connectionbinding.HealthHealthy, Enabled: true,
+	}}, nil
+}
+
+func (redactionAdministration) Create(context.Context, string, connectionadmin.TargetBindingInput) (connectionadmin.TargetBinding, error) {
+	return connectionadmin.TargetBinding{}, nil
+}
+func (redactionAdministration) PlanConfigurationChange(context.Context, string, connectionadmin.BindingKey, connectionadmin.TargetBindingConfiguration) (connectionadmin.BindingChangePlan, error) {
+	return connectionadmin.BindingChangePlan{}, nil
+}
+func (redactionAdministration) UpdateConfiguration(context.Context, connectionadmin.UpdateConfigurationRequest) (connectionadmin.TargetBinding, error) {
+	return connectionadmin.TargetBinding{}, nil
+}
+func (redactionAdministration) Test(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
+	return connectionadmin.BindingHealthStatus{}, nil
+}
+func (redactionAdministration) RefreshNow(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
+	return connectionadmin.BindingHealthStatus{}, nil
+}
+func (redactionAdministration) Enable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
+	return connectionadmin.TargetBinding{}, nil
+}
+func (redactionAdministration) Disable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
+	return connectionadmin.TargetBinding{}, nil
+}

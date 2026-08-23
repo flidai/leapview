@@ -47,6 +47,7 @@ type ConnectionBindingView struct {
 
 type ConnectionAdministrationView struct {
 	Bindings        map[string]ConnectionBindingView
+	CanCreate       bool
 	CanManage       bool
 	CanTest         bool
 	RequiresBinding map[string]bool
@@ -101,7 +102,7 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 		lifecycle.State = "missing"
 		lifecycle.StatusLabel = "Not configured"
 		lifecycle.Tone = "warning"
-		if administration.CanManage {
+		if administration.CanCreate {
 			lifecycle.Actions = append(lifecycle.Actions, lifecycleAction("configure", "Configure", true, false))
 		}
 		return lifecycle
@@ -119,10 +120,10 @@ func connectionLifecycleSignal(asset projectview.DevelopAssetView, assets []proj
 	lifecycle.SourceIdentity = binding.SourceIdentity
 	lifecycle.TLSMode = binding.TLSMode
 	lifecycle.Options = encodeConnectionOptions(binding.Options)
-	lifecycle.CredentialProjectID = binding.CredentialProjectID
-	lifecycle.CredentialEnvironment = binding.CredentialEnvironment
-	lifecycle.SecretPath = binding.SecretPath
-	lifecycle.SecretKey = binding.SecretKey
+	// Credential references are write-only browser inputs. The server keeps
+	// them in the binding administration store, but never hydrates a browser
+	// signal with project, environment, path, or key values. Operators can
+	// enter a replacement reference in the configuration drawer when needed.
 	lifecycle.Enabled = binding.Enabled
 	lifecycle.Health = binding.Health
 	lifecycle.DiagnosticCode = binding.DiagnosticCode

@@ -7,6 +7,7 @@ import type {
   ConnectionLifecycleSignal,
 } from '../../generated/signals'
 import { lucideIcon } from '../shared/lucide-icons'
+import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
 import '../shared/drawer'
 import '../shared/loading-spinner'
 
@@ -18,6 +19,7 @@ class LeapViewConnectionAdministration extends LitElement {
   @state() private drawerOpen = false
   @state() private selectedLogical = ''
   @state() private authenticationMode = 'external_bundle'
+  @state() private terminalFailure: BrowserCommandFailure | null = null
 
   static get styles() {
     return css`
@@ -43,6 +45,8 @@ class LeapViewConnectionAdministration extends LitElement {
       .form-section { display: grid; gap: var(--base-size-12); }
       .form-section + .form-section { border-top: var(--lv-border-muted); padding-top: var(--base-size-16); }
       .form-section h2 { margin: 0; color: var(--lv-fg-default); font: var(--lv-type-body); font-weight: var(--base-text-weight-semibold); }
+      .credential-hint { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+      .credential-hint.wide { grid-column: 1 / -1; }
       .form-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: var(--base-size-12); }
       label { display: grid; min-width: 0; gap: var(--base-size-6); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
       label.wide { grid-column: 1 / -1; }
@@ -52,9 +56,22 @@ class LeapViewConnectionAdministration extends LitElement {
       textarea { min-height: 5.5rem; resize: vertical; font-family: var(--fontStack-monospace); }
       .form-status { border-radius: var(--lv-radius-default); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-body-compact); }
       .form-status.error { border: var(--lv-border-danger); background: var(--lv-bg-danger-muted); color: var(--lv-fg-danger); }
+      .form-status-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); margin-top: var(--base-size-8); }
+      .form-status-actions button { border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); color: var(--lv-fg-default); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; font: var(--lv-type-caption); }
+      .terminal-failure { display: grid; gap: var(--base-size-6); border: var(--lv-border-danger); border-radius: var(--lv-radius-default); background: var(--lv-bg-danger-muted); color: var(--lv-fg-danger); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-body-compact); }
       .drawer-footer { display: flex; align-items: center; justify-content: flex-end; gap: var(--base-size-8); border-top: var(--lv-border-muted); padding: var(--base-size-12) var(--base-size-20); }
       @media (max-width: 640px) { .form-grid { grid-template-columns: 1fr; } }
     `
+  }
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
   }
 
   updated(changed: Map<string, unknown>): void {
@@ -64,6 +81,7 @@ class LeapViewConnectionAdministration extends LitElement {
   render() {
     const lifecycle = this.selectedLifecycle()
     return html`
+      ${this.terminalFailure && !this.drawerOpen ? this.renderTerminalFailure() : nothing}
       ${this.renderTrigger(lifecycle)}
       ${this.drawerOpen && lifecycle ? this.renderDrawer(lifecycle) : nothing}
     `
@@ -97,10 +115,10 @@ class LeapViewConnectionAdministration extends LitElement {
       <button
         class=${primary ? 'button primary' : action.destructive ? 'danger' : ''}
         type="button"
-        ?disabled=${this.administration.status.loading}
+        ?disabled=${this.commandBusy}
         @click=${() => this.handleAction(action, lifecycle)}
       >
-        ${primary && this.administration.status.loading ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
+        ${primary && this.commandBusy ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
         ${action.label}
       </button>
     `
@@ -132,7 +150,7 @@ class LeapViewConnectionAdministration extends LitElement {
         <div slot="title">${lifecycle.exists ? 'Edit connection' : 'Configure connection'}</div>
         <p slot="subtitle">${lifecycle.logicalConnection} · ${this.environment || 'current environment'}</p>
         <form class="drawer-body" id="connection-configuration-form" @submit=${(event: SubmitEvent) => this.save(event, lifecycle)}>
-          ${this.administration.status.error ? html`<div class="form-status error" role="alert">${this.administration.status.error}</div>` : nothing}
+          ${this.renderFailureStatus()}
           <section class="form-section">
             <h2>Connection</h2>
             <div class="form-grid">
@@ -163,6 +181,7 @@ class LeapViewConnectionAdministration extends LitElement {
                 </select>
               </label>
               ${this.authenticationMode === 'external_bundle' ? html`
+                <p class="credential-hint wide">Credential references are write-only. Re-enter all four reference fields when saving a change.</p>
                 <label>Credential project<input name="credentialProjectId" .value=${lifecycle.credentialProjectId} required></label>
                 <label>Credential environment<input name="credentialEnvironment" .value=${lifecycle.credentialEnvironment} required></label>
                 <label>Secret path<input name="secretPath" .value=${lifecycle.secretPath} placeholder="/connections/warehouse" required></label>
@@ -172,8 +191,8 @@ class LeapViewConnectionAdministration extends LitElement {
           </section>
           <div class="drawer-footer">
           <button class="button" type="button" @click=${() => { this.drawerOpen = false }}>Cancel</button>
-          <button class="button primary" type="submit" form="connection-configuration-form" ?disabled=${this.administration.status.loading}>
-            ${this.administration.status.loading ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
+          <button class="button primary" type="submit" form="connection-configuration-form" ?disabled=${this.commandBusy}>
+            ${this.commandBusy ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
             ${confirm ? 'Confirm update' : lifecycle.exists ? 'Save changes' : 'Configure'}
           </button>
           </div>
@@ -223,6 +242,48 @@ class LeapViewConnectionAdministration extends LitElement {
 
   private selectedLifecycle(): ConnectionLifecycleSignal | undefined {
     return this.lifecycles.find((item) => item.logicalConnection === this.selectedLogical) || this.lifecycles[0]
+  }
+
+  private get commandBusy(): boolean {
+    return this.administration.status.loading && !this.terminalFailure
+  }
+
+  private renderFailureStatus() {
+    const message = this.terminalFailure?.message || this.administration.status.error
+    if (!message) return nothing
+    return html`
+      <div class="form-status error" role="alert" aria-live="assertive">
+        <div>${message}</div>
+        <div class="form-status-actions">
+          <span>Inputs and the current connection state were kept.</span>
+          <button type="button" @click=${this.reloadAfterFailure}>Reload latest connection state</button>
+        </div>
+      </div>
+    `
+  }
+
+  private renderTerminalFailure() {
+    const failure = this.terminalFailure
+    if (!failure) return nothing
+    return html`
+      <div class="terminal-failure" role="alert" aria-live="assertive">
+        <div>${failure.message}</div>
+        <div class="form-status-actions">
+          <span>Connection state was kept.</span>
+          <button type="button" @click=${this.reloadAfterFailure}>Reload latest connection state</button>
+        </div>
+      </div>
+    `
+  }
+
+  private readonly handleDatastarFetch = (event: Event): void => {
+    const failure = browserCommandFailure(event, 'Connection action')
+    if (!failure) return
+    this.terminalFailure = failure
+  }
+
+  private readonly reloadAfterFailure = (): void => {
+    if (typeof window !== 'undefined') window.location.reload()
   }
 }
 

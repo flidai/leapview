@@ -30,6 +30,11 @@ type AuthorizationRequest struct {
 	OwnerPrincipalID string
 	SemanticModel    graph.ResourceID
 	Action           authoring.AuthorizationAction
+	// ProjectScoped marks a target-draft authorization that occurs before the
+	// newly allocated dashboard exists in the active graph. Authorizers must
+	// evaluate the project role bundle for this request; source-dashboard and
+	// existing-draft operations remain exact dashboard-resource checks.
+	ProjectScoped bool
 }
 
 type Authorizer interface {
@@ -339,7 +344,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	}
 	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: targetID,
-		OwnerPrincipalID: ownerID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionEdit,
+		OwnerPrincipalID: ownerID, SemanticModel: source.SemanticModel, Action: authoring.AuthorizationActionEdit, ProjectScoped: true,
 	}); err != nil {
 		return Result{}, err
 	}
@@ -554,7 +559,7 @@ func (s *Service) createDraft(ctx context.Context, input createDraftInput) (Resu
 	}
 	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: targetID,
-		OwnerPrincipalID: ownerID, SemanticModel: semanticModel, Action: authoring.AuthorizationActionEdit,
+		OwnerPrincipalID: ownerID, SemanticModel: semanticModel, Action: authoring.AuthorizationActionEdit, ProjectScoped: true,
 	}); err != nil {
 		return Result{}, err
 	}

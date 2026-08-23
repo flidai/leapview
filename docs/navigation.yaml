@@ -515,6 +515,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/journey-qualification
+            title: Cross-role journey qualification
+            type: reference
+            summary: Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.
+            source: articles/architecture/journey-qualification.md
           - slug: architecture/github-hosted-ci
             title: GitHub-hosted CI
             type: explanation

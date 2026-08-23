@@ -51,24 +51,3 @@ function normalizeStatus(value: string | number | undefined): number | null {
 function failure(kind: BrowserCommandFailureKind, status: number | null, retryable: boolean, message: string): BrowserCommandFailure {
   return { kind, status, retryable, message }
 }
-
-function failureMessage(label: string): (problem: APIGenProblemDetails) => string {
-  return (problem) => `${label}: ${problem.detail} (${problem.code})`
-}
-
-// finalizeReleaseFailureMessage is the UI proof that every authored failure
-// variant must be handled when the generated contract changes.
-export function finalizeReleaseFailureMessage(failure: FinalizeReleaseFailure): string {
-  return matchFinalizeReleaseFailure(failure, {
-    conflict: failureMessage('Release finalization conflict'),
-    immutable: failureMessage('Release is immutable'),
-    incomplete: failureMessage('Release artifacts are incomplete'),
-    not_found: failureMessage('Release not found'),
-    queue_unavailable: failureMessage('Release finalization queue unavailable'),
-  })
-}
-import {
-  matchFinalizeReleaseFailure,
-  type APIGenProblemDetails,
-  type FinalizeReleaseFailure,
-} from '../../generated/api/failures'

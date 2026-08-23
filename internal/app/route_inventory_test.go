@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "d84e80d8fd49f2c81757d6e5d6bfb39e906869a83545952a5309d7751d3bebe1"
+	const expectedRouteContractDigest = "a3969a5f61849b9d0347880ce9bc7ee1761ccf2fe71cccb343b4475e7dd5574c"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -149,10 +149,16 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/candidates/{candidate}":
 		authenticated.owner = "deployment"
 		authenticated.privilege = "PROJECT_ADMIN"
+	case path == "/candidates/{candidate}/review":
+		authenticated.owner = "deployment"
+		authenticated.privilege = "RESOURCE_EDIT"
 	case strings.HasPrefix(path, "/candidates/{candidate}/"):
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "PROJECT_ADMIN"
 	case path == "/dashboards/{dashboard}/edit" || path == "/dashboards/{dashboard}/draft/command":
+		authenticated.owner = "dashboard"
+		authenticated.privilege = "RESOURCE_EDIT"
+	case path == "/dashboards/new" || path == "/dashboards/{dashboard}/fork":
 		authenticated.owner = "dashboard"
 		authenticated.privilege = "RESOURCE_EDIT"
 	case path == "/dashboards/{dashboard}/preview" || path == "/dashboards/{dashboard}/export.yaml":
@@ -167,6 +173,12 @@ func nonAPIRouteMetadata(method, path string) (routeMetadata, bool) {
 	case path == "/explore" || path == "/explore/command" || path == "/models/{asset}/data/command" || path == "/semantic-models/{asset}/data/command":
 		authenticated.owner = "project"
 		authenticated.privilege = "RESOURCE_USE"
+	case path == "/pipelines/command":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_USE"
+	case path == "/connections/administration/configuration" || path == "/connections/administration/lifecycle":
+		authenticated.owner = "project"
+		authenticated.privilege = "RESOURCE_MANAGE"
 	case path == "/" || path == "/catalog/search" || path == "/sources" || strings.HasPrefix(path, "/sources/") ||
 		path == "/models" || strings.HasPrefix(path, "/models/") || path == "/semantic-models" || strings.HasPrefix(path, "/semantic-models/") ||
 		path == "/pipelines" || strings.HasPrefix(path, "/pipelines/") || path == "/connections" || strings.HasPrefix(path, "/connections/"):
@@ -262,11 +274,14 @@ GET /chats/references/search
 GET /chats/restore
 GET /chats/{conversation}
 GET /candidates/{candidate}
+GET /candidates/{candidate}/review
 GET /candidates/{candidate}/dashboards/{dashboard}
 GET /candidates/{candidate}/dashboards/{dashboard}/pages/{page}
 GET /candidates/{candidate}/updates
 GET /connections
 GET /connections/{asset}/{section}
+POST /connections/administration/configuration
+POST /connections/administration/lifecycle
 GET /dashboards
 GET /dashboards/{asset}/definition
 GET /dashboards/{asset}/details
@@ -276,7 +291,9 @@ GET /sources
 GET /sources/{asset}/{section}
 GET /device
 GET /dashboards/{dashboard}
+GET /dashboards/new
 GET /dashboards/{dashboard}/edit
+GET /dashboards/{dashboard}/fork
 GET /dashboards/{dashboard}/export.yaml
 GET /dashboards/{dashboard}/pages/{page}
 GET /dashboards/{dashboard}/preview
@@ -294,6 +311,7 @@ GET /models
 GET /models/{asset}/{section}
 GET /pipelines
 GET /pipelines/{asset}/{section}
+POST /pipelines/command
 GET /public/dashboards/{publicId}
 GET /public/dashboards/{publicId}/pages/{page}
 GET /public/dashboards/{publicId}/updates
@@ -338,6 +356,8 @@ POST /dashboards/{dashboard}/commands/select
 POST /dashboards/{dashboard}/commands/spatial-select
 POST /dashboards/{dashboard}/commands/visual-window
 POST /dashboards/{dashboard}/draft/command
+POST /dashboards/new
+POST /dashboards/{dashboard}/fork
 POST /sources/search
 POST /models/search
 POST /models/{asset}/data/command

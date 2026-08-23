@@ -706,6 +706,35 @@ func TestCandidatePreviewConcealsForeignOwnership(t *testing.T) {
 	}
 }
 
+func TestCandidateReviewReturnsBoundedEvidenceWithoutOwnerRuntimeAccess(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	started, err := module.candidates.Start(context.Background(), deployment.StartCandidateRequest{
+		ProjectID: "finance", OwnerID: "principal_1", ArtifactDigest: digest,
+	})
+	require.NoError(t, err)
+	reviewed, err := module.ResolveCandidateForReview(context.Background(), "finance", started.Candidate.ID)
+	require.NoError(t, err)
+	if reviewed.ID != started.Candidate.ID || reviewed.OwnerID != "principal_1" {
+		t.Fatalf("reviewed candidate = %#v", reviewed)
+	}
+	reviewRequest := httptest.NewRequest(http.MethodGet, "/candidates/"+started.Candidate.ID+"/review", nil)
+	reviewResponse := httptest.NewRecorder()
+	module.ServeCandidateReview(reviewResponse, reviewRequest, started.Candidate.ID, "finance", nil)
+	if reviewResponse.Code != http.StatusAccepted || !strings.Contains(reviewResponse.Body.String(), started.Candidate.ID) || !strings.Contains(reviewResponse.Body.String(), digest) || !strings.Contains(reviewResponse.Body.String(), "finance") || !strings.Contains(reviewResponse.Body.String(), "prod") {
+		t.Fatalf("review evidence response = %d %s", reviewResponse.Code, reviewResponse.Body.String())
+	}
+
+	// The reviewer operation returns evidence only. The owner-bound preview
+	// remains concealed when a different principal attempts to acquire it.
+	request := httptest.NewRequest(http.MethodGet, "/candidates/"+started.Candidate.ID, nil)
+	response := httptest.NewRecorder()
+	module.ServeCandidatePreview(response, request, started.Candidate.ID, "principal_2", nil)
+	if response.Code != http.StatusNotFound {
+		t.Fatalf("reviewer preview status = %d body=%s", response.Code, response.Body.String())
+	}
+}
+
 func testCandidateModule(t *testing.T, principalID string) *Module {
 	t.Helper()
 	return testCandidateModuleWithClock(

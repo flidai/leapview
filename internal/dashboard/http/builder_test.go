@@ -42,6 +42,10 @@ type builderAuthoringFake struct {
 	exportDraftReq   sourceadapter.ExportRequest
 	executeCalls     int
 	intentCalls      int
+	createResult     authoringservice.Result
+	forkResult       authoringservice.Result
+	createRequest    authoringservice.CreateRequest
+	forkRequest      sourceadapter.ForkRequest
 }
 
 func (f *builderAuthoringFake) Builder(_ context.Context, request builderview.Request) (uisignals.DashboardBuilderSignal, error) {
@@ -57,6 +61,85 @@ func (f *builderAuthoringFake) ExecuteIntent(_ context.Context, request applicat
 	f.intentCalls++
 	f.executed = request.Command
 	return authoringservice.Result{Revision: request.Command.ExpectedRevision}, f.err
+}
+func (f *builderAuthoringFake) Create(_ context.Context, request authoringservice.CreateRequest) (authoringservice.Result, error) {
+	f.createRequest = request
+	return f.createResult, f.err
+}
+func (f *builderAuthoringFake) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
+	f.forkRequest = request
+	return f.forkResult, f.err
+}
+
+func browserDraftResult(t *testing.T, dashboardID authoring.DashboardID) authoringservice.Result {
+	t.Helper()
+	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "principal-1"}
+	revision := authoring.RevisionToken{RevisionID: "revision-created", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		ProjectID: "sales", ID: dashboardID, OwnerPrincipalID: "principal-1", Slug: "sales", Title: "Sales", SemanticModel: "sales-model", Visibility: authoring.VisibilityPrivate,
+		Draft: &authoring.Draft{ID: "draft-created", DashboardID: dashboardID, Revision: revision, Provenance: provenance},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return authoringservice.Result{Lifecycle: lifecycle, Revision: revision}
+}
+
+func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *testing.T) {
+	fake := &builderAuthoringFake{createResult: browserDraftResult(t, "dashboard-created"), forkResult: browserDraftResult(t, "dashboard-forked")}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }, CSRFToken: func(*nethttp.Request) string { return "csrf" }}
+	getCreate := httptest.NewRecorder()
+	handler.DashboardDraftCreate(getCreate, httptest.NewRequest(nethttp.MethodGet, "/dashboards/new", nil))
+	if getCreate.Code != nethttp.StatusOK || !strings.Contains(getCreate.Body.String(), `action="/dashboards/new"`) || !strings.Contains(getCreate.Body.String(), "Governed semantic model") || !strings.Contains(getCreate.Body.String(), `name="gorilla.csrf.Token" value="csrf"`) || !strings.Contains(getCreate.Body.String(), `name="idempotencyKey" value="req_`) {
+		t.Fatalf("create page = %d %s", getCreate.Code, getCreate.Body.String())
+	}
+	getFork := httptest.NewRecorder()
+	getForkRequest := withBuilderURLParams(httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/fork", nil), "sales", "revenue")
+	handler.DashboardDraftFork(getFork, getForkRequest)
+	if getFork.Code != nethttp.StatusOK || !strings.Contains(getFork.Body.String(), `action="/dashboards/revenue/fork"`) || !strings.Contains(getFork.Body.String(), `name="idempotencyKey" value="req_`) {
+		t.Fatalf("fork page = %d %s", getFork.Code, getFork.Body.String())
+	}
+	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model&slug=sales&idempotencyKey=create-form-1"))
+	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRec := httptest.NewRecorder()
+	handler.DashboardDraftCreate(createRec, create)
+	if createRec.Code != nethttp.StatusSeeOther || createRec.Header().Get("Location") != "/dashboards/dashboard-created/edit" {
+		t.Fatalf("create redirect = %d %q", createRec.Code, createRec.Header().Get("Location"))
+	}
+	if fake.createRequest.SemanticModel != "sales-model" || fake.createRequest.IdempotencyKey != "create-form-1" || fake.createRequest.Origin != authoring.OriginUI {
+		t.Fatalf("create request = %#v", fake.createRequest)
+	}
+	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy&slug=sales-copy&idempotencyKey=fork-form-1"))
+	fork.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	fork = withBuilderURLParams(fork, "sales", "revenue")
+	forkRec := httptest.NewRecorder()
+	handler.DashboardDraftFork(forkRec, fork)
+	if forkRec.Code != nethttp.StatusSeeOther || forkRec.Header().Get("Location") != "/dashboards/dashboard-forked/edit" {
+		t.Fatalf("fork redirect = %d %q", forkRec.Code, forkRec.Header().Get("Location"))
+	}
+	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
+		t.Fatalf("fork request = %#v", fake.forkRequest)
+	}
+}
+
+func TestDashboardDraftCreateAndForkRequireFormIdempotencyKey(t *testing.T) {
+	fake := &builderAuthoringFake{createResult: browserDraftResult(t, "dashboard-created"), forkResult: browserDraftResult(t, "dashboard-forked")}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	create := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=sales-model"))
+	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	createRec := httptest.NewRecorder()
+	handler.DashboardDraftCreate(createRec, create)
+	if createRec.Code != nethttp.StatusBadRequest || fake.createRequest.IdempotencyKey != "" {
+		t.Fatalf("missing create idempotency key = %d request=%#v body=%s", createRec.Code, fake.createRequest, createRec.Body.String())
+	}
+	fork := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/fork", strings.NewReader("title=Sales%20copy"))
+	fork.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	fork = withBuilderURLParams(fork, "sales", "revenue")
+	forkRec := httptest.NewRecorder()
+	handler.DashboardDraftFork(forkRec, fork)
+	if forkRec.Code != nethttp.StatusBadRequest || fake.forkRequest.IdempotencyKey != "" {
+		t.Fatalf("missing fork idempotency key = %d request=%#v body=%s", forkRec.Code, fake.forkRequest, forkRec.Body.String())
+	}
 }
 
 func TestDashboardBuilderCommandRoutesBuilderIntentsWithServerGeneratedIDs(t *testing.T) {

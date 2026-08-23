@@ -58,6 +58,20 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	}
 	r.Get("/dashboards/{dashboard}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Dashboard))
 	r.Get("/dashboards/{dashboard}/pages/{page}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Page))
+	// Draft creation is project-scoped. The shared project authorizer resolves
+	// RESOURCE_EDIT through the explicit project role bundle (the same fallback
+	// used by the generated project-root API), never as a direct unsupported
+	// project-resource grant. Forks bind two distinct RESOURCE_EDIT decisions:
+	// target project role bundle, then source dashboard resource.
+	r.Get("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+	r.Post("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+	forkHandler := protectResource(
+		access.CapabilityResourceEdit,
+		dashboardhttp.ProjectObjectRefs,
+		protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
+	)
+	r.Get("/dashboards/{dashboard}/fork", forkHandler)
+	r.Post("/dashboards/{dashboard}/fork", forkHandler)
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.

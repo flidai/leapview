@@ -31,6 +31,17 @@ func (m *Module) ResolveOwnedCandidate(ctx context.Context, candidateID, princip
 	)
 }
 
+// ResolveCandidateForReview returns bounded candidate evidence for a reviewer
+// authorized at the project boundary. It deliberately does not acquire the
+// candidate runtime or expose an owner principal; governed candidate preview
+// remains owner-only.
+func (m *Module) ResolveCandidateForReview(ctx context.Context, projectID projectgraph.ResourceID, candidateID string) (Candidate, error) {
+	if m == nil || m.candidates == nil {
+		return Candidate{}, deployment.ErrCandidateUnavailable
+	}
+	return m.candidates.Review(ctx, projectID, strings.TrimSpace(candidateID))
+}
+
 // MarkCanonicalCandidateReady is used by the plan-driven adapter after the
 // durable catalog seal has completed. It keeps the legacy candidate API view
 // synchronized with the immutable delivery candidate without allowing the
@@ -79,6 +90,46 @@ func (m *Module) ServeCandidatePreview(
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = deploymentui.CandidatePage(candidate, layout).Render(w)
+}
+
+// ServeCandidateReview renders non-sensitive candidate evidence for an
+// authorized reviewer without acquiring the candidate runtime. The review
+// operation is intentionally separate from preview so this surface cannot
+// widen owner-only data-query authorization.
+func (m *Module) ServeCandidateReview(
+	w http.ResponseWriter,
+	r *http.Request,
+	candidateID string,
+	projectID projectgraph.ResourceID,
+	layout webpage.Provider,
+) {
+	if m == nil || m.candidates == nil {
+		http.Error(w, "Candidate review is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	candidate, err := m.ResolveCandidateForReview(r.Context(), projectID, candidateID)
+	if err != nil {
+		if errors.Is(err, deployment.ErrCandidateNotFound) {
+			http.NotFound(w, r)
+			return
+		}
+		http.Error(w, "Candidate review is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	status := http.StatusOK
+	switch candidate.Status {
+	case deployment.CandidatePreparing:
+		status = http.StatusAccepted
+		w.Header().Set("Retry-After", "1")
+	case deployment.CandidateFailed:
+		status = http.StatusConflict
+	case deployment.CandidateCancelled, deployment.CandidateExpired:
+		status = http.StatusGone
+	}
+	w.WriteHeader(status)
+	_ = deploymentui.CandidateReviewPage(candidate, layout).Render(w)
 }
 
 func (m *Module) StartProjectCandidate(w http.ResponseWriter, r *http.Request, project, _ string) {

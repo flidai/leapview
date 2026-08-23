@@ -7,7 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
+	accessadapter "github.com/flidai/leapview/internal/dashboard/authoring/accessadapter"
 	"github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -174,7 +176,7 @@ func currentLifecycleToken(value authoring.DashboardLifecycle) authoring.Revisio
 	return authoring.RevisionToken{}
 }
 
-func newCanonicalService(t *testing.T, repository *canonicalRepository, authorizer *canonicalAuthorizer, compiler *canonicalCompiler, ids ...string) *service.Service {
+func newCanonicalService(t *testing.T, repository *canonicalRepository, authorizer service.Authorizer, compiler *canonicalCompiler, ids ...string) *service.Service {
 	t.Helper()
 	index := 0
 	next := func() (string, error) {
@@ -231,6 +233,34 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 }
 
+func TestCanonicalServiceCreateUsesProjectScopedRoleBeforeDashboardExists(t *testing.T) {
+	repository, compiler := newCanonicalRepository(), &canonicalCompiler{}
+	var authorized []access.ResourceRef
+	adapter, err := accessadapter.New(func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		authorized = append(authorized, resource)
+		if resource.Kind() == graph.KindProject && capability != access.CapabilityResourceEdit {
+			t.Fatalf("project create capability = %q, want RESOURCE_EDIT", capability)
+		}
+		if resource.Kind() == graph.KindSemanticModel && capability != access.CapabilityResourceRead {
+			t.Fatalf("semantic-model capability = %q, want RESOURCE_READ", capability)
+		}
+		// A newly allocated dashboard is not present in the active graph. The
+		// production adapter must authorize the project role bundle instead.
+		return resource.Kind() == graph.KindProject || resource.Kind() == graph.KindSemanticModel, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	svc := newCanonicalService(t, repository, adapter, compiler, "dashboard-created", "draft-created", "revision-created")
+	created, err := svc.Create(t.Context(), service.CreateRequest{ProjectID: "project:test", ActorID: "actor", OwnerPrincipalID: "owner", Title: "Orders", Slug: "orders", SemanticModel: "model:test", Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: "create-project-role"})
+	if err != nil {
+		t.Fatalf("project-scoped create failed: %v", err)
+	}
+	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 2 || authorized[0].Kind() != graph.KindProject || authorized[1].Kind() != graph.KindSemanticModel {
+		t.Fatalf("create result=%#v authorization=%#v", created, authorized)
+	}
+}
+
 func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	repository, authorizer, compiler := newCanonicalRepository(), &canonicalAuthorizer{}, &canonicalCompiler{}
 	svc := newCanonicalService(t, repository, authorizer, compiler, "dashboard-source", "draft-source", "revision-source", "revision-edited", "dashboard-fork", "draft-fork", "revision-fork")
@@ -258,12 +288,25 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	if _, err := svc.Execute(t.Context(), "project:test", publish); err != nil {
 		t.Fatal(err)
 	}
+	callsBeforeFork := len(authorizer.calls)
 	forked, err := svc.Fork(t.Context(), service.ForkRequest{ProjectID: "project:test", SourceDashboardID: first.Lifecycle.ID, ActorID: "actor", OwnerPrincipalID: "fork-owner", Title: "Forked", Slug: "forked", Origin: authoring.OriginUI, IdempotencyKey: "retry-fork"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if forked.Lifecycle.ID != "dashboard-fork" || forked.Lifecycle.Status != authoring.LifecycleStatusDraft || forked.Lifecycle.Draft == nil {
 		t.Fatalf("forked result = %#v", forked)
+	}
+	foundProjectScopedFork := false
+	for _, call := range authorizer.calls[callsBeforeFork:] {
+		if call.ProjectScoped {
+			foundProjectScopedFork = true
+			if call.DashboardID != forked.Lifecycle.ID || call.Action != authoring.AuthorizationActionEdit {
+				t.Fatalf("fork target authorization = %#v", call)
+			}
+		}
+	}
+	if !foundProjectScopedFork {
+		t.Fatalf("fork target authorization did not use project-scoped path: %#v", authorizer.calls)
 	}
 	if got := repository.revisions[first.Revision.RevisionID].CreatedAt; !got.Equal(time.Date(2026, 8, 18, 14, 0, 0, 0, time.UTC)) {
 		t.Fatalf("deterministic create clock = %v", got)

@@ -141,8 +141,14 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
 		}
+		candidateReviewGuard := func(next http.HandlerFunc) http.HandlerFunc {
+			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityResourceEdit, activeProjectResource, next)
+		}
 		r.Get("/candidates/{candidate}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidatePreview(dependencies.candidates, w, request)
+		}))
+		r.Get("/candidates/{candidate}/review", candidateReviewGuard(func(w http.ResponseWriter, request *http.Request) {
+			candidateReview(dependencies.candidates, w, request)
 		}))
 		r.Get("/candidates/{candidate}/dashboards/{dashboard}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardDocument(dependencies.candidates, w, request)

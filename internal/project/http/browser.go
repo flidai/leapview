@@ -14,10 +14,12 @@ import (
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
+	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -90,21 +92,55 @@ type Principal struct {
 	DevBypass bool
 }
 
+// ConnectionCommandBindings is the project HTTP composition contract for the
+// connection administration actions rendered by the project UI.
+type ConnectionCommandBindings = projectui.ConnectionCommandBindings
+
+type CreatorCommandInvocation struct {
+	Action         string
+	Project        string
+	Resource       string
+	IdempotencyKey string
+	RequestID      string
+	CorrelationID  string
+	Revision       int64
+}
+
 type BrowserHandler struct {
-	Graph                   GraphReader
-	AssetVersions           AssetVersionsReader
-	RefreshState            AssetRefreshStateReader
-	PhysicalCatalog         PhysicalCatalogReader
-	ProjectDefinitionReader ProjectDefinitionReader
-	QueryExecutor           DataQueryExecutor
-	Catalog                 CatalogAuthorizer
-	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
-	Environment             string
-	Trace                   *pagestream.TraceStore
-	Layout                  func(*stdhttp.Request) webpage.Provider
-	CSRFToken               func(*stdhttp.Request) string
-	CurrentUser             func(*stdhttp.Request) (Principal, bool)
-	Authenticate            func(stdhttp.Handler) stdhttp.Handler
+	Graph                    GraphReader
+	AssetVersions            AssetVersionsReader
+	RefreshState             AssetRefreshStateReader
+	PhysicalCatalog          PhysicalCatalogReader
+	ProjectDefinitionReader  ProjectDefinitionReader
+	QueryExecutor            DataQueryExecutor
+	Catalog                  CatalogAuthorizer
+	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
+	Environment              string
+	TargetID                 string
+	ConnectionAdministration connectionadmin.Administration
+	ConnectionCommands       projectui.ConnectionCommandBindings
+	PipelineRunCommand       uicommand.Binding
+	PipelineCancelCommand    uicommand.Binding
+	RunPipeline              func(context.Context, string, string, string) error
+	// CancelPipeline receives both the pipeline and run identifiers from the
+	// command. Implementations must verify that the run belongs to that
+	// pipeline before mutating it; keeping the pipeline ID in this callback
+	// prevents an opaque run ID from becoming a cross-pipeline capability.
+	CancelPipeline    func(context.Context, string, string, string) error
+	AuthorizePipeline func(*stdhttp.Request, string, access.Capability) (bool, error)
+	// AuthorizeConnectionCreate checks the project-root capability required by
+	// the generated createTargetConnectionBinding command. Updates remain
+	// resource-scoped in the administration service.
+	AuthorizeConnectionCreate func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeConnection       func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand    func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand      func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	MutationMiddleware        func(stdhttp.Handler) stdhttp.Handler
+	Trace                     *pagestream.TraceStore
+	Layout                    func(*stdhttp.Request) webpage.Provider
+	CSRFToken                 func(*stdhttp.Request) string
+	CurrentUser               func(*stdhttp.Request) (Principal, bool)
+	Authenticate              func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -118,6 +154,20 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 			return next
 		}
 		return h.Authenticate(stdhttp.HandlerFunc(next)).ServeHTTP
+	}
+	wrapMutation := func(next stdhttp.HandlerFunc) stdhttp.HandlerFunc {
+		var handler stdhttp.Handler = next
+		if h.MutationMiddleware == nil {
+			handler = stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				stdhttp.Error(w, "browser mutation idempotency is unavailable", stdhttp.StatusServiceUnavailable)
+			})
+		} else {
+			handler = h.MutationMiddleware(handler)
+		}
+		if h.Authenticate != nil {
+			handler = h.Authenticate(handler)
+		}
+		return handler.ServeHTTP
 	}
 	r.Get("/", wrap(h.Insights))
 	r.Get("/explore", wrap(h.Explore))
@@ -139,8 +189,11 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
 	r.Get("/pipelines", wrap(h.Pipelines))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
+	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))
 	r.Get("/connections", wrap(h.Connections))
 	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
+	r.Post("/connections/administration/configuration", wrapMutation(h.ConnectionAdministrationConfigurationCommand))
+	r.Post("/connections/administration/lifecycle", wrapMutation(h.ConnectionAdministrationLifecycleCommand))
 	r.Post("/catalog/search", wrap(h.CatalogSearch))
 	r.Post("/sources/search", wrap(h.SourcesSearch))
 	r.Post("/connections/search", wrap(h.ConnectionsSearch))
@@ -315,7 +368,8 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	if asset.Type == string(projectview.AssetTypeConnection) {
-		writeDocument(w, projectui.ConnectionAssetPageWithVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, h.layout(r)))
+		administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+		writeDocument(w, projectui.ConnectionAssetPageWithAdministrationForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, administration, h.ConnectionCommands, h.csrf(r), []webpage.Provider{h.layout(r)}))
 		return
 	}
 	refresh := projectui.AssetRefreshState{}
@@ -357,7 +411,7 @@ func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request)
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindPipeline}) {
 		return
 	}
-	_, assets, _, ok := h.assets(w, r)
+	projectID, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return
 	}
@@ -367,9 +421,13 @@ func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
+	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines)), RunCommand: h.PipelineRunCommand, CancelCommand: h.PipelineCancelCommand}
 	for _, asset := range pipelines {
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
+		refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
+		if refreshErr != nil {
+			refresh.Unavailable = true
+		}
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
 	}
 	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)))
 }
@@ -388,7 +446,8 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	writeDocument(w, projectui.ConnectionsPage(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), "", h.layout(r)))
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	writeDocument(w, projectui.ConnectionsPageWithAdministrationForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", h.csrf(r), administration, h.ConnectionCommands, h.layout(r)))
 }
 
 func (h *BrowserHandler) SourcesSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -410,7 +469,7 @@ func (h *BrowserHandler) DashboardsSearch(w stdhttp.ResponseWriter, r *stdhttp.R
 func (h *BrowserHandler) projectAreaSearch(w stdhttp.ResponseWriter, r *stdhttp.Request, typ string) {
 	kind, ok := catalogKindForAssetType(typ)
 	if !ok {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return
 	}
 	if !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {
@@ -432,7 +491,7 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindConnection}) {
 		return
 	}
-	_, assets, edges, ok := h.assets(w, r)
+	projectID, assets, edges, ok := h.assets(w, r)
 	if !ok {
 		return
 	}
@@ -446,7 +505,8 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	patch := projectui.ConnectionsListResultsPatch(assets, edges)
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	patch := projectui.ConnectionsListResultsPatchWithAdministration(assets, edges, administration)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
@@ -527,11 +587,12 @@ func (h *BrowserHandler) connectionsBootstrap(w stdhttp.ResponseWriter, r *stdht
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
 	}
-	return projectui.ConnectionsBootstrapSignalsForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", h.layout(r)), true
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	return projectui.ConnectionsBootstrapSignalsWithAdministrationForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", administration, h.layout(r)), true
 }
 
 func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
-	_, assets, _, ok := h.assets(w, r)
+	projectID, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return nil, false
 	}
@@ -541,9 +602,13 @@ func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
 	}
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
+	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines)), RunCommand: h.PipelineRunCommand, CancelCommand: h.PipelineCancelCommand}
 	for _, asset := range pipelines {
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
+		refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
+		if refreshErr != nil {
+			refresh.Unavailable = true
+		}
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
 	}
 	return projectui.PipelinesBootstrapSignals(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)), true
 }
@@ -592,7 +657,8 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 		return nil, false
 	}
 	if asset.Type == string(projectview.AssetTypeConnection) {
-		return projectui.ConnectionAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, h.layout(r)), true
+		administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+		return projectui.ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, administration, h.layout(r)), true
 	}
 	if r.URL.Query().Get("surface") == "asset" {
 		refresh := projectui.AssetRefreshState{}
@@ -1049,20 +1115,20 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 				return true
 			}
 		}
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
 	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+			uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 			return false
 		}
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
 	if len(page.Items) == 0 {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
 	return true

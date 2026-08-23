@@ -80,6 +80,51 @@ func TestAuthorizeCreationUsesSuppliedDashboardID(t *testing.T) {
 	}
 }
 
+func TestAuthorizeProjectScopedCreationUsesProjectRoleResource(t *testing.T) {
+	var objects []access.ResourceRef
+	adapter, err := New(func(_ context.Context, _ string, _ graph.ResourceID, got access.ResourceRef, capability access.Capability) (bool, error) {
+		objects = append(objects, got)
+		if got.Kind() == graph.KindProject && capability != access.CapabilityResourceEdit {
+			t.Fatalf("project-scoped capability = %q, want RESOURCE_EDIT", capability)
+		}
+		if got.Kind() == graph.KindSemanticModel && capability != access.CapabilityResourceRead {
+			t.Fatalf("semantic-model capability = %q, want RESOURCE_READ", capability)
+		}
+		return true, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "actor", ProjectID: "project", DashboardID: "allocated-dashboard", SemanticModel: "semantic-model", Action: authoring.AuthorizationActionEdit, ProjectScoped: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	wantProject, _ := access.NewResourceRef(graph.ResourceID("project"), graph.KindProject)
+	wantModel, _ := access.NewResourceRef(graph.ResourceID("semantic-model"), graph.KindSemanticModel)
+	if len(objects) != 2 || objects[0] != wantProject || objects[1] != wantModel {
+		t.Fatalf("project-scoped resources = %#v, want [%#v %#v]", objects, wantProject, wantModel)
+	}
+}
+
+func TestAuthorizeProjectScopedCreationRequiresGovernedSemanticModelRead(t *testing.T) {
+	adapter, err := New(func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		if resource.Kind() == graph.KindProject && capability == access.CapabilityResourceEdit {
+			return true, nil
+		}
+		return false, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "actor", ProjectID: "project", DashboardID: "allocated-dashboard", SemanticModel: "semantic-model", Action: authoring.AuthorizationActionEdit, ProjectScoped: true,
+	})
+	if !errors.Is(err, access.ErrForbidden) {
+		t.Fatalf("missing semantic-model access error = %v, want forbidden", err)
+	}
+}
+
 func TestAuthorizeDeniedDecisionIsForbidden(t *testing.T) {
 	adapter, err := New(func(context.Context, string, graph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
 		return false, nil

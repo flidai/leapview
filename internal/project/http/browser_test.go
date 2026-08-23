@@ -44,7 +44,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "POST /models/search", "GET /pipelines", "GET /pipelines/{asset}/{section}", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "POST /semantic-models/search", "GET /sources", "GET /sources/{asset}/{section}", "POST /sources/search", "POST /catalog/search", "POST /connections/search", "POST /dashboards/search"}
+	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "POST /models/search", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "POST /semantic-models/search", "GET /sources", "GET /sources/{asset}/{section}", "POST /sources/search", "POST /catalog/search", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /connections/search", "POST /dashboards/search"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -996,6 +996,9 @@ func TestSourcesRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden source recovery body = %q", body)
+	}
 }
 
 func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
@@ -1008,5 +1011,8 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	h.Explore(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore", nil))
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden Explorer recovery body = %q", body)
 	}
 }

@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js'
 import { CheckCircle2, Circle, Clock3, XCircle } from 'lucide'
 import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -17,6 +18,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   @state() private runStatus = 'all'
   @state() private runTrigger = 'all'
   @state() private selectedRunID = ''
+  @state() private terminalFailure: BrowserCommandFailure | null = null
 
   static styles = [pageHeaderStyles, css`
     :host {
@@ -135,6 +137,9 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       border-color: var(--lv-border-danger, var(--lv-border-muted));
       color: var(--lv-fg-danger);
     }
+
+    .command-feedback-actions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); margin-top: var(--base-size-8); }
+    .command-feedback-actions button { border: var(--lv-border-default); border-radius: var(--lv-radius-default); background: var(--lv-bg-panel); color: var(--lv-fg-default); padding: var(--base-size-4) var(--base-size-8); cursor: pointer; font: var(--lv-type-caption); }
 
     .run-toolbar {
       display: flex;
@@ -278,6 +283,16 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       .run-toolbar input { width: 100%; }
     }
   `]
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
+  }
 
   get page(): PipelinePageSignal | null {
     return this.signal<PipelinePageSignal | null>('page', null)
@@ -454,14 +469,25 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 
   private renderCommandFeedback() {
     const status = this.commandStatus
-    if (!status.loading && !status.error && !status.message) return nothing
-    const message = status.loading ? commandLoadingLabel(this.command.action) : status.error || status.message
-    return html`<div class=${`command-feedback ${status.error ? 'is-error' : ''}`} role=${status.error ? 'alert' : 'status'}>${message}</div>`
+    const failure = this.terminalFailure
+    if (!failure && !status.loading && !status.error && !status.message) return nothing
+    const message = failure?.message || (status.loading ? commandLoadingLabel(this.command.action) : status.error || status.message)
+    return html`
+      <div class=${`command-feedback ${failure || status.error ? 'is-error' : ''}`} role=${failure || status.error ? 'alert' : 'status'} aria-live=${failure || status.error ? 'assertive' : 'polite'}>
+        <div>${message}</div>
+        ${failure ? html`
+          <div class="command-feedback-actions">
+            <span>Pipeline state was kept.</span>
+            <button type="button" @click=${this.reloadAfterFailure}>Reload latest pipeline state</button>
+          </div>
+        ` : nothing}
+      </div>
+    `
   }
 
   private commandPendingFor(pipelineId: string, runId = ''): boolean {
     const command = this.command
-    return this.commandStatus.loading && command.pipelineId === pipelineId && (!runId || command.runId === runId)
+    return this.commandStatus.loading && !this.terminalFailure && command.pipelineId === pipelineId && (!runId || command.runId === runId)
   }
 
   private handlePipelineAction = (event: CustomEvent<{ action: string, item: { id: string } }>): void => {
@@ -555,11 +581,22 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   }
 
   private emitCommand(action: 'run' | 'retry' | 'cancel', pipeline: PipelineListItemSignal, runId: string): void {
+    this.terminalFailure = null
     this.dispatchEvent(new CustomEvent('lv-pipeline-command', {
       bubbles: true,
       composed: true,
       detail: { action, pipelineId: pipeline.pipelineId, assetId: pipeline.assetId, runId },
     }))
+  }
+
+  private readonly handleDatastarFetch = (event: Event): void => {
+    const failure = browserCommandFailure(event, 'Pipeline action')
+    if (!failure) return
+    this.terminalFailure = failure
+  }
+
+  private readonly reloadAfterFailure = (): void => {
+    if (typeof window !== 'undefined') window.location.reload()
   }
 }
 
