@@ -84,6 +84,19 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
 		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
 	}
+	if request.RepositoryScoped && strings.TrimSpace(request.OwnerPrincipalID) == actorID {
+		projectResource, err := access.NewResourceRef(request.ProjectID, graph.KindProject)
+		if err != nil {
+			return fmt.Errorf("%w: project resource: %v", ErrInvalid, err)
+		}
+		allowed, err := a.authorize(ctx, actorID, request.ProjectID, projectResource, capability)
+		if err != nil {
+			return err
+		}
+		if allowed {
+			return nil
+		}
+	}
 	resource, err := access.NewResourceRef(request.DashboardID, graph.KindDashboard)
 	if err != nil {
 		return fmt.Errorf("%w: dashboard resource: %v", ErrInvalid, err)

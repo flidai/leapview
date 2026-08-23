@@ -137,7 +137,7 @@ model TargetConnectionBindingChangePlanResponse {
   dependencies: TargetConnectionDependency[];
 }
 
-@doc("Target binding metadata. Credential references identify provider objects but never contain secret values.")
+@doc("Target binding metadata. Credential references are write-only configuration and are never returned.")
 model TargetConnectionBindingResponse {
   id: string;
   targetId: string;
@@ -146,7 +146,6 @@ model TargetConnectionBindingResponse {
   authenticationMode: TargetConnectionAuthenticationMode;
   environment: TargetConnectionIdentifier;
   endpoint: TargetConnectionEndpoint;
-  credentialReference?: TargetConnectionCredentialReference;
   enabled: boolean;
   validatedVersion?: string;
   health: TargetConnectionHealth;

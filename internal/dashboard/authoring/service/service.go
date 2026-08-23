@@ -35,6 +35,12 @@ type AuthorizationRequest struct {
 	// evaluate the project role bundle for this request; source-dashboard and
 	// existing-draft operations remain exact dashboard-resource checks.
 	ProjectScoped bool
+	// RepositoryScoped marks an authorization performed after the durable
+	// lifecycle has been loaded. Repository drafts may not yet exist in the
+	// active serving graph, so adapters can use the lifecycle owner and the
+	// project role bundle as the resource context before falling back to an
+	// exact graph dashboard grant.
+	RepositoryScoped bool
 }
 
 type Authorizer interface {
@@ -623,7 +629,7 @@ func (s *Service) authorizedCreateReplay(ctx context.Context, actorID string, op
 }
 
 func (s *Service) authorizeReplay(ctx context.Context, actorID string, lifecycle authoring.DashboardLifecycle) error {
-	return s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: authoring.AuthorizationActionEdit})
+	return s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: lifecycle.ProjectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: authoring.AuthorizationActionEdit, RepositoryScoped: true})
 }
 
 func inputWithNormalizedCreateFields(input createDraftInput, projectID graph.ResourceID, actorID, ownerID string, dashboardID authoring.DashboardID, title, slug string, visibility authoring.Visibility, origin authoring.Origin, authoredDocument document.DashboardDocument) createDraftInput {
@@ -751,7 +757,7 @@ func (s *Service) execute(ctx context.Context, projectID graph.ResourceID, comma
 	if err != nil {
 		return Result{}, err
 	}
-	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: command.Provenance.ActorID, ProjectID: projectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action}); err != nil {
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: command.Provenance.ActorID, ProjectID: projectID, DashboardID: lifecycle.ID, OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action, RepositoryScoped: true}); err != nil {
 		return Result{}, err
 	}
 	fingerprint, err := command.Fingerprint()

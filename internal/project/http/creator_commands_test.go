@@ -3,17 +3,23 @@ package http
 import (
 	"bytes"
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	projectview "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/project/ui/signals"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
+	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 func TestConnectionConfigurationCarriesReferencesButNeverSecretValues(t *testing.T) {
@@ -34,6 +40,19 @@ func TestConnectionConfigurationCarriesReferencesButNeverSecretValues(t *testing
 	encoded := configuration.CredentialReference.SecretPath + configuration.CredentialReference.SecretKey
 	if strings.Contains(encoded, "password") {
 		t.Fatal("credential value crossed the browser command configuration")
+	}
+}
+
+func TestConnectionCommandResponsesRedactWriteOnlyCredentialReferences(t *testing.T) {
+	redacted := redactConnectionCommand(signals.ConnectionAdministrationCommandSignal{
+		Action: "update", CredentialProjectID: "project:secrets", CredentialEnvironment: "prod",
+		SecretPath: "/connections/warehouse", SecretKey: "bundle", Host: "warehouse.internal",
+	})
+	if redacted.CredentialProjectID != "" || redacted.CredentialEnvironment != "" || redacted.SecretPath != "" || redacted.SecretKey != "" {
+		t.Fatalf("command response retained write-only credential reference: %#v", redacted)
+	}
+	if redacted.Action != "update" || redacted.Host != "warehouse.internal" {
+		t.Fatalf("command response lost non-secret metadata: %#v", redacted)
 	}
 }
 
@@ -102,6 +121,80 @@ func TestPipelineCommandFailsClosedWithoutResourceAuthorizer(t *testing.T) {
 	}
 	if !strings.Contains(recorder.Body.String(), "Pipeline operation is unavailable") {
 		t.Fatalf("fail-closed response = %q", recorder.Body.String())
+	}
+}
+
+func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testing.T) {
+	var authorizedID, queuedID string
+	h := &BrowserHandler{
+		PipelineRunCommand: refreshgen.GenUIActionCreateRefreshRun(),
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:test", nil
+		},
+		CurrentUser: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "user:test"}, true
+		},
+		AuthorizePipeline: func(_ *http.Request, pipelineID string, capability access.Capability) (bool, error) {
+			if capability != access.CapabilityResourceUse {
+				t.Fatalf("capability = %q, want RESOURCE_USE", capability)
+			}
+			authorizedID = pipelineID
+			return true, nil
+		},
+		BeginPipelineCommand: func(ctx context.Context, _ CreatorCommandInvocation) (context.Context, error) {
+			return ctx, nil
+		},
+		RunPipeline: func(_ context.Context, pipelineID, _ string, _ string) error {
+			queuedID = pipelineID
+			return errors.New("injected queue failure")
+		},
+	}
+	body := bytes.NewBufferString(`{"pipelineCommand":{"action":"run","assetId":"pipeline:sales","pipelineId":"sales","runId":""}}`)
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", body)
+	request.Header.Set("X-LeapView-Operation-ID", refreshgen.GenUIActionCreateRefreshRun().OperationID())
+	request.Header.Set("X-Request-ID", "pipeline-canonical-1")
+	recorder := httptest.NewRecorder()
+	h.PipelineCommand(recorder, request)
+	if authorizedID != "pipeline:sales" || queuedID != "pipeline:sales" {
+		t.Fatalf("pipeline IDs: authorized=%q queued=%q, want canonical asset ID", authorizedID, queuedID)
+	}
+}
+
+func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
+	const projectID = "project:test"
+	const assetID = "pipeline:sales"
+	h := &BrowserHandler{
+		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
+			ID: assetID, ProjectID: projectID, ServingStateID: "state:test", Type: "refresh_pipeline", Key: "sales", Title: "Sales refresh", PayloadJSON: `{}`,
+		}}}},
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return projectID, nil },
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
+			ID: projectID, RefreshPipelines: map[string]refreshschedule.Definition{assetID: {ID: assetID, Name: "Sales refresh"}},
+		}},
+		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+			Latest: refreshpresentation.AssetRefreshRun{ID: "run:queued", Status: "queued"},
+		}},
+		CurrentUser: func(*http.Request) (Principal, bool) { return Principal{ID: "user:test", DevBypass: true}, true },
+		AuthorizePipeline: func(_ *http.Request, pipelineID string, capability access.Capability) (bool, error) {
+			return pipelineID == assetID && capability == access.CapabilityResourceUse, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=asset&asset="+assetID+"&section=details", nil)
+	recorder := httptest.NewRecorder()
+	h.pipelineAssetCommandSuccess(recorder, request, signals.PipelineCommandSignal{Action: "run", AssetID: assetID, PipelineID: assetID}, "Pipeline command accepted.")
+	body := recorder.Body.String()
+	if !strings.Contains(body, `"assetId":"pipeline:sales"`) || !strings.Contains(body, `"refresh"`) {
+		t.Fatalf("detail success patch = %s, want ResourceAssetPageSignal", body)
+	}
+	if strings.Contains(body, `"activeTab"`) || strings.Contains(body, `"metrics"`) {
+		t.Fatalf("detail success patch replaced asset page with pipeline list: %s", body)
+	}
+	mismatchRequest := httptest.NewRequest(http.MethodPost, "/pipelines/command?surface=asset&asset=pipeline:other&section=details", nil)
+	mismatchRecorder := httptest.NewRecorder()
+	h.pipelineAssetCommandSuccess(mismatchRecorder, mismatchRequest, signals.PipelineCommandSignal{Action: "run", AssetID: assetID, PipelineID: assetID}, "Pipeline command accepted.")
+	mismatchBody := mismatchRecorder.Body.String()
+	if !strings.Contains(mismatchBody, "Pipeline command target is invalid") || strings.Contains(mismatchBody, `"page"`) {
+		t.Fatalf("mismatched detail target response = %s, want fail-closed status only", mismatchBody)
 	}
 }
 

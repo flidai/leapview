@@ -13,6 +13,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	catalog "github.com/flidai/leapview/internal/project/navigation"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
+	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -572,6 +573,41 @@ func TestUnavailablePipelineExplainsRecoveryAndLinksConnections(t *testing.T) {
 	}
 	if !foundConnections {
 		t.Fatalf("pipeline actions = %#v, want Review connections recovery action", actions)
+	}
+}
+
+func TestReadOnlyPipelineDetailDisablesRunWithoutUnavailableGuidance(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh"}
+	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", assetLineageModel{}, AssetRefreshState{CanRun: false})
+	actions := uisignals.ValueOrZero(page.Actions)
+	if len(actions) == 0 || actions[0].Label != "Run now" || actions[0].Disabled == nil || !*actions[0].Disabled {
+		t.Fatalf("read-only pipeline actions = %#v, want disabled Run now", actions)
+	}
+	if len(actions) > 1 && actions[1].Label == "Review connections" {
+		t.Fatalf("read-only pipeline actions = %#v, must not claim unavailable refresh infrastructure", actions)
+	}
+}
+
+func TestPipelineDetailUsesCanonicalPipelineCommandBridge(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh"}
+	refresh := AssetRefreshState{CanRun: true, RunCommand: refreshgen.GenUIActionCreateRefreshRun()}
+	var rendered bytes.Buffer
+	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", refresh, AssetVersionsState{}).Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	dom := rendered.String()
+	if !strings.Contains(dom, `data-on:lv-run-refresh-pipeline=`) || !strings.Contains(dom, "/pipelines/command?surface=asset") || !strings.Contains(dom, "asset=pipeline%3Asales") || !strings.Contains(dom, "pipelineCommand") {
+		t.Fatalf("pipeline detail command bridge = %s, want typed pipelineCommand POST", dom)
+	}
+	if strings.Contains(dom, "/pipelines/pipeline:sales/refresh") {
+		t.Fatalf("pipeline detail still posts to removed refresh route: %s", dom)
+	}
+	bootstrap := ProjectAssetBootstrapSignalsForEnvironment(catalog.Catalog{}, projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", refresh, AssetVersionsState{})
+	if _, ok := bootstrap["pipelineCommand"]; !ok {
+		t.Fatalf("pipeline detail bootstrap = %#v, missing pipelineCommand signal", bootstrap)
+	}
+	if _, ok := bootstrap["pipelineCommandStatus"]; !ok {
+		t.Fatalf("pipeline detail bootstrap = %#v, missing pipelineCommandStatus signal", bootstrap)
 	}
 }
 

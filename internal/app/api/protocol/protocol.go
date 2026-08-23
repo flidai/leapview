@@ -602,7 +602,18 @@ func safeIdempotencyResponse(status int, header http.Header, body []byte) (int, 
 }
 
 func containsCredentialField(value any) bool {
-	secretNames := map[string]bool{"token": true, "access_token": true, "accessToken": true, "refresh_token": true, "refreshToken": true, "clientSecret": true, "client_secret": true, "secret": true, "password": true, "device_code": true, "deviceCode": true, "verification_uri_complete": true}
+	secretNames := map[string]bool{
+		"token": true, "access_token": true, "accessToken": true, "refresh_token": true, "refreshToken": true,
+		"clientSecret": true, "client_secret": true, "secret": true, "password": true,
+		"device_code": true, "deviceCode": true, "verification_uri_complete": true,
+		// Provider credential references are write-only as well. Although they
+		// do not contain the secret value, persisting or replaying paths/keys
+		// would disclose durable secret locations to later callers.
+		"credentialReference": true, "credential_reference": true,
+		"credentialProjectId": true, "credential_project_id": true,
+		"credentialEnvironment": true, "credential_environment": true,
+		"secretPath": true, "secret_path": true, "secretKey": true, "secret_key": true,
+	}
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {

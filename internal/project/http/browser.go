@@ -132,15 +132,19 @@ type BrowserHandler struct {
 	// the generated createTargetConnectionBinding command. Updates remain
 	// resource-scoped in the administration service.
 	AuthorizeConnectionCreate func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
-	AuthorizeConnection       func(*stdhttp.Request, string, access.Capability) (bool, error)
-	BeginConnectionCommand    func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	BeginPipelineCommand      func(context.Context, CreatorCommandInvocation) (context.Context, error)
-	MutationMiddleware        func(stdhttp.Handler) stdhttp.Handler
-	Trace                     *pagestream.TraceStore
-	Layout                    func(*stdhttp.Request) webpage.Provider
-	CSRFToken                 func(*stdhttp.Request) string
-	CurrentUser               func(*stdhttp.Request) (Principal, bool)
-	Authenticate              func(stdhttp.Handler) stdhttp.Handler
+	// AuthorizeCreateDashboard evaluates the project-root edit capability used
+	// to expose the browser's new-draft affordance. The catalog remains usable
+	// for read-only principals when this decision is denied.
+	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
+	Trace                    *pagestream.TraceStore
+	Layout                   func(*stdhttp.Request) webpage.Provider
+	CSRFToken                func(*stdhttp.Request) string
+	CurrentUser              func(*stdhttp.Request) (Principal, bool)
+	Authenticate             func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -207,7 +211,16 @@ func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q")}, h.csrf(r), h.layout(r)))
+	canCreateDraft := false
+	if h.AuthorizeCreateDashboard != nil {
+		if projectID, err := h.boundProject(r.Context()); err == nil {
+			principal, ok := h.CurrentUser(r)
+			if ok && principal.ID != "" {
+				canCreateDraft, _ = h.AuthorizeCreateDashboard(r, projectID, access.CapabilityResourceEdit)
+			}
+		}
+	}
+	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q"), CanCreateDraft: canCreateDraft}, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -379,6 +392,9 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 			refresh = projectui.AssetRefreshState{Unavailable: true}
 		}
 	}
+	if asset.Type == string(projectview.AssetTypeRefreshPipeline) {
+		refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
+	}
 	refresh.CSRFToken = h.csrf(r)
 	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r)))
 }
@@ -427,9 +443,22 @@ func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request)
 		if refreshErr != nil {
 			refresh.Unavailable = true
 		}
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
+		canUse := h.pipelineMutationAllowed(r, asset.ID)
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: canUse && !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: canUse && !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
 	}
 	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)))
+}
+
+// pipelineMutationAllowed is used while building every pipeline projection,
+// including SSE refreshes after a command. Read access to the pipeline is not
+// sufficient to expose run, retry, or cancel controls; all of those actions
+// require the resource's canonical ID and RESOURCE_USE capability.
+func (h *BrowserHandler) pipelineMutationAllowed(r *stdhttp.Request, pipelineID string) bool {
+	if h == nil || h.AuthorizePipeline == nil || r == nil {
+		return false
+	}
+	allowed, err := h.AuthorizePipeline(r, strings.TrimSpace(pipelineID), access.CapabilityResourceUse)
+	return err == nil && allowed
 }
 
 func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -608,7 +637,8 @@ func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp
 		if refreshErr != nil {
 			refresh.Unavailable = true
 		}
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
+		canUse := h.pipelineMutationAllowed(r, asset.ID)
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: canUse && !refresh.Unavailable && refresh.RunCommand.OperationID() != "", CanCancel: canUse && !refresh.Unavailable && refresh.CancelCommand.OperationID() != ""})
 	}
 	return projectui.PipelinesBootstrapSignals(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)), true
 }
@@ -667,6 +697,9 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 			if err != nil {
 				refresh = projectui.AssetRefreshState{Unavailable: true}
 			}
+		}
+		if asset.Type == string(projectview.AssetTypeRefreshPipeline) {
+			refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
 		}
 		refresh.CSRFToken = h.csrf(r)
 		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r))

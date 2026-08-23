@@ -166,6 +166,8 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 		dependencies.admin.MountAuthenticated(r, adminmodule.RouteGuard{Authenticate: dependencies.access.Authenticate, RequirePlatformAdmin: dependencies.access.RequirePlatformAdmin})
 		dependencies.dashboard.MountAuthenticated(r, dashboardmodule.RouteGuard{ProtectWithResources: func(capability access.Capability, resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, capability, resolve, next)
+		}, ProtectWithAuthoring: func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {
+			return protectProjectAuthoringResource(dependencies.access, dependencies.runtimeHost, dependencies.dashboard.Authoring(), capability, next)
 		}})
 		dependencies.access.MountAuthenticatedBrowser(r)
 	})

@@ -93,15 +93,18 @@ func pipelineMonitorPageSignal(state PipelineMonitorState, activeTab string) uis
 			assetHref = "/pipelines/" + url.PathEscape(pipeline.Asset.ID) + "/details"
 		}
 		item := uisignals.PipelineListItemSignal{
-			AssetID:       pipeline.Asset.ID,
-			CanRun:        pipeline.CanRun,
-			ID:            firstNonEmpty(pipeline.Asset.Key, pipeline.Asset.ID),
+			AssetID: pipeline.Asset.ID,
+			CanRun:  pipeline.CanRun,
+			// Resource IDs are the only stable identity that command handlers
+			// and authorization understand. Keep the symbolic key for labels and
+			// search only; never use it as a row or command identity.
+			ID:            pipeline.Asset.ID,
 			Title:         firstNonEmpty(pipeline.Asset.Title, pipeline.Asset.Key, pipeline.Asset.ID),
 			Description:   uisignals.Optional(pipeline.Asset.Description),
 			Href:          assetHref,
 			SemanticModel: emptyDash(metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel")),
 			Schedule:      pipelineScheduleLabel(pipeline.Asset.Payload),
-			PipelineID:    pipeline.Asset.Key,
+			PipelineID:    pipeline.Asset.ID,
 			Running:       status == "queued" || status == "running",
 			Status:        status,
 			Duration:      uisignals.Optional(refreshRunDuration(pipeline.Refresh.Latest)),
@@ -208,7 +211,7 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 				"serving_state_id":       emptyDash(run.ServingStateID),
 				"target_generation":      run.TargetGeneration,
 				"asset_id":               pipeline.Asset.ID,
-				"pipeline_id":            pipeline.Asset.Key,
+				"pipeline_id":            pipeline.Asset.ID,
 				"run_id":                 run.ID,
 				"status_value":           strings.ToLower(strings.TrimSpace(run.Status)),
 				"trigger_value":          strings.ToLower(strings.TrimSpace(run.TriggerType)),

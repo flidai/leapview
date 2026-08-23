@@ -53132,11 +53132,6 @@ paths:
                   - authenticationMode: none
                     connectorKind: example
                     createdAt: "2026-01-02T15:04:05Z"
-                    credentialReference:
-                      environment: example
-                      projectId: example
-                      secretKey: example
-                      secretPath: example
                     enabled: true
                     endpoint:
                       database: example
@@ -53443,11 +53438,6 @@ paths:
                 authenticationMode: none
                 connectorKind: example
                 createdAt: "2026-01-02T15:04:05Z"
-                credentialReference:
-                  environment: example
-                  projectId: example
-                  secretKey: example
-                  secretPath: example
                 enabled: true
                 endpoint:
                   database: example
@@ -53835,11 +53825,6 @@ paths:
                 authenticationMode: none
                 connectorKind: example
                 createdAt: "2026-01-02T15:04:05Z"
-                credentialReference:
-                  environment: example
-                  projectId: example
-                  secretKey: example
-                  secretPath: example
                 enabled: true
                 endpoint:
                   database: example
@@ -54142,11 +54127,6 @@ paths:
                 authenticationMode: none
                 connectorKind: example
                 createdAt: "2026-01-02T15:04:05Z"
-                credentialReference:
-                  environment: example
-                  projectId: example
-                  secretKey: example
-                  secretPath: example
                 enabled: true
                 endpoint:
                   database: example
@@ -54544,11 +54524,6 @@ paths:
                 authenticationMode: none
                 connectorKind: example
                 createdAt: "2026-01-02T15:04:05Z"
-                credentialReference:
-                  environment: example
-                  projectId: example
-                  secretKey: example
-                  secretPath: example
                 enabled: true
                 endpoint:
                   database: example
@@ -54917,11 +54892,6 @@ paths:
                 authenticationMode: none
                 connectorKind: example
                 createdAt: "2026-01-02T15:04:05Z"
-                credentialReference:
-                  environment: example
-                  projectId: example
-                  secretKey: example
-                  secretPath: example
                 enabled: true
                 endpoint:
                   database: example
@@ -84232,11 +84202,6 @@ components:
             - authenticationMode: none
               connectorKind: example
               createdAt: "2026-01-02T15:04:05Z"
-              credentialReference:
-                environment: example
-                projectId: example
-                secretKey: example
-                secretPath: example
               enabled: true
               endpoint:
                 database: example
@@ -84261,11 +84226,6 @@ components:
           - authenticationMode: none
             connectorKind: example
             createdAt: "2026-01-02T15:04:05Z"
-            credentialReference:
-              environment: example
-              projectId: example
-              secretKey: example
-              secretPath: example
             enabled: true
             endpoint:
               database: example
@@ -84354,8 +84314,6 @@ components:
           example: example
         endpoint:
           $ref: '#/components/schemas/TargetConnectionEndpoint'
-        credentialReference:
-          $ref: '#/components/schemas/TargetConnectionCredentialReference'
         enabled:
           type: boolean
           example: true
@@ -84381,16 +84339,11 @@ components:
           format: int64
           minimum: !!float 1
           example: 1
-      description: Target binding metadata. Credential references identify provider objects but never contain secret values.
+      description: Target binding metadata. Credential references are write-only configuration and are never returned.
       example:
         authenticationMode: none
         connectorKind: example
         createdAt: "2026-01-02T15:04:05Z"
-        credentialReference:
-          environment: example
-          projectId: example
-          secretKey: example
-          secretPath: example
         enabled: true
         endpoint:
           database: example

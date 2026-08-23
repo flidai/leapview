@@ -239,10 +239,12 @@ func (h *BrowserHandler) beginConnectionInvocation(r *stdhttp.Request, action, p
 }
 
 func (h *BrowserHandler) connectionCommandPatch(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.ConnectionAdministrationCommandSignal, message string) {
+	command = redactConnectionCommand(command)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"connectionAdmin": projectsignals.ConnectionAdministrationSignal{Command: command, Status: projectsignals.ConnectionAdministrationStatusSignal{Error: message}}})
 }
 
 func (h *BrowserHandler) connectionCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.ConnectionAdministrationCommandSignal, projectID projectgraph.ResourceID, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, message string) {
+	command = redactConnectionCommand(command)
 	view, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
 	patch := map[string]any{"connectionAdmin": projectsignals.ConnectionAdministrationSignal{Command: command, Status: projectsignals.ConnectionAdministrationStatusSignal{Message: message}}}
 	if command.Surface == "list" {
@@ -254,13 +256,25 @@ func (h *BrowserHandler) connectionCommandSuccess(w stdhttp.ResponseWriter, r *s
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
+func redactConnectionCommand(command projectsignals.ConnectionAdministrationCommandSignal) projectsignals.ConnectionAdministrationCommandSignal {
+	command.CredentialEnvironment = ""
+	command.CredentialProjectID = ""
+	command.SecretPath = ""
+	command.SecretKey = ""
+	return command
+}
+
 func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	var payload creatorPipelineCommand
 	if err := pagestream.ReadSignals(r, &payload); err != nil {
 		stdhttp.Error(w, "pipeline command payload is required", stdhttp.StatusBadRequest)
 		return
 	}
-	command := payload.Command
+	command, valid := canonicalPipelineCommand(payload.Command)
+	if !valid {
+		h.pipelineCommandPatch(w, r, command, "The pipeline command is invalid.")
+		return
+	}
 	operation := h.PipelineRunCommand.OperationID()
 	if command.Action == "cancel" {
 		operation = h.PipelineCancelCommand.OperationID()
@@ -327,6 +341,10 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 }
 
 func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
+	if strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("surface")), "asset") {
+		h.pipelineAssetCommandSuccess(w, r, command, message)
+		return
+	}
 	// The mutation has already committed. Resolve the refreshed projection
 	// against a sink so a read-side outage cannot turn that successful write
 	// into a 5xx response that the durable idempotency layer would abandon.
@@ -340,9 +358,64 @@ func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *std
 	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), RunCommand: h.PipelineRunCommand, CancelCommand: h.PipelineCancelCommand}
 	for _, asset := range projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "") {
 		refresh, _ := h.assetRefreshState(r.Context(), projectID, asset)
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset, Refresh: refresh, CanRun: !refresh.Unavailable, CanCancel: !refresh.Unavailable})
+		canUse := h.pipelineMutationAllowed(r, asset.ID)
+		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{
+			Asset: asset, Refresh: refresh,
+			CanRun:    canUse && !refresh.Unavailable && h.PipelineRunCommand.OperationID() != "",
+			CanCancel: canUse && !refresh.Unavailable && h.PipelineCancelCommand.OperationID() != "",
+		})
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": projectui.PipelinesPagePatch(state, r.URL.Query().Get("view")), "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
+}
+
+// pipelineAssetCommandSuccess refreshes the detail projection that initiated
+// a pipeline command. The list projection used by /pipelines is a different
+// signal contract and must never replace a ResourceAssetPageSignal mounted by
+// an asset-detail route.
+func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
+	assetID := strings.TrimSpace(r.URL.Query().Get("asset"))
+	if assetID == "" || assetID != strings.TrimSpace(command.AssetID) {
+		h.pipelineCommandPatch(w, r, command, "Pipeline command target is invalid.")
+		return
+	}
+	projectID, assets, edges, assetsOK := h.assets(newCreatorResponseSink(), r)
+	if !assetsOK {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	if err != nil {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	asset, found := projectview.AssetByID(assets, assetID)
+	if !found || asset.Type != string(projectview.AssetTypeRefreshPipeline) {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	section := strings.TrimSpace(r.URL.Query().Get("section"))
+	if !projectui.ValidProjectAssetSection(asset.Type, section) {
+		section = "details"
+	}
+	refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
+	if refreshErr != nil {
+		refresh.Unavailable = true
+	}
+	refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
+	refresh.CSRFToken = h.csrf(r)
+	versions, versionsErr := h.assetVersionsState(r.Context(), projectID, asset, section)
+	if versionsErr != nil {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
+	detailPatch := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r))
+	page, found := detailPatch["page"]
+	if !found {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
+	}
+	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": page, "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
 }
 
 type creatorResponseSink struct {
@@ -405,7 +478,11 @@ func (h *BrowserHandler) AuthorizeCreatorMutationReplay(r *stdhttp.Request) bool
 		if json.Unmarshal(body, &payload) != nil || h.AuthorizePipeline == nil {
 			return false
 		}
-		allowed, authErr := h.AuthorizePipeline(r, payload.Command.PipelineID, access.CapabilityResourceUse)
+		command, valid := canonicalPipelineCommand(payload.Command)
+		if !valid {
+			return false
+		}
+		allowed, authErr := h.AuthorizePipeline(r, command.PipelineID, access.CapabilityResourceUse)
 		return authErr == nil && allowed
 	case "/connections/administration/configuration", "/connections/administration/lifecycle":
 		var payload creatorConnectionCommand
@@ -445,6 +522,24 @@ func resolveConnectionID(command projectsignals.ConnectionAdministrationCommandS
 		}
 	}
 	return logical
+}
+
+// canonicalPipelineCommand keeps the browser contract tolerant of older
+// clients that sent only pipelineId while making AssetID authoritative for
+// current clients. AssetID is populated with the same canonical resource ID
+// so the command, authorization target, and refresh callback cannot drift.
+func canonicalPipelineCommand(command projectsignals.PipelineCommandSignal) (projectsignals.PipelineCommandSignal, bool) {
+	assetID := strings.TrimSpace(command.AssetID)
+	pipelineID := strings.TrimSpace(command.PipelineID)
+	if assetID != "" {
+		pipelineID = assetID
+	}
+	if pipelineID == "" {
+		return command, false
+	}
+	command.AssetID = pipelineID
+	command.PipelineID = pipelineID
+	return command, true
 }
 
 func connectionConfiguration(command projectsignals.ConnectionAdministrationCommandSignal) (connectionadmin.TargetBindingConfiguration, error) {

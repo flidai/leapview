@@ -204,13 +204,20 @@ func (a *Adapter) LoadDraft(ctx context.Context, ref SourceRef, actorID string) 
 }
 
 func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actorID string, draft bool) (Source, error) {
-	// Lifecycle metadata is itself protected source detail. Authorize on the
-	// scoped dashboard object before loading it; owner/model fields are
-	// deliberately unavailable until after this boundary.
-	if err := a.authorizeView(ctx, actorID, ref, "", ""); err != nil {
-		return Source{}, err
+	var lifecycle authoring.DashboardLifecycle
+	var err error
+	if draft {
+		// Drafts are repository-backed resources and may not exist in the
+		// immutable serving graph yet. Load only lifecycle metadata, then make
+		// the owner-aware repository-scoped decision before exposing a revision.
+		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
+	} else {
+		// Published source reads retain the graph-first disclosure boundary.
+		if err := a.authorizeView(ctx, actorID, ref, "", "", false); err != nil {
+			return Source{}, err
+		}
+		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
 	}
-	lifecycle, err := a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
 	if err != nil {
 		if errors.Is(err, authoring.ErrNotFound) || errors.Is(err, authoring.ErrSourceUnavailable) {
 			return Source{}, sourceUnavailable(ref, err)
@@ -222,6 +229,11 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 	}
 	if err := lifecycle.Validate(); err != nil {
 		return Source{}, err
+	}
+	if draft {
+		if err := a.authorizeView(ctx, actorID, ref, lifecycle.OwnerPrincipalID, lifecycle.SemanticModel, true); err != nil {
+			return Source{}, err
+		}
 	}
 	var selectedToken authoring.RevisionToken
 	instanceProvenance := InstanceProvenance{ProjectID: ref.ProjectID, DashboardID: ref.DashboardID}
@@ -290,7 +302,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
 	// A project source has no authoring lifecycle to inspect before VIEW. The
 	// dashboard object itself is not touched until this scoped decision passes.
-	if err := a.authorizeView(ctx, actorID, ref, "", ""); err != nil {
+	if err := a.authorizeView(ctx, actorID, ref, "", "", false); err != nil {
 		return Source{}, err
 	}
 	if a.acquireRuntime == nil {
@@ -342,10 +354,10 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	}, nil
 }
 
-func (a *Adapter) authorizeView(ctx context.Context, actorID string, ref SourceRef, owner string, semanticModel graph.ResourceID) error {
+func (a *Adapter) authorizeView(ctx context.Context, actorID string, ref SourceRef, owner string, semanticModel graph.ResourceID, repositoryScoped bool) error {
 	return a.authorizer.Authorize(ctx, service.AuthorizationRequest{
 		ActorID: actorID, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
-		OwnerPrincipalID: owner, SemanticModel: semanticModel, Action: authoring.AuthorizationActionView,
+		OwnerPrincipalID: owner, SemanticModel: semanticModel, Action: authoring.AuthorizationActionView, RepositoryScoped: repositoryScoped,
 	})
 }
 

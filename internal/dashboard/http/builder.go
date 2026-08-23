@@ -72,9 +72,9 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		BackHref:       "/dashboards/" + url.PathEscape(dashboardID),
 		ForkHref:       dashboardBuilderBasePath(dashboardID) + "/fork",
 		PreviewHref:    dashboardBuilderPreviewPath(dashboardID, builder),
-		ExportYAMLHref: dashboardBuilderBasePath(dashboardID) + "/export.yaml",
-		PageBaseHref:   dashboardBuilderBasePath(dashboardID) + "/edit",
-		CommandPath:    dashboardBuilderBasePath(dashboardID) + "/draft/command",
+		ExportYAMLHref: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
+		PageBaseHref:   dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
+		CommandPath:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
 		CommandBinding: dashboardBuilderCommandBinding,
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
@@ -133,7 +133,11 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBuilderError(w, r, err)
 		return
 	}
-	nethttp.Redirect(w, r, dashboardBuilderBasePath(result.Lifecycle.ID.String())+"/edit", nethttp.StatusSeeOther)
+	draftID := ""
+	if result.Lifecycle.Draft != nil {
+		draftID = result.Lifecycle.Draft.ID.String()
+	}
+	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
 }
 
 // DashboardDraftFork renders and executes the browser fork action. Forks use
@@ -184,7 +188,11 @@ func (h Handler) DashboardDraftFork(w nethttp.ResponseWriter, r *nethttp.Request
 		writeBuilderError(w, r, err)
 		return
 	}
-	nethttp.Redirect(w, r, dashboardBuilderBasePath(result.Lifecycle.ID.String())+"/edit", nethttp.StatusSeeOther)
+	draftID := ""
+	if result.Lifecycle.Draft != nil {
+		draftID = result.Lifecycle.Draft.ID.String()
+	}
+	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
 }
 
 func browserFormRequestID(r *nethttp.Request) (string, error) {
@@ -577,6 +585,16 @@ func dashboardBuilderWithPreviewHref(builder uisignals.DashboardBuilderSignal) u
 
 func dashboardBuilderBasePath(dashboardID string) string {
 	return "/dashboards/" + url.PathEscape(dashboardID)
+}
+
+func dashboardBuilderDraftRoute(dashboardID, draftID, suffix string) string {
+	base := dashboardBuilderBasePath(dashboardID) + suffix
+	if strings.TrimSpace(draftID) == "" {
+		return base
+	}
+	values := url.Values{}
+	values.Set("draft", draftID)
+	return base + "?" + values.Encode()
 }
 
 func dashboardBuilderPreviewPath(dashboardID string, builder uisignals.DashboardBuilderSignal) string {

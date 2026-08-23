@@ -706,6 +706,17 @@ func buildApplicationSurfaces(
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			return projecthttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
 		},
+		AuthorizeCreateDashboard: func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
+		},
 		Authenticate: routes.accessModule.Authenticate,
 	}
 	if runtime.runtimeHostModule != nil && routes.accessModule != nil {

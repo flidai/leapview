@@ -163,7 +163,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Action: authoring.AuthorizationActionEdit,
+		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
 	}); err != nil {
 		return Preview{}, err
 	}

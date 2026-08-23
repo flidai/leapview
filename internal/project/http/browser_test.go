@@ -175,6 +175,24 @@ func TestAssetRefreshStateMarksMissingReaderUnavailable(t *testing.T) {
 	}
 }
 
+func TestPipelineMutationProjectionRequiresResourceUse(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/pipelines", nil)
+	var gotID string
+	h := &BrowserHandler{AuthorizePipeline: func(_ *stdhttp.Request, pipelineID string, capability access.Capability) (bool, error) {
+		if capability != access.CapabilityResourceUse {
+			t.Fatalf("capability = %q, want RESOURCE_USE", capability)
+		}
+		gotID = pipelineID
+		return false, nil
+	}}
+	if h.pipelineMutationAllowed(request, "pipeline:sales") {
+		t.Fatal("read-only pipeline unexpectedly exposed mutation controls")
+	}
+	if gotID != "pipeline:sales" {
+		t.Fatalf("authorization ID = %q, want canonical asset ID", gotID)
+	}
+}
+
 type browserProjectDefinitionStub struct {
 	definition projectmanifest.Project
 	compiled   map[string]*semanticquery.CompiledModel

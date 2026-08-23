@@ -40,7 +40,7 @@ func CatalogPageForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Pro
 }
 
 func CatalogPageForQuery(catalog catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
-	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", providers...)
+	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", false, providers...)
 }
 
 func CatalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
@@ -57,36 +57,40 @@ type CatalogDashboardMetadata struct {
 }
 
 type CatalogListOptions struct {
-	Query         string
-	ProjectFilter string
-	Metadata      map[string]CatalogDashboardMetadata
+	Query          string
+	ProjectFilter  string
+	Metadata       map[string]CatalogDashboardMetadata
+	CanCreateDraft bool
 }
 
 func CatalogPageForCatalogsWithOptions(catalogs []catalog.Catalog, options CatalogListOptions, csrfToken string, providers ...webpage.Provider) g.Node {
 	if len(catalogs) == 0 {
-		return catalogPageDocument(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), csrfToken, providers...)
+		return catalogPageDocument(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), csrfToken, options.CanCreateDraft, providers...)
 	}
 	// A serving process owns one active project. Keep this helper for callers
 	// that still pass a slice, but render only the server-bound catalog and do
 	// not expose a project picker in the page signal.
-	return catalogPageDocument(catalogs[0], catalogPageForCatalogs(catalogs[:1], options), csrfToken, providers...)
+	return catalogPageDocument(catalogs[0], catalogPageForCatalogs(catalogs[:1], options), csrfToken, options.CanCreateDraft, providers...)
 }
 
-func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, providers ...webpage.Provider) g.Node {
+func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, canCreateDraft bool, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), catalogLayoutContext(catalog))
 	catalogUpdatesURL := updatesURL(uisignals.RouteKindCatalog, "q", uisignals.ValueOrZero(page.ListQuery))
 	title := "Dashboards"
 	if productName := strings.TrimSpace(layout.Presentation.ProductName); productName != "" {
 		title = productName + " Dashboards"
 	}
+	content := []g.Node{
+		g.Attr("slot", "page"),
+		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/catalog/search", "entityListQuery", "entityListFilter")),
+	}
+	if canCreateDraft {
+		content = append(content, g.Attr("create-draft-href", "/dashboards/new"))
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: title, CSRFToken: csrfToken, Scripts: []string{"/static/catalog-page.js"},
 		UpdatesURL: catalogUpdatesURL,
-		Content: g.El("lv-catalog-page",
-			g.Attr("slot", "page"),
-			g.Attr("create-draft-href", "/dashboards/new"),
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/catalog/search", "entityListQuery", "entityListFilter")),
-		),
+		Content:    g.El("lv-catalog-page", content...),
 	})
 }
 

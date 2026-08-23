@@ -107,6 +107,28 @@ func TestAuthorizeProjectScopedCreationUsesProjectRoleResource(t *testing.T) {
 	}
 }
 
+func TestAuthorizeRepositoryScopedOwnerUsesProjectRoleBeforeAbsentDashboard(t *testing.T) {
+	var objects []access.ResourceRef
+	adapter, err := New(func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, _ access.Capability) (bool, error) {
+		objects = append(objects, resource)
+		return resource.Kind() == graph.KindProject, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = adapter.Authorize(t.Context(), service.AuthorizationRequest{
+		ActorID: "owner", ProjectID: "project", DashboardID: "new-dashboard", OwnerPrincipalID: "owner",
+		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
+	})
+	if err != nil {
+		t.Fatalf("repository-scoped owner authorization = %v", err)
+	}
+	want, _ := access.NewResourceRef("project", graph.KindProject)
+	if len(objects) != 1 || objects[0] != want {
+		t.Fatalf("authorization resources = %#v, want project-only %#v", objects, want)
+	}
+}
+
 func TestAuthorizeProjectScopedCreationRequiresGovernedSemanticModelRead(t *testing.T) {
 	adapter, err := New(func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 		if resource.Kind() == graph.KindProject && capability == access.CapabilityResourceEdit {

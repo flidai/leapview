@@ -135,6 +135,16 @@ func TestAdversarialIdempotencyNeverStoresOneTimeCredentials(t *testing.T) {
 	}
 }
 
+func TestAdversarialIdempotencyNeverStoresWriteOnlyCredentialReferences(t *testing.T) {
+	status, header, body := safeIdempotencyResponse(http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"id":"binding-1","credentialReference":{"projectId":"project-secrets","environment":"prod","secretPath":"/connections/warehouse","secretKey":"bundle"}}`))
+	if status != http.StatusConflict || header.Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("safe response = %d %#v", status, header)
+	}
+	if strings.Contains(string(body), "project-secrets") || strings.Contains(string(body), "/connections/warehouse") || strings.Contains(string(body), "bundle") {
+		t.Fatal("write-only credential reference persisted in replay representation")
+	}
+}
+
 func TestAdversarialDurableIdempotencyDatabaseAndBackupExcludeOneTimeCredential(t *testing.T) {
 	ctx := t.Context()
 	databasePath := filepath.Join(t.TempDir(), "idempotency.db")

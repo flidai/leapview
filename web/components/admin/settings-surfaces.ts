@@ -97,6 +97,21 @@ const tableStyles = css`
   }
 `
 
+type DatastarFetchOwnerDetail = { type?: string; el?: Element }
+
+// Datastar's fetch lifecycle is document-global. Settings controls may only
+// consume a successful completion from the lv-admin-page host whose data-on
+// attributes initiated their command; unrelated page fetches must not unlock
+// a still-running mutation.
+function ownsAdminActionFetch(element: Element, event: Event): boolean {
+  const owner = (event as CustomEvent<DatastarFetchOwnerDetail>).detail?.el
+  if (!(owner instanceof Element)) return false
+  const root = element.getRootNode()
+  const rootHost = 'host' in root ? (root as ShadowRoot).host : null
+  const actionHost = rootHost instanceof Element ? rootHost.closest('lv-admin-page') ?? rootHost : element.closest('lv-admin-page')
+  return owner === actionHost
+}
+
 const emptyAccessAdministration: AccessAdministrationSignal = { principals: [], groups: [], projects: [], sessions: [], roleAssignments: [], activity: [], loading: true }
 
 abstract class LeapViewAccessAdministrationBase extends DatastarLit(LitElement) {
@@ -601,6 +616,16 @@ class LeapViewServiceAccounts extends DatastarLit(LitElement) {
 
   private handleDatastarFetch = (event: Event): void => {
     if (!this.busy) return
+    const detail = (event as CustomEvent<DatastarFetchOwnerDetail>).detail
+    if (!ownsAdminActionFetch(this, event)) return
+    if (detail?.type === 'finished') {
+      // A successful command may be idempotent (for example selecting the
+      // already-selected account), so the signal tree can be byte-for-byte
+      // unchanged. Clear the local lock on transport completion rather than
+      // waiting for a serialized signal diff.
+      this.busy = false
+      return
+    }
     const failure = browserCommandFailure(event, 'Service account update')
     if (!failure) return
     this.busy = false
@@ -666,6 +691,14 @@ class LeapViewAuditLog extends DatastarLit(LitElement) {
 
   private handleDatastarFetch = (event: Event): void => {
     if (!this.busy) return
+    const detail = (event as CustomEvent<DatastarFetchOwnerDetail>).detail
+    if (!ownsAdminActionFetch(this, event)) return
+    if (detail?.type === 'finished') {
+      // Filtering or loading an empty page can legitimately return the same
+      // signal payload. Transport completion still marks the command done.
+      this.busy = false
+      return
+    }
     const failure = browserCommandFailure(event, 'Audit log update')
     if (!failure) return
     this.busy = false

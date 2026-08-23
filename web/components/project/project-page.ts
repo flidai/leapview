@@ -334,7 +334,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
           title=${action.label}
           aria-label=${action.label}
           ?disabled=${Boolean(action.disabled || page.refresh?.running)}
-          @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', { bubbles: true, composed: true }))}
+          @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', {
+            bubbles: true,
+            composed: true,
+            detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
+          }))}
         >
           ${page.refresh?.running ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
         </button>

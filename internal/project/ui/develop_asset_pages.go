@@ -44,10 +44,11 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalo
 		attrs = append(attrs, g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost(commandPath)))
 	}
 	if assetRefreshable(asset.Type) {
-		refreshPath := "/pipelines/" + url.PathEscape(asset.ID) + "/refresh"
 		extras.CSRFToken = refresh.CSRFToken
+		commandPath := "/pipelines/command?surface=asset&asset=" + url.QueryEscape(asset.ID) + "&section=" + url.QueryEscape(activeSection)
+		pipelineCommand := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPost(refresh.RunCommand, commandPath, "pipelineCommand")
 		attrs = append(attrs,
-			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.CommandPost(refresh.RunCommand, refreshPath)),
+			g.Attr("data-on:lv-run-refresh-pipeline", pipelineCommand),
 		)
 		if activeSection == "versions" {
 			return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), extras, activeSection, chromeOptions)
@@ -66,7 +67,12 @@ func ProjectAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
 	page.Environment = uisignals.Optional(environment)
-	return projectRouteBootstrapSignals(catalog, projectAreaForAssetType(asset.Type), roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	patch := projectRouteBootstrapSignals(catalog, projectAreaForAssetType(asset.Type), roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	if assetRefreshable(asset.Type) {
+		patch["pipelineCommand"] = uisignals.PipelineCommandSignal{}
+		patch["pipelineCommandStatus"] = uisignals.PipelineCommandStatusSignal{}
+	}
+	return patch
 }
 
 func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, versions AssetVersionsState) map[string]any {
@@ -296,7 +302,11 @@ func ValidProjectAssetSection(assetType, section string) bool {
 }
 
 type AssetRefreshState struct {
-	CSRFToken        string
+	CSRFToken string
+	// CanRun is the caller's RESOURCE_USE decision for this pipeline. It is
+	// separate from Unavailable so a read-only caller gets a disabled action
+	// without being told that refresh infrastructure is broken.
+	CanRun           bool
 	Unavailable      bool
 	RunCommand       uicommand.Binding
 	CancelCommand    uicommand.Binding

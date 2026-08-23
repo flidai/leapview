@@ -103,7 +103,7 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	create.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	createRec := httptest.NewRecorder()
 	handler.DashboardDraftCreate(createRec, create)
-	if createRec.Code != nethttp.StatusSeeOther || createRec.Header().Get("Location") != "/dashboards/dashboard-created/edit" {
+	if createRec.Code != nethttp.StatusSeeOther || createRec.Header().Get("Location") != "/dashboards/dashboard-created/edit?draft=draft-created" {
 		t.Fatalf("create redirect = %d %q", createRec.Code, createRec.Header().Get("Location"))
 	}
 	if fake.createRequest.SemanticModel != "sales-model" || fake.createRequest.IdempotencyKey != "create-form-1" || fake.createRequest.Origin != authoring.OriginUI {
@@ -114,7 +114,7 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	fork = withBuilderURLParams(fork, "sales", "revenue")
 	forkRec := httptest.NewRecorder()
 	handler.DashboardDraftFork(forkRec, fork)
-	if forkRec.Code != nethttp.StatusSeeOther || forkRec.Header().Get("Location") != "/dashboards/dashboard-forked/edit" {
+	if forkRec.Code != nethttp.StatusSeeOther || forkRec.Header().Get("Location") != "/dashboards/dashboard-forked/edit?draft=draft-created" {
 		t.Fatalf("fork redirect = %d %q", forkRec.Code, forkRec.Header().Get("Location"))
 	}
 	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
@@ -322,7 +322,7 @@ func TestDashboardBuilderGETPropagatesPageSelectionAndPageBaseHref(t *testing.T)
 		t.Fatalf("builder selection request = %#v", fake.builderReq)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `page-base-href="/dashboards/revenue/edit"`) {
+	if !strings.Contains(body, `page-base-href="/dashboards/revenue/edit?draft=draft-1"`) {
 		t.Fatalf("page base href missing from shell: %s", body)
 	}
 	if strings.Contains(body, "/projects/") {

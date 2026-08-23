@@ -309,7 +309,7 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 			Label:    runLabel,
 			Icon:     uisignals.Pointer("refresh"),
 			Command:  uisignals.Pointer("run-refresh-pipeline"),
-			Disabled: uisignals.Optional(refresh.Unavailable || assetRefreshSignal(refresh).Running),
+			Disabled: uisignals.Optional(!refresh.CanRun || refresh.Unavailable || assetRefreshSignal(refresh).Running),
 		}}, actions...)
 		if refresh.Unavailable {
 			actions = append(actions, uisignals.ResourceActionSignal{Label: "Review connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("open")})

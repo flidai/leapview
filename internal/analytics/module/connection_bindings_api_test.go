@@ -49,7 +49,7 @@ func TestConnectionBindingAPICreatesOnlyNonSecretMetadata(t *testing.T) {
 		repository.binding.CredentialReference.SecretPath != "/leapview/sales" {
 		t.Fatalf("persisted binding = %#v", repository.binding)
 	}
-	for _, forbidden := range []string{"secretValue", "source-secret", "password", "token"} {
+	for _, forbidden := range []string{"secretValue", "source-secret", "password", "token", "credentialReference", "project-1", "/leapview/sales", "secretKey", "secretPath"} {
 		if strings.Contains(recorder.Body.String(), forbidden) {
 			t.Fatalf("response exposed forbidden material %q: %s", forbidden, recorder.Body.String())
 		}

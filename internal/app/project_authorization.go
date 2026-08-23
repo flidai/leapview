@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
 	manageddata "github.com/flidai/leapview/internal/manageddata"
 	manageddatacontrol "github.com/flidai/leapview/internal/manageddata/control"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
@@ -264,6 +265,62 @@ func protectProjectResources(
 		}
 		if !allowed {
 			uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+			return
+		}
+		next(w, r)
+	})).ServeHTTP
+}
+
+type repositoryDashboardAuthorizer interface {
+	AuthorizeDashboardEdit(context.Context, projectgraph.ResourceID, string, authoring.DashboardID) error
+}
+
+// protectProjectAuthoringResource authenticates and authorizes builder routes
+// against the durable dashboard lifecycle. This is intentionally separate
+// from protectProjectResources, whose immutable graph snapshot cannot contain
+// a freshly created private draft.
+func protectProjectAuthoringResource(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	authorizer repositoryDashboardAuthorizer,
+	capability access.Capability,
+	next http.HandlerFunc,
+) http.HandlerFunc {
+	if accessModule == nil || runtimeHost == nil || authorizer == nil || capability != access.CapabilityResourceEdit {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+	}
+	return accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := accessModule.CurrentPrincipal(r)
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		projectID := runtimeHost.ProjectID()
+		if err := projectID.Validate(); err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+		if err := authoring.ValidateDashboardID(authoring.DashboardID(dashboardID)); err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		if principal.DevBypass {
+			next(w, r)
+			return
+		}
+		if err := authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID)); err != nil {
+			if errors.Is(err, access.ErrForbidden) {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
+			if errors.Is(err, authoring.ErrNotFound) {
+				http.NotFound(w, r)
+				return
+			}
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
 		next(w, r)
