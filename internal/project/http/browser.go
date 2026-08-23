@@ -198,12 +198,12 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
 	r.Post("/connections/administration/configuration", wrapMutation(h.ConnectionAdministrationConfigurationCommand))
 	r.Post("/connections/administration/lifecycle", wrapMutation(h.ConnectionAdministrationLifecycleCommand))
-	r.Post("/catalog/search", wrap(h.CatalogSearch))
-	r.Post("/sources/search", wrap(h.SourcesSearch))
-	r.Post("/connections/search", wrap(h.ConnectionsSearch))
-	r.Post("/models/search", wrap(h.ModelsSearch))
-	r.Post("/semantic-models/search", wrap(h.SemanticModelsSearch))
-	r.Post("/dashboards/search", wrap(h.DashboardsSearch))
+	r.Get("/catalog/search", wrap(h.CatalogSearch))
+	r.Get("/sources/search", wrap(h.SourcesSearch))
+	r.Get("/connections/search", wrap(h.ConnectionsSearch))
+	r.Get("/models/search", wrap(h.ModelsSearch))
+	r.Get("/semantic-models/search", wrap(h.SemanticModelsSearch))
+	r.Get("/dashboards/search", wrap(h.DashboardsSearch))
 }
 
 func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -227,10 +227,14 @@ func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindDashboard, projectgraph.KindModel, projectgraph.KindSemanticModel}) {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("entityListQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("entityListQuery"))
+	var signals struct {
+		Query string `json:"entityListQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "catalog search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	patch := projectui.CatalogListPatchForCatalogsQuery([]projectnavigation.Catalog{h.navigationCatalog(r)}, query)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -508,10 +512,14 @@ func (h *BrowserHandler) projectAreaSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if !ok {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("projectAssetQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("projectAssetQuery"))
+	var signals struct {
+		Query string `json:"projectAssetQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "project asset search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	patch := projectui.ProjectAssetListResultsPatchWithContext(projectID.String(), projectview.FilterProjectLandingAssets(assets, typ, query), assets, edges)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -524,10 +532,14 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if !ok {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("entityListQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("entityListQuery"))
+	var signals struct {
+		Query string `json:"entityListQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "connection search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	assets = projectview.FilterConnections(assets, query)
 	assets, err := h.projectAssetReadModels(r.Context(), assets)
 	if err != nil {

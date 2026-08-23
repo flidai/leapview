@@ -770,8 +770,8 @@ func TestProjectAreaFilterBridgeUsesCanonicalSearchEndpoint(t *testing.T) {
 			if err := projectAssetFilterRouteBridge(tt.area)[0].Render(&rendered); err != nil {
 				t.Fatalf("render filter bridge: %v", err)
 			}
-			if !strings.Contains(rendered.String(), "@post(&#39;"+tt.endpoint+"&#39;") {
-				t.Fatalf("filter bridge = %q, want POST %s", rendered.String(), tt.endpoint)
+			if !strings.Contains(rendered.String(), "@get(&#39;"+tt.endpoint+"&#39;") {
+				t.Fatalf("filter bridge = %q, want GET %s", rendered.String(), tt.endpoint)
 			}
 		})
 	}

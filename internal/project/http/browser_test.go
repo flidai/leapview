@@ -6,6 +6,7 @@ import (
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -44,7 +45,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "POST /models/search", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "POST /semantic-models/search", "GET /sources", "GET /sources/{asset}/{section}", "POST /sources/search", "POST /catalog/search", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /connections/search", "POST /dashboards/search"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -910,11 +911,12 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 
 func TestSourceSurfacesRetainOnlyAuthorizedConnectionContext(t *testing.T) {
 	source := servingstate.Asset{ID: "source:orders", ProjectID: "project:test", ServingStateID: "state", Type: "source", Key: "orders", Title: "Orders", PayloadJSON: `{}`}
+	otherSource := servingstate.Asset{ID: "source:customers", ProjectID: "project:test", ServingStateID: "state", Type: "source", Key: "customers", Title: "Customers", PayloadJSON: `{}`}
 	connection := servingstate.Asset{ID: "connection:warehouse", ProjectID: "project:test", ServingStateID: "state", Type: "connection", Key: "warehouse", Title: "Warehouse", PayloadJSON: `{}`}
 	edge := servingstate.AssetEdge{ID: "edge:source-connection", ProjectID: "project:test", ServingStateID: "state", FromAssetID: source.ID, ToAssetID: connection.ID, Type: "uses_connection"}
 	newHandler := func() *BrowserHandler {
 		return &BrowserHandler{
-			Graph:            browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{source, connection}, Edges: []servingstate.AssetEdge{edge}}},
+			Graph:            browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{source, otherSource, connection}, Edges: []servingstate.AssetEdge{edge}}},
 			ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 			Environment:      "dev",
 			CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
@@ -941,12 +943,13 @@ func TestSourceSurfacesRetainOnlyAuthorizedConnectionContext(t *testing.T) {
 	assertParent("bootstrap", bootstrap)
 
 	searchRecorder := httptest.NewRecorder()
-	h.SourcesSearch(searchRecorder, httptest.NewRequest(stdhttp.MethodPost, "/sources/search?projectAssetQuery=orders", nil))
+	signals := url.QueryEscape(`{"projectAssetQuery":"orders"}`)
+	h.SourcesSearch(searchRecorder, httptest.NewRequest(stdhttp.MethodGet, "/sources/search?datastar="+signals, nil))
 	if searchRecorder.Code != stdhttp.StatusOK {
 		t.Fatalf("source search status = %d, want 200", searchRecorder.Code)
 	}
-	if body := searchRecorder.Body.String(); !strings.Contains(body, "Warehouse") || !strings.Contains(body, "/connections/connection:warehouse/details") {
-		t.Fatalf("source search payload = %q, missing parent context", body)
+	if body := searchRecorder.Body.String(); !strings.Contains(body, "Warehouse") || !strings.Contains(body, "/connections/connection:warehouse/details") || strings.Contains(body, "Customers") {
+		t.Fatalf("source search payload = %q, want matching source with parent context only", body)
 	}
 
 	pageRecorder := httptest.NewRecorder()

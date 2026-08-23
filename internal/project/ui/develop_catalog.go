@@ -74,7 +74,7 @@ func ConnectionsPageWithAdministrationForEnvironment(catalog catalog.Catalog, pr
 	}
 	rootAttributes := []g.Node{
 		g.Attr("slot", "page"),
-		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; "+uiactions.QueryPost("/connections/search", "entityListQuery")),
+		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; "+uiactions.Get("/connections/search", "entityListQuery")),
 	}
 	rootAttributes = append(rootAttributes, connectionAdministrationRouteBridge(commands)...)
 	return projectRouteDocument("Connections", catalog, "connections", roleLabel, page, uisignals.RouteKindConnections,
@@ -149,7 +149,7 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 
 func projectAssetFilterRouteBridge(area string) []g.Node {
 	endpoint := projectAssetSearchHref(area)
-	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.QueryPost(endpoint, "projectAssetType", "projectAssetQuery")
+	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.Get(endpoint, "projectAssetType", "projectAssetQuery")
 	return []g.Node{g.Attr("data-on:lv-project-asset-filter__debounce.200ms", filter)}
 }
 

@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "a3969a5f61849b9d0347880ce9bc7ee1761ccf2fe71cccb343b4475e7dd5574c"
+	const expectedRouteContractDigest = "741a60a71495309d1e3f03c74c6fa0fd2a8951849fbb55d65a4a8fd6dae6351b"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -333,8 +333,8 @@ POST /admin/access/command
 POST /admin/personal-settings/command
 POST /admin/product-settings/command
 POST /admin/publications/command
-POST /admin/groups/search
-POST /admin/principals/search
+GET /admin/groups/search
+GET /admin/principals/search
 POST /admin/queries/command
 POST /admin/service-accounts/command
 POST /auth/desktop/disconnect
@@ -344,9 +344,9 @@ POST /auth/local/password
 POST /auth/logout
 POST /chats/turns
 POST /candidates/{candidate}/commands/{command}
-POST /catalog/search
-POST /connections/search
-POST /dashboards/search
+GET /catalog/search
+GET /connections/search
+GET /dashboards/search
 POST /explore/command
 POST /dashboards/{dashboard}/commands/clear-selection
 POST /dashboards/{dashboard}/commands/filter
@@ -358,10 +358,10 @@ POST /dashboards/{dashboard}/commands/visual-window
 POST /dashboards/{dashboard}/draft/command
 POST /dashboards/new
 POST /dashboards/{dashboard}/fork
-POST /sources/search
-POST /models/search
+GET /sources/search
+GET /models/search
 POST /models/{asset}/data/command
-POST /semantic-models/search
+GET /semantic-models/search
 POST /semantic-models/{asset}/data/command
 POST /device
 POST /metrics
