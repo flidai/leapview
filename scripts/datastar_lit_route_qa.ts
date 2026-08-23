@@ -33,6 +33,7 @@ try {
   await verifySidebarCollapseToggle()
   await verifyEChartsFirstNavigation()
   await verifyDashboardCommandDoesNotReopenUpdates()
+  await verifyDataExplorerRecoveryActions()
   await verifyTableShowcase()
   await verifyFilterShowcase()
   await verifySpatialShowcaseMaps()
@@ -40,6 +41,49 @@ try {
   console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
 } finally {
   await browser.close()
+}
+
+async function verifyDataExplorerRecoveryActions(): Promise<void> {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const messages = collectBlockingConsoleMessages(page)
+
+  try {
+    const response = await page.goto(new URL('/explore', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`/explore recovery: status ${response?.status() ?? 'unknown'}`)
+    const explorer = page.locator('lv-data-explorer')
+    await explorer.waitFor()
+    const firstObject = explorer.locator('.object-button').first()
+    await firstObject.waitFor({ state: 'visible' })
+    await firstObject.click()
+
+    const preview = explorer.locator('lv-data-preview-table')
+    await preview.waitFor({ state: 'visible' })
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
+    })
+
+    const failure = preview.locator('[role="alert"]')
+    await expect(failure).toContainText('Qualification-injected preview failure.')
+    const retryRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
+    await failure.getByRole('button', { name: 'Retry', exact: true }).click()
+    await retryRequest
+
+    await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ dataExplorer: { preview: { error: 'Qualification-injected preview failure.' } } })
+    })
+    await expect(failure).toBeVisible()
+    const resetRequest = page.waitForRequest((request) => new URL(request.url()).pathname === '/explore/command' && request.method() === 'POST')
+    await failure.getByRole('button', { name: 'Reset view', exact: true }).click()
+    const reset = await resetRequest
+    if (!reset.postData()?.includes('resetVersion')) {
+      throw new Error('/explore recovery reset did not send canonical reset state')
+    }
+    assertNoBlockingConsoleMessages('data explorer recovery', messages)
+  } finally {
+    await page.close()
+  }
 }
 
 async function verifySidebarCollapseToggle(): Promise<void> {
