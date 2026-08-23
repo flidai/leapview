@@ -161,7 +161,7 @@ test('mobile record tables expose a horizontal-scroll affordance without changin
   }
 })
 
-test('narrow record tables keep the leading entity column visible while horizontally scrolling', async () => {
+test('narrow record tables keep entity columns usable without pinning them', async () => {
   const page = await browser.newPage({ viewport: { width: 520, height: 620 } })
   try {
     await page.goto(baseURL)
@@ -194,10 +194,10 @@ test('narrow record tables keep the leading entity column visible while horizont
     expect(initial.cellWidth).toBeGreaterThanOrEqual(220)
     expect(initial.cellWidth).toBeLessThanOrEqual(280)
     expect(initial.linkWidth).toBeGreaterThan(0)
-    expect(initial.cellPosition).toBe('sticky')
+    expect(initial.cellPosition).toBe('static')
     expect(scrolled.wrapScrollLeft).toBeGreaterThan(0)
-    expect(scrolled.cellLeft).toBe(initial.cellLeft)
-    expect(scrolled.linkLeft).toBe(initial.linkLeft)
+    expect(scrolled.cellLeft).toBeLessThan(initial.cellLeft)
+    expect(scrolled.linkLeft).toBeLessThan(initial.linkLeft)
     expect(scrolled.documentOverflow).toBe(0)
   } finally {
     await page.close()

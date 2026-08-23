@@ -200,13 +200,6 @@ function columnAlignClass(column: RecordColumn): string {
   return column.align === 'right' || column.kind === 'number' ? 'is-right' : ''
 }
 
-function columnClass(column: RecordColumn, index: number): string {
-  return [
-    columnAlignClass(column),
-    index === 0 ? 'is-leading' : '',
-  ].filter(Boolean).join(' ')
-}
-
 function columnWidth(column: RecordColumn): string {
   if (column.width) return column.width
   return column.kind === 'entity' ? 'clamp(220px, 45vw, 280px)' : ''
@@ -256,11 +249,11 @@ class RecordTable extends LitElement {
         <table class="record-table" style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
           <thead>
             <tr>
-              ${columns.map((column, index) => {
+              ${columns.map((column) => {
                 const direction = this.sortDirection(column.id)
                 const sortable = column.sortable !== false && column.kind !== 'actions'
                 return html`
-                  <th style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''} class=${columnClass(column, index)}>
+                  <th style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''} class=${columnAlignClass(column)}>
                     <span class="record-table-header-content">
                       <button
                         type="button"
@@ -494,8 +487,8 @@ class RecordTable extends LitElement {
         @click=${() => this.emitRowAction(rowAction, row)}
         @keydown=${(event: KeyboardEvent) => this.handleRowKeydown(event, rowAction, row)}
       >
-        ${columns.map((column, columnIndex) => html`
-          <td class=${columnClass(column, columnIndex)}>
+        ${columns.map((column) => html`
+          <td class=${columnAlignClass(column)}>
             ${this.renderCell(column, row[column.id], row)}
           </td>
         `)}
@@ -941,18 +934,6 @@ const recordTableStyles = `
     vertical-align: top;
   }
 
-  lv-record-table .record-table th.is-leading,
-  lv-record-table .record-table td.is-leading {
-    position: sticky;
-    left: 0;
-    z-index: 2;
-    background: var(--lv-bg-page);
-  }
-
-  lv-record-table .record-table th.is-leading {
-    z-index: 3;
-  }
-
   lv-record-table .record-table th {
     position: sticky;
     top: 0;
@@ -1017,10 +998,6 @@ const recordTableStyles = `
     background: var(--lv-bg-hover, var(--lv-bg-panel-muted));
   }
 
-  lv-record-table .record-table tbody tr:hover td.is-leading {
-    background: var(--lv-bg-hover, var(--lv-bg-panel-muted));
-  }
-
   lv-record-table .record-table tbody tr.is-actionable {
     cursor: pointer;
   }
@@ -1032,11 +1009,6 @@ const recordTableStyles = `
 
   lv-record-table .variant-primary .record-table tbody tr:hover,
   lv-record-table .variant-compact .record-table tbody tr:hover {
-    background: var(--control-transparent-bgColor-hover);
-  }
-
-  lv-record-table .variant-primary .record-table tbody tr:hover td.is-leading,
-  lv-record-table .variant-compact .record-table tbody tr:hover td.is-leading {
     background: var(--control-transparent-bgColor-hover);
   }
 
