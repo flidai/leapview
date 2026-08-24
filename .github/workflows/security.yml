@@ -1,0 +1,132 @@
+name: Security gates
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, stacked]
+  push:
+    branches: [main]
+  merge_group:
+    types: [checks_requested]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.event.pull_request.stack.id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  policy-validation:
+    name: Security policy contracts
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached security toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Verify inventory, exceptions, updaters, and workflow contracts
+        run: task security:policy
+
+  dependency-validation:
+    name: Dependency vulnerability policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached security toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Scan every maintained dependency graph
+        run: task security:dependencies
+
+  source-validation:
+    name: Secret and IaC policy
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out complete history
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up the cached security toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Scan source, infrastructure, and candidate history
+        run: task security:source
+
+  sast-validation:
+    name: Selected SAST (${{ matrix.language }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: go
+            build-mode: autobuild
+          - language: javascript-typescript
+            build-mode: none
+
+    steps:
+      - name: Check out the exact candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Initialize selected CodeQL analysis
+        uses: github/codeql-action/init@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      - name: Analyze selected source language
+        uses: github/codeql-action/analyze@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          category: /language:${{ matrix.language }}
+
+  security-gate:
+    name: Security gate
+    if: ${{ always() }}
+    needs: [policy-validation, dependency-validation, source-validation, sast-validation]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out the aggregate gate contract
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up Go for the aggregate contract
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Require every security lane
+        env:
+          POLICY_RESULT: ${{ needs.policy-validation.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-validation.result }}
+          SOURCE_RESULT: ${{ needs.source-validation.result }}
+          SAST_RESULT: ${{ needs.sast-validation.result }}
+        run: >-
+          go run ./internal/app/tools/securityresults
+          "$POLICY_RESULT" "$DEPENDENCY_RESULT" "$SOURCE_RESULT" "$SAST_RESULT"

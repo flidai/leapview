@@ -1,0 +1,10 @@
+{
+  "name": "image-size",
+  "version": "1.2.2-leapview.0",
+  "description": "Callable CommonJS bridge for exact image-size-next 1.2.2",
+  "private": true,
+  "main": "index.cjs",
+  "dependencies": {
+    "image-size-next": "1.2.2"
+  }
+}

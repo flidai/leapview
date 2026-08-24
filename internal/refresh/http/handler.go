@@ -30,14 +30,13 @@ type Handler struct {
 	RunCreated            func(context.Context, refreshrun.RunRecord) error
 	AuthorizePipelineView func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
-	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string) (refreshrun.RunRecord, error)
+	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string) (refreshrun.RunRecord, error)
 }
 
 var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
-	RetryOf    string `json:"retryOf,omitempty"`
 }
 
 // PipelineRunResponse is the public representation of a root refresh-pipeline
@@ -50,8 +49,11 @@ type PipelineRunResponse struct {
 	SemanticModel        string                       `json:"semanticModel"`
 	PrincipalID          string                       `json:"principalId,omitempty"`
 	PrincipalDisplayName string                       `json:"principalDisplayName,omitempty"`
-	Trigger              string                       `json:"trigger"`
-	RetryOf              string                       `json:"retryOf,omitempty"`
+	InvocationSource     string                       `json:"invocationSource"`
+	MatchingScheduleIDs  []string                     `json:"matchingScheduleIds,omitempty"`
+	NominalTime          string                       `json:"nominalTime,omitempty"`
+	PlanDigest           string                       `json:"planDigest"`
+	MaterializationScope []string                     `json:"materializationScope"`
 	Status               string                       `json:"status"`
 	Error                string                       `json:"error,omitempty"`
 	CreatedAt            string                       `json:"createdAt"`
@@ -78,17 +80,36 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 	if err != nil {
 		return PipelineRunResponse{}, false
 	}
+	nominalTime, err := httptransport.NormalizeTimestamp(run.NominalTime)
+	if err != nil {
+		return PipelineRunResponse{}, false
+	}
+	invocationSource := run.InvocationSource
+	switch invocationSource {
+	case refreshrun.TriggerManual, "backfill", "external":
+		if len(run.MatchingScheduleIDs) != 0 {
+			return PipelineRunResponse{}, false
+		}
+	case refreshrun.TriggerSchedule:
+		if len(run.MatchingScheduleIDs) == 0 {
+			return PipelineRunResponse{}, false
+		}
+	default:
+		return PipelineRunResponse{}, false
+	}
 	return PipelineRunResponse{
 		ID: run.ID, Identity: run.Identity, PipelineID: run.PipelineID.String(), SemanticModel: run.SemanticModelID.String(),
-		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, Trigger: run.TriggerType,
-		RetryOf: run.RetryOf, Status: run.Status, Error: run.Error, CreatedAt: createdAt,
+		PrincipalID: run.PrincipalID, PrincipalDisplayName: run.PrincipalDisplayName, InvocationSource: invocationSource,
+		MatchingScheduleIDs: append([]string(nil), run.MatchingScheduleIDs...),
+		NominalTime:         nominalTime, PlanDigest: run.PlanDigest, MaterializationScope: append([]string(nil), run.MaterializationScope...),
+		Status: run.Status, Error: run.Error, CreatedAt: createdAt,
 		StartedAt: startedAt, FinishedAt: finishedAt,
 	}, true
 }
 
 func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project string) {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
-	repo, identity, ok := h.commandRunRepository(w, r, operationID, project)
+	_, identity, ok := h.commandRunRepository(w, r, operationID, project)
 	if !ok {
 		return
 	}
@@ -131,31 +152,11 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 		writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh pipeline not found"))
 		return
 	}
-	if input.RetryOf != "" {
-		scope, scopeErr := refreshrun.ReadScopeForIdentity(identity)
-		if scopeErr != nil {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
-			return
-		}
-		prior, err := repo.GetRun(r.Context(), scope, input.RetryOf)
-		if err != nil {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
-			return
-		}
-		if !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipelineID {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("not_found", "refresh run not found"))
-			return
-		}
-		if prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
-			writeCommandFailure(w, r, operationID, apigenfailure.New("conflict", "retryOf refresh run is not terminal"))
-			return
-		}
-	}
 	if h.QueuePipeline == nil {
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh pipeline runner is not configured"))
 		return
 	}
-	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, principalID, input.RetryOf)
+	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, principalID)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)

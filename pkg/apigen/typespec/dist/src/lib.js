@@ -80,6 +80,12 @@ export const $lib = createTypeSpecLibrary({
                 default: paramMessage `Invalid @apigen.propertyNames usage: ${"reason"}.`,
             },
         },
+        "invalid-min-properties": {
+            severity: "error",
+            messages: {
+                default: paramMessage `Invalid @apigen.minProperties usage: ${"reason"}.`,
+            },
+        },
         "unnamed-schema": {
             severity: "error",
             messages: {

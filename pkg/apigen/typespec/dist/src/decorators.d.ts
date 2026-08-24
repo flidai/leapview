@@ -168,6 +168,7 @@ export declare function $metadata(context: DecoratorContext, target: Model | Mod
 export declare function $tool(context: DecoratorContext, target: Operation, options: ToolOptions): void;
 export declare function $transportErrors(context: DecoratorContext, target: Namespace, schema: Model, options: TransportErrorsOptions): void;
 export declare function $propertyNames(context: DecoratorContext, target: ModelProperty, key: Scalar): void;
+export declare function $minProperties(context: DecoratorContext, target: ModelProperty, value: number): void;
 export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
@@ -196,6 +197,7 @@ export declare const $decorators: {
         tool: typeof $tool;
         transportErrors: typeof $transportErrors;
         propertyNames: typeof $propertyNames;
+        minProperties: typeof $minProperties;
     };
 };
 export declare function getCLI(context: {
@@ -270,3 +272,6 @@ export declare function getTransportErrors(context: {
 export declare function getPropertyNames(context: {
     program: DecoratorContext["program"];
 }, target: ModelProperty): Scalar | undefined;
+export declare function getMinProperties(context: {
+    program: DecoratorContext["program"];
+}, target: ModelProperty): number | undefined;

@@ -294,6 +294,9 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 	if p.Status != deployment.DeliveryPublicationPending && p.Status != deployment.DeliveryPublicationIndeterminate {
 		return deployment.DeliveryPublication{}, fmt.Errorf("%w: publication is %s", deployment.ErrDeliveryTransition, p.Status)
 	}
+	if err := refreshPublicationFenceActive(ctx, tx, p); err != nil {
+		return deployment.DeliveryPublication{}, err
+	}
 	actor := "delivery"
 	if persistedActor, actorErr := deploydb.New(tx).GetDeliveryPublicationRequestActor(ctx, p.ID); actorErr == nil {
 		actor = persistedActor
@@ -437,6 +440,27 @@ func (r *Repository) CommitPublication(ctx context.Context, id string, now time.
 		return r.reconcilePublicationCommitError(ctx, id, now.UTC(), err)
 	}
 	return committed, nil
+}
+
+func refreshPublicationFenceActive(ctx context.Context, tx *sql.Tx, publication deployment.DeliveryPublication) error {
+	if publication.RefreshRunID == "" {
+		return nil
+	}
+	active, err := deploydb.New(tx).IsActiveRefreshPublicationFence(ctx, deploydb.IsActiveRefreshPublicationFenceParams{
+		RunID:          publication.RefreshRunID,
+		ProjectID:      publication.ProjectID.String(),
+		Environment:    publication.Environment,
+		TargetRevision: publication.RefreshTargetRevision,
+		LeaseOwner:     publication.RefreshLeaseOwner,
+		LeaseRevision:  publication.RefreshLeaseRevision,
+	})
+	if err != nil {
+		return err
+	}
+	if active != 1 {
+		return fmt.Errorf("%w: refresh publication authority was revoked", deployment.ErrDeliveryStale)
+	}
+	return nil
 }
 
 func (r *Repository) reconcilePublicationCommitError(ctx context.Context, id string, now time.Time, commitErr error) (deployment.DeliveryPublication, error) {

@@ -190,11 +190,11 @@ jobs:
             --version "${{ needs.identity.outputs.version }}"
 
       - name: Attest preview provenance
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: release/*
 
-      - name: Publish immutable unsigned prerelease
+      - name: Create draft unsigned prerelease with staged assets
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
@@ -221,8 +221,51 @@ jobs:
             --target "$source_sha" \
             --title "LeapView Desktop $VERSION (unsigned preview)" \
             --notes-file "$notes" \
+            --draft \
             --prerelease \
             release/*
+
+      - name: Verify staged draft assets and attestations
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+          SOURCE_SHA: ${{ needs.identity.outputs.source_sha }}
+        run: |
+          set -euo pipefail
+          gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
+            --jq 'if (.isDraft == true and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected draft preview release") end'
+          download="$RUNNER_TEMP/staged-desktop-evidence"
+          mkdir -p "$download"
+          gh release download "$RELEASE_TAG" --dir "$download"
+          mapfile -t staged_files < <(find release -maxdepth 1 -type f -printf '%f\n' | sort)
+          mapfile -t downloaded_files < <(find "$download" -maxdepth 1 -type f -printf '%f\n' | sort)
+          test "${#staged_files[@]}" -eq 13
+          test "${#downloaded_files[@]}" -eq "${#staged_files[@]}"
+          diff -u <(printf '%s\n' "${staged_files[@]}") <(printf '%s\n' "${downloaded_files[@]}")
+          for name in "${staged_files[@]}"; do
+            cmp "release/$name" "$download/$name"
+          done
+          cd "$download"
+          test "$(find . -maxdepth 1 -type f -name '*.spdx.json' | wc -l)" -eq 4
+          test "$(find . -maxdepth 1 -type f -name '*.release.json' | wc -l)" -eq 4
+          sha256sum --check SHA256SUMS
+          for sbom in ./*.spdx.json; do
+            jq -e '.spdxVersion == "SPDX-2.3" and (.packages | type == "array")' "$sbom" >/dev/null
+          done
+          for evidence in ./*; do
+            [[ "$(basename "$evidence")" == SHA256SUMS ]] && continue
+            gh attestation verify "$evidence" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow flidai/leapview/.github/workflows/desktop-preview-release.yml \
+              --source-digest "$SOURCE_SHA" >/dev/null
+          done
+
+      - name: Publish verified prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+        run: |
+          gh release edit "$RELEASE_TAG" --draft=false
 
       - name: Verify published prerelease shape
         env:
@@ -230,4 +273,16 @@ jobs:
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
         run: |
           gh release view "$RELEASE_TAG" --json isDraft,isPrerelease,assets \
-            --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected preview release") end'
+            --jq 'if (.isDraft == false and .isPrerelease == true and (.assets | length) == 13) then "verified" else error("unexpected published preview release") end'
+
+      - name: Remove failed draft preview
+        if: ${{ failure() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+          is_draft="$(gh release view "$RELEASE_TAG" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [[ "$is_draft" == "true" ]]; then
+            gh release delete "$RELEASE_TAG" --cleanup-tag --yes
+          fi

@@ -63,13 +63,16 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 
 func refreshPipelineDetailModel(model *assetDetailModel, asset projectview.DevelopAssetView, refresh AssetRefreshState) {
 	semanticModel := metaString(asset.Payload, "SemanticModel", "semanticModel")
+	timezone := metaString(asset.Payload, "Timezone", "timezone")
 	schedules := metaSlice(asset.Payload, "Schedules", "schedules")
-	lines := make([]string, 0, len(schedules)*2+1)
+	lines := make([]string, 0, len(schedules)+1)
 	for _, raw := range schedules {
 		entry, _ := raw.(map[string]any)
 		cron := metaString(entry, "Cron", "cron")
-		timezone := metaString(entry, "Timezone", "timezone")
-		lines = append(lines, "- cron: "+strconv.Quote(cron), "  timezone: "+timezone)
+		lines = append(lines, "- cron: "+strconv.Quote(cron))
+	}
+	if timezone != "" && len(lines) > 0 {
+		lines = append(lines, "timezone: "+timezone)
 	}
 	scheduleYAML := "Manual only"
 	if len(lines) > 0 {
@@ -671,7 +674,10 @@ func modelTableSourceNames(meta map[string]any) []string {
 }
 
 func modelTableSQL(meta map[string]any) string {
-	return metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql")
+	if sql := metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql"); sql != "" {
+		return sql
+	}
+	return metaString(metaMap(metaMap(meta, "AuthoredModel", "authoredModel"), "Query", "query"), "Code", "code")
 }
 
 func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {

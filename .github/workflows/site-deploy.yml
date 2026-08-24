@@ -32,6 +32,7 @@ jobs:
     permissions:
       contents: read
       packages: write
+      attestations: read
 
     steps:
       - name: Check out the published revision
@@ -57,10 +58,19 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Re-admit the exact public-site image before promotion
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ needs.publish.outputs.image_reference }}
+          repository: ghcr.io/flidai/leapview-site
+          expected-workflow: flidai/leapview/.github/workflows/site-image.yml
+          source-revision: ${{ needs.publish.outputs.revision }}
+
       - name: Promote the verified digest and await activation
         env:
-          IMAGE_REFERENCE: ${{ needs.publish.outputs.image_reference }}
-          IMAGE_DIGEST: ${{ needs.publish.outputs.image_digest }}
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
+          IMAGE_DIGEST: ${{ steps.admission.outputs.digest }}
           REVISION: ${{ needs.publish.outputs.revision }}
           PRODUCTION_TAG: ghcr.io/flidai/leapview-site:production
         run: |

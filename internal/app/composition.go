@@ -249,6 +249,39 @@ func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, delive
 			refreshAll = true
 		}
 	}
+	// A generation-bound pipeline restatement is intentionally scoped even
+	// when compiler materialization impact is false. Add its authored model
+	// table closure as explicit refresh targets while retaining every unrelated
+	// relation from the sealed base.
+	if deliveryPlan.PipelinePlan != nil {
+		for _, selected := range deliveryPlan.PipelinePlan.MaterializationScope {
+			matched := false
+			for modelID, model := range artifacts.Compiler.Artifact.Models() {
+				if model == nil {
+					continue
+				}
+				aliases := make([]string, 0, 1)
+				for alias, table := range model.Tables {
+					if alias == selected || table.ModelName == selected {
+						aliases = append(aliases, alias)
+					}
+				}
+				if len(aliases) == 0 {
+					continue
+				}
+				matched = true
+				if changedByModel[modelID] == nil {
+					changedByModel[modelID] = make(map[string]struct{})
+				}
+				for _, alias := range aliases {
+					changedByModel[modelID][alias] = struct{}{}
+				}
+			}
+			if !matched {
+				refreshAll = true
+			}
+		}
+	}
 	if len(changedByModel) == 0 && len(removed) == 0 && artifacts.Compiler.Plan.Summary.MaterializationImpact {
 		refreshAll = true
 	}
@@ -1196,7 +1229,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err := analyticsmodule.BindCandidateManagedDataRoots(models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, managedResolution.Roots); err != nil {
 				return nil, err
 			}
-			if artifacts.Generation.DataMode == release.GenerationDataReuseBase {
+			pipelineScoped := buildInput.Plan.PipelinePlan != nil && buildInput.Plan.Operation == deployment.DeliveryOperationRestatement
+			if artifacts.Generation.DataMode == release.GenerationDataReuseBase && !pipelineScoped {
 				actual, err := working.VisibleTables(matCtx)
 				if err != nil {
 					return nil, err
@@ -1303,7 +1337,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			return appruntimefactory.PreviewCandidatePlanWithPolicyAndReuse(planCtx, deliveryLifecycle, input, artifacts, identity.Version+":"+identity.Revision, appruntimefactory.CandidateDeliveryPolicy{RequiresApproval: requiresDeliveryApproval(production, cfg.EvaluationMode, input.Operation), RollbackClass: deployment.DeliveryServingSafe, RetentionWindow: cfg.DeliveryRollbackRetention().String()}, reuse)
 		}
-		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
+		publishCanonicalCandidate := func(publishCtx context.Context, project, candidate, actor string, refreshFence *deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
 			candidateRecord, candidateErr := sealedDelivery.DeliveryCandidateByID(publishCtx, candidate)
 			if candidateErr != nil {
 				return deployment.DeliveryPublication{}, candidateErr
@@ -1314,6 +1348,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			request, err := buildCanonicalPublishRequest(publishCtx, sealedDelivery, candidate, instanceID)
 			if err != nil {
 				return deployment.DeliveryPublication{}, err
+			}
+			if refreshFence != nil {
+				if err := refreshFence.Validate(); err != nil {
+					return deployment.DeliveryPublication{}, err
+				}
+				request.Publication.RefreshRunID = refreshFence.RunID
+				request.Publication.RefreshLeaseOwner = refreshFence.LeaseOwner
+				request.Publication.RefreshLeaseRevision = refreshFence.LeaseRevision
+				request.Publication.RefreshTargetRevision = refreshFence.TargetRevision
 			}
 			request.ActorID = actor
 			if _, err := sealedCoordinator.PublishWithActivation(publishCtx, request, func(activationCtx context.Context, commit func() error) error {
@@ -1341,6 +1384,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Generation.ServingStateID)
 			}
 			return sealedDelivery.DeliveryPublicationByID(publishCtx, request.Publication.ID)
+		}
+		canonicalDelivery = appruntimefactory.NewCanonicalDeliveryAdapter(appruntimefactory.CanonicalDeliveryConfig{Lifecycle: deliveryLifecycle, Artifacts: releaseModule, Publish: func(publishCtx context.Context, project, candidate, actor, _ string) (deployment.DeliveryPublication, error) {
+			return publishCanonicalCandidate(publishCtx, project, candidate, actor, nil)
 		}, Rollback: func(rollbackCtx context.Context, project, generation, actor, key string) (deployment.DeliveryPublication, error) {
 			generationRecord, generationErr := sealedDelivery.DeliveryGenerationByID(rollbackCtx, generation)
 			if generationErr != nil {
@@ -1422,7 +1468,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			BuildRequest: canonicalDelivery.BuildRequest,
 			Adapter:      canonicalDelivery,
 			Publish:      canonicalDelivery.Publish,
-			Rollback:     canonicalDelivery.Rollback,
+			PublishFenced: func(publishCtx context.Context, project, candidate, actor, _ string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
+				return publishCanonicalCandidate(publishCtx, project, candidate, actor, &fence)
+			},
+			Rollback: canonicalDelivery.Rollback,
 		}
 	}
 	deploymentConfig := deploymentmodule.Config{

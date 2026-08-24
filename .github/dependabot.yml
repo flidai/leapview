@@ -1,47 +1,93 @@
 version: 2
 
+# Keep every updater bounded: one grouped PR per maintained root, with a
+# finite queue so a broken upstream release cannot flood the repository.
 updates:
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
     groups:
-      github-actions:
-        patterns:
-          - "*"
+      github-actions: {patterns: ["*"]}
 
   - package-ecosystem: docker
     directory: /
-    schedule:
-      interval: weekly
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
     groups:
-      container-images:
-        patterns:
-          - "*"
+      container-images: {patterns: ["*"]}
+  - package-ecosystem: docker
+    directory: /deploy/compose/qualification
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      qualification-image: {patterns: ["*"]}
+  - package-ecosystem: docker
+    directory: /internal/app/testing/maliciousinstance/electron
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      electron-proof-images: {patterns: ["*"]}
 
   - package-ecosystem: gomod
     directory: /
-    schedule:
-      interval: weekly
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
     groups:
-      go-dependencies:
-        patterns:
-          - "*"
+      go-dependencies: {patterns: ["*"]}
+  - package-ecosystem: gomod
+    directory: /pkg/apigen
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      apigen-go-dependencies: {patterns: ["*"]}
+  - package-ecosystem: gomod
+    directory: /pkg/apigen/example
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      apigen-example-go-dependencies: {patterns: ["*"]}
 
   - package-ecosystem: npm
     directory: /
-    schedule:
-      interval: weekly
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
     groups:
-      frontend-dependencies:
-        patterns:
-          - "*"
+      frontend-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /desktop
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      desktop-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /deploy/compose/qualification
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      qualification-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /internal/app/testing/maliciousinstance/electron
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      electron-proof-dependencies: {patterns: ["*"]}
+  - package-ecosystem: npm
+    directory: /pkg/apigen/typespec
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      typespec-dependencies: {patterns: ["*"]}
 
   - package-ecosystem: terraform
     directory: /deploy/hetzner
-    schedule:
-      interval: weekly
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
     groups:
-      terraform-providers:
-        patterns:
-          - "*"
+      terraform-providers: {patterns: ["*"]}
+  - package-ecosystem: terraform
+    directory: /deploy/hetzner-site
+    schedule: {interval: weekly}
+    open-pull-requests-limit: 5
+    groups:
+      site-terraform-providers: {patterns: ["*"]}

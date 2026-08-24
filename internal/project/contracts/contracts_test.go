@@ -165,6 +165,49 @@ spec:
 	}
 }
 
+func TestPipelineContractDecodesSelectionAndSchedules(t *testing.T) {
+	content := []byte(`apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:sales
+  name: sales_refresh
+spec:
+  selection:
+    semanticModel: sales
+  schedules:
+    weekdays-0600: "0 6 * * 1-5"
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
+`)
+	var pipeline contracts.PipelineDocument
+	if err := configschema.DecodeResource(configschema.KindPipeline, "pipeline.yaml", content, &pipeline); err != nil {
+		t.Fatalf("decode Pipeline: %v", err)
+	}
+	scheduled, ok := pipeline.Spec.Value.(*contracts.ScheduledPipelineSpec)
+	if !ok {
+		t.Fatalf("spec variant = %T, want scheduled variant", pipeline.Spec.Value)
+	}
+	if scheduled.Selection.SemanticModel != "sales" || len(scheduled.Schedules) != 1 || scheduled.Schedules["weekdays-0600"] != "0 6 * * 1-5" {
+		t.Fatalf("scheduled spec = %#v, want selection and schedule", scheduled)
+	}
+	if scheduled.Timezone != "Europe/Copenhagen" || scheduled.StartingDeadlineSeconds != 3600 || scheduled.ConcurrencyPolicy != contracts.PipelineConcurrencyPolicyReplace {
+		t.Fatalf("scheduled policy = %#v, want explicit policy", scheduled)
+	}
+}
+
+func TestPipelineContractRejectsLegacyShape(t *testing.T) {
+	content := []byte(`apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata: {id: pipeline:sales, name: sales_refresh}
+spec: {semanticModel: semantic:sales}
+`)
+	var pipeline contracts.PipelineDocument
+	if err := configschema.DecodeResource(configschema.KindPipeline, "pipeline.yaml", content, &pipeline); err == nil {
+		t.Fatal("legacy semanticModel pipeline shape was accepted")
+	}
+}
+
 func TestGeneratedResourceBoundaryRejectsTargetOwnedFields(t *testing.T) {
 	content := []byte(`apiVersion: leapview.dev/v1
 kind: Connection

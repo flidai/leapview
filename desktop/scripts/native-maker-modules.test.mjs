@@ -19,7 +19,6 @@ test("prepares only the macOS DMG native helper with pinned build tools", () => 
     nodeGyp: join(
       "/desktop",
       "node_modules",
-      "@electron",
       "node-gyp",
       "bin",
       "node-gyp.js",

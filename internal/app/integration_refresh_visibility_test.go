@@ -16,13 +16,16 @@ import (
 )
 
 type refreshRunResponse struct {
-	ID            string                       `json:"id"`
-	Identity      projectgraph.ServingIdentity `json:"identity"`
-	PipelineID    string                       `json:"pipelineId"`
-	SemanticModel string                       `json:"semanticModel"`
-	Trigger       string                       `json:"trigger"`
-	Status        string                       `json:"status"`
-	CreatedAt     string                       `json:"createdAt"`
+	ID                   string                       `json:"id"`
+	Identity             projectgraph.ServingIdentity `json:"identity"`
+	PipelineID           string                       `json:"pipelineId"`
+	SemanticModel        string                       `json:"semanticModel"`
+	InvocationSource     string                       `json:"invocationSource"`
+	MatchingScheduleIDs  []string                     `json:"matchingScheduleIds,omitempty"`
+	PlanDigest           string                       `json:"planDigest"`
+	MaterializationScope []string                     `json:"materializationScope"`
+	Status               string                       `json:"status"`
+	CreatedAt            string                       `json:"createdAt"`
 }
 
 func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
@@ -39,7 +42,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 	if err := json.Unmarshal(body, &created); err != nil {
 		t.Fatalf("decode manual refresh response: %v; body=%s", err, body)
 	}
-	if created.ID == "" || created.PipelineID != pipelineID || created.SemanticModel != h.semanticModel.String() || created.Trigger != refreshrun.TriggerManual {
+	if created.ID == "" || created.PipelineID != pipelineID || created.SemanticModel != h.semanticModel.String() || created.InvocationSource != refreshrun.TriggerManual || len(created.MatchingScheduleIDs) != 0 || created.PlanDigest == "" || len(created.MaterializationScope) == 0 {
 		t.Fatalf("manual refresh response = %#v", created)
 	}
 	if created.Identity.ProjectID != h.projectID || created.Identity.Environment != string(h.environment) || created.Identity.GenerationID == "" {
@@ -192,7 +195,7 @@ func assertPublicRefreshResponse(t *testing.T, body []byte) {
 	if err := json.Unmarshal(body, &value); err != nil {
 		t.Fatalf("decode public refresh response: %v; body=%s", err, body)
 	}
-	for _, internalField := range []string{"modelId", "servingStateId", "targetType", "targetId", "parentRunId"} {
+	for _, internalField := range []string{"modelId", "servingStateId", "targetType", "targetId", "trigger", "triggerId", "triggerType", "parentRunId"} {
 		if _, exists := value[internalField]; exists {
 			t.Fatalf("public refresh response exposed internal field %q: %#v", internalField, value)
 		}

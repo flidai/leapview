@@ -1,0 +1,10 @@
+{
+  "name": "brace-expansion",
+  "version": "5.0.9-leapview.0",
+  "private": true,
+  "main": "index.cjs",
+  "description": "Callable CommonJS bridge for exact brace-expansion 5.0.9",
+  "dependencies": {
+    "brace-expansion-next": "npm:brace-expansion@5.0.9"
+  }
+}

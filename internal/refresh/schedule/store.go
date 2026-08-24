@@ -3,6 +3,7 @@ package schedule
 import (
 	"context"
 	"errors"
+	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -11,6 +12,11 @@ import (
 )
 
 var artifactDigestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+
+// ErrOccurrenceSkipped reports a terminal policy decision that has already
+// been persisted by the trigger implementation. The scheduler must not
+// release such an occurrence for retry.
+var ErrOccurrenceSkipped = errors.New("refresh occurrence skipped")
 
 const (
 	DataVersionSourcePublish = "publish"
@@ -25,11 +31,16 @@ type ReconcileInput struct {
 }
 
 type Occurrence struct {
-	Identity        projectgraph.ServingIdentity
-	PipelineID      projectgraph.ResourceID
-	SemanticModelID projectgraph.ResourceID
-	ArtifactDigest  string
-	ScheduledAt     time.Time
+	Identity   projectgraph.ServingIdentity
+	PipelineID projectgraph.ResourceID
+	// MatchingScheduleIDs is evidence only. It is sorted canonically and does
+	// not participate in occurrence uniqueness, so overlapping expressions and
+	// schedule renames cannot create duplicate executions.
+	MatchingScheduleIDs []string
+	SemanticModelID     projectgraph.ResourceID
+	ArtifactDigest      string
+	Timezone            string
+	ScheduledAt         time.Time
 }
 
 type DataVersion struct {
@@ -48,7 +59,6 @@ type DataVersion struct {
 type Repository interface {
 	Reconcile(context.Context, ReconcileInput) error
 	ClaimDue(context.Context, projectgraph.ServingIdentity, time.Time) ([]Occurrence, error)
-	AttachRun(context.Context, Occurrence, string) error
 	ReleaseOccurrence(context.Context, Occurrence) error
 	NextRun(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID) (time.Time, bool, error)
 	SaveDataVersion(context.Context, DataVersion) error
@@ -63,7 +73,10 @@ type RealClock struct{}
 
 func (RealClock) Now() time.Time { return time.Now() }
 
-type Trigger func(context.Context, Occurrence) (string, error)
+// Trigger atomically admits a claimed occurrence and attaches its run. A nil
+// error means the occurrence is already durable; the scheduler must not write
+// a second attachment after this boundary.
+type Trigger func(context.Context, Occurrence) error
 
 // ValidateScope checks that a schedule record is bound to one immutable
 // project/environment/generation scope.  A serving generation is never
@@ -97,6 +110,37 @@ func (definition Definition) Validate() error {
 	}
 	if err := definition.SemanticModelID.Validate(); err != nil {
 		return err
+	}
+	if len(definition.Schedules) == 0 {
+		if definition.Timezone != "" || definition.ConcurrencyPolicy != "" || definition.StartingDeadlineSeconds != 0 {
+			return errors.New("manual-only refresh pipeline must not declare scheduling policy")
+		}
+		return nil
+	}
+	if definition.StartingDeadlineSeconds < 0 {
+		return errors.New("refresh pipeline starting deadline seconds must not be negative")
+	}
+	if definition.Timezone == "" {
+		return errors.New("refresh pipeline timezone is required when schedules exist")
+	}
+	if _, err := time.LoadLocation(definition.Timezone); err != nil {
+		return fmt.Errorf("refresh pipeline timezone %q must be a valid IANA timezone: %w", definition.Timezone, err)
+	}
+	if definition.ConcurrencyPolicy != ConcurrencyForbid && definition.ConcurrencyPolicy != ConcurrencyReplace {
+		return errors.New("refresh pipeline concurrency policy must be Forbid or Replace when schedules exist")
+	}
+	seenIDs := map[string]struct{}{}
+	for _, item := range definition.Schedules {
+		if err := ValidateOperationalID(item.ID); err != nil {
+			return fmt.Errorf("refresh pipeline schedule id: %w", err)
+		}
+		if _, exists := seenIDs[item.ID]; exists {
+			return fmt.Errorf("refresh pipeline schedule id %q is duplicated", item.ID)
+		}
+		seenIDs[item.ID] = struct{}{}
+		if _, err := ParseSchedule(item.Expression, definition.Timezone); err != nil {
+			return fmt.Errorf("refresh pipeline schedule %q: %w", item.ID, err)
+		}
 	}
 	return nil
 }
@@ -135,16 +179,16 @@ func (scheduler Scheduler) DispatchDue(ctx context.Context) error {
 	}
 	var dispatchErrors []error
 	for _, occurrence := range occurrences {
-		runID, triggerErr := scheduler.Trigger(ctx, occurrence)
+		triggerErr := scheduler.Trigger(ctx, occurrence)
 		if triggerErr != nil {
+			if errors.Is(triggerErr, ErrOccurrenceSkipped) {
+				continue
+			}
 			dispatchErrors = append(dispatchErrors, triggerErr)
 			if releaseErr := scheduler.Repository.ReleaseOccurrence(ctx, occurrence); releaseErr != nil {
 				dispatchErrors = append(dispatchErrors, releaseErr)
 			}
 			continue
-		}
-		if err := scheduler.Repository.AttachRun(ctx, occurrence, runID); err != nil {
-			dispatchErrors = append(dispatchErrors, err)
 		}
 	}
 	return errors.Join(dispatchErrors...)

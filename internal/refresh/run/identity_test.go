@@ -1,10 +1,49 @@
 package run
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func testPipelinePlan(identity projectgraph.ServingIdentity, pipelineID, semanticModelID string) *deployment.PipelinePlan {
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_test", PipelineID: pipelineID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: semanticModelID,
+		ServingGenerationID:  identity.GenerationID,
+		ArtifactDigest:       "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SelectionDigest:      "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		MaterializationScope: []string{"model_orders"},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return &plan
+}
+
+func TestScheduledRunAcceptsOpaqueAuthoredScheduleEvidence(t *testing.T) {
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"}
+	scheduleID := "weekdays 06:00 · " + strings.Repeat("evidence", 40)
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_scheduled", PipelineID: "pipeline_sales", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: "semantic_sales",
+		ServingGenerationID: identity.GenerationID, ArtifactDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		SelectionDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", MaterializationScope: []string{"model_orders"},
+		InvocationSource: "schedule", MatchingScheduleIDs: []string{scheduleID}, StartingDeadlineSeconds: 3600, ConcurrencyPolicy: "Replace",
+	})
+	if err != nil {
+		t.Fatalf("construct scheduled plan with opaque evidence label: %v", err)
+	}
+	input := RunInput{
+		Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PipelinePlan: &plan,
+		InvocationSource: TriggerSchedule, MatchingScheduleIDs: []string{scheduleID}, NominalTime: "2026-08-21T06:00:00Z",
+		ConcurrencyPolicy: "Replace", PrincipalID: "scheduler", EstimatedMemoryBytes: 1,
+		TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerSchedule, JobKind: JobKindRefreshPipeline,
+	}
+	if err := input.Validate(); err != nil {
+		t.Fatalf("scheduled run rejected authored schedule evidence: %v", err)
+	}
+}
 
 func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 	base := RunInput{
@@ -12,6 +51,7 @@ func TestRunInputRejectsIdentityAndOperationalAliases(t *testing.T) {
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetRefreshPipeline,
 		TargetID: "pipeline_sales", TriggerType: TriggerManual, JobKind: JobKindRefreshPipeline,
 	}
+	base.PipelinePlan = testPipelinePlan(base.Identity, base.PipelineID.String(), base.SemanticModelID.String())
 	if err := base.Validate(); err != nil {
 		t.Fatal(err)
 	}
@@ -39,8 +79,9 @@ func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 	job := JobRecord{
 		ID: "job_1", Identity: projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
 		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, Kind: JobKindRefreshPipeline,
-		RunID: "run_1", TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual,
+		RunID: "run_1", TargetType: TargetRefreshPipeline, TargetID: "pipeline_sales", TriggerType: TriggerManual, TriggerID: "manual",
 	}
+	job.PipelinePlan = testPipelinePlan(job.Identity, job.PipelineID.String(), job.SemanticModelID.String())
 	if err := job.Validate(); err != nil {
 		t.Fatal(err)
 	}

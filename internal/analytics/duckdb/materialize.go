@@ -585,6 +585,7 @@ func safeSourceError(source string, _ error) error {
 
 type ProjectRuntimeConfig struct {
 	Models                   map[string]*semanticmodel.Model
+	ModelTables              map[string]semanticmodel.Table
 	Database                 analyticsruntime.ProjectDatabase
 	CredentialResolver       CredentialResolver
 	ConnectionResolver       analyticsruntime.ConnectionResolver
@@ -674,7 +675,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			sources.extensionAdmission = config.ExtensionAdmission
 		}
 	}
-	materializationModel, err := physicalProjectModel(config.Models)
+	materializationModel, err := physicalProjectModel(config.Models, config.ModelTables)
 	if err != nil {
 		return nil, err
 	}
@@ -1105,7 +1106,7 @@ func cloneTableSchema(schema semanticmodel.TableSchema) semanticmodel.TableSchem
 }
 
 func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, selectedTable string) ([]string, error) {
-	model, err := physicalProjectModel(models)
+	model, err := physicalProjectModel(models, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1371,7 +1372,7 @@ func (r txPreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.
 	return planModelTable(ctx, r.tx, r.model, tableName, table, r.relations)
 }
 
-func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmodel.Model, error) {
+func physicalProjectModel(models map[string]*semanticmodel.Model, authoredTables map[string]semanticmodel.Table) (*semanticmodel.Model, error) {
 	projectModel := &semanticmodel.Model{
 		Name:              "project",
 		DefaultConnection: "",
@@ -1403,6 +1404,14 @@ func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmode
 			}
 			projectModel.Sources[name] = source
 		}
+	}
+	for _, name := range sortedKeys(authoredTables) {
+		table := authoredTables[name]
+		table.ModelName = name
+		projectModel.Tables[name] = table
+	}
+	for _, modelID := range modelIDs {
+		model := models[modelID]
 		// A semantic model exposes dataset aliases, but project materialization
 		// must emit one physical table per authored Model. Resolve aliases before
 		// merging so two semantic datasets can safely reuse one Model table.
@@ -1415,6 +1424,11 @@ func physicalProjectModel(models map[string]*semanticmodel.Model) (*semanticmode
 			dataset, _ := compiled.Dataset(name)
 			table := dataset.Table()
 			physicalName := dataset.ModelName()
+			if _, catalogued := authoredTables[physicalName]; catalogued {
+				// The project catalog is authoritative for physical execution and
+				// includes dependencies that need not be semantic datasets.
+				continue
+			}
 			table.ModelDependencies = append([]string(nil), table.ModelDependencies...)
 			for index, dependency := range table.ModelDependencies {
 				physicalDependency, err := compiled.ResolvePhysicalModelName(dependency)

@@ -1,5 +1,5 @@
 -- +goose Up
-CREATE TABLE project_dashboard_appearances (
+CREATE TABLE IF NOT EXISTS project_dashboard_appearances (
   project_id TEXT NOT NULL,
   dashboard_id TEXT NOT NULL,
   icon TEXT,

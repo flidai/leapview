@@ -19,7 +19,7 @@ type duckDBProjectMaterializer struct {
 
 func (e duckDBProjectMaterializer) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
-		Models: request.Models, Database: e.environment,
+		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,

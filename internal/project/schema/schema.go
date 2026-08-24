@@ -104,6 +104,9 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 	if kind == KindDashboard {
 		return validateDashboardDocument(filename, content)
 	}
+	if kind == KindPipeline {
+		return validatePipelineDocument(filename, content)
+	}
 	// Connection, Source, and Model structure is owned by the generated
 	// TypeSpec contracts. ValidateBytes is also called directly by schema tests
 	// and callers, so route all three kinds through the same generated JSON
@@ -138,6 +141,9 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 func JSONSchema(kind Kind) ([]byte, error) {
 	if kind == KindDashboard {
 		return append([]byte(nil), canonicalschemas.DashboardDocumentSchema...), nil
+	}
+	if kind == KindPipeline {
+		return append([]byte(nil), canonicalschemas.PipelineSchema...), nil
 	}
 	if kind == KindConnection || kind == KindSource || kind == KindModel {
 		return generatedJSONSchema(kind)
@@ -272,6 +278,80 @@ func compiledDashboardSchema() (*jsonschema.Schema, error) {
 		dashboardSchema, dashboardSchemaErr = compiler.Compile(schemaURL)
 	})
 	return dashboardSchema, dashboardSchemaErr
+}
+
+var (
+	pipelineSchemaOnce sync.Once
+	pipelineSchema     *jsonschema.Schema
+	pipelineSchemaErr  error
+)
+
+func compiledPipelineSchema() (*jsonschema.Schema, error) {
+	pipelineSchemaOnce.Do(func() {
+		var document any
+		if err := json.Unmarshal(canonicalschemas.PipelineSchema, &document); err != nil {
+			pipelineSchemaErr = fmt.Errorf("decode generated pipeline schema: %w", err)
+			return
+		}
+		compiler := jsonschema.NewCompiler()
+		const schemaURL = "https://leapview.dev/schemas/pipeline.schema.json"
+		if err := compiler.AddResource(schemaURL, document); err != nil {
+			pipelineSchemaErr = fmt.Errorf("register generated pipeline schema: %w", err)
+			return
+		}
+		pipelineSchema, pipelineSchemaErr = compiler.Compile(schemaURL)
+	})
+	return pipelineSchema, pipelineSchemaErr
+}
+
+func validatePipelineDocument(filename string, content []byte) error {
+	root, err := parseResourceDocument(filename, content)
+	if err != nil {
+		return err
+	}
+	if err := checkResourceNode(filename, root); err != nil {
+		return err
+	}
+	normalizedValue, err := normalizeResourceNode(filename, root)
+	if err != nil {
+		return err
+	}
+	normalized, err := json.Marshal(normalizedValue)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.normalize", err.Error())
+	}
+	schema, err := compiledPipelineSchema()
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", err.Error())
+	}
+	value, err := decodeJSONForCUE(normalized)
+	if err != nil {
+		return resourceDiagnostic(filename, root, "schema.generated", "decode normalized pipeline resource: "+err.Error())
+	}
+	if err := schema.Validate(value); err != nil {
+		diagnosticErr := generatedValidationDiagnostic(filename, root, err)
+		var schemaErr *Error
+		if errors.As(diagnosticErr, &schemaErr) && len(schemaErr.Diagnostics) > 0 {
+			message := err.Error()
+			switch {
+			case strings.Contains(message, "value must be one of"), strings.Contains(message, "does not match pattern"):
+				schemaErr.Diagnostics[0].Code = "schema.enum"
+			case strings.Contains(message, "missing propert"):
+				schemaErr.Diagnostics[0].Code = "schema.contract"
+			}
+		}
+		return diagnosticErr
+	}
+	var envelope struct {
+		Kind string `json:"kind"`
+	}
+	if err := json.Unmarshal(normalized, &envelope); err != nil {
+		return resourceDiagnostic(filename, root, "schema.decode", err.Error())
+	}
+	if envelope.Kind != "Pipeline" {
+		return resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested pipeline", envelope.Kind))
+	}
+	return nil
 }
 
 func validateDashboardDocument(filename string, content []byte) error {

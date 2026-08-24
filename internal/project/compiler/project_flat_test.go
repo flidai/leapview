@@ -784,7 +784,7 @@ spec:
 	write("pipelines/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:sales, name: sales_refresh}
-spec: {semanticModel: sales}
+spec: {selection: {semanticModel: sales}}
 `)
 	write("dashboards/sales.yaml", `apiVersion: leapview.dev/v1
 kind: Dashboard
@@ -1321,8 +1321,11 @@ spec: {datasets: {orders: {model: orders_model}}, metrics: {}}
 kind: Pipeline
 metadata: {id: pipeline:sales-refresh, name: sales_refresh}
 spec:
-  semanticModel: sales
-  on: {schedule: [{cron: "0 6 * * *", timezone: Europe/Copenhagen}]}
+  selection: {semanticModel: sales}
+  schedules: {"weekdays 06:00": "0 6 * * *"}
+  timezone: Europe/Copenhagen
+  startingDeadlineSeconds: 3600
+  concurrencyPolicy: Replace
 `
 	projectPath := writeFlatProjectFixtureWithProject(t, projectYAML, validFiles)
 	project, err := LoadProject(projectPath)
@@ -1330,14 +1333,14 @@ spec:
 		t.Fatalf("LoadProject(valid pipeline) error = %v", err)
 	}
 	pipeline := project.RefreshPipelines["sales_refresh"]
-	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].Timezone != "Europe/Copenhagen" {
+	if pipeline.ID != "pipeline:sales-refresh" || pipeline.SemanticModelID != "sales" || pipeline.SelectionDigest != authoredPipelineSelectionDigest("sales") || pipeline.Timezone != "Europe/Copenhagen" || pipeline.StartingDeadlineSeconds != 3600 || pipeline.ConcurrencyPolicy != "Replace" || len(pipeline.Schedules) != 1 || pipeline.Schedules[0].ID != "weekdays 06:00" || pipeline.Schedules[0].Expression != "0 6 * * *" {
 		t.Fatalf("pipeline = %#v, want normalized schedule", pipeline)
 	}
 	manualFiles := cloneFixtureFiles(base)
 	manualFiles["pipelines/manual.yaml"] = `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:manual, name: manual}
-spec: {semanticModel: sales}
+spec: {selection: {semanticModel: sales}}
 `
 	manual, err := LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, manualFiles))
 	if err != nil {
@@ -1350,11 +1353,21 @@ spec: {semanticModel: sales}
 	invalidFiles["pipelines/bad.yaml"] = `apiVersion: leapview.dev/v1
 kind: Pipeline
 metadata: {id: pipeline:bad, name: bad}
-spec: {semanticModel: missing}
+spec: {selection: {semanticModel: missing}}
 `
 	_, err = LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, invalidFiles))
-	if err == nil || !strings.Contains(err.Error(), `reference "missing" is missing`) {
+	if err == nil || !strings.Contains(err.Error(), `unknown authored SemanticModel name "missing"`) {
 		t.Fatalf("LoadProject(invalid pipeline) error = %v, want missing semantic model", err)
+	}
+	canonicalIDFiles := cloneFixtureFiles(base)
+	canonicalIDFiles["pipelines/canonical-id.yaml"] = `apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata: {id: pipeline:canonical-id, name: canonical_id}
+spec: {selection: {semanticModel: semantic-model:sales}}
+`
+	_, err = LoadProject(writeFlatProjectFixtureWithProject(t, projectYAML, canonicalIDFiles))
+	if err == nil || !strings.Contains(err.Error(), "spec.selection.semanticModel") {
+		t.Fatalf("LoadProject(canonical semantic model ID) error = %v, want authored-name validation", err)
 	}
 }
 

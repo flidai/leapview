@@ -108,16 +108,3 @@ type projectDataPolicyTargetSpec struct {
 	Kind string `yaml:"kind"`
 	ID   string `yaml:"id"`
 }
-type refreshPipelineSpec struct {
-	SemanticModel string                `yaml:"semanticModel"`
-	On            refreshPipelineOnSpec `yaml:"on"`
-}
-
-type refreshPipelineOnSpec struct {
-	Schedule []refreshPipelineScheduleSpec `yaml:"schedule"`
-}
-
-type refreshPipelineScheduleSpec struct {
-	Cron     string `yaml:"cron"`
-	Timezone string `yaml:"timezone"`
-}

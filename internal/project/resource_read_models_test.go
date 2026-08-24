@@ -54,7 +54,8 @@ func TestConnectionAssetPayloadOmitsCredentialMaterial(t *testing.T) {
 func TestRefreshPipelineAssetPayloadProjectsPublicSchedule(t *testing.T) {
 	pipeline := refreshschedule.Definition{
 		ID: "pipeline:sales", Name: "sales-refresh", SemanticModelID: projectgraph.ResourceID("semantic:sales"),
-		Schedules: []refreshschedule.Schedule{{Expression: "0 * * * *", Timezone: "Europe/Copenhagen"}},
+		Timezone: "Europe/Copenhagen", ConcurrencyPolicy: refreshschedule.ConcurrencyForbid,
+		Schedules: []refreshschedule.Schedule{{Expression: "0 * * * *"}},
 	}
 	payload := RefreshPipelineAssetPayload(pipeline)
 	if payload["SemanticModel"] != "semantic:sales" || payload["SemanticModelID"] != "semantic:sales" {
@@ -65,7 +66,7 @@ func TestRefreshPipelineAssetPayloadProjectsPublicSchedule(t *testing.T) {
 		t.Fatalf("pipeline schedules = %#v, want one schedule", payload["Schedules"])
 	}
 	entry := schedules[0].(map[string]any)
-	if entry["Cron"] != "0 * * * *" || entry["Timezone"] != "Europe/Copenhagen" {
+	if entry["Cron"] != "0 * * * *" || payload["Timezone"] != "Europe/Copenhagen" {
 		t.Fatalf("pipeline schedule = %#v", entry)
 	}
 }

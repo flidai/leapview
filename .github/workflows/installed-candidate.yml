@@ -62,10 +62,14 @@ jobs:
             runner: ubuntu-24.04-arm
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
 
     steps:
-      - name: Remove registry credentials
-        run: docker logout ghcr.io >/dev/null 2>&1 || true
+      - name: Check out admission policy
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Download public Compose archive anonymously
         id: download
@@ -85,6 +89,41 @@ jobs:
           tar --extract --gzip --file "${package}.tar.gz"
           echo "package_root=$RUNNER_TEMP/leapview-public/$package" >> "$GITHUB_OUTPUT"
 
+      - name: Resolve candidate image identity
+        id: identity
+        env:
+          PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
+        run: |
+          image="$(tr -d '[:space:]' < "$PACKAGE_ROOT/image-reference.txt")"
+          revision="$(jq -er '.revision' "$PACKAGE_ROOT/release-identity.json")"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+          echo "revision=$revision" >> "$GITHUB_OUTPUT"
+
+      - name: Log in to GHCR for admission
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Admit the exact public release image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ steps.identity.outputs.image }}
+          repository: ghcr.io/flidai/leapview
+          expected-workflow: flidai/leapview/.github/workflows/release.yml
+          source-revision: ${{ steps.identity.outputs.revision }}
+
+      - name: Pin the installed candidate to the admitted image
+        env:
+          PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
+          ADMITTED_IMAGE: ${{ steps.admission.outputs.image }}
+        run: printf '%s\n' "$ADMITTED_IMAGE" > "$PACKAGE_ROOT/image-reference.txt"
+
+      - name: Remove registry credentials before the public journey
+        run: docker logout ghcr.io >/dev/null 2>&1
+
       - name: Run installed-candidate journey
         env:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
@@ -92,7 +131,7 @@ jobs:
         run: |
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" qualify installed-candidate \
-              --evidence-dir "$EVIDENCE_ROOT"
+            --evidence-dir "$EVIDENCE_ROOT"
 
       - name: Upload bounded qualification evidence
         if: always()

@@ -320,6 +320,16 @@ sections:
         type: how-to
         summary: Inspect security and administrative activity.
         source: articles/security/audit.md
+      - slug: security/dependency-clearance
+        title: Dependency security clearance
+        type: how-to
+        summary: Generate and verify content-bound dependency security evidence.
+        source: articles/security/dependency-clearance.md
+      - slug: security/governance
+        title: Security governance and release assurance
+        type: explanation
+        summary: Operate fail-closed repository, provenance, and promotion controls.
+        source: articles/security/governance.md
 
   - id: integrate
     title: Integrate

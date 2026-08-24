@@ -34,7 +34,7 @@ jobs:
 
       - name: Run pure security contract tests
         working-directory: internal/app/testing/maliciousinstance/electron
-        run: node --test policy.test.mjs manifest-proof.test.mjs
+        run: node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs
 
   packages:
     name: Hardened package (${{ matrix.name }})
@@ -140,7 +140,7 @@ jobs:
           printf 'sbom_path=%s\n' "$sbom" >> "$GITHUB_OUTPUT"
 
       - name: Attest candidate provenance
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             candidate/out/make/**/*.${{ matrix.format }}
@@ -150,7 +150,7 @@ jobs:
             candidate/out/evidence/*.release.json
 
       - name: Attest candidate SBOM
-        uses: actions/attest@f6bf1532d7d6793fce74eac584813a8eee607999 # v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
         with:
           subject-path: |
             candidate/out/make/**/*.${{ matrix.format }}

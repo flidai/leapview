@@ -45,7 +45,7 @@ func PipelinesPage(nav catalog.Catalog, state PipelineMonitorState, activeTab, r
 	attrs := []g.Node{g.Attr("slot", "page")}
 	if state.RunCommand.OperationID() != "" && state.CancelCommand.OperationID() != "" {
 		command := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPostSwitch("evt.detail.action", map[string]uicommand.Binding{
-			"run": state.RunCommand, "retry": state.RunCommand, "cancel": state.CancelCommand,
+			"run": state.RunCommand, "cancel": state.CancelCommand,
 		}, "/pipelines/command", "pipelineCommand")
 		attrs = append(attrs, g.Attr("data-on:lv-pipeline-command", command))
 	}
@@ -179,11 +179,7 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 			if status == "queued" && pipeline.CanCancel {
 				actions = append(actions, map[string]any{"label": "Cancel run", "action": "cancel", "icon": "cancel"})
 			} else if status != "" && status != "queued" && status != "running" && pipeline.CanRun {
-				label := "Rerun"
-				if status == "failed" || status == "cancelled" {
-					label = "Retry run"
-				}
-				actions = append(actions, map[string]any{"label": label, "action": "retry", "icon": "refresh"})
+				actions = append(actions, map[string]any{"label": "Run again", "action": "run", "icon": "refresh"})
 			}
 			semanticModel := firstNonEmpty(run.ModelID, metaString(pipeline.Asset.Payload, "SemanticModel", "semanticModel"))
 			all = append(all, runRow{started: started, row: map[string]any{
@@ -206,7 +202,6 @@ func pipelineRunsTable(pipelines []PipelineMonitorPipeline) recordTable {
 				"updated_at":             emptyDash(run.UpdatedAt),
 				"started_at":             emptyDash(run.StartedAt),
 				"finished_at":            emptyDash(run.FinishedAt),
-				"retry_of":               emptyDash(run.RetryOf),
 				"parent_run_id":          emptyDash(run.ParentRunID),
 				"serving_state_id":       emptyDash(run.ServingStateID),
 				"target_generation":      run.TargetGeneration,

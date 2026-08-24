@@ -395,7 +395,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
           </select>
           <select aria-label="Filter runs by trigger" .value=${this.runTrigger} @change=${(event: Event) => { this.runTrigger = (event.currentTarget as HTMLSelectElement).value }}>
             <option value="all">All triggers</option>
-            ${['manual', 'schedule', 'retry'].map((trigger) => html`<option value=${trigger}>${capitalize(trigger)}</option>`)}
+            ${['manual', 'schedule'].map((trigger) => html`<option value=${trigger}>${capitalize(trigger)}</option>`)}
           </select>
         </div>
         <div class="run-table">
@@ -505,7 +505,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
       this.selectedRunID = String(row.run_id || row.id || '')
       return
     }
-    if (action !== 'retry' && action !== 'cancel') return
+    if (action !== 'run' && action !== 'cancel') return
     const pipeline = this.page?.pipelines.find((candidate) => candidate.pipelineId === String(row.pipeline_id))
     if (!pipeline) return
     this.emitCommand(action, pipeline, String(row.run_id || ''))
@@ -563,7 +563,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
           <section class="run-detail-section" aria-label="Execution">
             <h2>Execution</h2>
             <div class="run-detail-facts">
-              ${runDetailFact('Retry of', runDetailValue(row, 'retry_of'), true)}
               ${runDetailFact('Parent run', runDetailValue(row, 'parent_run_id'), true)}
               ${runDetailFact('Serving state', runDetailValue(row, 'serving_state_id'), true)}
               ${runDetailFact('Target generation', runDetailValue(row, 'target_generation'), true)}
@@ -602,7 +601,6 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
 
 function commandLoadingLabel(action: string): string {
   if (action === 'cancel') return 'Cancelling pipeline run…'
-  if (action === 'retry') return 'Queuing pipeline retry…'
   return 'Queuing pipeline run…'
 }
 

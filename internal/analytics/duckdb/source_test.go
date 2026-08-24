@@ -396,7 +396,7 @@ func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
 			"purchases": {Model: "sales_orders"},
 		},
 	}
-	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -427,12 +427,36 @@ func TestPhysicalProjectModelPreservesCanonicalPhysicalDependencies(t *testing.T
 			"summary": {Model: "sales_summary"},
 		},
 	}
-	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got := physical.Tables["sales_summary"].ModelDependencies; len(got) != 1 || got[0] != "sales_orders" {
 		t.Fatalf("physical dependencies = %#v, want sales_orders", got)
+	}
+}
+
+func TestPhysicalProjectModelIncludesCatalogDependenciesOutsideSemanticDatasets(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", ModelDependencies: []string{"staged_orders"}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	catalog := map[string]semanticmodel.Table{
+		"staged_orders": {Execution: semanticmodel.ExecutionDefinition{Source: "raw_orders"}},
+		"orders":        {ModelDependencies: []string{"staged_orders"}},
+	}
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}, catalog)
+	if err != nil {
+		t.Fatalf("physicalProjectModel() error = %v", err)
+	}
+	if _, ok := physical.Tables["staged_orders"]; !ok {
+		t.Fatalf("physical tables = %#v, want hidden upstream Model", physical.Tables)
+	}
+	if got := physical.Tables["orders"].ModelDependencies; !reflect.DeepEqual(got, []string{"staged_orders"}) {
+		t.Fatalf("orders dependencies = %#v, want staged_orders", got)
 	}
 }
 
@@ -448,7 +472,7 @@ func TestPhysicalProjectModelResolvesDistinctAliasPhysicalDependencies(t *testin
 			"summary_alias": {Model: "sales_summary"},
 		},
 	}
-	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model})
+	physical, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}, nil)
 	if err != nil {
 		t.Fatalf("physicalProjectModel() error = %v", err)
 	}
@@ -478,7 +502,7 @@ func TestPhysicalProjectModelRejectsDatasetAliasAsPhysicalDependency(t *testing.
 			"derived_alias": {Model: "sales_derived"},
 		},
 	}
-	if _, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}); err == nil || !strings.Contains(err.Error(), "unknown model dependency") {
+	if _, err := physicalProjectModel(map[string]*semanticmodel.Model{"sales": model}, nil); err == nil || !strings.Contains(err.Error(), "unknown model dependency") {
 		t.Fatalf("physicalProjectModel() error = %v, want unknown physical dependency", err)
 	}
 }

@@ -7,3 +7,6 @@ import _ "embed"
 
 //go:embed json/dashboard-document.schema.json
 var DashboardDocumentSchema []byte
+
+//go:embed json/pipeline.schema.json
+var PipelineSchema []byte
