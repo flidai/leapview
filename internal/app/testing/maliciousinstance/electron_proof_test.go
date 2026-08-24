@@ -3,13 +3,27 @@ package maliciousinstance
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
+
+const maximumElectronProofDiagnosticBytes = 8 * 1024
+
+type electronProofResult struct {
+	Passed          bool          `json:"passed"`
+	Framework       string        `json:"framework"`
+	Chromium        string        `json:"chromium"`
+	Phase           string        `json:"phase"`
+	ManifestVersion string        `json:"manifestVersion"`
+	Observations    []Observation `json:"observations"`
+	Error           string        `json:"error"`
+}
 
 func TestElectronPolicyIntegrationPreservesBrowserEquivalentAuthority(t *testing.T) {
 	switch runtime.GOOS {
@@ -40,23 +54,12 @@ func TestElectronPolicyIntegrationPreservesBrowserEquivalentAuthority(t *testing
 	)
 	output, runErr := command.CombinedOutput()
 
-	payload, readErr := os.ReadFile(resultPath)
-	if readErr != nil {
-		t.Fatalf("read Electron proof result: %v\nprocess error: %v\noutput:\n%s", readErr, runErr, output)
+	result, payload, err := readElectronProofResult(resultPath, runErr, output)
+	if err != nil {
+		t.Fatal(err)
 	}
-	var result struct {
-		Passed          bool          `json:"passed"`
-		Framework       string        `json:"framework"`
-		Chromium        string        `json:"chromium"`
-		ManifestVersion string        `json:"manifestVersion"`
-		Observations    []Observation `json:"observations"`
-		Error           string        `json:"error"`
-	}
-	if err := json.Unmarshal(payload, &result); err != nil {
-		t.Fatalf("decode Electron proof result: %v\n%s", err, payload)
-	}
-	if runErr != nil || !result.Passed {
-		t.Fatalf("Electron proof failed: process error=%v result=%s output=%s", runErr, payload, output)
+	if err := electronProofProcessFailure(result, payload, runErr, output); err != nil {
+		t.Fatal(err)
 	}
 	manifest := harness.Manifest()
 	if result.ManifestVersion != manifest.Version {
@@ -78,4 +81,76 @@ func TestElectronPolicyIntegrationPreservesBrowserEquivalentAuthority(t *testing
 		}
 	}
 	t.Logf("%s / Chromium %s satisfied all %d security invariants", result.Framework, result.Chromium, len(result.Observations))
+}
+
+func readElectronProofResult(
+	resultPath string,
+	processErr error,
+	output []byte,
+) (electronProofResult, []byte, error) {
+	payload, err := os.ReadFile(resultPath)
+	if err != nil {
+		classification := "could not be read"
+		if os.IsNotExist(err) {
+			classification = "is missing"
+		}
+		return electronProofResult{}, nil, fmt.Errorf(
+			"Electron proof result %s: %v\n%s",
+			classification,
+			err,
+			electronProofProcessDiagnostics(processErr, output),
+		)
+	}
+	if len(payload) == 0 {
+		return electronProofResult{}, payload, fmt.Errorf(
+			"Electron proof result is empty (size=0 bytes)\nraw result: %s\n%s",
+			formatElectronProofPayload(payload),
+			electronProofProcessDiagnostics(processErr, output),
+		)
+	}
+
+	var result electronProofResult
+	if err := json.Unmarshal(payload, &result); err != nil {
+		return electronProofResult{}, payload, fmt.Errorf(
+			"Electron proof result is malformed (size=%d bytes): %w\nraw result: %s\n%s",
+			len(payload),
+			err,
+			formatElectronProofPayload(payload),
+			electronProofProcessDiagnostics(processErr, output),
+		)
+	}
+	return result, payload, nil
+}
+
+func electronProofProcessFailure(
+	result electronProofResult,
+	payload []byte,
+	processErr error,
+	output []byte,
+) error {
+	if processErr == nil && result.Passed {
+		return nil
+	}
+	return fmt.Errorf(
+		"Electron proof returned a valid failure result (size=%d bytes, phase=%q, error=%q)\nraw result: %s\n%s",
+		len(payload),
+		result.Phase,
+		result.Error,
+		formatElectronProofPayload(payload),
+		electronProofProcessDiagnostics(processErr, output),
+	)
+}
+
+func electronProofProcessDiagnostics(processErr error, output []byte) string {
+	return fmt.Sprintf("process error: %v\noutput:\n%s", processErr, output)
+}
+
+func formatElectronProofPayload(payload []byte) string {
+	display := payload
+	suffix := ""
+	if len(display) > maximumElectronProofDiagnosticBytes {
+		display = display[:maximumElectronProofDiagnosticBytes]
+		suffix = fmt.Sprintf(" (truncated; total size=%d bytes)", len(payload))
+	}
+	return strconv.QuoteToASCII(string(display)) + suffix
 }
