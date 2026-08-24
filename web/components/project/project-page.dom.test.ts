@@ -275,7 +275,9 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
     const host = page.locator('lv-project-asset-page')
     const initial = await host.evaluate(async (element: any) => {
       await element.updateComplete
-      const root = element.shadowRoot!
+	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  await editor.updateComplete
+	  const root = editor.shadowRoot!
       return {
         current: root.querySelector('.dashboard-appearance-current')?.textContent?.trim(),
         editor: Boolean(root.querySelector('lv-dashboard-icon-picker')),
@@ -287,17 +289,19 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
 
     const detail = await host.evaluate(async (element: any) => {
       const selected = new Promise<unknown>((resolve) => element.addEventListener('lv-dashboard-appearance-change', (event: Event) => resolve((event as CustomEvent).detail), { once: true }))
-      element.shadowRoot!.querySelector<HTMLButtonElement>('.dashboard-appearance-edit')!.click()
-      await element.updateComplete
-      const picker = element.shadowRoot!.querySelector('lv-dashboard-icon-picker') as any
+	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  editor.shadowRoot!.querySelector<HTMLButtonElement>('.dashboard-appearance-edit')!.click()
+	  await editor.updateComplete
+	  const picker = editor.shadowRoot!.querySelector('lv-dashboard-icon-picker') as any
       await picker.updateComplete
       picker.shadowRoot!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
       return selected
     })
     expect(detail).toEqual({ icon: 'chart-no-axes-combined', color: 'orange' })
     const optimistic = await host.evaluate(async (element: any) => {
-      await element.updateComplete
-      const root = element.shadowRoot!
+	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  await editor.updateComplete
+	  const root = editor.shadowRoot!
       return {
         previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
         status: root.querySelector('[role="status"]')?.textContent?.trim(),
@@ -307,8 +311,9 @@ test('dashboard detail owns the persisted appearance editor and emits complete u
     expect(optimistic.status).toBe('Saving appearance…')
     const failed = await host.evaluate(async (element: any) => {
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
-      await element.updateComplete
-      const root = element.shadowRoot!
+	  const editor = element.shadowRoot!.querySelector('lv-dashboard-appearance-editor') as any
+	  await editor.updateComplete
+	  const root = editor.shadowRoot!
       return {
         previewClass: root.querySelector('.dashboard-appearance-preview')?.className,
         error: root.querySelector('[role="alert"]')?.textContent?.trim(),

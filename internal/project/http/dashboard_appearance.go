@@ -62,7 +62,7 @@ func (h *BrowserHandler) DashboardAppearanceCommand(w stdhttp.ResponseWriter, r 
 	}
 	record, err := h.DashboardAppearances.ApplyPatch(r.Context(), dashboardappearance.Key{ProjectID: projectID, DashboardID: dashboardID}, principal.ID, dashboardappearance.Patch{Icon: signals.Command.Icon, Color: signals.Command.Color})
 	if err != nil {
-		if errors.Is(err, dashboardappearance.ErrInvalid) || strings.Contains(err.Error(), "patch is empty") {
+		if errors.Is(err, dashboardappearance.ErrInvalid) || errors.Is(err, dashboardappearance.ErrEmptyPatch) {
 			stdhttp.Error(w, "the selected dashboard appearance is invalid", stdhttp.StatusUnprocessableEntity)
 			return
 		}

@@ -11,7 +11,10 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-var ErrInvalid = errors.New("invalid dashboard appearance")
+var (
+	ErrInvalid    = errors.New("invalid dashboard appearance")
+	ErrEmptyPatch = errors.New("dashboard appearance patch is empty")
+)
 
 const (
 	DefaultIcon  = "layout-dashboard"

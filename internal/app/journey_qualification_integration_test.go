@@ -221,36 +221,16 @@ func (journeyDefinitionReader) ProjectDefinitionSnapshot(context.Context) (proje
 }
 
 type journeyConnectionAdministration struct {
+	journeyConnectionAdministrationStub
 	denyPrincipal string
 	creates       int
 }
 
-func (f *journeyConnectionAdministration) List(context.Context, string, connectionadmin.BindingScope, connectionadmin.TargetID) ([]connectionadmin.TargetBinding, error) {
-	return nil, nil
-}
 func (f *journeyConnectionAdministration) Create(_ context.Context, actor string, _ connectionadmin.TargetBindingInput) (connectionadmin.TargetBinding, error) {
 	if actor == f.denyPrincipal {
 		return connectionadmin.TargetBinding{}, connectionadmin.ErrUnauthorizedBinding
 	}
 	f.creates++
-	return connectionadmin.TargetBinding{}, nil
-}
-func (f *journeyConnectionAdministration) PlanConfigurationChange(context.Context, string, connectionadmin.BindingKey, connectionadmin.TargetBindingConfiguration) (connectionadmin.BindingChangePlan, error) {
-	return connectionadmin.BindingChangePlan{}, nil
-}
-func (f *journeyConnectionAdministration) UpdateConfiguration(context.Context, connectionadmin.UpdateConfigurationRequest) (connectionadmin.TargetBinding, error) {
-	return connectionadmin.TargetBinding{}, nil
-}
-func (f *journeyConnectionAdministration) Test(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
-func (f *journeyConnectionAdministration) RefreshNow(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
-func (f *journeyConnectionAdministration) Enable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
-	return connectionadmin.TargetBinding{}, nil
-}
-func (f *journeyConnectionAdministration) Disable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
 	return connectionadmin.TargetBinding{}, nil
 }
 

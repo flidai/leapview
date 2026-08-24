@@ -13,7 +13,16 @@ const externalModules = [datastarRuntimeURL]
 
 const fixtures = new Map<string, FixtureBuild>([
   ['app-shell', single('app-shell', 'web/components/app/app-shell.ts', '.tmp/app-shell-test/app-shell-under-test.js')],
-  ['catalog-page', single('catalog-page', 'web/components/app/catalog-page.ts', '.tmp/catalog-page-test/catalog-page-under-test.js')],
+  [
+    'catalog-page',
+    split(
+      'catalog-page',
+      'web/components/app/catalog-page.ts',
+      '.tmp/catalog-page-test',
+      'catalog-page-under-test.js',
+      'chunks/[name]-[hash].[ext]',
+    ),
+  ],
   [
     'dashboard-page',
     split(

@@ -256,33 +256,13 @@ type credentialedJourneyPipelineCall struct {
 }
 
 type credentialedJourneyConnectionAdministration struct {
+	journeyConnectionAdministrationStub
 	mode      connectionadmin.AuthenticationMode
 	reference connectionadmin.CredentialReference
 }
 
-func (a *credentialedJourneyConnectionAdministration) List(context.Context, string, connectionadmin.BindingScope, connectionadmin.TargetID) ([]connectionadmin.TargetBinding, error) {
-	return nil, nil
-}
 func (a *credentialedJourneyConnectionAdministration) Create(_ context.Context, _ string, input connectionadmin.TargetBindingInput) (connectionadmin.TargetBinding, error) {
 	a.mode, a.reference = input.AuthenticationMode, input.CredentialReference
-	return connectionadmin.TargetBinding{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) PlanConfigurationChange(context.Context, string, connectionadmin.BindingKey, connectionadmin.TargetBindingConfiguration) (connectionadmin.BindingChangePlan, error) {
-	return connectionadmin.BindingChangePlan{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) UpdateConfiguration(context.Context, connectionadmin.UpdateConfigurationRequest) (connectionadmin.TargetBinding, error) {
-	return connectionadmin.TargetBinding{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) Test(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) RefreshNow(context.Context, string, connectionadmin.BindingKey) (connectionadmin.BindingHealthStatus, error) {
-	return connectionadmin.BindingHealthStatus{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) Enable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
-	return connectionadmin.TargetBinding{}, nil
-}
-func (a *credentialedJourneyConnectionAdministration) Disable(context.Context, string, connectionadmin.BindingKey) (connectionadmin.TargetBinding, error) {
 	return connectionadmin.TargetBinding{}, nil
 }
 

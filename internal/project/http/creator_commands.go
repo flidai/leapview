@@ -195,8 +195,23 @@ func (h *BrowserHandler) ConnectionAdministrationLifecycleCommand(w stdhttp.Resp
 		h.connectionCommandPatch(w, r, command, message)
 		return
 	}
-	message := strings.Title(command.Action) + " completed."
+	message := connectionActionCompletionMessage(command.Action)
 	h.connectionCommandSuccess(w, r, command, projectID, assets, edges, message)
+}
+
+func connectionActionCompletionMessage(action string) string {
+	switch action {
+	case "enable":
+		return "Enable completed."
+	case "disable":
+		return "Disable completed."
+	case "test":
+		return "Test completed."
+	case "refresh":
+		return "Refresh completed."
+	default:
+		return "Connection command completed."
+	}
 }
 
 func (h *BrowserHandler) connectionOperation(action string) string {
@@ -250,8 +265,9 @@ func (h *BrowserHandler) connectionCommandSuccess(w stdhttp.ResponseWriter, r *s
 	if command.Surface == "list" {
 		patch["page"] = projectui.ConnectionsListResultsPatchWithAdministration(assets, edges, view)["page"]
 	} else if asset, found := projectview.AssetByID(assets, command.AssetID); found {
-		project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
-		patch["page"] = projectui.ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, "details", h.Environment, "", projectui.AssetVersionsState{}, view, h.layout(r))["page"]
+		catalog := h.navigationCatalog(r)
+		project := projectview.DevelopView{ID: projectID.String(), Title: catalog.Project.Title, Description: catalog.Project.Description}
+		patch["page"] = projectui.ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(catalog, project, asset, assets, edges, "details", h.Environment, "", projectui.AssetVersionsState{}, view, h.layout(r))["page"]
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -349,21 +365,15 @@ func (h *BrowserHandler) pipelineCommandSuccess(w stdhttp.ResponseWriter, r *std
 	// against a sink so a read-side outage cannot turn that successful write
 	// into a 5xx response that the durable idempotency layer would abandon.
 	// The browser can safely reload the authoritative state later.
-	projectID, assets, _, assetsOK := h.assets(newCreatorResponseSink(), r)
-	if !assetsOK {
+	projectID, assets, _, err := h.loadAssets(r)
+	if err != nil {
 		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
 		return
 	}
-	assets, _ = h.projectAssetReadModels(r.Context(), assets)
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), RunCommand: h.PipelineRunCommand, CancelCommand: h.PipelineCancelCommand}
-	for _, asset := range projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "") {
-		refresh, _ := h.assetRefreshState(r.Context(), projectID, asset)
-		canUse := h.pipelineMutationAllowed(r, asset.ID)
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{
-			Asset: asset, Refresh: refresh,
-			CanRun:    canUse && !refresh.Unavailable && h.PipelineRunCommand.OperationID() != "",
-			CanCancel: canUse && !refresh.Unavailable && h.PipelineCancelCommand.OperationID() != "",
-		})
+	state, err := h.pipelineMonitorState(r, projectID, assets)
+	if err != nil {
+		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
+		return
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": projectui.PipelinesPagePatch(state, r.URL.Query().Get("view")), "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
 }
@@ -378,12 +388,7 @@ func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r
 		h.pipelineCommandPatch(w, r, command, "Pipeline command target is invalid.")
 		return
 	}
-	projectID, assets, edges, assetsOK := h.assets(newCreatorResponseSink(), r)
-	if !assetsOK {
-		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
-		return
-	}
-	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	projectID, assets, edges, err := h.loadAssets(r)
 	if err != nil {
 		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
 		return
@@ -397,19 +402,12 @@ func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r
 	if !projectui.ValidProjectAssetSection(asset.Type, section) {
 		section = "details"
 	}
-	refresh, refreshErr := h.assetRefreshState(r.Context(), projectID, asset)
-	if refreshErr != nil {
-		refresh.Unavailable = true
-	}
-	refresh.CanRun = h.pipelineMutationAllowed(r, asset.ID)
-	refresh.CSRFToken = h.csrf(r)
-	versions, versionsErr := h.assetVersionsState(r.Context(), projectID, asset, section)
-	if versionsErr != nil {
+	projection, err := h.assetPageState(r, projectID, assets, edges, assetID, section)
+	if err != nil {
 		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
 		return
 	}
-	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
-	detailPatch := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r))
+	detailPatch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
 	page, found := detailPatch["page"]
 	if !found {
 		h.pipelineCommandPatch(w, r, command, message+" Reload the page to refresh pipeline status.")
@@ -417,20 +415,6 @@ func (h *BrowserHandler) pipelineAssetCommandSuccess(w stdhttp.ResponseWriter, r
 	}
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"page": page, "pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Message: message}})
 }
-
-type creatorResponseSink struct {
-	header stdhttp.Header
-}
-
-func newCreatorResponseSink() *creatorResponseSink {
-	return &creatorResponseSink{header: make(stdhttp.Header)}
-}
-
-func (w *creatorResponseSink) Header() stdhttp.Header { return w.header }
-
-func (*creatorResponseSink) Write(body []byte) (int, error) { return len(body), nil }
-
-func (*creatorResponseSink) WriteHeader(int) {}
 
 func (h *BrowserHandler) pipelineCommandPatch(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.PipelineCommandSignal, message string) {
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"pipelineCommand": command, "pipelineCommandStatus": projectsignals.PipelineCommandStatusSignal{Error: message}})
