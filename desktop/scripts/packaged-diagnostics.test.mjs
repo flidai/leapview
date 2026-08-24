@@ -1,8 +1,12 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import {
   verifyPackagedDiagnosticEvent,
+  verifyPackagedDiagnosticJournal,
 } from "./packaged-diagnostics.mjs";
 
 const at = "2026-07-29T19:55:25.000Z";
@@ -84,4 +88,24 @@ test("preserves the bounded pre-updater startup event contract", () => {
       }),
     /unexpected startup event/,
   );
+});
+
+test("gives diagnostic persistence its own bounded wait", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "leapview-diagnostics-"));
+  const path = join(directory, "diagnostics.json");
+  const document = `${JSON.stringify({
+    schemaVersion: 1,
+    events: [{ at, kind: "startup", packaged: true }],
+  })}\n`;
+  try {
+    const persisted = new Promise((resolve, reject) => {
+      setTimeout(() => {
+        writeFile(path, document, { mode: 0o600 }).then(resolve, reject);
+      }, 75);
+    });
+    await verifyPackagedDiagnosticJournal(path, 1_000);
+    await persisted;
+  } finally {
+    await rm(directory, { force: true, recursive: true });
+  }
 });

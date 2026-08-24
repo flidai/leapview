@@ -1059,8 +1059,7 @@ tasks:
     desc: Run the security scans added by the nightly CI tier
     cmds:
       - task: generate
-      - task: node:audit
-      - task: vuln
+      - task: security:check
 
   ci:local:
     desc: Compatibility alias for the full current-environment contract
@@ -1107,7 +1106,61 @@ tasks:
   vuln:
     desc: Scan Go dependencies and call paths for known vulnerabilities
     cmds:
-      - go run golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...
+      - go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...
+
+  security:policy:
+    desc: Validate security coverage, updater ownership, exceptions, and pinned actions
+    cmds:
+      - go test ./internal/app/securitypolicy ./internal/app/tools/securitycontracts ./internal/app/tools/securityresults
+      - go run ./internal/app/tools/securitypolicy -root .
+
+  security:dependencies:
+    desc: Scan every maintained Go and JavaScript dependency graph
+    deps:
+      - ci:prepare
+    cmds:
+      - go run ./internal/app/tools/securitydependencies -root .
+
+  security:source:
+    desc: Scan secrets, infrastructure, Dockerfiles, and workflows with pinned tools
+    cmds:
+      - go run ./internal/app/tools/securitysource -root .
+
+  security:oci-contracts:
+    desc: Exercise fail-closed OCI provenance and promotion admission contracts
+    cmds:
+      - go test ./internal/app/tools/ociadmission
+
+  security:promotion-contracts:
+    desc: Exercise OCI and Desktop promotion admission contracts
+    cmds:
+      - task: security:oci-contracts
+      - node --test desktop/scripts/workflow-contract.test.mjs
+
+  security:governance:test:
+    desc: Exercise the read-only repository governance audit
+    cmds:
+      - go test ./internal/app/tools/governanceaudit
+
+  security:governance:
+    desc: Audit live GitHub rulesets and protected deployment environments read-only
+    cmds:
+      - go run ./internal/app/tools/governanceaudit --live --repo flidai/leapview
+
+  security:test:
+    desc: Run hermetic security and provenance contract tests
+    cmds:
+      - task: security:policy
+      - go test ./internal/app/tools/securitydependencies ./internal/app/tools/securitysource
+      - task: security:promotion-contracts
+      - task: security:governance:test
+
+  security:check:
+    desc: Run all required security gates for the current candidate
+    cmds:
+      - task: security:test
+      - task: security:dependencies
+      - task: security:source
 
   agent:e2e:
     desc: Run opt-in DeepSeek-backed headless agent E2E

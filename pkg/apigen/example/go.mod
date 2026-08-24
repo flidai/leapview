@@ -1,6 +1,6 @@
 module github.com/example/apigen-example
 
-go 1.25.8
+go 1.25.14
 
 require (
 	github.com/Yacobolo/toolbelt/apigen v0.0.0

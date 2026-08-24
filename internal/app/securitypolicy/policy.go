@@ -1,0 +1,753 @@
+// Package securitypolicy validates the repository's dependency-security
+// coverage contract.  The contract is deliberately kept in the repository so
+// that adding a new build surface cannot silently bypass dependency updates.
+package securitypolicy
+
+import (
+	"errors"
+	"fmt"
+	"io"
+	"io/fs"
+	"os"
+	"path/filepath"
+	"regexp"
+	"sort"
+	"strings"
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	coverageFile    = ".security/coverage.yaml"
+	exceptionsFile  = ".security/exceptions.yaml"
+	dependabotFile  = ".github/dependabot.yml"
+	maxExceptionAge = 90 * 24 * time.Hour
+)
+
+// Coverage is the machine-readable list of maintained security surfaces.
+type Coverage struct {
+	Version  int       `yaml:"version"`
+	Surfaces []Surface `yaml:"surfaces"`
+}
+
+// Surface describes one repository file or root. Path is repository-relative
+// and uses slash separators on every platform.
+type Surface struct {
+	Path        string   `yaml:"path"`
+	Kind        string   `yaml:"kind"`
+	Updater     Updater  `yaml:"updater"`
+	Scanners    []string `yaml:"scanners"`
+	Images      []string `yaml:"images,omitempty"`
+	UpdaterOnly bool     `yaml:"updater-only,omitempty"`
+}
+
+type Updater struct {
+	Ecosystem string `yaml:"ecosystem"`
+	Directory string `yaml:"directory"`
+}
+
+// Exceptions is intentionally empty by default. A non-empty exception must
+// identify one narrow scanner finding and have a short, dated owner-approved
+// rationale.
+type Exceptions struct {
+	Version    int         `yaml:"version" json:"version"`
+	Exceptions []Exception `yaml:"exceptions" json:"exceptions"`
+}
+
+type Exception struct {
+	ID        string `yaml:"id" json:"id"`
+	Scanner   string `yaml:"scanner" json:"scanner"`
+	Rule      string `yaml:"rule" json:"rule"`
+	Resource  string `yaml:"resource" json:"resource"`
+	Owner     string `yaml:"owner" json:"owner"`
+	Rationale string `yaml:"rationale" json:"rationale"`
+	Created   string `yaml:"created" json:"created"`
+	Expires   string `yaml:"expires" json:"expires"`
+}
+
+// Finding is the small, machine-readable identity used when deciding whether
+// a scanner result may be covered by an exception.  Scanner output adapters
+// must provide all three identity fields; matching is deliberately exact.
+type Finding struct {
+	Scanner  string `json:"scanner"`
+	Rule     string `json:"rule"`
+	Resource string `json:"resource"`
+	Severity string `json:"severity,omitempty"`
+	Class    string `json:"class,omitempty"`
+}
+
+type dependabotConfig struct {
+	Version int                `yaml:"version"`
+	Updates []dependabotUpdate `yaml:"updates"`
+}
+
+type dependabotUpdate struct {
+	PackageEcosystem      string                     `yaml:"package-ecosystem"`
+	Directory             string                     `yaml:"directory"`
+	Schedule              map[string]any             `yaml:"schedule"`
+	OpenPullRequestsLimit *int                       `yaml:"open-pull-requests-limit"`
+	Groups                map[string]dependabotGroup `yaml:"groups"`
+}
+
+type dependabotGroup struct {
+	Patterns []string `yaml:"patterns"`
+}
+
+var (
+	stableIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`)
+	actionSHARef    = regexp.MustCompile(`^[0-9a-f]{40}$`)
+	knownLockNames  = map[string]bool{
+		"bun.lock": true, "bun.lockb": true, "package-lock.json": true,
+		"pnpm-lock.yaml": true, "yarn.lock": true,
+	}
+	// scannerApplicability is the closed vocabulary for coverage.  Keep this
+	// list repository-owned: a typo or a scanner attached to the wrong surface
+	// must fail policy validation instead of silently reducing coverage.
+	scannerApplicability = map[string]map[string]bool{
+		"govulncheck":       {"go-module": true},
+		"bun-audit":         {"js-package": true, "js-lock": true},
+		"npm-audit":         {"js-package": true, "js-lock": true},
+		"trivy":             {"terraform-root": true, "dockerfile": true, "github-actions": true},
+		"action-pin-policy": {"github-actions": true},
+		"actionlint":        {"github-actions": true},
+	}
+)
+
+// ValidateRepository validates all three repository-owned contracts and
+// Dependabot coverage. now is injectable to make expiry checks hermetic.
+func ValidateRepository(root string, now time.Time) error {
+	if strings.TrimSpace(root) == "" {
+		return errors.New("repository root is required")
+	}
+	coverage, err := readYAML[Coverage](filepath.Join(root, coverageFile))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", coverageFile, err)
+	}
+	if err := validateCoverage(root, coverage); err != nil {
+		return err
+	}
+	exceptions, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", exceptionsFile, err)
+	}
+	if err := validateExceptions(exceptions, coverage, now); err != nil {
+		return err
+	}
+	dependabot, err := readYAML[dependabotConfig](filepath.Join(root, dependabotFile))
+	if err != nil {
+		return fmt.Errorf("read %s: %w", dependabotFile, err)
+	}
+	if err := validateUpdaters(coverage, dependabot); err != nil {
+		return err
+	}
+	if err := validatePinnedActions(root, coverage); err != nil {
+		return err
+	}
+	return nil
+}
+
+// LoadValidatedExceptions validates the complete repository security contract
+// before returning its canonical exception set. Scanner and admission gates use
+// this entrypoint so expiry and exact-match semantics have one Go owner.
+func LoadValidatedExceptions(root string, now time.Time) (Exceptions, error) {
+	if err := ValidateRepository(root, now); err != nil {
+		return Exceptions{}, err
+	}
+	contract, err := readYAML[Exceptions](filepath.Join(root, exceptionsFile))
+	if err != nil {
+		return Exceptions{}, fmt.Errorf("read %s: %w", exceptionsFile, err)
+	}
+	return contract, nil
+}
+
+func validatePinnedActions(root string, coverage Coverage) error {
+	for _, surface := range coverage.Surfaces {
+		if surface.Kind != "github-actions" {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(surface.Path)))
+		if err != nil {
+			return fmt.Errorf("read GitHub Actions surface %q: %w", surface.Path, err)
+		}
+		usesEntries, err := workflowUses(data)
+		if err != nil {
+			return fmt.Errorf("parse GitHub Actions surface %q: %w", surface.Path, err)
+		}
+		for _, entry := range usesEntries {
+			uses := strings.TrimSpace(entry.value)
+			if strings.HasPrefix(uses, "./") {
+				continue
+			}
+			if strings.HasPrefix(uses, "docker://") {
+				parts := strings.Split(uses, "@sha256:")
+				if len(parts) == 2 && regexp.MustCompile(`^[0-9a-f]{64}$`).MatchString(parts[1]) {
+					continue
+				}
+				return fmt.Errorf("GitHub Actions surface %q line %d uses an unpinned container action %q", surface.Path, entry.line, uses)
+			}
+			at := strings.LastIndexByte(uses, '@')
+			if at <= 0 || !actionSHARef.MatchString(uses[at+1:]) {
+				return fmt.Errorf("GitHub Actions surface %q line %d must pin %q to a full commit SHA", surface.Path, entry.line, uses)
+			}
+		}
+	}
+	return nil
+}
+
+type workflowUsesEntry struct {
+	value string
+	line  int
+}
+
+func dereferenceYAMLNode(node *yaml.Node) *yaml.Node {
+	seen := map[*yaml.Node]bool{}
+	for node != nil && node.Kind == yaml.AliasNode && node.Alias != nil {
+		if seen[node] {
+			return node
+		}
+		seen[node] = true
+		node = node.Alias
+	}
+	return node
+}
+
+// workflowUses parses a workflow or composite action as YAML and returns only
+// action references in schema-defined locations. Traversing parsed nodes
+// handles quoted keys and all YAML whitespace variants without depending on
+// the source spelling of the key.
+func workflowUses(data []byte) ([]workflowUsesEntry, error) {
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	var document yaml.Node
+	if err := decoder.Decode(&document); err != nil {
+		return nil, err
+	}
+	var trailing yaml.Node
+	if err := decoder.Decode(&trailing); err == nil {
+		return nil, errors.New("multiple YAML documents are not allowed")
+	} else if !errors.Is(err, io.EOF) {
+		return nil, err
+	}
+
+	entries := make([]workflowUsesEntry, 0)
+	root := &document
+	if root.Kind == yaml.DocumentNode {
+		if len(root.Content) == 0 {
+			return entries, nil
+		}
+		root = root.Content[0]
+	}
+	appendUse := func(key, value *yaml.Node) {
+		if key == nil {
+			return
+		}
+		entry := workflowUsesEntry{line: key.Line}
+		if value != nil && value.Kind == yaml.ScalarNode {
+			entry.value = value.Value
+		}
+		entries = append(entries, entry)
+	}
+	mappingEntry := func(mapping *yaml.Node, name string) (*yaml.Node, *yaml.Node) {
+		mapping = dereferenceYAMLNode(mapping)
+		if mapping == nil || mapping.Kind != yaml.MappingNode {
+			return nil, nil
+		}
+		for index := 0; index+1 < len(mapping.Content); index += 2 {
+			key, value := mapping.Content[index], mapping.Content[index+1]
+			if key.Kind == yaml.ScalarNode && key.Value == name {
+				return key, dereferenceYAMLNode(value)
+			}
+		}
+		return nil, nil
+	}
+	collectSteps := func(steps *yaml.Node) {
+		if steps == nil || steps.Kind != yaml.SequenceNode {
+			return
+		}
+		for _, step := range steps.Content {
+			key, value := mappingEntry(step, "uses")
+			appendUse(key, value)
+		}
+	}
+	if _, jobs := mappingEntry(root, "jobs"); jobs != nil && jobs.Kind == yaml.MappingNode {
+		for index := 0; index+1 < len(jobs.Content); index += 2 {
+			job := jobs.Content[index+1]
+			usesKey, uses := mappingEntry(job, "uses")
+			appendUse(usesKey, uses)
+			_, steps := mappingEntry(job, "steps")
+			collectSteps(steps)
+		}
+	}
+	if _, runs := mappingEntry(root, "runs"); runs != nil && runs.Kind == yaml.MappingNode {
+		_, steps := mappingEntry(runs, "steps")
+		collectSteps(steps)
+	}
+	return entries, nil
+}
+
+func readYAML[T any](path string) (T, error) {
+	var value T
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return value, err
+	}
+	decoder := yaml.NewDecoder(strings.NewReader(string(data)))
+	decoder.KnownFields(true)
+	if err := decoder.Decode(&value); err != nil {
+		return value, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err == nil {
+		return value, errors.New("multiple YAML documents are not allowed")
+	} else if !errors.Is(err, io.EOF) {
+		return value, err
+	}
+	return value, nil
+}
+
+func validateCoverage(root string, coverage Coverage) error {
+	if coverage.Version != 1 {
+		return fmt.Errorf("coverage version must be 1, got %d", coverage.Version)
+	}
+	if len(coverage.Surfaces) == 0 {
+		return errors.New("coverage surfaces must not be empty")
+	}
+	discovered, err := discoverSurfaces(root)
+	if err != nil {
+		return fmt.Errorf("discover security surfaces: %w", err)
+	}
+	seen := make(map[string]bool, len(coverage.Surfaces))
+	covered := make(map[string]bool, len(coverage.Surfaces))
+	for i, surface := range coverage.Surfaces {
+		where := fmt.Sprintf("coverage surface %d", i+1)
+		path, err := normalizeRepoPath(surface.Path)
+		if err != nil {
+			return fmt.Errorf("%s: %w", where, err)
+		}
+		if seen[path] {
+			return fmt.Errorf("duplicate coverage path %q", path)
+		}
+		seen[path] = true
+		if surface.Path != path {
+			return fmt.Errorf("%s path must be normalized as %q", where, path)
+		}
+		if !isKnownKind(surface.Kind) {
+			return fmt.Errorf("%s has unknown kind %q", where, surface.Kind)
+		}
+		if _, ok := discovered[coverageKey(path, surface.Kind)]; !ok {
+			return fmt.Errorf("coverage path %q (%s) is not a maintained security surface", path, surface.Kind)
+		}
+		covered[coverageKey(path, surface.Kind)] = true
+		if err := validateUpdater(surface.Updater, where); err != nil {
+			return err
+		}
+		if err := validateSurfaceUpdater(surface, where); err != nil {
+			return err
+		}
+		if len(surface.Scanners) == 0 && !surface.UpdaterOnly {
+			return fmt.Errorf("%s must name at least one applicable scanner", where)
+		}
+		if surface.UpdaterOnly && len(surface.Scanners) != 0 {
+			return fmt.Errorf("%s cannot be updater-only while naming scanners", where)
+		}
+		if surface.UpdaterOnly && surface.Kind != "js-package" {
+			return fmt.Errorf("%s updater-only is only valid for a package without a lockfile", where)
+		}
+		seenScanners := map[string]bool{}
+		for _, scanner := range surface.Scanners {
+			trimmed := strings.TrimSpace(scanner)
+			if trimmed == "" {
+				return fmt.Errorf("%s has an empty scanner", where)
+			}
+			if trimmed != scanner {
+				return fmt.Errorf("%s scanner %q must not contain leading or trailing whitespace", where, scanner)
+			}
+			if _, ok := scannerApplicability[scanner]; !ok {
+				return fmt.Errorf("%s has unknown scanner %q", where, scanner)
+			}
+			if !scannerApplicability[scanner][surface.Kind] {
+				return fmt.Errorf("%s scanner %q does not apply to kind %q", where, scanner, surface.Kind)
+			}
+			if seenScanners[scanner] {
+				return fmt.Errorf("%s lists scanner %q more than once", where, scanner)
+			}
+			seenScanners[scanner] = true
+		}
+		if surface.Kind == "dockerfile" {
+			if len(surface.Images) != len(uniqueSorted(surface.Images)) {
+				return fmt.Errorf("%s lists a Docker image more than once", where)
+			}
+			actual, err := dockerImages(filepath.Join(root, filepath.FromSlash(path)))
+			if err != nil {
+				return fmt.Errorf("read Dockerfile %q: %w", path, err)
+			}
+			if err := compareStrings("Dockerfile "+path+" images", actual, surface.Images); err != nil {
+				return err
+			}
+		} else if len(surface.Images) != 0 {
+			return fmt.Errorf("coverage surface %q has images but is not a Dockerfile", path)
+		}
+	}
+	for key := range discovered {
+		path, kind := splitCoverageKey(key)
+		if !covered[key] {
+			return fmt.Errorf("maintained %s %q is missing from coverage", kind, path)
+		}
+	}
+	return nil
+}
+
+func validateSurfaceUpdater(surface Surface, where string) error {
+	wantEcosystem := map[string]string{
+		"go-module":      "gomod",
+		"js-package":     "npm",
+		"js-lock":        "npm",
+		"terraform-root": "terraform",
+		"dockerfile":     "docker",
+		"github-actions": "github-actions",
+	}[surface.Kind]
+	if surface.Updater.Ecosystem != wantEcosystem {
+		return fmt.Errorf("%s updater ecosystem %q does not apply to kind %q", where, surface.Updater.Ecosystem, surface.Kind)
+	}
+	if surface.Kind == "github-actions" {
+		if surface.Updater.Directory != "/" {
+			return fmt.Errorf("%s GitHub Actions updater directory must be /", where)
+		}
+		return nil
+	}
+	directory := filepath.ToSlash(filepath.Dir(surface.Path))
+	if directory == "." {
+		directory = ""
+	}
+	wantDirectory := "/" + directory
+	if surface.Kind == "terraform-root" {
+		wantDirectory = "/" + surface.Path
+	}
+	if surface.Updater.Directory != wantDirectory {
+		return fmt.Errorf("%s updater directory %q does not cover path (want %q)", where, surface.Updater.Directory, wantDirectory)
+	}
+	return nil
+}
+
+func validateUpdater(updater Updater, where string) error {
+	if strings.TrimSpace(updater.Ecosystem) == "" || strings.TrimSpace(updater.Directory) == "" {
+		return fmt.Errorf("%s must specify updater ecosystem and directory", where)
+	}
+	if updater.Directory[0] != '/' || strings.Contains(updater.Directory, "..") || filepath.Clean(updater.Directory) != updater.Directory {
+		return fmt.Errorf("%s updater directory must be a normalized absolute repository path", where)
+	}
+	switch updater.Ecosystem {
+	case "gomod", "npm", "docker", "terraform", "github-actions":
+	default:
+		return fmt.Errorf("%s has unsupported updater ecosystem %q", where, updater.Ecosystem)
+	}
+	return nil
+}
+
+func validateExceptions(contract Exceptions, coverage Coverage, now time.Time) error {
+	if contract.Version != 1 {
+		return fmt.Errorf("exceptions version must be 1, got %d", contract.Version)
+	}
+	if contract.Exceptions == nil {
+		return errors.New("exceptions must be an explicit list (use [] when empty)")
+	}
+	seen := make(map[string]bool, len(contract.Exceptions))
+	coveredScanners := make(map[string]bool)
+	for _, surface := range coverage.Surfaces {
+		for _, scanner := range surface.Scanners {
+			coveredScanners[scanner] = true
+		}
+	}
+	now = now.UTC()
+	for i, exception := range contract.Exceptions {
+		where := fmt.Sprintf("exception %d", i+1)
+		if !stableIDPattern.MatchString(exception.ID) {
+			return fmt.Errorf("%s id must be a stable non-empty identifier", where)
+		}
+		if seen[exception.ID] {
+			return fmt.Errorf("duplicate exception id %q", exception.ID)
+		}
+		seen[exception.ID] = true
+		if _, known := scannerApplicability[exception.Scanner]; !known {
+			return fmt.Errorf("%s scanner %q is unknown", where, exception.Scanner)
+		}
+		if !coveredScanners[exception.Scanner] {
+			return fmt.Errorf("%s scanner %q is not covered", where, exception.Scanner)
+		}
+		for field, value := range map[string]string{
+			"scanner": exception.Scanner, "rule": exception.Rule, "resource": exception.Resource,
+			"owner": exception.Owner, "rationale": exception.Rationale,
+		} {
+			if strings.TrimSpace(value) == "" {
+				return fmt.Errorf("%s %s is required", where, field)
+			}
+			if field == "scanner" || field == "rule" || field == "resource" {
+				if isOverbroad(value) {
+					return fmt.Errorf("%s %s is overbroad", where, field)
+				}
+			}
+		}
+		created, err := parseExceptionDate(exception.Created)
+		if err != nil {
+			return fmt.Errorf("%s created: %w", where, err)
+		}
+		expires, err := parseExceptionDate(exception.Expires)
+		if err != nil {
+			return fmt.Errorf("%s expires: %w", where, err)
+		}
+		if created.After(now) {
+			return fmt.Errorf("%s created date is in the future", where)
+		}
+		if !expires.After(created) {
+			return fmt.Errorf("%s expires must be after created", where)
+		}
+		if expires.After(created.Add(maxExceptionAge)) {
+			return fmt.Errorf("%s exceeds the 90-day maximum", where)
+		}
+		if !expires.After(now) {
+			return fmt.Errorf("%s is expired", where)
+		}
+	}
+	return nil
+}
+
+// Match returns the one exact, currently valid exception for finding.  It is
+// intentionally not a pattern matcher: scanner, rule, and resource must all
+// be equal.  High/critical results and release/provenance classes cannot be
+// waived even when a matching record exists.
+func (contract Exceptions) Match(finding Finding) (Exception, bool) {
+	if protectedFinding(finding) {
+		return Exception{}, false
+	}
+	for _, exception := range contract.Exceptions {
+		if exception.Scanner == finding.Scanner && exception.Rule == finding.Rule && exception.Resource == finding.Resource {
+			return exception, true
+		}
+	}
+	return Exception{}, false
+}
+
+func protectedFinding(finding Finding) bool {
+	severity := strings.ToUpper(strings.TrimSpace(finding.Severity))
+	if severity == "" || severity == "HIGH" || severity == "CRITICAL" {
+		return true
+	}
+	class := strings.ToLower(strings.TrimSpace(finding.Class))
+	scanner := strings.ToLower(strings.TrimSpace(finding.Scanner))
+	return class == "release-signing" || class == "provenance" || scanner == "release-signing" || scanner == "provenance"
+}
+
+func parseExceptionDate(value string) (time.Time, error) {
+	if strings.TrimSpace(value) != value || value == "" {
+		return time.Time{}, errors.New("must be an ISO date (YYYY-MM-DD)")
+	}
+	parsed, err := time.Parse("2006-01-02", value)
+	if err != nil {
+		return time.Time{}, errors.New("must be an ISO date (YYYY-MM-DD)")
+	}
+	return parsed.UTC(), nil
+}
+
+func isOverbroad(value string) bool {
+	if strings.ContainsAny(value, "*?[]%") {
+		return true
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "all", "any", "everything", "global":
+		return true
+	default:
+		return false
+	}
+}
+
+func validateUpdaters(coverage Coverage, config dependabotConfig) error {
+	if config.Version != 2 {
+		return fmt.Errorf("Dependabot version must be 2, got %d", config.Version)
+	}
+	wanted := map[string]bool{}
+	for _, surface := range coverage.Surfaces {
+		wanted[updaterKey(surface.Updater)] = true
+	}
+	got := map[string]bool{}
+	for i, update := range config.Updates {
+		where := fmt.Sprintf("Dependabot update %d", i+1)
+		if err := validateUpdater(Updater{Ecosystem: update.PackageEcosystem, Directory: update.Directory}, where); err != nil {
+			return err
+		}
+		key := updaterKey(Updater{Ecosystem: update.PackageEcosystem, Directory: update.Directory})
+		if got[key] {
+			return fmt.Errorf("duplicate Dependabot updater %q", key)
+		}
+		got[key] = true
+		if update.OpenPullRequestsLimit == nil || *update.OpenPullRequestsLimit < 1 || *update.OpenPullRequestsLimit > 10 {
+			return fmt.Errorf("%s must set open-pull-requests-limit between 1 and 10", where)
+		}
+		if len(update.Schedule) == 0 {
+			return fmt.Errorf("%s must set a schedule", where)
+		}
+		if len(update.Groups) == 0 {
+			return fmt.Errorf("%s must define a bounded dependency group", where)
+		}
+		for name, group := range update.Groups {
+			if strings.TrimSpace(name) == "" || len(group.Patterns) == 0 {
+				return fmt.Errorf("%s has an empty dependency group", where)
+			}
+		}
+	}
+	for key := range wanted {
+		if !got[key] {
+			return fmt.Errorf("missing Dependabot updater for %q", key)
+		}
+	}
+	for key := range got {
+		if !wanted[key] {
+			return fmt.Errorf("Dependabot updater %q has no covered security surface", key)
+		}
+	}
+	return nil
+}
+
+func discoverSurfaces(root string) (map[string]bool, error) {
+	discovered := map[string]bool{}
+	terraformDirs := map[string]bool{}
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		if entry.IsDir() {
+			base := filepath.Base(rel)
+			if base == ".git" || base == "node_modules" || base == "vendor" || base == ".terraform" {
+				return fs.SkipDir
+			}
+			return nil
+		}
+		if rel == "." || strings.HasPrefix(rel, ".git/") {
+			return nil
+		}
+		base := filepath.Base(rel)
+		switch {
+		case base == "go.mod":
+			discovered[coverageKey(rel, "go-module")] = true
+		case base == "package.json":
+			discovered[coverageKey(rel, "js-package")] = true
+		case knownLockNames[base]:
+			discovered[coverageKey(rel, "js-lock")] = true
+		case strings.HasSuffix(base, ".tf"):
+			terraformDirs[filepath.ToSlash(filepath.Dir(rel))] = true
+		case base == "Dockerfile" || strings.HasPrefix(base, "Dockerfile."):
+			discovered[coverageKey(rel, "dockerfile")] = true
+		case (strings.HasPrefix(rel, ".github/workflows/") || strings.HasPrefix(rel, ".github/actions/") || strings.HasPrefix(rel, ".github/examples/")) && (strings.HasSuffix(base, ".yml") || strings.HasSuffix(base, ".yaml")):
+			discovered[coverageKey(rel, "github-actions")] = true
+		}
+		return nil
+	})
+	for dir := range terraformDirs {
+		discovered[coverageKey(dir, "terraform-root")] = true
+	}
+	if err != nil {
+		return nil, err
+	}
+	return discovered, nil
+}
+
+func dockerImages(path string) ([]string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	var stages = map[string]bool{}
+	var images []string
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		fields := strings.Fields(line)
+		if len(fields) == 0 || !strings.EqualFold(fields[0], "FROM") {
+			continue
+		}
+		fields = fields[1:]
+		if len(fields) == 0 {
+			return nil, errors.New("FROM has no image")
+		}
+		if fields[0] == "--platform=$BUILDPLATFORM" || strings.HasPrefix(fields[0], "--platform=") {
+			fields = fields[1:]
+		}
+		if len(fields) == 0 {
+			return nil, errors.New("FROM has no image")
+		}
+		image := fields[0]
+		if len(fields) >= 3 && strings.EqualFold(fields[1], "AS") {
+			stages[strings.ToLower(fields[2])] = true
+		}
+		if image == "scratch" || stages[strings.ToLower(image)] {
+			continue
+		}
+		images = append(images, image)
+	}
+	return uniqueSorted(images), nil
+}
+
+func compareStrings(label string, actual, declared []string) error {
+	actual = uniqueSorted(actual)
+	declared = uniqueSorted(declared)
+	if len(actual) != len(declared) {
+		return fmt.Errorf("%s inventory mismatch: declared %v, found %v", label, declared, actual)
+	}
+	for i := range actual {
+		if actual[i] != declared[i] {
+			return fmt.Errorf("%s inventory mismatch: declared %v, found %v", label, declared, actual)
+		}
+	}
+	return nil
+}
+
+func uniqueSorted(values []string) []string {
+	seen := map[string]bool{}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if !seen[value] {
+			seen[value] = true
+			result = append(result, value)
+		}
+	}
+	sort.Strings(result)
+	return result
+}
+
+func normalizeRepoPath(path string) (string, error) {
+	if path == "" || filepath.IsAbs(path) || strings.Contains(path, "\\") {
+		return "", errors.New("path must be a non-empty relative slash path")
+	}
+	clean := path
+	for strings.Contains(clean, "//") {
+		clean = strings.ReplaceAll(clean, "//", "/")
+	}
+	if clean == "." || strings.HasPrefix(clean, "../") || clean == ".." || strings.Contains(clean, "/../") || strings.HasPrefix(clean, "./") {
+		return "", errors.New("path must not escape repository root")
+	}
+	return clean, nil
+}
+
+func isKnownKind(kind string) bool {
+	switch kind {
+	case "go-module", "js-package", "js-lock", "terraform-root", "dockerfile", "github-actions":
+		return true
+	default:
+		return false
+	}
+}
+
+func coverageKey(path, kind string) string { return kind + "\x00" + path }
+
+func splitCoverageKey(key string) (string, string) {
+	parts := strings.SplitN(key, "\x00", 2)
+	if len(parts) != 2 {
+		return key, "surface"
+	}
+	return parts[1], parts[0]
+}
+
+func updaterKey(updater Updater) string { return updater.Ecosystem + "\x00" + updater.Directory }

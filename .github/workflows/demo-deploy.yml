@@ -10,6 +10,7 @@ permissions:
   contents: read
   id-token: write
   packages: read
+  attestations: read
 
 concurrency:
   group: leapview-hosted-demo
@@ -58,6 +59,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve the qualified immutable image
+        id: resolve
         run: |
           set -euo pipefail
           [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
@@ -68,7 +70,20 @@ jobs:
             head -n 1)"
           [[ "$demo_image" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
           echo "DEMO_IMAGE=$demo_image" >> "$GITHUB_ENV"
+          echo "image=$demo_image" >> "$GITHUB_OUTPUT"
           printf 'Qualified demo image: `%s`\n' "$demo_image" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Admit the exact hosted-demo image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ steps.resolve.outputs.image }}
+          repository: ${{ env.IMAGE_REPOSITORY }}
+          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
+          source-revision: ${{ env.SOURCE_REVISION }}
+
+      - name: Pin the admitted hosted-demo image
+        run: echo "DEMO_IMAGE=${{ steps.admission.outputs.image }}" >> "$GITHUB_ENV"
 
       - name: Fetch Hetzner infrastructure credentials
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
