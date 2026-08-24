@@ -248,7 +248,7 @@ func TestServiceForwardsCatalogStatisticsThroughGovernedRuntime(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != 1 || got[0] != want[0] {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("CatalogTableStatistics() = %#v, want %#v", got, want)
 	}
 }

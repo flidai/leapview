@@ -26,7 +26,7 @@ func (e duckDBProjectMaterializer) Materialize(ctx context.Context, request anal
 		Environment: string(servingstate.NormalizeEnvironment(request.Environment)),
 		TargetType:  request.TargetType, TargetID: request.TargetID.String(),
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
-		SkipInitialRefresh: true,
+		SkipInitialRefresh: true, MaterializationOnly: true,
 	})
 	if err != nil {
 		return 0, err

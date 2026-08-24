@@ -6,6 +6,7 @@ import (
 	"math/big"
 
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 )
 
@@ -58,35 +59,71 @@ WITH selected_snapshot AS (
 	  AND c.begin_snapshot <= selected.id
 	  AND (c.end_snapshot IS NULL OR selected.id < c.end_snapshot)
 	GROUP BY c.table_id
+), active_columns AS (
+	SELECT c.table_id, c.column_name, c.column_type, c.column_order,
+	       c.nulls_allowed, c.default_value
+	FROM __ducklake_metadata_lake.ducklake_column c
+	CROSS JOIN selected_snapshot selected
+	WHERE c.parent_column IS NULL
+	  AND c.begin_snapshot <= selected.id
+	  AND (c.end_snapshot IS NULL OR selected.id < c.end_snapshot)
 )
 SELECT a.schema_name, a.table_name,
        coalesce(f.row_count, 0), coalesce(c.column_count, 0),
        coalesce(f.file_count, 0), coalesce(f.byte_count, 0),
-       selected.id AS snapshot_id
+	   selected.id AS snapshot_id,
+	   columns.column_name, columns.column_type, columns.column_order,
+	   columns.nulls_allowed, columns.default_value
 FROM active_tables a
 CROSS JOIN selected_snapshot selected
 LEFT JOIN file_rollup f ON f.table_id = a.table_id
 LEFT JOIN column_rollup c ON c.table_id = a.table_id
-ORDER BY a.schema_name, a.table_name`,
+LEFT JOIN active_columns columns ON columns.table_id = a.table_id
+ORDER BY a.schema_name, a.table_name, columns.column_order`,
 		Args:    []any{snapshotID, snapshotID, "lake"},
-		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id"},
+		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id", "column_name", "column_type", "column_order", "nulls_allowed", "default_value"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("inspect serving DuckLake catalog: %w", err)
 	}
 	statistics := make([]catalogstats.Table, 0, len(rows))
+	indexes := make(map[string]int, len(rows))
 	for _, row := range rows {
-		statistics = append(statistics, catalogstats.Table{
-			Schema:      catalogStatisticString(row["schema_name"]),
-			Name:        catalogStatisticString(row["table_name"]),
-			RowCount:    catalogStatisticInt64(row["row_count"]),
-			ColumnCount: catalogStatisticInt64(row["column_count"]),
-			FileCount:   catalogStatisticInt64(row["file_count"]),
-			SizeBytes:   catalogStatisticInt64(row["byte_count"]),
-			SnapshotID:  catalogStatisticInt64(row["snapshot_id"]),
-		})
+		schemaName := catalogStatisticString(row["schema_name"])
+		tableName := catalogStatisticString(row["table_name"])
+		key := schemaName + "\x00" + tableName
+		index, ok := indexes[key]
+		if !ok {
+			index = len(statistics)
+			indexes[key] = index
+			statistics = append(statistics, catalogstats.Table{
+				Schema:      schemaName,
+				Name:        tableName,
+				RowCount:    catalogStatisticInt64(row["row_count"]),
+				ColumnCount: catalogStatisticInt64(row["column_count"]),
+				FileCount:   catalogStatisticInt64(row["file_count"]),
+				SizeBytes:   catalogStatisticInt64(row["byte_count"]),
+				SnapshotID:  catalogStatisticInt64(row["snapshot_id"]),
+			})
+		}
+		if columnName := catalogStatisticString(row["column_name"]); columnName != "" {
+			statistics[index].Columns = append(statistics[index].Columns, semanticmodel.ColumnSchema{
+				Name: columnName, Ordinal: int(catalogStatisticInt64(row["column_order"])),
+				PhysicalType: catalogStatisticString(row["column_type"]),
+				Nullable:     catalogStatisticNullable(row["nulls_allowed"]),
+				Default:      catalogStatisticString(row["default_value"]),
+			})
+		}
 	}
 	return statistics, nil
+}
+
+func catalogStatisticNullable(value any) *bool {
+	valueBool, ok := value.(bool)
+	if !ok {
+		return nil
+	}
+	return &valueBool
 }
 
 func catalogStatisticString(value any) string {

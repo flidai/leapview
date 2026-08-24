@@ -252,7 +252,10 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 		Entities:           map[string]semanticmodel.EntityDefinition{"zip_prefix": {Type: "primary", Fields: []string{"zip_prefix"}}},
 		GrainEntity:        "zip_prefix",
 		SourceDependencies: []string{"olist.geolocation"},
-		Schema:             semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"}}},
+		Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{
+			{Name: "zip_prefix", Ordinal: 0, PhysicalType: "VARCHAR"},
+			{Name: "observation_count", Ordinal: 1, PhysicalType: "BIGINT"},
+		}},
 	}
 	asset := projectview.DevelopAssetView{
 		ID: "model:zip_geolocations", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Title: "ZIP locations",
@@ -264,8 +267,14 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
-	if got := factValue(details.Overview, "Fields"); got != "1" {
-		t.Fatalf("fields fact = %q, want 1", got)
+	if got := factValue(details.Overview, "Fields"); got != "2" {
+		t.Fatalf("fields fact = %q, want 2", got)
+	}
+	if got := factValue(details.Overview, "Documented fields"); got != "1" {
+		t.Fatalf("documented fields fact = %q, want 1", got)
+	}
+	if got := factValue(details.Overview, "Contracted fields"); got != "0" {
+		t.Fatalf("contracted fields fact = %q, want 0", got)
 	}
 	if got := factValue(details.Overview, "Input sources"); got != "1" {
 		t.Fatalf("input sources fact = %q, want 1", got)
@@ -285,7 +294,7 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "DuckLake snapshot"); got != "17" {
 		t.Fatalf("snapshot fact = %q, want 17", got)
 	}
-	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (1)" {
+	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (2)" {
 		t.Fatalf("detail sections = %#v, want entities and fields only", details.Sections)
 	}
 	if len(details.Sections[0].Table.Rows) != 1 || details.Sections[0].Table.Rows[0]["name"] != "zip_prefix" || details.Sections[0].Table.Rows[0]["grain"] != "Yes" {
@@ -301,8 +310,14 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if uisignals.ValueOrZero(definition.Sections[1].Code) != table.Execution.SQL || uisignals.ValueOrZero(definition.Sections[1].Lang) != "sql" {
 		t.Fatalf("SQL section = %#v, want compiled transform SQL", definition.Sections[1])
 	}
-	if len(details.Sections[1].Table.Rows) != 1 {
-		t.Fatalf("field rows = %#v, want one row", details.Sections[1].Table.Rows)
+	if len(details.Sections[1].Table.Rows) != 2 {
+		t.Fatalf("field rows = %#v, want two rows", details.Sections[1].Table.Rows)
+	}
+	if got := details.Sections[1].Table.Rows[0]["metadata"].(recordTableBadge).Label; got != "Documented" {
+		t.Fatalf("documented field badge = %q", got)
+	}
+	if got := details.Sections[1].Table.Rows[1]["metadata"].(recordTableBadge).Label; got != "Observed" {
+		t.Fatalf("observed field badge = %q", got)
 	}
 }
 
@@ -586,14 +601,21 @@ func TestSourceAndModelSchemaUseLogicalFallbacksAndExplicitUnknowns(t *testing.T
 		if got := rows["physical"]["nullable"]; got != "Yes" {
 			t.Fatalf("%s physical nullable = %q, want schema-over-logical Yes", name, got)
 		}
-		if got := rows["logical"]["physical_type"].(recordTableBadge).Label; got != "integer" {
-			t.Fatalf("%s logical type = %q, want Datatype fallback integer", name, got)
+		logicalKey, wantLogical, wantUnknown := "physical_type", "integer", "Not profiled"
+		if name == "model" {
+			logicalKey, wantLogical, wantUnknown = "logical_type", "integer", "Opaque"
+			if got := rows["logical"]["physical_type"].(recordTableBadge).Label; got != "Not observed" {
+				t.Fatalf("model physical type = %q, want Not observed", got)
+			}
+		}
+		if got := rows["logical"][logicalKey].(recordTableBadge).Label; got != wantLogical {
+			t.Fatalf("%s logical type = %q, want %s", name, got, wantLogical)
 		}
 		if got := rows["logical"]["nullable"]; got != "No" {
 			t.Fatalf("%s logical nullable = %q, want explicit No", name, got)
 		}
-		if got := rows["unknown"]["physical_type"].(recordTableBadge).Label; got != "Not profiled" {
-			t.Fatalf("%s unknown type = %q, want Not profiled", name, got)
+		if got := rows["unknown"][logicalKey].(recordTableBadge).Label; got != wantUnknown {
+			t.Fatalf("%s unknown type = %q, want %s", name, got, wantUnknown)
 		}
 		if got := rows["unknown"]["nullable"]; got != "Not profiled" {
 			t.Fatalf("%s unknown nullable = %q, want Not profiled", name, got)

@@ -95,6 +95,14 @@ func SourceAssetPayload(source semanticmodel.Source) map[string]any {
 	})
 }
 
+// ModelSchemaPayload projects exact active-generation DuckLake columns into
+// the same JSON-shaped read-model form consumed by the Develop UI.
+func ModelSchemaPayload(schema semanticmodel.TableSchema) map[string]any {
+	return encodeAssetReadModel(struct {
+		Schema semanticmodel.TableSchema `json:"Schema"`
+	}{Schema: schema})
+}
+
 // SourceSchemaObservationPayload projects active-generation evidence into the
 // source detail payload without replacing authored contract fields.
 func SourceSchemaObservationPayload(observation SourceSchemaObservationReadModel) map[string]any {

@@ -15,6 +15,7 @@ import (
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -55,6 +56,7 @@ type AssetRefreshStateReader interface {
 // a model's catalog detail page.
 type ModelPhysicalMetadata struct {
 	RowCount, ColumnCount, FileCount, SizeBytes, SnapshotID int64
+	Schema                                                  semanticmodel.TableSchema
 }
 
 // PhysicalCatalogReader reads statistics from the exact active serving
@@ -843,6 +845,9 @@ func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset 
 	asset.Payload["Physical"] = map[string]any{
 		"RowCount": physical.RowCount, "ColumnCount": physical.ColumnCount,
 		"FileCount": physical.FileCount, "SizeBytes": physical.SizeBytes, "SnapshotID": physical.SnapshotID,
+	}
+	for key, value := range projectview.ModelSchemaPayload(physical.Schema) {
+		asset.Payload[key] = value
 	}
 	return asset, nil
 }

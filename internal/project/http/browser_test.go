@@ -465,6 +465,7 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		}},
 		PhysicalCatalog: browserPhysicalCatalogStub{"zip_geolocations": {
 			RowCount: 99_441, ColumnCount: 5, FileCount: 2, SizeBytes: 1_572_864, SnapshotID: 17,
+			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", PhysicalType: "VARCHAR"}}},
 		}},
 	}
 	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
@@ -476,6 +477,15 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 	physical, ok := asset.Payload["Physical"].(map[string]any)
 	if !ok || physical["RowCount"] != int64(99_441) || physical["SizeBytes"] != int64(1_572_864) || physical["SnapshotID"] != int64(17) {
 		t.Fatalf("physical payload = %#v", asset.Payload["Physical"])
+	}
+	schema, ok := asset.Payload["Schema"].(map[string]any)
+	columns, columnsOK := schema["columns"].([]any)
+	if !ok || !columnsOK || len(columns) != 1 {
+		t.Fatalf("schema payload = %#v", asset.Payload["Schema"])
+	}
+	column, columnOK := columns[0].(map[string]any)
+	if !columnOK || column["physicalType"] != "VARCHAR" {
+		t.Fatalf("schema payload = %#v", asset.Payload["Schema"])
 	}
 }
 

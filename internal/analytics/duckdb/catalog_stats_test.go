@@ -26,6 +26,7 @@ func TestProjectRuntimeCatalogTableStatisticsUsesServingSnapshot(t *testing.T) {
 	database := &catalogStatisticsDatabase{rows: semanticquery.Rows{{
 		"schema_name": "model", "table_name": "orders", "row_count": big.NewInt(42),
 		"column_count": int64(7), "file_count": int64(2), "byte_count": big.NewInt(4096), "snapshot_id": big.NewInt(17),
+		"column_name": "order_id", "column_type": "VARCHAR", "column_order": int64(0), "nulls_allowed": false,
 	}}}
 	runtime := &ProjectRuntime{db: database, lastSnapshotID: 17}
 
@@ -39,6 +40,9 @@ func TestProjectRuntimeCatalogTableStatisticsUsesServingSnapshot(t *testing.T) {
 	got := statistics[0]
 	if got.Schema != "model" || got.Name != "orders" || got.RowCount != 42 || got.ColumnCount != 7 || got.FileCount != 2 || got.SizeBytes != 4096 || got.SnapshotID != 17 {
 		t.Fatalf("CatalogTableStatistics()[0] = %#v", got)
+	}
+	if len(got.Columns) != 1 || got.Columns[0].Name != "order_id" || got.Columns[0].PhysicalType != "VARCHAR" || got.Columns[0].Nullable == nil || *got.Columns[0].Nullable {
+		t.Fatalf("CatalogTableStatistics()[0].Columns = %#v", got.Columns)
 	}
 	if len(database.plan.Args) != 3 || database.plan.Args[0] != int64(17) || database.plan.Args[1] != int64(17) || database.plan.Args[2] != "lake" {
 		t.Fatalf("query args = %#v, want serving snapshot 17 and lake alias", database.plan.Args)

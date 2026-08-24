@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectview "github.com/flidai/leapview/internal/project"
 	"github.com/flidai/leapview/internal/project/assetnav"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -564,6 +565,18 @@ func sortedMapKeysString(values map[string][]string) []string {
 func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, refresh AssetRefreshState) {
 	modelKey, tableName := modelTableKeyParts(asset)
 	fields := modelTableFields(asset.Payload)
+	schema := metaMap(asset.Payload, "Schema", "schema")
+	physicalColumns := metaSlice(schema, "Columns", "columns")
+	contractedFields := 0
+	for _, raw := range fields {
+		if metaString(asMap(raw), "Datatype", "datatype") != "" {
+			contractedFields++
+		}
+	}
+	totalFields := len(fields)
+	if len(physicalColumns) > 0 {
+		totalFields = len(physicalColumns)
+	}
 	sources := modelTableSourceNames(asset.Payload)
 	mode := "Unspecified"
 	if modelTableSQL(asset.Payload) != "" {
@@ -576,7 +589,9 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	model.Overview = append(model.Overview,
 		definitionFact{Label: "Grain entity", Value: grainEntity, Code: true},
 		definitionFact{Label: "Entities", Value: fmt.Sprint(len(entities))},
-		definitionFact{Label: "Fields", Value: fmt.Sprint(len(fields))},
+		definitionFact{Label: "Fields", Value: fmt.Sprint(totalFields)},
+		definitionFact{Label: "Documented fields", Value: fmt.Sprint(len(fields))},
+		definitionFact{Label: "Contracted fields", Value: fmt.Sprint(contractedFields)},
 		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
@@ -591,7 +606,7 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
-		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
+		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
 	)
 }
 
@@ -668,13 +683,27 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
 		field := asMap(fields[name])
+		_, documented := fields[name]
+		logicalType := metaString(field, "Datatype", "datatype")
+		metadataLabel, metadataTone := "Observed", "muted"
+		if logicalType != "" {
+			metadataLabel, metadataTone = "Contracted", "success"
+		} else {
+			logicalType = string(semanticmodel.LogicalDataTypeFromPhysicalType(metaString(column, "PhysicalType", "physicalType")))
+			if documented {
+				metadataLabel = "Documented"
+			}
+		}
+		physicalType := firstNonEmpty(metaString(column, "PhysicalType", "physicalType"), "Not observed")
 		child := assetByTypeKey("field", modelKey+"."+tableName+"."+name, assets)
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"nameHref":      childHref(projectID, child),
 			"label":         firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name)),
-			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
+			"logical_type":  recordTableBadgeValue(logicalType, "muted"),
+			"physical_type": recordTableBadgeValue(physicalType, "muted"),
 			"nullable":      schemaNullableLabel(column, field),
+			"metadata":      recordTableBadgeValue(metadataLabel, metadataTone),
 			"entities":      emptyDash(strings.Join(entityNames[name], ", ")),
 			"grain":         boolLabel(grainFields[name]),
 			"description":   emptyDash(metaString(field, "Description", "description")),
@@ -682,10 +711,12 @@ func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[strin
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("170px")},
+			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("210px")},
 			{ID: "label", Header: "Label", Width: uisignals.Pointer("180px")},
-			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "logical_type", Header: "Logical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "physical_type", Header: "Physical type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("150px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
+			{ID: "metadata", Header: "Metadata", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("130px")},
 			{ID: "entities", Header: "Entities", Width: uisignals.Pointer("180px")},
 			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
 			{ID: "description", Header: "Description"},

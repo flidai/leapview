@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
@@ -44,6 +45,7 @@ func (r activeProjectPhysicalCatalog) ModelPhysicalMetadata(ctx context.Context,
 		out[table.Name] = projecthttp.ModelPhysicalMetadata{
 			RowCount: table.RowCount, ColumnCount: table.ColumnCount, FileCount: table.FileCount,
 			SizeBytes: table.SizeBytes, SnapshotID: table.SnapshotID,
+			Schema: semanticmodel.TableSchema{Columns: append([]semanticmodel.ColumnSchema(nil), table.Columns...)},
 		}
 	}
 	return out, nil

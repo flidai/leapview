@@ -1019,7 +1019,7 @@ type ModelEntity struct {
 }
 
 type ModelField struct {
-	Datatype    string     `json:"datatype" yaml:"datatype"`
+	Datatype    *string    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
 	Label       *string    `json:"label,omitempty" yaml:"label,omitempty"`
 	Description *string    `json:"description,omitempty" yaml:"description,omitempty"`
 	AiContext   *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
@@ -1033,7 +1033,7 @@ type ModelSpec struct {
 	Definition ModelDefinition        `json:"definition" yaml:"definition"`
 	Entities   map[string]ModelEntity `json:"entities" yaml:"entities"`
 	Grain      ModelGrain             `json:"grain" yaml:"grain"`
-	Fields     map[string]ModelField  `json:"fields" yaml:"fields"`
+	Fields     *map[string]ModelField `json:"fields,omitempty" yaml:"fields,omitempty"`
 	Checks     *[]ModelCheck          `json:"checks,omitempty" yaml:"checks,omitempty"`
 }
 
