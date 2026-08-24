@@ -323,10 +323,8 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	if assetDataInspectable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
 	}
-	if assetRefreshable(asset.Type) {
+	if assetHasRefreshHistory(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
-	} else if asset.Type == "model_table" {
-		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refresh", Label: "Refresh", Href: assetnav.CanonicalAssetSectionHref(asset, "refresh"), Active: activeSection == "refresh"})
 	}
 	if assetHasVersions(versions) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions", Count: uisignals.Pointer(int64(len(versions.Versions)))})
@@ -382,14 +380,10 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 		ActiveSection: activeSection,
 		Asset:         projectAssetSummarySignal(project.ID, asset, assetsByID(assets), edges),
 	}
-	if assetRefreshable(asset.Type) {
+	if asset.Type == "refresh_pipeline" || asset.Type == "semantic_model" {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
 	} else if asset.Type == "model_table" {
 		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
-		if activeSection == "refresh" {
-			runsTable := assetRefreshesTable(refresh)
-			page.Refresh.RunsTable = &runsTable
-		}
 	}
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))
@@ -405,7 +399,7 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 			UsedByTable: lineage.UsedBy,
 		})
 	}
-	if activeSection == "refreshes" && assetRefreshable(asset.Type) {
+	if activeSection == "refreshes" && assetHasRefreshHistory(asset.Type) && page.Refresh != nil {
 		runsTable := assetRefreshesTable(refresh)
 		page.Refresh.RunsTable = &runsTable
 	}

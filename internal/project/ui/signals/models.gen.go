@@ -1350,6 +1350,11 @@ type RecordTableSignal struct {
 	Rows           []map[string]any           `json:"rows" yaml:"rows"`
 }
 
+type RefreshRunDrawerSignal struct {
+	Open  bool   `json:"open" yaml:"open"`
+	RunID string `json:"runId" yaml:"runId"`
+}
+
 type ResourceActionSignal struct {
 	Command  *string `json:"command,omitempty" yaml:"command,omitempty"`
 	Disabled *bool   `json:"disabled,omitempty" yaml:"disabled,omitempty"`
@@ -1388,6 +1393,7 @@ type ResourceAssetPageEnvelope struct {
 	Chrome           ChromeSignal                    `json:"chrome" yaml:"chrome"`
 	ConnectionAdmin  *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
 	ModelFieldDrawer *ModelFieldDrawerSignal         `json:"modelFieldDrawer,omitempty" yaml:"modelFieldDrawer,omitempty"`
+	RefreshRunDrawer *RefreshRunDrawerSignal         `json:"refreshRunDrawer,omitempty" yaml:"refreshRunDrawer,omitempty"`
 	Page             ResourceAssetPageSignal         `json:"page" yaml:"page"`
 	Runtime          RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
 	Status           DashboardStatus                 `json:"status" yaml:"status"`

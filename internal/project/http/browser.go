@@ -24,6 +24,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectview "github.com/flidai/leapview/internal/project"
+	"github.com/flidai/leapview/internal/project/assetnav"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -52,6 +53,7 @@ type AssetVersionsReader interface {
 type AssetRefreshStateReader interface {
 	AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 	ModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
+	SemanticModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 }
 
 // ModelPhysicalMetadata is the credential-free DuckLake table rollup shown on
@@ -383,6 +385,14 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	section := requestedAssetSection(r)
+	if asset.Type == string(projectview.AssetTypeModelTable) && section == "refresh" {
+		target := assetnav.CanonicalAssetSectionHref(asset, "refreshes")
+		if query := r.URL.Query().Encode(); query != "" {
+			target += "?" + query
+		}
+		stdhttp.Redirect(w, r, target, stdhttp.StatusPermanentRedirect)
+		return
+	}
 	if !projectui.ValidProjectAssetSection(asset.Type, section) {
 		stdhttp.NotFound(w, r)
 		return
@@ -723,7 +733,7 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModelTable) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModelTable) && asset.Type != string(projectview.AssetTypeSemanticModel) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
@@ -739,6 +749,17 @@ func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projec
 			return state, err
 		}
 		return refreshStateToProjectUI(h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID))
+	}
+	if asset.Type == string(projectview.AssetTypeSemanticModel) {
+		semanticModelKey := strings.TrimSpace(asset.Key)
+		if semanticModelKey == "" {
+			semanticModelKey = strings.TrimPrefix(strings.TrimPrefix(asset.ID, "semantic-model:"), "semantic:")
+		}
+		semanticModelID, err := projectgraph.NewResourceID(semanticModelKey)
+		if err != nil {
+			return state, err
+		}
+		return refreshStateToProjectUI(h.RefreshState.SemanticModelRefreshState(ctx, projectID, h.Environment, semanticModelID))
 	}
 	pipelineID, err := projectgraph.NewResourceID(asset.ID)
 	if err != nil {

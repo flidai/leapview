@@ -1964,6 +1964,13 @@ model ModelFieldDrawerSignal {
   `open`: boolean;
 }
 
+@apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
+@apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
+model RefreshRunDrawerSignal {
+  `open`: boolean;
+  `runId`: string;
+}
+
 @apigen.contract(#{ kind: "ui-envelope", tags: #["resource", "envelope"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "envelope", `x-leapview-surface`: "resource" })
 model ResourceAssetPageEnvelope {
@@ -1973,6 +1980,8 @@ model ResourceAssetPageEnvelope {
   `connectionAdmin`?: ConnectionAdministrationSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "modelFieldDrawer" })
   `modelFieldDrawer`?: ModelFieldDrawerSignal;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "refreshRunDrawer" })
+  `refreshRunDrawer`?: RefreshRunDrawerSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "page" })
   `page`: ResourceAssetPageSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "runtime" })

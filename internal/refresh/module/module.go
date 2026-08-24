@@ -514,6 +514,48 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 	return state, nil
 }
 
+// SemanticModelRefreshState returns root pipeline runs that materialize the
+// requested semantic model. A semantic model may be refreshed by multiple
+// pipelines, so the projection is keyed by semantic-model identity rather
+// than by one pipeline target.
+func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, semanticModelID projectgraph.ResourceID) (AssetRefreshState, error) {
+	state := AssetRefreshState{}
+	if err := projectID.Validate(); err != nil {
+		return state, err
+	}
+	if err := semanticModelID.Validate(); err != nil {
+		return state, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	if m == nil || m.runs == nil {
+		state.Unavailable = true
+		return state, nil
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
+	if err := scope.Validate(); err != nil {
+		return state, err
+	}
+	runs, err := m.runs.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		return state, err
+	}
+	state.Runs = make([]AssetRefreshRun, 0, len(runs))
+	for _, run := range runs {
+		state.Runs = append(state.Runs, assetRefreshRun(run))
+	}
+	if len(state.Runs) > 0 {
+		state.Latest = state.Runs[0]
+	}
+	latest, ok, err := m.runs.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
+	if err != nil {
+		return state, err
+	}
+	if ok {
+		state.LatestSuccessful = assetRefreshRun(latest)
+	}
+	return state, nil
+}
+
 func (m *Module) activeServingIdentity(ctx context.Context, projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
 	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
 	if err != nil {

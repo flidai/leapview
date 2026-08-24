@@ -225,6 +225,13 @@ INSERT INTO refresh_job_runs (
 	if len(modelState.Runs) != 1 || modelState.Runs[0].ID != "run_model" || modelState.LatestSuccessful.ID != "run_model" {
 		t.Fatalf("model runs = %#v, latest successful = %#v", modelState.Runs, modelState.LatestSuccessful)
 	}
+	semanticState, err := module.SemanticModelRefreshState(t.Context(), "project_sales", "dev", "semantic_sales")
+	if err != nil {
+		t.Fatalf("semantic model refresh state: %v", err)
+	}
+	if len(semanticState.Runs) != 1 || semanticState.Runs[0].ID != "run_1" || semanticState.LatestSuccessful.ID != "run_1" {
+		t.Fatalf("semantic model runs = %#v, latest successful = %#v", semanticState.Runs, semanticState.LatestSuccessful)
+	}
 }
 
 func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
@@ -245,6 +252,13 @@ func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
 	}
 	if !modelState.Unavailable {
 		t.Fatalf("model refresh state = %#v, want unavailable without persistence", modelState)
+	}
+	semanticState, err := module.SemanticModelRefreshState(t.Context(), "project_sales", "dev", "semantic_sales")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !semanticState.Unavailable {
+		t.Fatalf("semantic model refresh state = %#v, want unavailable without persistence", semanticState)
 	}
 }
 

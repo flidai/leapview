@@ -712,6 +712,44 @@ WHERE j.project_id = sqlc.arg(project_id)
 ORDER BY j.created_at DESC, r.created_sequence DESC
 LIMIT sqlc.arg(limit);
 
+-- name: ListSemanticModelMaterializationRuns :many
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
+       COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.invocation_source, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.matching_schedule_ids_json, r.parent_run_id, r.status,
+       j.created_at, j.updated_at, r.started_at, r.finished_at, r.error
+FROM refresh_job_runs r
+JOIN refresh_jobs j ON j.id = r.job_id
+LEFT JOIN principals p ON p.id = r.principal_id
+WHERE j.project_id = sqlc.arg(project_id)
+  AND r.environment = sqlc.arg(environment)
+  AND j.semantic_model_id = sqlc.arg(semantic_model_id)
+  AND COALESCE(r.parent_run_id, '') = ''
+  AND r.target_type = 'refresh_pipeline'
+  AND (
+    CAST(sqlc.arg(cursor_created_at) AS TEXT) = ''
+    OR j.created_at < CAST(sqlc.arg(cursor_created_at) AS TEXT)
+    OR (j.created_at = CAST(sqlc.arg(cursor_created_at) AS TEXT) AND r.created_sequence < sqlc.arg(cursor_sequence))
+  )
+ORDER BY j.created_at DESC, r.created_sequence DESC
+LIMIT sqlc.arg(limit);
+
+-- name: LatestSuccessfulSemanticModelMaterializationRun :one
+SELECT r.id, j.project_id, r.environment, j.generation_id, j.semantic_model_id, j.pipeline_id, r.principal_id,
+       COALESCE(NULLIF(p.display_name, ''), NULLIF(p.email, ''), r.principal_id, '') AS principal_display_name,
+       r.target_type, r.target_id, r.target_revision, r.trigger_type, r.trigger_id, r.invocation_source, r.nominal_time, r.plan_digest, r.materialization_scope_json, r.matching_schedule_ids_json, r.parent_run_id, r.status,
+       j.created_at, j.updated_at, r.started_at, r.finished_at, r.error
+FROM refresh_job_runs r
+JOIN refresh_jobs j ON j.id = r.job_id
+LEFT JOIN principals p ON p.id = r.principal_id
+WHERE j.project_id = sqlc.arg(project_id)
+  AND r.environment = sqlc.arg(environment)
+  AND j.semantic_model_id = sqlc.arg(semantic_model_id)
+  AND COALESCE(r.parent_run_id, '') = ''
+  AND r.target_type = 'refresh_pipeline'
+  AND r.status = sqlc.arg(status)
+ORDER BY j.created_at DESC, r.created_sequence DESC
+LIMIT 1;
+
 -- name: GetMaterializationRunCursor :one
 SELECT j.created_at, r.created_sequence
 FROM refresh_job_runs r

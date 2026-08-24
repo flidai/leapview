@@ -243,31 +243,97 @@ test('asset Definition tab renders authored YAML and SQL as separate code sectio
   }
 })
 
-test('model Refresh tab renders serving snapshot metadata', async () => {
+test('model Refreshes tab renders compact history and opens signal-driven run details', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=model-refresh`)
-    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-drawer'))
     const refresh = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
       const runTable = root.querySelector('lv-record-table') as any
       await runTable?.updateComplete
+      runTable?.querySelector<HTMLElement>('tbody tr.record-row')?.click()
       return {
         activeTab: root.querySelector('.tabs a.active')?.textContent?.trim(),
-        heading: root.querySelector('#refresh .detail-section h2')?.textContent?.trim(),
-        text: root.querySelector('#refresh')?.textContent?.replace(/\s+/g, ' ').trim(),
-        lastRefreshedWide: root.querySelector('#refresh .facts .wide p')?.textContent?.trim(),
+        headings: Array.from(root.querySelectorAll('#refreshes .detail-section h2')).map((heading: any) => heading.textContent?.trim()),
+        text: root.querySelector('#refreshes')?.textContent?.replace(/\s+/g, ' ').trim(),
+        lastRefreshedWide: root.querySelector('#refreshes .facts .wide p')?.textContent?.trim(),
+        columns: runTable?.table?.columns?.map((column: any) => column.header),
+        rowAction: runTable?.table?.rowAction,
         runRows: runTable?.querySelectorAll('tbody tr').length,
       }
     })
-    expect(refresh.activeTab).toBe('Refresh')
-    expect(refresh.heading).toBe('Refresh')
+    expect(refresh.activeTab).toBe('Refreshes')
+    expect(refresh.headings).toEqual(['Summary', 'Refresh history'])
     expect(refresh.text).toContain('2026-08-24 14:32 UTC')
     expect(refresh.lastRefreshedWide).toBe('2026-08-24 14:32 UTC')
+    expect(refresh.columns).toEqual(['Status', 'Started', 'Duration', 'Trigger', 'Initiated by'])
+    expect(refresh.rowAction).toBe('open-refresh-run')
     expect(refresh.runRows).toBe(1)
     expect(refresh.text).toContain('DuckLake snapshot')
     expect(refresh.text).toContain('2')
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('refresh') === 'run:model:orders')
+    const drawer = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const detail = root.querySelector('lv-drawer') as any
+      await detail?.updateComplete
+      return {
+        signal: element.signals.refreshRunDrawer,
+        label: detail?.getAttribute('label'),
+        title: root.querySelector('.refresh-run-drawer-title h1')?.textContent?.trim(),
+        subtitle: root.querySelector('.refresh-run-drawer-subtitle')?.textContent?.trim(),
+        sections: Array.from(root.querySelectorAll('.refresh-run-drawer-body .detail-section')).map((section: any) => ({
+          title: section.querySelector('h2')?.textContent?.trim(),
+          text: section.textContent?.replace(/\s+/g, ' ').trim(),
+        })),
+      }
+    })
+    expect(drawer.signal).toEqual({ open: true, runId: 'run:model:orders' })
+    expect(drawer.label).toBe('run:model:orders refresh details')
+    expect(drawer.title).toBe('Refresh run')
+    expect(drawer.subtitle).toBe('failed · 2026-08-24T14:32:00Z')
+    expect(drawer.sections.map((section: any) => section.title)).toEqual(['Overview', 'Context', 'Execution', 'Error'])
+    expect(drawer.sections.at(-1)?.text).toContain('Artifact digest mismatch')
+
+    await page.evaluate(() => history.back())
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('refresh'))
+    const afterBack = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return { signal: element.signals.refreshRunDrawer, drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')) }
+    })
+    expect(afterBack).toEqual({ signal: { open: false, runId: '' }, drawer: false })
+
+    await page.goto(`${baseURL}/?root=model-refresh&refresh=run:model:orders`)
+    await page.waitForFunction(() => Boolean((document.querySelector('lv-project-asset-page') as any)?.signals?.refreshRunDrawer?.open))
+    expect(await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return element.shadowRoot!.querySelector('.refresh-run-drawer-title h1')?.textContent?.trim()
+    })).toBe('Refresh run')
+  } finally {
+    await page.close()
+  }
+})
+
+test('semantic model exposes the same Refreshes history surface', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(`${baseURL}/?root=semantic-refreshes`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const state = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const table = root.querySelector('lv-record-table') as any
+      await table?.updateComplete
+      return {
+        activeTab: root.querySelector('.tabs a.active')?.textContent?.trim(),
+        label: root.querySelector('#refreshes')?.getAttribute('aria-label'),
+        rows: table?.querySelectorAll('tbody tr.record-row').length,
+        rowAction: table?.table?.rowAction,
+      }
+    })
+    expect(state).toEqual({ activeTab: 'Refreshes', label: 'Refreshes', rows: 1, rowAction: 'open-refresh-run' })
   } finally {
     await page.close()
   }
@@ -558,7 +624,9 @@ function testDocument(rootName: string): string {
   } : rootName === 'model-definition' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
   } : rootName === 'model-refresh' ? {
-    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'refresh', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }, { id: 'refresh', label: 'Refresh', href: '/models/model:orders/refresh', active: true }], refresh: { status: 'available', running: false, lastSuccessful: '2026-08-24T14:32:00Z', facts: [{ label: 'Status', value: 'available' }, { label: 'Last refreshed', value: '2026-08-24 14:32 UTC', wide: true }, { label: 'Rows', value: '99,441' }, { label: 'Physical size', value: '7.6 MiB' }, { label: 'Data files', value: '1' }, { label: 'DuckLake snapshot', value: '2', code: true }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'trigger', header: 'Trigger' }], rows: [{ status: { label: 'succeeded', tone: 'success' }, started: '2026-08-24T14:32:00Z', trigger: 'Pipeline' }], empty: 'No refresh runs.' } },
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'refreshes', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/models/model:orders/refreshes', active: true }], refresh: { status: 'available', running: false, lastSuccessful: '2026-08-24T14:32:00Z', facts: [{ label: 'Status', value: 'available' }, { label: 'Last refreshed', value: '2026-08-24 14:32 UTC', wide: true }, { label: 'Rows', value: '99,441' }, { label: 'Physical size', value: '7.6 MiB' }, { label: 'Data files', value: '1' }, { label: 'DuckLake snapshot', value: '2', code: true }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'duration', header: 'Duration' }, { id: 'trigger', header: 'Trigger' }, { id: 'triggered_by', header: 'Initiated by' }], rows: [{ status: { label: 'failed', tone: 'danger' }, started: '2026-08-24T14:32:00Z', duration: '5s', trigger: 'Pipeline', triggered_by: 'Local Developer', runId: 'run:model:orders', statusLabel: 'failed', startedAt: '2026-08-24T14:32:00Z', finishedAt: '2026-08-24T14:32:05Z', modelId: 'sales', environment: 'dev', servingStateId: 'generation:1', parentRunId: 'run:pipeline:sales', targetGeneration: 2, createdAt: '2026-08-24T14:31:59Z', updatedAt: '2026-08-24T14:32:05Z', error: 'Artifact digest mismatch' }], empty: 'No refresh runs.', rowAction: 'open-refresh-run' } },
+  } : rootName === 'semantic-refreshes' ? {
+    kind: 'data', title: 'Sales', assetId: 'semantic:sales', activeSection: 'refreshes', asset: { id: 'semantic:sales', key: 'sales', title: 'Sales', type: 'semantic_model', typeLabel: 'Semantic model', detailHref: '/semantic-models/semantic:sales/details', openHref: '/semantic-models/semantic:sales/details' }, breadcrumbs: [{ label: 'Semantic models', href: '/semantic-models' }, { label: 'Sales', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/semantic-models/semantic:sales/details' }, { id: 'refreshes', label: 'Refreshes', href: '/semantic-models/semantic:sales/refreshes', active: true }], refresh: { status: 'succeeded', running: false, lastSuccessful: '2026-08-24T14:32:05Z', facts: [{ label: 'Refresh status', value: 'succeeded' }, { label: 'Last refreshed', value: '2026-08-24T14:32:05Z' }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'duration', header: 'Duration' }, { id: 'trigger', header: 'Trigger' }, { id: 'triggered_by', header: 'Initiated by' }], rows: [{ status: { label: 'succeeded', tone: 'success' }, started: '2026-08-24T14:32:00Z', duration: '5s', trigger: 'Schedule', triggered_by: 'Scheduler', runId: 'run:semantic:sales', statusLabel: 'succeeded' }], empty: 'No refresh runs.', rowAction: 'open-refresh-run' } },
   } : rootName === 'pipeline-detail' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'succeeded', running: false, canRun: true }, actions: [{ label: 'Run now', command: 'run-refresh-pipeline', disabled: false }], details: { overview: [{ label: 'Refresh status', value: 'succeeded' }], sections: [] },
   } : rootName === 'pipeline-unavailable' ? {
@@ -580,7 +648,7 @@ function testDocument(rootName: string): string {
   } : {
     kind: 'data', title: 'Develop', assetList: { activeType: 'source', assets: [{ id: 'source:orders', key: 'source:orders', title: 'orders', description: 'Raw orders.', type: 'source', typeLabel: 'Source', detailHref: '/sources/source:orders/details', openHref: '/sources/source:orders/details' }], empty: 'No assets.', searchHref: '/sources', tabs: [] },
   }
-  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' ? 'lv-project-asset-page' : 'lv-project-page'
+  const rootTag = rootName === 'connections' ? 'lv-connections-page' : rootName === 'pipelines' ? 'lv-pipelines-page' : rootName === 'detail' || rootName === 'connection-detail' || rootName === 'connection-admin' || rootName === 'semantic-detail' || rootName === 'semantic-refreshes' || rootName === 'model-data' || rootName === 'model-definition' || rootName === 'model-refresh' || rootName === 'model-field-drawer' || rootName === 'pipeline-detail' || rootName === 'pipeline-unavailable' || rootName === 'dashboard-detail' ? 'lv-project-asset-page' : 'lv-project-page'
   const previewRows = Array.from({ length: 100 }, (_, index) => ({ customer_id: `customer-${index + 1}`, city: 'Example' }))
   const dataExplorer = { objects: [{ key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }], selectedKey: 'orders', selectedObject: { key: 'orders', resourceId: 'model:orders', title: 'orders', layer: 'model_table' }, preview: { columns: [{ key: 'customer_id', label: 'Customer ID', type: 'string' }, { key: 'city', label: 'City', type: 'string' }], totalRows: 99441, availableRows: 99441, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: previewRows } }, totalRowLabel: '99441', sort: {}, sql: '', error: '' }, explore: { command: { modelId: '', datasetId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } }, command: { mode: 'browse', objectKey: 'orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} }, warnings: [] }
   const signals = {

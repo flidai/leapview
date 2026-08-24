@@ -27,6 +27,7 @@ import type {
   ConnectionsPageSignal,
   DefinitionFactSignal,
   ModelFieldDrawerSignal,
+  RefreshRunDrawerSignal,
   RecordTableSignal,
   ResourceAssetPageSignal,
   ResourceAssetSummarySignal,
@@ -58,6 +59,7 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
 }
 
 const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
+const emptyRefreshRunDrawer: RefreshRunDrawerSignal = { open: false, runId: '' }
 
 type ModelFieldDrawerRow = Record<string, unknown> & {
   fieldKey?: string
@@ -72,6 +74,24 @@ type ModelFieldDrawerRow = Record<string, unknown> & {
   grain?: string
   description?: string
   duckLakeSnapshot?: string
+}
+
+type RefreshRunDrawerRow = Record<string, unknown> & {
+  runId?: string
+  statusLabel?: string
+  startedAt?: string
+  finishedAt?: string
+  duration?: string
+  trigger?: string
+  triggered_by?: string
+  modelId?: string
+  environment?: string
+  servingStateId?: string
+  parentRunId?: string
+  targetGeneration?: number
+  createdAt?: string
+  updatedAt?: string
+  error?: string
 }
 
 class LeapViewProjectPage extends DatastarLit(LitElement) {
@@ -199,6 +219,8 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private modelFieldDrawerPageKey = ''
   private pushedModelFieldDrawerEntry = false
+  private refreshRunDrawerPageKey = ''
+  private pushedRefreshRunDrawerEntry = false
 
   static get styles() {
     return [projectStyles]
@@ -207,10 +229,12 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   override connectedCallback(): void {
     super.connectedCallback()
     window.addEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+    window.addEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+    window.removeEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
     super.disconnectedCallback()
   }
 
@@ -223,6 +247,13 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     if (drawerPageKey && drawerPageKey !== this.modelFieldDrawerPageKey) {
       this.modelFieldDrawerPageKey = drawerPageKey
       this.syncModelFieldDrawerFromLocation()
+    }
+    const refreshDrawerPageKey = page?.activeSection === 'refreshes' && page.refresh?.runsTable
+      ? `${page.asset.detailHref}/refreshes`
+      : ''
+    if (refreshDrawerPageKey && refreshDrawerPageKey !== this.refreshRunDrawerPageKey) {
+      this.refreshRunDrawerPageKey = refreshDrawerPageKey
+      this.syncRefreshRunDrawerFromLocation()
     }
   }
 
@@ -238,6 +269,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return this.signal<ModelFieldDrawerSignal>('modelFieldDrawer', emptyModelFieldDrawer)
   }
 
+  get refreshRunDrawer(): RefreshRunDrawerSignal {
+    return this.signal<RefreshRunDrawerSignal>('refreshRunDrawer', emptyRefreshRunDrawer)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
@@ -246,7 +281,66 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return html`
       ${this.renderAssetPage(page)}
       ${this.renderModelFieldDrawer(page)}
+      ${this.renderRefreshRunDrawer(page)}
     `
+  }
+
+  private renderRefreshRunDrawer(page: ResourceAssetPageSignal) {
+    const run = this.selectedRefreshRun(page)
+    if (!run) return nothing
+    const runId = fieldValue(run, 'runId')
+    const status = fieldValue(run, 'statusLabel')
+    const started = fieldValue(run, 'startedAt')
+    const error = fieldValue(run, 'error', '')
+    return html`
+      <lv-drawer
+        open
+        label=${`${runId} refresh details`}
+        .modal=${false}
+        @lv-drawer-close=${this.closeRefreshRunDrawer}
+      >
+        <div slot="title" class="source-drawer-title refresh-run-drawer-title">
+          <span aria-hidden="true">${lucideIcon(RefreshCw)}</span>
+          <h1>Refresh run</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle refresh-run-drawer-subtitle">${[status, started].filter((value) => value && value !== '-').join(' · ')}</p>
+        <div class="source-drawer-body refresh-run-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Status', status),
+            fieldFact('Started', started),
+            fieldFact('Finished', fieldValue(run, 'finishedAt')),
+            fieldFact('Duration', fieldValue(run, 'duration')),
+          ], false)}
+          ${renderFacts('Context', [
+            fieldFact('Trigger', fieldValue(run, 'trigger')),
+            fieldFact('Initiated by', fieldValue(run, 'triggered_by')),
+            fieldFact('Semantic model', fieldValue(run, 'modelId'), false, true),
+            fieldFact('Environment', fieldValue(run, 'environment')),
+          ], false)}
+          ${renderFacts('Execution', [
+            fieldFact('Run ID', runId, true, true),
+            fieldFact('Serving generation', fieldValue(run, 'servingStateId'), true, true),
+            fieldFact('Parent run', fieldValue(run, 'parentRunId'), true, true),
+            fieldFact('Target revision', fieldValue(run, 'targetGeneration')),
+            fieldFact('Created', fieldValue(run, 'createdAt')),
+            fieldFact('Updated', fieldValue(run, 'updatedAt')),
+          ], false)}
+          ${error ? renderFacts('Error', [fieldFact('Message', error, true)], false) : nothing}
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedRefreshRun(page: ResourceAssetPageSignal): RefreshRunDrawerRow | null {
+    if (page.activeSection !== 'refreshes') return null
+    const drawer = this.refreshRunDrawer
+    const runId = drawer.runId.trim()
+    if (!drawer.open || !runId) return null
+    for (const row of page.refresh?.runsTable?.rows ?? []) {
+      const candidate = row as RefreshRunDrawerRow
+      if (fieldValue(candidate, 'runId', '') === runId) return candidate
+    }
+    return null
   }
 
   private renderModelFieldDrawer(page: ResourceAssetPageSignal) {
@@ -306,13 +400,23 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private handleRecordTableAction = (event: CustomEvent<{ action?: string, row?: ModelFieldDrawerRow }>): void => {
-    if (event.detail?.action !== 'open-model-field') return
-    const fieldKey = fieldValue(event.detail.row ?? {}, 'fieldKey', '')
-    if (!fieldKey) return
-    const wasOpen = this.modelFieldDrawer.open
-    this.setModelFieldDrawer({ fieldKey, open: true })
-    updateURLSearchParameter('field', fieldKey, wasOpen ? 'replace' : 'push')
-    if (!wasOpen) this.pushedModelFieldDrawerEntry = true
+    if (event.detail?.action === 'open-model-field') {
+      const fieldKey = fieldValue(event.detail.row ?? {}, 'fieldKey', '')
+      if (!fieldKey) return
+      const wasOpen = this.modelFieldDrawer.open
+      this.setModelFieldDrawer({ fieldKey, open: true })
+      updateURLSearchParameter('field', fieldKey, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedModelFieldDrawerEntry = true
+      return
+    }
+    if (event.detail?.action === 'open-refresh-run') {
+      const runId = fieldValue(event.detail.row ?? {}, 'runId', '')
+      if (!runId) return
+      const wasOpen = this.refreshRunDrawer.open
+      this.setRefreshRunDrawer({ open: true, runId })
+      updateURLSearchParameter('refresh', runId, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedRefreshRunDrawerEntry = true
+    }
   }
 
   private closeModelFieldDrawer = (): void => {
@@ -333,6 +437,26 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private setModelFieldDrawer(drawer: ModelFieldDrawerSignal): void {
     void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ modelFieldDrawer: drawer }))
+  }
+
+  private closeRefreshRunDrawer = (): void => {
+    this.setRefreshRunDrawer(emptyRefreshRunDrawer)
+    if (this.pushedRefreshRunDrawerEntry) {
+      this.pushedRefreshRunDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('refresh', '', 'replace')
+  }
+
+  private syncRefreshRunDrawerFromLocation = (): void => {
+    this.pushedRefreshRunDrawerEntry = false
+    const runId = new URLSearchParams(window.location.search).get('refresh')?.trim() ?? ''
+    this.setRefreshRunDrawer({ open: Boolean(runId), runId })
+  }
+
+  private setRefreshRunDrawer(drawer: RefreshRunDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ refreshRunDrawer: drawer }))
   }
 
   private renderDrawerPage(page: ResourceAssetPageSignal) {
@@ -540,10 +664,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderRefreshes(page: ResourceAssetPageSignal) {
     return html`
-      <section class="details" id=${page.activeSection} aria-label=${page.activeSection === 'refresh' ? 'Model refresh' : 'Refresh runs'}>
+      <section class="details" id="refreshes" aria-label="Refreshes">
         <div class="details-content">
-          ${renderFacts('Refresh', page.refresh?.facts ?? [], true)}
-          ${page.refresh?.runsTable ? renderRecordTableSection('Refreshes', page.refresh.runsTable) : nothing}
+          ${renderFacts('Summary', page.refresh?.facts ?? [], true)}
+          ${page.refresh?.runsTable ? renderRecordTableSection('Refresh history', page.refresh.runsTable) : nothing}
         </div>
       </section>
     `

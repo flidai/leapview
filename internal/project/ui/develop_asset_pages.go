@@ -319,9 +319,7 @@ func ValidProjectAssetSection(assetType, section string) bool {
 	case "data":
 		return assetDataInspectable(assetType)
 	case "refreshes":
-		return assetRefreshable(assetType)
-	case "refresh":
-		return assetType == "model_table"
+		return assetHasRefreshHistory(assetType)
 	default:
 		return false
 	}
@@ -386,7 +384,7 @@ type AssetVersionState struct {
 
 func validProjectAssetSectionName(section string) bool {
 	switch strings.TrimSpace(section) {
-	case "details", "definition", "data", "lineage", "refresh", "refreshes", "versions":
+	case "details", "definition", "data", "lineage", "refreshes", "versions":
 		return true
 	default:
 		return false

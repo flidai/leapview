@@ -107,9 +107,10 @@ func (s browserAssetVersionsStub) AssetVersions(context.Context, projectgraph.Re
 }
 
 type browserRefreshStateStub struct {
-	state            refreshpresentation.AssetRefreshState
-	err              error
-	requestedModelID *projectgraph.ResourceID
+	state                    refreshpresentation.AssetRefreshState
+	err                      error
+	requestedModelID         *projectgraph.ResourceID
+	requestedSemanticModelID *projectgraph.ResourceID
 }
 
 func (s browserRefreshStateStub) AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
@@ -119,6 +120,13 @@ func (s browserRefreshStateStub) AssetRefreshState(context.Context, projectgraph
 func (s browserRefreshStateStub) ModelRefreshState(_ context.Context, _ projectgraph.ResourceID, _ string, modelID projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
 	if s.requestedModelID != nil {
 		*s.requestedModelID = modelID
+	}
+	return s.state, s.err
+}
+
+func (s browserRefreshStateStub) SemanticModelRefreshState(_ context.Context, _ projectgraph.ResourceID, _ string, semanticModelID projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	if s.requestedSemanticModelID != nil {
+		*s.requestedSemanticModelID = semanticModelID
 	}
 	return s.state, s.err
 }
@@ -194,6 +202,29 @@ func TestAssetRefreshStateMapsModelRunHistory(t *testing.T) {
 	}
 	if requestedModelID != "sales_customers" {
 		t.Fatalf("model refresh target = %q, want authored model key", requestedModelID)
+	}
+}
+
+func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
+	requestedSemanticModelID := projectgraph.ResourceID("")
+	h := &BrowserHandler{
+		Environment: "dev",
+		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", Status: "succeeded", TriggerType: "schedule"}},
+			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:semantic", Status: "succeeded"},
+		}, requestedSemanticModelID: &requestedSemanticModelID},
+	}
+	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
+		ID: "semantic:sales", Key: "sales", Type: string(projectview.AssetTypeSemanticModel),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.LatestSuccessful.ID != "run:semantic" {
+		t.Fatalf("semantic model refresh state = %#v", state)
+	}
+	if requestedSemanticModelID != "sales" {
+		t.Fatalf("semantic model refresh target = %q, want authored semantic-model key", requestedSemanticModelID)
 	}
 }
 

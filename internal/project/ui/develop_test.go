@@ -360,7 +360,7 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 }
 
-func TestModelTableRefreshTabUsesServingSnapshotFacts(t *testing.T) {
+func TestModelTableRefreshesTabUsesServingSnapshotFacts(t *testing.T) {
 	asset := projectview.DevelopAssetView{
 		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
 		Payload: map[string]any{"Physical": map[string]any{
@@ -368,18 +368,18 @@ func TestModelTableRefreshTabUsesServingSnapshotFacts(t *testing.T) {
 			"SnapshotID": int64(2), "SnapshotAt": "2026-08-24T14:32:00Z",
 		}},
 	}
-	page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refresh", assetLineageModel{})
-	if page.ActiveSection != "refresh" || page.Refresh == nil {
+	page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refreshes", assetLineageModel{})
+	if page.ActiveSection != "refreshes" || page.Refresh == nil {
 		t.Fatalf("model refresh page = %#v, want active refresh signal", page)
 	}
 	var refreshTab *uisignals.ResourceTabSignal
 	for index := range page.Tabs {
-		if page.Tabs[index].ID == "refresh" {
+		if page.Tabs[index].ID == "refreshes" {
 			refreshTab = &page.Tabs[index]
 			break
 		}
 	}
-	if refreshTab == nil || refreshTab.Label != "Refresh" || refreshTab.Href != "/models/model:orders/refresh" || !refreshTab.Active {
+	if refreshTab == nil || refreshTab.Label != "Refreshes" || refreshTab.Href != "/models/model:orders/refreshes" || !refreshTab.Active {
 		t.Fatalf("model refresh tab = %#v", refreshTab)
 	}
 	if page.Refresh.Status != "available" || page.Refresh.LastSuccessful != "2026-08-24T14:32:00Z" {
@@ -592,18 +592,45 @@ func TestDashboardVersionsSectionIsReachableWhenHistoryExists(t *testing.T) {
 	}
 }
 
-func TestModelRefreshSectionIncludesTargetRunHistory(t *testing.T) {
+func TestModelRefreshesSectionIncludesTargetRunHistory(t *testing.T) {
 	asset := projectview.DevelopAssetView{ID: "model:sales_customers", Type: string(projectview.AssetTypeModelTable), Key: "sales_customers", Title: "Customers"}
 	refresh := AssetRefreshState{Runs: []AssetRefreshRun{{
 		ID: "run:model", Status: "succeeded", TriggerType: "dependency", StartedAt: "2026-08-24T13:00:00Z", FinishedAt: "2026-08-24T13:00:02Z",
 	}}}
-	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refresh", assetLineageModel{}, refresh)
+	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refreshes", assetLineageModel{}, refresh)
 	if page.Refresh == nil || page.Refresh.RunsTable == nil || len(page.Refresh.RunsTable.Rows) != 1 {
 		t.Fatalf("model refresh page = %#v, want target run history", page.Refresh)
+	}
+	if page.Refresh.RunsTable.RowAction == nil || *page.Refresh.RunsTable.RowAction != "open-refresh-run" {
+		t.Fatalf("model refresh table action = %#v", page.Refresh.RunsTable.RowAction)
+	}
+	wantColumns := []string{"status", "started", "duration", "trigger", "triggered_by"}
+	for index, want := range wantColumns {
+		if got := page.Refresh.RunsTable.Columns[index].ID; got != want {
+			t.Fatalf("model refresh column %d = %q, want %q", index, got, want)
+		}
 	}
 	if got := page.Refresh.RunsTable.Rows[0]["trigger"]; got != "Pipeline" {
 		t.Fatalf("model refresh trigger = %#v, want Pipeline", got)
 	}
+	if got := page.Refresh.RunsTable.Rows[0]["runId"]; got != "run:model" {
+		t.Fatalf("model refresh drawer run id = %#v", got)
+	}
+}
+
+func TestSemanticModelRefreshesSectionIncludesRunHistory(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}
+	refresh := AssetRefreshState{Runs: []AssetRefreshRun{{ID: "run:sales", Status: "succeeded", TriggerType: "schedule"}}}
+	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refreshes", assetLineageModel{}, refresh)
+	if page.Refresh == nil || page.Refresh.RunsTable == nil || len(page.Refresh.RunsTable.Rows) != 1 {
+		t.Fatalf("semantic model refresh page = %#v, want run history", page.Refresh)
+	}
+	for _, tab := range page.Tabs {
+		if tab.ID == "refreshes" && tab.Label == "Refreshes" && tab.Href == "/semantic-models/semantic:sales/refreshes" && tab.Active {
+			return
+		}
+	}
+	t.Fatalf("semantic model tabs = %#v, want active Refreshes tab", page.Tabs)
 }
 
 func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
@@ -784,8 +811,9 @@ func TestProjectAssetSectionsAreResourceAware(t *testing.T) {
 		{string(projectview.AssetTypeSource), "definition", true},
 		{string(projectview.AssetTypeSource), "data", false},
 		{string(projectview.AssetTypeModelTable), "data", true},
-		{string(projectview.AssetTypeModelTable), "refresh", true},
-		{string(projectview.AssetTypeModelTable), "refreshes", false},
+		{string(projectview.AssetTypeModelTable), "refresh", false},
+		{string(projectview.AssetTypeModelTable), "refreshes", true},
+		{string(projectview.AssetTypeSemanticModel), "refreshes", true},
 		{string(projectview.AssetTypeRefreshPipeline), "refreshes", true},
 		{string(projectview.AssetTypeDashboard), "refreshes", false},
 		{string(projectview.AssetTypeDashboard), "bogus", false},

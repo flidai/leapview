@@ -169,13 +169,23 @@ func assetRefreshesTable(refresh AssetRefreshState) recordTable {
 	rows := make([]map[string]any, 0, len(refresh.Runs))
 	for _, run := range refresh.Runs {
 		rows = append(rows, map[string]any{
-			"status":       refreshStatusGridValue(run.Status),
-			"started":      emptyDash(run.StartedAt),
-			"duration":     emptyDash(refreshRunDuration(run)),
-			"triggered_by": emptyDash(run.PrincipalDisplayName),
-			"trigger":      refreshTriggerLabel(run.TriggerType),
-			"run":          emptyDash(shortRefreshRunID(run.ID)),
-			"error":        emptyDash(run.Error),
+			"status":           refreshStatusGridValue(run.Status),
+			"started":          emptyDash(run.StartedAt),
+			"duration":         emptyDash(refreshRunDuration(run)),
+			"trigger":          refreshTriggerLabel(run.TriggerType),
+			"triggered_by":     emptyDash(run.PrincipalDisplayName),
+			"runId":            run.ID,
+			"environment":      emptyDash(run.Environment),
+			"modelId":          emptyDash(run.ModelID),
+			"servingStateId":   emptyDash(run.ServingStateID),
+			"parentRunId":      emptyDash(run.ParentRunID),
+			"targetGeneration": run.TargetGeneration,
+			"createdAt":        emptyDash(run.CreatedAt),
+			"updatedAt":        emptyDash(run.UpdatedAt),
+			"startedAt":        emptyDash(run.StartedAt),
+			"finishedAt":       emptyDash(run.FinishedAt),
+			"statusLabel":      emptyDash(run.Status),
+			"error":            strings.TrimSpace(run.Error),
 		})
 	}
 	return recordTable{
@@ -183,14 +193,13 @@ func assetRefreshesTable(refresh AssetRefreshState) recordTable {
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("status"), Width: uisignals.Pointer("140px")},
 			{ID: "started", Header: "Started", Width: uisignals.Pointer("180px")},
 			{ID: "duration", Header: "Duration", Width: uisignals.Pointer("110px")},
-			{ID: "triggered_by", Header: "Triggered by", Width: uisignals.Pointer("130px")},
 			{ID: "trigger", Header: "Trigger", Width: uisignals.Pointer("130px")},
-			{ID: "run", Header: "Run ID", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("160px")},
-			{ID: "error", Header: "Error"},
+			{ID: "triggered_by", Header: "Initiated by", Width: uisignals.Pointer("160px")},
 		},
-		Rows:     rows,
-		Empty:    "No refresh runs have been recorded for this asset.",
-		MinWidth: uisignals.Pointer("1040px"),
+		Rows:      rows,
+		Empty:     "No refresh runs have been recorded for this asset.",
+		MinWidth:  uisignals.Pointer("720px"),
+		RowAction: uisignals.Pointer("open-refresh-run"),
 	}
 }
 
@@ -264,6 +273,10 @@ func parseRefreshTime(value string) (time.Time, bool) {
 
 func assetRefreshable(assetType string) bool {
 	return assetType == "refresh_pipeline"
+}
+
+func assetHasRefreshHistory(assetType string) bool {
+	return assetType == "refresh_pipeline" || assetType == "model_table" || assetType == "semantic_model"
 }
 
 func assetDataInspectable(assetType string) bool {

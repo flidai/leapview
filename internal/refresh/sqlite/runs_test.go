@@ -544,6 +544,13 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES
 	if len(listed) != 1 || listed[0].ID != run.ID {
 		t.Fatalf("listed runs = %#v, want originating run", listed)
 	}
+	semanticRuns, err := repository.ListSemanticModelRuns(t.Context(), scope, "semantic_sales", refreshrun.RunPage{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListSemanticModelRuns() after activation: %v", err)
+	}
+	if len(semanticRuns) != 1 || semanticRuns[0].ID != run.ID {
+		t.Fatalf("semantic model runs = %#v, want originating run", semanticRuns)
+	}
 }
 
 func TestSQLRunRepositoryListsExecutableJobsAcrossGenerationsWithinReadScope(t *testing.T) {
