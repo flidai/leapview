@@ -63,6 +63,15 @@ type PhysicalCatalogReader interface {
 	ModelPhysicalMetadata(context.Context, projectgraph.ResourceID, string) (map[string]ModelPhysicalMetadata, error)
 }
 
+type SourceSchemaObservation = projectview.SourceSchemaObservationReadModel
+
+// SourceSchemaReader reads the persisted, non-secret schema evidence captured
+// for one source in the exact serving generation shown by the project graph.
+// It must not introspect a live source on behalf of an HTTP request.
+type SourceSchemaReader interface {
+	SourceSchemaObservation(context.Context, projectgraph.ResourceID, string, string, projectgraph.ResourceID) (SourceSchemaObservation, bool, error)
+}
+
 type CatalogAuthorizer interface {
 	List(context.Context, projectcatalog.ListRequest) (projectcatalog.Page, error)
 	Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error)
@@ -117,6 +126,7 @@ type BrowserHandler struct {
 	AssetVersions            AssetVersionsReader
 	RefreshState             AssetRefreshStateReader
 	PhysicalCatalog          PhysicalCatalogReader
+	SourceSchemas            SourceSchemaReader
 	ProjectDefinitionReader  ProjectDefinitionReader
 	DashboardAppearances     DashboardAppearanceStore
 	QueryExecutor            DataQueryExecutor
@@ -799,7 +809,15 @@ func (h *BrowserHandler) projectAssetReadModel(ctx context.Context, asset projec
 	if err != nil {
 		return projectview.DevelopAssetView{}, err
 	}
-	return h.enrichModelPhysicalMetadata(ctx, enriched)
+	return h.enrichAssetRuntimeMetadata(ctx, enriched)
+}
+
+func (h *BrowserHandler) enrichAssetRuntimeMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	enriched, err := h.enrichModelPhysicalMetadata(ctx, asset)
+	if err != nil {
+		return projectview.DevelopAssetView{}, err
+	}
+	return h.enrichSourceSchemaObservation(ctx, enriched)
 }
 
 func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
@@ -825,6 +843,28 @@ func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset 
 	asset.Payload["Physical"] = map[string]any{
 		"RowCount": physical.RowCount, "ColumnCount": physical.ColumnCount,
 		"FileCount": physical.FileCount, "SizeBytes": physical.SizeBytes, "SnapshotID": physical.SnapshotID,
+	}
+	return asset, nil
+}
+
+func (h *BrowserHandler) enrichSourceSchemaObservation(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	if asset.Type != string(projectview.AssetTypeSource) || h.SourceSchemas == nil {
+		return asset, nil
+	}
+	projectID, projectErr := projectgraph.NewResourceID(asset.ProjectID)
+	sourceID, sourceErr := projectgraph.NewResourceID(asset.ID)
+	servingStateID := strings.TrimSpace(asset.ServingStateID)
+	if projectErr != nil || sourceErr != nil || servingStateID == "" {
+		return asset, nil
+	}
+	observation, found, err := h.SourceSchemas.SourceSchemaObservation(ctx, projectID, h.Environment, servingStateID, sourceID)
+	if err != nil || !found {
+		// Observed schema enriches the authored definition. Historical generations
+		// without gate provenance remain browsable with their contract fields.
+		return asset, nil
+	}
+	for key, value := range projectview.SourceSchemaObservationPayload(observation) {
+		asset.Payload[key] = value
 	}
 	return asset, nil
 }

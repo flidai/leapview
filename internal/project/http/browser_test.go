@@ -200,6 +200,16 @@ type browserProjectDefinitionStub struct {
 	err        error
 }
 
+type browserSourceSchemaStub struct {
+	observation SourceSchemaObservation
+	found       bool
+	err         error
+}
+
+func (s browserSourceSchemaStub) SourceSchemaObservation(context.Context, projectgraph.ResourceID, string, string, projectgraph.ResourceID) (SourceSchemaObservation, bool, error) {
+	return s.observation, s.found, s.err
+}
+
 type browserDataQueryStub struct {
 	query  dataquery.Query
 	result dataquery.Result
@@ -489,6 +499,73 @@ func TestModelAssetReadModelRemainsAvailableWhenServingCatalogStatisticsAreUnava
 	}
 	if _, ok := asset.Payload["Physical"]; ok {
 		t.Fatalf("physical payload = %#v, want unavailable statistics omitted", asset.Payload["Physical"])
+	}
+}
+
+func TestSourceAssetReadModelUsesActiveGenerationObservedSchema(t *testing.T) {
+	const assetID = "source:orders"
+	observedAt := time.Date(2026, 8, 24, 7, 30, 0, 0, time.UTC)
+	h := &BrowserHandler{
+		Environment: "dev",
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
+			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+				SchemaMode: "compatible",
+				Fields: map[string]semanticmodel.SourceField{
+					"order_id": {Datatype: semanticmodel.DataTypeString, Description: "Order identifier"},
+				},
+			}},
+		}},
+		SourceSchemas: browserSourceSchemaStub{observation: SourceSchemaObservation{
+			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{
+				{Name: "review_id", Ordinal: 0, PhysicalType: "VARCHAR"},
+				{Name: "order_id", Ordinal: 1, PhysicalType: "VARCHAR"},
+			}},
+			Mode: "compatible", Status: "success", ObservedAt: observedAt, SchemaDigest: "sha256:observed",
+		}, found: true},
+	}
+	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
+		ID: assetID, ProjectID: "project:test", ServingStateID: "state:active", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("projectAssetReadModel() error = %v", err)
+	}
+	schema, ok := asset.Payload["Schema"].(map[string]any)
+	if !ok || len(schema["columns"].([]any)) != 2 {
+		t.Fatalf("source schema = %#v, want two observed columns", asset.Payload["Schema"])
+	}
+	observation, ok := asset.Payload["SchemaObservation"].(map[string]any)
+	if !ok || observation["Status"] != "success" || observation["ObservedAt"] != observedAt.Format(time.RFC3339) {
+		t.Fatalf("source observation = %#v, want active generation evidence", asset.Payload["SchemaObservation"])
+	}
+	fields := asset.Payload["Fields"].(map[string]any)
+	if len(fields) != 1 || fields["order_id"] == nil {
+		t.Fatalf("source contract fields = %#v, want authored contract retained", fields)
+	}
+}
+
+func TestSourceAssetReadModelFallsBackWhenObservedSchemaIsUnavailable(t *testing.T) {
+	const assetID = "source:orders"
+	h := &BrowserHandler{
+		Environment: "dev",
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
+			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+				SchemaMode: "compatible", Fields: map[string]semanticmodel.SourceField{"order_id": {Datatype: semanticmodel.DataTypeString}},
+			}},
+		}},
+		SourceSchemas: browserSourceSchemaStub{err: errors.New("provenance unavailable")},
+	}
+	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
+		ID: assetID, ProjectID: "project:test", ServingStateID: "state:legacy", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("projectAssetReadModel() error = %v, want authored fallback", err)
+	}
+	if _, ok := asset.Payload["SchemaObservation"]; ok {
+		t.Fatalf("schema observation = %#v, want unavailable evidence omitted", asset.Payload["SchemaObservation"])
+	}
+	fields := asset.Payload["Fields"].(map[string]any)
+	if fields["order_id"] == nil || asset.Payload["SchemaMode"] != "compatible" {
+		t.Fatalf("source fallback payload = %#v, want authored contract", asset.Payload)
 	}
 }
 

@@ -64,7 +64,7 @@ func (h *BrowserHandler) assetPageState(r *http.Request, projectID projectgraph.
 	if !found {
 		return assetPageProjection{}, errAssetNotFound
 	}
-	asset, err = h.enrichModelPhysicalMetadata(r.Context(), asset)
+	asset, err = h.enrichAssetRuntimeMetadata(r.Context(), asset)
 	if err != nil {
 		return assetPageProjection{}, err
 	}

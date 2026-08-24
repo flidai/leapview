@@ -3,6 +3,7 @@ package project
 import (
 	"encoding/json"
 	"strings"
+	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -22,8 +23,28 @@ type SourceAssetReadModel struct {
 	Connection   string                               `json:"Connection,omitempty"`
 	Object       string                               `json:"Object,omitempty"`
 	PathLocation *projectcontracts.PathSourceLocation `json:"PathLocation,omitempty"`
+	SchemaMode   string                               `json:"SchemaMode,omitempty"`
 	Fields       map[string]semanticmodel.SourceField `json:"Fields,omitempty"`
 	Schema       semanticmodel.TableSchema            `json:"Schema,omitempty"`
+}
+
+// SourceSchemaObservationReadModel is the non-secret schema evidence captured
+// while qualifying one exact serving generation. It remains separate from
+// Fields, which is the authored source contract rather than physical catalog
+// discovery.
+type SourceSchemaObservationReadModel struct {
+	Schema       semanticmodel.TableSchema `json:"Schema"`
+	Mode         string                    `json:"Mode,omitempty"`
+	Status       string                    `json:"Status,omitempty"`
+	ObservedAt   time.Time                 `json:"ObservedAt,omitempty"`
+	SchemaDigest string                    `json:"SchemaDigest,omitempty"`
+}
+
+type sourceSchemaObservationMetadataReadModel struct {
+	Mode         string    `json:"Mode,omitempty"`
+	Status       string    `json:"Status,omitempty"`
+	ObservedAt   time.Time `json:"ObservedAt,omitempty"`
+	SchemaDigest string    `json:"SchemaDigest,omitempty"`
 }
 
 // ConnectionAssetReadModel is the non-secret connection definition used by
@@ -70,8 +91,24 @@ func SourceAssetPayload(source semanticmodel.Source) map[string]any {
 	return encodeAssetReadModel(SourceAssetReadModel{
 		Format: source.Format, Description: source.Description, Path: source.Path,
 		Connection: source.Connection, Object: source.Object, PathLocation: source.PathLocation,
-		Fields: source.Fields, Schema: source.Schema,
+		SchemaMode: source.SchemaMode, Fields: source.Fields, Schema: source.Schema,
 	})
+}
+
+// SourceSchemaObservationPayload projects active-generation evidence into the
+// source detail payload without replacing authored contract fields.
+func SourceSchemaObservationPayload(observation SourceSchemaObservationReadModel) map[string]any {
+	payload := encodeAssetReadModel(struct {
+		Schema            semanticmodel.TableSchema                `json:"Schema"`
+		SchemaObservation sourceSchemaObservationMetadataReadModel `json:"SchemaObservation"`
+	}{
+		Schema: observation.Schema,
+		SchemaObservation: sourceSchemaObservationMetadataReadModel{
+			Mode: observation.Mode, Status: observation.Status,
+			ObservedAt: observation.ObservedAt, SchemaDigest: observation.SchemaDigest,
+		},
+	})
+	return payload
 }
 
 func ConnectionAssetPayload(connection semanticmodel.Connection) map[string]any {

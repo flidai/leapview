@@ -610,9 +610,28 @@ func modelTableFields(meta map[string]any) map[string]any {
 func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetView) {
 	fields := metaMap(asset.Payload, "Fields", "fields")
 	schema := metaMap(asset.Payload, "Schema", "schema")
+	observation := metaMap(asset.Payload, "SchemaObservation", "schemaObservation")
 	columns := modelTableSchemaColumns(fields, schema)
 	model.Overview = append(model.Overview, sourceFacts(asset)...)
-	model.Overview = append(model.Overview, definitionFact{Label: "Fields", Value: fmt.Sprint(len(columns))})
+	mode := firstNonEmpty(metaString(asset.Payload, "SchemaMode", "schemaMode"), metaString(observation, "Mode", "mode"), "inferred")
+	status := firstNonEmpty(metaString(observation, "Status", "status"), "not observed")
+	observedFields := 0
+	if len(observation) > 0 {
+		observedFields = len(metaSlice(schema, "Columns", "columns"))
+	}
+	model.Overview = append(model.Overview,
+		definitionFact{Label: "Fields", Value: fmt.Sprint(len(columns))},
+		definitionFact{Label: "Schema mode", Value: mode},
+		definitionFact{Label: "Schema status", Value: status},
+		definitionFact{Label: "Observed fields", Value: fmt.Sprint(observedFields)},
+		definitionFact{Label: "Contract fields", Value: fmt.Sprint(len(fields))},
+	)
+	if observedAt := metaString(observation, "ObservedAt", "observedAt"); observedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, observedAt); err == nil {
+			observedAt = parsed.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		model.Overview = append(model.Overview, definitionFact{Label: "Schema observed at", Value: observedAt})
+	}
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(columns)), Signal: "assetDetailsSourceFieldsTable", Table: sourceFieldsGrid(fields, schema)},
 	)
@@ -707,19 +726,26 @@ func sourceFieldsGrid(fields, schema map[string]any) recordTable {
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
 		field := asMap(fields[name])
+		_, declared := fields[name]
+		contractLabel, contractTone := "Observed only", "muted"
+		if declared {
+			contractLabel, contractTone = "Declared", "success"
+		}
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"description":   emptyDash(metaString(field, "Description", "description")),
 			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
 			"nullable":      schemaNullableLabel(column, field),
+			"contract":      recordTableBadgeValue(contractLabel, contractTone),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("170px")},
-			{ID: "description", Header: "Description"},
+			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("230px")},
 			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
+			{ID: "contract", Header: "Contract", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "description", Header: "Description"},
 		},
 		Rows:     rows,
 		Empty:    "No schema is available for this source.",

@@ -500,16 +500,38 @@ func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
 	source := projectview.DevelopAssetView{
 		ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders",
 		Payload: projectview.SourceAssetPayload(semanticmodel.Source{
-			Format: "csv", Connection: "warehouse", Path: "s3://bucket/orders.csv",
-			Fields: map[string]semanticmodel.SourceField{"order_id": {Type: "int"}},
+			Format: "csv", Connection: "warehouse", Path: "s3://bucket/orders.csv", SchemaMode: "compatible",
+			Fields: map[string]semanticmodel.SourceField{"order_id": {Type: "int", Description: "Order identifier"}},
+			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{
+				{Name: "review_id", Ordinal: 0, PhysicalType: "VARCHAR"},
+				{Name: "order_id", Ordinal: 1, PhysicalType: "BIGINT"},
+			}},
 		}),
+	}
+	source.Payload["SchemaObservation"] = map[string]any{
+		"Status": "success", "ObservedAt": "2026-08-24T07:30:00Z", "SchemaDigest": "sha256:observed",
 	}
 	sourceDetails := assetDetailModelForAsset(projectview.DevelopView{ID: "project:test"}, source, []projectview.DevelopAssetView{source}, nil)
 	if got := detailFactValue(sourceDetails.Overview, "Connection"); got != "warehouse" {
 		t.Fatalf("source connection fact = %q, want warehouse", got)
 	}
-	if len(sourceDetails.Sections) != 1 || len(sourceDetails.Sections[0].Table.Rows) != 1 {
-		t.Fatalf("source field section = %#v, want one projected field", sourceDetails.Sections)
+	if got := detailFactValue(sourceDetails.Overview, "Schema mode"); got != "compatible" {
+		t.Fatalf("source schema mode = %q, want compatible", got)
+	}
+	if got := detailFactValue(sourceDetails.Overview, "Schema status"); got != "success" {
+		t.Fatalf("source schema status = %q, want success", got)
+	}
+	if got := detailFactValue(sourceDetails.Overview, "Observed fields"); got != "2" {
+		t.Fatalf("source observed fields = %q, want 2", got)
+	}
+	if got := detailFactValue(sourceDetails.Overview, "Contract fields"); got != "1" {
+		t.Fatalf("source contract fields = %q, want 1", got)
+	}
+	if len(sourceDetails.Sections) != 1 || len(sourceDetails.Sections[0].Table.Rows) != 2 {
+		t.Fatalf("source field section = %#v, want two observed fields", sourceDetails.Sections)
+	}
+	if sourceDetails.Sections[0].Table.Rows[0]["contract"].(recordTableBadge).Label != "Observed only" || sourceDetails.Sections[0].Table.Rows[1]["contract"].(recordTableBadge).Label != "Declared" {
+		t.Fatalf("source contract badges = %#v, want observed-only then declared", sourceDetails.Sections[0].Table.Rows)
 	}
 
 	pipeline := projectview.DevelopAssetView{

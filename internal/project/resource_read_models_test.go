@@ -13,8 +13,9 @@ import (
 func TestSourceAssetPayloadProjectsSchemaAndFields(t *testing.T) {
 	source := semanticmodel.Source{
 		Format: "csv", Connection: "warehouse", Path: "s3://bucket/orders.csv",
-		Fields: map[string]semanticmodel.SourceField{"order_id": {Type: "int", Description: "Order ID"}},
-		Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", Ordinal: 0, PhysicalType: "BIGINT"}}},
+		SchemaMode: "compatible",
+		Fields:     map[string]semanticmodel.SourceField{"order_id": {Type: "int", Description: "Order ID"}},
+		Schema:     semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "order_id", Ordinal: 0, PhysicalType: "BIGINT"}}},
 	}
 	payload := SourceAssetPayload(source)
 	if payload["Format"] != "csv" || payload["Connection"] != "warehouse" || payload["Path"] != "s3://bucket/orders.csv" {
@@ -23,6 +24,9 @@ func TestSourceAssetPayloadProjectsSchemaAndFields(t *testing.T) {
 	fields, ok := payload["Fields"].(map[string]any)
 	if !ok || fields["order_id"] == nil {
 		t.Fatalf("source fields = %#v, want order_id", payload["Fields"])
+	}
+	if payload["SchemaMode"] != "compatible" {
+		t.Fatalf("source schema mode = %#v, want compatible", payload["SchemaMode"])
 	}
 	schema, ok := payload["Schema"].(map[string]any)
 	if !ok || len(schema["columns"].([]any)) != 1 {
