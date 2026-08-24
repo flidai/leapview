@@ -1,0 +1,180 @@
+version: 1
+
+# Every maintained dependency-bearing surface is listed separately. Keep
+# paths repository-relative; the validator discovers these classes and fails
+# when a new surface is added without an entry here.
+surfaces:
+  - path: go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /}
+    scanners: [govulncheck]
+  - path: pkg/apigen/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /pkg/apigen}
+    scanners: [govulncheck]
+  - path: pkg/apigen/example/go.mod
+    kind: go-module
+    updater: {ecosystem: gomod, directory: /pkg/apigen/example}
+    scanners: [govulncheck]
+
+  - path: package.json
+    kind: js-package
+    updater: {ecosystem: npm, directory: /}
+    scanners: [bun-audit]
+  - path: desktop/package.json
+    kind: js-package
+    updater: {ecosystem: npm, directory: /desktop}
+    scanners: [bun-audit]
+  - path: deploy/compose/qualification/package.json
+    kind: js-package
+    updater: {ecosystem: npm, directory: /deploy/compose/qualification}
+    scanners: [bun-audit]
+  - path: internal/app/testing/maliciousinstance/electron/package.json
+    kind: js-package
+    updater: {ecosystem: npm, directory: /internal/app/testing/maliciousinstance/electron}
+    scanners: [bun-audit]
+  - path: pkg/apigen/typespec/package.json
+    kind: js-package
+    updater: {ecosystem: npm, directory: /pkg/apigen/typespec}
+    scanners: [npm-audit]
+  - path: bun.lock
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /}
+    scanners: [bun-audit]
+  - path: deploy/compose/qualification/bun.lock
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /deploy/compose/qualification}
+    scanners: [bun-audit]
+  - path: desktop/bun.lock
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /desktop}
+    scanners: [bun-audit]
+  - path: internal/app/testing/maliciousinstance/electron/bun.lock
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /internal/app/testing/maliciousinstance/electron}
+    scanners: [bun-audit]
+  - path: pkg/apigen/typespec/package-lock.json
+    kind: js-lock
+    updater: {ecosystem: npm, directory: /pkg/apigen/typespec}
+    scanners: [npm-audit]
+
+  - path: deploy/hetzner
+    kind: terraform-root
+    updater: {ecosystem: terraform, directory: /deploy/hetzner}
+    scanners: [trivy]
+  - path: deploy/hetzner-site
+    kind: terraform-root
+    updater: {ecosystem: terraform, directory: /deploy/hetzner-site}
+    scanners: [trivy]
+
+  - path: Dockerfile
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /}
+    scanners: [trivy]
+    images:
+      - debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
+      - golang:1.25.14-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437
+      - node:24-bookworm@sha256:392e1e23f34da768d8d1f4e502b64f200d3be3465934d4b7930f57d7e2fc1989
+      - oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+  - path: Dockerfile.site
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /}
+    scanners: [trivy]
+    images:
+      - gcr.io/distroless/static-debian12:nonroot@sha256:aef9602f8710ec12bde19d593fed1f76c708531bb7aba205110f1029786ead7b
+      - golang:1.25.14-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437
+      - node:24-bookworm@sha256:392e1e23f34da768d8d1f4e502b64f200d3be3465934d4b7930f57d7e2fc1989
+      - oven/bun:1.3.14@sha256:e10577f0db68676a7024391c6e5cb4b879ebd17188ab750cf10024a6d700e5c4
+  - path: deploy/compose/qualification/Dockerfile.authoring-client
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /deploy/compose/qualification}
+    scanners: [trivy]
+    images: ["${LEAPVIEW_IMAGE}"]
+  - path: internal/app/testing/maliciousinstance/electron/Dockerfile.linux
+    kind: dockerfile
+    updater: {ecosystem: docker, directory: /internal/app/testing/maliciousinstance/electron}
+    scanners: [trivy]
+    images:
+      - golang:1.25-bookworm
+      - oven/bun:1.3.14-debian@sha256:9dba1a1b43ce28c9d7931bfc4eb00feb63b0114720a0277a8f939ae4dfc9db6f
+
+  - path: .github/examples/leapview-authoring.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/actions/desktop-preview-candidate/action.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/actions/oci-admission/action.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/actions/setup-ci/action.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/artifacts.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/ci-health.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/ci.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/demo-deploy.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/desktop-preview-release.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/electron-security-proof.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/hetzner-deploy.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/installed-candidate.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/merge-validation.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/nightly.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/public-site-smoke.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/release.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/site-deploy.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/security.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/site-image.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]
+  - path: .github/workflows/site-infrastructure.yml
+    kind: github-actions
+    updater: {ecosystem: github-actions, directory: /}
+    scanners: [trivy, action-pin-policy]

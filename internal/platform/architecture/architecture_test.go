@@ -2370,7 +2370,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25.13-bookworm@sha256:",
+		"FROM golang:1.25.14-bookworm@sha256:",
 		"AS go-deps",
 		"FROM go-deps AS sourcegen",
 		"COPY --from=node /usr/local/bin/node /usr/local/bin/node",
@@ -2585,7 +2585,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 	text := string(dockerfile)
 	for _, want := range []string{
 		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25.13-bookworm@sha256:",
+		"FROM golang:1.25.14-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
@@ -2596,7 +2596,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 		"RUN bun install --frozen-lockfile --no-cache",
 		"bun scripts/generate_visualization_validator.ts",
 		"bun run build:site",
-		"FROM golang:1.25.13-bookworm@sha256:",
+		"FROM golang:1.25.14-bookworm@sha256:",
 		"CGO_ENABLED=0 go build -trimpath",
 		"./cmd/leapview-site",
 		"FROM gcr.io/distroless/static-debian12:nonroot@sha256:",
@@ -3066,7 +3066,11 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"node:audit:",
 		"bun audit",
 		"vuln:",
-		"golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./...",
+		"golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
+		"security:policy:",
+		"security:dependencies:",
+		"security:source:",
+		"security:check:",
 		"ci:prepare:frontend:",
 		"ci:test:docs-site:",
 		"go test ./cmd/leapview-site ./docs ./site ./internal/app/site/...",
@@ -3199,7 +3203,7 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 		}
 	}
 	nightlyExtras := taskfileTaskBlock(t, taskfile, "ci:nightly:extras")
-	for _, want := range []string{"- task: dependency-security"} {
+	for _, want := range []string{"- task: generate", "- task: security:check", "- task: dependency-security"} {
 		if !strings.Contains(nightlyExtras, want) {
 			t.Fatalf("ci:nightly:extras missing %q", want)
 		}
@@ -3314,7 +3318,7 @@ func TestDependencySecurityContractCoversEveryDependencyGraph(t *testing.T) {
 		"node:audit":            {"bun audit"},
 		"desktop:audit":         {"dir: desktop", "bun audit"},
 		"apigen:audit":          {"npm --prefix pkg/apigen/typespec ci", "npm --prefix pkg/apigen/typespec audit"},
-		"vuln":                  {"GOMEMLIMIT: 4GiB", "golang.org/x/vuln/cmd/govulncheck@v1.5.0 ./..."},
+		"vuln":                  {"GOMEMLIMIT: 4GiB", "golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./..."},
 		"security:report":       {"dependency-security", "dependencyreport report", ".tmp/release-security/dependency-clearance.json"},
 		"security:report:check": {"dependencyreport check", ".tmp/release-security/dependency-clearance.json"},
 	} {

@@ -48,6 +48,7 @@
   ],
   "overrides": {
     "brace-expansion": "file:vendor/brace-expansion-compat",
-    "image-size": "file:vendor/image-size-next-compat"
+    "image-size": "file:vendor/image-size-next-compat",
+    "tar": "7.5.22"
   }
 }

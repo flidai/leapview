@@ -28,6 +28,7 @@ const (
 	SchemaVersion        = "leapview.dependency-clearance/v1"
 	defaultWaiver        = "security/dependency-waivers.json"
 	goScannerMemoryLimit = "4GiB"
+	goScannerPackage     = "golang.org/x/vuln/cmd/govulncheck@v1.6.0"
 )
 
 var requiredFiles = []string{
@@ -228,7 +229,7 @@ func runCLI(args []string) error {
 func execRunner(ctx context.Context, dir, name string, args ...string) (CommandResult, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.Dir = dir
-	if name == "go" && containsArgument(args, "golang.org/x/vuln/cmd/govulncheck@v1.5.0") {
+	if name == "go" && containsArgument(args, goScannerPackage) {
 		cmd.Env = append(cmd.Environ(), "GOMEMLIMIT="+goScannerMemoryLimit)
 	}
 	var stdout, stderr bytes.Buffer
@@ -864,7 +865,7 @@ func parseNPM(data []byte) ([]Finding, int, int, error) {
 
 func scanGo(ctx context.Context, root string, run Runner) GraphResult {
 	result := GraphResult{ID: "go", Manager: "go", Manifest: "go.mod", Lockfile: "go.sum"}
-	audit, err := run(ctx, root, "go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.5.0", "-json", "./...")
+	audit, err := run(ctx, root, "go", "run", goScannerPackage, "-json", "./...")
 	if err != nil {
 		result.Result = scannerError(err.Error())
 		return result
@@ -885,7 +886,7 @@ func parseGo(data []byte) ([]Finding, []Finding, int, ToolIdentity, error) {
 	identity := ToolIdentity{
 		RuntimeName: "go",
 		ScannerName: "govulncheck",
-		Command:     []string{"go", "run", "golang.org/x/vuln/cmd/govulncheck@v1.5.0", "-json", "./..."},
+		Command:     []string{"go", "run", goScannerPackage, "-json", "./..."},
 		Environment: []string{"GOMEMLIMIT=" + goScannerMemoryLimit},
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))

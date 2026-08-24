@@ -22,6 +22,11 @@ jobs:
     if: github.repository == 'flidai/leapview' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      attestations: write
+      id-token: write
     outputs:
       digest: ${{ steps.build.outputs.digest }}
       version: ${{ steps.identity.outputs.version }}
@@ -79,11 +84,22 @@ jobs:
           provenance: mode=max
           sbom: true
 
+      - name: Attest production image provenance
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE_REPOSITORY }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+
   qualify-production-image:
     name: Qualify production image
     needs: build-production-image
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
 
     steps:
       - name: Check out repository
@@ -104,16 +120,25 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Admit the exact production image
+        id: admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ env.IMAGE_REPOSITORY }}@${{ needs.build-production-image.outputs.digest }}
+          repository: ${{ env.IMAGE_REPOSITORY }}
+          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
+          source-revision: ${{ needs.build-production-image.outputs.revision }}
+
       - name: Qualify the immutable production image
         env:
-          IMAGE_DIGEST: ${{ needs.build-production-image.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.admission.outputs.image }}
           IMAGE_VERSION: ${{ needs.build-production-image.outputs.version }}
           IMAGE_REVISION: ${{ needs.build-production-image.outputs.revision }}
           IMAGE_BUILD_TIME: ${{ needs.build-production-image.outputs.build_time }}
         run: |
           set -euo pipefail
-          [[ "${IMAGE_DIGEST}" == sha256:* ]]
-          immutable_image="${IMAGE_REPOSITORY}@${IMAGE_DIGEST}"
+          immutable_image="${IMAGE_REFERENCE}"
+          [[ "${immutable_image}" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
           task image:qualify:production IMAGE="${immutable_image}"
           identity="$(docker run --rm "${immutable_image}" version --json)"
           jq -e \

@@ -1,6 +1,6 @@
 module github.com/flidai/leapview
 
-go 1.25.13
+go 1.25.14
 
 replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen
 
