@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -285,11 +286,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				audit:    config.AuditIntentRecorder,
 			}
 		}
+		cancelJob, cancelJobOK := config.API.Jobs.(jobplatform.WorkflowJobCanceller)
+		if config.API.Jobs != nil && !cancelJobOK {
+			return nil, errors.New("deployment transactional job canceller is required")
+		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
 			config.ActivationHooks,
 			config.API.Releases,
 			config.API.Workflow,
+			cancelJob,
 			config.AuditIntentRecorder,
 		)
 		if config.DeliveryReader == nil {

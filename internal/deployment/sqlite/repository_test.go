@@ -14,6 +14,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -205,12 +206,21 @@ func TestCancelDeploymentAuditIsAtomicAndIdempotent(t *testing.T) {
 func TestCancelDeploymentAuditFailureRollsBackStatus(t *testing.T) {
 	store, _ := openDeploymentRepository(t)
 	insertDeploymentGeneration(t, store, "project", "prod", "generation_cancel_rollback", "validated", deploymentDigest("a"))
-	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+	jobRepo := jobsqlite.NewRepository(store.SQLDB())
+	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{CancelJob: jobRepo, Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
 		return errors.New("injected cancel audit failure")
 	})})
 	input := deploymentCreateInput(t, "deployment_cancel_rollback", "project", "prod", "generation_cancel_rollback", "")
 	created, err := repo.CreateDeployment(t.Context(), input)
 	if err != nil {
+		t.Fatal(err)
+	}
+	jobID := "deployment:" + created.ID + ":activate"
+	if _, err := jobRepo.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: jobID, Kind: "deployment.activate", WorkloadClass: jobplatform.WorkloadClassControl,
+		PrincipalID: "principal_1", ResourceKind: "deployment", ResourceID: created.ID,
+		EstimatedMemoryBytes: 1, Payload: []byte(`{}`),
+	}); err != nil {
 		t.Fatal(err)
 	}
 	intent := access.AuditIntent{EventID: "deployment-cancel-rollback", Source: "deployment", Operation: "cancelDeployment", PrincipalID: "principal_1", Action: "deployment.cancelled", ResourceKind: "project", ResourceID: "project", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:" + created.ID, AggregateSequence: 2, MetadataJSON: `{}`}
@@ -223,6 +233,42 @@ func TestCancelDeploymentAuditFailureRollsBackStatus(t *testing.T) {
 	}
 	if row.Status != deployment.StatusPending {
 		t.Fatalf("deployment status after audit rollback = %q, want pending", row.Status)
+	}
+	job, err := jobRepo.Get(t.Context(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusQueued {
+		t.Fatalf("activation job status after audit rollback = %q, want queued", job.Status)
+	}
+}
+
+func TestCancelDeploymentCancelsActivationJobInSameTransaction(t *testing.T) {
+	store, _ := openDeploymentRepository(t)
+	insertDeploymentGeneration(t, store, "project", "prod", "generation_cancel_job", "validated", deploymentDigest("a"))
+	jobRepo := jobsqlite.NewRepository(store.SQLDB())
+	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{CancelJob: jobRepo})
+	created, err := repo.CreateDeployment(t.Context(), deploymentCreateInput(t, "deployment_cancel_job", "project", "prod", "generation_cancel_job", ""))
+	if err != nil {
+		t.Fatal(err)
+	}
+	jobID := "deployment:" + created.ID + ":activate"
+	if _, err := jobRepo.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: jobID, Kind: "deployment.activate", WorkloadClass: jobplatform.WorkloadClassControl,
+		PrincipalID: "principal_1", ResourceKind: "deployment", ResourceID: created.ID,
+		EstimatedMemoryBytes: 1, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CancelDeployment(t.Context(), created.ID); err != nil {
+		t.Fatal(err)
+	}
+	job, err := jobRepo.Get(t.Context(), jobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCancelled {
+		t.Fatalf("activation job status = %q, want cancelled", job.Status)
 	}
 }
 

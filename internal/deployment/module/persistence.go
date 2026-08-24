@@ -29,6 +29,7 @@ func newPersistence(
 	hooks ActivationHooks,
 	releases ReleasePort,
 	workflow jobplatform.WorkflowRecorder,
+	cancelJob jobplatform.WorkflowJobCanceller,
 	audit access.AuditIntentRecorder,
 ) (
 	deployment.Repository,
@@ -44,6 +45,7 @@ func newPersistence(
 		}
 	}
 	sqliteHooks.RecordWorkflow = workflow
+	sqliteHooks.CancelJob = cancelJob
 	owned := deploymentsqlite.NewRepositoryWithHooks(database, sqliteHooks)
 	return owned, owned, owned, owned
 }

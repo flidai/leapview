@@ -193,8 +193,12 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 		if err := json.Unmarshal([]byte(intent.MetadataJSON), &metadata); err != nil {
 			return Artifact{}, err
 		}
-		metadata["digest"] = item.ActualDigest
-		metadata["sizeBytes"] = item.SizeBytes
+		payload, ok := metadata["payload"].(map[string]any)
+		if !ok {
+			return Artifact{}, fmt.Errorf("release audit metadata payload must be an object")
+		}
+		payload["digest"] = item.ActualDigest
+		payload["sizeBytes"] = item.SizeBytes
 		encoded, err := json.Marshal(metadata)
 		if err != nil {
 			return Artifact{}, err

@@ -15,6 +15,7 @@ import (
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	graph "github.com/flidai/leapview/internal/project/graph"
+	publicjobs "github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct {
@@ -37,6 +38,7 @@ type Repository struct {
 type ActivationHooks struct {
 	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
 	RecordWorkflow jobplatform.WorkflowRecorder
+	CancelJob      jobplatform.WorkflowJobCanceller
 	Audit          access.AuditIntentRecorder
 	// CommitPublication replaces the final SQLite commit only in tests or
 	// controlled adapters. A hook may commit and return an error to model a
@@ -371,6 +373,11 @@ func (r *Repository) CancelDeployment(ctx context.Context, id string) (deploymen
 	n, _ := result.RowsAffected()
 	if n != 1 {
 		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	if r.hooks.CancelJob != nil {
+		if err := r.hooks.CancelJob.CancelWorkflowJob(ctx, tx, "deployment:"+id+":activate"); err != nil && !errors.Is(err, publicjobs.ErrConflict) {
+			return deployment.Deployment{}, err
+		}
 	}
 	if err := r.recordAuditIntent(ctx, tx); err != nil {
 		return deployment.Deployment{}, err

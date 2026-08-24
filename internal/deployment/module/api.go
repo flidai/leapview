@@ -390,10 +390,6 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		m.writeCommandFailure(w, r, operationID, err)
 		return
 	}
-	if err := m.api.Jobs.Cancel(r.Context(), "deployment:"+deploymentID+":activate"); err != nil && !errors.Is(err, jobs.ErrConflict) {
-		m.writeCommandFailure(w, r, operationID, apigenfailure.Wrap("queue_unavailable", err))
-		return
-	}
 	ctx := r.Context()
 	if m.auditIntentConfigured {
 		requestID, correlationID := deploymentAuditRequestIdentity(r)

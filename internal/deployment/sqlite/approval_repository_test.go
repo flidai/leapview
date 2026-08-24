@@ -3,14 +3,15 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/stretchr/testify/require"
 )
@@ -63,7 +64,11 @@ func TestApprovalAuditIntentTracksAtomicRequestAndDecision(t *testing.T) {
 	insertApprovalPrincipalsAndDeployment(t, ctx, db)
 	repository := NewRepositoryWithHooks(db, ActivationHooks{Audit: accesssqlite.NewRepository(db)})
 	pending := deployment.Approval{ID: "approval-audit", ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1", Status: deployment.ApprovalPending, RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1", RequestedAt: now, ExpiresAt: now.Add(time.Hour), Revision: 1}
-	requestIntent := access.AuditIntent{EventID: "approval-request-audit", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", ResourceKind: "project", ResourceID: "finance", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0, MetadataJSON: `{"approvalId":""}`}
+	requestMetadata, err := deploymentgen.EncodeGenRequestDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalRequestedAuditPayload{DeploymentId: pending.DeploymentID, ApprovalId: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestIntent := access.AuditIntent{EventID: "approval-request-audit", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", ResourceKind: "project", ResourceID: "finance", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0, MetadataJSON: requestMetadata}
 	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, requestIntent), pending); err != nil {
 		t.Fatal(err)
 	}
@@ -71,8 +76,16 @@ func TestApprovalAuditIntentTracksAtomicRequestAndDecision(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT metadata_json FROM audit_outbox WHERE event_id = ?`, requestIntent.EventID).Scan(&metadata); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(metadata, pending.ID) {
-		t.Fatalf("request audit metadata = %q, missing approval id", metadata)
+	var envelope map[string]any
+	if err := json.Unmarshal([]byte(metadata), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	payload, ok := envelope["payload"].(map[string]any)
+	if !ok || payload["approvalId"] != pending.ID {
+		t.Fatalf("request audit payload = %#v, want approval id %q", payload, pending.ID)
+	}
+	if _, exists := envelope["approvalId"]; exists {
+		t.Fatalf("request audit envelope contains undeclared top-level approvalId: %s", metadata)
 	}
 	approved := pending
 	approved.Status = deployment.ApprovalApproved
