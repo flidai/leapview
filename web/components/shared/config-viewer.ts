@@ -40,7 +40,7 @@ class ConfigViewer extends LitElement {
       align-items: center;
       gap: var(--base-size-8);
       justify-content: space-between;
-      padding-bottom: var(--base-size-10);
+      padding-bottom: var(--base-size-12);
     }
 
     .outline-tools {
@@ -60,7 +60,7 @@ class ConfigViewer extends LitElement {
       min-width: 0;
       width: min(100%, 52rem);
       flex: 0 1 52rem;
-      height: var(--control-medium-size, 32px);
+      height: var(--control-medium-size);
       border: var(--lv-border-muted);
       border-radius: var(--lv-radius-default);
       outline: 0;
@@ -72,7 +72,7 @@ class ConfigViewer extends LitElement {
 
     .search:focus-visible {
       outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset, 2px);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .tools {
@@ -103,8 +103,8 @@ class ConfigViewer extends LitElement {
 
     .tool.icon-tool {
       display: inline-grid;
-      width: var(--control-small-size, 28px);
-      height: var(--control-small-size, 28px);
+      width: var(--control-small-size);
+      height: var(--control-small-size);
       padding: 0;
       place-items: center;
     }
@@ -122,7 +122,7 @@ class ConfigViewer extends LitElement {
 
     .mode {
       border: 0;
-      border-radius: var(--lv-radius-small, 4px);
+      border-radius: var(--lv-radius-small);
       background: transparent;
       color: var(--lv-fg-muted);
       cursor: pointer;
@@ -141,7 +141,7 @@ class ConfigViewer extends LitElement {
     .mode:focus-visible {
       color: var(--lv-fg-default);
       outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset, 1px);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .tree {
