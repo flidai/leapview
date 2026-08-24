@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"net/http"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
 	adminhttp "github.com/flidai/leapview/internal/admin/http"
@@ -22,6 +21,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type PublicationService interface {
@@ -96,7 +96,7 @@ type Config struct {
 	AccessConfigured             bool
 	Storage                      StorageConfig
 	Layout                       func(*http.Request) webpage.Provider
-	EnsureClientID               func(http.ResponseWriter, *http.Request)
+	EnsureClientID               func(http.ResponseWriter, *http.Request) bool
 	Broker                       *pagestream.Broker
 	Product                      *product.Service
 	ProductCommands              product.CommandExecutor

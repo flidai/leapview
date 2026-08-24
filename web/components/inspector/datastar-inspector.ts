@@ -1,21 +1,14 @@
 /**
  * Datastar Inspector - Dev-only debugging tool
  *
- * A development-only view of effective Datastar signal state and history.
+ * A development-only view of the browser's current Datastar signal state.
  */
 import { LitElement, css, html, nothing, type TemplateResult } from 'lit'
 import { customElement, state } from 'lit/decorators.js'
 import { ChevronDown, ChevronRight, X } from 'lucide'
 
 import { lucideIcon } from '../shared/lucide-icons'
-import type {
-  InspectorPosition,
-  InspectorState,
-  PageStreamSignalChange,
-  PageStreamSignalLeaf,
-  PageStreamSignalsResponse,
-  SignalObject,
-} from './types.js'
+import type { InspectorPosition, InspectorState, SignalObject } from './types.js'
 import {
   countSignals,
   filterObject,
@@ -25,8 +18,6 @@ import {
 
 const FLASH_DURATION = 400
 const STORAGE_KEY = 'ds-inspector'
-const SIGNAL_POLL_INTERVAL = 500
-const SIGNAL_HISTORY_LIMIT = 500
 const DRAG_THRESHOLD = 4
 const VIEWPORT_MARGIN = 8
 
@@ -54,11 +45,6 @@ export class DatastarInspector extends LitElement {
   @state() private changedPaths: Set<string> = new Set()
   @state() private expandedPaths: Set<string> = new Set()
   @state() private hasUnseenChanges = false
-  @state() private signalLeaves: PageStreamSignalLeaf[] = []
-  @state() private signalHistory: PageStreamSignalChange[] = []
-  @state() private signalStreamID = ''
-  @state() private selectedSignalPath = ''
-  @state() private signalError = ''
   @state() private togglePosition?: InspectorPosition
   @state() private panelPosition?: InspectorPosition
 
@@ -68,10 +54,6 @@ export class DatastarInspector extends LitElement {
   private previousSignals: SignalObject = {}
   private flashTimeout: number | null = null
   private parseFrame: number | null = null
-  private signalTimer: number | null = null
-  private signalAfter = 0
-  private signalLoading = false
-  private signalAbort: AbortController | null = null
   private drag?: InspectorDrag
   private suppressToggleClick = false
   private suppressToggleClickTimer: number | null = null
@@ -295,27 +277,6 @@ export class DatastarInspector extends LitElement {
       padding: 2px 4px;
     }
 
-    button.row {
-      width: 100%;
-      background: transparent;
-      cursor: pointer;
-      font-family: inherit;
-      font-size: inherit;
-      text-align: left;
-    }
-
-    button.row:hover,
-    button.row:focus-visible,
-    button.row[aria-selected='true'] {
-      background: var(--ds-panel-muted);
-      color: var(--ds-fg);
-      outline: 0;
-    }
-
-    button.row[aria-selected='true'] {
-      box-shadow: 2px 0 0 var(--ds-accent) inset;
-    }
-
     .branch {
       display: flex;
       align-items: center;
@@ -393,118 +354,9 @@ export class DatastarInspector extends LitElement {
       color: var(--ds-success);
     }
 
-    .signal-error {
-      color: var(--ds-warning);
-      font-size: 12px;
-      padding: 8px 10px 0;
-    }
-
     .signal-content {
-      display: flex;
-      overflow: hidden;
-      flex-direction: column;
-      padding: 0;
-    }
-
-    .signal-workbench {
-      display: grid;
-      min-height: 0;
-      flex: 1;
-      grid-template-columns: minmax(250px, 0.9fr) minmax(300px, 1.1fr);
-    }
-
-    .signal-tree-pane,
-    .signal-history-pane {
-      min-height: 0;
       overflow: auto;
       padding: 10px;
-    }
-
-    .signal-tree-pane {
-      border-right: 1px solid var(--ds-border-muted);
-    }
-
-    .signal-path {
-      color: var(--ds-fg);
-      font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-      font-size: 12px;
-      font-weight: var(--base-text-weight-semibold);
-      overflow-wrap: anywhere;
-    }
-
-    .signal-section-label {
-      color: var(--ds-muted);
-      font-size: 10px;
-      letter-spacing: 0.04em;
-      margin: 14px 0 5px;
-      text-transform: uppercase;
-    }
-
-    .signal-current {
-      border: 1px solid var(--ds-border-muted);
-      border-radius: var(--ds-radius);
-      background: var(--ds-bg);
-      font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-      font-size: 12px;
-      margin: 0;
-      overflow-wrap: anywhere;
-      padding: 8px;
-      white-space: pre-wrap;
-    }
-
-    .signal-sparkline {
-      display: block;
-      width: 100%;
-      height: 54px;
-      border: 1px solid var(--ds-border-muted);
-      border-radius: var(--ds-radius);
-      background: var(--ds-bg);
-    }
-
-    .signal-sparkline polyline {
-      fill: none;
-      stroke: var(--ds-accent);
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: 2;
-    }
-
-    .signal-change {
-      display: grid;
-      grid-template-columns: 68px minmax(0, 1fr);
-      align-items: start;
-      gap: 8px;
-      border-top: 1px solid var(--ds-border-muted);
-      font-size: 11px;
-      padding: 8px 0;
-    }
-
-    .signal-change-time,
-    .signal-change-meta {
-      color: var(--ds-muted);
-    }
-
-    .signal-change-value {
-      color: var(--ds-fg);
-      font-family: var(--fontStack-monospace, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
-      overflow-wrap: anywhere;
-    }
-
-    .signal-change-removed {
-      color: var(--ds-warning);
-      font-style: italic;
-    }
-
-    @media (max-width: 620px) {
-      .signal-workbench {
-        grid-template-columns: 1fr;
-        grid-template-rows: minmax(180px, 0.9fr) minmax(220px, 1.1fr);
-      }
-
-      .signal-tree-pane {
-        border-right: 0;
-        border-bottom: 1px solid var(--ds-border-muted);
-      }
     }
   `
 
@@ -524,10 +376,6 @@ export class DatastarInspector extends LitElement {
     if (this.flashTimeout) {
       clearTimeout(this.flashTimeout)
     }
-    if (this.signalTimer !== null) {
-      clearInterval(this.signalTimer)
-    }
-    this.signalAbort?.abort()
     if (this.suppressToggleClickTimer !== null) clearTimeout(this.suppressToggleClickTimer)
     this.stopDrag()
     window.removeEventListener('resize', this.handleViewportResize)
@@ -535,7 +383,6 @@ export class DatastarInspector extends LitElement {
 
   override firstUpdated() {
     this.setupSignalObserver()
-    this.startSignalPolling()
     this.handleViewportResize()
   }
 
@@ -784,85 +631,6 @@ export class DatastarInspector extends LitElement {
     this.saveState()
   }
 
-  private startSignalPolling() {
-    if (!this.signalsURL()) return
-    void this.loadSignals()
-    this.signalTimer = window.setInterval(() => {
-      void this.loadSignals()
-    }, SIGNAL_POLL_INTERVAL)
-  }
-
-  private signalsURL() {
-    return this.getAttribute('signals-url')?.trim() ?? ''
-  }
-
-  private preferredSignalStreamID() {
-    const runtime = this.signals.runtime
-    if (!runtime || Array.isArray(runtime) || typeof runtime !== 'object') return this.signalStreamID
-    const values = runtime as Record<string, unknown>
-    const parts = ['clientId', 'dashboardId', 'pageId'].map((key) => typeof values[key] === 'string' ? values[key] as string : '')
-    if (parts.some((part) => !part)) return this.signalStreamID
-    if (typeof values.streamInstanceId === 'string' && values.streamInstanceId) parts.push(values.streamInstanceId)
-    return parts.join(':')
-  }
-
-  private async loadSignals() {
-    const rawURL = this.signalsURL()
-    if (!rawURL || this.signalLoading) return
-    const requestedPath = this.selectedSignalPath
-    this.signalLoading = true
-    this.signalAbort?.abort()
-    this.signalAbort = new AbortController()
-    try {
-      const url = new URL(rawURL, window.location.href)
-      const streamID = this.preferredSignalStreamID()
-      if (streamID) url.searchParams.set('streamId', streamID)
-      if (this.selectedSignalPath) url.searchParams.set('path', this.selectedSignalPath)
-      if (this.signalAfter > 0) url.searchParams.set('after', String(this.signalAfter))
-      url.searchParams.set('limit', '200')
-      const response = await fetch(url, {
-        cache: 'no-store',
-        credentials: 'same-origin',
-        signal: this.signalAbort.signal,
-      })
-      if (!response.ok) throw new Error(`Signal history request failed (${response.status})`)
-      const body = await response.json() as PageStreamSignalsResponse
-      if (this.signalStreamID && body.streamId && this.signalStreamID !== body.streamId) {
-        this.signalAfter = 0
-        this.signalHistory = []
-      }
-      this.signalStreamID = body.streamId || streamID
-      this.signals = body.state && typeof body.state === 'object' ? body.state : {}
-      this.signalLeaves = Array.isArray(body.leaves) ? body.leaves : []
-      this.signalCount = this.signalLeaves.length
-      const incoming = Array.isArray(body.history) ? body.history : []
-      if (incoming.length > 0) {
-        const byID = new Map(this.signalHistory.map((change) => [change.id, change]))
-        for (const change of incoming) byID.set(change.id, change)
-        this.signalHistory = [...byID.values()].sort((left, right) => right.id - left.id).slice(0, SIGNAL_HISTORY_LIMIT)
-      }
-      this.signalAfter = Math.max(this.signalAfter, Number(body.nextAfter) || 0)
-      this.signalError = ''
-    } catch (error) {
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        this.signalError = error instanceof Error ? error.message : String(error)
-      }
-    } finally {
-      this.signalLoading = false
-      if (requestedPath !== this.selectedSignalPath) {
-        void this.loadSignals()
-      }
-    }
-  }
-
-  private selectSignal(path: string) {
-    if (this.selectedSignalPath === path) return
-    this.selectedSignalPath = path
-    this.signalHistory = []
-    this.signalAfter = 0
-    void this.loadSignals()
-  }
-
   private togglePath(path: string) {
     const next = new Set(this.expandedPaths)
     if (next.has(path)) {
@@ -949,86 +717,11 @@ export class DatastarInspector extends LitElement {
 
     return html`
       <div class="content signal-content">
-        ${this.signalError ? html`<div class="signal-error" role="alert">${this.signalError}</div>` : nothing}
-        <div class="signal-workbench">
-          <div class="signal-tree-pane">
-            ${isEmpty
-              ? html`<div class="empty">
-                  ${hasFilter ? 'No signals match filter' : 'No delivered signals found'}
-                </div>`
-              : this.renderJsonView(filteredSignals)}
-          </div>
-          <div class="signal-history-pane">
-            ${this.renderSignalHistory()}
-          </div>
-        </div>
-      </div>
-    `
-  }
-
-  private renderSignalHistory() {
-    if (!this.selectedSignalPath) {
-      return html`<div class="empty">Select a signal to inspect its delivered history</div>`
-    }
-    const leaf = this.signalLeaves.find((candidate) => candidate.path === this.selectedSignalPath)
-    const latest = this.signalHistory[0]
-    const displayPath = leaf?.displayPath || latest?.displayPath || this.selectedSignalPath
-    const removed = !leaf && latest?.operation === 'removed'
-    const current = leaf
-      ? JSON.stringify(leaf.value, null, 2)
-      : this.signalLoading && this.signalHistory.length === 0
-        ? 'Loading history…'
-        : removed
-          ? 'removed'
-          : 'No current value'
-    return html`
-      <div class="signal-path">${displayPath}</div>
-      <div class="signal-section-label">Current value</div>
-      <pre class="signal-current ${removed ? 'signal-change-removed' : ''}">${current}</pre>
-      ${this.renderSignalSparkline()}
-      <div class="signal-section-label">Effective delivered changes · ${this.signalHistory.length}</div>
-      ${this.signalHistory.length === 0
-        ? html`<div class="empty">No retained changes for this signal</div>`
-        : this.signalHistory.map((change) => this.renderSignalChange(change))}
-    `
-  }
-
-  private renderSignalSparkline() {
-    const numeric = [...this.signalHistory].reverse()
-      .filter((change) => change.operation === 'set' && typeof change.value === 'number' && Number.isFinite(change.value))
-      .map((change) => change.value as number)
-    if (numeric.length < 2) return nothing
-    const minValue = Math.min(...numeric)
-    const maxValue = Math.max(...numeric)
-    const span = maxValue - minValue || 1
-    const points = numeric.map((value, index) => {
-      const x = numeric.length === 1 ? 50 : 4 + (index / (numeric.length - 1)) * 92
-      const y = 46 - ((value - minValue) / span) * 38
-      return `${x.toFixed(1)},${y.toFixed(1)}`
-    }).join(' ')
-    return html`
-      <div class="signal-section-label">Trend</div>
-      <svg class="signal-sparkline" data-signal-sparkline viewBox="0 0 100 54" preserveAspectRatio="none" aria-label="Numeric signal history">
-        <polyline points=${points}></polyline>
-      </svg>
-    `
-  }
-
-  private renderSignalChange(change: PageStreamSignalChange) {
-    const time = new Date(change.timestamp).toLocaleTimeString([], { hour12: false })
-    const value = change.operation === 'removed' ? 'removed' : JSON.stringify(change.value)
-    const metadata = [
-      `generation ${change.generation ?? '—'}`,
-      change.origin || 'unknown origin',
-      change.correlationId || 'no correlation',
-    ].join(' · ')
-    return html`
-      <div class="signal-change" data-signal-change>
-        <span class="signal-change-time">${time}</span>
-        <div>
-          <div class="signal-change-value ${change.operation === 'removed' ? 'signal-change-removed' : ''}">${value}</div>
-          <div class="signal-change-meta">${metadata}</div>
-        </div>
+        ${isEmpty
+          ? html`<div class="empty">
+              ${hasFilter ? 'No signals match filter' : 'No signals found'}
+            </div>`
+          : this.renderJsonView(filteredSignals)}
       </div>
     `
   }
@@ -1048,11 +741,11 @@ export class DatastarInspector extends LitElement {
 
     if (!this.isBranch(value)) {
       return html`
-        <button class="row${rowClass}" data-signal-path=${path} aria-selected=${String(this.selectedSignalPath === path)} style=${rowStyle} @click=${() => this.selectSignal(path)}>
+        <div class="row${rowClass}" data-signal-path=${path} style=${rowStyle}>
           <span class="key">${key}</span>
           <span class="separator">:</span>
           ${this.renderPrimitive(value)}
-        </button>
+        </div>
       `
     }
 

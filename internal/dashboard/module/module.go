@@ -11,7 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
@@ -34,6 +33,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type Module struct {
@@ -71,7 +71,6 @@ type Config struct {
 	ServingSnapshot func(context.Context) (string, error)
 	PublicTelemetry PublicTelemetry
 	Logger          *slog.Logger
-	Trace           *pagestream.TraceStore
 	PublicURL       string
 	CurrentActor    func(*http.Request) string
 	// AuditIntentRecorder is the narrow Access-owned port used by publication
@@ -115,8 +114,13 @@ type SemanticConfig struct {
 
 type SignalBroker interface {
 	Subscribe(string) (<-chan pagestream.SignalPatch, func())
-	PublishEnvelope(string, pagestream.Envelope)
-	TraceStore() *pagestream.TraceStore
+	PublishEnvelope(string, dashboardstream.Envelope)
+}
+
+type DeliveryBroker = dashboardstream.DeliveryBroker
+
+func NewDeliveryBroker() *DeliveryBroker {
+	return dashboardstream.NewDeliveryBroker()
 }
 
 type Presentation = dashboardui.Presentation
@@ -298,7 +302,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Database != nil {
 		module.publications = publicationsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 		module.streams = publicationsqlite.NewStreamRegistry(config.Database)
-		module.publicBroker = publicationsqlite.NewBroker(config.Database, config.Trace, config.Logger)
+		module.publicBroker = publicationsqlite.NewBroker(config.Database, config.Logger)
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
 	}
 	return module, nil

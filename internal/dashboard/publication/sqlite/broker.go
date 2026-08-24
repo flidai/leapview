@@ -8,8 +8,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	publicationdb "github.com/flidai/leapview/internal/dashboard/internal/db"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 const brokerPollInterval = 20 * time.Millisecond
@@ -20,7 +21,7 @@ const brokerPollInterval = 20 * time.Millisecond
 type Broker struct {
 	db     *sql.DB
 	q      *publicationdb.Queries
-	local  *pagestream.Broker
+	local  *dashboardstream.DeliveryBroker
 	logger *slog.Logger
 	mu     sync.Mutex
 	relays map[string]*relaySubscription
@@ -31,19 +32,15 @@ type relaySubscription struct {
 	refs   int
 }
 
-func NewBroker(db *sql.DB, trace *pagestream.TraceStore, logger *slog.Logger) *Broker {
+func NewBroker(db *sql.DB, logger *slog.Logger) *Broker {
 	if logger == nil {
 		logger = slog.Default()
 	}
 	return &Broker{
 		db: db, q: publicationdb.New(db),
-		local: pagestream.NewBroker(pagestream.WithTraceStore(trace)), logger: logger,
+		local: dashboardstream.NewDeliveryBroker(), logger: logger,
 		relays: map[string]*relaySubscription{},
 	}
-}
-
-func (b *Broker) TraceStore() *pagestream.TraceStore {
-	return b.local.TraceStore()
 }
 
 func (b *Broker) Subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
@@ -79,7 +76,7 @@ func (b *Broker) Subscribe(streamID string) (<-chan pagestream.SignalPatch, func
 	}
 }
 
-func (b *Broker) PublishEnvelope(streamID string, envelope pagestream.Envelope) {
+func (b *Broker) PublishEnvelope(streamID string, envelope dashboardstream.Envelope) {
 	if b == nil || b.db == nil || streamID == "" || len(envelope.Signals) == 0 {
 		return
 	}
@@ -121,7 +118,7 @@ func (b *Broker) relay(ctx context.Context, streamID string, cursor int64) {
 				continue
 			}
 			for _, row := range rows {
-				var envelope pagestream.Envelope
+				var envelope dashboardstream.Envelope
 				if err := json.Unmarshal([]byte(row.EnvelopeJson), &envelope); err != nil {
 					b.logger.Warn("decode public dashboard stream event", "error", err)
 					cursor = row.ID

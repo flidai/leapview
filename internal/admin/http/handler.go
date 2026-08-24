@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/admin/personalsettings"
@@ -18,7 +17,9 @@ import (
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -27,7 +28,7 @@ type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 type Handler struct {
 	ReadModel           ReadModel
 	Layout              func(*nethttp.Request) webpage.Provider
-	EnsureClientID      func(nethttp.ResponseWriter, *nethttp.Request)
+	EnsureClientID      func(nethttp.ResponseWriter, *nethttp.Request) bool
 	Broker              *pagestream.Broker
 	PublicationMutation func(*nethttp.Request, uisignals.AdminPublicationCommand) error
 	PersonalSettings    *personalsettings.Handler
@@ -194,7 +195,9 @@ func (h Handler) StorageTable(w nethttp.ResponseWriter, r *nethttp.Request) {
 }
 
 func (h Handler) Queries(w nethttp.ResponseWriter, r *nethttp.Request) {
-	h.ensureClientID(w, r)
+	if !h.ensureClientID(w, r) {
+		return
+	}
 	h.renderPage(w, r, "queries")
 }
 
@@ -568,16 +571,14 @@ func (h Handler) adminDataForUpdates(r *nethttp.Request, active string) (ui.Admi
 }
 
 func (h Handler) patchAndWait(w nethttp.ResponseWriter, r *nethttp.Request, patch pagestream.SignalPatch) {
-	clientID := pagestream.EnsureClientID(w, r)
-	var trace *pagestream.TraceStore
-	if h.Broker != nil {
-		trace = h.Broker.TraceStore()
+	if _, ok := webtransport.RequireClientID(w, r); !ok {
+		return
 	}
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, "admin:"+clientID, "admin.bootstrap"))
+	updates := pagestream.NewSignalStream(w, r)
 	if err := updates.Patch(patch); err != nil {
 		return
 	}
-	updates.Wait(r.Context())
+	<-r.Context().Done()
 }
 
 func (h Handler) layout(r *nethttp.Request) webpage.Provider {
@@ -587,12 +588,12 @@ func (h Handler) layout(r *nethttp.Request) webpage.Provider {
 	return h.Layout(r)
 }
 
-func (h Handler) ensureClientID(w nethttp.ResponseWriter, r *nethttp.Request) {
+func (h Handler) ensureClientID(w nethttp.ResponseWriter, r *nethttp.Request) bool {
 	if h.EnsureClientID != nil {
-		h.EnsureClientID(w, r)
-		return
+		return h.EnsureClientID(w, r)
 	}
-	_ = pagestream.EnsureClientID(w, r)
+	_, ok := webtransport.RequireClientID(w, r)
+	return ok
 }
 
 func (h Handler) readModel() ReadModel {

@@ -343,6 +343,7 @@ publish_project() {
 	local port="$1"
 	local project="${2:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
 	local connection="${3:-}"
+	local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
 	local from="${4:-}"
 	if [[ "${LEAPVIEW_DEV_SKIP_PUBLISH:-}" == "1" ]]; then
     echo "Skipping dev candidate publication"
@@ -359,7 +360,7 @@ publish_project() {
 		}
 		from="$(canonical_source_root "$from")" || return 1
 		local sync_output revision
-		sync_output="$(go run ./cmd/leapview data sync --project "$project" --connection "$connection" --from "$from" --target "http://localhost:${port}" --token dev)" || return 1
+		sync_output="$(go run ./cmd/leapview data sync --project "$project" --connection "$connection" --from "$from" --target "http://localhost:${port}" --token "$token")" || return 1
     printf '%s\n' "$sync_output"
     revision="$(printf '%s\n' "$sync_output" | awk '$1 == "staged" { print $2 }')"
     [[ "$revision" =~ ^sha256:[0-9a-f]{64}$ ]] || {
@@ -368,14 +369,14 @@ publish_project() {
     }
 	fi
 	local dev_output candidate_id
-	dev_output="$(go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token dev)" || return 1
+	dev_output="$(go run ./cmd/leapview dev --once --no-browser --project "$project" --target "http://localhost:${port}" --token "$token")" || return 1
 	printf '%s\n' "$dev_output"
 	candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"
 	[[ "$candidate_id" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
 		echo "Development candidate publication did not return a canonical candidate ID." >&2
 		return 1
 	}
-	go run ./cmd/leapview publish "$candidate_id" --token dev
+	go run ./cmd/leapview publish "$candidate_id" --token "$token" || return 1
 	mcp_smoke "$port"
 }
 

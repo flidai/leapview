@@ -25,6 +25,9 @@ import {
 import {
   verifyPackagedDiagnosticJournal,
 } from "./packaged-diagnostics.mjs";
+import {
+  packagedStartupTimeoutMilliseconds,
+} from "./package-startup-policy.mjs";
 import { requirePackagedDistribution } from "./distribution-packaging.mjs";
 
 const root = resolve(import.meta.dirname, "..");
@@ -316,7 +319,8 @@ async function verifyPackagedStartup(
   child.stdout.on("data", appendDiagnostic);
   child.stderr.on("data", appendDiagnostic);
   try {
-    const deadline = Date.now() + 15_000;
+    const deadline =
+      Date.now() + packagedStartupTimeoutMilliseconds(process.platform);
     while (Date.now() < deadline) {
       if (child.exitCode !== null || child.signalCode !== null) {
         throw startupFailure(
