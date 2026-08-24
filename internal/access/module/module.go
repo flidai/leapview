@@ -72,7 +72,11 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		if config.Repository == nil {
 			return "", false
 		}
-		cookie, err := r.Cookie("lv_session")
+		cookieName := sessionCookieName
+		if config.Auth != nil {
+			cookieName = config.Auth.SessionCookieName()
+		}
+		cookie, err := r.Cookie(cookieName)
 		if err != nil || strings.TrimSpace(cookie.Value) == "" {
 			return "", false
 		}
@@ -406,7 +410,11 @@ func (m *Module) CurrentCredentialEvidence(
 			}
 		}
 	}
-	cookie, err := r.Cookie("lv_session")
+	cookieName := sessionCookieName
+	if m.auth != nil {
+		cookieName = m.auth.SessionCookieName()
+	}
+	cookie, err := r.Cookie(cookieName)
 	if err != nil || strings.TrimSpace(cookie.Value) == "" {
 		return access.CredentialEvidence{}, false
 	}

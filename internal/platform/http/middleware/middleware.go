@@ -228,6 +228,16 @@ func RequestBodyLimit(config RequestBodyLimitConfig) func(http.Handler) http.Han
 	}
 }
 
+// PrivateResponse prevents browsers and shared intermediaries from retaining
+// authenticated or authentication-flow responses.
+func PrivateResponse(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		w.Header().Set("Pragma", "no-cache")
+		next.ServeHTTP(w, r)
+	})
+}
+
 func PanicRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()

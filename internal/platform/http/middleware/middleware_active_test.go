@@ -98,6 +98,22 @@ func TestRequestBodyLimitRejectsDeclaredAndStreamedOversize(t *testing.T) {
 	})
 }
 
+func TestPrivateResponseDisablesBrowserAndSharedCaching(t *testing.T) {
+	handler := PrivateResponse(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/login", nil))
+
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	if got := response.Header().Get("Pragma"); got != "no-cache" {
+		t.Fatalf("Pragma = %q, want no-cache", got)
+	}
+}
+
 func TestSecurityHeadersAndOptionalHSTS(t *testing.T) {
 	for _, test := range []struct {
 		name string

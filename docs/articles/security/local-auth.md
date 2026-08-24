@@ -21,7 +21,7 @@ Validate the complete environment:
 leapview config validate --production
 ```
 
-The CSRF key protects CSRF state and OAuth state cookies. Store it in the deployment secret manager. Rotating it can invalidate security state and should follow a controlled maintenance procedure.
+The CSRF key protects CSRF state and OAuth state cookies. Store it in the deployment secret manager. Rotating it can invalidate security state and should follow a controlled maintenance procedure. Local sign-in and password forms are capped at 8 KiB, and authentication responses are marked `no-store`.
 
 ## Initialize the first administrator
 

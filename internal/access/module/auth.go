@@ -27,12 +27,15 @@ import (
 type principalContextKey struct{}
 type apiCredentialContextKey struct{}
 
+const sessionCookieName = "lv_session"
 const csrfCookieName = "lv_csrf"
 const oidcStateCookieName = "lv_oidc_state"
 const authReturnCookieName = "lv_auth_return"
+const hostCookiePrefix = "__Host-"
 const oidcStateMaxAge = 10 * time.Minute
 const oidcStateClockSkew = time.Minute
 const maxAuthReturnTargetBytes = 2500
+const LocalAuthMaxFormBytes int64 = 8 * 1024
 
 var (
 	errUnauthorized = errors.New("unauthorized")
@@ -87,21 +90,25 @@ type disabledCredentialResolver interface {
 }
 
 type Auth struct {
-	repo          access.Repository
-	sessions      sessionManager
-	devBypass     bool
-	devAPIToken   string
-	apiTokenOnly  bool
-	localAuth     bool
-	enabled       bool
-	configured    bool
-	azureTenant   string
-	cookieSecure  bool
-	csrf          func(http.Handler) http.Handler
-	oidcRegistry  *oidcauth.Registry
-	oidcOverride  map[string]oidcClient
-	stateKey      []byte
-	authoringAuth *access.AuthoringAuthService
+	repo             access.Repository
+	sessions         sessionManager
+	devBypass        bool
+	devAPIToken      string
+	apiTokenOnly     bool
+	localAuth        bool
+	enabled          bool
+	configured       bool
+	azureTenant      string
+	cookieSecure     bool
+	sessionCookieKey string
+	csrfCookie       string
+	oidcCookie       string
+	returnCookie     string
+	csrf             func(http.Handler) http.Handler
+	oidcRegistry     *oidcauth.Registry
+	oidcOverride     map[string]oidcClient
+	stateKey         []byte
+	authoringAuth    *access.AuthoringAuthService
 }
 
 type AuthConfig struct {
@@ -131,14 +138,18 @@ type OIDCProviderConfig struct {
 
 func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
 	auth := &Auth{
-		repo:         repo,
-		sessions:     repo,
-		devBypass:    cfg.DevBypass,
-		devAPIToken:  strings.TrimSpace(cfg.DevAPIToken),
-		apiTokenOnly: cfg.APITokenOnly,
-		localAuth:    cfg.LocalAuth,
-		azureTenant:  cfg.AzureTenant,
-		cookieSecure: cfg.CookieSecure,
+		repo:             repo,
+		sessions:         repo,
+		devBypass:        cfg.DevBypass,
+		devAPIToken:      strings.TrimSpace(cfg.DevAPIToken),
+		apiTokenOnly:     cfg.APITokenOnly,
+		localAuth:        cfg.LocalAuth,
+		azureTenant:      cfg.AzureTenant,
+		cookieSecure:     cfg.CookieSecure,
+		sessionCookieKey: hardenedCookieName(sessionCookieName, cfg.CookieSecure),
+		csrfCookie:       hardenedCookieName(csrfCookieName, cfg.CookieSecure),
+		oidcCookie:       hardenedCookieName(oidcStateCookieName, cfg.CookieSecure),
+		returnCookie:     hardenedCookieName(authReturnCookieName, cfg.CookieSecure),
 	}
 	providers := make([]oidcauth.Config, 0, len(cfg.OIDCProviders))
 	for _, provider := range cfg.OIDCProviders {
@@ -157,7 +168,7 @@ func NewAuth(repo access.Repository, cfg AuthConfig) *Auth {
 	}
 	auth.csrf = csrf.Protect(
 		csrfKey(cfg.CSRFKey),
-		csrf.CookieName(csrfCookieName),
+		csrf.CookieName(auth.csrfCookie),
 		csrf.Path("/"),
 		csrf.Secure(cfg.CookieSecure),
 		csrf.SameSite(csrf.SameSiteLaxMode),
@@ -200,6 +211,22 @@ func hasOIDCProvider(providers []oidcauth.Config, id string) bool {
 	return false
 }
 
+func hardenedCookieName(name string, secure bool) string {
+	if secure {
+		return hostCookiePrefix + name
+	}
+	return name
+}
+
+// SessionCookieName returns the environment-appropriate browser session
+// cookie name. Secure deployments use the browser-enforced __Host- prefix.
+func (a *Auth) SessionCookieName() string {
+	if a == nil || a.sessionCookieKey == "" {
+		return sessionCookieName
+	}
+	return a.sessionCookieKey
+}
+
 func (a *Auth) Enabled() bool {
 	return a != nil && a.enabled
 }
@@ -234,7 +261,7 @@ func (a *Auth) Begin(w http.ResponseWriter, r *http.Request) {
 	}
 	client, _, err := a.oidcClient(r.Context(), provider)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "identity provider unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	state, err := randomAuthValue()
@@ -262,21 +289,21 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 	}
 	state, nonce, err := a.consumeOIDCState(w, r)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "invalid authentication response", http.StatusUnauthorized)
 		return
 	}
 	if r.URL.Query().Get("state") != state {
-		http.Error(w, "invalid oidc state", http.StatusUnauthorized)
+		http.Error(w, "invalid authentication response", http.StatusUnauthorized)
 		return
 	}
 	client, providerConfig, err := a.oidcClient(r.Context(), provider)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusServiceUnavailable)
+		http.Error(w, "identity provider unavailable", http.StatusServiceUnavailable)
 		return
 	}
 	claims, err := client.Authenticate(r.Context(), r.URL.Query().Get("code"), nonce)
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusUnauthorized)
+		http.Error(w, "authentication failed", http.StatusUnauthorized)
 		return
 	}
 	email := oidcEmail(claims)
@@ -294,7 +321,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": provider}), mutationErr
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": provider})
@@ -303,7 +330,7 @@ func (a *Auth) Callback(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
-	if cookie, err := r.Cookie("lv_session"); err == nil {
+	if cookie, err := r.Cookie(a.SessionCookieName()); err == nil {
 		principal, _ := a.sessions.PrincipalForToken(r.Context(), cookie.Value)
 		if err := runAuthAuditedMutation(r, a.repo, func(txRepo access.Repository) (access.AuditEventInput, error) {
 			mutationErr := txRepo.DeleteSession(r.Context(), cookie.Value)
@@ -314,7 +341,7 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 		recordAccessAudit(r, a.repo, "sign_out", principal.ID, "principal", principal.ID, "", "success", nil)
 	}
-	http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
+	http.SetCookie(w, a.expiredSessionCookie())
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -323,8 +350,8 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "local auth is not enabled", http.StatusServiceUnavailable)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := parseLocalAuthForm(w, r); err != nil {
+		writeLocalAuthFormError(w, err)
 		return
 	}
 	email := access.NormalizeEmail(firstNonEmpty(r.Form.Get("email"), r.Form.Get("username")))
@@ -351,7 +378,7 @@ func (a *Auth) LocalLogin(w http.ResponseWriter, r *http.Request) {
 		return authAuditInput(r, "session.created", principal.ID, "session", "", "", "success", map[string]any{"provider": "local"}), mutationErr
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
 	recordAccessAudit(r, a.repo, "sign_in", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"})
@@ -377,8 +404,8 @@ func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errUnauthorized.Error(), http.StatusUnauthorized)
 		return
 	}
-	if err := r.ParseForm(); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	if err := parseLocalAuthForm(w, r); err != nil {
+		writeLocalAuthFormError(w, err)
 		return
 	}
 	_, ok = a.repo.(localCredentialManager)
@@ -549,7 +576,7 @@ func (a *Auth) CSRFMiddleware(next http.Handler) http.Handler {
 	}
 	protected := a.csrf(next)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if bearerToken(r) != "" && !hasSessionCookie(r) {
+		if bearerToken(r) != "" && !a.hasSessionCookie(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -570,7 +597,7 @@ func (a *Auth) authenticate(r *http.Request) (Principal, *access.APICredential, 
 	if a.apiTokenOnly {
 		return Principal{}, nil, false
 	}
-	cookie, err := r.Cookie("lv_session")
+	cookie, err := r.Cookie(a.SessionCookieName())
 	if err != nil || cookie.Value == "" {
 		return Principal{}, nil, false
 	}
@@ -620,8 +647,8 @@ func (a *Auth) authenticateBearer(r *http.Request) (Principal, *access.APICreden
 	return Principal{}, nil, false
 }
 
-func hasSessionCookie(r *http.Request) bool {
-	cookie, err := r.Cookie("lv_session")
+func (a *Auth) hasSessionCookie(r *http.Request) bool {
+	cookie, err := r.Cookie(a.SessionCookieName())
 	return err == nil && strings.TrimSpace(cookie.Value) != ""
 }
 
@@ -648,7 +675,7 @@ func (a *Auth) auditDisabledCredentialFailure(r *http.Request, credentialType, s
 
 func (a *Auth) sessionCookie(token string, expires time.Time) *http.Cookie {
 	return &http.Cookie{
-		Name:     "lv_session",
+		Name:     a.SessionCookieName(),
 		Value:    token,
 		Path:     "/",
 		Expires:  expires,
@@ -656,6 +683,34 @@ func (a *Auth) sessionCookie(token string, expires time.Time) *http.Cookie {
 		SameSite: http.SameSiteLaxMode,
 		Secure:   a.cookieSecure,
 	}
+}
+
+func (a *Auth) expiredSessionCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     a.SessionCookieName(),
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   a.cookieSecure,
+	}
+}
+
+func parseLocalAuthForm(w http.ResponseWriter, r *http.Request) error {
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = http.MaxBytesReader(w, r.Body, LocalAuthMaxFormBytes)
+	}
+	return r.ParseForm()
+}
+
+func writeLocalAuthFormError(w http.ResponseWriter, err error) {
+	var maxBytesErr *http.MaxBytesError
+	if errors.As(err, &maxBytesErr) {
+		http.Error(w, http.StatusText(http.StatusRequestEntityTooLarge), http.StatusRequestEntityTooLarge)
+		return
+	}
+	http.Error(w, "invalid authentication request", http.StatusBadRequest)
 }
 
 func wantsJSON(r *http.Request) bool {
@@ -706,7 +761,7 @@ func csrfKey(value string) []byte {
 
 func (a *Auth) oidcStateCookie(state, nonce string) *http.Cookie {
 	return &http.Cookie{
-		Name:     oidcStateCookieName,
+		Name:     a.oidcCookie,
 		Value:    a.encodeOIDCState(state, nonce),
 		Path:     "/",
 		MaxAge:   int(oidcStateMaxAge / time.Second),
@@ -729,7 +784,7 @@ func authenticationReturnTarget(r *http.Request) string {
 
 func (a *Auth) authReturnCookie(target string) *http.Cookie {
 	return &http.Cookie{
-		Name:     authReturnCookieName,
+		Name:     a.returnCookie,
 		Value:    a.encodeAuthReturn(target, authNow()),
 		Path:     "/",
 		MaxAge:   int(oidcStateMaxAge / time.Second),
@@ -740,12 +795,12 @@ func (a *Auth) authReturnCookie(target string) *http.Cookie {
 }
 
 func (a *Auth) authenticationRedirectTarget(w http.ResponseWriter, r *http.Request, fallback string) string {
-	cookie, err := r.Cookie(authReturnCookieName)
+	cookie, err := r.Cookie(a.returnCookie)
 	if err != nil {
 		return fallback
 	}
 	http.SetCookie(w, &http.Cookie{
-		Name: authReturnCookieName, Value: "", Path: "/", MaxAge: -1,
+		Name: a.returnCookie, Value: "", Path: "/", MaxAge: -1,
 		HttpOnly: true, Secure: a.cookieSecure, SameSite: http.SameSiteLaxMode,
 	})
 	target, err := a.decodeAuthReturn(cookie.Value, authNow())
@@ -802,11 +857,11 @@ func isAuthenticationReturnPath(path string) bool {
 }
 
 func (a *Auth) consumeOIDCState(w http.ResponseWriter, r *http.Request) (string, string, error) {
-	cookie, err := r.Cookie(oidcStateCookieName)
+	cookie, err := r.Cookie(a.oidcCookie)
 	if err != nil {
 		return "", "", err
 	}
-	http.SetCookie(w, &http.Cookie{Name: oidcStateCookieName, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
+	http.SetCookie(w, &http.Cookie{Name: a.oidcCookie, Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
 	return a.decodeOIDCState(cookie.Value)
 }
 

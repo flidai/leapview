@@ -20,7 +20,7 @@ Set `LEAPVIEW_PUBLIC_URL` to the application deployment's canonical HTTPS origin
 
 `LEAPVIEW_TRUST_PROXY_HEADERS` must be enabled only when requests arrive through a trusted proxy that overwrites client-address headers. Never trust forwarding headers from an arbitrary public client.
 
-Browser authentication in production requires secure cookies. Configure exact public OIDC or Azure callback URLs and register those same URLs with the identity provider.
+Browser authentication in production requires secure cookies. Secure deployments use `__Host-` cookie names for browser sessions, CSRF state, OIDC state, and authentication return targets so browsers enforce a secure, host-only, root-path boundary. Enabling secure cookies therefore invalidates legacy unprefixed browser cookies and requires users to sign in again. Configure exact public OIDC or Azure callback URLs and register those same URLs with the identity provider.
 
 ## Authentication and security secrets
 
