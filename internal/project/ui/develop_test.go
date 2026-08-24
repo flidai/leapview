@@ -313,11 +313,35 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if len(details.Sections[1].Table.Rows) != 2 {
 		t.Fatalf("field rows = %#v, want two rows", details.Sections[1].Table.Rows)
 	}
-	if got := details.Sections[1].Table.Rows[0]["metadata"].(recordTableBadge).Label; got != "Documented" {
-		t.Fatalf("documented field badge = %q", got)
+	columns := details.Sections[1].Table.Columns
+	if len(columns) != 4 || columns[0].ID != "field" || columns[1].ID != "type" || columns[2].ID != "description" || columns[3].ID != "status" {
+		t.Fatalf("field columns = %#v, want compact catalog columns", columns)
 	}
-	if got := details.Sections[1].Table.Rows[1]["metadata"].(recordTableBadge).Label; got != "Observed" {
-		t.Fatalf("observed field badge = %q", got)
+	row := details.Sections[1].Table.Rows[0]
+	field := asMap(row["field"])
+	if got := metaString(field, "label"); got != "zip_prefix" {
+		t.Fatalf("field label = %q", got)
+	}
+	if got := metaString(field, "description"); got != "ZIP prefix" {
+		t.Fatalf("field display label = %q", got)
+	}
+	if got := metaString(field, "href"); got != "/models/model:zip_geolocations/details?field=zip_prefix" {
+		t.Fatalf("field drawer href = %q", got)
+	}
+	if got := row["status"].(recordTableBadge).Label; got != "Documented" {
+		t.Fatalf("documented field status = %q", got)
+	}
+	for key, want := range map[string]any{
+		"fieldKey": "zip_prefix", "label": "ZIP prefix", "logicalType": "String", "physicalType": "VARCHAR",
+		"nullable": "Not profiled", "metadataStatus": "Documented", "entities": "zip_prefix", "grain": "Yes",
+		"description": "ZIP code prefix", "duckLakeSnapshot": "17",
+	} {
+		if got := row[key]; got != want {
+			t.Fatalf("field drawer %s = %#v, want %#v", key, got, want)
+		}
+	}
+	if got := details.Sections[1].Table.Rows[1]["status"].(recordTableBadge).Label; got != "Observed" {
+		t.Fatalf("observed field status = %q", got)
 	}
 }
 
@@ -590,7 +614,10 @@ func TestSourceAndModelSchemaUseLogicalFallbacksAndExplicitUnknowns(t *testing.T
 	}}
 	for name, table := range map[string]recordTable{
 		"source": sourceFieldsGrid(fields, schema),
-		"model":  modelTableFieldsGrid("project:test", "model", "table", map[string]any{"Dimensions": fields, "Schema": schema}, nil),
+		"model": modelTableFieldsGrid(
+			projectview.DevelopAssetView{ID: "model:table", Type: string(projectview.AssetTypeModelTable)},
+			map[string]any{"Dimensions": fields, "Schema": schema},
+		),
 	} {
 		rows := map[string]map[string]any{}
 		for _, row := range table.Rows {

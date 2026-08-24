@@ -54,6 +54,21 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
   status: { error: '', loading: false, message: '' },
 }
 
+type ModelFieldDrawerRow = Record<string, unknown> & {
+  fieldKey?: string
+  label?: string
+  logicalType?: string
+  physicalType?: string
+  nullable?: string
+  contractType?: string
+  metadataStatus?: string
+  metadataProvenance?: string
+  entities?: string
+  grain?: string
+  description?: string
+  duckLakeSnapshot?: string
+}
+
 class LeapViewProjectPage extends DatastarLit(LitElement) {
   @state() private assetQuery: string | null = null
   @state() private assetType: string | null = null
@@ -198,7 +213,65 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     if (!page) return html`<slot></slot>`
     if (page.drawerParent) return this.renderDrawerPage(page)
     if (page.asset.type === 'connection') return this.renderConnectionPage(page)
-    return this.renderAssetPage(page)
+    return html`
+      ${this.renderAssetPage(page)}
+      ${this.renderModelFieldDrawer(page)}
+    `
+  }
+
+  private renderModelFieldDrawer(page: ResourceAssetPageSignal) {
+    const field = this.selectedModelField(page)
+    if (!field) return nothing
+    const name = fieldValue(field, 'fieldKey')
+    const label = fieldValue(field, 'label', name)
+    return html`
+      <lv-drawer
+        open
+        label=${`${name} field details`}
+        .modal=${false}
+        @lv-drawer-close=${() => window.location.assign(page.asset.detailHref)}
+      >
+        <div slot="title" class="source-drawer-title field-drawer-title">
+          ${assetTypeGlyph('field', 'inline')}
+          <h1>${name}</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle field-drawer-subtitle">${label}</p>
+        <div class="source-drawer-body field-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Label', label),
+            fieldFact('Description', fieldValue(field, 'description'), true),
+          ], false)}
+          ${renderFacts('Schema', [
+            fieldFact('Logical type', fieldValue(field, 'logicalType')),
+            fieldFact('Physical type', fieldValue(field, 'physicalType'), false, true),
+            fieldFact('Nullable', fieldValue(field, 'nullable')),
+            fieldFact('DuckLake snapshot', fieldValue(field, 'duckLakeSnapshot'), false, true),
+          ], false)}
+          ${renderFacts('Contract', [
+            fieldFact('Expected type', fieldValue(field, 'contractType'), false, true),
+            fieldFact('Status', fieldValue(field, 'metadataStatus')),
+            fieldFact('Provenance', fieldValue(field, 'metadataProvenance')),
+          ], false)}
+          ${renderFacts('Semantics', [
+            fieldFact('Entities', fieldValue(field, 'entities'), false, true),
+            fieldFact('Grain', fieldValue(field, 'grain')),
+          ], false)}
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedModelField(page: ResourceAssetPageSignal): ModelFieldDrawerRow | null {
+    if (page.asset.type !== 'model_table' || page.activeSection !== 'details') return null
+    const fieldKey = new URLSearchParams(window.location.search).get('field')?.trim()
+    if (!fieldKey) return null
+    for (const section of page.details?.sections ?? []) {
+      for (const row of section.table?.rows ?? []) {
+        const candidate = row as ModelFieldDrawerRow
+        if (fieldValue(candidate, 'fieldKey', '') === fieldKey) return candidate
+      }
+    }
+    return null
   }
 
   private renderDrawerPage(page: ResourceAssetPageSignal) {
@@ -554,6 +627,16 @@ function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boo
         : html`<div class="empty">No details are available.</div>`}
     </section>
   `
+}
+
+function fieldValue(field: ModelFieldDrawerRow, key: keyof ModelFieldDrawerRow, fallback = '-'): string {
+  const value = field[key]
+  if (value == null || String(value).trim() === '') return fallback
+  return String(value)
+}
+
+function fieldFact(label: string, value: string, wide = false, code = false): DefinitionFactSignal {
+  return { label, value, ...(wide ? { wide: true } : {}), ...(code ? { code: true } : {}) }
 }
 
 function renderRecordTableSection(title: string, table?: RecordTableSignal) {
