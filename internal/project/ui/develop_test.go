@@ -297,11 +297,11 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Refresh status"); got != "" {
 		t.Fatalf("refresh status fact = %q, want compact freshness only", got)
 	}
-	if got := factValue(details.Overview, "Data files"); got != "" {
-		t.Fatalf("data files fact = %q, want technical metadata in Refresh tab", got)
+	if got := factValue(details.Overview, "Data files"); got != "2" {
+		t.Fatalf("data files fact = %q, want 2", got)
 	}
-	if got := factValue(details.Overview, "DuckLake snapshot"); got != "" {
-		t.Fatalf("snapshot fact = %q, want technical metadata in Refresh tab", got)
+	if got := factValue(details.Overview, "DuckLake snapshot"); got != "17" {
+		t.Fatalf("snapshot fact = %q, want 17", got)
 	}
 	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (2)" {
 		t.Fatalf("detail sections = %#v, want entities and fields only", details.Sections)
@@ -385,11 +385,8 @@ func TestModelTableRefreshesTabUsesServingSnapshotFacts(t *testing.T) {
 	if page.Refresh.Status != "available" || page.Refresh.LastSuccessful != "2026-08-24T14:32:00Z" {
 		t.Fatalf("model refresh state = %#v", page.Refresh)
 	}
-	if got := factValue(uisignals.ValueOrZero(page.Refresh.Facts), "DuckLake snapshot"); got != "2" {
-		t.Fatalf("snapshot fact = %q, want 2", got)
-	}
-	if got := factValue(uisignals.ValueOrZero(page.Refresh.Facts), "Data files"); got != "1" {
-		t.Fatalf("data files fact = %q, want 1", got)
+	if facts := uisignals.ValueOrZero(page.Refresh.Facts); len(facts) != 0 {
+		t.Fatalf("refresh facts = %#v, want history-only page", facts)
 	}
 }
 

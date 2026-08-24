@@ -40,29 +40,10 @@ func assetRefreshStatus(refresh AssetRefreshState) string {
 func modelRefreshSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetRefreshSignal {
 	physical := metaMap(asset.Payload, "Physical", "physical")
 	lastSuccessful := metaString(physical, "SnapshotAt", "snapshotAt")
-	facts := modelRefreshFacts(asset)
 	return uisignals.ResourceAssetRefreshSignal{
-		Facts:          uisignals.OptionalSlice(definitionFactSignals(facts)),
 		Status:         modelRefreshStatus(asset),
 		LastSuccessful: lastSuccessful,
 	}
-}
-
-func modelRefreshFacts(asset projectview.DevelopAssetView) []definitionFact {
-	physical := metaMap(asset.Payload, "Physical", "physical")
-	facts := []definitionFact{
-		{Label: "Status", Value: modelRefreshStatus(asset)},
-		modelLastRefreshedFact(asset),
-	}
-	if len(physical) > 0 {
-		facts = append(facts,
-			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
-			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
-			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
-			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
-		)
-	}
-	return facts
 }
 
 func modelRefreshStatus(asset projectview.DevelopAssetView) string {

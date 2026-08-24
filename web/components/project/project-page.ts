@@ -666,7 +666,6 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return html`
       <section class="details" id="refreshes" aria-label="Refreshes">
         <div class="details-content">
-          ${renderFacts('Summary', page.refresh?.facts ?? [], true)}
           ${page.refresh?.runsTable ? renderRecordTableSection('Refresh history', page.refresh.runsTable) : nothing}
         </div>
       </section>

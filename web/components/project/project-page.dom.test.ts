@@ -265,14 +265,14 @@ test('model Refreshes tab renders compact history and opens signal-driven run de
       }
     })
     expect(refresh.activeTab).toBe('Refreshes')
-    expect(refresh.headings).toEqual(['Summary', 'Refresh history'])
-    expect(refresh.text).toContain('2026-08-24 14:32 UTC')
-    expect(refresh.lastRefreshedWide).toBe('2026-08-24 14:32 UTC')
+    expect(refresh.headings).toEqual(['Refresh history'])
+    expect(refresh.text).not.toContain('2026-08-24 14:32 UTC')
+    expect(refresh.lastRefreshedWide).toBeUndefined()
     expect(refresh.columns).toEqual(['Status', 'Started', 'Duration', 'Trigger', 'Initiated by'])
     expect(refresh.rowAction).toBe('open-refresh-run')
     expect(refresh.runRows).toBe(1)
-    expect(refresh.text).toContain('DuckLake snapshot')
-    expect(refresh.text).toContain('2')
+    expect(refresh.text).not.toContain('DuckLake snapshot')
+    expect(refresh.text).not.toContain('Status available')
     await page.waitForFunction(() => new URL(location.href).searchParams.get('refresh') === 'run:model:orders')
     const drawer = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete

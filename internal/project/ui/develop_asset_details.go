@@ -601,6 +601,8 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 		model.Overview = append(model.Overview,
 			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
 			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
+			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
+			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
 		)
 	}
 	model.Overview = append(model.Overview, modelLastRefreshedFact(asset))
