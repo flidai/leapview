@@ -136,7 +136,7 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 			return authoring.DashboardLifecycle{}, err
 		}
 	}
-	if err := r.recordAuditIntent(ctx, tx, input.Lifecycle, input.Revision); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, input.Lifecycle, input.Revision, input.Operation.IdempotencyKey); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -609,7 +609,7 @@ func (r *Repository) AppendDraft(ctx context.Context, input authoring.AppendDraf
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, input.Revision.Token()); err != nil {
 		return authoring.Revision{}, err
 	}
-	if err := r.recordAuditIntent(ctx, tx, input.Next, input.Revision); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, input.Next, input.Revision, input.Evidence.ID.String()); err != nil {
 		return authoring.Revision{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -695,7 +695,7 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, target); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := r.recordAuditIntent(ctx, tx, lifecycle, revision); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, lifecycle, revision, input.Evidence.ID.String()); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -743,7 +743,7 @@ func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) 
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, result); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := r.recordAuditIntent(ctx, tx, lifecycle, authoring.Revision{ID: expected.RevisionID, DashboardID: input.DashboardID, Number: expected.Number, ContentHash: expected.ContentHash}); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, lifecycle, authoring.Revision{ID: expected.RevisionID, DashboardID: input.DashboardID, Number: expected.Number, ContentHash: expected.ContentHash}, input.Evidence.ID.String()); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -905,10 +905,11 @@ func (r *Repository) begin(ctx context.Context) (*sql.Tx, error) {
 
 // recordAuditIntent completes the transport-built intent with identities that
 // only exist after the authoring mutation has been validated. Revision number
-// is the source-owned aggregate sequence; the immutable revision token and
-// dashboard aggregate make the event identity stable across retries without
-// copying authored documents or query content into audit metadata.
-func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, lifecycle authoring.DashboardLifecycle, revision authoring.Revision) error {
+// is the source-owned aggregate sequence; the immutable command identity,
+// revision token, and dashboard aggregate make the event identity stable
+// across retries without copying authored documents or query content into
+// audit metadata.
+func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, lifecycle authoring.DashboardLifecycle, revision authoring.Revision, commandID string) error {
 	intent, ok := authoring.AuditIntentFromContext(ctx)
 	if !ok {
 		return nil
@@ -929,7 +930,14 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	if intent.AggregateSequence <= priorSequence {
 		intent.AggregateSequence = priorSequence + 1
 	}
-	identity := intent.Operation + "\x00" + aggregateKey + "\x00" + revision.ID.String() + "\x00" + revision.ContentHash
+	commandID = strings.TrimSpace(commandID)
+	if commandID == "" {
+		return fmt.Errorf("dashboard authoring audit command identity is required")
+	}
+	// The operation is intentionally generic for all dashboard commands. A
+	// stable command/idempotency key keeps retries idempotent while ensuring
+	// distinct lifecycle commands on the same revision cannot collide.
+	identity := intent.Operation + "\x00" + aggregateKey + "\x00" + revision.ID.String() + "\x00" + revision.ContentHash + "\x00" + commandID
 	sum := sha256.Sum256([]byte(identity))
 	intent.EventID = "dashboard-authoring:" + hex.EncodeToString(sum[:16])
 

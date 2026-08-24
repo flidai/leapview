@@ -58,7 +58,7 @@ func (r *SQLRunRepository) ConfigureAuditIntentRecorder(audit access.AuditIntent
 	}
 }
 
-func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, intent *access.AuditIntent, resourceID string) error {
+func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, intent *access.AuditIntent, runID string) error {
 	if intent == nil {
 		return nil
 	}
@@ -66,15 +66,17 @@ func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction
 		return fmt.Errorf("refresh audit intent recorder is required")
 	}
 	copy := *intent
-	resourceID = strings.TrimSpace(resourceID)
-	copy.ResourceID = resourceID
-	copy.AggregateKey = "refresh_run:" + resourceID
+	runID = strings.TrimSpace(runID)
+	copy.AggregateKey = "refresh_run:" + runID
 	if strings.Contains(strings.ToLower(copy.Operation), "create") {
 		copy.AggregateSequence = 1
 	} else {
 		copy.AggregateSequence = 2
 	}
-	hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + copy.ResourceID + "\x00" + copy.RequestID))
+	// Resource identity remains the generated project target. The run ID is
+	// still the durable aggregate and event identity, so independent runs do
+	// not collide in the audit outbox.
+	hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + runID + "\x00" + copy.RequestID))
 	copy.EventID = "sha256:" + hex.EncodeToString(hash[:])
 	return r.audit.RecordAuditIntent(ctx, tx, copy)
 }
@@ -347,7 +349,6 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		intent := normalized.AuditIntent
 		if intent != nil {
 			copy := *intent
-			copy.ResourceID = runID
 			if data, encodeErr := refreshgen.EncodeGenCreateRefreshRunAuditPayload(refreshgen.GenSchemaRefreshQueuedAuditPayload{
 				Id: runID, PipelineId: normalized.TargetID.String(), SemanticModel: normalized.SemanticModelID.String(),
 				InvocationSource: normalized.InvocationSource, MatchingScheduleIds: append([]string{}, normalized.MatchingScheduleIDs...), PlanDigest: normalized.PlanDigest, Status: admissionStatus,
@@ -989,7 +990,6 @@ func (r *SQLRunRepository) cancelRun(ctx context.Context, identity projectgraph.
 	}
 	if intent != nil {
 		copy := *intent
-		copy.ResourceID = runID
 		if data, encodeErr := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
 			Id: runID, PipelineId: prior.PipelineID.String(), Status: refreshrun.RunStatusCancelled, InvocationSource: prior.InvocationSource,
 			MatchingScheduleIds: append([]string{}, prior.MatchingScheduleIDs...),

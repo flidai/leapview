@@ -158,6 +158,8 @@ func TestDurableAuditInventoryIsComplete(t *testing.T) {
 
 	// Generated command guarantees are authored in TypeSpec. Scan every source
 	// declaration rather than relying on a hand-maintained list of filenames.
+	// This must include transactional-only contracts as well as best-effort
+	// contracts so adding a command source cannot bypass inventory ownership.
 	var unclassifiedContracts []string
 	if err := filepath.WalkDir(filepath.Join(root, "api", "typespec"), func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
@@ -170,7 +172,7 @@ func TestDurableAuditInventoryIsComplete(t *testing.T) {
 		if readErr != nil {
 			return readErr
 		}
-		if !strings.Contains(string(contents), "best-effort") {
+		if !strings.Contains(string(contents), "@apigen.command") {
 			return nil
 		}
 		relative, relErr := filepath.Rel(root, path)
@@ -186,7 +188,7 @@ func TestDurableAuditInventoryIsComplete(t *testing.T) {
 	}
 	if len(unclassifiedContracts) != 0 {
 		sort.Strings(unclassifiedContracts)
-		t.Fatalf("TypeSpec best-effort audit contracts without inventory owner: %s", strings.Join(unclassifiedContracts, ", "))
+		t.Fatalf("TypeSpec command contracts without inventory owner: %s", strings.Join(unclassifiedContracts, ", "))
 	}
 }
 

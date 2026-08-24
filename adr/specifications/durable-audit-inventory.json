@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "updated": "2026-08-23",
+  "updated": "2026-08-24",
   "guarantees": {
     "transactional": "The state transition and audit event commit in one durable transaction; an audit failure aborts the transition.",
     "durable-before-stream": "The access identity is persisted before a governed stream can release bytes. A later completion event may be best-effort.",
@@ -22,7 +22,7 @@
         "internal/admin/settings/commands.go",
         "internal/admin/personalsettings/service.go"
       ],
-      "contractSources": ["internal/access/access.go"],
+      "contractSources": ["internal/access/access.go", "api/typespec/access.tsp", "api/typespec/current_user.tsp"],
       "evidence": ["internal/access/sqlite/repository_test.go", "internal/access/sqlite/authoring_auth_test.go"]
     },
     {
@@ -52,6 +52,28 @@
       "implementation": ["internal/access/http/avatar.go"],
       "contractSources": ["api/typespec/current_user.tsp"],
       "evidence": ["internal/access/http/current_user_test.go"]
+    },
+    {
+      "id": "admin.product-settings",
+      "owner": "admin",
+      "kind": "generated-command-audit",
+      "events": ["product.identity.updated", "product.identity.reset", "product.logo.updated", "product.logo.deleted"],
+      "guarantee": "transactional",
+      "failureBehavior": "Product identity and logo mutations commit with their durable audit intent; an audit failure rolls the mutation back.",
+      "implementation": [
+        "internal/admin/product/product.go",
+        "internal/admin/product/http.go",
+        "internal/admin/productsettings/handler.go",
+        "internal/admin/module/product.go",
+        "internal/app/api_apigen.go",
+        "internal/app/product_ui_commands.go"
+      ],
+      "contractSources": ["api/typespec/instance.tsp"],
+      "evidence": [
+        "internal/admin/product/product_test.go",
+        "internal/admin/product/http_test.go",
+        "internal/app/product_authorization_test.go"
+      ]
     },
     {
       "id": "dashboard.authoring-command",

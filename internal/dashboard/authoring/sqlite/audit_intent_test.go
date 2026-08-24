@@ -195,3 +195,54 @@ func TestAuthoringArchiveAuditIntentSupportsPublishedOnlyLifecycle(t *testing.T)
 		t.Fatalf("published-only archive metadata = %s", metadata)
 	}
 }
+
+func TestAuthoringLifecycleAuditEventIDsIncludeCommandIdentity(t *testing.T) {
+	store, ctx := openAuthoringAuditStore(t)
+	createInput, _ := canonicalSQLiteInput(t, "project:sales", "dashboard:event-id", "revision-event-id", authoring.CreateOperation{})
+	repository := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repository.Create(ctx, createInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := servingIdentity(t, created.ProjectID.String(), "test", "generation-event-id")
+	definition := dashboarddefinition.Definition{ID: created.ID.String(), Title: created.Title, SemanticModel: created.SemanticModel.String()}
+	compiled, err := authoring.NewCompiledRevision(created.ProjectID, created.ID, created.Draft.Revision, definition, identity, time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance := created.Draft.Provenance
+	operation := "executeDashboardAuthoringCommand"
+	if _, err := repository.Publish(authoring.WithAuditIntent(ctx, authoringAuditIntent(operation, "dashboard_authoring.command_executed")), authoring.PublishInput{
+		ProjectID: created.ProjectID, DashboardID: created.ID, ExpectedDraftRevision: created.Draft.Revision,
+		Published:   authoring.Published{Revision: created.Draft.Revision, Compilation: compiled.Token(), PublishedAt: compiled.CompiledAt, Provenance: provenance},
+		Compilation: compiled,
+		Evidence:    authoring.CommandEvidence{ID: "publish-event-id", Fingerprint: "publish-event-id", Action: authoring.AuthorizationActionPublish, Provenance: provenance, OccurredAt: compiled.CompiledAt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Archive(authoring.WithAuditIntent(ctx, authoringAuditIntent(operation, "dashboard_authoring.command_executed")), authoring.ArchiveInput{
+		ProjectID: created.ProjectID, DashboardID: created.ID, ExpectedCurrentRevision: created.Draft.Revision,
+		Evidence: authoring.CommandEvidence{ID: "archive-event-id", Fingerprint: "archive-event-id", Action: authoring.AuthorizationActionArchive, Provenance: provenance, OccurredAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := store.SQLDB().QueryContext(ctx, `SELECT event_id FROM audit_outbox WHERE aggregate_key = ? ORDER BY aggregate_sequence`, "dashboard_authoring:project:sales:dashboard:event-id")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+	var eventIDs []string
+	for rows.Next() {
+		var eventID string
+		if err := rows.Scan(&eventID); err != nil {
+			t.Fatal(err)
+		}
+		eventIDs = append(eventIDs, eventID)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+	if len(eventIDs) != 2 || eventIDs[0] == eventIDs[1] {
+		t.Fatalf("lifecycle audit event IDs = %#v, want two distinct IDs", eventIDs)
+	}
+}

@@ -190,7 +190,6 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		}
 	}
 	if intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Correlation-Id")); intentErr == nil && intent != nil {
-		intent.ResourceID = runID
 		intent.EventID = ""
 		cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
 	}
