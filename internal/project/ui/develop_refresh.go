@@ -3,6 +3,7 @@ package ui
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -89,6 +90,7 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 	rows := make([]map[string]any, 0, len(state.Versions))
 	current := strings.TrimSpace(state.CurrentContentHash)
 	for index, version := range state.Versions {
+		versionNumber := len(state.Versions) - index
 		status := version.Status
 		if current != "" && version.ContentHash == current {
 			status = "current"
@@ -100,7 +102,7 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 		var diffStat any = "-"
 		if index+1 < len(state.Versions) {
 			previous := state.Versions[index+1]
-			previousVersion = shortHash(previous.ContentHash)
+			previousVersion = strconv.Itoa(versionNumber - 1)
 			changes = compiledConfigurationDiff(previous, version)
 			additions, deletions := compiledConfigurationDiffStats(previous, version)
 			diffStat = recordTableDiff{
@@ -114,7 +116,8 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 			}
 		}
 		rows = append(rows, map[string]any{
-			"version":               shortHash(version.ContentHash),
+			"version":               versionNumber,
+			"content_hash":          shortHash(version.ContentHash),
 			"published":             emptyDash(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
 			"status":                recordTableBadge{Label: status, Tone: uisignals.Pointer(versionStatusTone(status))},
 			"published_by":          emptyDash(version.CreatedBy),
@@ -137,7 +140,8 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "version", Header: "Version", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
+			{ID: "version", Header: "Version", Kind: uisignals.Pointer("number"), Align: uisignals.Pointer("right"), Width: uisignals.Pointer("90px")},
+			{ID: "content_hash", Header: "Content hash", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
 			{ID: "published", Header: "Published", Width: uisignals.Pointer("180px")},
 			{ID: "diff_stat", Header: "Changes", Kind: uisignals.Pointer("diff"), Width: uisignals.Pointer("120px")},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
@@ -145,7 +149,7 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 		},
 		Rows:      rows,
 		Empty:     "No config versions recorded for this asset yet.",
-		MinWidth:  uisignals.Pointer("720px"),
+		MinWidth:  uisignals.Pointer("850px"),
 		RowAction: uisignals.Pointer("open-asset-version"),
 	}
 }

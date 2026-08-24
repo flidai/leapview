@@ -597,7 +597,7 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 		},
 	}
 	table := assetVersionsTable(state)
-	wantColumns := []string{"version", "published", "diff_stat", "status", "published_by"}
+	wantColumns := []string{"version", "content_hash", "published", "diff_stat", "status", "published_by"}
 	if len(table.Columns) != len(wantColumns) {
 		t.Fatalf("version columns = %#v, want compact columns %v", table.Columns, wantColumns)
 	}
@@ -610,6 +610,9 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 		t.Fatalf("version row action = %#v", table.RowAction)
 	}
 	row := table.Rows[0]
+	if row["version"] != 2 || row["content_hash"] != "sha256:curre" {
+		t.Fatalf("latest display version = %#v, want version 2 with a separate content hash", row)
+	}
 	if row["versionId"] != "state:current" || row["contentHash"] != "sha256:current" || row["snapshotId"] != "snapshot:2" {
 		t.Fatalf("version drawer provenance = %#v", row)
 	}
@@ -628,6 +631,9 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 	}
 	if got := table.Rows[1]["diff_stat"]; got != "-" {
 		t.Fatalf("first version diff stat = %#v, want placeholder", got)
+	}
+	if got := table.Rows[1]["version"]; got != 1 {
+		t.Fatalf("oldest display version = %#v, want 1", got)
 	}
 }
 

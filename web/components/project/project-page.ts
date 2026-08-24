@@ -337,7 +337,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       <lv-drawer
         open
         size="wide"
-        label=${`${versionLabel} version details`}
+        label=${`Version ${versionLabel} details`}
         .modal=${false}
         @lv-drawer-close=${this.closeAssetVersionDrawer}
       >
