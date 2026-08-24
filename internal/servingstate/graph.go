@@ -27,8 +27,8 @@ type Asset struct {
 }
 
 // AssetVersion is the durable serving-state history row for one logical
-// project asset. It intentionally carries only public provenance fields used
-// by the browser's versions table.
+// project asset. PayloadJSON is the compiled configuration captured with the
+// version, allowing callers to compare history without recompiling old input.
 type AssetVersion struct {
 	ServingStateID ID
 	ProjectID      projectgraph.ResourceID
@@ -41,6 +41,7 @@ type AssetVersion struct {
 	SnapshotID     string
 	AssetID        projectgraph.ResourceID
 	SourceFile     string
+	PayloadJSON    string
 	ContentHash    string
 }
 

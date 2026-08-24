@@ -588,6 +588,43 @@ func TestDashboardVersionsSectionIsReachableWhenHistoryExists(t *testing.T) {
 	}
 }
 
+func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testing.T) {
+	state := AssetVersionsState{
+		CurrentContentHash: "sha256:current",
+		Versions: []AssetVersionState{
+			{ServingStateID: "state:current", Environment: "dev", Status: "active", Digest: "digest:current", CreatedBy: "dev", CreatedAt: "2026-08-24T14:56:00Z", ActivatedAt: "2026-08-24T14:57:00Z", SnapshotID: "snapshot:2", SourceFile: "models/orders.yaml", ContentHash: "sha256:current", PayloadJSON: `{"fields":["order_id","revenue"]}`},
+			{ServingStateID: "state:previous", Environment: "dev", Status: "inactive", Digest: "digest:previous", CreatedBy: "dev", CreatedAt: "2026-08-23T14:56:00Z", ActivatedAt: "2026-08-23T14:57:00Z", SnapshotID: "snapshot:1", SourceFile: "models/orders.yaml", ContentHash: "sha256:previous", PayloadJSON: `{"fields":["order_id"]}`},
+		},
+	}
+	table := assetVersionsTable(state)
+	wantColumns := []string{"version", "published", "status", "published_by"}
+	if len(table.Columns) != len(wantColumns) {
+		t.Fatalf("version columns = %#v, want compact columns %v", table.Columns, wantColumns)
+	}
+	for index, want := range wantColumns {
+		if got := table.Columns[index].ID; got != want {
+			t.Fatalf("version column %d = %q, want %q", index, got, want)
+		}
+	}
+	if table.RowAction == nil || *table.RowAction != "open-asset-version" {
+		t.Fatalf("version row action = %#v", table.RowAction)
+	}
+	row := table.Rows[0]
+	if row["versionId"] != "state:current" || row["contentHash"] != "sha256:current" || row["snapshotId"] != "snapshot:2" {
+		t.Fatalf("version drawer provenance = %#v", row)
+	}
+	diff, _ := row["changes"].(string)
+	if !strings.Contains(diff, `+    "revenue"`) || !strings.Contains(diff, "--- sha256:previ") || !strings.Contains(diff, "+++ sha256:curre") {
+		t.Fatalf("compiled configuration diff = %q", diff)
+	}
+	if got := row["compiledConfiguration"]; got != "{\n  \"fields\": [\n    \"order_id\",\n    \"revenue\"\n  ]\n}\n" {
+		t.Fatalf("compiled configuration = %q", got)
+	}
+	if got := table.Rows[1]["changesSummary"]; got != "This is the first recorded version." {
+		t.Fatalf("first version comparison = %q", got)
+	}
+}
+
 func TestModelRefreshesSectionIncludesTargetRunHistory(t *testing.T) {
 	asset := projectview.DevelopAssetView{ID: "model:sales_customers", Type: string(projectview.AssetTypeModelTable), Key: "sales_customers", Title: "Customers"}
 	refresh := AssetRefreshState{Runs: []AssetRefreshRun{{

@@ -83,6 +83,11 @@ type AssetLineageNodeSignal struct {
 	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty" yaml:"visibleUpstreamCount,omitempty"`
 }
 
+type AssetVersionDrawerSignal struct {
+	Open      bool   `json:"open" yaml:"open"`
+	VersionID string `json:"versionId" yaml:"versionId"`
+}
+
 type CatalogDashboardSignal struct {
 	AppearanceColor string           `json:"appearanceColor" yaml:"appearanceColor"`
 	AppearanceIcon  string           `json:"appearanceIcon" yaml:"appearanceIcon"`
@@ -1390,13 +1395,14 @@ type ResourceAssetListSignal struct {
 }
 
 type ResourceAssetPageEnvelope struct {
-	Chrome           ChromeSignal                    `json:"chrome" yaml:"chrome"`
-	ConnectionAdmin  *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
-	ModelFieldDrawer *ModelFieldDrawerSignal         `json:"modelFieldDrawer,omitempty" yaml:"modelFieldDrawer,omitempty"`
-	RefreshRunDrawer *RefreshRunDrawerSignal         `json:"refreshRunDrawer,omitempty" yaml:"refreshRunDrawer,omitempty"`
-	Page             ResourceAssetPageSignal         `json:"page" yaml:"page"`
-	Runtime          RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
-	Status           DashboardStatus                 `json:"status" yaml:"status"`
+	Chrome             ChromeSignal                    `json:"chrome" yaml:"chrome"`
+	ConnectionAdmin    *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
+	ModelFieldDrawer   *ModelFieldDrawerSignal         `json:"modelFieldDrawer,omitempty" yaml:"modelFieldDrawer,omitempty"`
+	RefreshRunDrawer   *RefreshRunDrawerSignal         `json:"refreshRunDrawer,omitempty" yaml:"refreshRunDrawer,omitempty"`
+	AssetVersionDrawer *AssetVersionDrawerSignal       `json:"assetVersionDrawer,omitempty" yaml:"assetVersionDrawer,omitempty"`
+	Page               ResourceAssetPageSignal         `json:"page" yaml:"page"`
+	Runtime            RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
+	Status             DashboardStatus                 `json:"status" yaml:"status"`
 }
 
 type ResourceAssetPageSignal struct {

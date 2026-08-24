@@ -1,12 +1,14 @@
 package ui
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
 	projectview "github.com/flidai/leapview/internal/project"
 	"github.com/flidai/leapview/internal/project/assetnav"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
+	"github.com/pmezard/go-difflib/difflib"
 )
 
 func ProjectAssetRefreshSignals(project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, refresh AssetRefreshState, activeSection string) map[string]any {
@@ -85,18 +87,43 @@ func assetVersionsSignal(state AssetVersionsState) uisignals.ResourceAssetVersio
 func assetVersionsTable(state AssetVersionsState) recordTable {
 	rows := make([]map[string]any, 0, len(state.Versions))
 	current := strings.TrimSpace(state.CurrentContentHash)
-	for _, version := range state.Versions {
+	for index, version := range state.Versions {
 		status := version.Status
 		if current != "" && version.ContentHash == current {
 			status = "current"
 		}
+		compiledConfiguration := formatCompiledConfiguration(version.PayloadJSON)
+		changes := ""
+		changesSummary := "This is the first recorded version."
+		previousVersion := ""
+		if index+1 < len(state.Versions) {
+			previous := state.Versions[index+1]
+			previousVersion = shortHash(previous.ContentHash)
+			changes = compiledConfigurationDiff(previous, version)
+			changesSummary = "No compiled configuration changes."
+			if strings.TrimSpace(changes) != "" {
+				changesSummary = ""
+			}
+		}
 		rows = append(rows, map[string]any{
-			"version":      shortHash(version.ContentHash),
-			"published":    emptyDash(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
-			"status":       recordTableBadge{Label: status, Tone: uisignals.Pointer(versionStatusTone(status))},
-			"config_hash":  shortHash(version.ContentHash),
-			"source_file":  emptyDash(version.SourceFile),
-			"published_by": emptyDash(version.CreatedBy),
+			"version":               shortHash(version.ContentHash),
+			"published":             emptyDash(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
+			"status":                recordTableBadge{Label: status, Tone: uisignals.Pointer(versionStatusTone(status))},
+			"published_by":          emptyDash(version.CreatedBy),
+			"versionId":             version.ServingStateID,
+			"statusLabel":           emptyDash(status),
+			"contentHash":           emptyDash(version.ContentHash),
+			"sourceFile":            emptyDash(version.SourceFile),
+			"environment":           emptyDash(version.Environment),
+			"snapshotId":            emptyDash(version.SnapshotID),
+			"servingStateId":        emptyDash(version.ServingStateID),
+			"servingDigest":         emptyDash(version.Digest),
+			"createdAt":             emptyDash(version.CreatedAt),
+			"activatedAt":           emptyDash(version.ActivatedAt),
+			"compiledConfiguration": compiledConfiguration,
+			"previousVersion":       previousVersion,
+			"changes":               changes,
+			"changesSummary":        changesSummary,
 		})
 	}
 	return recordTable{
@@ -104,14 +131,46 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 			{ID: "version", Header: "Version", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
 			{ID: "published", Header: "Published", Width: uisignals.Pointer("180px")},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
-			{ID: "config_hash", Header: "Config hash", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("130px")},
-			{ID: "source_file", Header: "Source file", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("220px")},
 			{ID: "published_by", Header: "Published by", Width: uisignals.Pointer("150px")},
 		},
-		Rows:     rows,
-		Empty:    "No config versions recorded for this asset yet.",
-		MinWidth: uisignals.Pointer("850px"),
+		Rows:      rows,
+		Empty:     "No config versions recorded for this asset yet.",
+		MinWidth:  uisignals.Pointer("600px"),
+		RowAction: uisignals.Pointer("open-asset-version"),
 	}
+}
+
+func formatCompiledConfiguration(payload string) string {
+	payload = strings.TrimSpace(payload)
+	if payload == "" {
+		return ""
+	}
+	var value any
+	if err := json.Unmarshal([]byte(payload), &value); err != nil {
+		return payload
+	}
+	formatted, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return payload
+	}
+	return string(formatted) + "\n"
+}
+
+func compiledConfigurationDiff(previous, current AssetVersionState) string {
+	before := formatCompiledConfiguration(previous.PayloadJSON)
+	after := formatCompiledConfiguration(current.PayloadJSON)
+	if before == after {
+		return ""
+	}
+	diff, err := difflib.GetUnifiedDiffString(difflib.UnifiedDiff{
+		A: difflib.SplitLines(before), B: difflib.SplitLines(after),
+		FromFile: shortHash(previous.ContentHash), ToFile: shortHash(current.ContentHash),
+		Context: 3,
+	})
+	if err != nil {
+		return ""
+	}
+	return diff
 }
 
 func versionStatusTone(status string) string {

@@ -23,6 +23,7 @@ import {
   type IconNode,
 } from 'lucide'
 import type {
+  AssetVersionDrawerSignal,
   ConnectionAdministrationSignal,
   ConnectionsPageSignal,
   DefinitionFactSignal,
@@ -60,6 +61,7 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
 
 const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
 const emptyRefreshRunDrawer: RefreshRunDrawerSignal = { open: false, runId: '' }
+const emptyAssetVersionDrawer: AssetVersionDrawerSignal = { open: false, versionId: '' }
 
 type ModelFieldDrawerRow = Record<string, unknown> & {
   fieldKey?: string
@@ -92,6 +94,26 @@ type RefreshRunDrawerRow = Record<string, unknown> & {
   createdAt?: string
   updatedAt?: string
   error?: string
+}
+
+type AssetVersionDrawerRow = Record<string, unknown> & {
+  versionId?: string
+  version?: string
+  statusLabel?: string
+  published?: string
+  published_by?: string
+  contentHash?: string
+  sourceFile?: string
+  environment?: string
+  snapshotId?: string
+  servingStateId?: string
+  servingDigest?: string
+  createdAt?: string
+  activatedAt?: string
+  compiledConfiguration?: string
+  previousVersion?: string
+  changes?: string
+  changesSummary?: string
 }
 
 class LeapViewProjectPage extends DatastarLit(LitElement) {
@@ -221,6 +243,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private pushedModelFieldDrawerEntry = false
   private refreshRunDrawerPageKey = ''
   private pushedRefreshRunDrawerEntry = false
+  private assetVersionDrawerPageKey = ''
+  private pushedAssetVersionDrawerEntry = false
 
   static get styles() {
     return [projectStyles]
@@ -230,11 +254,13 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     super.connectedCallback()
     window.addEventListener('popstate', this.syncModelFieldDrawerFromLocation)
     window.addEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
+    window.addEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
   }
 
   override disconnectedCallback(): void {
     window.removeEventListener('popstate', this.syncModelFieldDrawerFromLocation)
     window.removeEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
+    window.removeEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
     super.disconnectedCallback()
   }
 
@@ -255,6 +281,13 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       this.refreshRunDrawerPageKey = refreshDrawerPageKey
       this.syncRefreshRunDrawerFromLocation()
     }
+    const versionDrawerPageKey = page?.activeSection === 'versions' && page.versions?.table
+      ? `${page.asset.detailHref}/versions`
+      : ''
+    if (versionDrawerPageKey && versionDrawerPageKey !== this.assetVersionDrawerPageKey) {
+      this.assetVersionDrawerPageKey = versionDrawerPageKey
+      this.syncAssetVersionDrawerFromLocation()
+    }
   }
 
   get page(): ResourceAssetPageSignal | null {
@@ -273,16 +306,89 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return this.signal<RefreshRunDrawerSignal>('refreshRunDrawer', emptyRefreshRunDrawer)
   }
 
+  get assetVersionDrawer(): AssetVersionDrawerSignal {
+    return this.signal<AssetVersionDrawerSignal>('assetVersionDrawer', emptyAssetVersionDrawer)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
     if (page.drawerParent) return this.renderDrawerPage(page)
-    if (page.asset.type === 'connection') return this.renderConnectionPage(page)
+    if (page.asset.type === 'connection') return html`
+      ${this.renderConnectionPage(page)}
+      ${this.renderAssetVersionDrawer(page)}
+    `
     return html`
       ${this.renderAssetPage(page)}
       ${this.renderModelFieldDrawer(page)}
       ${this.renderRefreshRunDrawer(page)}
+      ${this.renderAssetVersionDrawer(page)}
     `
+  }
+
+  private renderAssetVersionDrawer(page: ResourceAssetPageSignal) {
+    const version = this.selectedAssetVersion(page)
+    if (!version) return nothing
+    const versionLabel = fieldValue(version, 'version')
+    const changes = fieldValue(version, 'changes', '')
+    const changesSummary = fieldValue(version, 'changesSummary', '')
+    const configuration = fieldValue(version, 'compiledConfiguration', '')
+    return html`
+      <lv-drawer
+        open
+        size="wide"
+        label=${`${versionLabel} version details`}
+        .modal=${false}
+        @lv-drawer-close=${this.closeAssetVersionDrawer}
+      >
+        <div slot="title" class="source-drawer-title version-drawer-title">
+          <span aria-hidden="true">${lucideIcon(BookOpen)}</span>
+          <h1>Version ${versionLabel}</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle version-drawer-subtitle">${[fieldValue(version, 'statusLabel'), fieldValue(version, 'published')].filter((value) => value && value !== '-').join(' · ')}</p>
+        <div class="source-drawer-body version-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Status', fieldValue(version, 'statusLabel')),
+            fieldFact('Published', fieldValue(version, 'published')),
+            fieldFact('Published by', fieldValue(version, 'published_by')),
+            fieldFact('Created', fieldValue(version, 'createdAt')),
+            fieldFact('Activated', fieldValue(version, 'activatedAt')),
+          ], false)}
+          ${renderFacts('Provenance', [
+            fieldFact('Content hash', fieldValue(version, 'contentHash'), true, true),
+            fieldFact('Source file', fieldValue(version, 'sourceFile'), true, true),
+            fieldFact('Environment', fieldValue(version, 'environment')),
+            fieldFact('Snapshot', fieldValue(version, 'snapshotId'), false, true),
+            fieldFact('Serving generation', fieldValue(version, 'servingStateId'), true, true),
+            fieldFact('Serving digest', fieldValue(version, 'servingDigest'), true, true),
+          ], false)}
+          <section class="detail-section version-changes" aria-label="Changes from previous version">
+            <h2>Changes from previous version</h2>
+            ${changes
+              ? html`<pre><code>${changes}</code></pre>`
+              : html`<div class="empty">${changesSummary || 'No compiled configuration changes.'}</div>`}
+          </section>
+          <section class="detail-section" aria-label="Compiled configuration">
+            <h2>Compiled configuration</h2>
+            ${configuration
+              ? html`<lv-code-block language="json" .code=${configuration}></lv-code-block>`
+              : html`<div class="empty">No compiled configuration was recorded.</div>`}
+          </section>
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedAssetVersion(page: ResourceAssetPageSignal): AssetVersionDrawerRow | null {
+    if (page.activeSection !== 'versions') return null
+    const drawer = this.assetVersionDrawer
+    const versionId = drawer.versionId.trim()
+    if (!drawer.open || !versionId) return null
+    for (const row of page.versions?.table?.rows ?? []) {
+      const candidate = row as AssetVersionDrawerRow
+      if (fieldValue(candidate, 'versionId', '') === versionId) return candidate
+    }
+    return null
   }
 
   private renderRefreshRunDrawer(page: ResourceAssetPageSignal) {
@@ -416,6 +522,15 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       this.setRefreshRunDrawer({ open: true, runId })
       updateURLSearchParameter('refresh', runId, wasOpen ? 'replace' : 'push')
       if (!wasOpen) this.pushedRefreshRunDrawerEntry = true
+      return
+    }
+    if (event.detail?.action === 'open-asset-version') {
+      const versionId = fieldValue(event.detail.row ?? {}, 'versionId', '')
+      if (!versionId) return
+      const wasOpen = this.assetVersionDrawer.open
+      this.setAssetVersionDrawer({ open: true, versionId })
+      updateURLSearchParameter('version', versionId, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedAssetVersionDrawerEntry = true
     }
   }
 
@@ -457,6 +572,26 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private setRefreshRunDrawer(drawer: RefreshRunDrawerSignal): void {
     void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ refreshRunDrawer: drawer }))
+  }
+
+  private closeAssetVersionDrawer = (): void => {
+    this.setAssetVersionDrawer(emptyAssetVersionDrawer)
+    if (this.pushedAssetVersionDrawerEntry) {
+      this.pushedAssetVersionDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('version', '', 'replace')
+  }
+
+  private syncAssetVersionDrawerFromLocation = (): void => {
+    this.pushedAssetVersionDrawerEntry = false
+    const versionId = new URLSearchParams(window.location.search).get('version')?.trim() ?? ''
+    this.setAssetVersionDrawer({ open: Boolean(versionId), versionId })
+  }
+
+  private setAssetVersionDrawer(drawer: AssetVersionDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ assetVersionDrawer: drawer }))
   }
 
   private renderDrawerPage(page: ResourceAssetPageSignal) {
@@ -504,7 +639,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       ></lv-connection-administration>
     ` : nothing
     return html`
-      <section class="asset-page connection-asset-page" aria-label="Connection detail">
+      <section class="asset-page connection-asset-page" aria-label="Connection detail" @lv-record-table-action=${this.handleRecordTableAction}>
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>
@@ -821,7 +956,7 @@ function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boo
   `
 }
 
-function fieldValue(field: ModelFieldDrawerRow, key: keyof ModelFieldDrawerRow, fallback = '-'): string {
+function fieldValue(field: Record<string, unknown>, key: string, fallback = '-'): string {
   const value = field[key]
   if (value == null || String(value).trim() === '') return fallback
   return String(value)
@@ -1477,6 +1612,23 @@ const projectStyles = css`
     display: grid;
     min-width: 0;
     align-content: start;
+  }
+
+  .version-drawer-body {
+    gap: var(--base-size-20);
+  }
+
+  .version-changes pre {
+    max-height: 24rem;
+    margin: 0;
+    overflow: auto;
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel-muted);
+    padding: var(--base-size-12);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-code-block);
+    white-space: pre;
   }
 
   .source-drawer-section {

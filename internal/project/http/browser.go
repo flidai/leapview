@@ -723,9 +723,9 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 	state.Versions = make([]projectui.AssetVersionState, 0, len(versions))
 	for _, version := range versions {
 		state.Versions = append(state.Versions, projectui.AssetVersionState{
-			ServingStateID: string(version.ServingStateID), Status: version.Status, Digest: version.Digest,
+			ServingStateID: string(version.ServingStateID), Environment: string(version.Environment), Status: version.Status, Digest: version.Digest,
 			CreatedBy: version.CreatedBy, CreatedAt: version.CreatedAt, ActivatedAt: version.ActivatedAt,
-			SourceFile: version.SourceFile, ContentHash: version.ContentHash,
+			SnapshotID: version.SnapshotID, SourceFile: version.SourceFile, PayloadJSON: version.PayloadJSON, ContentHash: version.ContentHash,
 		})
 	}
 	return state, nil

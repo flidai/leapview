@@ -197,6 +197,7 @@ SELECT
   a.snapshot_id,
   a.logical_asset_id,
   a.source_file,
+  a.payload_json,
   a.content_hash
 FROM serving_states d
 JOIN assets a ON a.serving_state_id = d.id

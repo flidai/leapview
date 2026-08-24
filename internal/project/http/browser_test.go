@@ -135,7 +135,7 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	h := &BrowserHandler{
 		Environment: "dev",
 		AssetVersions: browserAssetVersionsStub{versions: []servingstate.AssetVersion{
-			{ServingStateID: "state:current", Status: "active", ContentHash: "sha256:current", CreatedAt: "2026-08-20T12:00:00Z"},
+			{ServingStateID: "state:current", Environment: "dev", Status: "active", ContentHash: "sha256:current", CreatedAt: "2026-08-20T12:00:00Z", SnapshotID: "snapshot:2", PayloadJSON: `{"kind":"Model"}`},
 			{ServingStateID: "state:old", Status: "inactive", ContentHash: "sha256:old", CreatedAt: "2026-08-19T12:00:00Z"},
 		}},
 	}
@@ -145,6 +145,9 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	}
 	if state.CurrentContentHash != "sha256:current" || len(state.Versions) != 2 || state.Versions[1].ContentHash != "sha256:old" {
 		t.Fatalf("versions state = %#v", state)
+	}
+	if state.Versions[0].Environment != "dev" || state.Versions[0].SnapshotID != "snapshot:2" || state.Versions[0].PayloadJSON != `{"kind":"Model"}` {
+		t.Fatalf("versions drawer state = %#v", state.Versions[0])
 	}
 }
 

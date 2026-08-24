@@ -373,12 +373,15 @@ type AssetVersionsState struct {
 
 type AssetVersionState struct {
 	ServingStateID string
+	Environment    string
 	Status         string
 	Digest         string
 	CreatedBy      string
 	CreatedAt      string
 	ActivatedAt    string
+	SnapshotID     string
 	SourceFile     string
+	PayloadJSON    string
 	ContentHash    string
 }
 

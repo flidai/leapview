@@ -38,7 +38,7 @@ INSERT INTO assets (snapshot_id, logical_asset_id, serving_state_id, asset_type,
 VALUES
   ('snapshot_old', 'model_sales', 'state_old', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
   ('snapshot_dup', 'model_sales', 'state_dup', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
-  ('snapshot_new', 'model_sales', 'state_new', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_new');`); err != nil {
+	  ('snapshot_new', 'model_sales', 'state_new', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{"fields":["revenue"]}', 'hash_new');`); err != nil {
 		t.Fatalf("seed asset versions: %v", err)
 	}
 	versions, err := repo.AssetVersions(t.Context(), "project_sales", "dev", "model_sales")
@@ -50,6 +50,9 @@ VALUES
 	}
 	if versions[0].ServingStateID != "state_new" || versions[0].ContentHash != "hash_new" || versions[0].CreatedBy != "carol" {
 		t.Fatalf("latest version = %#v", versions[0])
+	}
+	if versions[0].Environment != "dev" || versions[0].SnapshotID != "snapshot_new" || versions[0].PayloadJSON != `{"fields":["revenue"]}` {
+		t.Fatalf("latest version provenance and payload = %#v", versions[0])
 	}
 	if versions[1].ServingStateID != "state_dup" || versions[1].ContentHash != "hash_old" {
 		t.Fatalf("deduplicated historical version = %#v", versions[1])
