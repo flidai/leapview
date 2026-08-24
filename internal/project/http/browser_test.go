@@ -314,10 +314,13 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Fields (1)", `"label":"Input sources","value":"1"`} {
+	for _, want := range []string{"Fields (1)", `"label":"Mode","value":"SQL transform"`} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap = %s, missing %q", encoded, want)
 		}
+	}
+	if strings.Contains(string(encoded), `"label":"Input sources"`) {
+		t.Fatalf("bootstrap = %s, duplicate input source count remains in overview", encoded)
 	}
 	definitionPatch, ok := h.assetBootstrap(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/updates?surface=asset&asset="+assetID+"&section=definition", nil))
 	if !ok {

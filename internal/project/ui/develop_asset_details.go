@@ -569,20 +569,13 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	fields := modelTableFields(asset.Payload)
 	schema := metaMap(asset.Payload, "Schema", "schema")
 	physicalColumns := metaSlice(schema, "Columns", "columns")
-	contractedFields := 0
-	for _, raw := range fields {
-		if metaString(asMap(raw), "Datatype", "datatype") != "" {
-			contractedFields++
-		}
-	}
 	totalFields := len(fields)
 	if len(physicalColumns) > 0 {
 		totalFields = len(physicalColumns)
 	}
-	sources := modelTableSourceNames(asset.Payload)
 	mode := "Unspecified"
 	if modelTableSQL(asset.Payload) != "" {
-		mode = "Definition"
+		mode = "SQL transform"
 	} else if modelTableSourceNames(asset.Payload) != nil {
 		mode = "Direct source"
 	}
@@ -590,11 +583,6 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	grainEntity := metaString(asset.Payload, "GrainEntity", "grainEntity")
 	model.Overview = append(model.Overview,
 		definitionFact{Label: "Grain entity", Value: grainEntity, Code: true},
-		definitionFact{Label: "Entities", Value: fmt.Sprint(len(entities))},
-		definitionFact{Label: "Fields", Value: fmt.Sprint(totalFields)},
-		definitionFact{Label: "Documented fields", Value: fmt.Sprint(len(fields))},
-		definitionFact{Label: "Contracted fields", Value: fmt.Sprint(contractedFields)},
-		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
 	if physical := metaMap(asset.Payload, "Physical", "physical"); len(physical) > 0 {
@@ -624,16 +612,9 @@ func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetVi
 	model.Overview = append(model.Overview, sourceFacts(asset)...)
 	mode := firstNonEmpty(metaString(asset.Payload, "SchemaMode", "schemaMode"), metaString(observation, "Mode", "mode"), "inferred")
 	status := firstNonEmpty(metaString(observation, "Status", "status"), "not observed")
-	observedFields := 0
-	if len(observation) > 0 {
-		observedFields = len(metaSlice(schema, "Columns", "columns"))
-	}
 	model.Overview = append(model.Overview,
-		definitionFact{Label: "Fields", Value: fmt.Sprint(len(columns))},
 		definitionFact{Label: "Schema mode", Value: mode},
 		definitionFact{Label: "Schema status", Value: status},
-		definitionFact{Label: "Observed fields", Value: fmt.Sprint(observedFields)},
-		definitionFact{Label: "Contract fields", Value: fmt.Sprint(len(fields))},
 	)
 	if observedAt := metaString(observation, "ObservedAt", "observedAt"); observedAt != "" {
 		if parsed, err := time.Parse(time.RFC3339Nano, observedAt); err == nil {

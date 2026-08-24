@@ -267,20 +267,13 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
-	if got := factValue(details.Overview, "Fields"); got != "2" {
-		t.Fatalf("fields fact = %q, want 2", got)
+	for _, label := range []string{"Entities", "Fields", "Documented fields", "Contracted fields", "Input sources"} {
+		if got := factValue(details.Overview, label); got != "" {
+			t.Fatalf("%s fact = %q, want duplicate summary omitted", label, got)
+		}
 	}
-	if got := factValue(details.Overview, "Documented fields"); got != "1" {
-		t.Fatalf("documented fields fact = %q, want 1", got)
-	}
-	if got := factValue(details.Overview, "Contracted fields"); got != "0" {
-		t.Fatalf("contracted fields fact = %q, want 0", got)
-	}
-	if got := factValue(details.Overview, "Input sources"); got != "1" {
-		t.Fatalf("input sources fact = %q, want 1", got)
-	}
-	if got := factValue(details.Overview, "Mode"); got != "Definition" {
-		t.Fatalf("mode fact = %q, want Definition", got)
+	if got := factValue(details.Overview, "Mode"); got != "SQL transform" {
+		t.Fatalf("mode fact = %q, want SQL transform", got)
 	}
 	if got := factValue(details.Overview, "Rows"); got != "99,441" {
 		t.Fatalf("rows fact = %q, want 99,441", got)
@@ -661,11 +654,10 @@ func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
 	if got := detailFactValue(sourceDetails.Overview, "Schema status"); got != "success" {
 		t.Fatalf("source schema status = %q, want success", got)
 	}
-	if got := detailFactValue(sourceDetails.Overview, "Observed fields"); got != "2" {
-		t.Fatalf("source observed fields = %q, want 2", got)
-	}
-	if got := detailFactValue(sourceDetails.Overview, "Contract fields"); got != "1" {
-		t.Fatalf("source contract fields = %q, want 1", got)
+	for _, label := range []string{"Fields", "Observed fields", "Contract fields"} {
+		if got := detailFactValue(sourceDetails.Overview, label); got != "" {
+			t.Fatalf("source %s fact = %q, want duplicate summary omitted", label, got)
+		}
 	}
 	if len(sourceDetails.Sections) != 1 || len(sourceDetails.Sections[0].Table.Rows) != 2 {
 		t.Fatalf("source field section = %#v, want two observed fields", sourceDetails.Sections)
@@ -868,8 +860,11 @@ func TestModelDetailUsesNamedEntitiesAndExactGrain(t *testing.T) {
 	for _, fact := range details.Overview {
 		overview[fact.Label] = fact.Value
 	}
-	if overview["Grain entity"] != "order_line" || overview["Entities"] != "1" {
-		t.Fatalf("overview = %#v, want named entity and grain", overview)
+	if overview["Grain entity"] != "order_line" {
+		t.Fatalf("overview = %#v, want named grain entity", overview)
+	}
+	if _, exists := overview["Entities"]; exists {
+		t.Fatalf("overview = %#v, want entity total only in section heading", overview)
 	}
 	if _, exists := overview["Primary key"]; exists {
 		t.Fatalf("overview = %#v, removed scalar primary-key contract is still exposed", overview)
