@@ -89,7 +89,7 @@ func modelLastRefreshedFact(asset projectview.DevelopAssetView) definitionFact {
 	if snapshotAt := metaString(physical, "SnapshotAt", "snapshotAt"); snapshotAt != "" {
 		value = formatCatalogTimestamp(snapshotAt)
 	}
-	return definitionFact{Label: "Last refreshed", Value: value}
+	return definitionFact{Label: "Last refreshed", Value: value, Wide: true}
 }
 
 func formatCatalogTimestamp(value string) string {

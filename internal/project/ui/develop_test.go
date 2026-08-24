@@ -291,6 +291,9 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Last refreshed"); got != "2026-08-24 14:32 UTC" {
 		t.Fatalf("last refreshed fact = %q, want serving snapshot time", got)
 	}
+	if !factWide(details.Overview, "Last refreshed") {
+		t.Fatal("last refreshed fact should span enough columns to display the complete timestamp")
+	}
 	if got := factValue(details.Overview, "Refresh status"); got != "" {
 		t.Fatalf("refresh status fact = %q, want compact freshness only", got)
 	}
@@ -444,6 +447,15 @@ func factValue(facts []uisignals.DefinitionFactSignal, label string) string {
 		}
 	}
 	return ""
+}
+
+func factWide(facts []uisignals.DefinitionFactSignal, label string) bool {
+	for _, fact := range facts {
+		if fact.Label == label {
+			return uisignals.ValueOrZero(fact.Wide)
+		}
+	}
+	return false
 }
 
 func TestDevelopCatalogUsesStableDashboardLinksWithoutProjectPicker(t *testing.T) {
