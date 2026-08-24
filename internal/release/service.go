@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -189,21 +190,13 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 	// authoritative size observed by the verifier so RecordArtifact can commit
 	// the complete payload atomically with the release row update.
 	if intent, ok := AuditIntentFromContext(ctx); ok {
-		var metadata map[string]any
-		if err := json.Unmarshal([]byte(intent.MetadataJSON), &metadata); err != nil {
-			return Artifact{}, err
-		}
-		payload, ok := metadata["payload"].(map[string]any)
-		if !ok {
-			return Artifact{}, fmt.Errorf("release audit metadata payload must be an object")
-		}
-		payload["digest"] = item.ActualDigest
-		payload["sizeBytes"] = item.SizeBytes
-		encoded, err := json.Marshal(metadata)
+		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(intent.MetadataJSON, map[string]any{
+			"digest": item.ActualDigest, "sizeBytes": item.SizeBytes,
+		})
 		if err != nil {
-			return Artifact{}, err
+			return Artifact{}, fmt.Errorf("release audit metadata: %w", err)
 		}
-		intent.MetadataJSON = string(encoded)
+		intent.MetadataJSON = metadata
 		ctx = WithAuditIntent(ctx, intent)
 	}
 	if err := s.releases.RecordArtifact(ctx, item); err != nil {

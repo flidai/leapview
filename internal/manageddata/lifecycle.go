@@ -17,6 +17,35 @@ var (
 	ErrConflict = apigenfailure.New("conflict", "managed data conflict")
 )
 
+// UploadTransition is the complete durable handoff for an upload state
+// transition. Workflow and audit are intentionally carried together so an
+// audited command cannot be reduced to an unaudited state mutation by an
+// adapter that only implements one half of the handoff.
+type UploadTransition struct {
+	Workflow    jobs.WorkflowIntent
+	AuditIntent *access.AuditIntent
+}
+
+// UploadTransitionPort owns the transaction containing either upload workflow
+// transition and its optional durable audit intent. Implementations must not
+// commit or roll back a caller-owned transaction outside this operation.
+//
+// The port is separate from Repository so the historical Repository methods
+// remain source-compatible for nonpersistent and test adapters. Durable
+// compositions wire this port explicitly.
+type UploadTransitionPort interface {
+	BeginUploadFinalizationTransition(context.Context, UploadID, UploadTransition) (UploadSession, error)
+	AbortUploadSessionTransition(context.Context, UploadID, UploadTransition) error
+}
+
+// WorkflowIntentPresent reports whether a workflow handoff contains an event
+// or queued job. It is shared by adapters so an audit-only transition does not
+// accidentally enqueue an empty workflow record.
+func WorkflowIntentPresent(intent jobs.WorkflowIntent) bool {
+	return intent.Event.Key != "" || intent.Event.ResourceKind != "" || intent.Event.ResourceID != "" || intent.Event.EventType != "" || len(intent.Event.Data) > 0 ||
+		intent.Job.ID != "" || intent.Job.Kind != "" || intent.Job.ResourceKind != "" || intent.Job.ResourceID != "" || len(intent.Job.Payload) > 0
+}
+
 type CollectionStatus string
 
 const (

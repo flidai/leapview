@@ -23,7 +23,7 @@ const (
 
 // auditOutboxReadiness reports only aggregate outbox state. In particular, it
 // never includes event identity or metadata in the readiness response.
-func auditOutboxReadiness(ctx context.Context, store access.AuditOutboxStore) error {
+func auditOutboxReadiness(ctx context.Context, store access.AuditOutboxStatsReader) error {
 	if store == nil {
 		return nil
 	}

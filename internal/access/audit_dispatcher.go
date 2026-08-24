@@ -10,7 +10,7 @@ import (
 )
 
 type AuditDispatcherConfig struct {
-	Store         AuditOutboxStore
+	Store         AuditOutboxDeliveryStore
 	PollInterval  time.Duration
 	LeaseDuration time.Duration
 	BaseRetry     time.Duration

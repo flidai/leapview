@@ -46,6 +46,11 @@ type Config struct {
 	VerifyConcurrency int
 	Transport         Transport
 	Clock             func() time.Time
+	// Transitions is the explicit transaction port for finalization and abort.
+	// It is required whenever a request carries workflow or audit intent. The
+	// historical Repository methods remain available for plain, non-audited
+	// transitions.
+	Transitions manageddata.UploadTransitionPort
 }
 
 type EnsureCollectionRequest struct {

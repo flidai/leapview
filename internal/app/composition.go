@@ -518,6 +518,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		cleanupErr := cleanup.Close(context.WithoutCancel(ctx))
 		return nil, nil, nil, errors.Join(err, cleanupErr)
 	}
+	auditRuntime, err := newAuditRuntime(store.SQLDB())
+	if err != nil {
+		return fail(fmt.Errorf("build access audit runtime: %w", err))
+	}
 	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
 		return fail(err)
 	}
@@ -566,7 +570,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
 	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{
-		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()), CredentialMode: credentialMode,
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, CredentialMode: credentialMode,
 		CredentialTarget: instanceID, CredentialProject: projectID, Environment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
 			InfisicalBaseURL: cfg.InfisicalBaseURL, InfisicalUniversalClientID: cfg.InfisicalUniversalClientID,
@@ -691,7 +695,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		},
 		AuthorizeConnection: manageddatamodule.ConnectionAuthorizer(authorizeConnection),
 		Jobs:                jobModule, Workflow: jobModule,
-		AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
+		AuditIntentRecorder: auditRuntime.recorder,
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
 			Interval: cfg.ManagedDataGCInterval,
 			Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
@@ -704,7 +708,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ExtensionPreparation: extensionSupply,
@@ -1001,7 +1005,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return runtimeHostModule.Acquire(ctx)
 	}
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()),
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
@@ -1463,7 +1467,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 	}
 	deploymentConfig := deploymentmodule.Config{
-		Database: store.SQLDB(), AuditIntentRecorder: accessmodule.NewAuditStore(store.SQLDB()), States: servingStateRepo, Runtime: deploymentRuntime,
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, States: servingStateRepo, Runtime: deploymentRuntime,
 		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
@@ -1621,7 +1625,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
 	routes, runtime, platformServices, policy, err := buildApplicationSurfaces(ctx, runtimeMetrics,
 		dataAssemblyInputs{
-			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
+			Database: store.SQLDB(), AuditRuntime: auditRuntime, PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
 			AccessRepo: accessRepo,
 		},

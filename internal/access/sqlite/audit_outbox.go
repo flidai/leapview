@@ -197,18 +197,7 @@ func (r *Repository) QuarantineAuditIntent(ctx context.Context, lease access.Aud
 	return r.transitionAuditIntent(ctx, lease, access.AuditIntentQuarantined, time.Now().UTC().Format(sqliteTimestampLayout), code)
 }
 
-func (r *Repository) RequeueAuditIntent(ctx context.Context, eventID string) error {
-	err := r.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{EventID: eventID})
-	if errors.Is(err, access.ErrAuditOutboxNotFound) {
-		// Preserve the historical state-protection contract for worker/admin
-		// callers that only supplied an event identity.
-		return access.ErrAuditIntentFence
-	}
-	return err
-}
-
 // RequeueAuditIntentExact performs one terminal-state compare-and-swap. The
-// optional expected values let an operator prove that the inspected terminal
 // row is still the row being recovered; no payload column is ever writable.
 func (r *Repository) RequeueAuditIntentExact(ctx context.Context, request access.AuditOutboxRequeueRequest) error {
 	if r == nil || r.root == nil {

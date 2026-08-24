@@ -269,7 +269,7 @@ func TestNewManagedDataStorageRejectsUnknownBackend(t *testing.T) {
 }
 
 func TestNewManagedDataControlRequiresStorage(t *testing.T) {
-	_, err := newManagedDataControl(nil, managedDataStorage{}, ProductConfig{})
+	_, err := newManagedDataControl(nil, nil, managedDataStorage{}, ProductConfig{})
 	if err == nil || !errors.Is(err, control.ErrInvalid) {
 		t.Fatalf("error = %v, want control.ErrInvalid", err)
 	}

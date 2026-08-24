@@ -904,11 +904,10 @@ func (r *Repository) begin(ctx context.Context) (*sql.Tx, error) {
 }
 
 // recordAuditIntent completes the transport-built intent with identities that
-// only exist after the authoring mutation has been validated. Revision number
-// is the source-owned aggregate sequence; the immutable command identity,
-// revision token, and dashboard aggregate make the event identity stable
-// across retries without copying authored documents or query content into
-// audit metadata.
+// only exist after the authoring mutation has been validated. Access owns
+// aggregate sequence allocation; the immutable command identity, revision
+// token, and dashboard aggregate make retries stable without copying authored
+// documents or query content into audit metadata.
 func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, lifecycle authoring.DashboardLifecycle, revision authoring.Revision, commandID string) error {
 	intent, ok := authoring.AuditIntentFromContext(ctx)
 	if !ok {
@@ -922,14 +921,7 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	intent.ResourceKind = "dashboard"
 	intent.ResourceID = lifecycle.ID.String()
 	intent.AggregateKey = aggregateKey
-	var priorSequence int64
-	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(aggregate_sequence), 0) FROM audit_outbox WHERE aggregate_key = ?`, aggregateKey).Scan(&priorSequence); err != nil {
-		return fmt.Errorf("dashboard authoring audit intent sequence: %w", err)
-	}
-	intent.AggregateSequence = int64(revision.Number)
-	if intent.AggregateSequence <= priorSequence {
-		intent.AggregateSequence = priorSequence + 1
-	}
+	intent.AggregateSequence = 0
 	commandID = strings.TrimSpace(commandID)
 	if commandID == "" {
 		return fmt.Errorf("dashboard authoring audit command identity is required")
@@ -941,32 +933,21 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	sum := sha256.Sum256([]byte(identity))
 	intent.EventID = "dashboard-authoring:" + hex.EncodeToString(sum[:16])
 
-	metadata := map[string]any{}
-	if strings.TrimSpace(intent.MetadataJSON) != "" {
-		if err := json.Unmarshal([]byte(intent.MetadataJSON), &metadata); err != nil || metadata == nil {
-			if err == nil {
-				err = fmt.Errorf("metadata must be an object")
-			}
-			return fmt.Errorf("dashboard authoring audit metadata: %w", err)
-		}
+	fields := map[string]any{
+		"operationId": intent.Operation,
+		"projectId":   projectID,
+		"dashboardId": lifecycle.ID.String(),
 	}
-	payload := metadata
-	if nested, exists := metadata["payload"].(map[string]any); exists {
-		payload = nested
-	}
-	if _, exists := payload["operationId"]; !exists {
-		payload["operationId"] = intent.Operation
-	}
-	payload["projectId"] = projectID
-	payload["dashboardId"] = lifecycle.ID.String()
 	// Archived published-only dashboards legitimately have no draft pointer.
 	// Preserve draft metadata when it exists, and derive the origin from the
 	// mutation revision first with lifecycle provenance as a safe fallback for
 	// transitions (such as archive) that only carry a revision token.
 	if lifecycle.Draft != nil {
-		payload["draftId"] = lifecycle.Draft.ID.String()
+		fields["draftId"] = lifecycle.Draft.ID.String()
+	} else {
+		fields["draftId"] = ""
 	}
-	if _, exists := payload["origin"]; !exists {
+	if lifecycle.Draft != nil || lifecycle.Published != nil {
 		origin := revision.Provenance.Origin
 		if !origin.Valid() && lifecycle.Draft != nil {
 			origin = lifecycle.Draft.Provenance.Origin
@@ -975,14 +956,14 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 			origin = lifecycle.Published.Provenance.Origin
 		}
 		if origin.Valid() {
-			payload["origin"] = string(origin)
+			fields["origin"] = string(origin)
 		}
 	}
-	encoded, err := json.Marshal(metadata)
+	metadata, err := access.RewriteGeneratedAuditEnvelopePayload(intent.MetadataJSON, fields)
 	if err != nil {
 		return fmt.Errorf("dashboard authoring audit metadata: %w", err)
 	}
-	intent.MetadataJSON = string(encoded)
+	intent.MetadataJSON = metadata
 	return r.audit.RecordAuditIntent(ctx, tx, intent)
 }
 

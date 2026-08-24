@@ -118,9 +118,9 @@ type AuditOutboxInspection struct {
 	Truncated bool
 }
 
-// AuditOutboxRequeueRequest provides optional compare-and-swap guards for a
-// recovery operation. EventID is always required; omitted optional guards
-// preserve the original state-protected API for trusted callers.
+// AuditOutboxRequeueRequest provides optional compare-and-swap guards for the
+// operator recovery operation. EventID is always required; an omitted guard
+// means that dimension is not part of the compare-and-swap.
 type AuditOutboxRequeueRequest struct {
 	EventID               string
 	ExpectedState         AuditIntentState
@@ -129,24 +129,29 @@ type AuditOutboxRequeueRequest struct {
 	ExpectedPayloadDigest string
 }
 
-// AuditOutboxOperator is the least-privilege operator surface. It is separate
-// from AuditOutboxStore so worker implementations and producer packages do not
-// gain inspection or recovery authority accidentally.
-type AuditOutboxOperator interface {
-	InspectAuditOutbox(context.Context, time.Time, int) (AuditOutboxInspection, error)
-	RequeueAuditIntentExact(context.Context, AuditOutboxRequeueRequest) error
-}
-
-// AuditOutboxStore is the durable worker and operator boundary. Complete must
-// atomically materialize the final Access event and fence the leased intent.
-type AuditOutboxStore interface {
+// AuditOutboxDeliveryStore is the least-privilege worker surface. It contains only
+// the lease and state-transition operations needed by the dispatcher; in
+// particular, it cannot inspect terminal payload facts or recover an intent.
+type AuditOutboxDeliveryStore interface {
 	ClaimAuditIntent(context.Context, string, time.Duration) (AuditIntentLease, bool, error)
 	CompleteAuditIntent(context.Context, AuditIntentLease) error
 	RetryAuditIntent(context.Context, AuditIntentLease, time.Time, string) error
 	PoisonAuditIntent(context.Context, AuditIntentLease, string) error
 	QuarantineAuditIntent(context.Context, AuditIntentLease, string) error
-	RequeueAuditIntent(context.Context, string) error
+}
+
+// AuditOutboxStatsReader is the aggregate-only observability surface. It is
+// intentionally separate from delivery and operator controls so metrics and
+// readiness cannot acquire mutation authority.
+type AuditOutboxStatsReader interface {
 	AuditOutboxStats(context.Context, time.Time) (AuditOutboxStats, error)
+}
+
+// AuditOutboxOperator is the least-privilege operator surface. It is separate
+// from worker and producer contracts and only exposes guarded recovery.
+type AuditOutboxOperator interface {
+	InspectAuditOutbox(context.Context, time.Time, int) (AuditOutboxInspection, error)
+	RequeueAuditIntentExact(context.Context, AuditOutboxRequeueRequest) error
 }
 
 // AuditStore is the module-owned durable audit surface used by process
@@ -154,7 +159,8 @@ type AuditOutboxStore interface {
 // lifecycle and operator wiring may use the worker or recovery subsets.
 type AuditStore interface {
 	AuditIntentRecorder
-	AuditOutboxStore
+	AuditOutboxDeliveryStore
+	AuditOutboxStatsReader
 	AuditOutboxOperator
 }
 

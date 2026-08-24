@@ -24,7 +24,7 @@ func TestRecordAgentRunAuditIntentUsesRunResourceIdentity(t *testing.T) {
 	intent := &access.AuditIntent{
 		EventID: "pending", Source: "agent", Operation: "createAgentRun",
 		ResourceKind: "conversation", ResourceID: "conversation-1",
-		MetadataJSON: `{"payload":{"resourceKind":"conversation","resourceId":"conversation-1"}}`,
+		MetadataJSON: `{"schemaVersion":1,"retention":"security","payloadSchema":"AgentRunAuditPayload","payload":{"resourceKind":"conversation","resourceId":"conversation-1"}}`,
 	}
 
 	if err := repo.recordAuditIntent(t.Context(), nil, intent, "run-1", "run-1"); err != nil {

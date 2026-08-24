@@ -14,30 +14,6 @@ type auditOutboxStatsStore struct {
 	err   error
 }
 
-func (s auditOutboxStatsStore) ClaimAuditIntent(context.Context, string, time.Duration) (access.AuditIntentLease, bool, error) {
-	return access.AuditIntentLease{}, false, nil
-}
-
-func (s auditOutboxStatsStore) CompleteAuditIntent(context.Context, access.AuditIntentLease) error {
-	return nil
-}
-
-func (s auditOutboxStatsStore) RetryAuditIntent(context.Context, access.AuditIntentLease, time.Time, string) error {
-	return nil
-}
-
-func (s auditOutboxStatsStore) PoisonAuditIntent(context.Context, access.AuditIntentLease, string) error {
-	return nil
-}
-
-func (s auditOutboxStatsStore) QuarantineAuditIntent(context.Context, access.AuditIntentLease, string) error {
-	return nil
-}
-
-func (s auditOutboxStatsStore) RequeueAuditIntent(context.Context, string) error {
-	return nil
-}
-
 func (s auditOutboxStatsStore) AuditOutboxStats(context.Context, time.Time) (access.AuditOutboxStats, error) {
 	return s.stats, s.err
 }

@@ -66,12 +66,6 @@ func (s *dispatcherStore) QuarantineAuditIntent(_ context.Context, _ AuditIntent
 	return s.quarantineErr
 }
 
-func (s *dispatcherStore) RequeueAuditIntent(context.Context, string) error { return nil }
-
-func (s *dispatcherStore) AuditOutboxStats(context.Context, time.Time) (AuditOutboxStats, error) {
-	return AuditOutboxStats{}, nil
-}
-
 func dispatcherLease(attempt int) AuditIntentLease {
 	return AuditIntentLease{
 		Intent: AuditIntent{EventID: "dispatcher-event"},

@@ -280,11 +280,22 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, errors.New("candidate project claim binder is required")
 		}
 		if config.API.Workflow != nil {
-			config.API.Committer = workflowAuditCommitter{
+			ownedCommitter := workflowAuditCommitter{
 				database: config.Database,
 				workflow: config.API.Workflow,
 				audit:    config.AuditIntentRecorder,
 			}
+			config.API.Committer = ownedCommitter
+			config.API.AuditedCommitter = ownedCommitter
+		} else if config.API.AuditedCommitter == nil {
+			if audited, ok := config.API.Committer.(AuditedWorkflowCommitter); ok {
+				config.API.AuditedCommitter = audited
+			} else {
+				return nil, errors.New("deployment audited workflow committer is required")
+			}
+		}
+		if config.API.Committer == nil {
+			config.API.Committer = config.API.AuditedCommitter
 		}
 		cancelJob, cancelJobOK := config.API.Jobs.(jobplatform.WorkflowJobCanceller)
 		if config.API.Jobs != nil && !cancelJobOK {

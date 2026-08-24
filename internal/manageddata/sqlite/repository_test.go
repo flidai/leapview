@@ -172,7 +172,7 @@ func TestBeginUploadFinalizationRollsBackWhenAuditIntentCannotBeRecorded(t *test
 		t.Fatal(err)
 	}
 	repo := NewRepositoryWithWorkflowAndAudit(db, nil, failingAuditIntentRecorder{err: errors.New("injected audit failure")})
-	_, err = repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, validManagedDataAuditIntent())
+	_, err = repo.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{AuditIntent: validManagedDataAuditIntent()})
 	if err == nil || !strings.Contains(err.Error(), "injected audit failure") {
 		t.Fatalf("audited finalization error = %v, want injected audit failure", err)
 	}
@@ -197,10 +197,10 @@ func TestBeginUploadFinalizationAuditIntentIsIdempotent(t *testing.T) {
 	intent.Operation = "managed_data.upload_session.finalize"
 	intent.AggregateKey = "managed_data_upload_session:" + session.ID.String()
 	repo := NewRepositoryWithAudit(db, accesssqlite.NewRepository(db))
-	if _, err := repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, intent); err != nil {
+	if _, err := repo.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{AuditIntent: intent}); err != nil {
 		t.Fatalf("first audited finalization: %v", err)
 	}
-	if _, err := repo.BeginUploadFinalizationWithAudit(ctx, session.ID, jobs.WorkflowIntent{}, intent); err != nil {
+	if _, err := repo.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{AuditIntent: intent}); err != nil {
 		t.Fatalf("idempotent audited finalization: %v", err)
 	}
 	var count int
@@ -221,7 +221,7 @@ func TestAbortUploadSessionWithWorkflowRollsBackStateOnEventFailure(t *testing.T
 	}
 	injected := errors.New("injected workflow failure")
 	repo := NewRepositoryWithWorkflow(db, jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return injected }))
-	err = repo.AbortUploadSessionWithWorkflow(ctx, session.ID, jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}})
+	err = repo.AbortUploadSessionTransition(ctx, session.ID, manageddata.UploadTransition{Workflow: jobs.WorkflowIntent{Event: jobs.EventInput{EventType: "upload_session.cancelled"}}})
 	if !errors.Is(err, injected) {
 		t.Fatalf("abort error=%v", err)
 	}
@@ -248,7 +248,7 @@ func TestAbortUploadSessionWithWorkflowConcurrentReplayEmitsOneEvent(t *testing.
 		group.Add(1)
 		go func() {
 			defer group.Done()
-			if callErr := repo.AbortUploadSessionWithWorkflow(ctx, session.ID, intent); callErr == nil {
+			if callErr := repo.AbortUploadSessionTransition(ctx, session.ID, manageddata.UploadTransition{Workflow: intent}); callErr == nil {
 				mu.Lock()
 				successes++
 				mu.Unlock()

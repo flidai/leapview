@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -18,11 +19,27 @@ import (
 )
 
 func authoringAuditIntent(operation, action string) access.AuditIntent {
+	payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: operation, ProjectId: "project:sales", DashboardId: "pending-dashboard", DraftId: "pending-draft", Origin: "agent"}
+	metadata, err := func() (string, error) {
+		switch operation {
+		case "createDashboardAuthoringDraft":
+			return dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
+		case "executeDashboardAuthoringCommand":
+			return dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(payload)
+		case "forkDashboardAuthoringDraft":
+			return dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
+		default:
+			return dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(payload)
+		}
+	}()
+	if err != nil {
+		panic(err)
+	}
 	return access.AuditIntent{
 		EventID: "dashboard-authoring:pending", Source: "dashboard.authoring", Operation: operation,
 		PrincipalID: "actor", Action: action, Capability: access.CapabilityResourceEdit, Outcome: "success",
 		RequestID: "request-1", CorrelationID: "request-1",
-		MetadataJSON: `{"operationId":"` + operation + `","projectId":"project:sales","dashboardId":"pending-dashboard","draftId":"pending-draft","origin":"agent"}`,
+		MetadataJSON: metadata,
 	}
 }
 
@@ -176,7 +193,8 @@ func TestAuthoringArchiveAuditIntentSupportsPublishedOnlyLifecycle(t *testing.T)
 		t.Fatalf("published-only lifecycle = %#v (%v)", publishedOnly, err)
 	}
 	intent := authoringAuditIntent("archiveDashboardAuthoring", "dashboard_authoring.archived")
-	intent.MetadataJSON = `{"operationId":"archiveDashboardAuthoring"}`
+	archivePayload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: "archiveDashboardAuthoring", ProjectId: "project:sales", DashboardId: "pending-dashboard", DraftId: "pending-draft", Origin: "agent"}
+	intent.MetadataJSON, _ = dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(archivePayload)
 	archived, err := repository.Archive(authoring.WithAuditIntent(ctx, intent), authoring.ArchiveInput{
 		ProjectID: created.ProjectID, DashboardID: created.ID, ExpectedCurrentRevision: publishedOnly.Published.Revision,
 		Evidence: authoring.CommandEvidence{ID: "archive-published-only", Fingerprint: "archive-published-only", Action: authoring.AuthorizationActionArchive, Provenance: provenance, OccurredAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)},
@@ -191,7 +209,7 @@ func TestAuthoringArchiveAuditIntentSupportsPublishedOnlyLifecycle(t *testing.T)
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT metadata_json FROM audit_outbox WHERE aggregate_key = ?`, "dashboard_authoring:project:sales:dashboard:published-only").Scan(&metadata); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(metadata, `"origin":"agent"`) || strings.Contains(metadata, `"draftId"`) {
+	if !strings.Contains(metadata, `"origin":"agent"`) || !strings.Contains(metadata, `"draftId":""`) {
 		t.Fatalf("published-only archive metadata = %s", metadata)
 	}
 }

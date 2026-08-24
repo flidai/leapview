@@ -128,7 +128,7 @@ type platformServices struct {
 	asyncJobs               jobs.Repository
 	jobModule               *jobsmodule.Module
 	auditDispatcher         *access.AuditDispatcher
-	auditOutbox             access.AuditOutboxStore
+	auditOutbox             access.AuditOutboxStatsReader
 	auth                    *accessmodule.Auth
 	assets                  staticasset.Resolver
 	buildIdentity           buildinfo.Identity
@@ -160,6 +160,7 @@ type persistenceInputs struct {
 	adminDatabase    *sql.DB
 	servingStateRepo servingStateRepository
 	accessRepo       access.Repository
+	auditRecorder    access.AuditIntentRecorder
 	product          *adminmodule.ProductService
 	productStatus    adminmodule.ProductStatus
 }
@@ -221,6 +222,7 @@ func newCompositionSurfaces(
 
 type dataAssemblyInputs struct {
 	Database         *sql.DB
+	AuditRuntime     *auditRuntime
 	PlatformHealth   platformHealth
 	AdminDatabase    *sql.DB
 	ServingStateRepo servingStateRepository
@@ -555,6 +557,17 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
+	audit := data.AuditRuntime
+	if data.Database != nil && audit == nil {
+		var err error
+		audit, err = newAuditRuntime(data.Database)
+		if err != nil {
+			return fail(fmt.Errorf("build access audit runtime: %w", err))
+		}
+	}
+	if data.Database != nil && (audit == nil || audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
+		return fail(errors.New("durable audit runtime facets are unavailable"))
+	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
@@ -608,6 +621,9 @@ func buildApplicationSurfaces(
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
 	persistence.adminDatabase = data.AdminDatabase
+	if audit != nil {
+		persistence.auditRecorder = audit.recorder
+	}
 	persistence.product = capabilities.Product
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
@@ -624,12 +640,11 @@ func buildApplicationSurfaces(
 			}
 		}
 		platform.asyncJobs = platform.jobModule
-		// Access audit intents share the platform SQL database. Keep the
-		// dispatcher repository private to the lifecycle worker rather than
-		// widening the Access module's construction surface.
-		platform.auditOutbox = accessmodule.NewAuditStore(data.Database)
+		// Access audit intents share the platform SQL database. Inject the narrow
+		// delivery and observability facets into lifecycle consumers.
+		platform.auditOutbox = audit.stats
 		platform.auditDispatcher, err = access.NewAuditDispatcher(access.AuditDispatcherConfig{
-			Store:  platform.auditOutbox,
+			Store:  audit.delivery,
 			Logger: platform.logger,
 		})
 		if err != nil {
@@ -817,7 +832,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
-				AuditIntentRecorder: accessmodule.NewAuditStore(database), RequireAuditIntent: true,
+				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: database != nil,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -963,7 +978,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:            database,
 			Authoring:           routes.dashboardAuthoring,
-			AuditIntentRecorder: accessmodule.NewAuditStore(database),
+			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
@@ -1290,7 +1305,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 		}
 		if database != nil {
-			agentConfig.AuditIntentRecorder = accessmodule.NewAuditStore(database)
+			agentConfig.AuditIntentRecorder = persistence.auditRecorder
 		}
 		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
 		if err != nil {

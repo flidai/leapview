@@ -247,16 +247,12 @@ func (r *Repository) UpdateUploadProgress(ctx context.Context, id manageddata.Up
 }
 
 func (r *Repository) BeginUploadFinalization(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) (manageddata.UploadSession, error) {
-	return r.beginUploadFinalization(ctx, id, workflow, nil)
+	return r.BeginUploadFinalizationTransition(ctx, id, manageddata.UploadTransition{Workflow: workflow})
 }
 
-// BeginUploadFinalizationWithAudit records the command intent in the same
-// transaction as the committing state transition and workflow enqueue.
-func (r *Repository) BeginUploadFinalizationWithAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) (manageddata.UploadSession, error) {
-	return r.beginUploadFinalization(ctx, id, workflow, intent)
-}
-
-func (r *Repository) beginUploadFinalization(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) (manageddata.UploadSession, error) {
+// BeginUploadFinalizationTransition atomically records the upload transition,
+// workflow handoff, and (when supplied) durable audit intent.
+func (r *Repository) BeginUploadFinalizationTransition(ctx context.Context, id manageddata.UploadID, transition manageddata.UploadTransition) (manageddata.UploadSession, error) {
 	idString := id.String()
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -271,11 +267,11 @@ func (r *Repository) beginUploadFinalization(ctx context.Context, id manageddata
 			return manageddata.UploadSession{}, err
 		}
 	}
-	if workflow.Job.ID != "" {
+	if manageddata.WorkflowIntentPresent(transition.Workflow) {
 		if r.workflow == nil {
 			return manageddata.UploadSession{}, fmt.Errorf("managed-data workflow recorder is required")
 		}
-		if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
+		if err := r.workflow.RecordWorkflow(ctx, tx, transition.Workflow); err != nil {
 			return manageddata.UploadSession{}, err
 		}
 	}
@@ -283,7 +279,7 @@ func (r *Repository) beginUploadFinalization(ctx context.Context, id manageddata
 	if err != nil {
 		return manageddata.UploadSession{}, mapError(err)
 	}
-	if err := r.recordAuditIntent(ctx, tx, intent); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, transition.AuditIntent); err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -310,21 +306,9 @@ func (r *Repository) AbortUploadSession(ctx context.Context, id manageddata.Uplo
 	return expectOne(result, err, "upload session is not open")
 }
 
-func (r *Repository) AbortUploadSessionWithWorkflow(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent) error {
-	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, workflow, nil, true)
-}
-
-// AbortUploadSessionWithAudit records a cancellation intent in the same
-// transaction as the terminal upload transition.
-func (r *Repository) AbortUploadSessionWithAudit(ctx context.Context, id manageddata.UploadID, intent *access.AuditIntent) error {
-	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, jobs.WorkflowIntent{}, intent, false)
-}
-
-func (r *Repository) AbortUploadSessionWithWorkflowAndAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent) error {
-	return r.abortUploadSessionWithWorkflowAndAudit(ctx, id, workflow, intent, true)
-}
-
-func (r *Repository) abortUploadSessionWithWorkflowAndAudit(ctx context.Context, id manageddata.UploadID, workflow jobs.WorkflowIntent, intent *access.AuditIntent, requireWorkflow bool) error {
+// AbortUploadSessionTransition atomically records the upload cancellation,
+// workflow handoff, and (when supplied) durable audit intent.
+func (r *Repository) AbortUploadSessionTransition(ctx context.Context, id manageddata.UploadID, transition manageddata.UploadTransition) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -335,15 +319,15 @@ func (r *Repository) abortUploadSessionWithWorkflowAndAudit(ctx context.Context,
 	if err := expectOne(result, err, "upload session is not open"); err != nil {
 		return err
 	}
-	if requireWorkflow || workflow.Job.ID != "" {
+	if manageddata.WorkflowIntentPresent(transition.Workflow) {
 		if r.workflow == nil {
 			return fmt.Errorf("managed-data workflow recorder is required")
 		}
-		if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
+		if err := r.workflow.RecordWorkflow(ctx, tx, transition.Workflow); err != nil {
 			return err
 		}
 	}
-	if err := r.recordAuditIntent(ctx, tx, intent); err != nil {
+	if err := r.recordAuditIntent(ctx, tx, transition.AuditIntent); err != nil {
 		return err
 	}
 	return tx.Commit()
@@ -1270,4 +1254,7 @@ func mapError(err error) error {
 	return err
 }
 
-var _ manageddata.Repository = (*Repository)(nil)
+var (
+	_ manageddata.Repository           = (*Repository)(nil)
+	_ manageddata.UploadTransitionPort = (*Repository)(nil)
+)

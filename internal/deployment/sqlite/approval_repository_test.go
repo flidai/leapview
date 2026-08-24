@@ -96,6 +96,11 @@ func TestApprovalAuditIntentTracksAtomicRequestAndDecision(t *testing.T) {
 	approved.ApprovedAt = now.Add(time.Minute)
 	approved.Revision = 2
 	decisionIntent := access.AuditIntent{EventID: "approval-decision-audit", Source: "deployment", Operation: "approveDeployment", Action: "deployment.approved", ResourceKind: "project", ResourceID: "finance", Capability: access.CapabilityProjectAdmin, Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0, MetadataJSON: `{"approvalId":"approval-audit","approvalRevision":2}`}
+	decisionMetadata, err := deploymentgen.EncodeGenApproveDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: approved.DeploymentID, ApprovalId: "approval-audit", ApprovalRevision: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decisionIntent.MetadataJSON = decisionMetadata
 	if _, err := repository.SaveApproval(deployment.WithAuditIntent(ctx, decisionIntent), approved, 1); err != nil {
 		t.Fatal(err)
 	}
@@ -130,8 +135,8 @@ func TestApprovalReplacementAuditIntentUsesUniqueAggregateIdentity(t *testing.T)
 		Action: "deployment.approval_requested", ResourceKind: "project", ResourceID: "finance",
 		Capability: access.CapabilityResourcePublish, Outcome: "success",
 		AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0,
-		MetadataJSON: `{"approvalId":""}`,
 	}
+	requestIntent.MetadataJSON, _ = deploymentgen.EncodeGenRequestDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalRequestedAuditPayload{DeploymentId: first.DeploymentID, ApprovalId: ""})
 	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, requestIntent), first); err != nil {
 		t.Fatal(err)
 	}
@@ -181,7 +186,11 @@ func TestApprovalCreateRollsBackWhenAuditIntentFails(t *testing.T) {
 	repository := NewRepositoryWithHooks(db, ActivationHooks{Audit: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return injected })})
 	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
 	pending := deployment.Approval{ID: "approval-audit-rollback", ProjectID: "finance", DeploymentID: "deployment_1", Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1", Status: deployment.ApprovalPending, RequestedBy: "publisher", RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1", RequestedAt: now, ExpiresAt: now.Add(time.Hour), Revision: 1}
-	intent := access.AuditIntent{EventID: "approval-create-rollback", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 1, MetadataJSON: `{}`}
+	metadata, err := deploymentgen.EncodeGenRequestDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalRequestedAuditPayload{DeploymentId: pending.DeploymentID, ApprovalId: ""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := access.AuditIntent{EventID: "approval-create-rollback", Source: "deployment", Operation: "requestDeploymentApproval", Action: "deployment.approval_requested", Outcome: "success", AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 1, MetadataJSON: metadata}
 	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, intent), pending); !errors.Is(err, injected) {
 		t.Fatalf("CreateApproval error = %v, want injected audit failure", err)
 	}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	adminsqlite "github.com/flidai/leapview/internal/admin/sqlite"
@@ -417,8 +418,8 @@ func (control auditOutboxControl) Status(ctx context.Context) (adminoffline.Audi
 		return adminoffline.AuditOutboxStatus{}, err
 	}
 	defer store.Close()
-	repository := accesssqlite.NewRepository(store.SQLDB())
-	inspection, err := repository.InspectAuditOutbox(ctx, time.Now().UTC(), access.MaxAuditOutboxInspectionRows)
+	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	inspection, err := operator.InspectAuditOutbox(ctx, time.Now().UTC(), access.MaxAuditOutboxInspectionRows)
 	if err != nil {
 		return adminoffline.AuditOutboxStatus{}, err
 	}
@@ -440,15 +441,6 @@ func (control auditOutboxControl) Status(ctx context.Context) (adminoffline.Audi
 	}, nil
 }
 
-func (control auditOutboxControl) Requeue(ctx context.Context, eventID string) error {
-	store, err := platform.Open(ctx, control.dbPath)
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	return accesssqlite.NewRepository(store.SQLDB()).RequeueAuditIntent(ctx, eventID)
-}
-
 func (control auditOutboxControl) RequeueExact(ctx context.Context, request adminoffline.AuditOutboxRequest) error {
 	store, err := platform.Open(ctx, control.dbPath)
 	if err != nil {
@@ -456,7 +448,8 @@ func (control auditOutboxControl) RequeueExact(ctx context.Context, request admi
 	}
 	defer store.Close()
 	attempts := request.ExpectedAttempts
-	return accesssqlite.NewRepository(store.SQLDB()).RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{
+	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	return operator.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{
 		EventID: request.RequeueEventID, ExpectedState: access.AuditIntentState(request.ExpectedState),
 		ExpectedAttempts: attempts, ExpectedFailureCode: request.ExpectedFailureCode,
 		ExpectedPayloadDigest: request.ExpectedPayloadDigest,

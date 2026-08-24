@@ -25,7 +25,7 @@ import (
 // The latter is the important at-least-once case: replay must not duplicate the
 // final audit event.
 type auditFailureStore struct {
-	inner access.AuditOutboxStore
+	inner access.AuditOutboxDeliveryStore
 
 	mu                  sync.Mutex
 	completeFailures    int
@@ -67,14 +67,6 @@ func (s *auditFailureStore) QuarantineAuditIntent(ctx context.Context, lease acc
 	return s.inner.QuarantineAuditIntent(ctx, lease, code)
 }
 
-func (s *auditFailureStore) RequeueAuditIntent(ctx context.Context, eventID string) error {
-	return s.inner.RequeueAuditIntent(ctx, eventID)
-}
-
-func (s *auditFailureStore) AuditOutboxStats(ctx context.Context, now time.Time) (access.AuditOutboxStats, error) {
-	return s.inner.AuditOutboxStats(ctx, now)
-}
-
 func openAuditConformanceStore(t *testing.T, ctx context.Context) (*platform.Store, *Repository, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "audit-conformance.db")
@@ -86,7 +78,7 @@ func openAuditConformanceStore(t *testing.T, ctx context.Context) (*platform.Sto
 	return store, NewRepository(store.SQLDB()), path
 }
 
-func conformanceDispatcher(t *testing.T, store access.AuditOutboxStore, maxAttempts int) *access.AuditDispatcher {
+func conformanceDispatcher(t *testing.T, store access.AuditOutboxDeliveryStore, maxAttempts int) *access.AuditDispatcher {
 	t.Helper()
 	dispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{
 		Store: store, PollInterval: time.Millisecond, LeaseDuration: time.Minute,

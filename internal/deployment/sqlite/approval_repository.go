@@ -3,12 +3,12 @@ package sqlite
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	platformdb "github.com/flidai/leapview/internal/deployment/internal/db"
 )
@@ -205,7 +205,7 @@ func (r *Repository) recordApprovalAuditIntent(ctx context.Context, tx *sql.Tx, 
 		// Request-approval intents are built before the repository allocates its
 		// random approval identity. Fill only that generated metadata field here;
 		// all other metadata remains transport-owned and canonical.
-		metadata, err := setAuditMetadataString(intent.MetadataJSON, "approvalId", approval.ID)
+		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(intent.MetadataJSON, map[string]any{"approvalId": approval.ID})
 		if err != nil {
 			return err
 		}
@@ -225,30 +225,6 @@ func approvalAuditAggregateKey(key, approvalID string) string {
 		return key[:index+len(marker)] + ":" + approvalID
 	}
 	return key + ":" + approvalID
-}
-
-func setAuditMetadataString(raw, key, value string) (string, error) {
-	var metadata map[string]any
-	if err := json.Unmarshal([]byte(raw), &metadata); err != nil || metadata == nil {
-		if err == nil {
-			err = fmt.Errorf("metadata must be an object")
-		}
-		return "", fmt.Errorf("deployment audit metadata: %w", err)
-	}
-	payload := metadata
-	if _, generatedEnvelope := metadata["payloadSchema"]; generatedEnvelope {
-		nested, ok := metadata["payload"].(map[string]any)
-		if !ok {
-			return "", fmt.Errorf("deployment audit metadata payload must be an object")
-		}
-		payload = nested
-	}
-	payload[key] = value
-	encoded, err := json.Marshal(metadata)
-	if err != nil {
-		return "", fmt.Errorf("encode deployment audit metadata: %w", err)
-	}
-	return string(encoded), nil
 }
 
 // appendApprovalEventTx bridges the deployment approval projection to the

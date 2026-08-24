@@ -174,18 +174,8 @@ func (service *Service) AuditOutbox(ctx context.Context, request AuditOutboxRequ
 		}
 		defer lock.Release()
 		request.RequeueEventID = eventID
-		if exact, ok := service.deps.AuditOutbox.(AuditOutboxExactRecovery); ok &&
-			(request.ExpectedState != "" || request.ExpectedAttempts != nil || request.ExpectedFailureCode != "" || request.ExpectedPayloadDigest != "") {
-			if err := exact.RequeueExact(ctx, request); err != nil {
-				return fmt.Errorf("requeue audit intent: %w", err)
-			}
-		} else {
-			if request.ExpectedState != "" || request.ExpectedAttempts != nil || request.ExpectedFailureCode != "" || request.ExpectedPayloadDigest != "" {
-				return fmt.Errorf("exact audit outbox recovery is unavailable")
-			}
-			if err := service.deps.AuditOutbox.Requeue(ctx, eventID); err != nil {
-				return fmt.Errorf("requeue audit intent: %w", err)
-			}
+		if err := service.deps.AuditOutbox.RequeueExact(ctx, request); err != nil {
+			return fmt.Errorf("requeue audit intent: %w", err)
 		}
 		fmt.Fprintf(out, "requeued event: %s\n", eventID)
 	}

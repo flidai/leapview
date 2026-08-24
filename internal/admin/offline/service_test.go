@@ -124,6 +124,10 @@ func (outbox *fakeAuditOutbox) Requeue(_ context.Context, eventID string) error 
 	return nil
 }
 
+func (outbox *fakeAuditOutbox) RequeueExact(ctx context.Context, request AuditOutboxRequest) error {
+	return outbox.Requeue(ctx, request.RequeueEventID)
+}
+
 func (retention *fakeRetention) Prune(_ context.Context, policy RetentionPolicy) (RetentionResult, error) {
 	retention.calls++
 	retention.policy = policy

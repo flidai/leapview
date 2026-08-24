@@ -472,7 +472,7 @@ func TestRequeueAuditIntentResetsTerminalStateAndRecordsRecoveryAudit(t *testing
 	if err := repo.PoisonAuditIntent(ctx, lease, "SINK_POISON"); err != nil {
 		t.Fatal(err)
 	}
-	if err := repo.RequeueAuditIntent(ctx, "requeue-event"); err != nil {
+	if err := repo.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{EventID: "requeue-event"}); err != nil {
 		t.Fatalf("requeue: %v", err)
 	}
 	var state, owner, errorCode string
@@ -490,7 +490,7 @@ func TestRequeueAuditIntentResetsTerminalStateAndRecordsRecoveryAudit(t *testing
 	if recoveryCount != 1 {
 		t.Fatalf("requeue recovery audit rows = %d, want 1", recoveryCount)
 	}
-	if err := repo.RequeueAuditIntent(ctx, "requeue-event"); !errors.Is(err, access.ErrAuditIntentFence) {
+	if err := repo.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{EventID: "requeue-event"}); !errors.Is(err, access.ErrAuditIntentFence) {
 		t.Fatalf("requeue nonterminal event = %v, want ErrAuditIntentFence", err)
 	}
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_events WHERE action = 'audit.outbox.requeued' AND resource_id = 'requeue-event'`).Scan(&recoveryCount); err != nil {

@@ -182,7 +182,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	uploads, err := newManagedDataControl(repository, services, cfg.Product)
+	uploads, err := newManagedDataControl(repository, repository, services, cfg.Product)
 	if err != nil {
 		return nil, err
 	}
@@ -511,14 +511,15 @@ func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*man
 	})
 }
 
-func newManagedDataControl(repo control.Repository, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
+func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
 	return control.New(repo, services.blobs, control.Config{
 		Limits: manageddata.Limits{
 			MaxFiles:         cfg.MaxFiles,
 			MaxFileBytes:     cfg.MaxFileBytes,
 			MaxRevisionBytes: cfg.MaxRevisionBytes,
 		},
-		UploadTTL: cfg.UploadSessionTTL,
-		Transport: services.transport,
+		UploadTTL:   cfg.UploadSessionTTL,
+		Transport:   services.transport,
+		Transitions: transitions,
 	})
 }

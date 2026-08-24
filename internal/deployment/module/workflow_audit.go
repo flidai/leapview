@@ -10,6 +10,16 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
+// AuditedWorkflowCommitter is the deployment-owned transaction port for
+// workflow handoffs that carry a durable Access audit intent. It extends the
+// compatibility WorkflowCommitter used by nonpersistent/test modes so the
+// activation handler never has to discover the audited capability at request
+// time.
+type AuditedWorkflowCommitter interface {
+	jobs.WorkflowCommitter
+	CommitWorkflowWithAudit(context.Context, jobs.WorkflowIntent, access.AuditIntent) error
+}
+
 // workflowAuditCommitter owns the deployment transaction that accepts an
 // activation workflow and records its Access audit intent. The generic jobs
 // module remains capability-neutral and participates through its transaction-
@@ -50,3 +60,5 @@ func (committer workflowAuditCommitter) commit(ctx context.Context, intent jobs.
 	}
 	return tx.Commit()
 }
+
+var _ AuditedWorkflowCommitter = workflowAuditCommitter{}

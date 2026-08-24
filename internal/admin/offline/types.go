@@ -216,13 +216,6 @@ type Retention interface {
 
 type AuditOutboxControl interface {
 	Status(context.Context) (AuditOutboxStatus, error)
-	Requeue(context.Context, string) error
-}
-
-// AuditOutboxExactRecovery is optional so existing test and embedding
-// adapters retain the narrow legacy control surface. The concrete offline
-// adapter implements it for compare-and-swap recovery guards.
-type AuditOutboxExactRecovery interface {
 	RequeueExact(context.Context, AuditOutboxRequest) error
 }
 

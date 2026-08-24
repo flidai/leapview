@@ -11,7 +11,7 @@ import (
 // auditOutboxCollector performs one bounded aggregate query per scrape. It
 // deliberately exposes no event, actor, resource, or metadata labels.
 type auditOutboxCollector struct {
-	store access.AuditOutboxStore
+	store access.AuditOutboxStatsReader
 
 	intents      *prometheus.Desc
 	oldest       *prometheus.Desc
@@ -23,7 +23,7 @@ type auditOutboxCollector struct {
 	scrapeError  *prometheus.Desc
 }
 
-func newAuditOutboxCollector(store access.AuditOutboxStore) prometheus.Collector {
+func newAuditOutboxCollector(store access.AuditOutboxStatsReader) prometheus.Collector {
 	return &auditOutboxCollector{
 		store: store,
 		intents: prometheus.NewDesc(

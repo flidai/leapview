@@ -73,6 +73,10 @@ type APIConfig struct {
 	Jobs      JobStore
 	Workflow  jobplatform.WorkflowRecorder
 	Committer jobs.WorkflowCommitter
+	// AuditedCommitter is the explicit durable-audit workflow port. Build fills
+	// it from Workflow when it owns the SQLite transaction, or validates an
+	// injected implementation when durable auditing is configured.
+	AuditedCommitter AuditedWorkflowCommitter
 }
 
 func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
@@ -639,14 +643,11 @@ func (m *Module) ActivateDeployment(
 	}
 	var commitErr error
 	if activationAudit != nil {
-		committer, ok := m.api.Committer.(interface {
-			CommitWorkflowWithAudit(context.Context, jobs.WorkflowIntent, access.AuditIntent) error
-		})
-		if !ok {
+		if m.api.AuditedCommitter == nil {
 			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("queue_unavailable", "Deployment activation audit is unavailable"))
 			return
 		}
-		commitErr = committer.CommitWorkflowWithAudit(r.Context(), workflow, *activationAudit)
+		commitErr = m.api.AuditedCommitter.CommitWorkflowWithAudit(r.Context(), workflow, *activationAudit)
 	} else {
 		commitErr = m.api.Committer.CommitWorkflow(r.Context(), workflow)
 	}
