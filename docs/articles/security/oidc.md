@@ -35,7 +35,7 @@ LEAPVIEW_OIDC_CALLBACK_URL=https://dash.example.com/auth/entra/callback
 LEAPVIEW_OIDC_SCOPES="openid profile email"
 ```
 
-Production validation requires the issuer and callback to use HTTPS and treats issuer, client ID, client secret, and callback as an all-or-none set. Store the client secret in the deployment secret manager.
+Production validation requires the issuer and callback to use unambiguous HTTPS URLs and treats issuer, client ID, client secret, and callback as an all-or-none set. URL userinfo, query strings, and fragments are rejected; issuer paths remain supported for tenant-specific providers. Store the client secret in the deployment secret manager.
 
 ## Configure the reverse proxy
 

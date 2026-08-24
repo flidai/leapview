@@ -109,7 +109,7 @@ Pass the returned access token to the MCP transport as `Authorization: Bearer <a
 
 ## Use an external authorization server
 
-Set `LEAPVIEW_MCP_OAUTH_ISSUER_URL` to delegate MCP authorization to an organization-wide issuer. The issuer must publish OpenID Connect discovery and sign JWT access tokens with:
+Set `LEAPVIEW_MCP_OAUTH_ISSUER_URL` to delegate MCP authorization to an organization-wide issuer. The issuer must be an HTTPS URL without URL credentials, a query string, or a fragment; issuer paths remain supported. It must publish OpenID Connect discovery and sign JWT access tokens with:
 
 - an audience exactly equal to `${LEAPVIEW_PUBLIC_URL}/mcp`;
 - a subject that LeapView can map to an existing principal;
