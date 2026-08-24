@@ -1248,6 +1248,11 @@ type FilterMenuSignal struct {
 	SummaryLabel *string                   `json:"summaryLabel,omitempty" yaml:"summaryLabel,omitempty"`
 }
 
+type ModelFieldDrawerSignal struct {
+	FieldKey string `json:"fieldKey" yaml:"fieldKey"`
+	Open     bool   `json:"open" yaml:"open"`
+}
+
 type PipelineCommandSignal struct {
 	Action     string `json:"action" yaml:"action"`
 	AssetID    string `json:"assetId" yaml:"assetId"`
@@ -1380,11 +1385,12 @@ type ResourceAssetListSignal struct {
 }
 
 type ResourceAssetPageEnvelope struct {
-	Chrome          ChromeSignal                    `json:"chrome" yaml:"chrome"`
-	ConnectionAdmin *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
-	Page            ResourceAssetPageSignal         `json:"page" yaml:"page"`
-	Runtime         RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
-	Status          DashboardStatus                 `json:"status" yaml:"status"`
+	Chrome           ChromeSignal                    `json:"chrome" yaml:"chrome"`
+	ConnectionAdmin  *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
+	ModelFieldDrawer *ModelFieldDrawerSignal         `json:"modelFieldDrawer,omitempty" yaml:"modelFieldDrawer,omitempty"`
+	Page             ResourceAssetPageSignal         `json:"page" yaml:"page"`
+	Runtime          RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
+	Status           DashboardStatus                 `json:"status" yaml:"status"`
 }
 
 type ResourceAssetPageSignal struct {

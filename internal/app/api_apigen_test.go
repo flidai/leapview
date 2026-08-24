@@ -793,12 +793,13 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	if irDoc.SchemaVersion != "v4" {
 		t.Fatalf("UI signal IR schema_version = %q, want v4", irDoc.SchemaVersion)
 	}
-	if len(irDoc.Contracts) != 124 {
-		t.Fatalf("UI signal IR contracts = %d, want 124", len(irDoc.Contracts))
+	if len(irDoc.Contracts) != 125 {
+		t.Fatalf("UI signal IR contracts = %d, want 125", len(irDoc.Contracts))
 	}
 	foundEnvelopeMetadata := false
 	foundImportedVisualizationRoot := false
 	foundDashboardVisualizationSignal := false
+	foundModelFieldDrawerSignal := false
 	for _, contract := range irDoc.Contracts {
 		if contract.Name == "DashboardEnvelope" && contract.Kind == "ui-envelope" && contract.Extensions["x-leapview-contract-role"] == "envelope" {
 			foundEnvelopeMetadata = true
@@ -808,6 +809,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 		}
 		if contract.Name == "DashboardVisualizationSignal" && contract.Kind == "ui-signal" {
 			foundDashboardVisualizationSignal = true
+		}
+		if contract.Name == "ModelFieldDrawerSignal" && contract.Kind == "ui-signal" {
+			foundModelFieldDrawerSignal = true
 		}
 	}
 	if !foundEnvelopeMetadata {
@@ -821,6 +825,9 @@ func TestAPIGenOwnsUISignalContracts(t *testing.T) {
 	}
 	if !foundDashboardVisualizationSignal {
 		t.Fatal("UI signals do not emit the dashboard visualization transport")
+	}
+	if !foundModelFieldDrawerSignal {
+		t.Fatal("UI signals do not emit the model field drawer state")
 	}
 }
 

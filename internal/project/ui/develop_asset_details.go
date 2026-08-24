@@ -710,7 +710,7 @@ func modelTableFieldsGrid(asset projectview.DevelopAssetView, table map[string]a
 		}
 		rows = append(rows, map[string]any{
 			"fieldKey":           name,
-			"field":              map[string]any{"label": name, "description": displayLabel, "href": detailHref + "?field=" + url.QueryEscape(name)},
+			"field":              map[string]any{"label": name, "description": displayLabel},
 			"type":               map[string]any{"label": physicalType, "description": typeQualifier},
 			"description":        emptyDash(metaString(field, "Description", "description")),
 			"status":             recordTableBadgeValue(metadataLabel, metadataTone),
@@ -738,9 +738,10 @@ func modelTableFieldsGrid(asset projectview.DevelopAssetView, table map[string]a
 			{ID: "description", Header: "Description"},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("130px")},
 		},
-		Rows:     rows,
-		Empty:    "No schema is available for this model table.",
-		MinWidth: uisignals.Pointer("760px"),
+		Rows:      rows,
+		Empty:     "No schema is available for this model table.",
+		MinWidth:  uisignals.Pointer("760px"),
+		RowAction: uisignals.Pointer("open-model-field"),
 	}
 }
 

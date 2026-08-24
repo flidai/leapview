@@ -26,6 +26,7 @@ import type {
   ConnectionAdministrationSignal,
   ConnectionsPageSignal,
   DefinitionFactSignal,
+  ModelFieldDrawerSignal,
   RecordTableSignal,
   ResourceAssetPageSignal,
   ResourceAssetSummarySignal,
@@ -35,6 +36,7 @@ import type {
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
+import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
@@ -42,6 +44,7 @@ import '../shared/loading-spinner'
 import '../shared/record-table'
 import '../shared/code-block'
 import '../shared/drawer'
+import { updateURLSearchParameter } from '../shared/url-search-state'
 import './connection-administration'
 import './dashboard-appearance-editor'
 import './pipelines-page'
@@ -53,6 +56,8 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
   },
   status: { error: '', loading: false, message: '' },
 }
+
+const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
 
 type ModelFieldDrawerRow = Record<string, unknown> & {
   fieldKey?: string
@@ -192,12 +197,33 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 }
 
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
+  private modelFieldDrawerPageKey = ''
+  private pushedModelFieldDrawerEntry = false
+
   static get styles() {
     return [projectStyles]
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+    super.disconnectedCallback()
+  }
+
   updated(): void {
     checkSignalContract('project asset page', this.page, { title: 'required', breadcrumbs: 'required', tabs: 'required' })
+    const page = this.page
+    const drawerPageKey = page?.asset.type === 'model_table' && page.activeSection === 'details'
+      ? page.asset.detailHref
+      : ''
+    if (drawerPageKey && drawerPageKey !== this.modelFieldDrawerPageKey) {
+      this.modelFieldDrawerPageKey = drawerPageKey
+      this.syncModelFieldDrawerFromLocation()
+    }
   }
 
   get page(): ResourceAssetPageSignal | null {
@@ -206,6 +232,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   get connectionAdmin(): ConnectionAdministrationSignal {
     return this.signal<ConnectionAdministrationSignal>('connectionAdmin', emptyConnectionAdministration)
+  }
+
+  get modelFieldDrawer(): ModelFieldDrawerSignal {
+    return this.signal<ModelFieldDrawerSignal>('modelFieldDrawer', emptyModelFieldDrawer)
   }
 
   render() {
@@ -229,7 +259,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         open
         label=${`${name} field details`}
         .modal=${false}
-        @lv-drawer-close=${() => window.location.assign(page.asset.detailHref)}
+        @lv-drawer-close=${this.closeModelFieldDrawer}
       >
         <div slot="title" class="source-drawer-title field-drawer-title">
           ${assetTypeGlyph('field', 'inline')}
@@ -263,8 +293,9 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private selectedModelField(page: ResourceAssetPageSignal): ModelFieldDrawerRow | null {
     if (page.asset.type !== 'model_table' || page.activeSection !== 'details') return null
-    const fieldKey = new URLSearchParams(window.location.search).get('field')?.trim()
-    if (!fieldKey) return null
+    const drawer = this.modelFieldDrawer
+    const fieldKey = drawer.fieldKey.trim()
+    if (!drawer.open || !fieldKey) return null
     for (const section of page.details?.sections ?? []) {
       for (const row of section.table?.rows ?? []) {
         const candidate = row as ModelFieldDrawerRow
@@ -272,6 +303,36 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       }
     }
     return null
+  }
+
+  private handleRecordTableAction = (event: CustomEvent<{ action?: string, row?: ModelFieldDrawerRow }>): void => {
+    if (event.detail?.action !== 'open-model-field') return
+    const fieldKey = fieldValue(event.detail.row ?? {}, 'fieldKey', '')
+    if (!fieldKey) return
+    const wasOpen = this.modelFieldDrawer.open
+    this.setModelFieldDrawer({ fieldKey, open: true })
+    updateURLSearchParameter('field', fieldKey, wasOpen ? 'replace' : 'push')
+    if (!wasOpen) this.pushedModelFieldDrawerEntry = true
+  }
+
+  private closeModelFieldDrawer = (): void => {
+    this.setModelFieldDrawer(emptyModelFieldDrawer)
+    if (this.pushedModelFieldDrawerEntry) {
+      this.pushedModelFieldDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('field', '', 'replace')
+  }
+
+  private syncModelFieldDrawerFromLocation = (): void => {
+    this.pushedModelFieldDrawerEntry = false
+    const fieldKey = new URLSearchParams(window.location.search).get('field')?.trim() ?? ''
+    this.setModelFieldDrawer({ fieldKey, open: Boolean(fieldKey) })
+  }
+
+  private setModelFieldDrawer(drawer: ModelFieldDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ modelFieldDrawer: drawer }))
   }
 
   private renderDrawerPage(page: ResourceAssetPageSignal) {
@@ -350,7 +411,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderAssetPage(page: ResourceAssetPageSignal) {
     return html`
-      <section class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`} aria-label="Project asset detail">
+      <section
+        class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`}
+        aria-label="Project asset detail"
+        @lv-record-table-action=${this.handleRecordTableAction}
+      >
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>

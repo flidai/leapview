@@ -317,6 +317,9 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if len(columns) != 4 || columns[0].ID != "field" || columns[1].ID != "type" || columns[2].ID != "description" || columns[3].ID != "status" {
 		t.Fatalf("field columns = %#v, want compact catalog columns", columns)
 	}
+	if got := uisignals.ValueOrZero(details.Sections[1].Table.RowAction); got != "open-model-field" {
+		t.Fatalf("field row action = %q, want open-model-field", got)
+	}
 	row := details.Sections[1].Table.Rows[0]
 	field := asMap(row["field"])
 	if got := metaString(field, "label"); got != "zip_prefix" {
@@ -325,8 +328,11 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := metaString(field, "description"); got != "ZIP prefix" {
 		t.Fatalf("field display label = %q", got)
 	}
-	if got := metaString(field, "href"); got != "/models/model:zip_geolocations/details?field=zip_prefix" {
-		t.Fatalf("field drawer href = %q", got)
+	if got := metaString(field, "href"); got != "" {
+		t.Fatalf("field cell href = %q, want signal-driven row action", got)
+	}
+	if got := metaString(row, "nameHref"); got != "/models/model:zip_geolocations/details?field=zip_prefix" {
+		t.Fatalf("field deep link = %q", got)
 	}
 	if got := row["status"].(recordTableBadge).Label; got != "Documented" {
 		t.Fatalf("documented field status = %q", got)

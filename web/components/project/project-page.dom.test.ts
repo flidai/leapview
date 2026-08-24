@@ -243,20 +243,34 @@ test('asset Definition tab renders authored YAML and SQL as separate code sectio
   }
 })
 
-test('model field deep links open a responsive metadata drawer over the compact catalog table', async () => {
+test('model field rows open a signal-driven responsive drawer and synchronize browser history', async () => {
   const page = await browser.newPage({ viewport: { width: 1180, height: 760 } })
   try {
-    await page.goto(`${baseURL}/?root=model-field-drawer&field=customer_id`)
+    await page.goto(`${baseURL}/?root=model-field-drawer`)
     await page.waitForFunction(() => customElements.get('lv-project-asset-page') && customElements.get('lv-drawer'))
+    await page.locator('lv-project-asset-page').evaluate((element: HTMLElement) => { element.dataset.instance = 'original' })
+    const before = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const table = Array.from(element.shadowRoot!.querySelectorAll('lv-record-table'))
+        .find((candidate: any) => candidate.table?.rowAction === 'open-model-field') as any
+      await table?.updateComplete
+      table?.querySelector<HTMLElement>('tbody tr.record-row')?.click()
+      return {
+        columns: table?.table?.columns?.map((column: any) => column.header),
+        drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')),
+      }
+    })
+    expect(before.columns).toEqual(['Field', 'Type', 'Description', 'Status'])
+    expect(before.drawer).toBe(false)
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('field') === 'customer_id')
     const desktop = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
-      const table = root.querySelector('lv-record-table') as any
       const drawer = root.querySelector('lv-drawer') as any
-      await table?.updateComplete
       await drawer?.updateComplete
       return {
-        columns: table?.table?.columns?.map((column: any) => column.header),
+        samePage: element.dataset.instance,
+        signal: element.signals.modelFieldDrawer,
         drawerLabel: drawer?.getAttribute('label'),
         title: root.querySelector('.field-drawer-title h1')?.textContent?.trim(),
         subtitle: root.querySelector('.field-drawer-subtitle')?.textContent?.trim(),
@@ -267,7 +281,8 @@ test('model field deep links open a responsive metadata drawer over the compact 
         width: Math.round(drawer.shadowRoot?.querySelector('.drawer')?.getBoundingClientRect().width ?? 0),
       }
     })
-    expect(desktop.columns).toEqual(['Field', 'Type', 'Description', 'Status'])
+    expect(desktop.samePage).toBe('original')
+    expect(desktop.signal).toEqual({ open: true, fieldKey: 'customer_id' })
     expect(desktop.drawerLabel).toBe('customer_id field details')
     expect(desktop.title).toBe('customer_id')
     expect(desktop.subtitle).toBe('Customer ID')
@@ -279,6 +294,44 @@ test('model field deep links open a responsive metadata drawer over the compact 
     ])
     expect(desktop.width).toBeGreaterThan(400)
     expect(desktop.width).toBeLessThan(600)
+
+    await page.evaluate(() => history.back())
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('field'))
+    const afterBack = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        samePage: element.dataset.instance,
+        signal: element.signals.modelFieldDrawer,
+        drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')),
+      }
+    })
+    expect(afterBack).toEqual({ samePage: 'original', signal: { open: false, fieldKey: '' }, drawer: false })
+
+    await page.evaluate(() => history.forward())
+    await page.waitForFunction(() => new URL(location.href).searchParams.get('field') === 'customer_id')
+    await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const drawer = element.shadowRoot!.querySelector('lv-drawer') as any
+      await drawer?.updateComplete
+      drawer?.shadowRoot?.querySelector<HTMLButtonElement>('button.close')?.click()
+    })
+    await page.waitForFunction(() => !new URL(location.href).searchParams.has('field'))
+    const afterClose = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return { signal: element.signals.modelFieldDrawer, drawer: Boolean(element.shadowRoot!.querySelector('lv-drawer')) }
+    })
+    expect(afterClose).toEqual({ signal: { open: false, fieldKey: '' }, drawer: false })
+
+    await page.goto(`${baseURL}/?root=model-field-drawer&field=customer_id`)
+    await page.waitForFunction(() => Boolean((document.querySelector('lv-project-asset-page') as any)?.signals?.modelFieldDrawer?.open))
+    const deepLink = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      return {
+        signal: element.signals.modelFieldDrawer,
+        title: element.shadowRoot!.querySelector('.field-drawer-title h1')?.textContent?.trim(),
+      }
+    })
+    expect(deepLink).toEqual({ signal: { open: true, fieldKey: 'customer_id' }, title: 'customer_id' })
 
     await page.setViewportSize({ width: 390, height: 760 })
     const mobileWidth = await page.locator('lv-project-asset-page lv-drawer').evaluate(async (drawer: any) => {
@@ -481,7 +534,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'dashboard-detail' ? {
     kind: 'data', title: 'Executive Sales', assetId: 'dashboard:executive-sales', activeSection: 'details', asset: { id: 'dashboard:executive-sales', key: 'executive-sales', title: 'Executive Sales', type: 'dashboard', typeLabel: 'Dashboard', detailHref: '/dashboards/dashboard:executive-sales/details', openHref: '/dashboards/dashboard:executive-sales' }, breadcrumbs: [{ label: 'Dashboards', href: '/dashboards' }, { label: 'Executive Sales', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/dashboards/dashboard:executive-sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/dashboards/dashboard:executive-sales/definition' }], dashboardAppearance: { icon: 'chart-no-axes-combined', color: 'purple', revision: 2 }, details: { overview: [{ label: 'Semantic model', value: 'semantic-model:sales' }], sections: [] },
   } : rootName === 'model-field-drawer' ? {
-    kind: 'data', title: 'Customers', assetId: 'model:sales_customers', activeSection: 'details', asset: { id: 'model:sales_customers', key: 'sales_customers', title: 'Customers', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:sales_customers/details', openHref: '/models/model:sales_customers/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'Customers', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:sales_customers/details', active: true }], details: { overview: [{ label: 'Fields', value: '1' }], sections: [{ title: 'Fields (1)', table: { columns: [{ id: 'field', header: 'Field', kind: 'entity' }, { id: 'type', header: 'Type', kind: 'entity' }, { id: 'description', header: 'Description' }, { id: 'status', header: 'Status', kind: 'badge' }], rows: [{ fieldKey: 'customer_id', field: { label: 'customer_id', description: 'Customer ID', href: '/models/model:sales_customers/details?field=customer_id' }, type: { label: 'varchar', description: 'Nullable' }, description: 'Stable customer identifier', status: { label: 'Contracted', tone: 'success' }, label: 'Customer ID', logicalType: 'String', physicalType: 'varchar', nullable: 'Yes', contractType: 'String', metadataStatus: 'Contracted', metadataProvenance: 'Declared in YAML', entities: 'customer', grain: 'Yes', duckLakeSnapshot: '17' }], empty: 'No fields.' } }] },
+    kind: 'data', title: 'Customers', assetId: 'model:sales_customers', activeSection: 'details', asset: { id: 'model:sales_customers', key: 'sales_customers', title: 'Customers', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:sales_customers/details', openHref: '/models/model:sales_customers/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'Customers', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:sales_customers/details', active: true }], details: { overview: [{ label: 'Fields', value: '1' }], sections: [{ title: 'Fields (1)', table: { columns: [{ id: 'field', header: 'Field', kind: 'entity' }, { id: 'type', header: 'Type', kind: 'entity' }, { id: 'description', header: 'Description' }, { id: 'status', header: 'Status', kind: 'badge' }], rows: [{ fieldKey: 'customer_id', field: { label: 'customer_id', description: 'Customer ID' }, type: { label: 'varchar', description: 'Nullable' }, description: 'Stable customer identifier', status: { label: 'Contracted', tone: 'success' }, label: 'Customer ID', logicalType: 'String', physicalType: 'varchar', nullable: 'Yes', contractType: 'String', metadataStatus: 'Contracted', metadataProvenance: 'Declared in YAML', entities: 'customer', grain: 'Yes', duckLakeSnapshot: '17' }], empty: 'No fields.', rowAction: 'open-model-field' } }] },
   } : rootName === 'detail' ? {
     kind: 'data', title: 'orders', assetId: 'orders', activeSection: 'details', asset: { id: 'orders', key: 'model_table:orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Develop', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details', active: true }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }], details: { overview: [{ label: 'Rows', value: '100' }], sections: [] },
   } : rootName === 'semantic-detail' ? {
