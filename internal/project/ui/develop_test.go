@@ -582,6 +582,12 @@ func TestDashboardVersionsSectionIsReachableWhenHistoryExists(t *testing.T) {
 	for _, tab := range page.Tabs {
 		if tab.ID == "versions" {
 			found = tab.Active && strings.HasSuffix(tab.Href, "/versions")
+			if tab.Count != nil {
+				t.Fatalf("versions tab count = %v, want no total in tabs", *tab.Count)
+			}
+		}
+		if tab.ID == "lineage" && tab.Count != nil {
+			t.Fatalf("lineage tab count = %v, want no total in tabs", *tab.Count)
 		}
 	}
 	if !found {

@@ -327,9 +327,9 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
 	}
 	if assetHasVersions(versions) {
-		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions", Count: uisignals.Pointer(int64(len(versions.Versions)))})
+		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions"})
 	}
-	page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "lineage", Label: "Lineage", Href: assetnav.CanonicalAssetSectionHref(asset, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))})
+	page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "lineage", Label: "Lineage", Href: assetnav.CanonicalAssetSectionHref(asset, "lineage"), Active: activeSection == "lineage"})
 	return page
 }
 
@@ -359,7 +359,7 @@ func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asse
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
 		{ID: "definition", Label: "Definition", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "definition"), Active: activeSection == "definition"},
-		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))},
+		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage"},
 	}
 	return page
 }

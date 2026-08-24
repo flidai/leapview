@@ -199,6 +199,7 @@ test('connections list and asset detail render without workspace terminology', a
         hasStandaloneEntityShell: Boolean(root.querySelector('.detail-surface')),
         heading: root.querySelector('.breadcrumb-header h1')?.textContent?.trim(),
         tabs: Array.from(root.querySelectorAll('.asset-body > .tabs a')).map((tab: Element) => tab.textContent?.trim()),
+        tabCounts: root.querySelectorAll('.asset-body > .tabs .count').length,
         hasAdministration: Boolean(root.querySelector('lv-connection-administration')),
         overview: root.querySelector('.detail-section[aria-label="Overview"]')?.textContent?.trim(),
       }
@@ -207,6 +208,7 @@ test('connections list and asset detail render without workspace terminology', a
     expect(connection.hasStandaloneEntityShell).toBe(false)
     expect(connection.heading).toContain('Warehouse')
     expect(connection.tabs).toEqual(expect.arrayContaining(['Details', 'Definition', 'Lineage']))
+    expect(connection.tabCounts).toBe(0)
     expect(connection.hasAdministration).toBe(true)
     expect(connection.overview).toContain('DuckDB')
   } finally {

@@ -773,7 +773,6 @@ function renderTabs(tabs: ResourceTabSignal[], label = 'Asset sections') {
       ${tabs.map((tab) => html`
         <a class=${tab.active ? 'active' : ''} href=${tab.href} aria-current=${tab.active ? 'page' : nothing}>
           <span>${tab.label}</span>
-          ${tab.count ? html`<span class="count">${tab.count}</span>` : nothing}
         </a>
       `)}
     </nav>
