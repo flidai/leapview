@@ -21,6 +21,7 @@ const exactVersionPattern = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/;
 const exactRuntimeVersionPattern =
   /^\d+\.\d+\.\d+(?:\.\d+)?(?:-[0-9A-Za-z.-]+)?$/;
 const shaPattern = /^[0-9a-f]{40}$/;
+const vendoredResolutionPattern = /^file:vendor\/[0-9A-Za-z][0-9A-Za-z._-]*$/;
 
 export function validateReleasePolicy(policy, packageDocument) {
   if (policy?.schemaVersion !== 2) {
@@ -126,7 +127,11 @@ export function buildSpdxDocument({
     ]),
   );
   const parsedPackages = lockPackages.map(([installPath, entry]) => {
-    const { name, version } = parseResolution(entry?.[0], installPath);
+    const { name, version } = parseResolution(
+      entry?.[0],
+      installPath,
+      sourceSha,
+    );
     const integrity = entry?.at(-1);
     const checksums =
       typeof integrity === "string" && integrity.startsWith("sha512-")
@@ -211,7 +216,7 @@ export function buildSpdxDocument({
       relatedSpdxElement: file.SPDXID,
     })),
   ];
-  const dependencyNameIndex = buildDependencyNameIndex(lockPackages);
+  const dependencyInstallPaths = buildDependencyInstallPathIndex(lockPackages);
   for (const [installPath, entry] of lockPackages) {
     const dependencyObject = entry?.find(
       (candidate) =>
@@ -225,7 +230,8 @@ export function buildSpdxDocument({
     ).sort()) {
       const relatedInstallPath = resolveLockedDependency(
         dependencyName,
-        dependencyNameIndex,
+        installPath,
+        dependencyInstallPaths,
       );
       if (relatedInstallPath !== undefined) {
         relationships.push({
@@ -241,7 +247,8 @@ export function buildSpdxDocument({
   ).sort()) {
     const relatedInstallPath = resolveLockedDependency(
       dependencyName,
-      dependencyNameIndex,
+      "",
+      dependencyInstallPaths,
     );
     if (relatedInstallPath !== undefined) {
       relationships.push({
@@ -791,23 +798,24 @@ function resolveChannel() {
   return "local-candidate";
 }
 
-function buildDependencyNameIndex(lockPackages) {
-  const index = new Map();
-  for (const [installPath, entry] of lockPackages) {
-    const { name } = parseResolution(entry?.[0], installPath);
-    const candidates = index.get(name) ?? [];
-    candidates.push(installPath);
-    index.set(name, candidates.sort());
+function buildDependencyInstallPathIndex(lockPackages) {
+  return new Set(lockPackages.map(([installPath]) => installPath));
+}
+
+function resolveLockedDependency(name, parentInstallPath, index) {
+  let scope = parentInstallPath;
+  while (scope.length > 0) {
+    const scopedInstallPath = `${scope}/${name}`;
+    if (index.has(scopedInstallPath)) {
+      return scopedInstallPath;
+    }
+    const separator = scope.lastIndexOf("/");
+    scope = separator >= 0 ? scope.slice(0, separator) : "";
   }
-  return index;
+  return index.has(name) ? name : undefined;
 }
 
-function resolveLockedDependency(name, index) {
-  const candidates = index.get(name);
-  return candidates?.includes(name) ? name : candidates?.[0];
-}
-
-function parseResolution(resolution, installPath) {
+function parseResolution(resolution, installPath, sourceSha) {
   if (typeof resolution !== "string" || resolution.length === 0) {
     throw new Error(
       `bun.lock package ${installPath} has no immutable resolution`,
@@ -824,11 +832,15 @@ function parseResolution(resolution, installPath) {
     version: assertImmutableResolution(
       resolution.slice(separator + 1),
       installPath,
+      sourceSha,
     ),
   };
 }
 
-function assertImmutableResolution(version, installPath) {
+function assertImmutableResolution(version, installPath, sourceSha) {
+  if (vendoredResolutionPattern.test(version) && shaPattern.test(sourceSha)) {
+    return `${version}#${sourceSha}`;
+  }
   if (
     !exactRuntimeVersionPattern.test(version) &&
     !/(?:#|[-])(?:[0-9a-f]{7}|[0-9a-f]{40})$/iu.test(version)

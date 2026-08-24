@@ -52,10 +52,10 @@ describe("desktop installer contract", () => {
       trustedDependencies?: string[];
     };
     expect(packageDocument.devDependencies).toMatchObject({
-      "@electron-forge/maker-deb": "7.11.2",
-      "@electron-forge/maker-dmg": "7.11.2",
-      "@electron-forge/maker-squirrel": "7.11.2",
-      "@electron-forge/maker-zip": "7.11.2",
+      "@electron-forge/maker-deb": "8.0.0-alpha.9",
+      "@electron-forge/maker-dmg": "8.0.0-alpha.9",
+      "@electron-forge/maker-squirrel": "8.0.0-alpha.9",
+      "@electron-forge/maker-zip": "8.0.0-alpha.9",
     });
     expect(forgeBody).toContain("new MakerSquirrel");
     expect(forgeBody).toContain("new MakerDMG");

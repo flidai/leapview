@@ -90,6 +90,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Roles, grants, and policies](/docs/security/authorization): Assign least-privilege access to securable resources.
 - [Service principals and API tokens](/docs/security/tokens): Authenticate non-human workloads with scoped credentials.
 - [Audit events](/docs/security/audit): Inspect security and administrative activity.
+- [Dependency security clearance](/docs/security/dependency-clearance): Generate and verify content-bound dependency security evidence.
 - [Security governance and release assurance](/docs/security/governance): Operate fail-closed repository, provenance, and promotion controls.
 
 ### Integrate
