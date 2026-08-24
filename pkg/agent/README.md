@@ -274,14 +274,17 @@ Useful event types include:
 - `agent_start`, `agent_end`
 - `turn_start`, `turn_end`
 - `model_request`, `model_response`, `model_retry`
-- `message_delta`, `message_end`
-- `tool_start`, `tool_end`
+- `output_part_added`, `output_text_delta`, `output_part_done`
+- `tool_execution_start`, `tool_execution_end`
 - `compaction_start`, `compaction_end`, `compaction_error`
 - `error`, `abort`
 
 Every event includes run ID, sequence number, timestamp, severity, and optional
 correlation ID. Turn-scoped events include turn ID. Model lifecycle events can
-include provider metadata supplied by the adapter.
+include provider metadata supplied by the adapter. Visible output is declared
+before it is updated: each text or tool part has a stable part ID, a run-local
+ordinal, and its parent assistant-message ID. Concurrent tool execution updates
+the declared part by ID and never determines display order.
 
 ## Compaction
 

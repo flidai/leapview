@@ -314,7 +314,7 @@ func TestPromptSingleTurnLifecycle(t *testing.T) {
 	}
 
 	gotEvents := eventTypes(events.events)
-	want := "agent_start,turn_start,model_request,model_response,message_end,turn_end,agent_end"
+	want := "agent_start,turn_start,model_request,model_response,output_part_added,output_part_done,turn_end,agent_end"
 	if gotEvents != want {
 		t.Fatalf("events = %s, want %s", gotEvents, want)
 	}

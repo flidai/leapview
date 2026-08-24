@@ -15,7 +15,8 @@ func transcriptFromMessages(conversationID string, messages []Message) []ChatTra
 
 func transcriptStateFromMessages(conversationID string, messages []Message) ChatTranscriptState {
 	items := make([]ChatTranscriptItem, 0, len(messages))
-	toolIndex := map[string]int{}
+	toolIndexByPartID := map[string]int{}
+	toolIndexByCallID := map[string]int{}
 	artifacts := emptyChatArtifactSignals()
 	for _, message := range messages {
 		switch message.Role {
@@ -30,56 +31,73 @@ func transcriptStateFromMessages(conversationID string, messages []Message) Chat
 				References:     turnReferencesFromContentJSON(message.ContentJSON),
 			})
 		case MessageRoleAssistant:
+			output := outputPartFromContentJSON(message.ContentJSON)
 			if strings.TrimSpace(message.ContentText) != "" {
+				partID := output.ID
+				if partID == "" {
+					partID = message.ID
+				}
 				items = append(items, ChatTranscriptItem{
-					ID:             message.ID,
-					Kind:           "assistant",
-					Markdown:       message.ContentText,
-					Status:         "complete",
-					ConversationID: conversationID,
-					RunID:          message.RunID,
-					CreatedAt:      message.CreatedAt,
+					ID:              partID,
+					Kind:            "assistant",
+					OutputOrdinal:   output.Ordinal,
+					ParentMessageID: output.ParentMessageID,
+					Markdown:        message.ContentText,
+					Status:          "complete",
+					ConversationID:  conversationID,
+					RunID:           message.RunID,
+					CreatedAt:       message.CreatedAt,
 				})
 			}
 			for _, call := range toolCallsFromContentJSON(message.ContentJSON) {
 				if call.ID == "" {
 					continue
 				}
-				toolIndex[call.ID] = len(items)
+				partID := call.outputPartID()
+				toolIndexByPartID[partID] = len(items)
+				toolIndexByCallID[call.ID] = len(items)
 				items = append(items, ChatTranscriptItem{
-					ID:             "tool:" + call.ID,
-					Kind:           "tool",
-					ToolCallID:     call.ID,
-					Name:           call.Name,
-					Title:          toolTitle(call.Name),
-					Status:         "running",
-					InputJSON:      formatToolCallPreview(call),
-					InputFormat:    "json",
-					ArgumentsJSON:  formatJSONPreview(string(call.Arguments), maxToolArgumentsPreviewBytes),
-					ConversationID: conversationID,
-					RunID:          message.RunID,
-					CreatedAt:      message.CreatedAt,
+					ID:              partID,
+					Kind:            "tool",
+					OutputOrdinal:   call.OutputOrdinal,
+					ParentMessageID: call.ParentMessageID,
+					ToolCallID:      call.ID,
+					Name:            call.Name,
+					Title:           toolTitle(call.Name),
+					Status:          "running",
+					InputJSON:       formatToolCallPreview(call),
+					InputFormat:     "json",
+					ArgumentsJSON:   formatJSONPreview(string(call.Arguments), maxToolArgumentsPreviewBytes),
+					ConversationID:  conversationID,
+					RunID:           message.RunID,
+					CreatedAt:       message.CreatedAt,
 				})
 			}
 		case MessageRoleTool:
+			output := outputPartFromContentJSON(message.ContentJSON)
 			artifact, artifactSignals := toolArtifact(message.ContentJSON)
 			mergeChatArtifactSignals(&artifacts, artifactSignals)
 			resultJSON := formatJSONPreview(message.ContentText, maxToolResultPreviewBytes)
 			item := ChatTranscriptItem{
-				ID:             message.ID,
-				Kind:           "tool",
-				ToolCallID:     message.ToolCallID,
-				Name:           message.ToolName,
-				Title:          toolTitle(message.ToolName),
-				Status:         "complete",
-				Summary:        toolSummary(message.ContentText),
-				ResultSummary:  toolSummary(message.ContentText),
-				ResultJSON:     resultJSON,
-				ResultFormat:   toolPreviewFormat(message.ContentText),
-				Artifact:       artifact,
-				ConversationID: conversationID,
-				RunID:          message.RunID,
-				CreatedAt:      message.CreatedAt,
+				ID:              output.ID,
+				Kind:            "tool",
+				OutputOrdinal:   output.Ordinal,
+				ParentMessageID: output.ParentMessageID,
+				ToolCallID:      message.ToolCallID,
+				Name:            message.ToolName,
+				Title:           toolTitle(message.ToolName),
+				Status:          "complete",
+				Summary:         toolSummary(message.ContentText),
+				ResultSummary:   toolSummary(message.ContentText),
+				ResultJSON:      resultJSON,
+				ResultFormat:    toolPreviewFormat(message.ContentText),
+				Artifact:        artifact,
+				ConversationID:  conversationID,
+				RunID:           message.RunID,
+				CreatedAt:       message.CreatedAt,
+			}
+			if item.ID == "" {
+				item.ID = message.ID
 			}
 			if message.IsError {
 				item.Status = "error"
@@ -87,7 +105,11 @@ func transcriptStateFromMessages(conversationID string, messages []Message) Chat
 				item.Summary = ""
 				item.ResultSummary = ""
 			}
-			if idx, ok := toolIndex[message.ToolCallID]; ok {
+			idx, ok := toolIndexByPartID[output.ID]
+			if !ok && output.ID == "" {
+				idx, ok = toolIndexByCallID[message.ToolCallID]
+			}
+			if ok {
 				items[idx] = mergeToolTranscriptItem(items[idx], item)
 				continue
 			}
@@ -125,9 +147,31 @@ func turnReferencesFromContentJSON(raw string) []TurnReference {
 }
 
 type transcriptToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Arguments       json.RawMessage `json:"arguments"`
+	OutputPartID    string          `json:"output_part_id"`
+	OutputOrdinal   int64           `json:"output_ordinal"`
+	ParentMessageID string          `json:"parent_message_id"`
+}
+
+func (c transcriptToolCall) outputPartID() string {
+	if c.OutputPartID != "" {
+		return c.OutputPartID
+	}
+	return "tool:" + c.ID
+}
+
+type transcriptOutputPart struct {
+	ID              string `json:"output_part_id"`
+	Ordinal         int64  `json:"output_ordinal"`
+	ParentMessageID string `json:"parent_message_id"`
+}
+
+func outputPartFromContentJSON(raw string) transcriptOutputPart {
+	var payload transcriptOutputPart
+	_ = json.Unmarshal([]byte(raw), &payload)
+	return payload
 }
 
 func toolCallsFromContentJSON(raw string) []transcriptToolCall {
@@ -141,7 +185,12 @@ func toolCallsFromContentJSON(raw string) []transcriptToolCall {
 }
 
 func mergeToolTranscriptItem(started, finished ChatTranscriptItem) ChatTranscriptItem {
-	started.ID = finished.ID
+	if started.ID == "" {
+		started.ID = finished.ID
+	}
+	if started.ParentMessageID == "" {
+		started.ParentMessageID = finished.ParentMessageID
+	}
 	started.Status = finished.Status
 	started.Summary = finished.Summary
 	started.ResultSummary = finished.ResultSummary

@@ -10,9 +10,11 @@ import (
 
 func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 	items := ChatTranscriptItems([]agent.ChatTranscriptItem{{
-		ID:   "message-1",
-		Kind: "assistant",
-		Text: "Hello",
+		ID:              "part-1",
+		Kind:            "assistant",
+		OutputOrdinal:   0,
+		ParentMessageID: "message-1",
+		Text:            "Hello",
 		Artifact: &agent.ChatArtifact{
 			Type:    "visualization",
 			ID:      "visual-1",
@@ -27,6 +29,9 @@ func TestChatTranscriptItemsPreserveAgentOwnedWireState(t *testing.T) {
 
 	if len(items) != 1 || items[0].Text == nil || *items[0].Text != "Hello" {
 		t.Fatalf("transcript items = %#v", items)
+	}
+	if items[0].OutputOrdinal == nil || *items[0].OutputOrdinal != 0 || items[0].ParentMessageID == nil || *items[0].ParentMessageID != "message-1" {
+		t.Fatalf("output identity = %#v", items[0])
 	}
 	if items[0].Artifact == nil || items[0].Artifact.ID != "visual-1" {
 		t.Fatalf("artifact = %#v", items[0].Artifact)

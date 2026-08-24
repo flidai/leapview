@@ -525,8 +525,11 @@ class ChatThread extends LitElement {
         return this.renderTool(item)
       case 'error':
         return this.renderMessage('error', item.text || item.error || '-', false, true)
+      case 'assistant': {
+        const content = item.markdown || item.text || ''
+        return content ? this.renderAssistantContent(content) : nothing
+      }
       case 'summary':
-      case 'assistant':
       default:
         return this.renderAssistantContent(item.markdown || item.text || '-')
     }
@@ -719,6 +722,8 @@ function statusLabel(status: string): string {
       return 'Failed'
     case 'streaming':
       return 'Streaming'
+    case 'pending':
+      return 'Queued'
     default:
       return 'Running'
   }

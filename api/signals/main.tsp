@@ -697,6 +697,8 @@ model ChatTranscriptItemSignal {
   `kind`: string;
   `markdown`?: string;
   `name`?: string;
+  `outputOrdinal`?: int64;
+  `parentMessageId`?: string;
   `references`?: AgentReferenceSignal[];
   `resultFormat`?: string;
   `resultJson`?: string;

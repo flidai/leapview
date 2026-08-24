@@ -64,11 +64,20 @@ func eventPayloadJSON(event agentcore.Event) string {
 		"provider_meta":  event.ProviderMetadata,
 		"correlation_id": event.CorrelationID,
 	}
+	if event.OutputPartID != "" {
+		payload["output_part_id"] = event.OutputPartID
+		payload["output_kind"] = event.OutputKind
+		payload["output_ordinal"] = event.OutputOrdinal
+		payload["parent_message_id"] = event.ParentMessageID
+	}
 	if event.Error != nil {
 		payload["error"] = event.Error.Error()
 	}
 	if event.Delta != "" {
 		payload["delta"] = event.Delta
+	}
+	if event.Content != "" || event.Type == agentcore.EventTypeOutputPartDone {
+		payload["content"] = event.Content
 	}
 	return metadataJSON(payload)
 }
@@ -129,6 +138,11 @@ func messageContentJSON(message agentcore.Message, context *TurnContext) string 
 		"is_error":        message.IsError,
 		"finish_reason":   message.FinishReason,
 		"usage":           message.Usage,
+	}
+	if message.OutputPartID != "" {
+		payload["output_part_id"] = message.OutputPartID
+		payload["output_ordinal"] = message.OutputOrdinal
+		payload["parent_message_id"] = message.ParentMessageID
 	}
 	if message.Role == agentcore.RoleUser && context != nil {
 		normalized := context.normalized()

@@ -124,9 +124,12 @@ func (f ToolHandlerFunc) Run(ctx context.Context, call ToolCall) (ToolResult, er
 }
 
 type ToolCall struct {
-	ID        string          `json:"id"`
-	Name      string          `json:"name"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
+	ID              string          `json:"id"`
+	Name            string          `json:"name"`
+	Arguments       json.RawMessage `json:"arguments,omitempty"`
+	OutputPartID    string          `json:"output_part_id,omitempty"`
+	OutputOrdinal   int64           `json:"output_ordinal,omitempty"`
+	ParentMessageID string          `json:"parent_message_id,omitempty"`
 }
 
 type ToolResult struct {
@@ -155,15 +158,18 @@ func (a *Agent) executeToolCalls(ctx context.Context, run *runState, turnID stri
 	for i, call := range calls {
 		if call.ID == "" {
 			results[i] = toolExecutionResult{message: a.toolErrorMessage(call, "invalid_tool_arguments", "Tool call ID is required.", nil, true)}
+			run.emitToolExecutionEnd(ctx, turnID, call, results[i].message)
 			continue
 		}
 		if _, ok := seen[call.ID]; ok {
 			results[i] = toolExecutionResult{message: a.toolErrorMessage(call, "invalid_tool_arguments", "Tool call ID must be unique within an assistant message.", nil, true)}
+			run.emitToolExecutionEnd(ctx, turnID, call, results[i].message)
 			continue
 		}
 		seen[call.ID] = struct{}{}
 		if errMsg, ok := a.validateToolCall(call); !ok {
 			results[i] = toolExecutionResult{message: errMsg}
+			run.emitToolExecutionEnd(ctx, turnID, call, results[i].message)
 			continue
 		}
 		valid = append(valid, i)
@@ -177,20 +183,19 @@ func (a *Agent) executeToolCalls(ctx context.Context, run *runState, turnID stri
 		group.Go(func() error {
 			call := calls[index]
 			_ = run.emit(groupCtx, Event{
-				Type:       EventTypeToolStart,
-				Severity:   SeverityInfo,
-				TurnID:     turnID,
-				ToolCallID: call.ID,
-				ToolName:   call.Name,
+				Type:            EventTypeToolExecutionStart,
+				Severity:        SeverityInfo,
+				TurnID:          turnID,
+				MessageID:       call.ParentMessageID,
+				OutputPartID:    call.OutputPartID,
+				OutputKind:      OutputPartKindTool,
+				OutputOrdinal:   call.OutputOrdinal,
+				ParentMessageID: call.ParentMessageID,
+				ToolCallID:      call.ID,
+				ToolName:        call.Name,
 			})
 			result := a.runOneTool(groupCtx, call)
-			_ = run.emit(groupCtx, Event{
-				Type:       EventTypeToolEnd,
-				Severity:   eventSeverityForToolResult(result.message),
-				TurnID:     turnID,
-				ToolCallID: call.ID,
-				ToolName:   call.Name,
-			})
+			run.emitToolExecutionEnd(groupCtx, turnID, call, result.message)
 			mu.Lock()
 			results[index] = result
 			mu.Unlock()
@@ -210,6 +215,21 @@ func (a *Agent) executeToolCalls(ctx context.Context, run *runState, turnID stri
 		}
 	}
 	return messages, nil
+}
+
+func (r *runState) emitToolExecutionEnd(ctx context.Context, turnID string, call ToolCall, message Message) {
+	_ = r.emit(ctx, Event{
+		Type:            EventTypeToolExecutionEnd,
+		Severity:        eventSeverityForToolResult(message),
+		TurnID:          turnID,
+		MessageID:       call.ParentMessageID,
+		OutputPartID:    call.OutputPartID,
+		OutputKind:      OutputPartKindTool,
+		OutputOrdinal:   call.OutputOrdinal,
+		ParentMessageID: call.ParentMessageID,
+		ToolCallID:      call.ID,
+		ToolName:        call.Name,
+	})
 }
 
 func eventSeverityForToolResult(message Message) Severity {
@@ -237,6 +257,9 @@ func (a *Agent) runOneTool(ctx context.Context, call ToolCall) (result toolExecu
 		if recovered := recover(); recovered != nil {
 			result.message = a.toolErrorMessage(call, "tool_panic", "Tool handler panicked.", []string{fmt.Sprint(recovered), string(debug.Stack())}, false)
 		}
+		result.message.OutputPartID = call.OutputPartID
+		result.message.OutputOrdinal = call.OutputOrdinal
+		result.message.ParentMessageID = call.ParentMessageID
 	}()
 
 	toolResult, err := a.catalog.Execute(toolCtx, call)
@@ -295,13 +318,16 @@ func (a *Agent) runOneTool(ctx context.Context, call ToolCall) (result toolExecu
 		return result
 	}
 	result.message = Message{
-		ID:             a.def.IDGenerator.NewID("msg"),
-		Role:           RoleTool,
-		Content:        body,
-		DisplayContent: toolResult.DisplayContent,
-		ToolCallID:     call.ID,
-		ToolName:       call.Name,
-		IsError:        toolResult.IsError,
+		ID:              a.def.IDGenerator.NewID("msg"),
+		OutputPartID:    call.OutputPartID,
+		OutputOrdinal:   call.OutputOrdinal,
+		ParentMessageID: call.ParentMessageID,
+		Role:            RoleTool,
+		Content:         body,
+		DisplayContent:  toolResult.DisplayContent,
+		ToolCallID:      call.ID,
+		ToolName:        call.Name,
+		IsError:         toolResult.IsError,
 	}
 	if toolResult.Fatal {
 		result.fatal = NewError(ErrorCodeTool, "fatal tool result", nil)
@@ -341,10 +367,13 @@ func (a *Agent) toolErrorMessage(call ToolCall, code, message string, details []
 		body = string(fallback)
 	}
 	return Message{
-		Role:       RoleTool,
-		Content:    body,
-		ToolCallID: call.ID,
-		ToolName:   call.Name,
-		IsError:    true,
+		OutputPartID:    call.OutputPartID,
+		OutputOrdinal:   call.OutputOrdinal,
+		ParentMessageID: call.ParentMessageID,
+		Role:            RoleTool,
+		Content:         body,
+		ToolCallID:      call.ID,
+		ToolName:        call.Name,
+		IsError:         true,
 	}
 }
