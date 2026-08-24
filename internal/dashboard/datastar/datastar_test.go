@@ -170,9 +170,6 @@ func TestRefreshEventEnvelopeCarriesExplicitDeliveryMetadata(t *testing.T) {
 			if envelope.Delivery.Generation != 9 || envelope.Delivery.Boundary != test.wantBoundary || envelope.Delivery.CoalesceGroup != test.wantGroup {
 				t.Fatalf("delivery metadata = %#v", envelope.Delivery)
 			}
-			if envelope.Trace.Origin != "dashboard.refresh" || envelope.Trace.CorrelationID != "refresh-9" {
-				t.Fatalf("trace metadata = %#v", envelope.Trace)
-			}
 			if test.wantMergeRoot != "" && !slices.Contains(envelope.Delivery.MergeRoots, test.wantMergeRoot) {
 				t.Fatalf("merge roots = %#v", envelope.Delivery.MergeRoots)
 			}

@@ -11,7 +11,6 @@ import (
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agentapi "github.com/flidai/leapview/internal/agent/api"
@@ -28,6 +27,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type Module struct {

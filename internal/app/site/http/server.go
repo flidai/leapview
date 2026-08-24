@@ -14,8 +14,8 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	mapassethttp "github.com/flidai/leapview/internal/dashboard/visualization/mapasset/http"
+	"github.com/flidai/leapview/pkg/pagestream"
 	siteassets "github.com/flidai/leapview/site"
 )
 

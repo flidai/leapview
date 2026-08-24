@@ -2806,9 +2806,10 @@ func TestDevelopmentPublishingCanonicalizesSharedDatasetRoots(t *testing.T) {
 	serverText := string(server)
 	for _, want := range []string{
 		"canonical_source_root()",
+		`local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"`,
 		`from="$(canonical_source_root "$from")"`,
 		`candidate_id="$(awk '$1 == "candidate" { print $2; exit }' <<<"$dev_output")"`,
-		`go run ./cmd/leapview publish "$candidate_id" --token dev`,
+		`go run ./cmd/leapview publish "$candidate_id" --token "$token"`,
 		`publish) publish_running "$@" ;;`,
 	} {
 		if !strings.Contains(serverText, want) {

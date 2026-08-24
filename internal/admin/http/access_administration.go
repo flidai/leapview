@@ -7,11 +7,11 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	adminsettings "github.com/flidai/leapview/internal/admin/settings"
 	"github.com/flidai/leapview/internal/admin/ui"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type accessAdministrationCommandSignals struct {

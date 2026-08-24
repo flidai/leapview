@@ -1,8 +1,9 @@
 package module
 
 import (
-	"github.com/Yacobolo/toolbelt/pagestream"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 // PublishSemanticModelRefresh asks every active dashboard bound to the model to
@@ -13,7 +14,7 @@ func (m *Module) PublishSemanticModelRefresh(projectID projectgraph.ResourceID, 
 	}
 	for _, streamID := range m.coordinators.RefreshSemanticModel(projectID, environment, modelID) {
 		if m.handler.Broker != nil {
-			m.handler.Broker.PublishEnvelope(streamID, pagestream.Envelope{
+			m.handler.Broker.PublishEnvelope(streamID, dashboardstream.Envelope{
 				Signals: pagestream.SignalPatch{"status": map[string]any{"lastUpdated": refreshedAt}},
 			})
 		}

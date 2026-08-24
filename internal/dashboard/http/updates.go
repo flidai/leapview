@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
@@ -22,7 +21,9 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 var readStreamInstanceRandom = rand.Read
@@ -72,7 +73,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		definitions[id] = definition
 	}
 	initialFilters := reportDefinition.FiltersFromURLForPage(activePage.ID, r.URL.Query())
-	clientID := pagestream.ClientIDFromRequest(r, strings.TrimSpace(r.URL.Query().Get("clientId")))
+	clientID := webtransport.ClientIDFromRequest(r, strings.TrimSpace(r.URL.Query().Get("clientId")))
 	streamInstanceID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
 	if streamInstanceID == "" {
 		streamInstanceID, err = fallbackStreamInstanceID()
@@ -125,14 +126,12 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 	broker := h.Broker
 	if broker == nil {
-		broker = pagestream.NewBroker()
+		broker = dashboardstream.NewDeliveryBroker()
 	}
 	mailbox, unsubscribe := broker.Subscribe(streamID)
 	defer unsubscribe()
 
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(
-		broker.TraceStore(), streamID, "dashboard.bootstrap",
-	))
+	updates := pagestream.NewSignalStream(w, r)
 	var providers []webpage.Provider
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}

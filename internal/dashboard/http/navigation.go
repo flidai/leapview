@@ -5,7 +5,6 @@ import (
 	"errors"
 	nethttp "net/http"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
@@ -15,6 +14,8 @@ import (
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -59,7 +60,7 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return
 	}
-	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
+	clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	streamInstanceID := signals.Runtime.StreamInstanceID
 	key, keyErr := h.dashboardSessionKey(r, definition, clientID, streamInstanceID)
 	if keyErr != nil {
@@ -144,14 +145,13 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	sourceStreamID := h.scopedStreamID(lddatastar.StreamID(clientID, dashboardID, sourcePageID, streamInstanceID))
 	broker := h.Broker
 	if broker == nil {
-		broker = pagestream.NewBroker()
+		broker = dashboardstream.NewDeliveryBroker()
 	}
-	broker.PublishEnvelope(sourceStreamID, pagestream.Envelope{
+	broker.PublishEnvelope(sourceStreamID, dashboardstream.Envelope{
 		Signals: patch,
-		Delivery: pagestream.DeliveryMetadata{
+		Delivery: dashboardstream.DeliveryMetadata{
 			Generation: result.StreamGeneration, Boundary: true,
 		},
-		Trace: pagestream.TraceMetadata{Origin: "dashboard.navigation", CorrelationID: signals.NavigationCommand.ClientMutationID},
 	})
 	if result.Duplicate {
 		writeJSON(w, nethttp.StatusOK, map[string]any{"activePage": targetPage.ID, "duplicate": true})

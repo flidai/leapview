@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	content "github.com/flidai/leapview/docs"
+	"github.com/flidai/leapview/pkg/pagestream"
 	g "maragu.dev/gomponents"
 	h "maragu.dev/gomponents/html"
 )
