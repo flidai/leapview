@@ -4,7 +4,6 @@ import {
   readdir,
   readFile,
   rm,
-  stat,
   writeFile,
 } from "node:fs/promises";
 import { constants } from "node:fs";
@@ -24,7 +23,7 @@ import {
   readTrustedShellAccessibility,
 } from "./accessibility-contract.mjs";
 import {
-  verifyPackagedDiagnosticEvent,
+  verifyPackagedDiagnosticJournal,
 } from "./packaged-diagnostics.mjs";
 import { requirePackagedDistribution } from "./distribution-packaging.mjs";
 
@@ -358,7 +357,9 @@ async function verifyPackagedStartup(
           shellTarget.webSocketDebuggerUrl,
         );
         if (verifyDiagnosticJournal) {
-          await verifyPackagedDiagnosticJournal(userData, deadline);
+          await verifyPackagedDiagnosticJournal(
+            join(userData, "diagnostics.json"),
+          );
         }
         return {
           status: "trusted-shell-ready",
@@ -412,70 +413,6 @@ async function readRuntimeVersions(devtoolsPort) {
     throw new Error("packaged application runtime version was malformed");
   }
   return { chromiumVersion, electronVersion };
-}
-
-async function verifyPackagedDiagnosticJournal(userData, deadline) {
-  const path = join(userData, "diagnostics.json");
-  while (Date.now() < deadline) {
-    try {
-      const body = await readFile(path, "utf8");
-      if (Buffer.byteLength(body, "utf8") > 128 * 1024) {
-        throw new Error("packaged diagnostic journal exceeds its size limit");
-      }
-      const document = JSON.parse(body);
-      if (
-        Object.keys(document).sort().join(",") !== "events,schemaVersion" ||
-        document.schemaVersion !== 1 ||
-        !Array.isArray(document.events) ||
-        document.events.length === 0 ||
-        document.events.length > 256
-      ) {
-        throw new Error(
-          "packaged diagnostic journal has an unexpected manifest",
-        );
-      }
-      if (
-        !document.events.some(
-          (event) => event?.kind === "startup" && event.packaged === true,
-        )
-      ) {
-        throw new Error(
-          "packaged diagnostic journal is missing its startup event",
-        );
-      }
-      for (const event of document.events) {
-        verifyPackagedDiagnosticEvent(event);
-      }
-      if (
-        /https?:|origin|cookie|token|authorization|console|filename/iu.test(
-          body,
-        )
-      ) {
-        throw new Error(
-          "packaged diagnostic journal contains forbidden sensitive fields",
-        );
-      }
-      if (
-        process.platform !== "win32" &&
-        ((await stat(path)).mode & 0o077) !== 0
-      ) {
-        throw new Error(
-          "packaged diagnostic journal permissions are not private",
-        );
-      }
-      return;
-    } catch (error) {
-      if (
-        error instanceof SyntaxError ||
-        (error instanceof Error &&
-          !("code" in error && error.code === "ENOENT"))
-      ) {
-        throw error;
-      }
-    }
-    await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
-  }
-  throw new Error("packaged application did not persist diagnostics");
 }
 
 async function reserveLoopbackPort() {

@@ -84,17 +84,17 @@
   },
   "dependencies": {
     "@shikijs/monaco": "^4.3.0",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "lucide": "^1.21.0",
     "markdown-it": "^14.3.0",
-    "mermaid": "^11.16.0",
+    "mermaid": "^11.16.1",
     "monaco-editor-core": "^0.55.1",
     "p5": "^2.3.0",
     "shiki": "^4.3.0",
     "sql-formatter": "^15.8.2"
   },
   "overrides": {
-    "dompurify": "3.4.12",
+    "dompurify": "3.4.13",
     "fast-uri": "3.1.5",
     "undici": "7.29.0"
   },

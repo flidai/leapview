@@ -1,0 +1,18 @@
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = "Deterministic non-secret values used by configuration and storage tests"
+targetRules = ["generic-api-key"]
+stopwords = [
+  "0123456789abcdef0123456789abcdef",
+  "replace-with-at-least-32-characters",
+  "s3DeletionLeaseKey",
+  "prefixed/blobs",
+]
+
+[[allowlists]]
+description = "S3 garbage-collection marker constant comparison"
+targetRules = ["generic-api-key"]
+regexTarget = "line"
+regexes = ['''key == s3OwnershipMarkerKey \|\| key == s3DeletionLeaseKey''']

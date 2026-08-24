@@ -25,7 +25,7 @@ jobs:
     if: github.event_name != 'pull_request' || github.event.action != 'closed'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Verify CLI is available
         run: leapview version
       - name: Validate without target credentials
@@ -46,7 +46,7 @@ jobs:
       SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
       SOURCE_REF: refs/pull/${{ github.event.pull_request.number }}/merge
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Create exact source-attested plan for review
         run: |
           leapview plan "$LEAPVIEW_PROJECT_FILE" --format json
@@ -65,7 +65,7 @@ jobs:
       CHANGE_KEY: github:branch/main
       SOURCE_REPOSITORY: ${{ github.server_url }}/${{ github.repository }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - name: Create and build exact protected-branch plan
         run: |
           plan_json=$(leapview plan "$LEAPVIEW_PROJECT_FILE" --format json)
