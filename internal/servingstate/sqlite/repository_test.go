@@ -56,6 +56,63 @@ VALUES
 	}
 }
 
+func TestRepositoryAssetVersionsIncludesCommittedDeliveryCandidatesOnly(t *testing.T) {
+	store, repo := openRepo(t)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status, source, digest, created_by, created_at)
+VALUES
+  ('state_unpublished', 'project_sales', 'dev', 'validated', 'candidate', 'digest_unpublished', 'alice', '2026-08-19T10:00:00Z'),
+  ('state_committed', 'project_sales', 'dev', 'validated', 'candidate', 'digest_committed', 'bob', '2026-08-20T10:00:00Z');
+INSERT INTO assets (snapshot_id, logical_asset_id, serving_state_id, asset_type, asset_key, source_file, payload_schema, payload_json, content_hash)
+VALUES
+  ('snapshot_unpublished', 'model_sales', 'state_unpublished', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_unpublished'),
+  ('snapshot_committed', 'model_sales', 'state_committed', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_committed');`); err != nil {
+		t.Fatalf("seed candidate asset versions: %v", err)
+	}
+	// The projection only needs the canonical publication evidence. Disable
+	// foreign keys while seeding that cross-domain record so this repository
+	// test does not have to reproduce the complete delivery control graph.
+	conn, err := store.SQLDB().Conn(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(t.Context(), `PRAGMA foreign_keys = OFF`); err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	if _, err := conn.ExecContext(t.Context(), `
+INSERT INTO delivery_publications (
+  id, request_digest, target_id, project_id, environment, plan_id, plan_digest,
+  candidate_id, generation_id, expected_target_revision, result_target_revision,
+  status, created_at, completed_at
+) VALUES (
+  'publication_committed',
+  'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+  'target_dev', 'project_sales', 'dev', 'plan_committed',
+  'sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+  'candidate_committed', 'state_committed', 0, 1, 'committed',
+  '2026-08-20T10:01:00Z', '2026-08-20T10:02:00Z'
+)`); err != nil {
+		_ = conn.Close()
+		t.Fatalf("seed committed delivery publication: %v", err)
+	}
+	if _, err := conn.ExecContext(t.Context(), `PRAGMA foreign_keys = ON`); err != nil {
+		_ = conn.Close()
+		t.Fatal(err)
+	}
+	if err := conn.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	versions, err := repo.AssetVersions(t.Context(), "project_sales", "dev", "model_sales")
+	if err != nil {
+		t.Fatalf("AssetVersions() error: %v", err)
+	}
+	if len(versions) != 1 || versions[0].ServingStateID != "state_committed" || versions[0].ContentHash != "hash_committed" {
+		t.Fatalf("AssetVersions() = %#v, want only committed delivery candidate", versions)
+	}
+}
+
 func TestRepositoryRejectsMalformedPersistedServingIdentity(t *testing.T) {
 	store, repo := openRepo(t)
 	created, err := repo.Create(t.Context(), servingstate.CreateInput{ProjectID: "project", Environment: servingstate.DefaultEnvironment})

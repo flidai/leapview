@@ -303,7 +303,7 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	if assetRefreshable(asset.Type) && activeSection != "definition" {
 		runLabel := "Run now"
 		if refresh.Unavailable {
-			runLabel = "Run now unavailable; review connections"
+			runLabel = "Run now unavailable"
 		}
 		actions = append([]uisignals.ResourceActionSignal{{
 			Label:    runLabel,
@@ -311,9 +311,6 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 			Command:  uisignals.Pointer("run-refresh-pipeline"),
 			Disabled: uisignals.Optional(!refresh.CanRun || refresh.Unavailable || assetRefreshSignal(refresh).Running),
 		}}, actions...)
-		if refresh.Unavailable {
-			actions = append(actions, uisignals.ResourceActionSignal{Label: "Review connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("open")})
-		}
 	}
 	if asset.Href != "" {
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})

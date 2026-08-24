@@ -140,7 +140,7 @@ func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
 	if refresh.Unavailable {
 		facts = append(facts, definitionFact{
 			Label: "Refresh guidance",
-			Value: "Refresh state could not be loaded. Review Connections and runtime setup, then retry.",
+			Value: "Refresh state could not be loaded. Check the refresh runtime and try again.",
 			Wide:  true,
 		})
 	}

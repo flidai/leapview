@@ -303,10 +303,13 @@ func TestPipelineDefinitionBootstrapDoesNotDependOnRefreshState(t *testing.T) {
 	if !strings.Contains(string(detailsJSON), `"status":"unavailable"`) || !strings.Contains(string(detailsJSON), `"disabled":true`) {
 		t.Fatalf("details bootstrap = %s, want unavailable refresh state and disabled action", detailsJSON)
 	}
-	for _, want := range []string{"Refresh guidance", "Review Connections", "Review connections", "Run now unavailable"} {
+	for _, want := range []string{"Refresh guidance", "refresh runtime", "Run now unavailable"} {
 		if !strings.Contains(string(detailsJSON), want) {
 			t.Fatalf("details bootstrap = %s, missing actionable unavailable-state text %q", detailsJSON, want)
 		}
+	}
+	if strings.Contains(string(detailsJSON), `"href":"/connections"`) {
+		t.Fatalf("details bootstrap = %s, must not infer a connection failure", detailsJSON)
 	}
 
 	for _, section := range []string{"bogus", "data"} {

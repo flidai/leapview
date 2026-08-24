@@ -243,7 +243,7 @@ test('asset Definition tab renders authored YAML and SQL as separate code sectio
   }
 })
 
-test('unavailable pipeline shows visible recovery guidance and connections action', async () => {
+test('unavailable pipeline shows guidance without an unrelated connections action', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=pipeline-unavailable`)
@@ -252,28 +252,16 @@ test('unavailable pipeline shows visible recovery guidance and connections actio
       await element.updateComplete
       const root = element.shadowRoot!
       const run = root.querySelector('button[aria-label*="Run now unavailable"]') as HTMLButtonElement | null
-      const recovery = root.querySelector('.refresh-recovery-actions a.action-link[href="/connections"]') as HTMLAnchorElement | null
-      const recoveryStyle = recovery ? getComputedStyle(recovery) : null
       return {
         runDisabled: run?.disabled,
-        headerHasRecovery: Boolean(root.querySelector('.breadcrumb-header a.action-link[href="/connections"]')),
-        recoveryText: recovery?.textContent?.trim(),
-        recoveryBackground: recoveryStyle?.backgroundColor,
-        recoveryForeground: recoveryStyle?.color,
-        recoveryMinHeight: recoveryStyle?.minHeight,
-        recoveryLabel: recovery?.parentElement?.getAttribute('aria-label'),
+        hasConnectionsAction: Boolean(root.querySelector('a.action-link[href="/connections"]')),
         overview: root.querySelector('.detail-section[aria-label="Overview"]')?.textContent?.trim(),
       }
     })
     expect(state.runDisabled).toBe(true)
-    expect(state.headerHasRecovery).toBe(false)
-    expect(state.recoveryText).toContain('Review connections')
-    expect(state.recoveryBackground).toBe('rgb(9, 105, 218)')
-    expect(state.recoveryForeground).toBe('rgb(255, 255, 255)')
-    expect(state.recoveryMinHeight).toBe('32px')
-    expect(state.recoveryLabel).toBe('Refresh recovery actions')
+    expect(state.hasConnectionsAction).toBe(false)
     expect(state.overview).toContain('Refresh state could not be loaded')
-    expect(state.overview).toContain('Review connections')
+    expect(state.overview).toContain('refresh runtime')
   } finally {
     await page.close()
   }
@@ -436,7 +424,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'pipeline-detail' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'succeeded', running: false, canRun: true }, actions: [{ label: 'Run now', command: 'run-refresh-pipeline', disabled: false }], details: { overview: [{ label: 'Refresh status', value: 'succeeded' }], sections: [] },
   } : rootName === 'pipeline-unavailable' ? {
-    kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable; review connections', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }, { label: 'Review connections', href: '/connections', icon: 'open' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Review Connections and runtime setup, then retry.', wide: true }], sections: [] },
+    kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Check the refresh runtime and try again.', wide: true }], sections: [] },
   } : rootName === 'dashboard-detail' ? {
     kind: 'data', title: 'Executive Sales', assetId: 'dashboard:executive-sales', activeSection: 'details', asset: { id: 'dashboard:executive-sales', key: 'executive-sales', title: 'Executive Sales', type: 'dashboard', typeLabel: 'Dashboard', detailHref: '/dashboards/dashboard:executive-sales/details', openHref: '/dashboards/dashboard:executive-sales' }, breadcrumbs: [{ label: 'Dashboards', href: '/dashboards' }, { label: 'Executive Sales', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/dashboards/dashboard:executive-sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/dashboards/dashboard:executive-sales/definition' }], dashboardAppearance: { icon: 'chart-no-axes-combined', color: 'purple', revision: 2 }, details: { overview: [{ label: 'Semantic model', value: 'semantic-model:sales' }], sections: [] },
   } : rootName === 'detail' ? {

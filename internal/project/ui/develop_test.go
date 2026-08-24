@@ -579,24 +579,20 @@ func TestSourceAndModelSchemaUseLogicalFallbacksAndExplicitUnknowns(t *testing.T
 	}
 }
 
-func TestUnavailablePipelineExplainsRecoveryAndLinksConnections(t *testing.T) {
+func TestUnavailablePipelineExplainsRecoveryWithoutUnrelatedActions(t *testing.T) {
 	asset := projectview.DevelopAssetView{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Title: "Sales refresh"}
 	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "details", assetLineageModel{}, AssetRefreshState{Unavailable: true})
-	if page.Details == nil || factValue(page.Details.Overview, "Refresh status") != "unavailable" || !strings.Contains(factValue(page.Details.Overview, "Refresh guidance"), "Review Connections") {
+	if page.Details == nil || factValue(page.Details.Overview, "Refresh status") != "unavailable" || !strings.Contains(factValue(page.Details.Overview, "Refresh guidance"), "refresh runtime") {
 		t.Fatalf("pipeline details = %#v, want unavailable status and recovery guidance", page.Details)
 	}
 	actions := uisignals.ValueOrZero(page.Actions)
-	if len(actions) < 3 || actions[0].Disabled == nil || !*actions[0].Disabled || !strings.Contains(actions[0].Label, "unavailable") {
+	if len(actions) < 2 || actions[0].Disabled == nil || !*actions[0].Disabled || !strings.Contains(actions[0].Label, "unavailable") {
 		t.Fatalf("pipeline actions = %#v, want explanatory disabled Run now", actions)
 	}
-	foundConnections := false
 	for _, action := range actions {
-		if action.Label == "Review connections" && uisignals.ValueOrZero(action.Href) == "/connections" {
-			foundConnections = true
+		if uisignals.ValueOrZero(action.Href) == "/connections" {
+			t.Fatalf("pipeline actions = %#v, must not infer a connection failure", actions)
 		}
-	}
-	if !foundConnections {
-		t.Fatalf("pipeline actions = %#v, want Review connections recovery action", actions)
 	}
 }
 
