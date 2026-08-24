@@ -597,7 +597,7 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 		},
 	}
 	table := assetVersionsTable(state)
-	wantColumns := []string{"version", "published", "status", "published_by"}
+	wantColumns := []string{"version", "published", "diff_stat", "status", "published_by"}
 	if len(table.Columns) != len(wantColumns) {
 		t.Fatalf("version columns = %#v, want compact columns %v", table.Columns, wantColumns)
 	}
@@ -613,6 +613,9 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 	if row["versionId"] != "state:current" || row["contentHash"] != "sha256:current" || row["snapshotId"] != "snapshot:2" {
 		t.Fatalf("version drawer provenance = %#v", row)
 	}
+	if got := row["diff_stat"]; got != (recordTableDiff{Label: "2 additions, 1 deletion", Additions: 2, Deletions: 1}) {
+		t.Fatalf("version diff stat = %#v", got)
+	}
 	diff, _ := row["changes"].(string)
 	if !strings.Contains(diff, `+    "revenue"`) || !strings.Contains(diff, "--- sha256:previ") || !strings.Contains(diff, "+++ sha256:curre") {
 		t.Fatalf("compiled configuration diff = %q", diff)
@@ -622,6 +625,9 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 	}
 	if got := table.Rows[1]["changesSummary"]; got != "This is the first recorded version." {
 		t.Fatalf("first version comparison = %q", got)
+	}
+	if got := table.Rows[1]["diff_stat"]; got != "-" {
+		t.Fatalf("first version diff stat = %#v, want placeholder", got)
 	}
 }
 

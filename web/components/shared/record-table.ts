@@ -53,6 +53,8 @@ type RecordCell = {
   statusLabel?: string
   expandedContent?: string
   copyLabel?: string
+  additions?: number
+  deletions?: number
 }
 
 type RecordAction = {
@@ -66,7 +68,7 @@ type RecordAction = {
 type RecordColumn = {
   id: string
   header: string
-  kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
+  kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'diff' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
   align?: 'left' | 'right'
   hrefKey?: string
   width?: string
@@ -451,6 +453,8 @@ class RecordTable extends LitElement {
         return label === '-' ? html`<span class="record-muted">-</span>` : this.renderStatusCell(value, label)
       case 'query':
         return this.renderQueryCell(value, row)
+      case 'diff':
+        return this.renderDiffCell(value, label)
       case 'number':
         return label === '-' ? html`<span class="record-muted">-</span>` : html`<span class="record-number">${label}</span>`
       case 'link':
@@ -468,6 +472,18 @@ class RecordTable extends LitElement {
       default:
         return label === '-' ? html`<span class="record-muted">-</span>` : html`<span>${label}</span>`
     }
+  }
+
+  private renderDiffCell(value: unknown, label: string): TemplateResult {
+    if (label === '-' || typeof value !== 'object' || value == null) return html`<span class="record-muted">-</span>`
+    const additions = Number((value as RecordCell).additions ?? 0)
+    const deletions = Number((value as RecordCell).deletions ?? 0)
+    return html`
+      <span class="record-diff" aria-label=${label}>
+        <span class="record-diff-additions">+${additions}</span>
+        <span class="record-diff-deletions">-${deletions}</span>
+      </span>
+    `
   }
 
   private renderRow(row: RecordRow, columns: RecordColumn[], rowAction: string, index: number): TemplateResult {
@@ -1305,6 +1321,23 @@ const recordTableStyles = `
 
   lv-record-table .record-number {
     font-variant-numeric: tabular-nums;
+  }
+
+  lv-record-table .record-diff {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-8);
+    font: var(--lv-type-code-inline);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  lv-record-table .record-diff-additions {
+    color: var(--lv-fg-accent);
+  }
+
+  lv-record-table .record-diff-deletions {
+    color: var(--lv-fg-danger);
   }
 
   lv-record-table .record-link,

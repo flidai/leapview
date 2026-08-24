@@ -2,6 +2,7 @@ package ui
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
@@ -96,10 +97,17 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 		changes := ""
 		changesSummary := "This is the first recorded version."
 		previousVersion := ""
+		var diffStat any = "-"
 		if index+1 < len(state.Versions) {
 			previous := state.Versions[index+1]
 			previousVersion = shortHash(previous.ContentHash)
 			changes = compiledConfigurationDiff(previous, version)
+			additions, deletions := compiledConfigurationDiffStats(previous, version)
+			diffStat = recordTableDiff{
+				Label:     diffStatLabel(additions, deletions),
+				Additions: additions,
+				Deletions: deletions,
+			}
 			changesSummary = "No compiled configuration changes."
 			if strings.TrimSpace(changes) != "" {
 				changesSummary = ""
@@ -110,6 +118,7 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 			"published":             emptyDash(firstNonEmpty(version.ActivatedAt, version.CreatedAt)),
 			"status":                recordTableBadge{Label: status, Tone: uisignals.Pointer(versionStatusTone(status))},
 			"published_by":          emptyDash(version.CreatedBy),
+			"diff_stat":             diffStat,
 			"versionId":             version.ServingStateID,
 			"statusLabel":           emptyDash(status),
 			"contentHash":           emptyDash(version.ContentHash),
@@ -130,12 +139,13 @@ func assetVersionsTable(state AssetVersionsState) recordTable {
 		Columns: []recordTableColumn{
 			{ID: "version", Header: "Version", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("150px")},
 			{ID: "published", Header: "Published", Width: uisignals.Pointer("180px")},
+			{ID: "diff_stat", Header: "Changes", Kind: uisignals.Pointer("diff"), Width: uisignals.Pointer("120px")},
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("120px")},
 			{ID: "published_by", Header: "Published by", Width: uisignals.Pointer("150px")},
 		},
 		Rows:      rows,
 		Empty:     "No config versions recorded for this asset yet.",
-		MinWidth:  uisignals.Pointer("600px"),
+		MinWidth:  uisignals.Pointer("720px"),
 		RowAction: uisignals.Pointer("open-asset-version"),
 	}
 }
@@ -171,6 +181,34 @@ func compiledConfigurationDiff(previous, current AssetVersionState) string {
 		return ""
 	}
 	return diff
+}
+
+func compiledConfigurationDiffStats(previous, current AssetVersionState) (additions, deletions int) {
+	before := difflib.SplitLines(formatCompiledConfiguration(previous.PayloadJSON))
+	after := difflib.SplitLines(formatCompiledConfiguration(current.PayloadJSON))
+	for _, operation := range difflib.NewMatcher(before, after).GetOpCodes() {
+		switch operation.Tag {
+		case 'r':
+			deletions += operation.I2 - operation.I1
+			additions += operation.J2 - operation.J1
+		case 'd':
+			deletions += operation.I2 - operation.I1
+		case 'i':
+			additions += operation.J2 - operation.J1
+		}
+	}
+	return additions, deletions
+}
+
+func diffStatLabel(additions, deletions int) string {
+	return fmt.Sprintf("%d %s, %d %s", additions, pluralizeLine(additions, "addition"), deletions, pluralizeLine(deletions, "deletion"))
+}
+
+func pluralizeLine(count int, singular string) string {
+	if count == 1 {
+		return singular
+	}
+	return singular + "s"
 }
 
 func versionStatusTone(status string) string {

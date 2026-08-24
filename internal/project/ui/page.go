@@ -161,6 +161,12 @@ type recordTableBadge struct {
 	Tone  *string `json:"tone,omitempty"`
 }
 
+type recordTableDiff struct {
+	Label     string `json:"label"`
+	Additions int    `json:"additions"`
+	Deletions int    `json:"deletions"`
+}
+
 func catalogLayoutContext(catalog catalog.Catalog) webpage.Context {
 	context := webpage.Context{
 		Active:       "dashboards",
