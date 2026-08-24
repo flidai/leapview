@@ -119,6 +119,7 @@ func mountPublicDashboardRoutes(mux *chi.Mux, dependencies publicDashboardRouteD
 
 func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDependencies, csrf func(http.Handler) http.Handler) {
 	mux.Group(func(r chi.Router) {
+		r.Use(apihttpmiddleware.PrivateResponse)
 		r.Use(csrf)
 		r.With(dependencies.rateLimits.Updates()).Get("/updates", dependencies.pageStreams.ServeHTTP)
 		if dependencies.projectBrowser != nil {
@@ -158,11 +159,13 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 func mountAuthenticationRoutes(mux *chi.Mux, accessModule *accessmodule.Module, rateLimits apihttpmiddleware.RateLimitConfig, csrf func(http.Handler) http.Handler) {
 	mux.Group(func(r chi.Router) {
 		r.Use(rateLimits.Auth())
+		r.Use(apihttpmiddleware.PrivateResponse)
 		r.Use(csrf)
 		accessModule.MountLocalLogin(r)
 	})
 	mux.Group(func(r chi.Router) {
 		r.Use(rateLimits.Auth())
+		r.Use(apihttpmiddleware.PrivateResponse)
 		accessModule.MountOAuthEndpoints(r)
 	})
 	accessModule.MountOAuthMetadata(mux)
