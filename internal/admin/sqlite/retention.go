@@ -93,7 +93,7 @@ func pruneDeliveredAuditIntents(ctx context.Context, tx *sql.Tx, now time.Time, 
 		return 0, nil
 	}
 	cutoff := sqliteTime(now.Add(-maxAge))
-	condition := "state = 'delivered' AND delivered_at IS NOT NULL AND delivered_at < ?"
+	condition := "state = 'delivered' AND delivered_at IS NOT NULL AND created_at < ?"
 	if dryRun {
 		return countWhere(ctx, tx, "SELECT COUNT(*) FROM audit_outbox WHERE "+condition, cutoff)
 	}

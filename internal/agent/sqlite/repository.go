@@ -63,16 +63,20 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	resourceID = strings.TrimSpace(resourceID)
 	aggregateID = strings.TrimSpace(aggregateID)
 	operation := strings.ToLower(copy.Operation)
-	if strings.Contains(operation, "agentrun") || copy.ResourceID == "" {
+	isAgentRun := strings.Contains(operation, "agentrun")
+	usesGeneratedResourceID := strings.TrimSpace(copy.ResourceID) == ""
+	if isAgentRun || usesGeneratedResourceID {
 		copy.ResourceID = resourceID
 	}
-	if strings.Contains(operation, "agentrun") {
+	if isAgentRun {
 		copy.ResourceKind = "agent_run"
 	}
-	if strings.Contains(operation, "agentrun") && strings.TrimSpace(copy.MetadataJSON) != "" {
-		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(copy.MetadataJSON, map[string]any{
-			"resourceKind": "agent_run", "resourceId": resourceID,
-		})
+	if (isAgentRun || usesGeneratedResourceID) && strings.TrimSpace(copy.MetadataJSON) != "" {
+		replacements := map[string]any{"resourceId": resourceID}
+		if isAgentRun {
+			replacements["resourceKind"] = "agent_run"
+		}
+		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(copy.MetadataJSON, replacements)
 		if err != nil {
 			return fmt.Errorf("agent audit metadata: %w", err)
 		}
@@ -81,7 +85,7 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	if aggregateID == "" {
 		aggregateID = resourceID
 	}
-	if strings.Contains(operation, "agentrun") {
+	if isAgentRun {
 		copy.AggregateKey = "agent_run:" + aggregateID
 		if strings.Contains(operation, "create") {
 			copy.AggregateSequence = 1
@@ -110,7 +114,7 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	// Conversation updates/archives may occur more than once. A zero sequence
 	// delegates replay-stable aggregate ordering to the Access-owned recorder;
 	// this repository never reads another capability's persistence tables.
-	if !strings.Contains(operation, "create") && !strings.Contains(operation, "agentrun") {
+	if !strings.Contains(operation, "create") && !isAgentRun {
 		copy.AggregateSequence = 0
 	}
 	return r.audit.RecordAuditIntent(ctx, tx, copy)

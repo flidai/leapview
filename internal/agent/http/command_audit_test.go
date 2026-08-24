@@ -284,12 +284,23 @@ func commandAuditTestIntent(input CommandAuditInput) *access.AuditIntent {
 		createAgentRunOperation.APIGenOperationID():           "agent.run.created",
 		cancelAgentRunOperation.APIGenOperationID():           "agent.run.cancelled",
 	}[input.OperationID]
+	metadata, _ := json.Marshal(map[string]any{
+		"schemaVersion": 1,
+		"retention":     "security",
+		"payloadSchema": "AgentCommandAuditPayload",
+		"payload": map[string]any{
+			"operationId":  input.OperationID,
+			"resourceKind": input.TargetType,
+			"resourceId":   input.TargetID,
+			"surface":      "api",
+		},
+	})
 	return &access.AuditIntent{
 		EventID: "agent-command-pending", Source: "agent", Operation: input.OperationID,
 		PrincipalID: input.Scope.PrincipalID, Action: action, ResourceKind: input.TargetType,
 		ResourceID: input.TargetID, Capability: access.CapabilityResourceUse, Outcome: "success",
 		RequestID: input.RequestID, CorrelationID: input.CorrelationID,
-		AggregateKey: "agent-command:pending", MetadataJSON: `{}`,
+		AggregateKey: "agent-command:pending", MetadataJSON: string(metadata),
 	}
 }
 

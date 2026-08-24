@@ -73,6 +73,31 @@ func TestPruneOperationalHistoryDeletesOnlyExpiredOperationalRows(t *testing.T) 
 	requireRowExists(t, ctx, store, "agent_conversations", "agent_archived_recent")
 }
 
+func TestPruneOperationalHistoryUsesAuditIntentCreationTime(t *testing.T) {
+	ctx := context.Background()
+	store := testMaintenanceStore(t, ctx)
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO audit_outbox
+		(event_id, source, operation, action, outcome, aggregate_key, aggregate_sequence, payload_digest, state, created_at, delivered_at)
+		VALUES ('outbox_delivered_late', 'test', 'late', 'late', 'success', 'outbox_delivered_late', 0, ?, 'delivered', ?, ?)`,
+		digest, sqliteTime(now.Add(-(366 * 24 * time.Hour))), sqliteTime(now.Add(-time.Hour))); err != nil {
+		t.Fatalf("seed late delivered audit outbox: %v", err)
+	}
+
+	result, err := PruneOperationalHistory(ctx, store.SQLDB(), RetentionOptions{
+		Now:               now,
+		AuditEventsMaxAge: 365 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("prune operational history: %v", err)
+	}
+	if result.DeliveredAuditIntentsDeleted != 1 {
+		t.Fatalf("delivered audit intents deleted = %d, want 1", result.DeliveredAuditIntentsDeleted)
+	}
+	requireTableCount(t, ctx, store, "audit_outbox", 0)
+}
+
 func TestPruneOperationalHistoryDeletesStaleAuthState(t *testing.T) {
 	ctx := context.Background()
 	store := testMaintenanceStore(t, ctx)
