@@ -235,10 +235,10 @@ INSERT INTO refresh_jobs (
 );
 INSERT INTO refresh_job_runs (
   id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type,
-  status, created_sequence
+  invocation_source, status, created_sequence
 ) VALUES (
   'run_1', 'job_1', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual',
-  'queued', 1
+  'manual', 'queued', 1
 );`); err != nil {
 		t.Fatalf("seed refresh run: %v", err)
 	}
@@ -253,12 +253,12 @@ INSERT INTO refresh_job_runs (
 	if err := module.CancelPipelineRefreshForUI(t.Context(), identity, "pipeline_other", "run_1", "user:test"); err == nil {
 		t.Fatal("cross-pipeline cancel unexpectedly succeeded")
 	}
-	run, err := module.runs.GetRun(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, "run_1")
-	if err != nil {
-		t.Fatalf("read run after denied cancel: %v", err)
+	var status string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT status FROM refresh_job_runs WHERE id = 'run_1'`).Scan(&status); err != nil {
+		t.Fatalf("read run status after denied cancel: %v", err)
 	}
-	if run.Status != refreshrun.RunStatusQueued {
-		t.Fatalf("cross-pipeline cancel changed run status to %q", run.Status)
+	if status != refreshrun.RunStatusQueued {
+		t.Fatalf("cross-pipeline cancel changed run status to %q", status)
 	}
 }
 

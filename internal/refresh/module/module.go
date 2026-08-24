@@ -316,11 +316,13 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 			return errors.New("refresh retry is invalid")
 		}
 	}
-	trigger := refreshrun.TriggerManual
-	if retryOf != "" {
-		trigger = refreshrun.TriggerRetry
-	}
-	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{Identity: identity, PipelineID: pipeline, PrincipalID: principalID, EstimatedMemoryBytes: 1, TriggerType: trigger, RetryOf: retryOf})
+	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
+	// validated above for UI safety, but it is not retained as mutable execution
+	// state on the new immutable pipeline occurrence.
+	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
+		Identity: identity, PipelineID: pipeline, PrincipalID: principalID,
+		EstimatedMemoryBytes: 1, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
+	})
 	if err != nil {
 		return err
 	}
