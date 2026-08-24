@@ -2014,6 +2014,7 @@ model DashboardAppearanceSignal {
 @apigen.contract(#{ kind: "ui-signal", tags: #["resource", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "resource" })
 model ResourceAssetRefreshSignal {
+  `facts`?: DefinitionFactSignal[];
   `lastSuccessful`: string;
   `running`: boolean;
   `runsTable`?: RecordTableSignal;

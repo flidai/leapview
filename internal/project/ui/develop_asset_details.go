@@ -42,7 +42,7 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 	case "semantic_model":
 		semanticModelDetailModel(&model, project, asset, assets, refresh)
 	case "model_table":
-		modelTableDetailModel(&model, project, asset, assets, refresh)
+		modelTableDetailModel(&model, project, asset, assets)
 	case "dashboard":
 		dashboardDetailModel(&model, asset, assets)
 	case "refresh_pipeline":
@@ -136,7 +136,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 }
 
 func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
-	status := assetRefreshSignal(refresh).Status
+	status := assetRefreshStatus(refresh)
 	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
 		{Label: "Last refreshed", Value: emptyDash(refresh.LatestSuccessful.FinishedAt)},
@@ -565,7 +565,7 @@ func sortedMapKeysString(values map[string][]string) []string {
 	return keys
 }
 
-func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, refresh AssetRefreshState) {
+func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {
 	fields := modelTableFields(asset.Payload)
 	schema := metaMap(asset.Payload, "Schema", "schema")
 	physicalColumns := metaSlice(schema, "Columns", "columns")
@@ -601,11 +601,9 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 		model.Overview = append(model.Overview,
 			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
 			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
-			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
-			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
 		)
 	}
-	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
+	model.Overview = append(model.Overview, modelLastRefreshedFact(asset))
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(asset, asset.Payload)},

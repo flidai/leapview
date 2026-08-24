@@ -1414,10 +1414,11 @@ type ResourceAssetPageSignal struct {
 }
 
 type ResourceAssetRefreshSignal struct {
-	LastSuccessful string             `json:"lastSuccessful" yaml:"lastSuccessful"`
-	Running        bool               `json:"running" yaml:"running"`
-	RunsTable      *RecordTableSignal `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
-	Status         string             `json:"status" yaml:"status"`
+	Facts          *[]DefinitionFactSignal `json:"facts,omitempty" yaml:"facts,omitempty"`
+	LastSuccessful string                  `json:"lastSuccessful" yaml:"lastSuccessful"`
+	Running        bool                    `json:"running" yaml:"running"`
+	RunsTable      *RecordTableSignal      `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
+	Status         string                  `json:"status" yaml:"status"`
 }
 
 type ResourceAssetSummarySignal struct {

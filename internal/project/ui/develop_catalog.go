@@ -325,6 +325,8 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	}
 	if assetRefreshable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
+	} else if asset.Type == "model_table" {
+		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refresh", Label: "Refresh", Href: assetnav.CanonicalAssetSectionHref(asset, "refresh"), Active: activeSection == "refresh"})
 	}
 	if assetHasVersions(versions) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions", Count: uisignals.Pointer(int64(len(versions.Versions)))})
@@ -382,6 +384,8 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 	}
 	if assetRefreshable(asset.Type) {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
+	} else if asset.Type == "model_table" {
+		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
 	}
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))

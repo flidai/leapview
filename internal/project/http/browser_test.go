@@ -458,6 +458,7 @@ func TestModelAssetBootstrapUsesAuthoredSQLWhenRuntimeProjectionIsTargetBound(t 
 
 func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 	const assetID = "model:zip_geolocations"
+	snapshotAt := time.Date(2026, 8, 24, 14, 32, 0, 0, time.UTC)
 	h := &BrowserHandler{
 		Environment: "dev",
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -465,7 +466,8 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		}},
 		PhysicalCatalog: browserPhysicalCatalogStub{"zip_geolocations": {
 			RowCount: 99_441, ColumnCount: 5, FileCount: 2, SizeBytes: 1_572_864, SnapshotID: 17,
-			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", PhysicalType: "VARCHAR"}}},
+			SnapshotAt: snapshotAt,
+			Schema:     semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", PhysicalType: "VARCHAR"}}},
 		}},
 	}
 	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
@@ -475,7 +477,7 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		t.Fatalf("projectAssetReadModel() error = %v", err)
 	}
 	physical, ok := asset.Payload["Physical"].(map[string]any)
-	if !ok || physical["RowCount"] != int64(99_441) || physical["SizeBytes"] != int64(1_572_864) || physical["SnapshotID"] != int64(17) {
+	if !ok || physical["RowCount"] != int64(99_441) || physical["SizeBytes"] != int64(1_572_864) || physical["SnapshotID"] != int64(17) || physical["SnapshotAt"] != snapshotAt.Format(time.RFC3339) {
 		t.Fatalf("physical payload = %#v", asset.Payload["Physical"])
 	}
 	schema, ok := asset.Payload["Schema"].(map[string]any)

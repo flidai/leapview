@@ -4,6 +4,7 @@ package catalogstats
 
 import (
 	"context"
+	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 )
@@ -18,6 +19,7 @@ type Table struct {
 	FileCount   int64
 	SizeBytes   int64
 	SnapshotID  int64
+	SnapshotAt  time.Time
 	Columns     []semanticmodel.ColumnSchema
 }
 

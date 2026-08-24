@@ -11,6 +11,7 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
@@ -56,6 +57,7 @@ type AssetRefreshStateReader interface {
 // a model's catalog detail page.
 type ModelPhysicalMetadata struct {
 	RowCount, ColumnCount, FileCount, SizeBytes, SnapshotID int64
+	SnapshotAt                                              time.Time
 	Schema                                                  semanticmodel.TableSchema
 }
 
@@ -823,7 +825,11 @@ func (h *BrowserHandler) enrichAssetRuntimeMetadata(ctx context.Context, asset p
 }
 
 func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
-	if asset.Type != string(projectview.AssetTypeModelTable) || h.PhysicalCatalog == nil {
+	if asset.Type != string(projectview.AssetTypeModelTable) {
+		return asset, nil
+	}
+	if h.PhysicalCatalog == nil {
+		asset.Payload["PhysicalStatus"] = "unavailable"
 		return asset, nil
 	}
 	projectID, err := projectgraph.NewResourceID(asset.ProjectID)
@@ -835,17 +841,24 @@ func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset 
 		// Physical catalog statistics enrich the authored definition but are not
 		// required to browse it. A temporarily unavailable DuckLake snapshot must
 		// not regress the entire model detail route.
+		asset.Payload["PhysicalStatus"] = "unavailable"
 		return asset, nil
 	}
 	_, tableName := projectModelTableKeyParts(asset.Key)
 	physical, ok := statistics[tableName]
 	if !ok {
+		asset.Payload["PhysicalStatus"] = "not refreshed"
 		return asset, nil
 	}
-	asset.Payload["Physical"] = map[string]any{
+	physicalPayload := map[string]any{
 		"RowCount": physical.RowCount, "ColumnCount": physical.ColumnCount,
 		"FileCount": physical.FileCount, "SizeBytes": physical.SizeBytes, "SnapshotID": physical.SnapshotID,
 	}
+	if !physical.SnapshotAt.IsZero() {
+		physicalPayload["SnapshotAt"] = physical.SnapshotAt.UTC().Format(time.RFC3339)
+	}
+	asset.Payload["Physical"] = physicalPayload
+	asset.Payload["PhysicalStatus"] = "available"
 	for key, value := range projectview.ModelSchemaPayload(physical.Schema) {
 		asset.Payload[key] = value
 	}

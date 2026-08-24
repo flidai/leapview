@@ -44,7 +44,7 @@ func (r activeProjectPhysicalCatalog) ModelPhysicalMetadata(ctx context.Context,
 		}
 		out[table.Name] = projecthttp.ModelPhysicalMetadata{
 			RowCount: table.RowCount, ColumnCount: table.ColumnCount, FileCount: table.FileCount,
-			SizeBytes: table.SizeBytes, SnapshotID: table.SnapshotID,
+			SizeBytes: table.SizeBytes, SnapshotID: table.SnapshotID, SnapshotAt: table.SnapshotAt,
 			Schema: semanticmodel.TableSchema{Columns: append([]semanticmodel.ColumnSchema(nil), table.Columns...)},
 		}
 	}

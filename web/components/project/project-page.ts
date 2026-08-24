@@ -459,6 +459,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         ? this.renderDefinition(page)
       : page.activeSection === 'refreshes'
         ? this.renderRefreshes(page)
+      : page.activeSection === 'refresh'
+        ? this.renderRefreshes(page)
         : page.activeSection === 'versions'
           ? this.renderVersions(page)
         : this.renderDetails(page)
@@ -538,8 +540,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderRefreshes(page: ResourceAssetPageSignal) {
     return html`
-      <section class="details" id="refreshes" aria-label="Refresh runs">
-        ${renderRecordTableSection('Refreshes', page.refresh?.runsTable)}
+      <section class="details" id=${page.activeSection} aria-label=${page.activeSection === 'refresh' ? 'Model refresh' : 'Refresh runs'}>
+        <div class="details-content">
+          ${renderFacts('Refresh', page.refresh?.facts ?? [], true)}
+          ${page.refresh?.runsTable ? renderRecordTableSection('Refreshes', page.refresh.runsTable) : nothing}
+        </div>
       </section>
     `
   }

@@ -17,17 +17,86 @@ func ProjectAssetRefreshSignals(project projectview.DevelopView, asset projectvi
 }
 
 func assetRefreshSignal(refresh AssetRefreshState) uisignals.ResourceAssetRefreshSignal {
-	status := strings.TrimSpace(refresh.Latest.Status)
-	if refresh.Unavailable {
-		status = "unavailable"
-	} else if status == "" {
-		status = "not refreshed"
-	}
+	status := assetRefreshStatus(refresh)
 	return uisignals.ResourceAssetRefreshSignal{
+		Facts:          uisignals.OptionalSlice(definitionFactSignals(refreshOverviewFacts(refresh))),
 		Status:         status,
 		Running:        status == "queued" || status == "running",
 		LastSuccessful: refresh.LatestSuccessful.FinishedAt,
 	}
+}
+
+func assetRefreshStatus(refresh AssetRefreshState) string {
+	status := strings.TrimSpace(refresh.Latest.Status)
+	if refresh.Unavailable {
+		return "unavailable"
+	}
+	if status == "" {
+		return "not refreshed"
+	}
+	return status
+}
+
+func modelRefreshSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetRefreshSignal {
+	physical := metaMap(asset.Payload, "Physical", "physical")
+	lastSuccessful := metaString(physical, "SnapshotAt", "snapshotAt")
+	facts := modelRefreshFacts(asset)
+	return uisignals.ResourceAssetRefreshSignal{
+		Facts:          uisignals.OptionalSlice(definitionFactSignals(facts)),
+		Status:         modelRefreshStatus(asset),
+		LastSuccessful: lastSuccessful,
+	}
+}
+
+func modelRefreshFacts(asset projectview.DevelopAssetView) []definitionFact {
+	physical := metaMap(asset.Payload, "Physical", "physical")
+	facts := []definitionFact{
+		{Label: "Status", Value: modelRefreshStatus(asset)},
+		modelLastRefreshedFact(asset),
+	}
+	if len(physical) > 0 {
+		facts = append(facts,
+			definitionFact{Label: "Rows", Value: formatCatalogCount(metaInt64(physical, "RowCount", "rowCount"))},
+			definitionFact{Label: "Physical size", Value: formatCatalogBytes(metaInt64(physical, "SizeBytes", "sizeBytes"))},
+			definitionFact{Label: "Data files", Value: formatCatalogCount(metaInt64(physical, "FileCount", "fileCount"))},
+			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
+		)
+	}
+	facts = append(facts, definitionFact{
+		Label: "Run history",
+		Value: "Refresh runs are recorded against refresh pipelines. Use Lineage to find the pipelines that materialize this model.",
+		Wide:  true,
+	})
+	return facts
+}
+
+func modelRefreshStatus(asset projectview.DevelopAssetView) string {
+	if len(metaMap(asset.Payload, "Physical", "physical")) > 0 {
+		return "available"
+	}
+	return firstNonEmpty(metaString(asset.Payload, "PhysicalStatus", "physicalStatus"), "not refreshed")
+}
+
+func modelLastRefreshedFact(asset projectview.DevelopAssetView) definitionFact {
+	physical := metaMap(asset.Payload, "Physical", "physical")
+	value := "Never refreshed"
+	if len(physical) > 0 {
+		value = "Unknown"
+	}
+	if metaString(asset.Payload, "PhysicalStatus", "physicalStatus") == "unavailable" {
+		value = "Unavailable"
+	}
+	if snapshotAt := metaString(physical, "SnapshotAt", "snapshotAt"); snapshotAt != "" {
+		value = formatCatalogTimestamp(snapshotAt)
+	}
+	return definitionFact{Label: "Last refreshed", Value: value}
+}
+
+func formatCatalogTimestamp(value string) string {
+	if parsed, ok := parseRefreshTime(value); ok {
+		return parsed.UTC().Format("2006-01-02 15:04 UTC")
+	}
+	return value
 }
 
 func assetVersionsSignal(state AssetVersionsState) uisignals.ResourceAssetVersionsSignal {

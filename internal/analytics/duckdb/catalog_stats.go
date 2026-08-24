@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"math/big"
+	"time"
 
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -30,8 +31,13 @@ func (r *ProjectRuntime) CatalogTableStatistics(ctx context.Context) ([]catalogs
 	rows, err := queryer.Query(ctx, semanticquery.Plan{
 		SQL: `
 WITH selected_snapshot AS (
-	SELECT CASE WHEN ? > 0 THEN ? ELSE id END AS id
-	FROM ducklake_current_snapshot(?)
+	SELECT selected.id, snapshots.snapshot_time
+	FROM (
+		SELECT CASE WHEN ? > 0 THEN ? ELSE id END AS id
+		FROM ducklake_current_snapshot(?)
+	) selected
+	LEFT JOIN __ducklake_metadata_lake.ducklake_snapshot snapshots
+	  ON snapshots.snapshot_id = selected.id
 ), active_tables AS (
 	SELECT s.schema_name, t.table_name, t.table_id
 	FROM __ducklake_metadata_lake.ducklake_table t
@@ -71,7 +77,7 @@ WITH selected_snapshot AS (
 SELECT a.schema_name, a.table_name,
        coalesce(f.row_count, 0), coalesce(c.column_count, 0),
        coalesce(f.file_count, 0), coalesce(f.byte_count, 0),
-	   selected.id AS snapshot_id,
+	   selected.id AS snapshot_id, selected.snapshot_time,
 	   columns.column_name, columns.column_type, columns.column_order,
 	   columns.nulls_allowed, columns.default_value
 FROM active_tables a
@@ -81,7 +87,7 @@ LEFT JOIN column_rollup c ON c.table_id = a.table_id
 LEFT JOIN active_columns columns ON columns.table_id = a.table_id
 ORDER BY a.schema_name, a.table_name, columns.column_order`,
 		Args:    []any{snapshotID, snapshotID, "lake"},
-		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id", "column_name", "column_type", "column_order", "nulls_allowed", "default_value"},
+		Columns: []string{"schema_name", "table_name", "row_count", "column_count", "file_count", "byte_count", "snapshot_id", "snapshot_time", "column_name", "column_type", "column_order", "nulls_allowed", "default_value"},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("inspect serving DuckLake catalog: %w", err)
@@ -104,6 +110,7 @@ ORDER BY a.schema_name, a.table_name, columns.column_order`,
 				FileCount:   catalogStatisticInt64(row["file_count"]),
 				SizeBytes:   catalogStatisticInt64(row["byte_count"]),
 				SnapshotID:  catalogStatisticInt64(row["snapshot_id"]),
+				SnapshotAt:  catalogStatisticTime(row["snapshot_time"]),
 			})
 		}
 		if columnName := catalogStatisticString(row["column_name"]); columnName != "" {
@@ -116,6 +123,21 @@ ORDER BY a.schema_name, a.table_name, columns.column_order`,
 		}
 	}
 	return statistics, nil
+}
+
+func catalogStatisticTime(value any) time.Time {
+	switch value := value.(type) {
+	case time.Time:
+		return value.UTC()
+	case string:
+		parsed, _ := time.Parse(time.RFC3339Nano, value)
+		return parsed.UTC()
+	case []byte:
+		parsed, _ := time.Parse(time.RFC3339Nano, string(value))
+		return parsed.UTC()
+	default:
+		return time.Time{}
+	}
 }
 
 func catalogStatisticNullable(value any) *bool {

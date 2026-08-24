@@ -263,7 +263,7 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 	asset.Payload["Physical"] = map[string]any{
 		"RowCount": int64(99_441), "ColumnCount": int64(5), "FileCount": int64(2),
-		"SizeBytes": int64(1_572_864), "SnapshotID": int64(17),
+		"SizeBytes": int64(1_572_864), "SnapshotID": int64(17), "SnapshotAt": "2026-08-24T14:32:00Z",
 	}
 	project := projectview.DevelopView{ID: "project:test", Title: "Test"}
 	details := projectAssetDetailsSignal(project, asset, []projectview.DevelopAssetView{asset}, nil)
@@ -288,11 +288,17 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	if got := factValue(details.Overview, "Physical size"); got != "1.5 MiB" {
 		t.Fatalf("physical size fact = %q, want 1.5 MiB", got)
 	}
-	if got := factValue(details.Overview, "Data files"); got != "2" {
-		t.Fatalf("data files fact = %q, want 2", got)
+	if got := factValue(details.Overview, "Last refreshed"); got != "2026-08-24 14:32 UTC" {
+		t.Fatalf("last refreshed fact = %q, want serving snapshot time", got)
 	}
-	if got := factValue(details.Overview, "DuckLake snapshot"); got != "17" {
-		t.Fatalf("snapshot fact = %q, want 17", got)
+	if got := factValue(details.Overview, "Refresh status"); got != "" {
+		t.Fatalf("refresh status fact = %q, want compact freshness only", got)
+	}
+	if got := factValue(details.Overview, "Data files"); got != "" {
+		t.Fatalf("data files fact = %q, want technical metadata in Refresh tab", got)
+	}
+	if got := factValue(details.Overview, "DuckLake snapshot"); got != "" {
+		t.Fatalf("snapshot fact = %q, want technical metadata in Refresh tab", got)
 	}
 	if len(details.Sections) != 2 || details.Sections[0].Title != "Entities (1)" || details.Sections[1].Title != "Fields (2)" {
 		t.Fatalf("detail sections = %#v, want entities and fields only", details.Sections)
@@ -348,6 +354,39 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 	if got := details.Sections[1].Table.Rows[1]["status"].(recordTableBadge).Label; got != "Observed" {
 		t.Fatalf("observed field status = %q", got)
+	}
+}
+
+func TestModelTableRefreshTabUsesServingSnapshotFacts(t *testing.T) {
+	asset := projectview.DevelopAssetView{
+		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
+		Payload: map[string]any{"Physical": map[string]any{
+			"RowCount": int64(99_441), "FileCount": int64(1), "SizeBytes": int64(7_969_177),
+			"SnapshotID": int64(2), "SnapshotAt": "2026-08-24T14:32:00Z",
+		}},
+	}
+	page := projectAssetPageSignal(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refresh", assetLineageModel{})
+	if page.ActiveSection != "refresh" || page.Refresh == nil {
+		t.Fatalf("model refresh page = %#v, want active refresh signal", page)
+	}
+	var refreshTab *uisignals.ResourceTabSignal
+	for index := range page.Tabs {
+		if page.Tabs[index].ID == "refresh" {
+			refreshTab = &page.Tabs[index]
+			break
+		}
+	}
+	if refreshTab == nil || refreshTab.Label != "Refresh" || refreshTab.Href != "/models/model:orders/refresh" || !refreshTab.Active {
+		t.Fatalf("model refresh tab = %#v", refreshTab)
+	}
+	if page.Refresh.Status != "available" || page.Refresh.LastSuccessful != "2026-08-24T14:32:00Z" {
+		t.Fatalf("model refresh state = %#v", page.Refresh)
+	}
+	if got := factValue(uisignals.ValueOrZero(page.Refresh.Facts), "DuckLake snapshot"); got != "2" {
+		t.Fatalf("snapshot fact = %q, want 2", got)
+	}
+	if got := factValue(uisignals.ValueOrZero(page.Refresh.Facts), "Data files"); got != "1" {
+		t.Fatalf("data files fact = %q, want 1", got)
 	}
 }
 
@@ -719,6 +758,8 @@ func TestProjectAssetSectionsAreResourceAware(t *testing.T) {
 		{string(projectview.AssetTypeSource), "definition", true},
 		{string(projectview.AssetTypeSource), "data", false},
 		{string(projectview.AssetTypeModelTable), "data", true},
+		{string(projectview.AssetTypeModelTable), "refresh", true},
+		{string(projectview.AssetTypeModelTable), "refreshes", false},
 		{string(projectview.AssetTypeRefreshPipeline), "refreshes", true},
 		{string(projectview.AssetTypeDashboard), "refreshes", false},
 		{string(projectview.AssetTypeDashboard), "bogus", false},
