@@ -372,6 +372,8 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
     })
     await page.waitForFunction(() => new URL(location.href).searchParams.get('version') === 'state:current')
     const drawer = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      element.style.setProperty('--base-size-12', '12px')
+      element.style.setProperty('--base-size-16', '16px')
       await element.updateComplete
       const root = element.shadowRoot!
       const detail = root.querySelector('lv-drawer') as any
@@ -382,6 +384,20 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
         title: root.querySelector('.version-drawer-title h1')?.textContent?.trim(),
         subtitle: root.querySelector('.version-drawer-subtitle')?.textContent?.trim(),
         sections: Array.from(root.querySelectorAll('.version-drawer-body .detail-section')).map((section: any) => section.querySelector('h2')?.textContent?.trim()),
+        factRowGaps: Array.from(root.querySelector('.version-drawer-body .facts')!.children).slice(1).map((row: any, index) => {
+          const previous = root.querySelector('.version-drawer-body .facts')!.children[index].getBoundingClientRect()
+          return Math.round(row.getBoundingClientRect().top - previous.bottom)
+        }),
+        factRows: Array.from(root.querySelectorAll('.version-drawer-body .facts > div')).map((row: any) => {
+          const label = row.children[0]?.getBoundingClientRect()
+          const value = row.children[1]?.getBoundingClientRect()
+          return {
+            labelTop: Math.round(label?.top ?? 0),
+            valueTop: Math.round(value?.top ?? 0),
+            labelLeft: Math.round(label?.left ?? 0),
+            valueLeft: Math.round(value?.left ?? 0),
+          }
+        }),
         changes: root.querySelector('.version-changes pre')?.textContent,
         configuration: (root.querySelector('lv-code-block') as any)?.code,
       }
@@ -391,6 +407,10 @@ test('Versions uses a compact table and a deep-linked comparison drawer', async 
     expect(drawer.title).toBe('Version 2')
     expect(drawer.subtitle).toBe('current · 2026-08-24T14:57:00Z')
     expect(drawer.sections).toEqual(['Overview', 'Provenance', 'Changes from previous version', 'Compiled configuration'])
+    expect(Math.min(...drawer.factRowGaps)).toBeGreaterThanOrEqual(12)
+    expect(drawer.factRows.length).toBeGreaterThan(0)
+    expect(drawer.factRows.every((row: any) => Math.abs(row.labelTop - row.valueTop) <= 2)).toBe(true)
+    expect(drawer.factRows.every((row: any) => row.valueLeft > row.labelLeft)).toBe(true)
     expect(drawer.changes).toContain('+    "revenue"')
     expect(drawer.configuration).toContain('"revenue"')
 

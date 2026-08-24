@@ -27,10 +27,10 @@ func TestProviderOwnsInsightsNavigationAndAgentHistory(t *testing.T) {
 	if chrome.Sidebar.UserSettingsHref != "/admin/profile" {
 		t.Fatalf("user settings href = %q, want /admin/profile", chrome.Sidebar.UserSettingsHref)
 	}
-	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 2 {
+	if len(chrome.Sidebar.Groups) != 1 || len(chrome.Sidebar.Groups[0].Items) != 3 {
 		t.Fatalf("navigation = %#v", chrome.Sidebar.Groups)
 	}
-	if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "data-explorer" || chrome.Sidebar.Groups[0].Items[1].Label != "Data Explorer" || chrome.Sidebar.Groups[0].Items[1].Href != "/explore" {
+	if chrome.Sidebar.Groups[0].Items[0].ID != "dashboards" || chrome.Sidebar.Groups[0].Items[1].ID != "data-explorer" || chrome.Sidebar.Groups[0].Items[1].Label != "Data Explorer" || chrome.Sidebar.Groups[0].Items[1].Href != "/explore" || chrome.Sidebar.Groups[0].Items[2].ID != "chat" || chrome.Sidebar.Groups[0].Items[2].Label != "Chats" || chrome.Sidebar.Groups[0].Items[2].Href != "/chats" {
 		t.Fatalf("insights navigation = %#v", chrome.Sidebar.Groups)
 	}
 	if chrome.Sidebar.UserName == nil || *chrome.Sidebar.UserName != "Ada Lovelace" {

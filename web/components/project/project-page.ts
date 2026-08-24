@@ -1733,6 +1733,37 @@ const projectStyles = css`
     white-space: pre-wrap;
   }
 
+  .source-drawer-body .facts,
+  .source-drawer-body .facts.overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--base-size-12);
+  }
+
+  .source-drawer-body .facts > div {
+    grid-template-columns: minmax(7rem, .42fr) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--base-size-16);
+  }
+
+  .source-drawer-body .facts .wide {
+    grid-column: auto;
+  }
+
+  .source-drawer-body .facts span:first-child {
+    font: var(--lv-type-body-compact);
+    text-transform: none;
+  }
+
+  .source-drawer-body .facts p,
+  .source-drawer-body .facts code,
+  .source-drawer-body .facts .wide p,
+  .source-drawer-body .facts .wide code {
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+    font: var(--lv-type-body-compact);
+  }
+
   @media (max-width: 720px) {
     .page {
       padding: var(--base-size-12);

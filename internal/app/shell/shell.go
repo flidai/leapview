@@ -183,6 +183,7 @@ func insightsNavigation() []Item {
 	return []Item{
 		{ID: "dashboards", Label: "Dashboards", Href: "/", Icon: "dashboard"},
 		{ID: "data-explorer", Label: "Data Explorer", Href: "/explore", Icon: "database"},
+		{ID: "chat", Label: "Chats", Href: "/chats", Icon: "chat"},
 	}
 }
 
