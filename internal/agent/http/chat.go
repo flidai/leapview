@@ -8,12 +8,13 @@ import (
 	"net/url"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	"github.com/flidai/leapview/internal/agent/ui"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -126,7 +127,10 @@ func (h *Handler) ChatTurn(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if !ok {
 		return
 	}
-	clientID := chatClientID(r)
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
+	}
 	signals := chatTurnCommandSignals{}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
@@ -184,24 +188,26 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	scope := h.chatScope(r)
 	signal, view := h.chatBootstrapSignal(r, scope)
 	projectID := ""
-	streamID := chatStreamID(scope, chatClientID(r))
-	var trace *pagestream.TraceStore
-	if h.options.Broker != nil {
-		trace = h.options.Broker.TraceStore()
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
 	}
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, "chat.bootstrap"))
+	streamID := chatStreamID(scope, clientID)
+	updates := pagestream.NewSignalStream(w, r)
 	if err := updates.Patch(ui.ChatBootstrapSignals(projectID, view, signal, h.layout(r))); err != nil {
 		return
 	}
 	if h.options.Service == nil || !h.options.Service.Enabled() || scope.PrincipalID == "" || h.options.Broker == nil {
-		updates.Wait(r.Context())
+		<-r.Context().Done()
 		return
 	}
 	_ = updates.Forward(r.Context(), h.options.Broker, streamID)
 }
 
 func (h *Handler) renderChat(w nethttp.ResponseWriter, r *nethttp.Request, view string, signal ui.ChatViewState) {
-	_ = pagestream.EnsureClientID(w, r)
+	if _, ok := webtransport.RequireClientID(w, r); !ok {
+		return
+	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(nethttp.StatusOK)
 	projectID := ""
@@ -295,12 +301,7 @@ func (h *Handler) runChatTurn(w nethttp.ResponseWriter, r *nethttp.Request, serv
 	}
 	transcript := state.Transcript
 	streamArtifacts := state.Artifacts
-	streamID := chatStreamID(scope, clientID)
-	var trace *pagestream.TraceStore
-	if h.options.Broker != nil {
-		trace = h.options.Broker.TraceStore()
-	}
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, "chat.turn"))
+	updates := pagestream.NewSignalStream(w, r)
 	identity := uiRequestIdentity(r, input)
 	runCtx, invocationErr := beginUICommandInvocation(r, agentUIBinding(createAgentRunOperation), nil, conversationID, input, identity)
 	if invocationErr != nil {
@@ -484,12 +485,9 @@ func chatRoutePath(parts ...string) string {
 }
 
 func chatClientID(r *nethttp.Request) string {
-	return pagestream.ClientIDFromRequest(r, "")
+	return webtransport.ClientIDFromRequest(r, "")
 }
 
 func chatStreamID(scope agent.Scope, clientID string) string {
-	if strings.TrimSpace(clientID) == "" {
-		clientID = "default"
-	}
 	return "chat:" + clientID + ":" + scope.PrincipalID
 }

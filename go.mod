@@ -7,7 +7,6 @@ replace github.com/Yacobolo/toolbelt/apigen => ./pkg/apigen
 require (
 	cuelang.org/go v0.16.1
 	github.com/Yacobolo/toolbelt/apigen v0.7.3
-	github.com/Yacobolo/toolbelt/pagestream v0.0.0-20260802184245-b486599808d1
 	github.com/alexedwards/argon2id v1.0.0
 	github.com/apache/arrow-go/v18 v18.5.1
 	github.com/aws/aws-sdk-go-v2 v1.42.1
@@ -42,6 +41,7 @@ require (
 	github.com/scim2/filter-parser/v2 v2.2.0
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
+	github.com/starfederation/datastar-go v1.2.2
 	github.com/stretchr/testify v1.11.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0
@@ -178,7 +178,6 @@ require (
 	github.com/spf13/cast v1.5.1 // indirect
 	github.com/spf13/jwalterweatherman v1.1.0 // indirect
 	github.com/spf13/viper v1.16.0 // indirect
-	github.com/starfederation/datastar-go v1.2.2 // indirect
 	github.com/stoewer/go-strcase v1.3.1 // indirect
 	github.com/subosito/gotenv v1.4.2 // indirect
 	github.com/tklauser/go-sysconf v0.3.16 // indirect

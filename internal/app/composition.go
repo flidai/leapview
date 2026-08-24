@@ -355,10 +355,37 @@ type sealedRuntimeActivator interface {
 	ActivatePreparedContext(context.Context, *runtimehost.Prepared, func() error) error
 }
 
+type sealedRuntimeActiveReader interface {
+	ActiveArtifact(context.Context) (servingstate.State, servingstate.Artifact, error)
+}
+
+type sealedRuntimeLeaseReader interface {
+	Acquire(context.Context) (runtimehost.Lease, error)
+}
+
 func activateCanonicalServingState(ctx context.Context, runtime sealedRuntimeActivator, generationID string, activate func() error) error {
 	generationID = strings.TrimSpace(generationID)
 	if runtime == nil || generationID == "" || activate == nil {
 		return fmt.Errorf("canonical sealed runtime, generation, and activation callback are required")
+	}
+	if leaseReader, ok := runtime.(sealedRuntimeLeaseReader); ok {
+		lease, err := leaseReader.Acquire(ctx)
+		if err == nil && lease != nil {
+			activeGenerationID := lease.Identity().GenerationID
+			lease.Release()
+			if activeGenerationID == generationID {
+				return activate()
+			}
+		}
+	}
+	if activeReader, ok := runtime.(sealedRuntimeActiveReader); ok {
+		active, _, err := activeReader.ActiveArtifact(ctx)
+		switch {
+		case err == nil && string(active.ID) == generationID:
+			return activate()
+		case err != nil && !errors.Is(err, servingstate.ErrNotFound):
+			return fmt.Errorf("resolve active canonical sealed serving state: %w", err)
+		}
 	}
 	prepared, err := runtime.PrepareServingState(ctx, generationID)
 	if err != nil {
@@ -417,6 +444,9 @@ func authorizeSealedPublication(
 		if resourceErr != nil {
 			return fmt.Errorf("sealed publication graph impact: %w", resourceErr)
 		}
+		if requestLocalDevelopmentAuthorization(ctx, binding.ActorID) {
+			return nil
+		}
 		var allowed bool
 		if len(resources) == 0 {
 			allowed, err = authorizeProjectRole(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, capability)
@@ -435,6 +465,9 @@ func authorizeSealedPublication(
 	if err != nil {
 		return fmt.Errorf("sealed publication resource: %w", err)
 	}
+	if requestLocalDevelopmentAuthorization(ctx, binding.ActorID) {
+		return nil
+	}
 	allowed, err := authorizeProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, []access.ResourceRef{resource}, capability)
 	if err != nil {
 		return fmt.Errorf("sealed publication live authorization: %w", err)
@@ -443,6 +476,11 @@ func authorizeSealedPublication(
 		return fmt.Errorf("sealed publication live authorization denied")
 	}
 	return nil
+}
+
+func requestLocalDevelopmentAuthorization(ctx context.Context, actorID string) bool {
+	principal, ok := accessmodule.PrincipalFromContext(ctx)
+	return ok && principal.DevBypass && strings.TrimSpace(principal.ID) == strings.TrimSpace(actorID)
 }
 
 func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {

@@ -6,11 +6,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 func DashboardID(r *http.Request, signals dashboard.Signals, defaultID string) string {
@@ -48,7 +49,7 @@ func ClientStreamID(r *http.Request, signals dashboard.Signals, dashboardID, pag
 	if instanceID == "" {
 		instanceID = r.URL.Query().Get("streamInstance")
 	}
-	return StreamID(pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID), dashboardID, pageID, instanceID)
+	return StreamID(webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID), dashboardID, pageID, instanceID)
 }
 
 func StreamID(clientID, dashboardID, pageID string, streamInstanceID ...string) string {
@@ -160,12 +161,12 @@ func visualizationEnvelopeSignal(event dashboardstream.RefreshEvent) Visualizati
 // RefreshEventEnvelope keeps refresh ordering and mailbox behavior outside the
 // signal payload. The browser receives Signals only; pagestream consumes the
 // explicit delivery metadata.
-func RefreshEventEnvelope(event dashboardstream.RefreshEvent) pagestream.Envelope {
+func RefreshEventEnvelope(event dashboardstream.RefreshEvent) dashboardstream.Envelope {
 	generation := uint64(0)
 	if event.Generation > 0 {
 		generation = uint64(event.Generation)
 	}
-	delivery := pagestream.DeliveryMetadata{Generation: generation}
+	delivery := dashboardstream.DeliveryMetadata{Generation: generation}
 	switch event.Type {
 	case dashboardstream.RefreshEventStart, dashboardstream.RefreshEventProgress, dashboardstream.RefreshEventComplete:
 		delivery.Boundary = true
@@ -180,13 +181,9 @@ func RefreshEventEnvelope(event dashboardstream.RefreshEvent) pagestream.Envelop
 		delivery.CoalesceGroup = "dashboard-results"
 		delivery.MergeRoots = dashboardMergeRoots()
 	}
-	return pagestream.Envelope{
+	return dashboardstream.Envelope{
 		Signals:  RefreshEventPatch(event),
 		Delivery: delivery,
-		Trace: pagestream.TraceMetadata{
-			Origin:        "dashboard.refresh",
-			CorrelationID: event.RefreshID,
-		},
 	}
 }
 

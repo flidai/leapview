@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accesspolicy "github.com/flidai/leapview/internal/access/policy"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
@@ -15,6 +14,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	"github.com/flidai/leapview/internal/platform/digest"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -112,7 +112,7 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 			}
 		}
 		if principalOrClient == "" {
-			principalOrClient = pagestream.ClientIDFromRequest(r, clientID)
+			principalOrClient = webtransport.ClientIDFromRequest(r, clientID)
 		}
 		dashboardID, err := projectgraph.NewResourceID(report.ID)
 		if err != nil {

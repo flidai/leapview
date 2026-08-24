@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	content "github.com/flidai/leapview/docs"
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type visualDocumentationArtifact = visualdocs.Artifact

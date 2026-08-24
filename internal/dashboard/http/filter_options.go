@@ -6,10 +6,10 @@ import (
 	"fmt"
 	nethttp "net/http"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 )
 
 type compiledFilterOptionMetrics interface {
@@ -54,7 +54,7 @@ func (h Handler) FilterOptions(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return
 	}
-	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
+	clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	key, keyErr := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
 	if keyErr != nil {
 		nethttp.NotFound(w, r)
