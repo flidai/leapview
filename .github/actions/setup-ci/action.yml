@@ -76,8 +76,23 @@ runs:
     - name: Install pinned CI tools
       shell: bash
       run: |
-        go install github.com/go-task/task/v3/cmd/task@v3.50.0
-        go install github.com/bufbuild/buf/cmd/buf@v1.57.2
+        install_go_tool() {
+          local package="$1"
+          local attempt
+          for attempt in 1 2 3; do
+            if GODEBUG=http2client=0 go install "${package}"; then
+              return 0
+            fi
+            if [ "${attempt}" -eq 3 ]; then
+              echo "failed to install ${package} after ${attempt} attempts" >&2
+              return 1
+            fi
+            echo "retrying ${package} after failed attempt ${attempt}/3" >&2
+            sleep "$((attempt * 5))"
+          done
+        }
+        install_go_tool github.com/go-task/task/v3/cmd/task@v3.50.0
+        install_go_tool github.com/bufbuild/buf/cmd/buf@v1.57.2
         echo "$(go env GOPATH)/bin" >> "${GITHUB_PATH}"
 
     - name: Install cached Chromium and system dependencies

@@ -3572,8 +3572,11 @@ func TestGitHubHostedWorkflowsUseEphemeralRunnersAndBoundedCaches(t *testing.T) 
 		"~/.bun/install/cache",
 		"~/.cache/ms-playwright",
 		"~/.cache/terraform",
-		"go install github.com/go-task/task/v3/cmd/task@v3.50.0",
-		"go install github.com/bufbuild/buf/cmd/buf@v1.57.2",
+		"install_go_tool()",
+		"for attempt in 1 2 3",
+		"GODEBUG=http2client=0 go install",
+		"github.com/go-task/task/v3/cmd/task@v3.50.0",
+		"github.com/bufbuild/buf/cmd/buf@v1.57.2",
 		"playwright install --with-deps chromium",
 	} {
 		if !strings.Contains(setupText, want) {
