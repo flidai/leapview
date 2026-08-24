@@ -50,6 +50,7 @@ class CodeBlock extends LitElement {
   @property({ type: Boolean, reflect: true }) format = false
   @property({ type: Boolean, reflect: true }) copy = false
   @property({ type: Boolean, reflect: true }) dense = false
+  @property({ type: Boolean, reflect: true }) inline = false
   @property({ type: Boolean, reflect: true }) toolbar = false
   @property({ attribute: false }) highlightedLines: number[] = []
   @state() private highlighted = ''
@@ -317,6 +318,19 @@ const codeBlockStyles = `
     line-height: var(--base-text-lineHeight-normal);
   }
 
+  lv-code-block[inline] .code-block-shell {
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default, 6px);
+    background: transparent;
+  }
+
+  lv-code-block[inline] .shiki,
+  lv-code-block[inline] .code-block-fallback {
+    max-height: none;
+    padding: var(--base-size-4) var(--base-size-8);
+    background-color: var(--lv-bg-app, transparent) !important;
+  }
+
   lv-code-block[copy]:not([toolbar]) .shiki,
   lv-code-block[copy]:not([toolbar]) .code-block-fallback {
     padding-top: calc(var(--base-size-16) + var(--control-medium-size, 32px));
@@ -353,6 +367,24 @@ const codeBlockStyles = `
     background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
     color: var(--lv-fg-default);
     outline: 0;
+  }
+
+  lv-code-block[inline][copy] .shiki,
+  lv-code-block[inline][copy] .code-block-fallback {
+    padding-top: var(--base-size-4);
+  }
+
+  lv-code-block[inline] .code-block-copy {
+    top: 0;
+    right: 0;
+    border: 0;
+    background: transparent;
+    opacity: 0;
+  }
+
+  lv-code-block[inline]:hover .code-block-copy,
+  lv-code-block[inline]:focus-within .code-block-copy {
+    opacity: 1;
   }
 
   lv-code-block .code-block-toolbar {
