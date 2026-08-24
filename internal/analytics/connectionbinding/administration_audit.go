@@ -2,14 +2,10 @@ package connectionbinding
 
 import (
 	"context"
-	"fmt"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"log/slog"
 	"strings"
 	"time"
-
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 )
 
 type AdministrationAuditAction string
@@ -47,6 +43,15 @@ func (service *Administration) recordMutation(
 	action AdministrationAuditAction,
 	binding TargetBinding,
 ) error {
+	// Command producers carry a durable Access intent in the context. The
+	// source repository consumes it inside its own SQLite transaction, so the
+	// legacy best-effort recorder must not emit a second event after commit.
+	if _, ok := AuditIntentFromContext(ctx); ok {
+		return nil
+	}
+	if service != nil && service.requireAuditIntent {
+		return ErrAdministrationAuditUnavailable
+	}
 	if service == nil || service.audit == nil {
 		return ErrAdministrationAuditUnavailable
 	}
@@ -56,41 +61,15 @@ func (service *Administration) recordMutation(
 		Actor: strings.TrimSpace(actor), Action: action, Outcome: AdministrationAuditSucceeded,
 		Revision: binding.Revision, Timestamp: service.now().UTC(),
 	}
-	operationID, ok := administrationOperationID(action)
-	if !ok {
-		return fmt.Errorf("connection administration audit action %q has no generated operation", action)
-	}
-	executor, err := apigencommand.NewExecutor(analyticsgen.GetAPIGenCommandRuntimeContract, service.logger)
-	if err != nil {
-		return err
-	}
-	return executor.Execute(ctx, operationID, apigencommand.Execution{
-		BestEffortAudit: func(context.Context, apigencommand.Contract) error {
-			return service.audit.RecordConnectionAdministration(context.WithoutCancel(ctx), event)
-		},
-		LogMessage: "best-effort connection administration audit failed",
-		LogAttributes: []slog.Attr{
+	if err := service.audit.RecordConnectionAdministration(context.WithoutCancel(ctx), event); err != nil {
+		service.logger.Error("best-effort connection administration audit failed", "error", err,
 			slog.String("project_id", binding.Scope.ProjectID.String()),
 			slog.String("principal_id", strings.TrimSpace(actor)),
 			slog.String("binding_id", binding.ID.String()),
 			slog.String("target_id", binding.TargetID.String()),
 			slog.String("connection_id", binding.ConnectionID.String()),
 			slog.Int64("revision", binding.Revision),
-		},
-	})
-}
-
-func administrationOperationID(action AdministrationAuditAction) (string, bool) {
-	switch action {
-	case AuditBindingCreated:
-		return string(analyticsgen.GenOperationCreateTargetConnectionBinding), true
-	case AuditBindingUpdated:
-		return string(analyticsgen.GenOperationUpdateTargetConnectionBinding), true
-	case AuditBindingEnabled:
-		return string(analyticsgen.GenOperationEnableTargetConnectionBinding), true
-	case AuditBindingDisabled:
-		return string(analyticsgen.GenOperationDisableTargetConnectionBinding), true
-	default:
-		return "", false
+			slog.String("action", string(action)))
 	}
+	return nil
 }

@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	manageddatasqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
@@ -66,8 +67,8 @@ func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
 	root := t.TempDir()
 	managedData, err := manageddatamodule.Build(context.Background(), manageddatamodule.Config{
 		Database: store.SQLDB(), ServingStates: base.ServingStateRepo, Environment: base.DefaultEnvironment,
-		Product:     manageddatamodule.ProductConfig{Backend: "local", Dir: root, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
-		RecordAudit: func(context.Context, manageddatamodule.CommandAuditEvent) error { return nil },
+		Product:             manageddatamodule.ProductConfig{Backend: "local", Dir: root, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 	})
 	if err != nil {
 		t.Fatalf("build managed data module: %v", err)

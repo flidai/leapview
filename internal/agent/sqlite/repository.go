@@ -13,9 +13,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	platformdb "github.com/flidai/leapview/internal/agent/internal/db"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -24,6 +26,7 @@ type Repository struct {
 	q        *platformdb.Queries
 	events   jobs.Repository
 	workflow jobplatform.WorkflowRecorder
+	audit    access.AuditIntentRecorder
 }
 
 func NewRepository(sqlDB *sql.DB) *Repository {
@@ -38,6 +41,85 @@ func NewRepositoryWithWorkflow(sqlDB *sql.DB, events jobs.Repository, workflow j
 	return &Repository{db: sqlDB, q: platformdb.New(sqlDB), events: events, workflow: workflow}
 }
 
+// NewRepositoryWithWorkflowAndAudit wires the agent source transaction to
+// Access' durable audit-intent outbox. The recorder participates in caller
+// transactions and never commits or rolls them back.
+func NewRepositoryWithWorkflowAndAudit(sqlDB *sql.DB, events jobs.Repository, workflow jobplatform.WorkflowRecorder, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: sqlDB, q: platformdb.New(sqlDB), events: events, workflow: workflow, audit: audit}
+}
+
+func NewRepositoryWithAudit(sqlDB *sql.DB, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: sqlDB, q: platformdb.New(sqlDB), audit: audit}
+}
+
+func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, intent *access.AuditIntent, resourceID, aggregateID string) error {
+	if intent == nil {
+		return nil
+	}
+	if r.audit == nil {
+		return fmt.Errorf("agent audit intent recorder is required")
+	}
+	copy := *intent
+	resourceID = strings.TrimSpace(resourceID)
+	aggregateID = strings.TrimSpace(aggregateID)
+	operation := strings.ToLower(copy.Operation)
+	isAgentRun := strings.Contains(operation, "agentrun")
+	usesGeneratedResourceID := strings.TrimSpace(copy.ResourceID) == ""
+	if isAgentRun || usesGeneratedResourceID {
+		copy.ResourceID = resourceID
+	}
+	if isAgentRun {
+		copy.ResourceKind = "agent_run"
+	}
+	if (isAgentRun || usesGeneratedResourceID) && strings.TrimSpace(copy.MetadataJSON) != "" {
+		replacements := map[string]any{"resourceId": resourceID}
+		if isAgentRun {
+			replacements["resourceKind"] = "agent_run"
+		}
+		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(copy.MetadataJSON, replacements)
+		if err != nil {
+			return fmt.Errorf("agent audit metadata: %w", err)
+		}
+		copy.MetadataJSON = metadata
+	}
+	if aggregateID == "" {
+		aggregateID = resourceID
+	}
+	if isAgentRun {
+		copy.AggregateKey = "agent_run:" + aggregateID
+		if strings.Contains(operation, "create") {
+			copy.AggregateSequence = 1
+		} else if strings.Contains(operation, "cancel") {
+			copy.AggregateSequence = 2
+		}
+	} else {
+		copy.AggregateKey = "agent_conversation:" + aggregateID
+		switch {
+		case strings.Contains(operation, "create"):
+			copy.AggregateSequence = 1
+		case strings.Contains(operation, "update"):
+			copy.AggregateSequence = 2
+		case strings.Contains(operation, "archive"):
+			copy.AggregateSequence = 3
+		}
+	}
+	// Recompute the stable identity after the repository knows the aggregate
+	// ID. This avoids collisions between commands that target one conversation.
+	{
+		// Resource IDs are stable for retries. Include request identity when
+		// available so two commands against one aggregate remain distinct.
+		hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + copy.ResourceKind + "\x00" + copy.ResourceID + "\x00" + aggregateID + "\x00" + copy.RequestID))
+		copy.EventID = "sha256:" + hex.EncodeToString(hash[:])
+	}
+	// Conversation updates/archives may occur more than once. A zero sequence
+	// delegates replay-stable aggregate ordering to the Access-owned recorder;
+	// this repository never reads another capability's persistence tables.
+	if !strings.Contains(operation, "create") && !isAgentRun {
+		copy.AggregateSequence = 0
+	}
+	return r.audit.RecordAuditIntent(ctx, tx, copy)
+}
+
 func (r *Repository) RunWorkflowAvailable() bool {
 	return r != nil && r.workflow != nil
 }
@@ -50,6 +132,12 @@ func (r *Repository) ConfigureRunWorkflow(workflow jobplatform.WorkflowRecorder)
 		if events, ok := workflow.(jobs.Repository); ok {
 			r.events = events
 		}
+	}
+}
+
+func (r *Repository) ConfigureAuditIntentRecorder(audit access.AuditIntentRecorder) {
+	if r != nil {
+		r.audit = audit
 	}
 }
 
@@ -75,8 +163,32 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 	if title == "" {
 		title = agent.ConversationDefaultTitle
 	}
-	row, err := r.q.CreateAgentConversation(ctx, platformdb.CreateAgentConversationParams{
-		ID:             newID("agentconv"),
+	id := newID("agentconv")
+	intent, hasIntent := agent.AuditIntentFromContext(ctx)
+	if !hasIntent {
+		row, err := r.q.CreateAgentConversation(ctx, platformdb.CreateAgentConversationParams{
+			ID:             id,
+			PrincipalID:    principalID,
+			Title:          title,
+			Status:         agent.ConversationStatusActive,
+			MetadataJson:   metadata,
+			TranscriptJson: "[]",
+		})
+		if err != nil {
+			return agent.Conversation{}, err
+		}
+		return mapConversation(row), nil
+	}
+	if r.db == nil {
+		return agent.Conversation{}, fmt.Errorf("agent repository database is required")
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return agent.Conversation{}, err
+	}
+	defer tx.Rollback()
+	row, err := r.q.WithTx(tx).CreateAgentConversation(ctx, platformdb.CreateAgentConversationParams{
+		ID:             id,
 		PrincipalID:    principalID,
 		Title:          title,
 		Status:         agent.ConversationStatusActive,
@@ -84,6 +196,12 @@ func (r *Repository) CreateConversation(ctx context.Context, input agent.Convers
 		TranscriptJson: "[]",
 	})
 	if err != nil {
+		return agent.Conversation{}, err
+	}
+	if err := r.recordAuditIntent(ctx, tx, &intent, id, id); err != nil {
+		return agent.Conversation{}, err
+	}
+	if err := tx.Commit(); err != nil {
 		return agent.Conversation{}, err
 	}
 	return mapConversation(row), nil
@@ -139,6 +257,27 @@ func (r *Repository) UpdateConversation(ctx context.Context, input agent.Convers
 	if title == "" {
 		return agent.Conversation{}, fmt.Errorf("conversation title is required")
 	}
+	intent, hasIntent := agent.AuditIntentFromContext(ctx)
+	if hasIntent {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return agent.Conversation{}, err
+		}
+		defer tx.Rollback()
+		row, err := r.q.WithTx(tx).UpdateAgentConversationTitle(ctx, platformdb.UpdateAgentConversationTitleParams{
+			Title: title, ConversationID: input.ConversationID, PrincipalID: principalID,
+		})
+		if err != nil {
+			return agent.Conversation{}, err
+		}
+		if err := r.recordAuditIntent(ctx, tx, &intent, input.ConversationID, input.ConversationID); err != nil {
+			return agent.Conversation{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return agent.Conversation{}, err
+		}
+		return mapConversation(row), nil
+	}
 	row, err := r.q.UpdateAgentConversationTitle(ctx, platformdb.UpdateAgentConversationTitleParams{
 		Title: title, ConversationID: input.ConversationID, PrincipalID: principalID,
 	})
@@ -155,6 +294,17 @@ func (r *Repository) UpdateConversation(ctx context.Context, input agent.Convers
 func (r *Repository) UpdateConversationAtomic(ctx context.Context, input agent.ConversationUpdate, check func(agent.Conversation) error) (agent.Conversation, error) {
 	if r == nil || r.db == nil {
 		return agent.Conversation{}, fmt.Errorf("agent repository database is required")
+	}
+	principalID, err := agentPrincipalID(input.PrincipalID)
+	if err != nil {
+		return agent.Conversation{}, err
+	}
+	if strings.TrimSpace(input.ConversationID) == "" {
+		return agent.Conversation{}, fmt.Errorf("conversation id is required")
+	}
+	title := strings.TrimSpace(input.Title)
+	if title == "" {
+		return agent.Conversation{}, fmt.Errorf("conversation title is required")
 	}
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
@@ -180,9 +330,17 @@ func (r *Repository) UpdateConversationAtomic(ctx context.Context, input agent.C
 			return agent.Conversation{}, err
 		}
 	}
-	updated, err := txRepo.UpdateConversation(ctx, input)
+	row, err := txQueries.UpdateAgentConversationTitle(ctx, platformdb.UpdateAgentConversationTitleParams{
+		Title: title, ConversationID: input.ConversationID, PrincipalID: principalID,
+	})
 	if err != nil {
 		return agent.Conversation{}, err
+	}
+	updated := mapConversation(row)
+	if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+		if err := r.recordAuditIntent(ctx, tx, &intent, input.ConversationID, input.ConversationID); err != nil {
+			return agent.Conversation{}, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return agent.Conversation{}, err
@@ -197,6 +355,27 @@ func (r *Repository) ArchiveConversation(ctx context.Context, principalID, conve
 	}
 	if strings.TrimSpace(conversationID) == "" {
 		return agent.Conversation{}, fmt.Errorf("conversation id is required")
+	}
+	intent, hasIntent := agent.AuditIntentFromContext(ctx)
+	if hasIntent {
+		tx, err := r.db.BeginTx(ctx, nil)
+		if err != nil {
+			return agent.Conversation{}, err
+		}
+		defer tx.Rollback()
+		row, err := r.q.WithTx(tx).ArchiveAgentConversation(ctx, platformdb.ArchiveAgentConversationParams{
+			ID: conversationID, PrincipalID: principalID,
+		})
+		if err != nil {
+			return agent.Conversation{}, err
+		}
+		if err := r.recordAuditIntent(ctx, tx, &intent, conversationID, conversationID); err != nil {
+			return agent.Conversation{}, err
+		}
+		if err := tx.Commit(); err != nil {
+			return agent.Conversation{}, err
+		}
+		return mapConversation(row), nil
 	}
 	row, err := r.q.ArchiveAgentConversation(ctx, platformdb.ArchiveAgentConversationParams{
 		ID:          conversationID,
@@ -351,6 +530,16 @@ func (r *Repository) CreateRun(ctx context.Context, input agent.RunInput) (agent
 }
 
 func (r *Repository) ActivateRunWorkflow(ctx context.Context, principalID, conversationID, runID string, workflow jobs.WorkflowIntent) (agent.Run, error) {
+	return r.activateRunWorkflow(ctx, principalID, conversationID, runID, workflow, nil)
+}
+
+// ActivateRunWorkflowWithAudit commits the queued run transition, durable job
+// workflow, and command audit intent in one SQLite transaction.
+func (r *Repository) ActivateRunWorkflowWithAudit(ctx context.Context, principalID, conversationID, runID string, workflow jobs.WorkflowIntent, intent *access.AuditIntent) (agent.Run, error) {
+	return r.activateRunWorkflow(ctx, principalID, conversationID, runID, workflow, intent)
+}
+
+func (r *Repository) activateRunWorkflow(ctx context.Context, principalID, conversationID, runID string, workflow jobs.WorkflowIntent, explicit *access.AuditIntent) (agent.Run, error) {
 	if r.workflow == nil {
 		return agent.Run{}, fmt.Errorf("agent workflow recorder is required")
 	}
@@ -373,6 +562,15 @@ func (r *Repository) ActivateRunWorkflow(ctx context.Context, principalID, conve
 		}
 	}
 	if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
+		return agent.Run{}, err
+	}
+	intent := explicit
+	if intent == nil {
+		if fromContext, ok := agent.AuditIntentFromContext(ctx); ok {
+			intent = &fromContext
+		}
+	}
+	if err := r.recordAuditIntent(ctx, tx, intent, runID, runID); err != nil {
 		return agent.Run{}, err
 	}
 	row, err := q.GetAgentRunInConversation(ctx, platformdb.GetAgentRunInConversationParams{RunID: runID, ConversationID: conversationID, PrincipalID: principalID})
@@ -561,6 +759,11 @@ func (r *Repository) CancelRunWorkflow(ctx context.Context, input agent.RunFinis
 	}
 	if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
 		return false, err
+	}
+	if intent, ok := agent.AuditIntentFromContext(ctx); ok {
+		if err := r.recordAuditIntent(ctx, tx, &intent, input.RunID, input.RunID); err != nil {
+			return false, err
+		}
 	}
 	if err := tx.Commit(); err != nil {
 		return false, err

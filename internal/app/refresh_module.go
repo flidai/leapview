@@ -120,6 +120,9 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			}
 		},
 	}
+	if database != nil {
+		config.AuditIntentRecorder = persistence.auditRecorder
+	}
 	module, err := refreshmodule.Build(ctx, config)
 	if err != nil {
 		return fmt.Errorf("build refresh module: %w", err)

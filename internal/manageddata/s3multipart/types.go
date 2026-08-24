@@ -5,6 +5,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -66,6 +67,7 @@ type CreateRequest struct {
 	UploadSessionID string
 	Path            string
 	IdempotencyKey  string
+	AuditIntent     *access.AuditIntent
 }
 
 type SignPartRequest struct {
@@ -91,6 +93,7 @@ type CompleteRequest struct {
 	MultipartUploadID string
 	IdempotencyKey    string
 	Parts             []CompletedPart
+	AuditIntent       *access.AuditIntent
 }
 
 type AbortRequest struct {
@@ -99,6 +102,7 @@ type AbortRequest struct {
 	UploadSessionID   string
 	MultipartUploadID string
 	IdempotencyKey    string
+	AuditIntent       *access.AuditIntent
 }
 
 type Status string

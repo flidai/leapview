@@ -15,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -38,6 +39,7 @@ type Module struct {
 	instanceID                string
 	executions                map[string]apigencommand.AsyncExecutionContract
 	protected                 bool
+	auditIntentConfigured     bool
 	currentApprovalActor      func(*http.Request) (deployment.ApprovalActor, bool)
 	authorizeApproval         func(context.Context, deployment.ApprovalActor, string, string) error
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
@@ -167,7 +169,10 @@ type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, 
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
 type Config struct {
-	Database                  *sql.DB
+	Database *sql.DB
+	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
+	// It is required whenever deployment SQLite persistence is configured.
+	AuditIntentRecorder       access.AuditIntentRecorder
 	States                    ServingStatePort
 	Runtime                   deployment.Runtime
 	ManagedData               deployment.ManagedDataResolver
@@ -265,17 +270,44 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
 	if config.Database != nil {
+		if config.AuditIntentRecorder == nil {
+			return nil, errors.New("deployment audit intent recorder is required")
+		}
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
 			return nil, errors.New("deployment states, runtime, and managed data are required")
 		}
 		if config.BindClaimedProject == nil {
 			return nil, errors.New("candidate project claim binder is required")
 		}
+		if config.API.Workflow != nil {
+			ownedCommitter := workflowAuditCommitter{
+				database: config.Database,
+				workflow: config.API.Workflow,
+				audit:    config.AuditIntentRecorder,
+			}
+			config.API.Committer = ownedCommitter
+			config.API.AuditedCommitter = ownedCommitter
+		} else if config.API.AuditedCommitter == nil {
+			if audited, ok := config.API.Committer.(AuditedWorkflowCommitter); ok {
+				config.API.AuditedCommitter = audited
+			} else {
+				return nil, errors.New("deployment audited workflow committer is required")
+			}
+		}
+		if config.API.Committer == nil {
+			config.API.Committer = config.API.AuditedCommitter
+		}
+		cancelJob, cancelJobOK := config.API.Jobs.(jobplatform.WorkflowJobCanceller)
+		if config.API.Jobs != nil && !cancelJobOK {
+			return nil, errors.New("deployment transactional job canceller is required")
+		}
 		repository, activation, candidateRepository, approvalRepository := newPersistence(
 			config.Database,
 			config.ActivationHooks,
 			config.API.Releases,
 			config.API.Workflow,
+			cancelJob,
+			config.AuditIntentRecorder,
 		)
 		if config.DeliveryReader == nil {
 			if reader, ok := repository.(deployment.DeliveryReader); ok {
@@ -367,8 +399,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
-		logger:                   config.Logger,
-		jobs:                     jobs, api: config.API, protected: config.Protected,
+		logger:                   config.Logger, auditIntentConfigured: config.Database != nil && config.AuditIntentRecorder != nil,
+		jobs: jobs, api: config.API, protected: config.Protected,
 		instanceID: config.InstanceID, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,

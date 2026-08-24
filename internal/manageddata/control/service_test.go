@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	"github.com/flidai/leapview/internal/manageddata/storage"
@@ -174,6 +175,43 @@ func TestFinalizeRequiresEveryBlobAndRedactsBackendErrors(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "secret-token") || strings.Contains(err.Error(), "private.example") {
 		t.Fatalf("backend error leaked sensitive details: %v", err)
+	}
+}
+
+func TestAuditedUploadTransitionsFailClosedWithoutTypedPort(t *testing.T) {
+	now := time.Date(2026, 7, 14, 8, 0, 0, 0, time.UTC)
+	repo := newFakeRepository()
+	blobs := &fakeBlobStore{blobs: map[string]storage.Blob{
+		digestA: {SHA256: digestA, Size: 3, URI: "file:///data/blobs/" + digestA},
+	}}
+	service := newService(t, repo, blobs, &fakeTransport{backend: "local"}, now)
+	started, err := service.BeginUpload(t.Context(), control.BeginUploadRequest{
+		Project: "project-a", Connection: "orders", IdempotencyKey: "audited-transition",
+		Manifest: manageddata.Manifest{Files: []manageddata.File{{Path: "orders.csv", Size: 3, SHA256: digestA}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = service.BeginFinalizeUpload(t.Context(), control.UploadRequest{
+		Project: "project-a", Connection: "orders", UploadID: started.ID,
+		AuditIntent: &access.AuditIntent{EventID: "managed-data-audit"},
+	})
+	if !errors.Is(err, control.ErrInternal) {
+		t.Fatalf("audited finalization error = %v, want control.ErrInternal", err)
+	}
+	if got := repo.sessions[started.ID].Status; got != manageddata.UploadStatusOpen {
+		t.Fatalf("audited transition status = %q, want open", got)
+	}
+
+	_, err = service.AbortUpload(t.Context(), control.UploadRequest{
+		Project: "project-a", Connection: "orders", UploadID: started.ID,
+		AuditIntent: &access.AuditIntent{EventID: "managed-data-abort-audit"},
+	})
+	if !errors.Is(err, control.ErrInternal) {
+		t.Fatalf("audited abort error = %v, want control.ErrInternal", err)
+	}
+	if got := repo.sessions[started.ID].Status; got != manageddata.UploadStatusOpen {
+		t.Fatalf("audited abort status = %q, want open", got)
 	}
 }
 

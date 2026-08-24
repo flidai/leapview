@@ -2,29 +2,31 @@ package http
 
 import (
 	"context"
-	"log/slog"
 	stdhttp "net/http"
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 )
 
-var errCommandAuditUnavailable = apigenfailure.New("unavailable", "managed-data command audit is unavailable")
+func (h *Handler) completeCommand(r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID) error {
+	executor, err := apigencommand.NewExecutor(manageddatagen.GetAPIGenCommandRuntimeContract, h.options.Logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(r.Context(), operationID.APIGenOperationID(), apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
+	})
+}
 
-func (h *Handler) recordCommandAudit(
+func (h *Handler) buildAuditIntent(
 	r *stdhttp.Request,
 	operationID manageddatagen.GenCommandOperationID,
-	principalID string,
-	projectID string,
-	connectionID string,
-	targetType string,
-	targetID string,
-) error {
-	operationIDValue := operationID.APIGenOperationID()
-	if h == nil || h.options.RecordCommandAudit == nil {
-		return errCommandAuditUnavailable
+	principalID, projectID, connectionID, targetType, targetID string,
+) (*access.AuditIntent, error) {
+	if h == nil || h.options.BuildAuditIntent == nil {
+		return nil, nil
 	}
 	requestID := firstCommandHeader(r, "X-Request-Id", "X-Request-ID")
 	correlationID := firstCommandHeader(r, "X-Correlation-Id", "X-Correlation-ID")
@@ -35,41 +37,16 @@ func (h *Handler) recordCommandAudit(
 	if strings.EqualFold(firstCommandHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client"), "cli") {
 		surface = "cli"
 	}
-	logger := h.options.Logger
-	if logger == nil {
-		logger = slog.Default()
-	}
-	executor, err := apigencommand.NewExecutor(manageddatagen.GetAPIGenCommandRuntimeContract, logger)
-	if err != nil {
-		return err
-	}
-	err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
-		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-			return h.options.RecordCommandAudit(ctx, CommandAuditInput{
-				OperationID: operationIDValue, PrincipalID: strings.TrimSpace(principalID),
-				ProjectID: strings.TrimSpace(projectID), ConnectionID: strings.TrimSpace(connectionID),
-				TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
-				RequestID: requestID, CorrelationID: correlationID, Surface: surface,
-			})
-		},
-		LogMessage: "best-effort managed-data command audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("principal_id", strings.TrimSpace(principalID)),
-			slog.String("project_id", strings.TrimSpace(projectID)),
-			slog.String("connection_id", strings.TrimSpace(connectionID)),
-			slog.String("target_type", strings.TrimSpace(targetType)),
-			slog.String("target_id", strings.TrimSpace(targetID)),
-			slog.String("request_id", requestID),
-		},
+	return h.options.BuildAuditIntent(r.Context(), CommandAuditInput{
+		OperationID: operationID.APIGenOperationID(), PrincipalID: strings.TrimSpace(principalID),
+		ProjectID: strings.TrimSpace(projectID), ConnectionID: strings.TrimSpace(connectionID),
+		TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
+		RequestID: requestID, CorrelationID: correlationID, Surface: surface,
 	})
-	if err != nil {
-		return err
-	}
-	return nil
 }
 
 func (h *Handler) commandAuditActor(w stdhttp.ResponseWriter, r *stdhttp.Request) (string, bool) {
-	if h == nil || h.options.RecordCommandAudit == nil {
+	if h == nil || h.options.BuildAuditIntent == nil {
 		if h != nil {
 			h.writeUnavailable(w, r)
 		}
@@ -79,7 +56,7 @@ func (h *Handler) commandAuditActor(w stdhttp.ResponseWriter, r *stdhttp.Request
 }
 
 func (h *Handler) commandAuditActorForOperation(w stdhttp.ResponseWriter, r *stdhttp.Request, operationID manageddatagen.GenCommandOperationID) (string, bool) {
-	if h == nil || h.options.RecordCommandAudit == nil {
+	if h == nil || h.options.BuildAuditIntent == nil {
 		if h != nil {
 			h.writeCommandUnavailable(w, r, operationID)
 		}

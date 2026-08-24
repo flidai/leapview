@@ -10,6 +10,7 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	agentconfig "github.com/flidai/leapview/internal/agent/config"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	agentcore "github.com/flidai/leapview/pkg/agent"
@@ -86,6 +87,24 @@ func (s *Service) ConfigureRunWorkflow(recorder jobplatform.WorkflowRecorder) er
 	if !s.runWorkflowAvailable() {
 		return fmt.Errorf("agent repository did not enable durable workflows")
 	}
+	return nil
+}
+
+// ConfigureAuditIntentRecorder connects an externally constructed service to
+// the transaction-scoped Access recorder used by its repository. Production
+// composition may receive a prebuilt service, but transactional command audit
+// must still be configured before the HTTP handlers are exposed.
+func (s *Service) ConfigureAuditIntentRecorder(recorder access.AuditIntentRecorder) error {
+	if s == nil || s.repo == nil || recorder == nil {
+		return fmt.Errorf("agent audit intent recorder is required")
+	}
+	configurer, ok := s.repo.(interface {
+		ConfigureAuditIntentRecorder(access.AuditIntentRecorder)
+	})
+	if !ok {
+		return fmt.Errorf("agent repository does not support durable audit configuration")
+	}
+	configurer.ConfigureAuditIntentRecorder(recorder)
 	return nil
 }
 

@@ -94,7 +94,7 @@ alias GetRefreshRunOK = OkJson<RefreshRunResponse>;
 
 @route("/projects/{project}/refresh-runs")
 @tag("Refresh Runs")
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 interface RefreshRuns {
   @summary("List refresh runs")
   @get

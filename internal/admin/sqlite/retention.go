@@ -21,6 +21,7 @@ type RetentionOptions struct {
 type RetentionResult struct {
 	DryRun                              bool
 	AuditEventsDeleted                  int64
+	DeliveredAuditIntentsDeleted        int64
 	QueryEventsDeleted                  int64
 	ArchivedAgentConversationsDeleted   int64
 	ExpiredOAuthStatesDeleted           int64
@@ -45,6 +46,10 @@ func PruneOperationalHistory(ctx context.Context, database *sql.DB, options Rete
 	defer tx.Rollback()
 
 	result.AuditEventsDeleted, err = pruneByCreatedAt(ctx, tx, "audit_events", now, options.AuditEventsMaxAge, options.DryRun)
+	if err != nil {
+		return result, err
+	}
+	result.DeliveredAuditIntentsDeleted, err = pruneDeliveredAuditIntents(ctx, tx, now, options.AuditEventsMaxAge, options.DryRun)
 	if err != nil {
 		return result, err
 	}
@@ -81,6 +86,22 @@ func PruneOperationalHistory(ctx context.Context, database *sql.DB, options Rete
 		return result, err
 	}
 	return result, nil
+}
+
+func pruneDeliveredAuditIntents(ctx context.Context, tx *sql.Tx, now time.Time, maxAge time.Duration, dryRun bool) (int64, error) {
+	if maxAge <= 0 {
+		return 0, nil
+	}
+	cutoff := sqliteTime(now.Add(-maxAge))
+	condition := "state = 'delivered' AND delivered_at IS NOT NULL AND created_at < ?"
+	if dryRun {
+		return countWhere(ctx, tx, "SELECT COUNT(*) FROM audit_outbox WHERE "+condition, cutoff)
+	}
+	result, err := tx.ExecContext(ctx, "DELETE FROM audit_outbox WHERE "+condition, cutoff)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected()
 }
 
 func pruneByCreatedAt(ctx context.Context, tx *sql.Tx, table string, now time.Time, maxAge time.Duration, dryRun bool) (int64, error) {

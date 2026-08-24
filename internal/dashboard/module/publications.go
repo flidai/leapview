@@ -38,10 +38,10 @@ func (m *Module) PublicationByPublicID(ctx context.Context, publicID string) (pu
 
 // MutatePublicationWithInvocation is the transport-neutral UI adapter used by
 // the admin surface. It validates the generated cross-surface policy before
-// mutating state, then executes the generated audit contract with the same
-// request identity.
+// mutating state, then carries a generated durable audit intent into the
+// publication transaction with the same request identity.
 func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID, name, actorID string, action publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
-	if m == nil || m.publicationService == nil || m.recordPublicationCommandAudit == nil {
+	if m == nil || m.publicationService == nil || !m.publicationAuditConfigured {
 		return publication.Publication{}, publication.ErrNotFound
 	}
 	operationID, ok := publicationOperationID(action)
@@ -60,30 +60,35 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID,
 	if err != nil {
 		return publication.Publication{}, err
 	}
+	intent, err := buildPublicationAuditIntent(publicationCommandAuditInput{
+		operationID: operationIDValue, projectID: parsedProjectID, principalID: strings.TrimSpace(actorID),
+		targetID: strings.TrimSpace(name), requestID: strings.TrimSpace(invocation.RequestID),
+		correlationID: strings.TrimSpace(invocation.CorrelationID), surface: string(invocation.Surface),
+		idempotencyKey: strings.TrimSpace(invocation.IdempotencyKey),
+		aggregateKey:   "dashboard_publication:" + parsedProjectID.String() + ":" + strings.TrimSpace(name),
+	})
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	ctx = publication.WithAuditIntent(ctx, intent)
 	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actorID, action)
 	if err != nil {
 		return row, err
 	}
+	if err := m.completePublicationCommand(ctx, operationIDValue); err != nil {
+		return publication.Publication{}, err
+	}
+	return row, nil
+}
+
+func (m *Module) completePublicationCommand(ctx context.Context, operationID string) error {
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, m.logger)
 	if err != nil {
-		return row, err
+		return err
 	}
-	err = executor.Execute(ctx, operationIDValue, apigencommand.Execution{
-		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-			return m.recordPublicationCommandAudit(ctx, publicationCommandAuditInput{
-				operationID: operationIDValue, projectID: parsedProjectID, principalID: strings.TrimSpace(actorID),
-				targetID: strings.TrimSpace(row.ID), requestID: strings.TrimSpace(invocation.RequestID),
-				correlationID: strings.TrimSpace(invocation.CorrelationID), surface: string(invocation.Surface),
-			})
-		},
-		LogMessage: "best-effort dashboard publication command audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("project_id", parsedProjectID.String()),
-			slog.String("principal_id", strings.TrimSpace(actorID)),
-			slog.String("target_id", strings.TrimSpace(row.ID)),
-		},
+	return executor.Execute(ctx, operationID, apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
 	})
-	return row, err
 }
 
 func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, projectID projectgraph.ResourceID, invocation publication.CommandInvocation) (context.Context, error) {
@@ -207,9 +212,9 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, publication.ErrNotFound)
 		return
 	}
-	// Publication commands require the generated success audit contract. Reject
+	// Publication commands require a transaction-scoped audit recorder. Reject
 	// an incompletely constructed module before performing the state transition.
-	if m.recordPublicationCommandAudit == nil {
+	if !m.publicationAuditConfigured {
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
@@ -235,30 +240,19 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
 		return
 	}
-	row, err := m.publicationService.Mutate(r.Context(), parsedProjectID, name, actor, action)
+	// The API command guard has already begun the generated invocation on the
+	// request context. Starting a nested invocation here would mark only the
+	// child state complete and cause the outer guard to reject the response.
+	ctx := r.Context()
+	intent, intentErr := buildPublicationAuditIntent(publicationAuditRequestInput(r, operationIDValue, parsedProjectID, actor, name))
+	if intentErr != nil {
+		m.writePublicationMutation(w, r, operationID, publication.Publication{}, intentErr)
+		return
+	}
+	ctx = publication.WithAuditIntent(ctx, intent)
+	row, err := m.publicationService.Mutate(ctx, parsedProjectID, name, actor, action)
 	if err == nil {
-		logger := m.logger
-		if logger == nil {
-			logger = slog.Default()
-		}
-		executor, executorErr := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, logger)
-		if executorErr != nil {
-			err = executorErr
-		} else {
-			err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
-				BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
-					return m.recordPublicationCommandAudit(ctx, publicationAuditRequestInput(r, operationIDValue, parsedProjectID, actor, row.ID))
-				},
-				LogMessage: "best-effort dashboard publication command audit failed",
-				LogAttributes: []slog.Attr{
-					slog.String("project_id", parsedProjectID.String()),
-					slog.String("principal_id", strings.TrimSpace(actor)),
-					slog.String("target_type", "dashboard_publication"),
-					slog.String("target_id", strings.TrimSpace(row.ID)),
-					slog.String("request_id", firstPublicationHeader(r, "X-Request-Id", "X-Request-ID")),
-				},
-			})
-		}
+		err = m.completePublicationCommand(ctx, operationIDValue)
 	}
 	m.writePublicationMutation(w, r, operationID, row, err)
 }

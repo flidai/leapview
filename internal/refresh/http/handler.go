@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	httpmodel "github.com/flidai/leapview/internal/platform/http/model"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -31,9 +32,22 @@ type Handler struct {
 	AuthorizePipelineView func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string) (refreshrun.RunRecord, error)
+	BuildAuditIntent      func(context.Context, string, string, string, string, string) (*access.AuditIntent, error)
 }
 
 var errAuthorizationUnavailable = errors.New("refresh authorization is unavailable")
+
+func firstHeader(r *nethttp.Request, names ...string) string {
+	if r == nil {
+		return ""
+	}
+	for _, name := range names {
+		if value := strings.TrimSpace(r.Header.Get(name)); value != "" {
+			return value
+		}
+	}
+	return ""
+}
 
 type materializationRunRequest struct {
 	PipelineID string `json:"pipelineId"`
@@ -156,7 +170,23 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 		writeCommandFailure(w, r, operationID, apigenfailure.New("unavailable", "refresh pipeline runner is not configured"))
 		return
 	}
-	run, err := h.QueuePipeline(r.Context(), identity, input.PipelineID, principalID)
+	queueCtx := r.Context()
+	if h.BuildAuditIntent != nil {
+		requestID := firstHeader(r, "Idempotency-Key", "X-Request-Id", "X-Request-ID")
+		correlationID := firstHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+		if correlationID == "" {
+			correlationID = requestID
+		}
+		intent, intentErr := h.BuildAuditIntent(queueCtx, operationID.APIGenOperationID(), principalID, project, requestID, correlationID)
+		if intentErr != nil {
+			writeCommandFailure(w, r, operationID, apigenfailure.Wrap("unavailable", intentErr))
+			return
+		}
+		if intent != nil {
+			queueCtx = refreshrun.WithAuditIntent(queueCtx, *intent)
+		}
+	}
+	run, err := h.QueuePipeline(queueCtx, identity, input.PipelineID, principalID)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)

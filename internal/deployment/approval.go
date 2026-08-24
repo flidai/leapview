@@ -301,7 +301,7 @@ func (service *ApprovalService) Request(
 				return Approval{}, err
 			}
 			if _, err := service.repository.SaveApproval(
-				ctx,
+				WithoutAuditIntent(ctx),
 				existing,
 				existing.Revision-1,
 			); err != nil {
@@ -368,7 +368,7 @@ func (service *ApprovalService) Current(
 		if err := current.Validate(); err != nil {
 			return Approval{}, err
 		}
-		saved, err := service.repository.SaveApproval(ctx, current, expectedRevision)
+		saved, err := service.repository.SaveApproval(WithoutAuditIntent(ctx), current, expectedRevision)
 		if errors.Is(err, ErrApprovalConflict) {
 			return service.repository.ApprovalByDeployment(
 				ctx,

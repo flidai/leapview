@@ -34,6 +34,26 @@ func TestStoreOpenMakesDatabasePrivate(t *testing.T) {
 	assertExistingSQLiteSidecarsPrivate(t, dbPath)
 }
 
+func TestChmodDatabaseFileMakesSQLiteSidecarsPrivate(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "leapview.db")
+	paths := []string{dbPath, dbPath + "-wal", dbPath + "-shm"}
+	restoreUmask := setUmask(t, 0)
+	for _, path := range paths {
+		if err := os.WriteFile(path, nil, 0o644); err != nil {
+			restoreUmask()
+			t.Fatalf("seed sqlite file %s: %v", path, err)
+		}
+	}
+	restoreUmask()
+
+	if err := chmodDatabaseFile(dbPath); err != nil {
+		t.Fatalf("chmod sqlite files: %v", err)
+	}
+	for _, path := range paths {
+		assertFileMode(t, path, 0o600)
+	}
+}
+
 func TestStoreUsesPerOperationConnectionsAndDrainsOnClose(t *testing.T) {
 	store, err := Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	if err != nil {
@@ -99,13 +119,18 @@ func TestStoreBackupCreatesPrivateDatabaseCopy(t *testing.T) {
 	}
 	defer store.Close()
 
+	backupDir := filepath.Join(dir, "backups")
+	if err := os.Mkdir(backupDir, 0o755); err != nil {
+		t.Fatalf("seed backup directory: %v", err)
+	}
 	restoreUmask := setUmask(t, 0)
-	backupPath := filepath.Join(dir, "backups", "leapview.backup.db")
+	backupPath := filepath.Join(backupDir, "leapview.backup.db")
 	if err := store.Backup(ctx, backupPath); err != nil {
 		restoreUmask()
 		t.Fatalf("backup store: %v", err)
 	}
 	restoreUmask()
+	assertFileMode(t, filepath.Dir(backupPath), 0o700)
 	assertFileMode(t, backupPath, 0o600)
 }
 

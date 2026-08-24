@@ -91,7 +91,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (UploadResu
 	}
 	upload, err := s.repo.CreateS3MultipartUpload(ctx, manageddata.CreateS3MultipartUploadInput{
 		ID: id, UploadSessionID: session.ID, LogicalPath: file.Path, SHA256: file.SHA256,
-		SizeBytes: file.Size, IdempotencyIdentity: identity,
+		SizeBytes: file.Size, IdempotencyIdentity: identity, AuditIntent: request.AuditIntent,
 	})
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
@@ -143,6 +143,7 @@ func (s *Service) Create(ctx context.Context, request CreateRequest) (UploadResu
 	}
 	initialized, initErr := s.repo.InitializeS3MultipartUpload(claimCtx, manageddata.InitializeS3MultipartUploadInput{
 		ID: upload.ID, ObjectKey: provider.Key, ProviderUploadID: provider.UploadID, Existing: provider.Existing,
+		AuditIntent: request.AuditIntent,
 	})
 	if initErr == nil {
 		return resultFor(initialized, session, file)
@@ -372,6 +373,7 @@ func (s *Service) Complete(ctx context.Context, request CompleteRequest) (Upload
 	}
 	claim, err := s.repo.BeginS3MultipartCompletion(ctx, manageddata.BeginS3MultipartCompletionInput{
 		ID: upload.ID, IdempotencyIdentity: identityHash("complete", upload.ID.String(), request.IdempotencyKey), RequestHash: requestHash,
+		AuditIntent: request.AuditIntent,
 	})
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
@@ -412,6 +414,7 @@ func (s *Service) Abort(ctx context.Context, request AbortRequest) (UploadResult
 	}
 	claim, err := s.repo.BeginS3MultipartAbort(ctx, manageddata.BeginS3MultipartAbortInput{
 		ID: upload.ID, IdempotencyIdentity: identityHash("abort", upload.ID.String(), request.IdempotencyKey),
+		AuditIntent: request.AuditIntent,
 	})
 	if err != nil {
 		return UploadResult{}, repositoryError(err)
@@ -772,6 +775,13 @@ func identityHash(operation string, values ...string) string {
 		_, _ = hash.Write([]byte(value))
 	}
 	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// DeterministicMultipartUploadID returns the idempotent multipart identity
+// used by Create. Transports use it to build an audit intent before the
+// repository's source transaction begins.
+func DeterministicMultipartUploadID(uploadSessionID, idempotencyKey string) string {
+	return "multipart_" + identityHash("create", uploadSessionID, idempotencyKey)
 }
 
 func repositoryError(err error) error {

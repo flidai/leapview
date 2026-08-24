@@ -282,7 +282,7 @@ model ManagedDataUploadSessionListResponse {
 @tag("Managed Data")
 @doc("Managed-data revision queries and upload-session lifecycle commands. Revision reads, session reads, and event streaming do not mutate durable domain state.")
 @route("/projects/{project}/connections/{connection}")
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(ManagedDataCommandAuditPayload)
 interface ManagedDataLifecycle {
   @summary("Get the active managed-data revision")

@@ -22,17 +22,18 @@ import (
 )
 
 type Module struct {
-	service              *release.Service
-	candidateArtifacts   *candidateArtifactService
-	catalog              release.CatalogRepository
-	searchCatalog        projectcatalogSearcher
-	deployments          release.DeploymentLinkage
-	servingProvenance    release.ServingStateProvenanceRepository
-	environment          string
-	api                  APIConfig
-	logger               *slog.Logger
-	extensionPreparation extension.Preparation
-	finalizeExecution    apigencommand.AsyncExecutionContract
+	service               *release.Service
+	candidateArtifacts    *candidateArtifactService
+	catalog               release.CatalogRepository
+	searchCatalog         projectcatalogSearcher
+	deployments           release.DeploymentLinkage
+	servingProvenance     release.ServingStateProvenanceRepository
+	environment           string
+	api                   APIConfig
+	logger                *slog.Logger
+	extensionPreparation  extension.Preparation
+	finalizeExecution     apigencommand.AsyncExecutionContract
+	auditIntentConfigured bool
 }
 
 // candidateArtifactPhases is the complete phase-aware artifact surface used
@@ -51,7 +52,10 @@ var (
 )
 
 type Config struct {
-	Database             *sql.DB
+	Database *sql.DB
+	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
+	// It is required whenever release SQLite persistence is configured.
+	AuditIntentRecorder  access.AuditIntentRecorder
 	States               ServingStateRepository
 	ManagedDataPins      ManagedDataPins
 	ManagedDataHook      validate.Hook
@@ -84,6 +88,9 @@ type projectcatalogSearcher interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if config.Database != nil && config.AuditIntentRecorder == nil {
+		return nil, errors.New("release audit intent recorder is required")
+	}
 	environment := config.Environment
 	if string(environment) != strings.TrimSpace(string(environment)) {
 		return nil, fmt.Errorf("release environment must be canonical")
@@ -95,7 +102,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	releases, finalization, catalog, deployments, err := releaseStores(config.Database, config.API.Workflow)
+	releases, finalization, catalog, deployments, err := releaseStoresWithAudit(config.Database, config.API.Workflow, config.AuditIntentRecorder)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +144,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
 		searchCatalog: config.API.ProjectSearchCatalog,
 		environment:   string(environment), api: config.API, logger: logger,
-		finalizeExecution: finalizeExecution,
+		finalizeExecution: finalizeExecution, auditIntentConfigured: config.Database != nil && config.AuditIntentRecorder != nil,
 	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {
 		return nil, err
@@ -251,14 +258,18 @@ func (m *Module) PublishCandidate(
 }
 
 func releaseStores(database *sql.DB, workflow ...jobplatform.WorkflowRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
-	if database == nil {
-		return nil, nil, nil, nil, errors.New("release database is required")
-	}
 	var recorder jobplatform.WorkflowRecorder
 	if len(workflow) > 0 {
 		recorder = workflow[0]
 	}
-	owned := releasesqlite.NewRepositoryWithWorkflow(database, recorder)
+	return releaseStoresWithAudit(database, recorder, nil)
+}
+
+func releaseStoresWithAudit(database *sql.DB, workflow jobplatform.WorkflowRecorder, audit access.AuditIntentRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
+	if database == nil {
+		return nil, nil, nil, nil, errors.New("release database is required")
+	}
+	owned := releasesqlite.NewRepositoryWithWorkflowAndAudit(database, workflow, audit)
 	return owned, owned, owned, owned, nil
 }
 

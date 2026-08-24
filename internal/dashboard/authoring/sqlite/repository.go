@@ -2,17 +2,21 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/internal/db"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -20,9 +24,19 @@ import (
 // SQLite database. Queries are generated from the checked-in authoring SQL and
 // transaction-scoped so CAS checks, immutable revision insertion, pointer
 // updates, and command evidence commit as one unit.
-type Repository struct{ db *sql.DB }
+type Repository struct {
+	db    *sql.DB
+	audit access.AuditIntentRecorder
+}
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db} }
+
+// NewRepositoryWithAudit wires authoring mutations to Access' transaction-
+// scoped audit-intent port. The recorder participates in the source
+// transaction and never commits or rolls it back.
+func NewRepositoryWithAudit(db *sql.DB, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: db, audit: audit}
+}
 
 var _ authoring.Repository = (*Repository)(nil)
 
@@ -121,6 +135,9 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 		if err := insertDraft(ctx, q, projectID, input.Lifecycle.ID, *input.Lifecycle.Draft); err != nil {
 			return authoring.DashboardLifecycle{}, err
 		}
+	}
+	if err := r.recordAuditIntent(ctx, tx, input.Lifecycle, input.Revision, input.Operation.IdempotencyKey); err != nil {
+		return authoring.DashboardLifecycle{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -592,6 +609,9 @@ func (r *Repository) AppendDraft(ctx context.Context, input authoring.AppendDraf
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, input.Revision.Token()); err != nil {
 		return authoring.Revision{}, err
 	}
+	if err := r.recordAuditIntent(ctx, tx, input.Next, input.Revision, input.Evidence.ID.String()); err != nil {
+		return authoring.Revision{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return authoring.Revision{}, err
 	}
@@ -675,6 +695,9 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, target); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
+	if err := r.recordAuditIntent(ctx, tx, lifecycle, revision, input.Evidence.ID.String()); err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
@@ -718,6 +741,9 @@ func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) 
 		return authoring.DashboardLifecycle{}, err
 	}
 	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, result); err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
+	if err := r.recordAuditIntent(ctx, tx, lifecycle, authoring.Revision{ID: expected.RevisionID, DashboardID: input.DashboardID, Number: expected.Number, ContentHash: expected.ContentHash}, input.Evidence.ID.String()); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -875,6 +901,70 @@ func (r *Repository) begin(ctx context.Context) (*sql.Tx, error) {
 		return nil, fmt.Errorf("dashboard authoring persistence is unavailable")
 	}
 	return r.db.BeginTx(ctx, nil)
+}
+
+// recordAuditIntent completes the transport-built intent with identities that
+// only exist after the authoring mutation has been validated. Access owns
+// aggregate sequence allocation; the immutable command identity, revision
+// token, and dashboard aggregate make retries stable without copying authored
+// documents or query content into audit metadata.
+func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, lifecycle authoring.DashboardLifecycle, revision authoring.Revision, commandID string) error {
+	intent, ok := authoring.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r == nil || r.audit == nil {
+		return fmt.Errorf("dashboard authoring audit intent recorder is required")
+	}
+	projectID := lifecycle.ProjectID.String()
+	aggregateKey := "dashboard_authoring:" + projectID + ":" + lifecycle.ID.String()
+	intent.ResourceKind = "dashboard"
+	intent.ResourceID = lifecycle.ID.String()
+	intent.AggregateKey = aggregateKey
+	intent.AggregateSequence = 0
+	commandID = strings.TrimSpace(commandID)
+	if commandID == "" {
+		return fmt.Errorf("dashboard authoring audit command identity is required")
+	}
+	// The operation is intentionally generic for all dashboard commands. A
+	// stable command/idempotency key keeps retries idempotent while ensuring
+	// distinct lifecycle commands on the same revision cannot collide.
+	identity := intent.Operation + "\x00" + aggregateKey + "\x00" + revision.ID.String() + "\x00" + revision.ContentHash + "\x00" + commandID
+	sum := sha256.Sum256([]byte(identity))
+	intent.EventID = "dashboard-authoring:" + hex.EncodeToString(sum[:16])
+
+	fields := map[string]any{
+		"operationId": intent.Operation,
+		"projectId":   projectID,
+		"dashboardId": lifecycle.ID.String(),
+	}
+	// Archived published-only dashboards legitimately have no draft pointer.
+	// Preserve draft metadata when it exists, and derive the origin from the
+	// mutation revision first with lifecycle provenance as a safe fallback for
+	// transitions (such as archive) that only carry a revision token.
+	if lifecycle.Draft != nil {
+		fields["draftId"] = lifecycle.Draft.ID.String()
+	} else {
+		fields["draftId"] = ""
+	}
+	if lifecycle.Draft != nil || lifecycle.Published != nil {
+		origin := revision.Provenance.Origin
+		if !origin.Valid() && lifecycle.Draft != nil {
+			origin = lifecycle.Draft.Provenance.Origin
+		}
+		if !origin.Valid() && lifecycle.Published != nil {
+			origin = lifecycle.Published.Provenance.Origin
+		}
+		if origin.Valid() {
+			fields["origin"] = string(origin)
+		}
+	}
+	metadata, err := access.RewriteGeneratedAuditEnvelopePayload(intent.MetadataJSON, fields)
+	if err != nil {
+		return fmt.Errorf("dashboard authoring audit metadata: %w", err)
+	}
+	intent.MetadataJSON = metadata
+	return r.audit.RecordAuditIntent(ctx, tx, intent)
 }
 
 func getRevision(ctx context.Context, q *dashboarddb.Queries, projectID string, dashboardID authoring.DashboardID, revisionID authoring.RevisionID) (authoring.Revision, error) {

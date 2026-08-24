@@ -55,7 +55,7 @@ model DashboardPublicationNotConfiguredFailure {}
 @doc("Project-wide dashboard publication discovery and lifecycle commands. Publication mutations complete synchronously and return the updated publication; they do not create durable asynchronous executions.")
 @route("/projects/{project}/dashboard-publications")
 @apigen.authz(#{ mode: "authenticated" })
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(DashboardPublicationCommandAuditPayload)
 interface DashboardPublications {
   @summary("List project dashboard publications")

@@ -234,21 +234,69 @@ func (m *Module) CreateRelease(w http.ResponseWriter, r *http.Request, project, 
 	for _, item := range body.Connections {
 		input.Connections = append(input.Connections, release.ConnectionPin{ConnectionID: item.Connection, RevisionID: item.RevisionID})
 	}
-	created, err := m.service.Create(r.Context(), input)
+	ctx := r.Context()
+	if m.auditIntentConfigured {
+		projectID := identity.ProjectID
+		releaseID := release.IDFor(projectID, idempotencyKey)
+		requestID, correlationID := releaseAuditRequestIdentity(r)
+		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
+			OperationID: string(releasegen.GenOperationCreateRelease), ProjectID: projectID, ReleaseID: releaseID,
+			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,
+			Surface: "api", ProjectDigest: input.ProjectDigest, Status: string(release.StatusDraft), CreatedBy: principal.ID,
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), intentErr)
+			return
+		}
+		ctx = release.WithAuditIntent(ctx, intent)
+	}
+	created, err := m.service.Create(ctx, input)
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), err)
 		return
 	}
-	m.recordBestEffortEvent(
-		r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
-		releaseCreatedAuditAction, releasegen.GenSchemaReleaseCreatedAuditPayload{
-			OperationId: string(releasegen.GenOperationCreateRelease), ReleaseId: created.ID,
-			ProjectId: created.ServingIdentity.ProjectID.String(), ProjectDigest: created.ProjectDigest,
-			Status: string(created.Status), CreatedBy: created.CreatedBy,
-		},
-	)
+	if m.auditIntentConfigured {
+		if err := m.completeCommand(ctx, string(releasegen.GenOperationCreateRelease)); err != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationCreateRelease(), err)
+			return
+		}
+	} else {
+		m.recordBestEffortEvent(
+			r.Context(), string(releasegen.GenOperationCreateRelease), created.ID,
+			releaseCreatedAuditAction, releasegen.GenSchemaReleaseCreatedAuditPayload{
+				OperationId: string(releasegen.GenOperationCreateRelease), ReleaseId: created.ID,
+				ProjectId: created.ServingIdentity.ProjectID.String(), ProjectDigest: created.ProjectDigest,
+				Status: string(created.Status), CreatedBy: created.CreatedBy,
+			},
+		)
+	}
 	w.Header().Set("Location", location(project, created.ID))
 	apitransport.WriteJSON(w, http.StatusCreated, response(created))
+}
+
+func (m *Module) completeCommand(ctx context.Context, operationID string) error {
+	executor, err := apigencommand.NewExecutor(releasegen.GetAPIGenCommandRuntimeContract, m.logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, operationID, apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
+	})
+}
+
+func releaseAuditRequestIdentity(r *http.Request) (string, string) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	}
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(r.Header.Get("X-Correlation-Id"))
+	}
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	return requestID, correlationID
 }
 
 func (m *Module) ListReleases(w http.ResponseWriter, r *http.Request, project string, limit *int32, pageToken *string) {
@@ -294,7 +342,37 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 		apitransport.WriteProblem(w, r, http.StatusUnsupportedMediaType, "UNSUPPORTED_MEDIA_TYPE", "Release artifacts require application/octet-stream", nil)
 		return
 	}
-	artifact, err := m.service.UploadArtifact(r.Context(), project, releaseID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
+	ctx := r.Context()
+	if m.auditIntentConfigured {
+		principal, ok := m.currentPrincipal(r)
+		if !ok {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), apigenfailure.New("authentication_required", "Bearer authentication is required"))
+			return
+		}
+		projectID, projectErr := projectgraph.NewResourceID(project)
+		if projectErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), projectErr)
+			return
+		}
+		current, getErr := m.service.Get(ctx, projectID, releaseID)
+		if getErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), getErr)
+			return
+		}
+		requestID, correlationID := releaseAuditRequestIdentity(r)
+		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
+			OperationID: string(releasegen.GenOperationUploadReleaseArtifact), ProjectID: projectID, ReleaseID: releaseID,
+			GenerationID: current.ServingIdentity.GenerationID, ArtifactDigest: current.ArtifactDigest,
+			IdempotencyKey: "artifact:" + releaseID + ":" + contentDigest, PrincipalID: principal.ID,
+			RequestID: requestID, CorrelationID: correlationID, Status: string(current.Status),
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), intentErr)
+			return
+		}
+		ctx = release.WithAuditIntent(ctx, intent)
+	}
+	artifact, err := m.service.UploadArtifact(ctx, project, releaseID, contentDigest, http.MaxBytesReader(w, r.Body, releasefilesystem.MaxUploadBytes))
 	if err != nil {
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
 		return
@@ -305,11 +383,15 @@ func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, p
 		return
 	}
 	result := releaseapi.ArtifactResponse{ReleaseID: releaseID, GenerationID: identity.GenerationID, Digest: artifact.ExpectedDigest, ActualDigest: artifact.ActualDigest, SizeBytes: artifact.SizeBytes}
+	if err := m.completeCommand(ctx, string(releasegen.GenOperationUploadReleaseArtifact)); err != nil {
+		m.writeCommandFailure(w, r, releasegen.GenCommandOperationUploadReleaseArtifact(), err)
+		return
+	}
 	w.Header().Set("Location", location(project, releaseID)+"/artifact")
 	apitransport.WriteJSON(w, http.StatusCreated, result)
 }
 
-func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, _ string) {
+func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, idempotencyKey string) {
 	principal, ok := m.currentPrincipal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
@@ -332,10 +414,29 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 		m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), apigenfailure.New("queue_unavailable", "release workflow is unavailable"))
 		return
 	}
+	ctx := r.Context()
+	if m.auditIntentConfigured {
+		projectID, projectErr := projectgraph.NewResourceID(project)
+		if projectErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), projectErr)
+			return
+		}
+		requestID, correlationID := releaseAuditRequestIdentity(r)
+		intent, intentErr := buildReleaseCreatedAuditIntent(releaseAuditCommandInput{
+			OperationID: string(releasegen.GenOperationFinalizeRelease), ProjectID: projectID, ReleaseID: releaseID,
+			IdempotencyKey: idempotencyKey, PrincipalID: principal.ID, RequestID: requestID, CorrelationID: correlationID,
+			Status: m.finalizeExecution.InitialState,
+		})
+		if intentErr != nil {
+			m.writeCommandFailure(w, r, releasegen.GenCommandOperationFinalizeRelease(), intentErr)
+			return
+		}
+		ctx = release.WithAuditIntent(ctx, intent)
+	}
 	var row release.Release
 	executor, err := apigencommand.NewExecutor(releasegen.GetAPIGenCommandRuntimeContract, m.logger)
 	if err == nil {
-		err = executor.Execute(r.Context(), string(releasegen.GenOperationFinalizeRelease), apigencommand.Execution{
+		err = executor.Execute(ctx, string(releasegen.GenOperationFinalizeRelease), apigencommand.Execution{
 			Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
 				if contract.Execution == nil {
 					return fmt.Errorf("finalize release async execution contract is unavailable")

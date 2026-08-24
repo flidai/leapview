@@ -22,7 +22,7 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 			contract.Command.Owner != "LeapViewAPI.Refresh" ||
 			contract.Command.Audit.SuccessAction != auditAction ||
 			!contract.Command.Audit.Required ||
-			contract.Command.Audit.Guarantee != "best-effort" ||
+			contract.Command.Audit.Guarantee != "transactional" ||
 			(contract.Command.Target == nil || contract.Command.Target.Parameter != "project") ||
 			contract.Command.Idempotency != "required" ||
 			contract.Command.Privilege != "" {

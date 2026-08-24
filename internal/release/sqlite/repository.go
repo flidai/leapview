@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/digest"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -22,11 +23,20 @@ type Repository struct {
 	db       *sql.DB
 	queries  *releasedb.Queries
 	workflow jobplatform.WorkflowRecorder
+	audit    access.AuditIntentRecorder
 }
 
 func NewRepository(db *sql.DB) *Repository { return &Repository{db: db, queries: releasedb.New(db)} }
 func NewRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder) *Repository {
 	return &Repository{db: db, queries: releasedb.New(db), workflow: workflow}
+}
+
+// NewRepositoryWithWorkflowAndAudit wires release mutations to Access' narrow
+// transaction-scoped audit-intent port. The recorder participates in the
+// SQLite transaction opened by this repository and never commits or rolls it
+// back.
+func NewRepositoryWithWorkflowAndAudit(db *sql.DB, workflow jobplatform.WorkflowRecorder, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: db, queries: releasedb.New(db), workflow: workflow, audit: audit}
 }
 
 func (r *Repository) Create(ctx context.Context, input release.CreateInput) (release.Release, error) {
@@ -82,10 +92,24 @@ func (r *Repository) Create(ctx context.Context, input release.CreateInput) (rel
 			return release.Release{}, mapError(err)
 		}
 	}
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
+		return release.Release{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err
 	}
 	return r.Get(ctx, input.ServingIdentity.ProjectID, input.ID)
+}
+
+func (r *Repository) recordAuditIntent(ctx context.Context, tx *sql.Tx) error {
+	intent, ok := release.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r.audit == nil {
+		return fmt.Errorf("release audit intent recorder is required")
+	}
+	return r.audit.RecordAuditIntent(ctx, tx, intent)
 }
 
 func (r *Repository) Get(ctx context.Context, projectID projectgraph.ResourceID, releaseID string) (release.Release, error) {
@@ -159,12 +183,23 @@ func (r *Repository) RecordArtifact(ctx context.Context, artifact release.Artifa
 	if err != nil || artifact.ReleaseID == "" || artifact.SizeBytes < 0 || digest.ValidateSHA256Identity(artifact.ExpectedDigest) != nil || artifact.ActualDigest != artifact.ExpectedDigest {
 		return release.ErrInvalid
 	}
-	n, err := r.queries.RecordAPIReleaseArtifact(ctx, releasedb.RecordAPIReleaseArtifactParams{ArtifactActualDigest: artifact.ActualDigest, ArtifactSizeBytes: artifact.SizeBytes, ID: artifact.ReleaseID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ArtifactDigest: artifact.ExpectedDigest})
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	n, err := releasedb.New(tx).RecordAPIReleaseArtifact(ctx, releasedb.RecordAPIReleaseArtifactParams{ArtifactActualDigest: artifact.ActualDigest, ArtifactSizeBytes: artifact.SizeBytes, ID: artifact.ReleaseID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ArtifactDigest: artifact.ExpectedDigest})
 	if err != nil {
 		return err
 	}
 	if n != 1 {
 		return release.ErrConflict
+	}
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
 	}
 	return nil
 }
@@ -248,6 +283,9 @@ func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID
 		if err := r.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
 			return release.Release{}, err
 		}
+	}
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
+		return release.Release{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return release.Release{}, err

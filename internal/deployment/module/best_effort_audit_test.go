@@ -27,7 +27,7 @@ func (*failingDeploymentAuditStore) ListEvents(context.Context, string, string, 
 	return nil, nil
 }
 
-func TestDeploymentBestEffortAuditFailureIsObservable(t *testing.T) {
+func TestDeploymentTransactionalAuditCannotUseBestEffortPath(t *testing.T) {
 	var logs bytes.Buffer
 	module := &Module{
 		api:    APIConfig{Jobs: &failingDeploymentAuditStore{err: errors.New("audit store unavailable")}},
@@ -40,13 +40,7 @@ func TestDeploymentBestEffortAuditFailureIsObservable(t *testing.T) {
 	)
 
 	output := logs.String()
-	for _, expected := range []string{
-		"deployment audit failed",
-		"operation_id=cancelDeployment",
-		"deployment_id=deployment_1",
-		"audit_action=deployment.cancelled",
-		"audit store unavailable",
-	} {
+	for _, expected := range []string{"deployment command contract execution failed", "operation_id=cancelDeployment", "requires transactional auditing"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("audit failure log = %q, missing %q", output, expected)
 		}

@@ -88,10 +88,10 @@ model ManagedDataS3MultipartCompleteRequest {
 }
 
 @tag("Managed Data")
-@doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state.")
+@doc("S3 multipart transport lifecycle. Part signing is a query because it issues transient upload authorization without mutating durable multipart state. Completion and abortion commands durably accept a provider transition; provider work is recoverable but external to the SQLite transaction.")
 @route("/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads")
 @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(ManagedDataS3MultipartAuditPayload)
 interface ManagedDataS3MultipartUploads {
   @summary("Create an S3 multipart upload for a session file")
@@ -132,7 +132,7 @@ interface ManagedDataS3MultipartUploads {
     @body body: ManagedDataS3MultipartSignPartRequest,
   ): OkJson<ManagedDataS3MultipartSignedPartResponse> | CommonErrors;
 
-  @summary("Complete an S3 multipart upload")
+  @summary("Request completion of an S3 multipart upload")
   @route("/{multipartUpload}/complete")
   @post
   @extension("x-leapview-object-scope", "connection")
@@ -146,7 +146,7 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataBackendUnavailableFailure)
   @apigen.failsWith(ManagedDataUploadUnavailableFailure)
   @apigen.failsWith(ManagedDataUploadInternalFailure)
-  @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.completed" })
+  @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.completion_requested" })
   completeManagedDataS3MultipartUpload(
     @path project: ResourceId,
     @path @apigen.target connection: ResourceId,
@@ -156,7 +156,7 @@ interface ManagedDataS3MultipartUploads {
     @body body: ManagedDataS3MultipartCompleteRequest,
   ): OkJson<ManagedDataS3MultipartUploadResponse> | CommonErrors;
 
-  @summary("Abort an S3 multipart upload")
+  @summary("Request abortion of an S3 multipart upload")
   @route("/{multipartUpload}/abort")
   @post
   @extension("x-leapview-object-scope", "connection")
@@ -169,7 +169,7 @@ interface ManagedDataS3MultipartUploads {
   @apigen.failsWith(ManagedDataBackendUnavailableFailure)
   @apigen.failsWith(ManagedDataUploadUnavailableFailure)
   @apigen.failsWith(ManagedDataUploadInternalFailure)
-  @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.aborted" })
+  @apigen.command(#{ auditAction: "managed_data.s3_multipart_upload.abort_requested" })
   abortManagedDataS3MultipartUpload(
     @path project: ResourceId,
     @path @apigen.target connection: ResourceId,

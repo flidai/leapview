@@ -9,20 +9,30 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsdb "github.com/flidai/leapview/internal/analytics/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 type ConnectionBindingRepository struct {
-	q *analyticsdb.Queries
+	db    *sql.DB
+	q     *analyticsdb.Queries
+	audit access.AuditIntentRecorder
 }
 
 var _ connectionbinding.Repository = (*ConnectionBindingRepository)(nil)
 var _ connectionbinding.BindingCatalog = (*ConnectionBindingRepository)(nil)
 
 func NewConnectionBindingRepository(database *sql.DB) *ConnectionBindingRepository {
-	return &ConnectionBindingRepository{q: analyticsdb.New(database)}
+	return &ConnectionBindingRepository{db: database, q: analyticsdb.New(database)}
+}
+
+// NewConnectionBindingRepositoryWithAudit wires binding mutations to the
+// Access-owned durable audit-intent port. The recorder participates in the
+// transaction opened here and never commits or rolls it back.
+func NewConnectionBindingRepositoryWithAudit(database *sql.DB, audit access.AuditIntentRecorder) *ConnectionBindingRepository {
+	return &ConnectionBindingRepository{db: database, q: analyticsdb.New(database), audit: audit}
 }
 
 func (repository *ConnectionBindingRepository) Create(ctx context.Context, binding connectionbinding.TargetBinding) error {
@@ -36,7 +46,7 @@ func (repository *ConnectionBindingRepository) Create(ctx context.Context, bindi
 	if err != nil {
 		return fmt.Errorf("encode non-secret endpoint: %w", err)
 	}
-	err = repository.q.CreateTargetConnectionBinding(ctx, analyticsdb.CreateTargetConnectionBindingParams{
+	params := analyticsdb.CreateTargetConnectionBindingParams{
 		ID: binding.ID.String(), TargetID: binding.TargetID.String(), ConnectionID: binding.ConnectionID.String(),
 		ConnectorKind: binding.ConnectorKind, AuthenticationMode: string(binding.AuthenticationMode),
 		ProjectID: binding.Scope.ProjectID.String(), Environment: binding.Scope.Environment, EndpointJson: string(endpoint),
@@ -45,7 +55,22 @@ func (repository *ConnectionBindingRepository) Create(ctx context.Context, bindi
 		Enabled: boolInt(binding.Enabled), ValidatedVersion: binding.ValidatedVersion, Health: string(binding.Health),
 		HealthReason: binding.HealthReason, LastValidatedAt: nullableTime(binding.LastValidatedAt),
 		CreatedAt: sqliteTime(binding.CreatedAt), UpdatedAt: sqliteTime(binding.UpdatedAt), Revision: binding.Revision,
-	})
+	}
+	if intent, ok := connectionbinding.AuditIntentFromContext(ctx); ok {
+		if err := repository.withAuditTransaction(ctx, func(tx *sql.Tx) error {
+			if err := repository.q.WithTx(tx).CreateTargetConnectionBinding(ctx, params); err != nil {
+				return err
+			}
+			return repository.recordAuditIntent(ctx, tx, intent)
+		}); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "constraint") {
+				return fmt.Errorf("%w: target connection scope already has a binding", connectionbinding.ErrIncompatibleBinding)
+			}
+			return err
+		}
+		return nil
+	}
+	err = repository.q.CreateTargetConnectionBinding(ctx, params)
 	if err != nil && strings.Contains(strings.ToLower(err.Error()), "constraint") {
 		return fmt.Errorf("%w: target connection scope already has a binding", connectionbinding.ErrIncompatibleBinding)
 	}
@@ -114,7 +139,7 @@ func (repository *ConnectionBindingRepository) Save(
 	if err != nil {
 		return connectionbinding.TargetBinding{}, fmt.Errorf("encode non-secret endpoint: %w", err)
 	}
-	count, err := repository.q.UpdateTargetConnectionBinding(ctx, analyticsdb.UpdateTargetConnectionBindingParams{
+	params := analyticsdb.UpdateTargetConnectionBindingParams{
 		EndpointJson: string(endpoint), CredentialProjectID: binding.CredentialReference.ProjectID.String(),
 		CredentialEnvironment: binding.CredentialReference.Environment,
 		CredentialSecretPath:  binding.CredentialReference.SecretPath, CredentialSecretKey: binding.CredentialReference.SecretKey,
@@ -124,7 +149,23 @@ func (repository *ConnectionBindingRepository) Save(
 		TargetID: binding.TargetID.String(), ConnectionID: binding.ConnectionID.String(),
 		ConnectorKind: binding.ConnectorKind, AuthenticationMode: string(binding.AuthenticationMode),
 		ProjectID: binding.Scope.ProjectID.String(), Environment: binding.Scope.Environment,
-	})
+	}
+	if intent, ok := connectionbinding.AuditIntentFromContext(ctx); ok {
+		if err := repository.withAuditTransaction(ctx, func(tx *sql.Tx) error {
+			count, err := repository.q.WithTx(tx).UpdateTargetConnectionBinding(ctx, params)
+			if err != nil {
+				return err
+			}
+			if count != 1 {
+				return connectionbinding.ErrIncompatibleBinding
+			}
+			return repository.recordAuditIntent(ctx, tx, intent)
+		}); err != nil {
+			return connectionbinding.TargetBinding{}, err
+		}
+		return binding, nil
+	}
+	count, err := repository.q.UpdateTargetConnectionBinding(ctx, params)
 	if err != nil {
 		return connectionbinding.TargetBinding{}, err
 	}
@@ -132,6 +173,31 @@ func (repository *ConnectionBindingRepository) Save(
 		return connectionbinding.TargetBinding{}, connectionbinding.ErrIncompatibleBinding
 	}
 	return binding, nil
+}
+
+func (repository *ConnectionBindingRepository) withAuditTransaction(ctx context.Context, fn func(*sql.Tx) error) error {
+	if repository == nil || repository.db == nil {
+		return fmt.Errorf("connection binding audit transaction database is required")
+	}
+	if repository.audit == nil {
+		return fmt.Errorf("connection binding audit intent recorder is required")
+	}
+	tx, err := repository.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (repository *ConnectionBindingRepository) recordAuditIntent(ctx context.Context, tx *sql.Tx, intent access.AuditIntent) error {
+	if repository.audit == nil {
+		return fmt.Errorf("connection binding audit intent recorder is required")
+	}
+	return repository.audit.RecordAuditIntent(ctx, tx, intent)
 }
 
 func bindingFromDB(row analyticsdb.TargetConnectionBinding) (connectionbinding.TargetBinding, error) {
