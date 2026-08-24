@@ -17,7 +17,6 @@ export function nativeMakerPreparation(platform, desktopRoot) {
     nodeGyp: join(
       desktopRoot,
       "node_modules",
-      "@electron",
       "node-gyp",
       "bin",
       "node-gyp.js",
