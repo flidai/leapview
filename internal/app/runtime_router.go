@@ -14,7 +14,6 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
@@ -52,6 +51,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -79,7 +79,7 @@ type runtimeServices struct {
 	metrics               QueryMetrics
 	workloads             workloadControl
 	broker                *pagestream.Broker
-	pageStreamTrace       *pagestream.TraceStore
+	dashboardBroker       *dashboardmodule.DeliveryBroker
 	pageStreams           *uitransport.PageStream
 	persistenceConfigured bool
 	platformHealth        platformHealth
@@ -190,18 +190,9 @@ func newCompositionSurfaces(
 	dashboardTelemetry dashboardmodule.Telemetry,
 ) (*capabilityRoutes, *runtimeServices, *platformServices, *httpPolicy) {
 	logger := slog.Default()
-	var trace *pagestream.TraceStore
-	if !assets.Production() {
-		trace = pagestream.NewTraceStore(pagestream.TraceOptions{
-			CapacityPerStream: 512,
-			MaxStreams:        32,
-			IncludePayloads:   true,
-		})
-	}
 	routes := &capabilityRoutes{dashboardTelemetry: dashboardTelemetry}
 	runtime := &runtimeServices{
-		metrics: metrics, broker: pagestream.NewBroker(pagestream.WithTraceStore(trace)),
-		pageStreamTrace: trace,
+		metrics: metrics, broker: pagestream.NewBroker(), dashboardBroker: dashboardmodule.NewDeliveryBroker(),
 	}
 	platform := &platformServices{
 		telemetry: telemetry, logger: logger, assets: assets,
@@ -697,7 +688,7 @@ func buildApplicationSurfaces(
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
-		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -758,9 +749,6 @@ func buildApplicationSurfaces(
 	}
 	if httpConfig.Logger != nil {
 		platform.logger = httpConfig.Logger
-		if runtime.pageStreamTrace != nil {
-			runtime.pageStreamTrace.SetLogger(httpConfig.Logger)
-		}
 	}
 	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
@@ -953,7 +941,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
 				ResolveProjectID: runtime.resolveProjectID,
-				Admission:        workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
+				Admission:        workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -1066,7 +1054,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CommandObserved:  routes.dashboardTelemetry.PublicCommandObserved,
 			},
 			Logger:    platform.logger,
-			Trace:     runtime.pageStreamTrace,
 			PublicURL: storage.publicURL,
 			CurrentActor: func(r *http.Request) string {
 				principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -1330,8 +1317,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
-			EnsureClientID: func(w http.ResponseWriter, r *http.Request) {
-				_ = pagestream.EnsureClientID(w, r)
+			EnsureClientID: func(w http.ResponseWriter, r *http.Request) bool {
+				_, ok := uitransport.RequireClientID(w, r)
+				return ok
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,

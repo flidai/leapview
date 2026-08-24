@@ -9,7 +9,7 @@
     "build": "node scripts/build.mjs",
     "evidence": "node scripts/release-evidence.mjs",
     "start": "bun run build && bun scripts/run-electron.mjs start",
-    "test": "bun test ./src && node --test vendor/brace-expansion-compat.test.cjs vendor/image-size-next-compat.test.cjs scripts/accessibility-contract.test.mjs scripts/distribution-packaging.test.mjs scripts/native-maker-modules.test.mjs scripts/packaged-diagnostics.test.mjs scripts/preview-release.test.mjs scripts/release-evidence.test.mjs scripts/release-operations.test.mjs scripts/verify-installer.test.mjs scripts/workflow-contract.test.mjs ../internal/app/testing/maliciousinstance/electron/policy.test.mjs",
+    "test": "bun test ./src && node --test vendor/brace-expansion-compat.test.cjs vendor/image-size-next-compat.test.cjs scripts/accessibility-contract.test.mjs scripts/distribution-packaging.test.mjs scripts/native-maker-modules.test.mjs scripts/package-startup-policy.test.mjs scripts/packaged-diagnostics.test.mjs scripts/preview-release.test.mjs scripts/release-evidence.test.mjs scripts/release-operations.test.mjs scripts/verify-installer.test.mjs scripts/workflow-contract.test.mjs ../internal/app/testing/maliciousinstance/electron/policy.test.mjs",
     "package": "bun run build && bun scripts/run-electron.mjs package && node scripts/verify-package.mjs",
     "make": "bun run build && bun scripts/run-electron.mjs make && node scripts/verify-package.mjs && node scripts/verify-installer.mjs"
   },

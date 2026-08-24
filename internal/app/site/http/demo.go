@@ -1,8 +1,8 @@
 package http
 
 import (
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type visualShowcaseDocument struct {

@@ -7,11 +7,12 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/admin/ui"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 const (
@@ -26,13 +27,16 @@ type queryHistoryCommandSignals struct {
 }
 
 func (h Handler) queryHistoryUpdates(w http.ResponseWriter, r *http.Request) {
-	clientID := pagestream.EnsureClientID(w, r)
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
+	}
 	if h.Broker == nil {
 		http.Error(w, "admin query-history broker is not configured", http.StatusInternalServerError)
 		return
 	}
 	streamID := queryHistoryStreamID(clientID)
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.Broker.TraceStore(), streamID, "admin.queries.bootstrap"))
+	updates := pagestream.NewSignalStream(w, r)
 	data, err := h.adminDataForUpdates(r, "queries")
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -45,7 +49,10 @@ func (h Handler) queryHistoryUpdates(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) queryHistoryCommand(w http.ResponseWriter, r *http.Request) {
-	clientID := pagestream.EnsureClientID(w, r)
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
+	}
 	signals := queryHistoryCommandSignals{}
 	if err := pagestream.ReadSignals(r, &signals); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)

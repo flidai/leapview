@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -27,6 +26,7 @@ import (
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 	g "maragu.dev/gomponents"
 )
@@ -100,7 +100,6 @@ type BrowserHandler struct {
 	Catalog                 CatalogAuthorizer
 	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
 	Environment             string
-	Trace                   *pagestream.TraceStore
 	Layout                  func(*stdhttp.Request) webpage.Provider
 	CSRFToken               func(*stdhttp.Request) string
 	CurrentUser             func(*stdhttp.Request) (Principal, bool)
@@ -496,7 +495,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 	}
-	_ = uitransport.PatchOnce(h.Trace, w, r, pagestream.SignalPatch(patch))
+	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
 }
 
 func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {

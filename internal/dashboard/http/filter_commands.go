@@ -8,7 +8,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
@@ -17,6 +16,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 )
 
 func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -55,7 +55,7 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		nethttp.Error(w, "dashboard session store is unavailable", nethttp.StatusServiceUnavailable)
 		return
 	}
-	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
+	clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	key, keyErr := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
 	if keyErr != nil {
 		nethttp.NotFound(w, r)
@@ -134,7 +134,7 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}
 	broker := h.Broker
 	if broker == nil {
-		broker = pagestream.NewBroker()
+		broker = dashboardstream.NewDeliveryBroker()
 	}
 	coordinator := registry.Ensure(streamID, h.analyticalStreamContext(context.WithoutCancel(r.Context()), streamID), func(event dashboardstream.RefreshEvent) {
 		broker.PublishEnvelope(streamID, lddatastar.RefreshEventEnvelope(event))

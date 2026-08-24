@@ -75,7 +75,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 			adminHTTP.BootstrapUpdates(w, r)
 		}),
 		routeLogin: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			_ = uitransport.PatchOnce(runtime.pageStreamTrace, w, r, routes.accessModule.LoginBootstrapSignals(r))
+			uitransport.PatchOnce(w, r, routes.accessModule.LoginBootstrapSignals(r))
 		}),
 	}
 	if routes.projectBrowser != nil {
@@ -86,7 +86,7 @@ func configurePageStream(routes *capabilityRoutes, runtime *runtimeServices, _ *
 		handlers[routePipelines] = http.HandlerFunc(routes.projectBrowser.Updates)
 		handlers[routeAsset] = http.HandlerFunc(routes.projectBrowser.Updates)
 	}
-	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Trace: runtime.pageStreamTrace, Authorize: authorize, Handlers: handlers})
+	runtime.pageStreams = uitransport.NewPageStream(uitransport.PageStreamConfig{Authorize: authorize, Handlers: handlers})
 }
 
 func dashboardPageStreamResource(r *http.Request, _ projectgraph.ResourceID) []access.ResourceRef {

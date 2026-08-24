@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
@@ -20,8 +19,10 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	"github.com/flidai/leapview/internal/platform"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type spatialTileAcceptanceMetrics struct {
@@ -297,14 +298,14 @@ func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testin
 
 func TestPublicationBrokerRelaysEventsAcrossReplicas(t *testing.T) {
 	store := testStore(t)
-	first := publicationsqlite.NewBroker(store.SQLDB(), nil, nil)
-	second := publicationsqlite.NewBroker(store.SQLDB(), nil, nil)
+	first := publicationsqlite.NewBroker(store.SQLDB(), nil)
+	second := publicationsqlite.NewBroker(store.SQLDB(), nil)
 	updates, unsubscribe := first.Subscribe("shared-public-stream")
 	defer unsubscribe()
 
-	second.PublishEnvelope("shared-public-stream", pagestream.Envelope{
+	second.PublishEnvelope("shared-public-stream", dashboardstream.Envelope{
 		Signals:  pagestream.SignalPatch{"status": map[string]any{"generation": 2}},
-		Delivery: pagestream.DeliveryMetadata{Generation: 2, Boundary: true},
+		Delivery: dashboardstream.DeliveryMetadata{Generation: 2, Boundary: true},
 	})
 	select {
 	case patch := <-updates:
