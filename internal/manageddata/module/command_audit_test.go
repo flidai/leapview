@@ -59,3 +59,26 @@ func TestManagedDataAuditIntentBuilderRejectsUnknownOperation(t *testing.T) {
 		t.Fatal("unknown operation was accepted")
 	}
 }
+
+func TestManagedDataS3MultipartAuditIntentUsesAcceptedOutcome(t *testing.T) {
+	builder, err := buildManagedDataAuditIntentBuilder()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, operationID := range []string{
+		manageddatagen.GenOperationCreateManagedDataS3MultipartUpload,
+		manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload,
+		manageddatagen.GenOperationAbortManagedDataS3MultipartUpload,
+	} {
+		intent, err := builder(t.Context(), manageddatahttp.CommandAuditInput{
+			OperationID: operationID, PrincipalID: "principal-a", ProjectID: "project-a", ConnectionID: "orders",
+			TargetType: "managed_data_s3_multipart_upload", TargetID: "multipart-a", Surface: "api",
+		})
+		if err != nil {
+			t.Fatalf("build %s: %v", operationID, err)
+		}
+		if intent.Outcome != "accepted" {
+			t.Fatalf("%s outcome = %q, want accepted", operationID, intent.Outcome)
+		}
+	}
+}

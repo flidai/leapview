@@ -9,9 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
+	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	"github.com/flidai/leapview/internal/manageddata/control"
 	managedhttp "github.com/flidai/leapview/internal/manageddata/http"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
@@ -136,6 +138,42 @@ func TestUploadSessionOperationsUseControlServiceAndPrincipal(t *testing.T) {
 	}
 	if uploads.recoverCalls != 1 || uploads.abortCalls != 1 || uploads.finalizeCalls != 1 {
 		t.Fatalf("upload calls = recover %d, abort %d, finalize %d", uploads.recoverCalls, uploads.abortCalls, uploads.finalizeCalls)
+	}
+}
+
+func TestCancelUploadCompletesOnlyItsGeneratedCommandGuard(t *testing.T) {
+	handler := newHandler(metadataFixture(), &fakeUploads{result: uploadFixture()}, nil)
+
+	getContext, getGuard, err := manageddatagen.BeginGenCancelManagedDataUploadSessionCommand(t.Context(), manageddatagen.GenCancelManagedDataUploadSessionCommandInvocation{
+		Surface: apigencommand.SurfaceAPI, Connection: "orders", IdempotencyKey: "cancel-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	getRequest := httptest.NewRequest(http.MethodGet, "/", nil).WithContext(getContext)
+	getRecorder := httptest.NewRecorder()
+	handler.GetManagedDataUploadSession(getRecorder, getRequest, "project-a", "orders", "upload-a")
+	if getRecorder.Code != http.StatusOK {
+		t.Fatalf("get status = %d, body = %s", getRecorder.Code, getRecorder.Body.String())
+	}
+	if getGuard.Completed() {
+		t.Fatal("GET completed the cancellation command guard")
+	}
+
+	cancelContext, cancelGuard, err := manageddatagen.BeginGenCancelManagedDataUploadSessionCommand(t.Context(), manageddatagen.GenCancelManagedDataUploadSessionCommandInvocation{
+		Surface: apigencommand.SurfaceAPI, Connection: "orders", IdempotencyKey: "cancel-key",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelRequest := httptest.NewRequest(http.MethodPost, "/", nil).WithContext(cancelContext)
+	cancelRecorder := httptest.NewRecorder()
+	handler.CancelManagedDataUploadSession(cancelRecorder, cancelRequest, "project-a", "orders", "upload-a", apigenapi.GenCancelManagedDataUploadSessionHeaders{IdempotencyKey: "cancel-key"})
+	if cancelRecorder.Code != http.StatusOK {
+		t.Fatalf("cancel status = %d, body = %s", cancelRecorder.Code, cancelRecorder.Body.String())
+	}
+	if !cancelGuard.Completed() {
+		t.Fatal("successful cancellation did not complete its generated command guard")
 	}
 }
 

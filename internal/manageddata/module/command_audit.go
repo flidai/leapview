@@ -72,7 +72,7 @@ func buildManagedDataAuditIntentBuilder() (func(context.Context, manageddatahttp
 
 func managedDataAuditOutcome(operationID string) string {
 	switch operationID {
-	case string(manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload), string(manageddatagen.GenOperationAbortManagedDataS3MultipartUpload):
+	case string(manageddatagen.GenOperationCreateManagedDataS3MultipartUpload), string(manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload), string(manageddatagen.GenOperationAbortManagedDataS3MultipartUpload):
 		// The source transaction durably accepts the provider transition. The
 		// provider call and terminal SQLite transition are recoverable but not
 		// part of the same transaction, so these are not claimed as successes.

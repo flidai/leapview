@@ -66,10 +66,14 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	if strings.Contains(operation, "agentrun") || copy.ResourceID == "" {
 		copy.ResourceID = resourceID
 	}
+	if strings.Contains(operation, "agentrun") {
+		copy.ResourceKind = "agent_run"
+	}
 	if strings.Contains(operation, "agentrun") && strings.TrimSpace(copy.MetadataJSON) != "" {
 		var envelope map[string]any
 		if err := json.Unmarshal([]byte(copy.MetadataJSON), &envelope); err == nil {
 			if payload, ok := envelope["payload"].(map[string]any); ok {
+				payload["resourceKind"] = "agent_run"
 				payload["resourceId"] = resourceID
 				if encoded, encodeErr := json.Marshal(envelope); encodeErr == nil {
 					copy.MetadataJSON = string(encoded)

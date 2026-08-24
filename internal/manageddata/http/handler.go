@@ -211,10 +211,6 @@ func (h *Handler) GetManagedDataUploadSession(w stdhttp.ResponseWriter, r *stdht
 		h.writeError(w, r, err)
 		return
 	}
-	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession()); err != nil {
-		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
-		return
-	}
 	h.writeJSON(w, stdhttp.StatusOK, response)
 }
 
@@ -304,6 +300,10 @@ func (h *Handler) CancelManagedDataUploadSession(w stdhttp.ResponseWriter, r *st
 	response, err := uploadResponse(result, project, connection, uploadSession)
 	if err != nil {
 		h.writeCommandError(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
+		return
+	}
+	if err := h.completeCommand(r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession()); err != nil {
+		h.writeCommandUnavailableCause(w, r, manageddatagen.GenCommandOperationCancelManagedDataUploadSession(), err)
 		return
 	}
 	h.writeJSON(w, stdhttp.StatusOK, response)

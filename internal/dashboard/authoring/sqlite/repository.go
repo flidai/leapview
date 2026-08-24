@@ -916,9 +916,6 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	if r == nil || r.audit == nil {
 		return fmt.Errorf("dashboard authoring audit intent recorder is required")
 	}
-	if lifecycle.Draft == nil {
-		return fmt.Errorf("dashboard authoring audit intent requires a draft pointer")
-	}
 	projectID := lifecycle.ProjectID.String()
 	aggregateKey := "dashboard_authoring:" + projectID + ":" + lifecycle.ID.String()
 	intent.ResourceKind = "dashboard"
@@ -954,11 +951,24 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx transaction.Trans
 	}
 	payload["projectId"] = projectID
 	payload["dashboardId"] = lifecycle.ID.String()
+	// Archived published-only dashboards legitimately have no draft pointer.
+	// Preserve draft metadata when it exists, and derive the origin from the
+	// mutation revision first with lifecycle provenance as a safe fallback for
+	// transitions (such as archive) that only carry a revision token.
 	if lifecycle.Draft != nil {
 		payload["draftId"] = lifecycle.Draft.ID.String()
 	}
 	if _, exists := payload["origin"]; !exists {
-		payload["origin"] = string(revision.Provenance.Origin)
+		origin := revision.Provenance.Origin
+		if !origin.Valid() && lifecycle.Draft != nil {
+			origin = lifecycle.Draft.Provenance.Origin
+		}
+		if !origin.Valid() && lifecycle.Published != nil {
+			origin = lifecycle.Published.Provenance.Origin
+		}
+		if origin.Valid() {
+			payload["origin"] = string(origin)
+		}
 	}
 	encoded, err := json.Marshal(metadata)
 	if err != nil {

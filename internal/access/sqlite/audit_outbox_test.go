@@ -180,6 +180,27 @@ func TestRecordAuditIntentAllocatesReplayStableAggregateSequence(t *testing.T) {
 	if sequence != 2 || rows != 2 {
 		t.Fatalf("allocated sequence=%d rows=%d, want sequence=2 rows=2", sequence, rows)
 	}
+
+	conflict := allocated
+	conflict.AggregateKey = "aggregate:different"
+	tx, err := store.SQLDB().BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := repo.RecordAuditIntent(ctx, tx, conflict); !errors.Is(err, access.ErrAuditIntentConflict) {
+		t.Fatalf("changed aggregate replay = %v, want ErrAuditIntentConflict", err)
+	}
+	if err := tx.Rollback(); err != nil {
+		t.Fatal(err)
+	}
+	var storedAggregate string
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT aggregate_key FROM audit_outbox WHERE event_id = ?`, allocated.EventID).Scan(&storedAggregate); err != nil {
+		t.Fatal(err)
+	}
+	if storedAggregate != allocated.AggregateKey {
+		t.Fatalf("stored aggregate = %q, want original %q", storedAggregate, allocated.AggregateKey)
+	}
 }
 
 func TestRecordAuditIntentCapacityFailsClosedButAllowsIdempotentReplay(t *testing.T) {

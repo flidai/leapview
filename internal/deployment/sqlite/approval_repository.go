@@ -193,6 +193,13 @@ func (r *Repository) recordApprovalAuditIntent(ctx context.Context, tx *sql.Tx, 
 	if r.hooks.Audit == nil {
 		return fmt.Errorf("deployment audit intent recorder is required")
 	}
+	if approval.ID != "" {
+		// Approval revisions restart at one for each replacement approval. Keep
+		// those independent revision streams in independent audit aggregates;
+		// otherwise every replacement request collides with the first request's
+		// (deployment:<id>:approval, 1) outbox row.
+		intent.AggregateKey = approvalAuditAggregateKey(intent.AggregateKey, approval.ID)
+	}
 	intent.AggregateSequence = approval.Revision
 	if approval.ID != "" {
 		// Request-approval intents are built before the repository allocates its
@@ -201,6 +208,19 @@ func (r *Repository) recordApprovalAuditIntent(ctx context.Context, tx *sql.Tx, 
 		intent.MetadataJSON = setAuditMetadataString(intent.MetadataJSON, "approvalId", approval.ID)
 	}
 	return r.hooks.Audit.RecordAuditIntent(ctx, tx, intent)
+}
+
+func approvalAuditAggregateKey(key, approvalID string) string {
+	key = strings.TrimSpace(key)
+	approvalID = strings.TrimSpace(approvalID)
+	if approvalID == "" {
+		return key
+	}
+	const marker = ":approval"
+	if index := strings.LastIndex(key, marker); index >= 0 {
+		return key[:index+len(marker)] + ":" + approvalID
+	}
+	return key + ":" + approvalID
 }
 
 func setAuditMetadataString(raw, key, value string) string {

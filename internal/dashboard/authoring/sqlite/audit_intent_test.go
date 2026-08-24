@@ -12,6 +12,7 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
 )
@@ -141,5 +142,56 @@ func TestAuthoringAppendAuditIntentRollsBackRevisionAndDraftPointer(t *testing.T
 	}
 	if current.Draft == nil || current.Draft.Revision != first.Token() {
 		t.Fatalf("draft pointer after rollback=%#v", current.Draft)
+	}
+}
+
+func TestAuthoringArchiveAuditIntentSupportsPublishedOnlyLifecycle(t *testing.T) {
+	store, ctx := openAuthoringAuditStore(t)
+	createInput, _ := canonicalSQLiteInput(t, "project:sales", "dashboard:published-only", "revision-published-only", authoring.CreateOperation{})
+	repository := authoringsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repository.Create(ctx, createInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := servingIdentity(t, created.ProjectID.String(), "test", "generation-published-only")
+	definition := dashboarddefinition.Definition{ID: created.ID.String(), Title: created.Title, SemanticModel: created.SemanticModel.String()}
+	compiled, err := authoring.NewCompiledRevision(created.ProjectID, created.ID, created.Draft.Revision, definition, identity, time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	provenance := created.Draft.Provenance
+	if _, err := repository.Publish(ctx, authoring.PublishInput{
+		ProjectID: created.ProjectID, DashboardID: created.ID, ExpectedDraftRevision: created.Draft.Revision,
+		Published:   authoring.Published{Revision: created.Draft.Revision, Compilation: compiled.Token(), PublishedAt: compiled.CompiledAt, Provenance: provenance},
+		Compilation: compiled,
+		Evidence:    authoring.CommandEvidence{ID: "publish-published-only", Fingerprint: "publish-published-only", Action: authoring.AuthorizationActionPublish, Provenance: provenance, OccurredAt: compiled.CompiledAt},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(ctx, `DELETE FROM dashboard_authoring_drafts WHERE project_id = ? AND dashboard_id = ?`, created.ProjectID.String(), created.ID.String()); err != nil {
+		t.Fatal(err)
+	}
+	publishedOnly, err := repository.Get(ctx, created.ProjectID, created.ID)
+	if err != nil || publishedOnly.Draft != nil || publishedOnly.Published == nil {
+		t.Fatalf("published-only lifecycle = %#v (%v)", publishedOnly, err)
+	}
+	intent := authoringAuditIntent("archiveDashboardAuthoring", "dashboard_authoring.archived")
+	intent.MetadataJSON = `{"operationId":"archiveDashboardAuthoring"}`
+	archived, err := repository.Archive(authoring.WithAuditIntent(ctx, intent), authoring.ArchiveInput{
+		ProjectID: created.ProjectID, DashboardID: created.ID, ExpectedCurrentRevision: publishedOnly.Published.Revision,
+		Evidence: authoring.CommandEvidence{ID: "archive-published-only", Fingerprint: "archive-published-only", Action: authoring.AuthorizationActionArchive, Provenance: provenance, OccurredAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if archived.Status != authoring.LifecycleStatusArchived {
+		t.Fatalf("archived status = %q, want archived", archived.Status)
+	}
+	var metadata string
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT metadata_json FROM audit_outbox WHERE aggregate_key = ?`, "dashboard_authoring:project:sales:dashboard:published-only").Scan(&metadata); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(metadata, `"origin":"agent"`) || strings.Contains(metadata, `"draftId"`) {
+		t.Fatalf("published-only archive metadata = %s", metadata)
 	}
 }

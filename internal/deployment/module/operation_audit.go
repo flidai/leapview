@@ -51,6 +51,10 @@ func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.Audit
 	switch input.OperationID {
 	case string(deploymentgen.GenOperationCreateDeployment):
 		metadata, err = deploymentgen.EncodeGenCreateDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
+	case string(deploymentgen.GenOperationActivateDeployment):
+		metadata, err = deploymentgen.EncodeGenActivateDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
+	case string(deploymentgen.GenOperationCancelDeployment):
+		metadata, err = deploymentgen.EncodeGenCancelDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentCancelledAuditPayload{DeploymentId: input.DeploymentID, Status: input.Status})
 	case string(deploymentgen.GenOperationRetryDeployment):
 		metadata, err = deploymentgen.EncodeGenRetryDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
 	case string(deploymentgen.GenOperationRollbackDeployment):
@@ -70,8 +74,11 @@ func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.Audit
 		return access.AuditIntent{}, err
 	}
 	aggregateKey := "deployment:" + strings.TrimSpace(input.DeploymentID)
-	if strings.HasPrefix(input.OperationID, "requestDeploymentApproval") || strings.HasPrefix(input.OperationID, "approveDeployment") || strings.HasPrefix(input.OperationID, "denyDeploymentApproval") || strings.HasPrefix(input.OperationID, "revokeDeploymentApproval") {
+	if isDeploymentApprovalAuditOperation(input.OperationID) {
 		aggregateKey += ":approval"
+		if approvalID := strings.TrimSpace(input.ApprovalID); approvalID != "" {
+			aggregateKey += ":" + approvalID
+		}
 	}
 	key := strings.TrimSpace(input.IdempotencyKey)
 	if key == "" {
@@ -88,7 +95,22 @@ func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.Audit
 	}
 	sequence := int64(1)
 	if input.OperationID == string(deploymentgen.GenOperationActivateDeployment) || input.OperationID == string(deploymentgen.GenOperationCancelDeployment) {
-		sequence = 2
+		// Lifecycle events can race (for example, activation and cancellation
+		// of the same queued deployment). Let Access allocate the next sequence
+		// in the source transaction so both events cannot collide at sequence 2.
+		sequence = 0
 	}
 	return access.AuditIntent{EventID: "deployment:" + hex.EncodeToString(sum[:16]), Source: "deployment", Operation: input.OperationID, PrincipalID: strings.TrimSpace(input.PrincipalID), Action: contract.Command.Audit.SuccessAction, ResourceKind: "project", ResourceID: strings.TrimSpace(input.ProjectID), Capability: capability, Outcome: outcome, RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID), AggregateKey: aggregateKey, AggregateSequence: sequence, MetadataJSON: metadata}.Canonicalize()
+}
+
+func isDeploymentApprovalAuditOperation(operationID string) bool {
+	switch operationID {
+	case string(deploymentgen.GenOperationRequestDeploymentApproval),
+		string(deploymentgen.GenOperationApproveDeployment),
+		string(deploymentgen.GenOperationDenyDeploymentApproval),
+		string(deploymentgen.GenOperationRevokeDeploymentApproval):
+		return true
+	default:
+		return false
+	}
 }

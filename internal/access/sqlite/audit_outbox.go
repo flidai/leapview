@@ -31,7 +31,10 @@ func (r *Repository) RecordAuditIntent(ctx context.Context, tx transaction.Trans
 		err := tx.QueryRowContext(ctx, `SELECT aggregate_key, aggregate_sequence FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&storedKey, &storedSequence)
 		switch {
 		case err == nil:
-			intent.AggregateKey, intent.AggregateSequence = storedKey, storedSequence
+			if intent.AggregateKey != storedKey {
+				return fmt.Errorf("%w: event %s aggregate key changed", access.ErrAuditIntentConflict, intent.EventID)
+			}
+			intent.AggregateSequence = storedSequence
 		case errors.Is(err, sql.ErrNoRows):
 			if err := tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(aggregate_sequence), 0) + 1 FROM audit_outbox WHERE aggregate_key = ?`, intent.AggregateKey).Scan(&intent.AggregateSequence); err != nil {
 				return fmt.Errorf("allocate audit intent aggregate sequence: %w", err)

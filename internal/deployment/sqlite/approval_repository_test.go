@@ -86,12 +86,78 @@ func TestApprovalAuditIntentTracksAtomicRequestAndDecision(t *testing.T) {
 	if _, err := repository.SaveApproval(deployment.WithAuditIntent(ctx, decisionIntent), approved, 1); err != nil {
 		t.Fatal(err)
 	}
+	var aggregateKey string
 	var sequence int64
-	if err := db.QueryRowContext(ctx, `SELECT aggregate_sequence FROM audit_outbox WHERE event_id = ?`, decisionIntent.EventID).Scan(&sequence); err != nil {
+	if err := db.QueryRowContext(ctx, `SELECT aggregate_key, aggregate_sequence FROM audit_outbox WHERE event_id = ?`, decisionIntent.EventID).Scan(&aggregateKey, &sequence); err != nil {
 		t.Fatal(err)
+	}
+	if aggregateKey != "deployment:deployment_1:approval:approval-audit" {
+		t.Fatalf("decision aggregate key = %q, want approval-specific key", aggregateKey)
 	}
 	if sequence != 2 {
 		t.Fatalf("decision aggregate sequence = %d, want 2", sequence)
+	}
+}
+
+func TestApprovalReplacementAuditIntentUsesUniqueAggregateIdentity(t *testing.T) {
+	ctx, db, _ := testRepository(t)
+	now := time.Date(2026, 7, 30, 10, 0, 0, 0, time.UTC)
+	insertApprovalPrincipalsAndDeployment(t, ctx, db)
+	audit := accesssqlite.NewRepository(db)
+	repository := NewRepositoryWithHooks(db, ActivationHooks{Audit: audit})
+	first := deployment.Approval{
+		ID: "approval-first", ProjectID: "finance", DeploymentID: "deployment_1",
+		Environment: "prod", RequestDigest: deploymentDigest("b"), ReleaseID: "release_1",
+		Status: deployment.ApprovalPending, RequestedBy: "publisher",
+		RequestCredentialClass: deployment.CredentialClassWorkload, RequestCredentialID: "workload_1",
+		RequestedAt: now, ExpiresAt: now.Add(time.Minute), Revision: 1,
+	}
+	requestIntent := access.AuditIntent{
+		EventID: "approval-replacement-first", Source: "deployment", Operation: "requestDeploymentApproval",
+		Action: "deployment.approval_requested", ResourceKind: "project", ResourceID: "finance",
+		Capability: access.CapabilityResourcePublish, Outcome: "success",
+		AggregateKey: "deployment:deployment_1:approval", AggregateSequence: 0,
+		MetadataJSON: `{"approvalId":""}`,
+	}
+	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, requestIntent), first); err != nil {
+		t.Fatal(err)
+	}
+
+	expired := first
+	expired.Status = deployment.ApprovalExpired
+	expired.Revision = 2
+	if _, err := repository.SaveApproval(ctx, expired, first.Revision); err != nil {
+		t.Fatal(err)
+	}
+
+	replacement := first
+	replacement.ID = "approval-replacement"
+	replacement.RequestCredentialID = "workload_2"
+	replacement.RequestedAt = now.Add(2 * time.Minute)
+	replacement.ExpiresAt = now.Add(time.Hour)
+	replacement.Revision = 1
+	replacement.Status = deployment.ApprovalPending
+	replacementIntent := requestIntent
+	replacementIntent.EventID = "approval-replacement-second"
+	if _, err := repository.CreateApproval(deployment.WithAuditIntent(ctx, replacementIntent), replacement); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		eventID string
+		wantKey string
+	}{
+		{requestIntent.EventID, "deployment:deployment_1:approval:approval-first"},
+		{replacementIntent.EventID, "deployment:deployment_1:approval:approval-replacement"},
+	} {
+		var aggregateKey string
+		var sequence int64
+		if err := db.QueryRowContext(ctx, `SELECT aggregate_key, aggregate_sequence FROM audit_outbox WHERE event_id = ?`, test.eventID).Scan(&aggregateKey, &sequence); err != nil {
+			t.Fatal(err)
+		}
+		if aggregateKey != test.wantKey || sequence != 1 {
+			t.Fatalf("%s audit aggregate = %s/%d, want %s/1", test.eventID, aggregateKey, sequence, test.wantKey)
+		}
 	}
 }
 

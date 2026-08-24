@@ -991,7 +991,7 @@ func (r *SQLRunRepository) cancelRun(ctx context.Context, identity projectgraph.
 		copy := *intent
 		copy.ResourceID = runID
 		if data, encodeErr := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
-			Id: runID, PipelineId: prior.PipelineID.String(), Status: prior.Status, InvocationSource: prior.InvocationSource,
+			Id: runID, PipelineId: prior.PipelineID.String(), Status: refreshrun.RunStatusCancelled, InvocationSource: prior.InvocationSource,
 			MatchingScheduleIds: append([]string{}, prior.MatchingScheduleIDs...),
 		}); encodeErr != nil {
 			return refreshrun.RunRecord{}, encodeErr

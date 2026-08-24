@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
@@ -70,6 +71,35 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 	recorded, err := events.ListEvents(t.Context(), "refresh", run.ID, 0, 10)
 	if err != nil || len(recorded) != 1 || recorded[0].EventType != "refresh.queued" {
 		t.Fatalf("initial events = %#v, %v", recorded, err)
+	}
+}
+
+func TestSQLRunRepositoryCancellationAuditUsesCancelledStatus(t *testing.T) {
+	store, repository, _ := seedRefreshJob(t, refreshrun.RunStatusQueued, "+5 minutes")
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET source = 'refresh' WHERE id = ?`, testRunIdentity.GenerationID); err != nil {
+		t.Fatal(err)
+	}
+	var recorded access.AuditIntent
+	repository.ConfigureAuditIntentRecorder(access.AuditIntentRecorderFunc(func(_ context.Context, _ transaction.Transaction, intent access.AuditIntent) error {
+		recorded = intent
+		return nil
+	}))
+	_, err := repository.CancelRunWithAudit(t.Context(), testRunIdentity, "run_1", &access.AuditIntent{
+		Source: "LeapViewAPI.Refresh", Operation: "cancelRefreshRun", PrincipalID: "user:test", RequestID: "request-cancel",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(recorded.MetadataJSON), &payload); err != nil {
+		t.Fatalf("decode cancellation audit payload %q: %v", recorded.MetadataJSON, err)
+	}
+	nested, ok := payload["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("cancellation audit payload body = %#v", payload["payload"])
+	}
+	if nested["status"] != string(refreshrun.RunStatusCancelled) {
+		t.Fatalf("cancellation audit payload = %q status = %v, want %q", recorded.MetadataJSON, nested["status"], refreshrun.RunStatusCancelled)
 	}
 }
 
