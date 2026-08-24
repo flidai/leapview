@@ -386,6 +386,10 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
 	} else if asset.Type == "model_table" {
 		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
+		if activeSection == "refresh" {
+			runsTable := assetRefreshesTable(refresh)
+			page.Refresh.RunsTable = &runsTable
+		}
 	}
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))

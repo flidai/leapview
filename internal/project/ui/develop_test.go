@@ -592,6 +592,20 @@ func TestDashboardVersionsSectionIsReachableWhenHistoryExists(t *testing.T) {
 	}
 }
 
+func TestModelRefreshSectionIncludesTargetRunHistory(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "model:sales_customers", Type: string(projectview.AssetTypeModelTable), Key: "sales_customers", Title: "Customers"}
+	refresh := AssetRefreshState{Runs: []AssetRefreshRun{{
+		ID: "run:model", Status: "succeeded", TriggerType: "dependency", StartedAt: "2026-08-24T13:00:00Z", FinishedAt: "2026-08-24T13:00:02Z",
+	}}}
+	page := projectAssetPageSignalWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, "refresh", assetLineageModel{}, refresh)
+	if page.Refresh == nil || page.Refresh.RunsTable == nil || len(page.Refresh.RunsTable.Rows) != 1 {
+		t.Fatalf("model refresh page = %#v, want target run history", page.Refresh)
+	}
+	if got := page.Refresh.RunsTable.Rows[0]["trigger"]; got != "Pipeline" {
+		t.Fatalf("model refresh trigger = %#v, want Pipeline", got)
+	}
+}
+
 func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {
 	source := projectview.DevelopAssetView{
 		ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders",

@@ -251,17 +251,21 @@ test('model Refresh tab renders serving snapshot metadata', async () => {
     const refresh = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
+      const runTable = root.querySelector('lv-record-table') as any
+      await runTable?.updateComplete
       return {
         activeTab: root.querySelector('.tabs a.active')?.textContent?.trim(),
         heading: root.querySelector('#refresh .detail-section h2')?.textContent?.trim(),
         text: root.querySelector('#refresh')?.textContent?.replace(/\s+/g, ' ').trim(),
         lastRefreshedWide: root.querySelector('#refresh .facts .wide p')?.textContent?.trim(),
+        runRows: runTable?.querySelectorAll('tbody tr').length,
       }
     })
     expect(refresh.activeTab).toBe('Refresh')
     expect(refresh.heading).toBe('Refresh')
     expect(refresh.text).toContain('2026-08-24 14:32 UTC')
     expect(refresh.lastRefreshedWide).toBe('2026-08-24 14:32 UTC')
+    expect(refresh.runRows).toBe(1)
     expect(refresh.text).toContain('DuckLake snapshot')
     expect(refresh.text).toContain('2')
   } finally {
@@ -554,7 +558,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'model-definition' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
   } : rootName === 'model-refresh' ? {
-    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'refresh', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }, { id: 'refresh', label: 'Refresh', href: '/models/model:orders/refresh', active: true }], refresh: { status: 'available', running: false, lastSuccessful: '2026-08-24T14:32:00Z', facts: [{ label: 'Status', value: 'available' }, { label: 'Last refreshed', value: '2026-08-24 14:32 UTC', wide: true }, { label: 'Rows', value: '99,441' }, { label: 'Physical size', value: '7.6 MiB' }, { label: 'Data files', value: '1' }, { label: 'DuckLake snapshot', value: '2', code: true }] },
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'refresh', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }, { id: 'refresh', label: 'Refresh', href: '/models/model:orders/refresh', active: true }], refresh: { status: 'available', running: false, lastSuccessful: '2026-08-24T14:32:00Z', facts: [{ label: 'Status', value: 'available' }, { label: 'Last refreshed', value: '2026-08-24 14:32 UTC', wide: true }, { label: 'Rows', value: '99,441' }, { label: 'Physical size', value: '7.6 MiB' }, { label: 'Data files', value: '1' }, { label: 'DuckLake snapshot', value: '2', code: true }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'trigger', header: 'Trigger' }], rows: [{ status: { label: 'succeeded', tone: 'success' }, started: '2026-08-24T14:32:00Z', trigger: 'Pipeline' }], empty: 'No refresh runs.' } },
   } : rootName === 'pipeline-detail' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'succeeded', running: false, canRun: true }, actions: [{ label: 'Run now', command: 'run-refresh-pipeline', disabled: false }], details: { overview: [{ label: 'Refresh status', value: 'succeeded' }], sections: [] },
   } : rootName === 'pipeline-unavailable' ? {

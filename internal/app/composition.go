@@ -1655,6 +1655,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			Auth:          auth, Reloader: runtimeHostModule, Workload: workloadController,
 			ManagedDataValidation:    managedDataModule.BindingValidation(),
 			ManagedDataResolver:      managedDataResolver,
+			RefreshSourceDigest:      canonicalRefreshSourceDigest(sealedDelivery, instanceID),
 			CanonicalRefreshExecutor: canonicalRefreshExecutor(canonicalDeliveryMutations, sealedDelivery, instanceID),
 			EnableRefreshDispatcher:  true,
 			DeploymentConfig:         deploymentConfig,

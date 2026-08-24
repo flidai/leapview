@@ -62,11 +62,6 @@ func modelRefreshFacts(asset projectview.DevelopAssetView) []definitionFact {
 			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
 		)
 	}
-	facts = append(facts, definitionFact{
-		Label: "Run history",
-		Value: "Refresh runs are recorded against refresh pipelines. Use Lineage to find the pipelines that materialize this model.",
-		Wide:  true,
-	})
 	return facts
 }
 
@@ -205,6 +200,8 @@ func refreshTriggerLabel(trigger string) string {
 		return "Manual"
 	case "schedule":
 		return "Schedule"
+	case "dependency":
+		return "Pipeline"
 	default:
 		return "-"
 	}

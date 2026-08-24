@@ -107,11 +107,19 @@ func (s browserAssetVersionsStub) AssetVersions(context.Context, projectgraph.Re
 }
 
 type browserRefreshStateStub struct {
-	state refreshpresentation.AssetRefreshState
-	err   error
+	state            refreshpresentation.AssetRefreshState
+	err              error
+	requestedModelID *projectgraph.ResourceID
 }
 
 func (s browserRefreshStateStub) AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	return s.state, s.err
+}
+
+func (s browserRefreshStateStub) ModelRefreshState(_ context.Context, _ projectgraph.ResourceID, _ string, modelID projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	if s.requestedModelID != nil {
+		*s.requestedModelID = modelID
+	}
 	return s.state, s.err
 }
 
@@ -163,6 +171,29 @@ func TestAssetRefreshStateMapsPipelinePresentation(t *testing.T) {
 	}
 	if len(state.Runs) != 1 || state.LatestSuccessful.ID != "run:latest" || state.DataVersion.SnapshotID != 42 || !state.NextRun.Equal(next) {
 		t.Fatalf("refresh state = %#v", state)
+	}
+}
+
+func TestAssetRefreshStateMapsModelRunHistory(t *testing.T) {
+	requestedModelID := projectgraph.ResourceID("")
+	h := &BrowserHandler{
+		Environment: "dev",
+		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:model", Status: "succeeded", TriggerType: "dependency"}},
+			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:model", Status: "succeeded"},
+		}, requestedModelID: &requestedModelID},
+	}
+	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
+		ID: "model:sales_customers", Key: "sales_customers", Type: string(projectview.AssetTypeModelTable),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:model" || state.LatestSuccessful.ID != "run:model" {
+		t.Fatalf("model refresh state = %#v", state)
+	}
+	if requestedModelID != "sales_customers" {
+		t.Fatalf("model refresh target = %q, want authored model key", requestedModelID)
 	}
 }
 

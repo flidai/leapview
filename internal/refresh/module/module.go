@@ -473,6 +473,47 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	return state, nil
 }
 
+// ModelRefreshState returns the durable child-run history for one model table.
+// Model runs are targeted explicitly by the refresh service, so the history
+// remains correct when multiple pipelines materialize the same model.
+func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, modelID projectgraph.ResourceID) (AssetRefreshState, error) {
+	state := AssetRefreshState{}
+	if err := projectID.Validate(); err != nil {
+		return state, err
+	}
+	if err := modelID.Validate(); err != nil {
+		return state, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	if m == nil || m.runs == nil {
+		state.Unavailable = true
+		return state, nil
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
+	if err := scope.Validate(); err != nil {
+		return state, err
+	}
+	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, modelID, refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		return state, err
+	}
+	state.Runs = make([]AssetRefreshRun, 0, len(runs))
+	for _, run := range runs {
+		state.Runs = append(state.Runs, assetRefreshRun(run))
+	}
+	if len(state.Runs) > 0 {
+		state.Latest = state.Runs[0]
+	}
+	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModelTable, modelID)
+	if err != nil {
+		return state, err
+	}
+	if ok {
+		state.LatestSuccessful = assetRefreshRun(latest)
+	}
+	return state, nil
+}
+
 func (m *Module) activeServingIdentity(ctx context.Context, projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
 	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
 	if err != nil {

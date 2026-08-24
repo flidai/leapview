@@ -168,6 +168,23 @@ INSERT INTO refresh_job_runs (
 	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE refresh_job_runs SET project_id = 'project_sales', trigger_id = 'manual', plan_digest = ?, materialization_scope_json = ? WHERE id = 'run_1'`, plan.Digest, string(scope)); err != nil {
 		t.Fatalf("persist test run plan evidence: %v", err)
 	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO refresh_jobs (
+  id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json,
+  estimated_memory_bytes, kind, status
+) VALUES (
+  'job_model', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'user:test', '[]',
+  67108864, 'child_run', 'succeeded'
+);
+INSERT INTO refresh_job_runs (
+  id, job_id, project_id, principal_id, environment, target_type, target_id, target_revision,
+  trigger_type, invocation_source, parent_run_id, status, created_sequence
+) VALUES (
+  'run_model', 'job_model', 'project_sales', 'user:test', 'dev', 'model_table', 'model:sales_customers', 3,
+  'dependency', 'dependency', 'run_1', 'succeeded', 2
+);`); err != nil {
+		t.Fatalf("seed model refresh state: %v", err)
+	}
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
 		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{
@@ -201,6 +218,13 @@ INSERT INTO refresh_job_runs (
 	if state.RunCommand.OperationID() == "" || state.CancelCommand.OperationID() == "" {
 		t.Fatalf("generated command bindings missing: run=%#v cancel=%#v", state.RunCommand, state.CancelCommand)
 	}
+	modelState, err := module.ModelRefreshState(t.Context(), "project_sales", "dev", "model:sales_customers")
+	if err != nil {
+		t.Fatalf("model refresh state: %v", err)
+	}
+	if len(modelState.Runs) != 1 || modelState.Runs[0].ID != "run_model" || modelState.LatestSuccessful.ID != "run_model" {
+		t.Fatalf("model runs = %#v, latest successful = %#v", modelState.Runs, modelState.LatestSuccessful)
+	}
 }
 
 func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
@@ -214,6 +238,13 @@ func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
 	}
 	if !state.Unavailable {
 		t.Fatalf("refresh state = %#v, want unavailable without persistence", state)
+	}
+	modelState, err := module.ModelRefreshState(t.Context(), "project_sales", "dev", "model:sales_customers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !modelState.Unavailable {
+		t.Fatalf("model refresh state = %#v, want unavailable without persistence", modelState)
 	}
 }
 

@@ -51,6 +51,7 @@ type AssetVersionsReader interface {
 // without coupling refresh persistence to project UI rendering.
 type AssetRefreshStateReader interface {
 	AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
+	ModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 }
 
 // ModelPhysicalMetadata is the credential-free DuckLake table rollup shown on
@@ -722,11 +723,22 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModelTable) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
 		return projectui.AssetRefreshState{Unavailable: true}, nil
+	}
+	if asset.Type == string(projectview.AssetTypeModelTable) {
+		modelKey := strings.TrimSpace(asset.Key)
+		if modelKey == "" {
+			modelKey = strings.TrimPrefix(asset.ID, "model:")
+		}
+		modelID, err := projectgraph.NewResourceID(modelKey)
+		if err != nil {
+			return state, err
+		}
+		return refreshStateToProjectUI(h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID))
 	}
 	pipelineID, err := projectgraph.NewResourceID(asset.ID)
 	if err != nil {
