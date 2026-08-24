@@ -212,7 +212,7 @@ test('connections list and asset detail render without workspace terminology', a
   }
 })
 
-test('asset Definition tab renders authored YAML and SQL as separate code sections', async () => {
+test('asset Definition tab renders an outline and highlighted Transform SQL', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=model-definition`)
@@ -220,22 +220,23 @@ test('asset Definition tab renders authored YAML and SQL as separate code sectio
     const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
+      const viewer = root.querySelector('lv-config-viewer') as any
+      await viewer?.updateComplete
       return {
         activeTab: root.querySelector('.tabs a[aria-current="page"]')?.textContent?.trim(),
         label: root.querySelector('#definition')?.getAttribute('aria-label'),
-        sections: Array.from(root.querySelectorAll('#definition .detail-section')).map((section: any) => ({
-          title: section.querySelector('h2')?.textContent?.trim(),
-          code: section.querySelector('lv-code-block')?.code,
-          language: section.querySelector('lv-code-block')?.getAttribute('language'),
-        })),
+        configuration: viewer?.configuration,
+        sqlRows: viewer?.shadowRoot?.querySelectorAll('.sql-row').length ?? 0,
+        transformSections: root.querySelectorAll('.transform-section').length,
+        sqlCode: (viewer?.shadowRoot?.querySelector('.sql-row lv-code-block') as any)?.code,
       }
     })
     expect(definition.activeTab).toBe('Definition')
     expect(definition.label).toBe('Asset definition')
-    expect(definition.sections).toEqual([
-      { title: 'Configuration', code: 'kind: Model\n', language: 'yaml' },
-      { title: 'SQL', code: 'select * from source.orders', language: 'sql' },
-    ])
+    expect(definition.configuration).toContain('definition:')
+    expect(definition.sqlRows).toBe(1)
+    expect(definition.transformSections).toBe(0)
+    expect(definition.sqlCode).toBe('select * from source.orders\n')
   } finally {
     await page.close()
   }
@@ -278,7 +279,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'connection-detail' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], sections: [] },
   } : rootName === 'model-definition' ? {
-    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\nspec:\n  definition:\n    type: sql\n    sql: |\n      select * from source.orders\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
   } : rootName === 'pipeline-unavailable' ? {
     kind: 'data', title: 'Sales refresh', assetId: 'pipeline:sales', activeSection: 'details', asset: { id: 'pipeline:sales', key: 'sales', title: 'Sales refresh', type: 'refresh_pipeline', typeLabel: 'Pipeline', detailHref: '/pipelines/pipeline:sales/details', openHref: '/pipelines/pipeline:sales/details' }, breadcrumbs: [{ label: 'Pipelines', href: '/pipelines' }, { label: 'Sales refresh', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/pipelines/pipeline:sales/details', active: true }, { id: 'definition', label: 'Definition', href: '/pipelines/pipeline:sales/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/pipelines/pipeline:sales/refreshes' }], refresh: { status: 'unavailable', running: false, canRun: false }, actions: [{ label: 'Run now unavailable; review connections', command: 'run-refresh-pipeline', disabled: true }, { label: 'Back to pipelines', href: '/pipelines', icon: 'back' }, { label: 'Review connections', href: '/connections', icon: 'open' }], details: { overview: [{ label: 'Refresh status', value: 'unavailable' }, { label: 'Refresh guidance', value: 'Refresh state could not be loaded. Review Connections and runtime setup, then retry.', wide: true }], sections: [] },
   } : rootName === 'detail' ? {
