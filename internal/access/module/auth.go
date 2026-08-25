@@ -463,7 +463,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 		return next
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hadSession := hasSessionCookie(r)
+		hadSession := a.hasSessionCookie(r)
 		principal, credential, ok := a.authenticate(r)
 		if !ok {
 			if a.apiTokenOnly {
@@ -479,7 +479,7 @@ func (a *Auth) Middleware(next http.Handler) http.Handler {
 			}
 			redirect := a.defaultLoginRedirect()
 			if hadSession {
-				http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
+				http.SetCookie(w, a.expiredSessionCookie())
 				if a.localAuth {
 					redirect = "/login?error=session_expired"
 				}
