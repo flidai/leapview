@@ -889,13 +889,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// physical-pool admission is absent.
 	var canonicalDelivery *deploymentmodule.CanonicalDeliveryAdapter
 	var canonicalDeliveryMutations *deploymentmodule.CanonicalDeliveryMutations
-	candidatePreparationAdmission := deploymentmodule.CandidatePreparationAdmitterFunc(
-		func(ctx context.Context) (deploymentmodule.CandidatePreparationLease, error) {
-			return workloadController.Acquire(
-				ctx,
-				workloadmodule.ControlRequest("candidate.prepare"),
-			)
-		},
+	candidatePreparationAdmission := candidatePreparationAdmitter(
+		workloadController,
+		workloadmodule.ControlRequest("candidate.prepare"),
 	)
 	canonicalDeliveryRequired := true
 	// Sealed production serving uses delivery-owned catalog lease/GC state;

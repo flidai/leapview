@@ -395,6 +395,14 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				relationReuse.ResourceID = id
 				relationReuse.ExecutionDigest = artifacts.Compiler.RelationExecution[id]
 				relationReuse.BaseExecutionDigest = baseDigest
+				// An unselected relation is not re-executed by a pipeline refresh.
+				// It retains the exact sealed base reference after the execution,
+				// catalog, pool, compatibility, and context identities below match.
+				// Project-wide observed/nondeterministic execution flags therefore
+				// apply only to the selected materialization work, not this retained
+				// immutable relation.
+				relationReuse.Deterministic = true
+				relationReuse.Observed = false
 				decision, reuseErr := deployment.EvaluateDeliveryReuse(relationReuse)
 				if reuseErr != nil {
 					return deployment.DeliveryPlanRequest{}, fmt.Errorf("evaluate scoped relation reuse %q: %w", id, reuseErr)

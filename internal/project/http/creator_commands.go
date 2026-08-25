@@ -315,8 +315,7 @@ func (h *BrowserHandler) PipelineCommand(w stdhttp.ResponseWriter, r *stdhttp.Re
 		h.pipelineCommandPatch(w, r, command, "Pipeline operation is unavailable.")
 		return
 	}
-	allowed, authErr := h.AuthorizePipeline(r, command.PipelineID, access.CapabilityResourceUse)
-	if authErr != nil || !allowed {
+	if !h.pipelineMutationAllowed(r, command.PipelineID) {
 		h.pipelineCommandPatch(w, r, command, "Pipeline operation is forbidden.")
 		return
 	}
@@ -466,8 +465,7 @@ func (h *BrowserHandler) AuthorizeCreatorMutationReplay(r *stdhttp.Request) bool
 		if !valid {
 			return false
 		}
-		allowed, authErr := h.AuthorizePipeline(r, command.PipelineID, access.CapabilityResourceUse)
-		return authErr == nil && allowed
+		return h.pipelineMutationAllowed(r, command.PipelineID)
 	case "/connections/administration/configuration", "/connections/administration/lifecycle":
 		var payload creatorConnectionCommand
 		if json.Unmarshal(body, &payload) != nil {

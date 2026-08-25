@@ -82,6 +82,56 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 	}
 }
 
+func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testing.T) {
+	artifact := dashboardPhysicalArtifact(t, "Sales", false)
+	projectID := projectgraph.ResourceID("project:dashboard")
+	sourceDigest := deliveryPlanDigest('a')
+	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-sales", PipelineID: "pipeline:sales", ProjectID: projectID.String(), Environment: "prod",
+		SemanticModelID: "semantic:sales", ServingGenerationID: "generation_0", ArtifactDigest: sourceDigest,
+		SelectionDigest: deliveryPlanDigest('b'), MaterializationScope: []string{"orders_model"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_pipeline")
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := release.CandidateArtifactSet{
+		Artifact: release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: artifact.Digest(), CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version},
+		// The project contains undeclared nondeterminism, but the unselected
+		// relation is retained from the sealed base and is never re-executed.
+		Generation: release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:1", DataMode: release.GenerationDataRefreshSources, Deterministic: false},
+		Compiler: release.CandidateCompilerEvidence{
+			Graph: artifact.Graph(), Artifact: artifact, Plan: projectcompiler.ProjectPlan{Project: projectID.String()},
+			RelationExecution:     map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
+			BaseRelationExecution: map[string]string{"model:orders": deliveryPlanDigest('1'), "model:customers": deliveryPlanDigest('2')},
+		},
+	}
+	input := deployment.DeliveryCandidateBuildInput{
+		ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: sourceDigest, Operation: deployment.DeliveryOperationRestatement, PipelinePlan: &pipelinePlan,
+		Candidate: deployment.Candidate{ID: "candidate_pipeline", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}},
+	}
+	base, err := CandidatePlanRequest(input, artifacts, "runtime:v1", time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseContext, err := base.Execution.ContextDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, base.CreatedAt, &deployment.DeliveryReuseInput{
+		BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+	})
+	if err != nil {
+		t.Fatalf("plan scoped refresh with an exact sealed sibling: %v", err)
+	}
+	if len(request.Evidence.Reuse) != 2 || request.Evidence.Reuse[0].ResourceID != "model:customers" || !request.Evidence.Reuse[0].Reusable || request.Evidence.Reuse[1].ResourceID != "model:orders" || request.Evidence.Reuse[1].Reusable || !request.Evidence.Reuse[1].RetainBase {
+		t.Fatalf("pipeline reuse evidence = %#v", request.Evidence.Reuse)
+	}
+}
+
 func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_delivery")
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_1")

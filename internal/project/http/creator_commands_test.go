@@ -160,6 +160,51 @@ func TestPipelineCommandUsesCanonicalAssetIDForAuthorizationAndRefresh(t *testin
 	}
 }
 
+func TestPipelineCommandAndReplayAllowConfiguredDevelopmentBypass(t *testing.T) {
+	authorizerCalled := false
+	queued := false
+	h := &BrowserHandler{
+		PipelineRunCommand: refreshgen.GenUIActionCreateRefreshRun(),
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
+			return "project:test", nil
+		},
+		CurrentUser: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizePipeline: func(*http.Request, string, access.Capability) (bool, error) {
+			authorizerCalled = true
+			return false, nil
+		},
+		BeginPipelineCommand: func(ctx context.Context, _ CreatorCommandInvocation) (context.Context, error) {
+			return ctx, nil
+		},
+		RunPipeline: func(context.Context, string, string, string) error {
+			queued = true
+			return errors.New("injected queue failure")
+		},
+	}
+	body := `{"pipelineCommand":{"action":"run","assetId":"pipeline:sales","pipelineId":"pipeline:sales","runId":""}}`
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(body))
+	request.Header.Set("X-LeapView-Operation-ID", refreshgen.GenUIActionCreateRefreshRun().OperationID())
+	request.Header.Set("X-Request-ID", "pipeline-dev-bypass-1")
+	recorder := httptest.NewRecorder()
+	h.PipelineCommand(recorder, request)
+	if !queued {
+		t.Fatalf("development pipeline command was not queued; response=%s", recorder.Body.String())
+	}
+	if authorizerCalled {
+		t.Fatal("development pipeline command unexpectedly consulted the serving-state resource authorizer")
+	}
+
+	replay := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(body))
+	if !h.AuthorizeCreatorMutationReplay(replay) {
+		t.Fatal("development pipeline command replay was denied")
+	}
+	if authorizerCalled {
+		t.Fatal("development replay unexpectedly consulted the serving-state resource authorizer")
+	}
+}
+
 func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
 	const projectID = "project:test"
 	const assetID = "pipeline:sales"

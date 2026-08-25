@@ -463,6 +463,9 @@ func (h *BrowserHandler) pipelineMutationAllowed(r *stdhttp.Request, pipelineID 
 	if h == nil || h.AuthorizePipeline == nil || r == nil {
 		return false
 	}
+	if principal, ok := h.currentPrincipal(r); ok && principal.DevBypass {
+		return true
+	}
 	allowed, err := h.AuthorizePipeline(r, strings.TrimSpace(pipelineID), access.CapabilityResourceUse)
 	return err == nil && allowed
 }
@@ -751,11 +754,11 @@ func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projec
 		return refreshStateToProjectUI(h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID))
 	}
 	if asset.Type == string(projectview.AssetTypeSemanticModel) {
-		semanticModelKey := strings.TrimSpace(asset.Key)
-		if semanticModelKey == "" {
-			semanticModelKey = strings.TrimPrefix(strings.TrimPrefix(asset.ID, "semantic-model:"), "semantic:")
+		semanticModelRef := strings.TrimSpace(asset.ID)
+		if semanticModelRef == "" {
+			semanticModelRef = strings.TrimSpace(asset.Key)
 		}
-		semanticModelID, err := projectgraph.NewResourceID(semanticModelKey)
+		semanticModelID, err := projectgraph.NewResourceID(semanticModelRef)
 		if err != nil {
 			return state, err
 		}

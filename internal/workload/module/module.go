@@ -17,6 +17,8 @@ type Config struct {
 }
 
 type Admitter = workload.Admitter
+type Class = workload.Class
+type Lease = workload.Lease
 type Stats = workload.Stats
 type Observer = workload.Observer
 type Request = workload.Request
@@ -56,6 +58,12 @@ func MaintenanceRequest(operation string) Request {
 
 func ControlRequest(operation string) Request {
 	return Request{Class: ControlClass, PrincipalID: jobplatform.SystemPrincipalID, Operation: operation, EstimatedMemoryBytes: controlMemoryEstimate}
+}
+
+// Current exposes the active admission identity to composition adapters that
+// must reuse an outer product operation instead of nesting another class.
+func Current(ctx context.Context) (Class, string, bool) {
+	return workload.Current(ctx)
 }
 
 type Module struct {

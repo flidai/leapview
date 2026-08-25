@@ -9,11 +9,96 @@ import (
 	"testing"
 	"time"
 
+	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	materializesqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
+
+func TestCanonicalProjectProvidesRefreshPipelineForEverySemanticModel(t *testing.T) {
+	project, err := projectcompiler.Compile(canonicalProjectPath(t))
+	if err != nil {
+		t.Fatalf("compile canonical project: %v", err)
+	}
+	covered := make(map[string]bool, len(project.RefreshPipelines()))
+	for _, pipeline := range project.RefreshPipelines() {
+		covered[pipeline.SemanticModelID.String()] = true
+	}
+	for semanticModelID := range project.Models() {
+		if !covered[semanticModelID] {
+			t.Errorf("semantic model %s has no refresh pipeline", semanticModelID)
+		}
+	}
+}
+
+func TestEveryCanonicalSemanticModelCanRefreshAndPersistHistory(t *testing.T) {
+	h := newCanonicalRefreshHarness(t)
+	project, err := projectcompiler.Compile(canonicalProjectPath(t))
+	if err != nil {
+		t.Fatalf("compile canonical project: %v", err)
+	}
+	projectID := h.projectID.String()
+	completed := make(map[projectgraph.ResourceID]refreshRunResponse, len(project.RefreshPipelines()))
+	for _, pipeline := range project.RefreshPipelines() {
+		pipelineID := pipeline.ID.String()
+		status, body, _ := refreshAPIRequest(t, h, http.MethodPost, "/api/v1/projects/"+projectID+"/refresh-runs", `{"pipelineId":"`+pipelineID+`"}`, "canonical-"+pipelineID)
+		if status != http.StatusAccepted {
+			t.Fatalf("queue %s status = %d, body=%s", pipelineID, status, body)
+		}
+		var run refreshRunResponse
+		if err := json.Unmarshal(body, &run); err != nil {
+			t.Fatalf("decode %s refresh response: %v; body=%s", pipelineID, err, body)
+		}
+		deadline := time.Now().Add(5 * time.Second)
+		for run.Status != refreshrun.RunStatusSucceeded {
+			if run.Status == refreshrun.RunStatusFailed || run.Status == refreshrun.RunStatusCancelled {
+				t.Fatalf("%s reached terminal failure: %#v", pipelineID, run)
+			}
+			if time.Now().After(deadline) {
+				t.Fatalf("timed out waiting for %s: %#v", pipelineID, run)
+			}
+			time.Sleep(10 * time.Millisecond)
+			status, body, _ = refreshAPIRequest(t, h, http.MethodGet, "/api/v1/projects/"+projectID+"/refresh-runs/"+run.ID, "", "")
+			if status != http.StatusOK {
+				t.Fatalf("get %s status = %d, body=%s", pipelineID, status, body)
+			}
+			if err := json.Unmarshal(body, &run); err != nil {
+				t.Fatalf("decode %s completion: %v; body=%s", pipelineID, err, body)
+			}
+		}
+		completed[pipeline.SemanticModelID] = run
+	}
+
+	repository := materializesqlite.NewSQLRunRepository(h.store.SQLDB())
+	for semanticModelID, definition := range project.Models() {
+		id := projectgraph.ResourceID(semanticModelID)
+		completedRun, ok := completed[id]
+		if !ok {
+			t.Fatalf("semantic model %s was not refreshed", id)
+		}
+		scope, err := refreshrun.ReadScopeForIdentity(completedRun.Identity)
+		if err != nil {
+			t.Fatalf("refresh read scope for %s: %v", id, err)
+		}
+		runs, err := repository.ListSemanticModelRuns(t.Context(), scope, id, refreshrun.RunPage{Limit: 10})
+		if err != nil {
+			t.Fatalf("list semantic model %s runs: %v", id, err)
+		}
+		if len(runs) == 0 || runs[0].ID != completedRun.ID || runs[0].Status != refreshrun.RunStatusSucceeded {
+			t.Fatalf("semantic model %s history = %#v, want succeeded run %s", id, runs, completedRun.ID)
+		}
+		for modelID := range definition.Tables {
+			modelRuns, err := repository.ListTargetRuns(t.Context(), scope, refreshrun.TargetModelTable, projectgraph.ResourceID(modelID), refreshrun.RunPage{Limit: 10})
+			if err != nil {
+				t.Fatalf("list model %s runs: %v", modelID, err)
+			}
+			if len(modelRuns) == 0 || modelRuns[0].Status != refreshrun.RunStatusSucceeded {
+				t.Fatalf("model %s history = %#v, want a succeeded dependency run", modelID, modelRuns)
+			}
+		}
+	}
+}
 
 type refreshRunResponse struct {
 	ID                   string                       `json:"id"`

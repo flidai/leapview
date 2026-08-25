@@ -218,7 +218,7 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 		}, requestedSemanticModelID: &requestedSemanticModelID},
 	}
 	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
-		ID: "semantic:sales", Key: "sales", Type: string(projectview.AssetTypeSemanticModel),
+		ID: "semantic-model:sales", Key: "sales", Type: string(projectview.AssetTypeSemanticModel),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -226,8 +226,8 @@ func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
 	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.LatestSuccessful.ID != "run:semantic" {
 		t.Fatalf("semantic model refresh state = %#v", state)
 	}
-	if requestedSemanticModelID != "sales" {
-		t.Fatalf("semantic model refresh target = %q, want authored semantic-model key", requestedSemanticModelID)
+	if requestedSemanticModelID != "semantic-model:sales" {
+		t.Fatalf("semantic model refresh target = %q, want canonical semantic-model ID", requestedSemanticModelID)
 	}
 }
 
@@ -256,6 +256,26 @@ func TestPipelineMutationProjectionRequiresResourceUse(t *testing.T) {
 	}
 	if gotID != "pipeline:sales" {
 		t.Fatalf("authorization ID = %q, want canonical asset ID", gotID)
+	}
+}
+
+func TestPipelineMutationProjectionAllowsConfiguredDevelopmentBypass(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/pipelines", nil)
+	authorizerCalled := false
+	h := &BrowserHandler{
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizePipeline: func(*stdhttp.Request, string, access.Capability) (bool, error) {
+			authorizerCalled = true
+			return false, nil
+		},
+	}
+	if !h.pipelineMutationAllowed(request, "pipeline:sales") {
+		t.Fatal("configured development bypass did not expose pipeline mutation controls")
+	}
+	if authorizerCalled {
+		t.Fatal("development bypass unexpectedly consulted the serving-state resource authorizer")
 	}
 }
 
