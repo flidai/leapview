@@ -65198,9 +65198,13 @@ components:
       properties:
         currentPassword:
           type: string
+          minLength: 1
+          maxLength: 1024
           example: example
         newPassword:
           type: string
+          minLength: 12
+          maxLength: 1024
           example: example
       example:
         currentPassword: example

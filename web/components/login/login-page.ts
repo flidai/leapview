@@ -190,6 +190,11 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
+    .field-hint {
+      color: var(--lv-fg-subtle);
+      font: var(--lv-type-caption);
+    }
+
     input {
       width: 100%;
       min-height: var(--control-large-size);
@@ -313,11 +318,12 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
             <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>
             <label>
               Temporary password
-              <input name="currentPassword" type="password" autocomplete="current-password" required>
+              <input name="currentPassword" type="password" autocomplete="current-password" maxlength="1024" required>
             </label>
             <label>
               New password
-              <input name="newPassword" type="password" autocomplete="new-password" required>
+              <input name="newPassword" type="password" autocomplete="new-password" minlength="12" maxlength="1024" aria-describedby="new-password-requirements" required>
+              <span id="new-password-requirements" class="field-hint">Use at least 12 characters.</span>
             </label>
             <button class="submit" type="submit">Change password</button>
           </form>

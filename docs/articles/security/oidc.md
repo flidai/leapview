@@ -41,7 +41,7 @@ Production validation requires the issuer and callback to use unambiguous HTTPS 
 
 Terminate TLS at a maintained trusted proxy and ensure the application sees the correct public scheme and host used by the callback. Set exact allowed hosts. Enable proxy-header trust only when that proxy overwrites client-supplied forwarding headers.
 
-Secure cookies must remain enabled for browser auth. Clock synchronization matters for token and state validation on both LeapView and the identity provider.
+Secure cookies must remain enabled for browser auth. With secure cookies enabled, LeapView uses browser-enforced `__Host-` names for session and authentication-state cookies; switching from an insecure development boundary to this production boundary requires a fresh sign-in. Authentication and authenticated responses are marked `no-store`, and provider failures return generic client messages rather than upstream details. Clock synchronization matters for token and state validation on both LeapView and the identity provider.
 
 ## Understand identity mapping
 

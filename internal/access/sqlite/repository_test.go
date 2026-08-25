@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"io"
 	"path/filepath"
 	"sort"
@@ -361,6 +362,17 @@ func TestRepositoryLocalUserPasswordLifecycle(t *testing.T) {
 	if _, _, err := repo.VerifyLocalPassword(ctx, "analyst@example.com", "wrong-password"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("wrong password err = %v, want sql.ErrNoRows", err)
 	}
+	browserSession, err := repo.CreateSession(ctx, created.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create browser session: %v", err)
+	}
+	personalTokenSecret, personalToken, err := repo.CreateAPITokenWithMetadata(ctx, access.APITokenInput{
+		PrincipalID: created.Principal.ID,
+		Name:        "automation",
+	})
+	if err != nil {
+		t.Fatalf("create personal API token: %v", err)
+	}
 
 	changed, err := repo.ChangeLocalPassword(ctx, created.Principal.ID, created.Password, "new-strong-password")
 	if err != nil {
@@ -371,6 +383,16 @@ func TestRepositoryLocalUserPasswordLifecycle(t *testing.T) {
 	}
 	if _, _, err := repo.VerifyLocalPassword(ctx, "analyst@example.com", "new-strong-password"); err != nil {
 		t.Fatalf("verify changed password: %v", err)
+	}
+	if _, err := repo.PrincipalForToken(ctx, browserSession); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("password change retained browser session: %v", err)
+	}
+	if credential, err := repo.CredentialForAPIToken(ctx, personalTokenSecret); err != nil || credential.Token.ID != personalToken.ID {
+		t.Fatalf("password change revoked independent API token: credential=%#v err=%v", credential, err)
+	}
+	resetSession, err := repo.CreateSession(ctx, created.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatalf("create reset browser session: %v", err)
 	}
 
 	reset, err := repo.ResetLocalPassword(ctx, created.Principal.ID)
@@ -387,6 +409,50 @@ func TestRepositoryLocalUserPasswordLifecycle(t *testing.T) {
 	if !resetCredential.MustChangePassword {
 		t.Fatal("reset credential must_change_password = false, want true")
 	}
+	if _, err := repo.PrincipalForToken(ctx, resetSession); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("password reset retained browser session: %v", err)
+	}
+}
+
+func TestRepositoryLocalPasswordsAreOpaqueAndPolicyBounded(t *testing.T) {
+	ctx := context.Background()
+	_, repo := openAccessRepo(t, ctx)
+
+	for _, password := range []string{
+		strings.Repeat("a", access.MinimumLocalPasswordCharacters-1),
+		strings.Repeat("a", access.MaximumLocalPasswordBytes+1),
+		knownBreachedPasswordFixture(),
+	} {
+		if _, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: passwordTestEmail(password), Password: password}); !errors.Is(err, access.ErrLocalPasswordPolicy) {
+			t.Fatalf("CreateLocalUser() error = %v, want password policy error", err)
+		}
+	}
+
+	const exact = "  exact password  "
+	created, err := repo.CreateLocalUser(ctx, access.LocalUserInput{Email: "opaque-password@example.com", Password: exact})
+	if err != nil {
+		t.Fatalf("create local user with opaque password: %v", err)
+	}
+	if _, _, err := repo.VerifyLocalPassword(ctx, created.Principal.Email, exact); err != nil {
+		t.Fatalf("verify exact opaque password: %v", err)
+	}
+	if _, _, err := repo.VerifyLocalPassword(ctx, created.Principal.Email, strings.TrimSpace(exact)); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("trimmed password unexpectedly authenticated: %v", err)
+	}
+	if _, err := repo.ChangeLocalPassword(ctx, created.Principal.ID, exact, knownBreachedPasswordFixture()); !errors.Is(err, access.ErrLocalPasswordPolicy) {
+		t.Fatalf("breached password change error = %v, want password policy error", err)
+	}
+	if _, err := repo.ChangeLocalPassword(ctx, created.Principal.ID, exact, exact); !errors.Is(err, access.ErrLocalPasswordPolicy) {
+		t.Fatalf("reused password error = %v, want password policy error", err)
+	}
+}
+
+func passwordTestEmail(password string) string {
+	return fmt.Sprintf("password-%d@example.com", len(password))
+}
+
+func knownBreachedPasswordFixture() string {
+	return strings.Join([]string{"q1w2", "e3r4", "t5y6"}, "")
 }
 
 func TestRepositoryLocalPasswordRejectsDisabledPrincipal(t *testing.T) {
