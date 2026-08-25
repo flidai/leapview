@@ -1,0 +1,15 @@
+# Frozen release-image package universe. Update the timestamp only in a
+# reviewed dependency refresh that rebuilds and scans both release platforms.
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian/20260820T000000Z/
+Suites: bookworm bookworm-updates
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no
+
+Types: deb
+URIs: https://snapshot.debian.org/archive/debian-security/20260820T000000Z/
+Suites: bookworm-security
+Components: main
+Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
+Check-Valid-Until: no
