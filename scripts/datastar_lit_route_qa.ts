@@ -1,4 +1,4 @@
-import { chromium, expect, type Page } from '@playwright/test'
+import { chromium, expect, type Locator, type Page } from '@playwright/test'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -8,6 +8,7 @@ type RouteExpectation = {
 }
 
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
+const routeQAScope = Bun.env.LEAPVIEW_ROUTE_QA_SCOPE?.trim() || 'all'
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const routes: RouteExpectation[] = [
   { path: '/', root: 'lv-catalog-page', shell: true },
@@ -27,18 +28,26 @@ const routes: RouteExpectation[] = [
 
 const browser = await chromium.launch()
 try {
-  for (const route of routes) {
-    await verifyRoute(route)
+  if (routeQAScope === 'keyboard') {
+    await verifyKeyboardAccessibilityJourney()
+    console.log(`Keyboard accessibility route QA passed at ${baseURL}`)
+  } else if (routeQAScope === 'all') {
+    for (const route of routes) {
+      await verifyRoute(route)
+    }
+    await verifySidebarCollapseToggle()
+    await verifyKeyboardAccessibilityJourney()
+    await verifyEChartsFirstNavigation()
+    await verifyDashboardCommandDoesNotReopenUpdates()
+    await verifyDataExplorerRecoveryActions()
+    await verifyTableShowcase()
+    await verifyFilterShowcase()
+    await verifySpatialShowcaseMaps()
+    await verifySpatialMapWindowing()
+    console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
+  } else {
+    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all" or "keyboard"`)
   }
-  await verifySidebarCollapseToggle()
-  await verifyEChartsFirstNavigation()
-  await verifyDashboardCommandDoesNotReopenUpdates()
-  await verifyDataExplorerRecoveryActions()
-  await verifyTableShowcase()
-  await verifyFilterShowcase()
-  await verifySpatialShowcaseMaps()
-  await verifySpatialMapWindowing()
-  console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
 } finally {
   await browser.close()
 }
@@ -161,6 +170,105 @@ async function verifyRoute(route: RouteExpectation): Promise<void> {
   } finally {
     await page.close()
   }
+}
+
+async function verifyKeyboardAccessibilityJourney(): Promise<void> {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  const messages = collectBlockingConsoleMessages(page)
+  await page.addInitScript(() => {
+    localStorage.removeItem('leapview-sidebar-collapsed')
+    localStorage.removeItem('leapview-area-last-insights')
+    localStorage.removeItem('leapview-area-last-develop')
+  })
+
+  try {
+    const response = await page.goto(new URL('/sources', baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`keyboard accessibility /sources: status ${response?.status() ?? 'unknown'}`)
+    await page.waitForSelector('lv-project-page')
+
+    const insightsLink = page.locator('lv-sidebar .area-switcher:not(.mobile-area-switcher) a[aria-label="Insights"]')
+    await focusByTab(page, insightsLink, 'Insights product-mode link')
+    await page.keyboard.press('Enter')
+    await page.waitForURL((url) => url.pathname === '/')
+    await page.waitForSelector('lv-catalog-page')
+    await assertDocumentFocusReset(page, 'Insights route')
+
+    const dashboardLink = page.locator('a[href="/dashboards/dashboard:visual-showcase"]')
+    await focusByTab(page, dashboardLink, 'Visual Showcase dashboard link')
+    await page.keyboard.press('Enter')
+    await page.waitForURL((url) => url.pathname === dashboardPath)
+    await page.waitForSelector('lv-dashboard-page')
+    const expand = page.locator('button[data-visualization-id="revenue"][data-visualization-expand]')
+    await expand.waitFor({ state: 'visible' })
+    await assertDocumentFocusReset(page, 'Visual Showcase route')
+
+    await focusByTab(page, expand, 'Revenue by month expand button', 80)
+    await page.keyboard.press('Enter')
+
+    const dialog = page.getByRole('dialog', { name: 'Revenue by month', exact: true })
+    const close = page.getByRole('button', { name: 'Close visual modal', exact: true })
+    await expect(dialog, 'visual modal must expose an aria-modal dialog named for its visual').toHaveAttribute('aria-modal', 'true')
+    await expect(close, 'opening a visual modal must move focus to its Close control').toBeFocused()
+
+    await page.keyboard.press('Shift+Tab')
+    const reverseTrap = await page.locator('lv-visual-modal').evaluate((modal: any) => {
+      const active = modal.deepActiveElement()
+      return {
+        active: describeElement(active),
+        contained: Boolean(active && modal.focusableElements().includes(active)),
+      }
+
+      function describeElement(element: HTMLElement | null): string {
+        if (!element) return '<none>'
+        return element.getAttribute('aria-label')
+          || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80)
+          || element.localName
+      }
+    })
+    if (!reverseTrap.contained) {
+      throw new Error(`visual modal: Shift+Tab escaped the dialog to ${reverseTrap.active}`)
+    }
+    await page.keyboard.press('Tab')
+    await expect(close, 'Tab from the modal\'s last control must wrap to its Close control').toBeFocused()
+
+    await page.keyboard.press('Escape')
+    await expect(dialog, 'Escape must close the active visual modal').toHaveCount(0)
+    await expect(expand, 'closing a visual modal must restore focus to its invoking Expand control').toBeFocused()
+    assertNoBlockingConsoleMessages('keyboard accessibility journey', messages)
+  } finally {
+    await page.close()
+  }
+}
+
+async function focusByTab(page: Page, target: Locator, label: string, maximumTabs = 40): Promise<void> {
+  await target.waitFor({ state: 'visible' })
+  const targetIsFocused = () => target.evaluate((element) => {
+    let active: Element | null = element.ownerDocument.activeElement
+    while (active?.shadowRoot?.activeElement) active = active.shadowRoot.activeElement
+    return active === element
+  })
+  if (await targetIsFocused()) return
+  for (let count = 0; count < maximumTabs; count++) {
+    await page.keyboard.press('Tab')
+    if (await targetIsFocused()) return
+  }
+  const active = await page.evaluate(() => {
+    let element: Element | null = document.activeElement
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement
+    if (!(element instanceof HTMLElement)) return '<none>'
+    const name = element.getAttribute('aria-label') || element.textContent?.replace(/\s+/g, ' ').trim().slice(0, 80) || ''
+    return `${element.localName}${name ? ` "${name}"` : ''}`
+  })
+  throw new Error(`${label} was not reachable after ${maximumTabs} Tab presses; focus stopped at ${active}`)
+}
+
+async function assertDocumentFocusReset(page: Page, label: string): Promise<void> {
+  const active = await page.evaluate(() => {
+    let element: Element | null = document.activeElement
+    while (element?.shadowRoot?.activeElement) element = element.shadowRoot.activeElement
+    return element instanceof HTMLElement ? element.localName : ''
+  })
+  if (active !== 'body') throw new Error(`${label}: initial focus was ${active || '<none>'}, want body`)
 }
 
 async function verifyEChartsFirstNavigation(): Promise<void> {
