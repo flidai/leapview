@@ -306,15 +306,71 @@ func BackupInstanceToWriter(ctx context.Context, options InstanceBackupOptions, 
 	return writeInstanceBackup(ctx, options, out)
 }
 
-func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out io.Writer) error {
+type validatedInstanceBackupSource struct {
+	homeAbs  string
+	dbAbs    string
+	excluded []string
+}
+
+func validateInstanceBackupReadiness(ctx context.Context, options InstanceBackupOptions) (validatedInstanceBackupSource, error) {
 	homeAbs, dbAbs, err := validateInstanceBackupSource(options.HomeDir, options.DBPath)
 	if err != nil {
-		return err
+		return validatedInstanceBackupSource{}, err
 	}
 	excluded, err := normalizeInstanceRelativePaths(options.ExcludeRelativePaths)
 	if err != nil {
-		return fmt.Errorf("instance backup exclusions: %w", err)
+		return validatedInstanceBackupSource{}, fmt.Errorf("instance backup exclusions: %w", err)
 	}
+	topology := normalizeBackupStorageTopology(options.StorageTopology)
+	if err := validateBackupStorageTopology(topology); err != nil {
+		return validatedInstanceBackupSource{}, err
+	}
+	for _, external := range topology.ExternalStores {
+		if err := validateExternalRecoveryReference(external); err != nil {
+			return validatedInstanceBackupSource{}, err
+		}
+	}
+	expectedEnvironment := strings.TrimSpace(options.Environment)
+	if expectedEnvironment != "" {
+		if err := ValidateDatabaseInstanceEnvironment(ctx, dbAbs, expectedEnvironment); err != nil {
+			return validatedInstanceBackupSource{}, fmt.Errorf("validate checkpoint database environment: %w", err)
+		}
+	} else if err := validateBackupDatabase(ctx, dbAbs); err != nil {
+		return validatedInstanceBackupSource{}, fmt.Errorf("validate checkpoint database: %w", err)
+	}
+	if err := validateExistingBackupDatabaseInstanceID(ctx, dbAbs); err != nil {
+		return validatedInstanceBackupSource{}, fmt.Errorf("validate checkpoint database identity: %w", err)
+	}
+	if err := walkInstanceBackupFiles(homeAbs, dbAbs, excluded, func(name, source string, _ os.FileInfo) error {
+		file, err := os.Open(source)
+		if err != nil {
+			return fmt.Errorf("read instance backup member %q: %w", name, err)
+		}
+		var first [1]byte
+		_, readErr := file.Read(first[:])
+		if readErr == io.EOF {
+			readErr = nil
+		}
+		closeErr := file.Close()
+		if readErr != nil {
+			return fmt.Errorf("read instance backup member %q: %w", name, readErr)
+		}
+		if closeErr != nil {
+			return fmt.Errorf("close instance backup member %q: %w", name, closeErr)
+		}
+		return nil
+	}); err != nil {
+		return validatedInstanceBackupSource{}, err
+	}
+	return validatedInstanceBackupSource{homeAbs: homeAbs, dbAbs: dbAbs, excluded: excluded}, nil
+}
+
+func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out io.Writer) error {
+	source, err := validateInstanceBackupReadiness(ctx, options)
+	if err != nil {
+		return err
+	}
+	homeAbs, dbAbs, excluded := source.homeAbs, source.dbAbs, source.excluded
 	parent := filepath.Dir(homeAbs)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -522,10 +578,18 @@ func validateInstanceRestoreDestination(targetHome, archivePath, currentBackupOu
 		if err != nil {
 			return "", "", false, false, err
 		}
+		if samePath(archiveAbs, currentBackupAbs) {
+			return "", "", false, false, fmt.Errorf("current instance backup path must not equal the restore archive")
+		}
 		if pathWithin(targetAbs, currentBackupAbs) {
 			return "", "", false, false, fmt.Errorf("current instance backup path must not be inside target home dir")
 		}
 		if err := rejectSymlinkPath(currentBackupAbs, "current instance backup path"); err != nil {
+			return "", "", false, false, err
+		}
+		if _, err := os.Lstat(currentBackupAbs); err == nil {
+			return "", "", false, false, fmt.Errorf("current instance backup path already exists: %s", currentBackupAbs)
+		} else if !os.IsNotExist(err) {
 			return "", "", false, false, err
 		}
 	}

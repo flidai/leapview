@@ -37,6 +37,7 @@ const (
 
 	RestorePreflightAllowed             = "restore.preflight.allowed"
 	RestorePreflightArchiveInvalid      = "restore.preflight.denied.archive_invalid"
+	RestorePreflightCheckpointInvalid   = "restore.preflight.denied.checkpoint_invalid"
 	RestorePreflightChecksumMismatch    = "restore.preflight.denied.checksum_mismatch"
 	RestorePreflightDuplicatePath       = "restore.preflight.denied.duplicate_path"
 	RestorePreflightExternalEvidence    = "restore.preflight.denied.external_evidence_missing"
@@ -288,7 +289,18 @@ func collectInstanceBackupMembers(homeAbs, dbAbs, dbCopy string, excluded []stri
 	if err := appendMember(instanceBackupDBName, dbCopy, dbInfo); err != nil {
 		return nil, err
 	}
-	err = filepath.WalkDir(homeAbs, func(current string, entry os.DirEntry, walkErr error) error {
+	err = walkInstanceBackupFiles(homeAbs, dbAbs, excluded, func(rel, current string, info os.FileInfo) error {
+		return appendMember(rel, current, info)
+	})
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(members, func(i, j int) bool { return members[i].manifest.Path < members[j].manifest.Path })
+	return members, nil
+}
+
+func walkInstanceBackupFiles(homeAbs, dbAbs string, excluded []string, visit func(string, string, os.FileInfo) error) error {
+	return filepath.WalkDir(homeAbs, func(current string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
 		}
@@ -336,13 +348,11 @@ func collectInstanceBackupMembers(homeAbs, dbAbs, dbCopy string, excluded []stri
 		if info.IsDir() {
 			return nil
 		}
-		return appendMember(rel, currentAbs, info)
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("instance backup contains unsupported entry %q", rel)
+		}
+		return visit(rel, currentAbs, info)
 	})
-	if err != nil {
-		return nil, err
-	}
-	sort.Slice(members, func(i, j int) bool { return members[i].manifest.Path < members[j].manifest.Path })
-	return members, nil
 }
 
 func writeManifestV2Archive(out io.Writer, manifest InstanceBackupManifestV2, members []instanceBackupStagedMember) error {
@@ -702,6 +712,10 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a current instance backup path before replacing non-empty state", fmt.Errorf("current instance backup path is required when restoring over an existing home dir"))
 	}
 	plan.CheckpointPath = currentBackupAbs
+	plan.Reset, err = normalizeInstanceRelativePaths(options.ResetRelativePaths)
+	if err != nil {
+		return preflightDenied(plan, RestorePreflightArchiveInvalid, "use safe reset paths", err)
+	}
 	if err := validateBackupStorageIdentity(plan.TargetStorageTopology); err != nil {
 		return preflightDenied(plan, RestorePreflightStorageTopology, "configure the exact target storage provider, endpoint, region, bucket, and prefix", err)
 	}
@@ -716,6 +730,13 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		}
 		if !sameBackupStorageIdentity(plan.TargetStorageTopology, plan.CheckpointTopology) {
 			return preflightDenied(plan, RestorePreflightStorageTopology, "checkpoint the current instance against its configured external store identity", fmt.Errorf("current checkpoint topology does not match target storage topology"))
+		}
+		if _, err := validateInstanceBackupReadiness(ctx, InstanceBackupOptions{
+			HomeDir: targetAbs, DBPath: filepath.Join(targetAbs, instanceBackupDBName),
+			ExcludeRelativePaths: plan.Reset, Environment: options.ExpectedEnvironment,
+			StorageTopology: plan.CheckpointTopology,
+		}); err != nil {
+			return preflightDenied(plan, RestorePreflightCheckpointInvalid, "repair current instance state so the safety checkpoint can be created", err)
 		}
 	}
 	file, err := os.Open(archiveAbs)
@@ -1019,10 +1040,6 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	}
 	if preserve := strings.TrimSpace(options.PreserveRelativeFile); preserve != "" {
 		plan.Preserve = []string{filepath.ToSlash(preserve)}
-	}
-	plan.Reset, err = normalizeInstanceRelativePaths(options.ResetRelativePaths)
-	if err != nil {
-		return preflightDenied(plan, RestorePreflightArchiveInvalid, "use safe reset paths", err)
 	}
 	plan.Allowed = true
 	plan.ReasonCode = RestorePreflightAllowed
@@ -1410,6 +1427,26 @@ func readBackupDatabaseInstanceID(ctx context.Context, path string) (string, err
 		return "", fmt.Errorf("archived database instance identity is empty")
 	}
 	return instanceID, nil
+}
+
+func validateExistingBackupDatabaseInstanceID(ctx context.Context, path string) error {
+	db, err := sql.Open("sqlite", path+"?_pragma=query_only(1)")
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	var instanceID string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM platform_settings WHERE key = ?`, instanceIDSetting).Scan(&instanceID); errors.Is(err, sql.ErrNoRows) {
+		// Older instances acquire their durable identity when the authoritative
+		// checkpoint snapshot is created. Preflight remains read-only.
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("read current database instance identity: %w", err)
+	}
+	if strings.TrimSpace(instanceID) == "" {
+		return fmt.Errorf("current database instance identity is empty")
+	}
+	return nil
 }
 
 func writeManifestV2JSON(value InstanceBackupManifestV2) ([]byte, error) {

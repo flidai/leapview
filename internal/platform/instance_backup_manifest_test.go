@@ -132,7 +132,7 @@ func TestRestorePreflightRejectsBeforeTargetMutation(t *testing.T) {
 	ctx := context.Background()
 	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
 	target := filepath.Join(t.TempDir(), "target")
-	createCurrentInstanceState(t, ctx, target, "prod")
+	createCurrentInstanceState(t, ctx, target, "staging")
 	writeTestFile(t, filepath.Join(target, "preserve.txt"), "unchanged")
 	before := hashTestTree(t, target)
 
@@ -258,6 +258,140 @@ func TestRestorePreflightAndRestoreShareArchiveAndSymlinkValidation(t *testing.T
 			})
 			if restoreErr == nil || !strings.Contains(restoreErr.Error(), test.want) {
 				t.Fatalf("restore error = %v", restoreErr)
+			}
+		})
+	}
+}
+
+func TestRestorePreflightAndRestoreRejectSameCheckpointDestinations(t *testing.T) {
+	ctx := context.Background()
+	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
+	tests := []struct {
+		name       string
+		checkpoint func(*testing.T) string
+		want       string
+	}{
+		{name: "existing file", want: "already exists", checkpoint: func(t *testing.T) string {
+			path := filepath.Join(t.TempDir(), "current.tar.gz")
+			writeTestFile(t, path, "occupied")
+			return path
+		}},
+		{name: "existing directory", want: "already exists", checkpoint: func(t *testing.T) string {
+			return t.TempDir()
+		}},
+		{name: "source archive", want: "must not equal", checkpoint: func(*testing.T) string {
+			return archivePath
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "target")
+			createCurrentInstanceState(t, ctx, target, "prod")
+			writeTestFile(t, filepath.Join(target, "state.txt"), "unchanged")
+			before := hashTestTree(t, target)
+			checkpoint := test.checkpoint(t)
+			preflightOptions := InstanceRestorePreflightOptions{
+				ArchivePath: archivePath, TargetHomeDir: target, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			}
+			plan, preflightErr := PreflightInstanceRestore(ctx, preflightOptions)
+			if preflightErr == nil || plan.ReasonCode != RestorePreflightArchiveInvalid || !strings.Contains(preflightErr.Error(), test.want) {
+				t.Fatalf("preflight plan=%#v err=%v, want %q", plan, preflightErr, test.want)
+			}
+			restoreErr := RestoreInstance(ctx, InstanceRestoreOptions{
+				TargetHomeDir: target, BackupPath: archivePath, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			})
+			if restoreErr == nil || restoreErr.Error() != preflightErr.Error() {
+				t.Fatalf("restore error = %v, want exact preflight denial %v", restoreErr, preflightErr)
+			}
+			if after := hashTestTree(t, target); after != before {
+				t.Fatalf("checkpoint destination denial mutated target: before=%s after=%s", before, after)
+			}
+		})
+	}
+}
+
+func TestRestorePreflightRejectsUncheckpointableCurrentStateBeforeMutation(t *testing.T) {
+	ctx := context.Background()
+	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
+	tests := []struct {
+		name        string
+		environment string
+		mutate      func(*testing.T, string)
+	}{
+		{name: "internal symlink", environment: "prod", mutate: func(t *testing.T, target string) {
+			if err := os.Symlink("state.txt", filepath.Join(target, "linked-state")); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+		}},
+		{name: "corrupt database", environment: "prod", mutate: func(t *testing.T, target string) {
+			writeTestFile(t, filepath.Join(target, instanceBackupDBName), "not a sqlite database")
+		}},
+		{name: "wrong database environment", environment: "staging"},
+		{name: "empty database identity", environment: "prod", mutate: func(t *testing.T, target string) {
+			store, err := Open(ctx, filepath.Join(target, instanceBackupDBName))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.db.ExecContext(ctx, `INSERT INTO platform_settings (key, value) VALUES (?, '') ON CONFLICT(key) DO UPDATE SET value = ''`, instanceIDSetting); err != nil {
+				_ = store.Close()
+				t.Fatal(err)
+			}
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target := filepath.Join(t.TempDir(), "target")
+			createCurrentInstanceState(t, ctx, target, test.environment)
+			writeTestFile(t, filepath.Join(target, "state.txt"), "unchanged")
+			if test.mutate != nil {
+				test.mutate(t, target)
+			}
+			databasePath := filepath.Join(target, instanceBackupDBName)
+			beforeDatabase, err := fileSHA256(databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			checkpoint := filepath.Join(t.TempDir(), "current.tar.gz")
+			options := InstanceRestorePreflightOptions{
+				ArchivePath: archivePath, TargetHomeDir: target, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			}
+			plan, preflightErr := PreflightInstanceRestore(ctx, options)
+			if preflightErr == nil || plan.ReasonCode != RestorePreflightCheckpointInvalid {
+				t.Fatalf("preflight plan=%#v err=%v, want checkpoint denial", plan, preflightErr)
+			}
+			directCheckpoint := filepath.Join(t.TempDir(), "direct-current.tar.gz")
+			directErr := BackupInstance(ctx, InstanceBackupOptions{
+				HomeDir: target, DBPath: databasePath, OutPath: directCheckpoint,
+				Environment: "prod", ReleaseIdentity: identity,
+			})
+			if directErr == nil || !strings.Contains(preflightErr.Error(), directErr.Error()) {
+				t.Fatalf("checkpoint backup error = %v, want preflight to use the same validation: %v", directErr, preflightErr)
+			}
+			restoreErr := RestoreInstance(ctx, InstanceRestoreOptions{
+				TargetHomeDir: target, BackupPath: archivePath, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			})
+			if restoreErr == nil || restoreErr.Error() != preflightErr.Error() {
+				t.Fatalf("restore error = %v, want exact preflight denial %v", restoreErr, preflightErr)
+			}
+			afterDatabase, err := fileSHA256(databasePath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if afterDatabase != beforeDatabase || readTestFile(t, filepath.Join(target, "state.txt")) != "unchanged" {
+				t.Fatal("checkpoint-readiness denial mutated current state")
+			}
+			if _, err := os.Stat(checkpoint); !os.IsNotExist(err) {
+				t.Fatalf("checkpoint-readiness denial created checkpoint: %v", err)
+			}
+			if _, err := os.Stat(directCheckpoint); !os.IsNotExist(err) {
+				t.Fatalf("checkpoint-readiness denial created direct checkpoint: %v", err)
 			}
 		})
 	}
