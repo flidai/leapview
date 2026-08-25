@@ -452,13 +452,22 @@ func TestSiteProductionHeadersAndHealthEndpoints(t *testing.T) {
 		t.Errorf("Content-Security-Policy = %q, want same-origin and blob renderer workers", got)
 	}
 
-	response, err = server.Client().Get(server.URL + "/static/site-page.js")
+	response, err = server.Client().Get(server.URL + "/static/favicon.svg")
 	if err != nil {
 		t.Fatalf("get site asset: %v", err)
 	}
+	assetPolicy := response.Header.Get("Content-Security-Policy")
 	response.Body.Close()
 	if got := response.Header.Get("Cache-Control"); got != "public, max-age=0, must-revalidate" {
 		t.Fatalf("site asset cache control = %q", got)
+	}
+	if strings.Contains(assetPolicy, "'unsafe-eval'") || strings.Contains(assetPolicy, "'unsafe-inline'") {
+		t.Fatalf("static asset CSP contains an unsafe directive: %q", assetPolicy)
+	}
+	for _, want := range []string{"script-src 'self'", "script-src-attr 'none'", "style-src-attr 'none'"} {
+		if !strings.Contains(assetPolicy, want) {
+			t.Fatalf("static asset CSP missing %q: %q", want, assetPolicy)
+		}
 	}
 
 }
