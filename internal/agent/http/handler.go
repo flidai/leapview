@@ -353,6 +353,11 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	scope, err := h.bindRunProject(r.Context(), scope)
+	if err != nil {
+		h.writeCommandFailure(w, r, createAgentRunOperation, err)
+		return
+	}
 	var input api.AgentTurnRequest
 	if err := decodeAgentJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -417,6 +422,26 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	h.recordLegacyCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
+}
+
+func (h *Handler) bindRunProject(ctx context.Context, scope agent.Scope) (agent.Scope, error) {
+	projectID := strings.TrimSpace(h.options.ActiveProjectID)
+	if h.options.ResolveProjectID != nil {
+		resolved, err := h.options.ResolveProjectID(ctx)
+		if err != nil {
+			return agent.Scope{}, apigenfailure.Wrap("unavailable", fmt.Errorf("active project runtime is required: %w", err))
+		}
+		projectID = resolved.String()
+	}
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return agent.Scope{}, apigenfailure.New("unavailable", "active project runtime is required")
+	}
+	if credentialProject := strings.TrimSpace(scope.Credential.ProjectID); credentialProject != "" && credentialProject != project.String() {
+		return agent.Scope{}, apigenfailure.New("forbidden", "agent credential project does not match the active project runtime")
+	}
+	scope.ProjectID = project.String()
+	return scope, nil
 }
 
 func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {

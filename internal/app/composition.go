@@ -1041,10 +1041,16 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
 		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-			if requestLocalDevelopmentAuthorization(ctx, principalID) {
+			if authoringDevelopmentBypass(ctx, principalID) {
 				return true, nil
 			}
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
+		},
+		AuthorizeProjectCapability: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			if authoringDevelopmentBypass(ctx, principalID) {
+				return true, nil
+			}
+			return authorizeProjectRole(ctx, accessModule, runtimeHostModule, principalID, projectID, capability)
 		},
 		AcquireRuntime: authoringAcquireRuntime,
 	})

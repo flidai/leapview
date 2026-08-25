@@ -38,7 +38,7 @@ func newPreviewFixture(t *testing.T) previewFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime := &previewRuntime{model: previewModel()}
+	runtime := &previewRuntime{modelID: "sales_model", model: previewModel()}
 	identity, _ := graph.NewServingIdentity("project", "production", "serving-1")
 	provider := &previewProvider{lease: &previewLease{runtime: runtime, identity: identity}}
 	repo := &previewRepository{lifecycle: lifecycle, revision: revision}
@@ -56,7 +56,7 @@ func previewDocument() document.DashboardDocument {
 }
 func previewStringPtr(value string) *string { return &value }
 func previewModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "sales_model", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
+	return &semanticmodel.Model{Name: "sales", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
 }
 
 func TestPreviewAuthorizesBeforeRevisionAndRuntimeReads(t *testing.T) {
@@ -90,14 +90,14 @@ func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) 
 	if f.provider.acquireCalls != 1 || f.provider.lease.releases != 1 || f.runtime.projectionCalls != 1 || f.runtime.queryCalls != 1 {
 		t.Fatalf("lease/runtime calls = acquire %d release %d projection %d query %d", f.provider.acquireCalls, f.provider.lease.releases, f.runtime.projectionCalls, f.runtime.queryCalls)
 	}
-	if result.Revision != f.revision.Token() || result.Definition.ID != "sales" || result.SemanticEvidence.Identity.GenerationID != "serving-1" {
+	if result.Revision != f.revision.Token() || result.Definition.ID != "sales" || result.SemanticEvidence.Identity.GenerationID != "serving-1" || result.SemanticEvidence.RuntimeModel != "sales" {
 		t.Fatalf("result = %#v", result)
 	}
 }
 
 func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testing.T) {
 	f := newPreviewFixture(t)
-	f.runtime.model = &semanticmodel.Model{Name: "other_model"}
+	f.runtime.modelID = "other_model"
 	if _, err := f.service.Preview(t.Context(), f.request); !errors.Is(err, ErrSemanticMismatch) || f.provider.lease.releases != 1 || f.runtime.queryCalls != 0 {
 		t.Fatalf("mismatch err=%v release=%d query=%d", err, f.provider.lease.releases, f.runtime.queryCalls)
 	}
@@ -214,6 +214,7 @@ func (l *previewLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *previewLease) Release()                        { l.releases++ }
 
 type previewRuntime struct {
+	modelID                     graph.ResourceID
 	model                       *semanticmodel.Model
 	projectionCalls, queryCalls int
 }
@@ -222,7 +223,7 @@ func (r *previewRuntime) Close() error              { return nil }
 func (r *previewRuntime) DuckLakeSnapshotID() int64 { return 42 }
 func (r *previewRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
 	r.projectionCalls++
-	if r.model == nil || r.model.Name != id.String() {
+	if r.model == nil || r.modelID != id {
 		return nil, false
 	}
 	copy := *r.model

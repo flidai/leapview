@@ -1368,7 +1368,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, apiprotocol.TransportErrorResponder{Logger: platform.logger}, writer, request)
 			},
-			QueryContext: func(ctx context.Context, scope agentmodule.Scope) context.Context {
+			ToolContext: func(ctx context.Context, scope agentmodule.Scope) context.Context {
 				principal := accessmodule.Principal{ID: scope.PrincipalID, DevBypass: scope.DevAuthBypass}
 				if platform.auth == nil && strings.TrimSpace(principal.ID) == "" {
 					principal = accessmodule.LocalDeveloperPrincipal()

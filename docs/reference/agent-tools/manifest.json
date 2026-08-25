@@ -1339,6 +1339,9 @@
           "count": {
             "type": "integer"
           },
+          "instanceCount": {
+            "type": "integer"
+          },
           "items": {
             "items": {
               "additionalProperties": {},
@@ -1352,6 +1355,7 @@
         },
         "required": [
           "count",
+          "instanceCount",
           "items",
           "projectCount"
         ],
@@ -15020,7 +15024,8 @@
           "visibility": {
             "enum": [
               "private",
-              "shared"
+              "restricted",
+              "organization"
             ],
             "type": "string"
           }

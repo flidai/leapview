@@ -44,7 +44,7 @@ type Module struct {
 	catalog            agenttools.Catalog
 	documentation      agenttools.Documentation
 	queryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
-	queryContext       func(context.Context, agent.Scope) context.Context
+	toolContext        func(context.Context, agent.Scope) context.Context
 	enableSystemPrompt bool
 	broker             *pagestream.Broker
 	logger             *slog.Logger
@@ -100,7 +100,7 @@ type Config struct {
 	Catalog            agenttools.Catalog
 	Documentation      agenttools.Documentation
 	QueryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
-	QueryContext       func(context.Context, Scope) context.Context
+	ToolContext        func(context.Context, Scope) context.Context
 	EnableSystemPrompt bool
 	Logger             *slog.Logger
 	MCPScope           func(*http.Request) (Scope, bool)
@@ -208,10 +208,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return config.DispatchAPIGen(scopeFromAgent(scope), operationID, writer, request)
 		}
 	}
-	var queryContext func(context.Context, agent.Scope) context.Context
-	if config.QueryContext != nil {
-		queryContext = func(ctx context.Context, scope agent.Scope) context.Context {
-			return config.QueryContext(ctx, scopeFromAgent(scope))
+	var toolContext func(context.Context, agent.Scope) context.Context
+	if config.ToolContext != nil {
+		toolContext = func(ctx context.Context, scope agent.Scope) context.Context {
+			return config.ToolContext(ctx, scopeFromAgent(scope))
 		}
 	}
 	var mcpScope func(*http.Request) (agent.Scope, bool)
@@ -230,7 +230,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		dashboardMetrics:  config.DashboardMetrics,
 		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
-		queryMetadata: config.QueryMetadata, queryContext: queryContext,
+		queryMetadata: config.QueryMetadata, toolContext: toolContext,
 		enableSystemPrompt: config.EnableSystemPrompt, broker: config.HTTP.Broker, logger: config.Logger,
 		pendingChatTitles: map[string]struct{}{},
 		mcpScope:          mcpScope, mcpProtect: config.MCPProtect,

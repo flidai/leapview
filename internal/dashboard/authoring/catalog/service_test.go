@@ -67,6 +67,24 @@ func TestGetHidesUnauthorizedAndArchived(t *testing.T) {
 	}
 }
 
+func TestProjectDashboardSourceUsesCanonicalIDAndAuthoredNameSeparately(t *testing.T) {
+	runtime := catalogSourceRuntime{source: authoring.AuthoredDashboardSource{
+		Document: document.DashboardDocument{
+			Metadata: document.DashboardMetadata{ID: "dashboard:executive-sales", Name: "executive-sales"},
+			Spec:     document.DashboardSpec{SemanticModel: "semantic-model:sales"},
+		},
+		Metadata: authoring.AuthoredDashboardMetadata{Project: "project:sales", Name: "executive-sales"},
+	}}
+	item := Dashboard{ID: "dashboard:executive-sales", ProjectID: "project:sales", SemanticModel: "semantic-model:sales", Source: SourceProject}
+	if err := enrichProjectItem(runtime, &item); err != nil {
+		t.Fatalf("canonical id with symbolic authored name was rejected: %v", err)
+	}
+	runtime.source.Metadata.Name = "different-name"
+	if err := enrichProjectItem(runtime, &item); err == nil {
+		t.Fatal("mismatched retained authored name was accepted")
+	}
+}
+
 func TestBackendErrorsReleaseExactlyOnce(t *testing.T) {
 	want := errors.New("repository unavailable")
 	repo := &catalogRepository{listErr: want}
@@ -97,6 +115,15 @@ type catalogRuntime struct{ catalog dashboardcatalog.Catalog }
 
 func (r catalogRuntime) Close() error                      { return nil }
 func (r catalogRuntime) Catalog() dashboardcatalog.Catalog { return r.catalog }
+
+type catalogSourceRuntime struct {
+	catalogRuntime
+	source authoring.AuthoredDashboardSource
+}
+
+func (r catalogSourceRuntime) AuthoredDashboardSource(id string) (authoring.AuthoredDashboardSource, bool) {
+	return r.source, r.source.Document.Metadata.ID == id
+}
 
 type catalogProvider struct {
 	runtime  projectruntime.Runtime

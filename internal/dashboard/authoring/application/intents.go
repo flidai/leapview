@@ -140,7 +140,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	}
 	semanticModelID := projectgraph.ResourceID(revision.Document.Spec.SemanticModel)
 	model, ok := active.SemanticModelProjection(semanticModelID)
-	if !ok || model == nil || model.Name != semanticModelID.String() {
+	if !ok || model == nil {
 		return fmt.Errorf("semantic model %q is unavailable in active runtime", semanticModelID)
 	}
 	if err := validateGovernedField(model, field.FieldID, field.Role); err != nil {

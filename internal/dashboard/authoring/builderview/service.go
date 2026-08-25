@@ -181,9 +181,6 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 	if !ok || model == nil {
 		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("semantic model %q is unavailable in active runtime", lifecycle.SemanticModel)
 	}
-	if model.Name != lifecycle.SemanticModel.String() {
-		return uisignals.DashboardBuilderSignal{}, fmt.Errorf("semantic model projection identity does not match lifecycle")
-	}
 
 	return project(request, lifecycle, revision, model, capabilities)
 }
@@ -191,8 +188,8 @@ func (s *Service) Build(ctx context.Context, request Request) (uisignals.Dashboa
 func (s *Service) authorize(ctx context.Context, actorID string, projectID graph.ResourceID, lifecycle authoring.DashboardLifecycle, action authoring.AuthorizationAction) (bool, error) {
 	err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: lifecycle.ID,
-		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action,
-		RepositoryScoped: true,
+		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
+		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility, Action: action,
 	})
 	if err == nil {
 		return true, nil
@@ -223,7 +220,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
-	semantic, err := projectSemanticModel(model)
+	semantic, err := projectSemanticModel(lifecycle.SemanticModel.String(), model)
 	if err != nil {
 		return uisignals.DashboardBuilderSignal{}, err
 	}
@@ -470,7 +467,7 @@ func safeLabel(value string) bool {
 	return true
 }
 
-func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilderSemanticModelSignal, error) {
+func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals.DashboardBuilderSemanticModelSignal, error) {
 	if model == nil {
 		return uisignals.DashboardBuilderSemanticModelSignal{}, fmt.Errorf("dashboard builder semantic model is empty")
 	}
@@ -557,7 +554,7 @@ func projectSemanticModel(model *semanticmodel.Model) (uisignals.DashboardBuilde
 	if result == nil {
 		result = []uisignals.DashboardBuilderDatasetSignal{}
 	}
-	return uisignals.DashboardBuilderSemanticModelSignal{ID: model.Name, Title: display(model.Title, model.Name), Datasets: result}, nil
+	return uisignals.DashboardBuilderSemanticModelSignal{ID: modelID, Title: display(model.Title, model.Name), Datasets: result}, nil
 }
 
 func fieldSignal(id, label, kind, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {

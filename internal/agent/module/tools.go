@@ -41,13 +41,27 @@ func (m *Module) configureTools() {
 // built-in agent and protocol adapters such as MCP.
 func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinition {
 	toolScope := ToolsScope(scope)
-	return (agenttools.ProviderSet{
+	definitions := (agenttools.ProviderSet{
 		Docs:      m.DocsToolProvider(),
 		Catalog:   m.CatalogToolProvider(),
 		Visual:    m.VisualToolProvider(),
 		APIGen:    m.APIGenToolProvider(),
 		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
+	return wrapToolContext(definitions, m.toolContext, scope)
+}
+
+func wrapToolContext(definitions []agentcore.ToolDefinition, decorate func(context.Context, agentcap.Scope) context.Context, scope agentcap.Scope) []agentcore.ToolDefinition {
+	if decorate == nil {
+		return definitions
+	}
+	for index := range definitions {
+		handler := definitions[index].Handler
+		definitions[index].Handler = agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
+			return handler.Run(decorate(ctx, scope), call)
+		})
+	}
+	return definitions
 }
 
 func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringProvider {
@@ -70,12 +84,6 @@ func (m *Module) CatalogToolProvider() agenttools.CatalogProvider {
 func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 	return agenttools.VisualProvider{
 		Resolve: resourceResolverForTools(m.resolveResource),
-		QueryContext: func(ctx context.Context, scope agenttools.Scope) context.Context {
-			if m.queryContext == nil {
-				return ctx
-			}
-			return m.queryContext(ctx, scopeFromTools(scope))
-		},
 		SemanticModel: func(projectID, modelID string) (model *semanticmodel.Model, ok bool) {
 			metrics, ok := m.dashboardMetrics(projectID)
 			if !ok || metrics == nil {

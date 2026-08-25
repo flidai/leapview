@@ -26,14 +26,14 @@ func TestDashboardAuthoringRequiresAuthenticatedPrincipalAndResolver(t *testing.
 		t.Fatalf("unauthenticated result=%#v err=%v", result, err)
 	}
 	provider = DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}
-	definition = definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), GetDashboardToolName)
-	result, err = definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "missing-resolver", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales"}`)})
+	definition = definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), CreateDashboardDraftToolName)
+	result, err = definition.Handler.Run(context.Background(), agentcore.ToolCall{ID: "missing-resolver", Arguments: json.RawMessage(`{"title":"Sales","semanticModelId":"semantic_sales"}`)})
 	if err != nil || !result.IsError || toolErrorCode(result) != "catalog_unavailable" {
 		t.Fatalf("missing resolver result=%#v err=%v", result, err)
 	}
 }
 
-func TestDashboardAuthoringCatalogAuthorizationAndFixedProject(t *testing.T) {
+func TestDashboardAuthoringCatalogApplicationIsAuthoritativeAndProjectIsFixed(t *testing.T) {
 	app := &projectAuthoringFake{list: catalog.ListResult{Items: []catalog.Dashboard{
 		{ID: "dashboard_sales", Source: catalog.SourceProject},
 		{ID: "dashboard_secret", Source: catalog.SourceInstance},
@@ -46,8 +46,8 @@ func TestDashboardAuthoringCatalogAuthorizationAndFixedProject(t *testing.T) {
 		t.Fatalf("list result=%#v err=%v", result, err)
 	}
 	value, ok := result.Content.(catalog.ListResult)
-	if !ok || len(value.Items) != 1 || value.Items[0].ID != "dashboard_sales" {
-		t.Fatalf("filtered dashboards=%#v", result.Content)
+	if !ok || len(value.Items) != 2 {
+		t.Fatalf("dashboard catalog=%#v", result.Content)
 	}
 	if app.listRequest.ProjectID != projectIDForTest() {
 		t.Fatalf("list project=%q, want %q", app.listRequest.ProjectID, projectIDForTest())
@@ -122,12 +122,12 @@ func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing
 		if err != nil || result.IsError {
 			t.Fatalf("%s result=%#v err=%v", payload.name, result, err)
 		}
-		if resolver.capabilityFor("dashboard_sales") != payload.cap {
-			t.Fatalf("%s capability=%q, want %q", payload.name, resolver.capabilityFor("dashboard_sales"), payload.cap)
-		}
 		if app.command.Provenance.ActorID != scope.PrincipalID || app.command.Provenance.ConversationID != scope.ConversationID || app.command.Provenance.ToolCallID != payload.name {
 			t.Fatalf("%s provenance=%#v", payload.name, app.command.Provenance)
 		}
+	}
+	if resolver.capabilityFor("dashboard_sales") != access.CapabilityResourceRead {
+		t.Fatalf("project fork capability=%q, want RESOURCE_READ", resolver.capabilityFor("dashboard_sales"))
 	}
 }
 

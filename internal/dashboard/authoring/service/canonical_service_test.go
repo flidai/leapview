@@ -233,20 +233,22 @@ func TestCanonicalServiceCreateEditPublishArchiveAndAuthorization(t *testing.T) 
 	}
 }
 
-func TestCanonicalServiceCreateUsesProjectScopedRoleBeforeDashboardExists(t *testing.T) {
+func TestCanonicalServiceCreateUsesProjectCapabilityBeforeDashboardExists(t *testing.T) {
 	repository, compiler := newCanonicalRepository(), &canonicalCompiler{}
 	var authorized []access.ResourceRef
-	adapter, err := accessadapter.New(func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
-		authorized = append(authorized, resource)
-		if resource.Kind() == graph.KindProject && capability != access.CapabilityResourceEdit {
-			t.Fatalf("project create capability = %q, want RESOURCE_EDIT", capability)
-		}
-		if resource.Kind() == graph.KindSemanticModel && capability != access.CapabilityResourceRead {
-			t.Fatalf("semantic-model capability = %q, want RESOURCE_READ", capability)
-		}
-		// A newly allocated dashboard is not present in the active graph. The
-		// production adapter must authorize the project role bundle instead.
-		return resource.Kind() == graph.KindProject || resource.Kind() == graph.KindSemanticModel, nil
+	var projectCapabilities []access.Capability
+	adapter, err := accessadapter.New(accessadapter.Options{
+		AuthorizeResource: func(_ context.Context, _ string, _ graph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			authorized = append(authorized, resource)
+			if resource.Kind() != graph.KindSemanticModel || capability != access.CapabilityResourceRead {
+				t.Fatalf("resource authorization = %#v %q, want semantic-model RESOURCE_READ", resource, capability)
+			}
+			return true, nil
+		},
+		AuthorizeProjectCapability: func(_ context.Context, _ string, _ graph.ResourceID, capability access.Capability) (bool, error) {
+			projectCapabilities = append(projectCapabilities, capability)
+			return capability == access.CapabilityResourceEdit || capability == access.CapabilityProjectAdmin, nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -256,8 +258,8 @@ func TestCanonicalServiceCreateUsesProjectScopedRoleBeforeDashboardExists(t *tes
 	if err != nil {
 		t.Fatalf("project-scoped create failed: %v", err)
 	}
-	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 2 || authorized[0].Kind() != graph.KindProject || authorized[1].Kind() != graph.KindSemanticModel {
-		t.Fatalf("create result=%#v authorization=%#v", created, authorized)
+	if created.Lifecycle.ID != "dashboard-created" || len(authorized) != 1 || authorized[0].Kind() != graph.KindSemanticModel || len(projectCapabilities) != 2 || projectCapabilities[0] != access.CapabilityResourceEdit || projectCapabilities[1] != access.CapabilityProjectAdmin {
+		t.Fatalf("create result=%#v resources=%#v project capabilities=%#v", created, authorized, projectCapabilities)
 	}
 }
 
@@ -296,17 +298,17 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	if forked.Lifecycle.ID != "dashboard-fork" || forked.Lifecycle.Status != authoring.LifecycleStatusDraft || forked.Lifecycle.Draft == nil {
 		t.Fatalf("forked result = %#v", forked)
 	}
-	foundProjectScopedFork := false
+	foundNewDashboardFork := false
 	for _, call := range authorizer.calls[callsBeforeFork:] {
-		if call.ProjectScoped {
-			foundProjectScopedFork = true
+		if call.Target == service.AuthorizationTargetNewDashboard {
+			foundNewDashboardFork = true
 			if call.DashboardID != forked.Lifecycle.ID || call.Action != authoring.AuthorizationActionEdit {
 				t.Fatalf("fork target authorization = %#v", call)
 			}
 		}
 	}
-	if !foundProjectScopedFork {
-		t.Fatalf("fork target authorization did not use project-scoped path: %#v", authorizer.calls)
+	if !foundNewDashboardFork {
+		t.Fatalf("fork target authorization did not use new-dashboard path: %#v", authorizer.calls)
 	}
 	if got := repository.revisions[first.Revision.RevisionID].CreatedAt; !got.Equal(time.Date(2026, 8, 18, 14, 0, 0, 0, time.UTC)) {
 		t.Fatalf("deterministic create clock = %v", got)
