@@ -116,6 +116,8 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
       const glyph = element.shadowRoot?.querySelector('h1 .asset-glyph') as HTMLElement | null
       const parent = root.querySelector('.breadcrumb-header nav a') as HTMLElement
       const title = root.querySelector('.breadcrumb-header h1') as HTMLElement
+      const parentBox = parent.getBoundingClientRect()
+      const titleBox = title.getBoundingClientRect()
       return {
         svg: glyph?.querySelector('svg')?.innerHTML ?? '',
         plain: glyph?.classList.contains('breadcrumb'),
@@ -127,6 +129,7 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
         titleFontSize: getComputedStyle(title).fontSize,
         titleColor: getComputedStyle(title).color,
         titleFontWeight: getComputedStyle(title).fontWeight,
+        verticalCenterDelta: Math.abs((parentBox.top + parentBox.bottom) / 2 - (titleBox.top + titleBox.bottom) / 2),
       }
     })
     expect(icon.svg).toContain('M6 12h12')
@@ -138,6 +141,7 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
     expect(icon.titleFontSize).toBe(icon.parentFontSize)
     expect(icon.titleColor).toBe(icon.parentColor)
     expect(icon.titleFontWeight).toBe('400')
+    expect(icon.verticalCenterDelta).toBeLessThan(0.5)
   } finally {
     await page.close()
   }

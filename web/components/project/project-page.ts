@@ -1456,6 +1456,12 @@ const projectStyles = css`
     font: var(--lv-type-body);
   }
 
+  .breadcrumb-header ol > li {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+  }
+
   .breadcrumb-separator {
     display: inline-flex;
     align-items: center;
