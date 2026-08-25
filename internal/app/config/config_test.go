@@ -333,15 +333,16 @@ func TestValidateProductionAuthRejectsPartialGenericOIDC(t *testing.T) {
 }
 
 func TestValidateProductionAuthRejectsInsecureOIDCURLs(t *testing.T) {
-	cfg := Config{
+	cfg := withAnalyticalTestDefaults(Config{
 		Production:         true,
+		PublicURL:          "https://app.example",
 		OIDCIssuerURL:      "http://issuer.example",
 		OIDCClientID:       "client-id",
 		OIDCSecret:         "client-secret",
 		OIDCCallbackURL:    "https://app.example/auth/oidc/callback",
 		CSRFKey:            "0123456789abcdef0123456789abcdef",
 		MetricsBearerToken: "0123456789abcdef0123456789abcdef",
-	}
+	})
 	if err := cfg.ValidateProductionAuth(); err == nil {
 		t.Fatal("expected insecure OIDC issuer URL to fail production auth validation")
 	}
@@ -350,6 +351,28 @@ func TestValidateProductionAuthRejectsInsecureOIDCURLs(t *testing.T) {
 	cfg.OIDCCallbackURL = "http://app.example/auth/oidc/callback"
 	if err := cfg.ValidateProductionAuth(); err == nil {
 		t.Fatal("expected insecure OIDC callback URL to fail production auth validation")
+	}
+
+	for _, test := range []struct {
+		name     string
+		issuer   string
+		callback string
+	}{
+		{name: "issuer userinfo", issuer: "https://client:secret@issuer.example", callback: "https://app.example/auth/oidc/callback"},
+		{name: "issuer query", issuer: "https://issuer.example/tenant?mode=prod", callback: "https://app.example/auth/oidc/callback"},
+		{name: "issuer fragment", issuer: "https://issuer.example/tenant#metadata", callback: "https://app.example/auth/oidc/callback"},
+		{name: "callback userinfo", issuer: "https://issuer.example", callback: "https://user:secret@app.example/auth/oidc/callback"},
+		{name: "callback query", issuer: "https://issuer.example", callback: "https://app.example/auth/oidc/callback?tenant=prod"},
+		{name: "callback fragment", issuer: "https://issuer.example", callback: "https://app.example/auth/oidc/callback#complete"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			invalid := cfg
+			invalid.OIDCIssuerURL = test.issuer
+			invalid.OIDCCallbackURL = test.callback
+			if err := invalid.ValidateProductionAuth(); err == nil {
+				t.Fatal("expected ambiguous OIDC URL to fail production auth validation")
+			}
+		})
 	}
 }
 
@@ -509,6 +532,17 @@ func TestValidateProductionAuthRejectsInsecureExternalMCPOAuthIssuer(t *testing.
 	cfg = withAnalyticalTestDefaults(cfg)
 	if err := cfg.ValidateProductionAuth(); err != nil {
 		t.Fatalf("secure external MCP OAuth issuer rejected: %v", err)
+	}
+	for _, issuer := range []string{
+		"https://client:secret@identity.example.com",
+		"https://identity.example.com/tenant?mode=prod",
+		"https://identity.example.com/tenant#metadata",
+	} {
+		invalid := cfg
+		invalid.MCPOAuthIssuerURL = issuer
+		if err := invalid.ValidateProductionAuth(); err == nil {
+			t.Fatalf("ambiguous external MCP OAuth issuer %q was accepted", issuer)
+		}
 	}
 }
 

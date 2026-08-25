@@ -2,6 +2,8 @@
 
 Local authentication supports self-hosted browser login and a controlled break-glass path. Local users are administrator-created; LeapView does not provide public self-registration.
 
+Local authentication is password-only. It is not an MFA-capable production profile. Deployments that require MFA for people must use an external provider that enforces it; see the [MFA security decision boundary](/docs/security/mfa-boundary). Do not retain a local account outside the documented break-glass controls and represent it as satisfying MFA.
+
 ## Enable the mode
 
 Configure local auth with production security requirements:

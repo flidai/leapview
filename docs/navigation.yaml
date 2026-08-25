@@ -300,6 +300,11 @@ sections:
         type: how-to
         summary: Connect an enterprise identity provider for browser login.
         source: articles/security/oidc.md
+      - slug: security/mfa-boundary
+        title: MFA security decision boundary
+        type: explanation
+        summary: Understand where MFA is enforced and what application-managed MFA requires.
+        source: articles/security/mfa-boundary.md
       - slug: security/scim
         title: SCIM provisioning
         type: how-to

@@ -35,7 +35,7 @@ LEAPVIEW_OIDC_CALLBACK_URL=https://dash.example.com/auth/entra/callback
 LEAPVIEW_OIDC_SCOPES="openid profile email"
 ```
 
-Production validation requires the issuer and callback to use HTTPS and treats issuer, client ID, client secret, and callback as an all-or-none set. Store the client secret in the deployment secret manager.
+Production validation requires the issuer and callback to use unambiguous HTTPS URLs and treats issuer, client ID, client secret, and callback as an all-or-none set. URL userinfo, query strings, and fragments are rejected; issuer paths remain supported for tenant-specific providers. Store the client secret in the deployment secret manager.
 
 ## Configure the reverse proxy
 
@@ -58,6 +58,8 @@ Test with a non-administrator user. An owner account can hide missing group prov
 ## Harden the provider
 
 Use provider MFA and conditional access. Restrict who may use the client, protect client-secret rotation, and monitor provider-side sign-in events. Keep redirect URI lists narrow and remove retired callbacks.
+
+LeapView currently delegates the MFA decision to the provider and does not authorize from `acr` or `amr` assurance claims. Read the [MFA security decision boundary](/docs/security/mfa-boundary) before describing the deployment's assurance level or requiring application-side step-up.
 
 When rotating the client secret, install the new value through the secret manager and coordinate restart without exposing either value. Verify login before revoking the old provider credential where the provider supports overlap.
 
