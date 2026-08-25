@@ -57,6 +57,7 @@
         }
       ],
       "legacyMarkers": [],
+      "legacyBackupVersions": [],
       "defaults": {
         "freshInstall": {
           "allowed": true,

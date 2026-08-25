@@ -26,6 +26,32 @@ func TestEmbeddedReleaseTransitionPolicyValidates(t *testing.T) {
 	}
 }
 
+func TestMarshalPolicyCanonicalizesEmptyArrays(t *testing.T) {
+	policy, err := EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy.Transitions = nil
+	for index := range policy.Releases {
+		policy.Releases[index].LegacyMarkers = nil
+		policy.Releases[index].LegacyBackupVersions = nil
+		policy.Releases[index].Defaults.FreshInstall.Requirements = nil
+		policy.Releases[index].Defaults.Upgrade.Requirements = nil
+		policy.Releases[index].Defaults.Rollback.Requirements = nil
+	}
+
+	document, err := MarshalPolicy(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(document), "null") {
+		t.Fatalf("policy contains a null array: %s", document)
+	}
+	if _, err := ParsePolicy(document); err != nil {
+		t.Fatalf("canonical policy does not satisfy its schema: %v", err)
+	}
+}
+
 func TestReleaseTransitionPolicyRejectsInvalidDocuments(t *testing.T) {
 	valid := testPolicyDocument(t)
 	for _, test := range []struct {

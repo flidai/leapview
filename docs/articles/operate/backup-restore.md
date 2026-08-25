@@ -29,6 +29,32 @@ For the local backend, the coordinated archive captures the local instance bound
 
 If DuckLake catalog or analytical data uses a remote backend, use its native consistent backup mechanism. Retain encryption keys and secret-manager recovery procedures separately from the encrypted data they unlock.
 
+### Record an executable S3 recovery point
+
+First stop writes and use the object store's native versioning, snapshot, replication, or inventory mechanism to select an immutable recovery point. The point must cover the exact S3 identity configured for LeapView: provider, credential-free endpoint, region, bucket, and prefix. Keep credentials in the deployment secret store; neither input below contains credentials.
+
+For example, record the selected point and a stable evidence key in `/srv/backups/source-external-recovery.json`:
+
+```json
+[
+  {
+    "role": "managed-data",
+    "recoveryPoint": "inventory-sha256:7c0d8f4e.../2026-07-16T02:00:00Z",
+    "evidenceKey": "managed-data-2026-07-16"
+  }
+]
+```
+
+Create the application archive only after that point exists:
+
+```sh
+leapview admin backup \
+  --out /srv/backups/leapview-2026-07-16.tar.gz \
+  --external-recovery-points /srv/backups/source-external-recovery.json
+```
+
+Manifest v2 binds that recovery point and evidence key to the configured provider, endpoint, region, bucket, and prefix. Backup fails when S3 is configured and the exact external point is absent.
+
 ## Validate continuously
 
 Automate these checks after backup creation:
@@ -44,16 +70,58 @@ Periodically restore into an isolated environment. Open representative project r
 
 ## Prepare a restore
 
-Choose a maintenance window, stop traffic and writes, validate the archive checksum, confirm version compatibility, and ensure enough space for both current and restored state. Preserve the current instance before replacement:
+Choose a maintenance window, stop traffic and writes, validate the archive checksum, confirm version compatibility, and ensure enough space for archive validation, restored state, and the current-state checkpoint. Do not restore over a running instance or unpack files manually.
+
+For an external-data restore, use this sequence:
+
+1. Read the selected backup's manifest or preflight output and identify every `externalPrerequisites` entry. Restore the native object-store recovery point into the exact provider, endpoint, region, bucket, and prefix named by the backup before replacing LeapView state.
+2. Independently verify the restored object-store point. Map each manifest evidence key to the exact verified recovery-point value in `/srv/backups/source-external-evidence.json`:
+
+   ```json
+   {
+     "managed-data-2026-07-16": "inventory-sha256:7c0d8f4e.../2026-07-16T02:00:00Z"
+   }
+   ```
+
+3. If the target home already contains an instance, select a new native recovery point for its current external store before restore. Record it in `/srv/backups/current-external-recovery.json`; this point belongs to the safety checkpoint, not the source backup:
+
+   ```json
+   [
+     {
+       "role": "managed-data",
+       "recoveryPoint": "inventory-sha256:91be36a2.../2026-07-17T01:30:00Z",
+       "evidenceKey": "managed-data-before-restore-2026-07-17"
+     }
+   ]
+   ```
+
+4. Run read-only preflight with the same archive, evidence, checkpoint path, and current recovery-point inputs intended for restore:
+
+   ```sh
+   leapview admin restore \
+     --from /srv/backups/leapview-2026-07-16.tar.gz \
+     --current-out /srv/backups/pre-restore-2026-07-17.tar.gz \
+     --external-evidence /srv/backups/source-external-evidence.json \
+     --current-external-recovery-points /srv/backups/current-external-recovery.json \
+     --preflight-only
+   ```
+
+   Continue only when the JSON plan has `allowed: true` and its archive digest, external prerequisites, target topology, checkpoint topology, capacity values, replacement inventory, and target-tree checksum match the incident plan. Preflight creates no checkpoint and mutates no target state.
+
+5. Run the restore with identical inputs, replacing only `--preflight-only` with `--confirm`:
 
 ```sh
 leapview admin restore \
-  --from /srv/backups/leapview-2026-07-16.tar \
-  --current-out /srv/backups/pre-restore-2026-07-17.tar \
+  --from /srv/backups/leapview-2026-07-16.tar.gz \
+  --current-out /srv/backups/pre-restore-2026-07-17.tar.gz \
+  --external-evidence /srv/backups/source-external-evidence.json \
+  --current-external-recovery-points /srv/backups/current-external-recovery.json \
   --confirm
 ```
 
-`--confirm` is required because the operation replaces configured instance state. Do not restore over a running instance by unpacking files manually.
+Actual restore reruns the same preflight validation before mutation and fails if the archive or target changed. It then writes the current-instance checkpoint with the current external topology before replacing state. Preserve both the checkpoint archive and its native external recovery point until the incident is closed.
+
+For a genuinely empty target, omit `--current-out` and `--current-external-recovery-points`; there is no current state to checkpoint. `--current-out -` creates and validates a temporary checkpoint and then discards it, so use it only when an independently durable rollback copy is explicitly unnecessary.
 
 ## Verify before reopening traffic
 

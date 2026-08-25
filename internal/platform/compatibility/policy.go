@@ -250,11 +250,33 @@ func MarshalPolicy(policy *Policy) ([]byte, error) {
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
-	contents, err := json.MarshalIndent(policy, "", "  ")
+	normalized := normalizePolicyArrays(policy)
+	contents, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode release-transition policy: %w", err)
 	}
 	return append(contents, '\n'), nil
+}
+
+func normalizePolicyArrays(policy *Policy) *Policy {
+	normalized := *policy
+	normalized.Releases = append([]Release{}, policy.Releases...)
+	for index := range normalized.Releases {
+		release := &normalized.Releases[index]
+		release.Artifacts = append([]Artifact{}, release.Artifacts...)
+		release.LegacyMarkers = append([]string{}, release.LegacyMarkers...)
+		release.LegacyBackupVersions = append([]int{}, release.LegacyBackupVersions...)
+		release.Defaults.FreshInstall.Requirements = append([]string{}, release.Defaults.FreshInstall.Requirements...)
+		release.Defaults.Upgrade.Requirements = append([]string{}, release.Defaults.Upgrade.Requirements...)
+		release.Defaults.Rollback.Requirements = append([]string{}, release.Defaults.Rollback.Requirements...)
+	}
+	normalized.Transitions = append([]Transition{}, policy.Transitions...)
+	for index := range normalized.Transitions {
+		transition := &normalized.Transitions[index]
+		transition.Platforms = append([]string{}, transition.Platforms...)
+		transition.Decision.Requirements = append([]string{}, transition.Decision.Requirements...)
+	}
+	return &normalized
 }
 
 // BindCandidate produces the runtime policy only after the admitted candidate
