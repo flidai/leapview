@@ -5,9 +5,11 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
+
 	"github.com/flidai/leapview/internal/access"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
-	"strings"
 )
 
 func (r *Repository) PrincipalByID(ctx context.Context, id string) (access.Principal, error) {
@@ -153,13 +155,16 @@ func (r *Repository) createLocalUser(ctx context.Context, input access.LocalUser
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		return access.LocalPasswordReset{}, err
 	}
-	password := strings.TrimSpace(input.Password)
+	password := input.Password
 	if password == "" {
 		generated, err := newTemporaryPassword()
 		if err != nil {
 			return access.LocalPasswordReset{}, err
 		}
 		password = generated
+	}
+	if err := access.ValidateLocalPassword(password); err != nil {
+		return access.LocalPasswordReset{}, err
 	}
 	verifier, err := newSecretVerifier(password)
 	if err != nil {
@@ -195,7 +200,7 @@ func (r *Repository) createLocalUser(ctx context.Context, input access.LocalUser
 
 func (r *Repository) VerifyLocalPassword(ctx context.Context, email, password string) (access.Principal, access.LocalCredential, error) {
 	email = access.NormalizeEmail(email)
-	if email == "" || strings.TrimSpace(password) == "" {
+	if email == "" || password == "" {
 		return access.Principal{}, access.LocalCredential{}, sql.ErrNoRows
 	}
 	principal, credential, verifier, err := r.localCredentialByEmail(ctx, email)
@@ -231,6 +236,9 @@ func (r *Repository) ResetLocalPassword(ctx context.Context, principalID string)
 	if err := r.upsertLocalCredential(ctx, principal.ID, verifier, true); err != nil {
 		return access.LocalPasswordReset{}, err
 	}
+	if err := r.revokeInteractiveSessionsByPrincipal(ctx, principal.ID); err != nil {
+		return access.LocalPasswordReset{}, err
+	}
 	return access.LocalPasswordReset{Principal: principal, Password: password}, nil
 }
 
@@ -239,8 +247,8 @@ func (r *Repository) ChangeLocalPassword(ctx context.Context, principalID, curre
 	if principalID == "" {
 		return access.LocalCredential{}, fmt.Errorf("principal id is required")
 	}
-	if strings.TrimSpace(newPassword) == "" {
-		return access.LocalCredential{}, fmt.Errorf("new password is required")
+	if err := access.ValidateLocalPassword(newPassword); err != nil {
+		return access.LocalCredential{}, err
 	}
 	principal, credential, verifier, err := r.localCredentialByPrincipalID(ctx, principalID)
 	if err != nil {
@@ -248,6 +256,9 @@ func (r *Repository) ChangeLocalPassword(ctx context.Context, principalID, curre
 	}
 	if principal.AccessDisabled() || !verifySecret(currentPassword, verifier) {
 		return access.LocalCredential{}, sql.ErrNoRows
+	}
+	if currentPassword == newPassword {
+		return access.LocalCredential{}, fmt.Errorf("%w: new password must differ from the current password", access.ErrLocalPasswordPolicy)
 	}
 	newVerifier, err := newSecretVerifier(newPassword)
 	if err != nil {
@@ -258,11 +269,32 @@ func (r *Repository) ChangeLocalPassword(ctx context.Context, principalID, curre
 	}); err != nil {
 		return access.LocalCredential{}, err
 	}
+	if err := r.revokeInteractiveSessionsByPrincipal(ctx, principalID); err != nil {
+		return access.LocalCredential{}, err
+	}
 	credential, err = r.LocalCredential(ctx, principalID)
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
 	return credential, nil
+}
+
+func (r *Repository) revokeInteractiveSessionsByPrincipal(ctx context.Context, principalID string) error {
+	if err := r.q.RevokeSessionsByPrincipal(ctx, principalID); err != nil {
+		return err
+	}
+	if err := r.q.DeactivateOAuthSessionsByPrincipal(ctx, principalID); err != nil {
+		return err
+	}
+	now := nullableTime(time.Now().UTC())
+	if err := r.q.DeactivateAuthoringCredentialsByPrincipal(ctx, platformdb.DeactivateAuthoringCredentialsByPrincipalParams{
+		ReplacedAt: now, PrincipalID: principalID,
+	}); err != nil {
+		return err
+	}
+	return r.q.RevokeAuthoringSessionsByPrincipal(ctx, platformdb.RevokeAuthoringSessionsByPrincipalParams{
+		RevokedAt: now, PrincipalID: principalID,
+	})
 }
 
 func (r *Repository) LocalCredential(ctx context.Context, principalID string) (access.LocalCredential, error) {

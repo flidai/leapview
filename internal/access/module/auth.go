@@ -314,7 +314,7 @@ func (a *Auth) Logout(w http.ResponseWriter, r *http.Request) {
 		}
 		recordAccessAudit(r, a.repo, "sign_out", principal.ID, "principal", principal.ID, "", "success", nil)
 	}
-	http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: a.cookieSecure})
+	http.SetCookie(w, a.expiredSessionCookie())
 	http.Redirect(w, r, "/", http.StatusFound)
 }
 
@@ -391,6 +391,14 @@ func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
 		return authAuditInput(r, "password.changed", principal.ID, "principal", principal.ID, "", "success", map[string]any{"provider": "local"}), mutationErr
 	})
 	if err != nil {
+		if errors.Is(err, access.ErrLocalPasswordPolicy) {
+			if wantsJSON(r) {
+				writeJSONError(w, err, http.StatusUnprocessableEntity)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusUnprocessableEntity)
+			return
+		}
 		if wantsJSON(r) {
 			writeJSONError(w, errUnauthorized, http.StatusUnauthorized)
 			return
@@ -398,11 +406,12 @@ func (a *Auth) LocalPassword(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errUnauthorized.Error(), http.StatusUnauthorized)
 		return
 	}
+	http.SetCookie(w, a.expiredSessionCookie())
 	if wantsJSON(r) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "changed"})
 		return
 	}
-	http.Redirect(w, r, a.authenticationRedirectTarget(w, r, "/"), http.StatusFound)
+	http.Redirect(w, r, "/login", http.StatusFound)
 }
 
 func (a *Auth) Principal(r *http.Request) (Principal, bool) {
@@ -652,6 +661,18 @@ func (a *Auth) sessionCookie(token string, expires time.Time) *http.Cookie {
 		Value:    token,
 		Path:     "/",
 		Expires:  expires,
+		HttpOnly: true,
+		SameSite: http.SameSiteLaxMode,
+		Secure:   a.cookieSecure,
+	}
+}
+
+func (a *Auth) expiredSessionCookie() *http.Cookie {
+	return &http.Cookie{
+		Name:     "lv_session",
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
 		Secure:   a.cookieSecure,

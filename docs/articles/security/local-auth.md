@@ -41,11 +41,13 @@ The generic Compose controller and Hetzner provider recipe wrap this command and
 
 A principal with grant-management authority can create a local user through the Admin / Principals surface or `POST /api/v1/principals`. The response returns a temporary password once. Deliver it out of band and require the user to replace it at first sign-in.
 
+New local passwords must contain at least 12 Unicode characters and no more than 1024 UTF-8 bytes. LeapView also rejects passwords found in a version-pinned offline corpus of common and breached credentials, including case variants. The check uses only embedded one-way hash prefixes: no password candidate or hash is sent to an external service. Passwords remain opaque values and are never trimmed or normalized before storage. A successful change revokes the principal's browser, desktop, CLI authoring, and MCP OAuth sessions; personal API tokens remain independent credentials and must be rotated or revoked separately when their exposure is suspected.
+
 Do not place temporary passwords in tickets, chat rooms, shell history, deployment output retained broadly, or automation variables. If delivery is uncertain, reset the password instead of forwarding the same value again.
 
 ## Reset access
 
-Use `POST /api/v1/principals/{principal}/password-reset` to issue a new temporary credential. LeapView never reveals the previous password. A reset should force a password change and produce an audit event.
+Use `POST /api/v1/principals/{principal}/password-reset` to issue a new temporary credential. LeapView never reveals the previous password. A reset forces a password change, revokes interactive sessions, and produces an audit event.
 
 When a principal is no longer trusted, deactivate the principal and revoke sessions and API tokens rather than only resetting the password. Review direct grants and group membership as part of offboarding.
 

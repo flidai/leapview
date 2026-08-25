@@ -316,6 +316,21 @@ func TestIdealAPIUsesBoundedInputsAndBodylessDeletes(t *testing.T) {
 	}
 }
 
+func TestCurrentPasswordChangeUsesBoundedCredentialInputs(t *testing.T) {
+	spec := managedDataOpenAPISpec(t)
+	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
+	request := openAPISchema(t, schemas, "CurrentPasswordChangeRequest")
+
+	current := schemaProperty(t, request, "currentPassword")
+	if current["minLength"] != float64(1) || current["maxLength"] != float64(1024) {
+		t.Fatalf("current password schema = %#v", current)
+	}
+	newPassword := schemaProperty(t, request, "newPassword")
+	if newPassword["minLength"] != float64(12) || newPassword["maxLength"] != float64(1024) {
+		t.Fatalf("new password schema = %#v", newPassword)
+	}
+}
+
 func firstOpenAPIRef(values []any) (string, bool) {
 	if len(values) == 0 {
 		return "", false

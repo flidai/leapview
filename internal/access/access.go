@@ -5,14 +5,40 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 )
 
 var ErrAuditTransaction = apigenfailure.New("audit_transaction", "audit transaction failed")
 var ErrPrincipalAlreadyExists = apigenfailure.New("conflict", "principal already exists")
+var ErrLocalPasswordPolicy = errors.New("local password does not meet policy")
+
+const (
+	MinimumLocalPasswordCharacters = 12
+	MaximumLocalPasswordBytes      = 1024
+)
+
+// ValidateLocalPassword applies the single local-credential boundary used by
+// browser and API password changes. Passwords are opaque: callers must not
+// trim or otherwise normalize them before validation or hashing.
+func ValidateLocalPassword(password string) error {
+	switch {
+	case !utf8.ValidString(password):
+		return fmt.Errorf("%w: password must be valid UTF-8", ErrLocalPasswordPolicy)
+	case utf8.RuneCountInString(password) < MinimumLocalPasswordCharacters:
+		return fmt.Errorf("%w: password must contain at least %d characters", ErrLocalPasswordPolicy, MinimumLocalPasswordCharacters)
+	case len(password) > MaximumLocalPasswordBytes:
+		return fmt.Errorf("%w: password must not exceed %d bytes", ErrLocalPasswordPolicy, MaximumLocalPasswordBytes)
+	case isCommonOrBreachedLocalPassword(password):
+		return fmt.Errorf("%w: password is too common or has appeared in a password breach", ErrLocalPasswordPolicy)
+	default:
+		return nil
+	}
+}
 
 // ErrForbidden is the canonical error for an authorization decision that
 // evaluated successfully but did not grant the requested privilege. Access
