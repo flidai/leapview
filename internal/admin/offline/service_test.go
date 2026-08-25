@@ -411,8 +411,9 @@ func TestS3BackupRequiresAndRecordsExactExternalRecoveryPoint(t *testing.T) {
 		DuckLakeData:    filepath.Join(home, "ducklake", "data"),
 		ArtifactDir:     filepath.Join(home, "artifacts"), RuntimeDir: filepath.Join(home, "runtime"),
 		ManagedDataDir: filepath.Join(home, "managed-data"), ManagedDataBackend: "s3",
+		ManagedDataS3Endpoint: "https://objects.example.test/", ManagedDataS3Region: "eu-west-1",
 		ManagedDataS3Bucket: "recovery-bucket", ManagedDataS3Prefix: "/tenant-a/managed-data/",
-	}, Dependencies{Locker: &fakeLocker{}, Archive: archive})
+	}, Dependencies{Locker: &fakeLocker{}, State: &fakeState{environment: "prod", existing: true}, Archive: archive})
 	if err := service.Backup(context.Background(), BackupRequest{Out: filepath.Join(t.TempDir(), "missing.tar.gz")}, io.Discard); err == nil || !strings.Contains(err.Error(), "exact external recovery point") {
 		t.Fatalf("backup without recovery point error = %v", err)
 	}
@@ -430,8 +431,24 @@ func TestS3BackupRequiresAndRecordsExactExternalRecoveryPoint(t *testing.T) {
 		t.Fatalf("storage topology = %#v", topology)
 	}
 	reference := topology.ExternalStores[0]
-	if reference.Role != "managed-data" || reference.Backend != "s3" || reference.Namespace != "recovery-bucket/tenant-a/managed-data" || reference.RecoveryPoint != "version-42" || reference.EvidenceKey != "managed-data-version" {
+	if reference.Role != "managed-data" || reference.Provider != "s3-compatible" || reference.Endpoint != "https://objects.example.test" ||
+		reference.Region != "eu-west-1" || reference.Bucket != "recovery-bucket" || reference.Prefix != "tenant-a/managed-data" ||
+		reference.RecoveryPoint != "version-42" || reference.EvidenceKey != "managed-data-version" {
 		t.Fatalf("external recovery reference = %#v", reference)
+	}
+	if err := service.Restore(context.Background(), RestoreRequest{
+		From: request.Out, CurrentBackup: filepath.Join(t.TempDir(), "current.tar.gz"), Confirm: true,
+		ExternalEvidence:              map[string]string{"managed-data-version": "version-42"},
+		CurrentExternalRecoveryPoints: request.ExternalRecoveryPoints,
+	}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := archive.restoreInstance.TargetStorageTopology.ExternalStores[0]; got.Provider != reference.Provider || got.Endpoint != reference.Endpoint || got.Region != reference.Region ||
+		got.Bucket != reference.Bucket || got.Prefix != reference.Prefix || got.RecoveryPoint != "" || got.EvidenceKey != "" {
+		t.Fatalf("restore target storage identity = %#v", got)
+	}
+	if got := archive.restoreInstance.CurrentStorageTopology.ExternalStores[0]; got != reference {
+		t.Fatalf("restore checkpoint topology = %#v, want %#v", got, reference)
 	}
 }
 

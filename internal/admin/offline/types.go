@@ -21,19 +21,21 @@ var ErrStateNotFound = errors.New("offline Admin state was not found")
 // Config is the normalized immutable process configuration required by
 // offline Admin use cases.
 type Config struct {
-	HomeDir             string
-	DBPath              string
-	Environment         string
-	Production          bool
-	BootstrapEmail      string
-	DuckLakeCatalog     string
-	DuckLakeData        string
-	ArtifactDir         string
-	RuntimeDir          string
-	ManagedDataDir      string
-	ManagedDataBackend  string
-	ManagedDataS3Bucket string
-	ManagedDataS3Prefix string
+	HomeDir               string
+	DBPath                string
+	Environment           string
+	Production            bool
+	BootstrapEmail        string
+	DuckLakeCatalog       string
+	DuckLakeData          string
+	ArtifactDir           string
+	RuntimeDir            string
+	ManagedDataDir        string
+	ManagedDataBackend    string
+	ManagedDataS3Endpoint string
+	ManagedDataS3Region   string
+	ManagedDataS3Bucket   string
+	ManagedDataS3Prefix   string
 }
 
 type InitializeRequest struct {
@@ -103,12 +105,13 @@ type ExternalRecoveryPoint struct {
 }
 
 type RestoreRequest struct {
-	From             string
-	CurrentBackup    string
-	Confirm          bool
-	DatabaseOnly     bool
-	PreflightOnly    bool
-	ExternalEvidence map[string]string
+	From                          string
+	CurrentBackup                 string
+	Confirm                       bool
+	DatabaseOnly                  bool
+	PreflightOnly                 bool
+	ExternalEvidence              map[string]string
+	CurrentExternalRecoveryPoints []ExternalRecoveryPoint
 }
 
 // PhysicalPoolBootstrapRequest is the offline operator input for the
@@ -272,20 +275,25 @@ type BackupStorageTopology struct {
 
 type BackupExternalStoreReference struct {
 	Role          string
-	Backend       string
-	Namespace     string
+	Provider      string
+	Endpoint      string
+	Region        string
+	Bucket        string
+	Prefix        string
 	RecoveryPoint string
 	EvidenceKey   string
 }
 
 type RestoreOptions struct {
-	Path                 string
-	Reader               io.Reader
-	CurrentBackup        string
-	DiscardCurrentBackup bool
-	ExpectedEnvironment  string
-	ResetRelativePaths   []string
-	ExternalEvidence     map[string]string
+	Path                   string
+	Reader                 io.Reader
+	CurrentBackup          string
+	DiscardCurrentBackup   bool
+	ExpectedEnvironment    string
+	ResetRelativePaths     []string
+	ExternalEvidence       map[string]string
+	TargetStorageTopology  BackupStorageTopology
+	CurrentStorageTopology BackupStorageTopology
 }
 
 type RestorePreflightResult struct {

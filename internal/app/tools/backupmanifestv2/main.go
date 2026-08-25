@@ -205,15 +205,33 @@ func run(evidenceDir string) error {
 	}); err != nil {
 		return err
 	}
-	if err := addArchiveFixture("external evidence", platform.RestorePreflightExternalEvidence, func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
+	setExternalStorage := func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
 		value.StorageTopology.ManagedData = "external"
-		value.StorageTopology.ExternalStores = []platform.InstanceBackupExternalStoreReference{{Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version"}}
-	}); err != nil {
+		value.StorageTopology.ExternalStores = []platform.InstanceBackupExternalStoreReference{{Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com", Region: "us-east-1", Bucket: "bucket", Prefix: "prefix", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version"}}
+	}
+	if err := addArchiveFixture("external storage identity mismatch", platform.RestorePreflightStorageTopology, setExternalStorage); err != nil {
 		return err
 	}
+	if err := addArchiveFixture("external evidence", platform.RestorePreflightExternalEvidence, setExternalStorage); err != nil {
+		return err
+	}
+	externalTopology := platform.InstanceBackupStorageTopology{
+		ControlPlane: "local", ManagedData: "external", DuckLake: "local",
+		ExternalStores: []platform.InstanceBackupExternalStoreReference{{
+			Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com",
+			Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
+			RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
+		}},
+	}
+	targetTopology := externalTopology
+	targetTopology.ExternalStores = append([]platform.InstanceBackupExternalStoreReference{}, externalTopology.ExternalStores...)
+	targetTopology.ExternalStores[0].RecoveryPoint = ""
+	targetTopology.ExternalStores[0].EvidenceKey = ""
+	fixtures[len(fixtures)-1].options.TargetStorageTopology = targetTopology
+	fixtures[len(fixtures)-1].options.CurrentStorageTopology = externalTopology
 	if err := addArchiveFixture("external reference secret", platform.RestorePreflightUnsupportedManifest, func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
 		value.StorageTopology.ManagedData = "external"
-		value.StorageTopology.ExternalStores = []platform.InstanceBackupExternalStoreReference{{Role: "managed-data", Backend: "s3", Namespace: "s3://access:secret@bucket/prefix", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version"}}
+		value.StorageTopology.ExternalStores = []platform.InstanceBackupExternalStoreReference{{Role: "managed-data", Provider: "s3-compatible", Endpoint: "https://access:secret@storage.example", Region: "us-east-1", Bucket: "bucket", Prefix: "prefix", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version"}}
 	}); err != nil {
 		return err
 	}

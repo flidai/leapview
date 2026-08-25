@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"path"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -81,6 +81,14 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 		ExpectedEnvironment: environment,
 		ExternalEvidence:    request.ExternalEvidence,
 	}
+	options.TargetStorageTopology, err = service.storageTopology(nil, false)
+	if err != nil {
+		return err
+	}
+	options.CurrentStorageTopology, err = service.storageTopology(request.CurrentExternalRecoveryPoints, false)
+	if err != nil {
+		return err
+	}
 	if request.From == "-" {
 		options.Path = ""
 		options.Reader = in
@@ -135,6 +143,10 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 }
 
 func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (BackupStorageTopology, error) {
+	return service.storageTopology(points, true)
+}
+
+func (service *Service) storageTopology(points []ExternalRecoveryPoint, requireRecoveryPoint bool) (BackupStorageTopology, error) {
 	topology := BackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []BackupExternalStoreReference{}}
 	backend := strings.TrimSpace(service.config.ManagedDataBackend)
 	switch backend {
@@ -144,10 +156,31 @@ func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (B
 		}
 		return topology, nil
 	case "s3":
+		region := strings.TrimSpace(service.config.ManagedDataS3Region)
+		if region == "" {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured region")
+		}
 		bucket := strings.TrimSpace(service.config.ManagedDataS3Bucket)
 		if bucket == "" {
-			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires a configured bucket")
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured bucket")
 		}
+		provider := "aws"
+		endpoint := strings.TrimSpace(service.config.ManagedDataS3Endpoint)
+		if endpoint == "" {
+			endpoint = "https://s3." + region + ".amazonaws.com"
+		} else {
+			provider = "s3-compatible"
+		}
+		parsedEndpoint, err := url.Parse(endpoint)
+		if err != nil || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || parsedEndpoint.Host == "" ||
+			parsedEndpoint.User != nil || parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" ||
+			(parsedEndpoint.Path != "" && parsedEndpoint.Path != "/") {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data endpoint must be a credential-free HTTP(S) origin")
+		}
+		parsedEndpoint.Scheme = strings.ToLower(parsedEndpoint.Scheme)
+		parsedEndpoint.Host = strings.ToLower(parsedEndpoint.Host)
+		parsedEndpoint.Path = ""
+		endpoint = parsedEndpoint.String()
 		var managed *ExternalRecoveryPoint
 		for index := range points {
 			if points[index].Role != "managed-data" {
@@ -158,18 +191,19 @@ func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (B
 			}
 			managed = &points[index]
 		}
-		if managed == nil || strings.TrimSpace(managed.RecoveryPoint) == "" || strings.TrimSpace(managed.EvidenceKey) == "" {
+		if requireRecoveryPoint && (managed == nil || strings.TrimSpace(managed.RecoveryPoint) == "" || strings.TrimSpace(managed.EvidenceKey) == "") {
 			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires an exact external recovery point and evidence key")
 		}
-		namespace := bucket
-		if prefix := strings.Trim(strings.TrimSpace(service.config.ManagedDataS3Prefix), "/"); prefix != "" {
-			namespace = path.Join(bucket, prefix)
-		}
+		prefix := strings.Trim(strings.TrimSpace(service.config.ManagedDataS3Prefix), "/")
 		topology.ManagedData = "external"
-		topology.ExternalStores = []BackupExternalStoreReference{{
-			Role: "managed-data", Backend: "s3", Namespace: namespace,
-			RecoveryPoint: strings.TrimSpace(managed.RecoveryPoint), EvidenceKey: strings.TrimSpace(managed.EvidenceKey),
-		}}
+		reference := BackupExternalStoreReference{
+			Role: "managed-data", Provider: provider, Endpoint: endpoint, Region: region, Bucket: bucket, Prefix: prefix,
+		}
+		if managed != nil {
+			reference.RecoveryPoint = strings.TrimSpace(managed.RecoveryPoint)
+			reference.EvidenceKey = strings.TrimSpace(managed.EvidenceKey)
+		}
+		topology.ExternalStores = []BackupExternalStoreReference{reference}
 		return topology, nil
 	default:
 		return BackupStorageTopology{}, fmt.Errorf("unsupported managed-data backend %q", backend)

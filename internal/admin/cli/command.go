@@ -25,19 +25,20 @@ const (
 
 // Options are the values accepted by offline Admin operations.
 type Options struct {
-	Apply             bool
-	AuditDays         int
-	QueryDays         int
-	ArchivedAgentDays int
-	AuthStateDays     int
-	BackupOut         string
-	RestoreFrom       string
-	RestoreBefore     string
-	ConfirmRestore    bool
-	DatabaseOnly      bool
-	PreflightOnly     bool
-	ExternalRecovery  string
-	ExternalEvidence  string
+	Apply                   bool
+	AuditDays               int
+	QueryDays               int
+	ArchivedAgentDays       int
+	AuthStateDays           int
+	BackupOut               string
+	RestoreFrom             string
+	RestoreBefore           string
+	ConfirmRestore          bool
+	DatabaseOnly            bool
+	PreflightOnly           bool
+	ExternalRecovery        string
+	CurrentExternalRecovery string
+	ExternalEvidence        string
 }
 
 // Operations are the offline administrative use cases exposed by the CLI.
@@ -142,10 +143,14 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 		if err := readOptionalJSONFile(values.ExternalEvidence, &externalEvidence); err != nil {
 			return fmt.Errorf("read external recovery evidence: %w", err)
 		}
+		var currentRecoveryPoints []adminoffline.ExternalRecoveryPoint
+		if err := readOptionalJSONFile(values.CurrentExternalRecovery, &currentRecoveryPoints); err != nil {
+			return fmt.Errorf("read current external recovery points: %w", err)
+		}
 		return operations.Restore(ctx, adminoffline.RestoreRequest{
 			From: values.RestoreFrom, CurrentBackup: values.RestoreBefore,
 			Confirm: values.ConfirmRestore, DatabaseOnly: values.DatabaseOnly, PreflightOnly: values.PreflightOnly,
-			ExternalEvidence: externalEvidence,
+			ExternalEvidence: externalEvidence, CurrentExternalRecoveryPoints: currentRecoveryPoints,
 		}, command.InOrStdin(), command.OutOrStdout())
 	})
 	restore.Flags().StringVar(&values.RestoreFrom, "from", "", "backup archive path to restore")
@@ -154,6 +159,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	restore.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "restore only the platform SQLite database")
 	restore.Flags().BoolVar(&values.PreflightOnly, "preflight-only", false, "emit the read-only restore plan without creating a checkpoint or replacing target state")
 	restore.Flags().StringVar(&values.ExternalEvidence, "external-evidence", "", "JSON map of evidence keys to verified external recovery points")
+	restore.Flags().StringVar(&values.CurrentExternalRecovery, "current-external-recovery-points", "", "JSON file containing exact recovery points for the pre-restore safety checkpoint")
 
 	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore)
 	delivery := deliveryPoolCommand(ctx, operations)

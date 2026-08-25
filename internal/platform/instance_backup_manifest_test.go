@@ -13,6 +13,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"slices"
 	"strings"
@@ -131,6 +132,7 @@ func TestRestorePreflightRejectsBeforeTargetMutation(t *testing.T) {
 	ctx := context.Background()
 	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
 	target := filepath.Join(t.TempDir(), "target")
+	createCurrentInstanceState(t, ctx, target, "prod")
 	writeTestFile(t, filepath.Join(target, "preserve.txt"), "unchanged")
 	before := hashTestTree(t, target)
 
@@ -151,6 +153,7 @@ func TestRestorePreflightDetectsMemberChecksumAndStaleTarget(t *testing.T) {
 	ctx := context.Background()
 	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
 	target := filepath.Join(t.TempDir(), "target")
+	createCurrentInstanceState(t, ctx, target, "prod")
 	writeTestFile(t, filepath.Join(target, "state.txt"), "before")
 	options := InstanceRestorePreflightOptions{
 		ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "prod",
@@ -206,13 +209,68 @@ func TestRestorePreflightAndRestoreShareDestinationValidation(t *testing.T) {
 	}
 }
 
+func TestRestorePreflightAndRestoreShareArchiveAndSymlinkValidation(t *testing.T) {
+	ctx := context.Background()
+	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
+	tests := []struct {
+		name  string
+		setup func(*testing.T) (string, string, string)
+		want  string
+	}{
+		{name: "archive inside target", want: "must not be inside", setup: func(t *testing.T) (string, string, string) {
+			target := filepath.Join(t.TempDir(), "target")
+			inside := filepath.Join(target, "backup.tar.gz")
+			writeTestBytes(t, inside, readTestBytes(t, archivePath))
+			return target, inside, filepath.Join(t.TempDir(), "current.tar.gz")
+		}},
+		{name: "archive symlink", want: "archive must not contain a symlink", setup: func(t *testing.T) (string, string, string) {
+			link := filepath.Join(t.TempDir(), "backup.tar.gz")
+			if err := os.Symlink(archivePath, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return filepath.Join(t.TempDir(), "target"), link, ""
+		}},
+		{name: "checkpoint symlink", want: "current instance backup path must not contain a symlink", setup: func(t *testing.T) (string, string, string) {
+			target := filepath.Join(t.TempDir(), "target")
+			createCurrentInstanceState(t, ctx, target, "prod")
+			checkpointTarget := filepath.Join(t.TempDir(), "existing.tar.gz")
+			writeTestFile(t, checkpointTarget, "existing")
+			link := filepath.Join(t.TempDir(), "current.tar.gz")
+			if err := os.Symlink(checkpointTarget, link); err != nil {
+				t.Skipf("symlinks unavailable: %v", err)
+			}
+			return target, archivePath, link
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			target, archive, checkpoint := test.setup(t)
+			plan, preflightErr := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+				ArchivePath: archive, TargetHomeDir: target, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			})
+			if preflightErr == nil || plan.ReasonCode != RestorePreflightArchiveInvalid || !strings.Contains(preflightErr.Error(), test.want) {
+				t.Fatalf("preflight plan=%#v err=%v", plan, preflightErr)
+			}
+			restoreErr := RestoreInstance(ctx, InstanceRestoreOptions{
+				TargetHomeDir: target, BackupPath: archive, CurrentBackupOut: checkpoint,
+				ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+			})
+			if restoreErr == nil || !strings.Contains(restoreErr.Error(), test.want) {
+				t.Fatalf("restore error = %v", restoreErr)
+			}
+		})
+	}
+}
+
 func TestRestoreConsumesExactExternalRecoveryEvidence(t *testing.T) {
 	ctx := context.Background()
 	baseArchive, identity := createManifestV2TestArchive(t, ctx, "prod")
 	manifest := readBackupManifestFromArchive(t, baseArchive)
 	manifest.StorageTopology.ManagedData = "external"
 	manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
-		Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix",
+		Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com",
+		Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
 		RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
 	}}
 	entries := manifestV2TestEntries(t, baseArchive, manifest)
@@ -223,7 +281,7 @@ func TestRestoreConsumesExactExternalRecoveryEvidence(t *testing.T) {
 	missingTarget := filepath.Join(t.TempDir(), "missing-evidence-target")
 	err := RestoreInstance(ctx, InstanceRestoreOptions{
 		TargetHomeDir: missingTarget, BackupPath: archivePath, ExpectedEnvironment: "prod",
-		TargetReleaseIdentity: identity,
+		TargetReleaseIdentity: identity, TargetStorageTopology: backupStorageIdentity(manifest.StorageTopology),
 	})
 	if err == nil || !strings.Contains(err.Error(), RestorePreflightExternalEvidence) {
 		t.Fatalf("restore without external evidence error = %v", err)
@@ -235,13 +293,91 @@ func TestRestoreConsumesExactExternalRecoveryEvidence(t *testing.T) {
 	target := filepath.Join(t.TempDir(), "target")
 	if err := RestoreInstance(ctx, InstanceRestoreOptions{
 		TargetHomeDir: target, BackupPath: archivePath, ExpectedEnvironment: "prod",
-		TargetReleaseIdentity: identity,
-		ExternalEvidence:      map[string]string{"managed-data-version": "version-42"},
+		TargetReleaseIdentity: identity, TargetStorageTopology: backupStorageIdentity(manifest.StorageTopology),
+		ExternalEvidence: map[string]string{"managed-data-version": "version-42"},
 	}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(filepath.Join(target, instanceBackupDBName)); err != nil {
 		t.Fatalf("restored database missing: %v", err)
+	}
+
+	for name, mutate := range map[string]func(*InstanceBackupExternalStoreReference){
+		"provider": func(reference *InstanceBackupExternalStoreReference) { reference.Provider = "s3-compatible" },
+		"endpoint": func(reference *InstanceBackupExternalStoreReference) {
+			reference.Endpoint = "https://objects.example.test"
+		},
+		"region": func(reference *InstanceBackupExternalStoreReference) { reference.Region = "eu-west-1" },
+		"bucket": func(reference *InstanceBackupExternalStoreReference) { reference.Bucket = "other-bucket" },
+		"prefix": func(reference *InstanceBackupExternalStoreReference) { reference.Prefix = "other-prefix" },
+	} {
+		t.Run("rejects mismatched "+name, func(t *testing.T) {
+			targetTopology := backupStorageIdentity(manifest.StorageTopology)
+			mutate(&targetTopology.ExternalStores[0])
+			mismatchedTarget := filepath.Join(t.TempDir(), "target")
+			plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+				ArchivePath: archivePath, TargetHomeDir: mismatchedTarget, ExpectedEnvironment: "prod",
+				TargetReleaseIdentity: identity, TargetStorageTopology: targetTopology,
+				ExternalEvidence: map[string]string{"managed-data-version": "version-42"},
+			})
+			if err == nil || plan.ReasonCode != RestorePreflightStorageTopology {
+				t.Fatalf("plan=%#v err=%v", plan, err)
+			}
+			if _, statErr := os.Stat(mismatchedTarget); !os.IsNotExist(statErr) {
+				t.Fatalf("topology rejection mutated target: %v", statErr)
+			}
+		})
+	}
+}
+
+func TestRestoreSafetyCheckpointPreservesExactExternalTopology(t *testing.T) {
+	ctx := context.Background()
+	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
+	manifest := readBackupManifestFromArchive(t, archivePath)
+	manifest.StorageTopology = externalTestTopology("source-version-42", "source-managed-data-version")
+	entries := manifestV2TestEntries(t, archivePath, manifest)
+	entries[0].body = marshalManifestV2ForTest(t, manifest)
+	externalArchive := filepath.Join(t.TempDir(), "external.tar.gz")
+	writeInstanceBackupArchive(t, externalArchive, entries)
+
+	target := filepath.Join(t.TempDir(), "target")
+	createCurrentInstanceState(t, ctx, target, "prod")
+	writeTestFile(t, filepath.Join(target, "current-state.txt"), "checkpoint-me")
+	checkpointTopology := externalTestTopology("current-version-7", "current-managed-data-version")
+	checkpoint := filepath.Join(t.TempDir(), "current.tar.gz")
+	options := InstanceRestoreOptions{
+		TargetHomeDir: target, BackupPath: externalArchive, CurrentBackupOut: checkpoint,
+		ExpectedEnvironment: "prod", TargetReleaseIdentity: identity,
+		TargetStorageTopology: backupStorageIdentity(manifest.StorageTopology), CurrentStorageTopology: checkpointTopology,
+		ExternalEvidence: map[string]string{"source-managed-data-version": "source-version-42"},
+	}
+	plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+		ArchivePath: options.BackupPath, TargetHomeDir: options.TargetHomeDir, CurrentBackupOut: options.CurrentBackupOut,
+		ExpectedEnvironment: options.ExpectedEnvironment, TargetReleaseIdentity: options.TargetReleaseIdentity,
+		TargetStorageTopology: options.TargetStorageTopology, CurrentStorageTopology: options.CurrentStorageTopology,
+		ExternalEvidence: options.ExternalEvidence,
+	})
+	if err != nil || plan.CheckpointRequiredBytes == 0 || plan.CheckpointAvailableBytes == 0 || plan.RequiredBytes == 0 {
+		t.Fatalf("checkpoint preflight plan=%#v err=%v", plan, err)
+	}
+	options.ValidatedPlan = &plan
+	if err := RestoreInstance(ctx, options); err != nil {
+		t.Fatal(err)
+	}
+	checkpointManifest := readBackupManifestFromArchive(t, checkpoint)
+	if !reflect.DeepEqual(checkpointManifest.StorageTopology, normalizeBackupStorageTopology(checkpointTopology)) {
+		t.Fatalf("checkpoint topology = %#v, want %#v", checkpointManifest.StorageTopology, checkpointTopology)
+	}
+}
+
+func externalTestTopology(recoveryPoint, evidenceKey string) InstanceBackupStorageTopology {
+	return InstanceBackupStorageTopology{
+		ControlPlane: "local", ManagedData: "external", DuckLake: "local",
+		ExternalStores: []InstanceBackupExternalStoreReference{{
+			Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com",
+			Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
+			RecoveryPoint: recoveryPoint, EvidenceKey: evidenceKey,
+		}},
 	}
 }
 
@@ -358,21 +494,24 @@ func TestRestorePreflightNegativeFixtureMatrixIsNonMutating(t *testing.T) {
 		}},
 		{name: "local topology with external reference", reason: RestorePreflightUnsupportedManifest, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
 			manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
-				Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix",
+				Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com",
+				Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
 				RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
 			}}
 		}},
 		{name: "external evidence", reason: RestorePreflightExternalEvidence, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
 			manifest.StorageTopology.ManagedData = "external"
 			manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
-				Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix",
+				Role: "managed-data", Provider: "aws", Endpoint: "https://s3.us-east-1.amazonaws.com",
+				Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
 				RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
 			}}
 		}},
 		{name: "external reference secret", reason: RestorePreflightUnsupportedManifest, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
 			manifest.StorageTopology.ManagedData = "external"
 			manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
-				Role: "managed-data", Backend: "s3", Namespace: "s3://access:secret@bucket/prefix",
+				Role: "managed-data", Provider: "s3-compatible", Endpoint: "https://access:secret@storage.example",
+				Region: "us-east-1", Bucket: "bucket", Prefix: "prefix",
 				RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
 			}}
 		}},
@@ -401,12 +540,20 @@ func TestRestorePreflightNegativeFixtureMatrixIsNonMutating(t *testing.T) {
 				}
 			}
 			target := filepath.Join(t.TempDir(), "target")
+			createCurrentInstanceState(t, ctx, target, "prod")
 			writeTestFile(t, filepath.Join(target, "state.txt"), "unchanged")
 			before := hashTestTree(t, target)
+			targetTopology := InstanceBackupStorageTopology{}
+			currentTopology := InstanceBackupStorageTopology{}
+			if test.reason == RestorePreflightExternalEvidence {
+				targetTopology = backupStorageIdentity(manifest.StorageTopology)
+				currentTopology = manifest.StorageTopology
+			}
 			plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
 				ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "prod",
 				TargetReleaseIdentity: identity, ExclusiveLockHeld: true, MinimumFreeBytes: test.minimum,
-				CurrentBackupOut: filepath.Join(t.TempDir(), "before.tar.gz"),
+				CurrentBackupOut:      filepath.Join(t.TempDir(), "before.tar.gz"),
+				TargetStorageTopology: targetTopology, CurrentStorageTopology: currentTopology,
 			})
 			if err == nil || plan.ReasonCode != test.reason {
 				t.Fatalf("plan=%#v err=%v, want %s", plan, err, test.reason)
@@ -565,6 +712,21 @@ func createManifestV2TestArchive(t *testing.T, ctx context.Context, environment 
 	return archivePath, identity
 }
 
+func createCurrentInstanceState(t *testing.T, ctx context.Context, home, environment string) {
+	t.Helper()
+	store, err := Open(ctx, filepath.Join(home, instanceBackupDBName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BindInstanceEnvironment(ctx, environment); err != nil {
+		_ = store.Close()
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testBackupReleaseIdentity(version, digestCharacter string) compatibility.ReleaseIdentity {
 	return compatibility.ReleaseIdentity{
 		ReleaseID: "v" + version, Version: version, SourceRevision: strings.Repeat("a", 40),
@@ -607,6 +769,16 @@ func hashTestTree(t *testing.T, root string) string {
 		t.Fatal(err)
 	}
 	return digest
+}
+
+func writeTestBytes(t *testing.T, path string, contents []byte) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, contents, 0o600); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func readBackupManifestFromArchive(t *testing.T, archivePath string) InstanceBackupManifestV2 {

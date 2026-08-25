@@ -846,6 +846,16 @@ func TestRestoreInstanceRejectsBackupFromAnotherEnvironmentBeforeReplacement(t *
 		t.Fatal(err)
 	}
 	targetHome := t.TempDir()
+	target, err := Open(ctx, filepath.Join(targetHome, instanceBackupDBName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := target.BindInstanceEnvironment(ctx, "staging"); err != nil {
+		t.Fatal(err)
+	}
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
 	marker := filepath.Join(targetHome, "current-state")
 	if err := os.WriteFile(marker, []byte("preserve"), 0o600); err != nil {
 		t.Fatal(err)

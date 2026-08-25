@@ -565,7 +565,8 @@ func (archive instanceArchive) BackupInstance(ctx context.Context, options admin
 	external := make([]platform.InstanceBackupExternalStoreReference, len(options.StorageTopology.ExternalStores))
 	for index, reference := range options.StorageTopology.ExternalStores {
 		external[index] = platform.InstanceBackupExternalStoreReference{
-			Role: reference.Role, Backend: reference.Backend, Namespace: reference.Namespace,
+			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
+			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
 			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
 		}
 	}
@@ -628,18 +629,20 @@ func (archive instanceArchive) RestoreInstance(ctx context.Context, options admi
 		defer os.Remove(current)
 	}
 	platformOptions := platform.InstanceRestoreOptions{
-		TargetHomeDir:         archive.home,
-		BackupPath:            options.Path,
-		CurrentBackupOut:      current,
-		DiscardCurrentBackup:  options.DiscardCurrentBackup,
-		ExpectedEnvironment:   options.ExpectedEnvironment,
-		PreserveRelativeFile:  instancelock.FileName,
-		ResetRelativePaths:    options.ResetRelativePaths,
-		ExclusiveLockHeld:     true,
-		RequireExclusiveLock:  true,
-		TargetReleaseIdentity: releaseIdentity,
-		ExternalEvidence:      options.ExternalEvidence,
-		TransitionPolicy:      policy,
+		TargetHomeDir:          archive.home,
+		BackupPath:             options.Path,
+		CurrentBackupOut:       current,
+		DiscardCurrentBackup:   options.DiscardCurrentBackup,
+		ExpectedEnvironment:    options.ExpectedEnvironment,
+		PreserveRelativeFile:   instancelock.FileName,
+		ResetRelativePaths:     options.ResetRelativePaths,
+		ExclusiveLockHeld:      true,
+		RequireExclusiveLock:   true,
+		TargetReleaseIdentity:  releaseIdentity,
+		ExternalEvidence:       options.ExternalEvidence,
+		TargetStorageTopology:  platformStorageTopology(options.TargetStorageTopology),
+		CurrentStorageTopology: platformStorageTopology(options.CurrentStorageTopology),
+		TransitionPolicy:       policy,
 	}
 	if options.Reader != nil {
 		platformOptions.BackupPath = ""
@@ -666,13 +669,22 @@ func (archive instanceArchive) PreflightInstance(ctx context.Context, options ad
 		defer os.Remove(temporary)
 		path = temporary
 	}
+	current := options.CurrentBackup
+	if options.DiscardCurrentBackup {
+		current, err = securefs.UnusedTemporaryPath(filepath.Dir(archive.home), platform.InstanceRestoreCheckpointPattern)
+		if err != nil {
+			return adminoffline.RestorePreflightResult{}, err
+		}
+	}
 	plan, preflightErr := platform.PreflightInstanceRestore(ctx, platform.InstanceRestorePreflightOptions{
 		ArchivePath: path, TargetHomeDir: archive.home, ExpectedEnvironment: options.ExpectedEnvironment,
 		PreserveRelativeFile: instancelock.FileName, ResetRelativePaths: options.ResetRelativePaths,
 		ExclusiveLockHeld: true, RequireExclusiveLock: true,
-		CurrentBackupOut: options.CurrentBackup, DiscardCurrentBackup: options.DiscardCurrentBackup,
+		CurrentBackupOut: current, DiscardCurrentBackup: options.DiscardCurrentBackup,
 		TargetReleaseIdentity: releaseIdentity, ExternalEvidence: options.ExternalEvidence,
-		TransitionPolicy: policy,
+		TargetStorageTopology:  platformStorageTopology(options.TargetStorageTopology),
+		CurrentStorageTopology: platformStorageTopology(options.CurrentStorageTopology),
+		TransitionPolicy:       policy,
 	})
 	document, err := json.MarshalIndent(plan, "", "  ")
 	if err != nil {
@@ -680,6 +692,21 @@ func (archive instanceArchive) PreflightInstance(ctx context.Context, options ad
 	}
 	document = append(document, '\n')
 	return adminoffline.RestorePreflightResult{Document: document}, preflightErr
+}
+
+func platformStorageTopology(topology adminoffline.BackupStorageTopology) platform.InstanceBackupStorageTopology {
+	external := make([]platform.InstanceBackupExternalStoreReference, len(topology.ExternalStores))
+	for index, reference := range topology.ExternalStores {
+		external[index] = platform.InstanceBackupExternalStoreReference{
+			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
+			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
+			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
+		}
+	}
+	return platform.InstanceBackupStorageTopology{
+		ControlPlane: topology.ControlPlane, ManagedData: topology.ManagedData,
+		DuckLake: topology.DuckLake, ExternalStores: external,
+	}
 }
 
 func runtimeArchiveReleaseIdentity() (compatibility.ReleaseIdentity, error) {

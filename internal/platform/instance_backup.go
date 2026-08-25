@@ -54,20 +54,22 @@ type InstanceBackupOptions struct {
 }
 
 type InstanceRestoreOptions struct {
-	TargetHomeDir         string
-	BackupPath            string
-	CurrentBackupOut      string
-	DiscardCurrentBackup  bool
-	ExpectedEnvironment   string
-	PreserveRelativeFile  string
-	ResetRelativePaths    []string
-	TargetReleaseIdentity compatibility.ReleaseIdentity
-	ExternalEvidence      map[string]string
-	MinimumFreeBytes      uint64
-	ExclusiveLockHeld     bool
-	RequireExclusiveLock  bool
-	TransitionPolicy      *compatibility.Policy
-	ValidatedPlan         *InstanceRestorePreflightPlan
+	TargetHomeDir          string
+	BackupPath             string
+	CurrentBackupOut       string
+	DiscardCurrentBackup   bool
+	ExpectedEnvironment    string
+	PreserveRelativeFile   string
+	ResetRelativePaths     []string
+	TargetReleaseIdentity  compatibility.ReleaseIdentity
+	TargetStorageTopology  InstanceBackupStorageTopology
+	CurrentStorageTopology InstanceBackupStorageTopology
+	ExternalEvidence       map[string]string
+	MinimumFreeBytes       uint64
+	ExclusiveLockHeld      bool
+	RequireExclusiveLock   bool
+	TransitionPolicy       *compatibility.Policy
+	ValidatedPlan          *InstanceRestorePreflightPlan
 }
 
 type instanceBackupManifest struct {
@@ -454,22 +456,13 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	if targetHome == "" {
 		return fmt.Errorf("instance restore target home dir is required")
 	}
-	targetAbs, err := filepath.Abs(targetHome)
-	if err != nil {
-		return err
-	}
-	backupAbs, err := filepath.Abs(backupPath)
-	if err != nil {
-		return err
-	}
-	if pathWithin(targetAbs, backupAbs) {
-		return fmt.Errorf("instance restore backup path must not be inside target home dir")
-	}
 	validated, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
-		ArchivePath: backupAbs, TargetHomeDir: targetAbs,
-		ExpectedEnvironment:   options.ExpectedEnvironment,
-		TargetReleaseIdentity: options.TargetReleaseIdentity,
-		ExternalEvidence:      options.ExternalEvidence, MinimumFreeBytes: options.MinimumFreeBytes,
+		ArchivePath: backupPath, TargetHomeDir: targetHome,
+		ExpectedEnvironment:    options.ExpectedEnvironment,
+		TargetReleaseIdentity:  options.TargetReleaseIdentity,
+		TargetStorageTopology:  options.TargetStorageTopology,
+		CurrentStorageTopology: options.CurrentStorageTopology,
+		ExternalEvidence:       options.ExternalEvidence, MinimumFreeBytes: options.MinimumFreeBytes,
 		PreserveRelativeFile: options.PreserveRelativeFile, ResetRelativePaths: options.ResetRelativePaths,
 		ExclusiveLockHeld: options.ExclusiveLockHeld, RequireExclusiveLock: options.RequireExclusiveLock,
 		CurrentBackupOut: options.CurrentBackupOut, DiscardCurrentBackup: options.DiscardCurrentBackup,
@@ -478,6 +471,7 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	if err != nil {
 		return err
 	}
+	backupAbs, targetAbs := validated.ArchivePath, validated.TargetHome
 	if supplied := options.ValidatedPlan; supplied != nil && !sameRestorePreflightIdentity(*supplied, validated) {
 		reason := RestorePreflightStaleArchive
 		if supplied.ArchivePath == validated.ArchivePath && supplied.ArchiveSHA256 == validated.ArchiveSHA256 {
@@ -489,7 +483,7 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	if !plan.Allowed {
 		return &InstanceRestorePreflightError{ReasonCode: plan.ReasonCode, Remediation: plan.Remediation, Err: fmt.Errorf("validated plan is denied")}
 	}
-	if err := verifyRestorePlanInputs(*plan, backupAbs, targetAbs, options.PreserveRelativeFile); err != nil {
+	if err := verifyRestorePlanInputs(*plan, backupAbs, targetAbs, options.CurrentBackupOut, options.PreserveRelativeFile); err != nil {
 		return err
 	}
 	file, err := os.Open(backupAbs)
@@ -500,15 +494,23 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	return restoreInstanceFromReader(ctx, options, file, *plan)
 }
 
-func validateInstanceRestoreDestination(targetHome, currentBackupOut string, discardCurrentBackup bool, preserveRelativeFile string) (string, string, bool, bool, error) {
+func validateInstanceRestoreDestination(targetHome, archivePath, currentBackupOut string, discardCurrentBackup bool, preserveRelativeFile string) (string, string, bool, bool, error) {
 	targetAbs, err := filepath.Abs(strings.TrimSpace(targetHome))
 	if err != nil {
 		return "", "", false, false, err
 	}
-	if info, statErr := os.Lstat(targetAbs); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return "", "", false, false, fmt.Errorf("instance restore target home must not be a symlink")
-	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return "", "", false, false, statErr
+	if err := rejectSymlinkPath(targetAbs, "instance restore target home"); err != nil {
+		return "", "", false, false, err
+	}
+	archiveAbs, err := filepath.Abs(strings.TrimSpace(archivePath))
+	if err != nil {
+		return "", "", false, false, err
+	}
+	if err := rejectSymlinkPath(archiveAbs, "instance restore archive"); err != nil {
+		return "", "", false, false, err
+	}
+	if pathWithin(targetAbs, archiveAbs) {
+		return "", "", false, false, fmt.Errorf("instance restore backup path must not be inside target home dir")
 	}
 	currentBackupOut = strings.TrimSpace(currentBackupOut)
 	if discardCurrentBackup && currentBackupOut == "" {
@@ -523,6 +525,9 @@ func validateInstanceRestoreDestination(targetHome, currentBackupOut string, dis
 		if pathWithin(targetAbs, currentBackupAbs) {
 			return "", "", false, false, fmt.Errorf("current instance backup path must not be inside target home dir")
 		}
+		if err := rejectSymlinkPath(currentBackupAbs, "current instance backup path"); err != nil {
+			return "", "", false, false, err
+		}
 	}
 	exists, nonEmpty, err := dirExistsNonEmptyExcept(targetAbs, preserveRelativeFile)
 	if err != nil {
@@ -531,15 +536,36 @@ func validateInstanceRestoreDestination(targetHome, currentBackupOut string, dis
 	return targetAbs, currentBackupAbs, exists, nonEmpty, nil
 }
 
+func rejectSymlinkPath(absolutePath, label string) error {
+	current := filepath.Clean(absolutePath)
+	for {
+		info, err := os.Lstat(current)
+		if err == nil && info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s must not contain a symlink: %s", label, current)
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return nil
+		}
+		current = parent
+	}
+}
+
 func sameRestorePreflightIdentity(left, right InstanceRestorePreflightPlan) bool {
 	return left.Allowed == right.Allowed && left.BackupID == right.BackupID &&
 		left.ManifestVersion == right.ManifestVersion && left.ManifestSHA256 == right.ManifestSHA256 &&
 		left.PolicyVersion == right.PolicyVersion && left.ArchivePath == right.ArchivePath &&
 		left.ArchiveSHA256 == right.ArchiveSHA256 && left.TargetHome == right.TargetHome &&
+		left.CheckpointPath == right.CheckpointPath &&
 		left.TargetTreeSHA256 == right.TargetTreeSHA256 && left.Environment == right.Environment &&
 		left.ArchiveRelease == right.ArchiveRelease && left.TargetRelease == right.TargetRelease &&
 		reflect.DeepEqual(left.Replace, right.Replace) && reflect.DeepEqual(left.Preserve, right.Preserve) &&
-		reflect.DeepEqual(left.Reset, right.Reset) && reflect.DeepEqual(left.ExternalPrerequisites, right.ExternalPrerequisites)
+		reflect.DeepEqual(left.Reset, right.Reset) && reflect.DeepEqual(left.ExternalPrerequisites, right.ExternalPrerequisites) &&
+		reflect.DeepEqual(left.TargetStorageTopology, right.TargetStorageTopology) &&
+		reflect.DeepEqual(left.CheckpointTopology, right.CheckpointTopology)
 }
 
 // RestoreInstanceFromReader validates and restores a full-instance archive
@@ -587,7 +613,7 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 	if targetHome == "" {
 		return fmt.Errorf("instance restore target home dir is required")
 	}
-	targetAbs, currentBackupAbs, exists, nonEmpty, err := validateInstanceRestoreDestination(targetHome, currentBackupOut, options.DiscardCurrentBackup, preserveRelativeFile)
+	targetAbs, currentBackupAbs, exists, nonEmpty, err := validateInstanceRestoreDestination(targetHome, options.BackupPath, currentBackupOut, options.DiscardCurrentBackup, preserveRelativeFile)
 	if err != nil {
 		return err
 	}
@@ -595,10 +621,6 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 	if err != nil {
 		return err
 	}
-	if options.DiscardCurrentBackup {
-		currentBackupAbs = filepath.Join(filepath.Dir(currentBackupAbs), fmt.Sprintf(".leapview-current-backup-%s-%d.tar.gz", targetID, time.Now().UnixNano()))
-	}
-
 	parent := filepath.Dir(targetAbs)
 	if err := os.MkdirAll(parent, 0o755); err != nil {
 		return err
@@ -668,6 +690,7 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 			Environment:          options.ExpectedEnvironment,
 			ReleaseIdentity:      options.TargetReleaseIdentity,
 			TransitionPolicy:     options.TransitionPolicy,
+			StorageTopology:      options.CurrentStorageTopology,
 		}); err != nil {
 			return fmt.Errorf("backup current instance: %w", err)
 		}

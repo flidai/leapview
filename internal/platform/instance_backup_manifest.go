@@ -19,6 +19,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -46,6 +47,7 @@ const (
 	RestorePreflightStaleArchive        = "restore.preflight.denied.stale_archive"
 	RestorePreflightStaleTarget         = "restore.preflight.denied.stale_target"
 	RestorePreflightStoppedRequired     = "restore.preflight.denied.exclusive_lock_required"
+	RestorePreflightStorageTopology     = "restore.preflight.denied.storage_topology_mismatch"
 	RestorePreflightUnsafePath          = "restore.preflight.denied.unsafe_path"
 	RestorePreflightUnsupportedEntry    = "restore.preflight.denied.unsupported_entry"
 	RestorePreflightUnsupportedManifest = "restore.preflight.denied.unsupported_manifest"
@@ -64,8 +66,11 @@ type InstanceBackupStorageTopology struct {
 
 type InstanceBackupExternalStoreReference struct {
 	Role          string `json:"role"`
-	Backend       string `json:"backend"`
-	Namespace     string `json:"namespace"`
+	Provider      string `json:"provider"`
+	Endpoint      string `json:"endpoint"`
+	Region        string `json:"region"`
+	Bucket        string `json:"bucket"`
+	Prefix        string `json:"prefix"`
 	RecoveryPoint string `json:"recoveryPoint"`
 	EvidenceKey   string `json:"evidenceKey"`
 }
@@ -100,46 +105,53 @@ type instanceBackupStagedMember struct {
 }
 
 type InstanceRestorePreflightOptions struct {
-	ArchivePath           string
-	TargetHomeDir         string
-	ExpectedEnvironment   string
-	TargetReleaseIdentity compatibility.ReleaseIdentity
-	ExternalEvidence      map[string]string
-	MinimumFreeBytes      uint64
-	PreserveRelativeFile  string
-	ResetRelativePaths    []string
-	ExclusiveLockHeld     bool
-	RequireExclusiveLock  bool
-	CurrentBackupOut      string
-	DiscardCurrentBackup  bool
-	TransitionPolicy      *compatibility.Policy
+	ArchivePath            string
+	TargetHomeDir          string
+	ExpectedEnvironment    string
+	TargetReleaseIdentity  compatibility.ReleaseIdentity
+	TargetStorageTopology  InstanceBackupStorageTopology
+	CurrentStorageTopology InstanceBackupStorageTopology
+	ExternalEvidence       map[string]string
+	MinimumFreeBytes       uint64
+	PreserveRelativeFile   string
+	ResetRelativePaths     []string
+	ExclusiveLockHeld      bool
+	RequireExclusiveLock   bool
+	CurrentBackupOut       string
+	DiscardCurrentBackup   bool
+	TransitionPolicy       *compatibility.Policy
 }
 
 type InstanceRestorePreflightPlan struct {
-	SchemaVersion         int                                    `json:"schemaVersion"`
-	Allowed               bool                                   `json:"allowed"`
-	ReasonCode            string                                 `json:"reasonCode"`
-	Remediation           string                                 `json:"remediation,omitempty"`
-	BackupID              string                                 `json:"backupId,omitempty"`
-	ManifestVersion       int                                    `json:"manifestVersion"`
-	ManifestSHA256        string                                 `json:"manifestSha256,omitempty"`
-	PolicyVersion         string                                 `json:"transitionPolicyVersion,omitempty"`
-	ArchivePath           string                                 `json:"archivePath"`
-	ArchiveSHA256         string                                 `json:"archiveSha256,omitempty"`
-	ArchiveSize           int64                                  `json:"archiveSize,omitempty"`
-	TargetHome            string                                 `json:"targetHome"`
-	TargetTreeSHA256      string                                 `json:"targetTreeSha256,omitempty"`
-	Environment           string                                 `json:"environment,omitempty"`
-	ArchiveRelease        compatibility.ReleaseIdentity          `json:"archiveRelease,omitempty"`
-	TargetRelease         compatibility.ReleaseIdentity          `json:"targetRelease,omitempty"`
-	Replace               []string                               `json:"replace"`
-	Preserve              []string                               `json:"preserve"`
-	Reset                 []string                               `json:"reset"`
-	ExternalPrerequisites []InstanceBackupExternalStoreReference `json:"externalPrerequisites"`
-	RequiredBytes         uint64                                 `json:"requiredBytes"`
-	AvailableBytes        uint64                                 `json:"availableBytes"`
-	ValidationBufferBytes int                                    `json:"validationBufferBytes"`
-	ExclusiveLockVerified bool                                   `json:"exclusiveLockVerified"`
+	SchemaVersion            int                                    `json:"schemaVersion"`
+	Allowed                  bool                                   `json:"allowed"`
+	ReasonCode               string                                 `json:"reasonCode"`
+	Remediation              string                                 `json:"remediation,omitempty"`
+	BackupID                 string                                 `json:"backupId,omitempty"`
+	ManifestVersion          int                                    `json:"manifestVersion"`
+	ManifestSHA256           string                                 `json:"manifestSha256,omitempty"`
+	PolicyVersion            string                                 `json:"transitionPolicyVersion,omitempty"`
+	ArchivePath              string                                 `json:"archivePath"`
+	ArchiveSHA256            string                                 `json:"archiveSha256,omitempty"`
+	ArchiveSize              int64                                  `json:"archiveSize,omitempty"`
+	TargetHome               string                                 `json:"targetHome"`
+	CheckpointPath           string                                 `json:"checkpointPath,omitempty"`
+	TargetTreeSHA256         string                                 `json:"targetTreeSha256,omitempty"`
+	Environment              string                                 `json:"environment,omitempty"`
+	ArchiveRelease           compatibility.ReleaseIdentity          `json:"archiveRelease,omitempty"`
+	TargetRelease            compatibility.ReleaseIdentity          `json:"targetRelease,omitempty"`
+	Replace                  []string                               `json:"replace"`
+	Preserve                 []string                               `json:"preserve"`
+	Reset                    []string                               `json:"reset"`
+	ExternalPrerequisites    []InstanceBackupExternalStoreReference `json:"externalPrerequisites"`
+	TargetStorageTopology    InstanceBackupStorageTopology          `json:"targetStorageTopology"`
+	CheckpointTopology       InstanceBackupStorageTopology          `json:"checkpointStorageTopology"`
+	RequiredBytes            uint64                                 `json:"requiredBytes"`
+	AvailableBytes           uint64                                 `json:"availableBytes"`
+	CheckpointRequiredBytes  uint64                                 `json:"checkpointRequiredBytes"`
+	CheckpointAvailableBytes uint64                                 `json:"checkpointAvailableBytes"`
+	ValidationBufferBytes    int                                    `json:"validationBufferBytes"`
+	ExclusiveLockVerified    bool                                   `json:"exclusiveLockVerified"`
 }
 
 type InstanceRestorePreflightError struct {
@@ -200,13 +212,26 @@ func normalizeBackupStorageTopology(topology InstanceBackupStorageTopology) Inst
 	}
 	if topology.ExternalStores == nil {
 		topology.ExternalStores = []InstanceBackupExternalStoreReference{}
+	} else {
+		external := make([]InstanceBackupExternalStoreReference, len(topology.ExternalStores))
+		copy(external, topology.ExternalStores)
+		topology.ExternalStores = external
 	}
 	sort.Slice(topology.ExternalStores, func(i, j int) bool {
 		left, right := topology.ExternalStores[i], topology.ExternalStores[j]
-		return strings.Join([]string{left.Role, left.Backend, left.Namespace, left.RecoveryPoint, left.EvidenceKey}, "\x00") <
-			strings.Join([]string{right.Role, right.Backend, right.Namespace, right.RecoveryPoint, right.EvidenceKey}, "\x00")
+		return externalStoreReferenceKey(left) < externalStoreReferenceKey(right)
 	})
 	return topology
+}
+
+func externalStoreIdentityKey(reference InstanceBackupExternalStoreReference) string {
+	return strings.Join([]string{
+		reference.Role, reference.Provider, reference.Endpoint, reference.Region, reference.Bucket, reference.Prefix,
+	}, "\x00")
+}
+
+func externalStoreReferenceKey(reference InstanceBackupExternalStoreReference) string {
+	return strings.Join([]string{externalStoreIdentityKey(reference), reference.RecoveryPoint, reference.EvidenceKey}, "\x00")
 }
 
 func newBackupID() (string, error) {
@@ -454,7 +479,7 @@ func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 	externalKeys := make(map[string]struct{}, len(manifest.StorageTopology.ExternalStores))
 	previousExternal := ""
 	for _, external := range manifest.StorageTopology.ExternalStores {
-		key := strings.Join([]string{external.Role, external.Backend, external.Namespace, external.RecoveryPoint, external.EvidenceKey}, "\x00")
+		key := externalStoreReferenceKey(external)
 		if previousExternal != "" && key < previousExternal {
 			return fmt.Errorf("external store references are not sorted")
 		}
@@ -510,16 +535,38 @@ func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 }
 
 func validateExternalRecoveryReference(reference InstanceBackupExternalStoreReference) error {
+	if err := validateExternalStoreIdentity(reference); err != nil {
+		return err
+	}
 	for field, value := range map[string]string{
-		"role": reference.Role, "backend": reference.Backend, "namespace": reference.Namespace,
 		"recovery point": reference.RecoveryPoint, "evidence key": reference.EvidenceKey,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("external store %s is required", field)
 		}
 	}
+	return validateExternalStoreSafeValues(reference)
+}
+
+func validateExternalStoreIdentity(reference InstanceBackupExternalStoreReference) error {
 	for field, value := range map[string]string{
-		"namespace": reference.Namespace, "recovery point": reference.RecoveryPoint,
+		"role": reference.Role, "provider": reference.Provider, "endpoint": reference.Endpoint,
+		"region": reference.Region, "bucket": reference.Bucket,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("external store %s is required", field)
+		}
+	}
+	if reference.Provider != "aws" && reference.Provider != "s3-compatible" {
+		return fmt.Errorf("external store provider %q is unsupported", reference.Provider)
+	}
+	return validateExternalStoreSafeValues(reference)
+}
+
+func validateExternalStoreSafeValues(reference InstanceBackupExternalStoreReference) error {
+	for field, value := range map[string]string{
+		"endpoint": reference.Endpoint, "region": reference.Region, "bucket": reference.Bucket,
+		"prefix": reference.Prefix, "recovery point": reference.RecoveryPoint,
 	} {
 		if strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
 			return fmt.Errorf("external store %s contains control characters", field)
@@ -530,14 +577,48 @@ func validateExternalRecoveryReference(reference InstanceBackupExternalStoreRefe
 				return fmt.Errorf("external store %s contains secret-bearing material", field)
 			}
 		}
-		if strings.Contains(value, "://") {
+		if field == "endpoint" {
 			parsed, err := url.Parse(value)
-			if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
-				return fmt.Errorf("external store %s must be a credential-free canonical reference", field)
+			if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" ||
+				parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || parsed.Path != "" {
+				return fmt.Errorf("external store endpoint must be a credential-free canonical origin")
 			}
 		}
 	}
+	if reference.Prefix != strings.Trim(reference.Prefix, "/") || strings.Contains(reference.Prefix, "//") ||
+		(reference.Prefix != "" && (path.Clean(reference.Prefix) != reference.Prefix || path.IsAbs(reference.Prefix) || strings.HasPrefix(reference.Prefix, "../"))) {
+		return fmt.Errorf("external store prefix must be a canonical relative object prefix")
+	}
 	return nil
+}
+
+func backupStorageIdentity(topology InstanceBackupStorageTopology) InstanceBackupStorageTopology {
+	topology = normalizeBackupStorageTopology(topology)
+	for index := range topology.ExternalStores {
+		topology.ExternalStores[index].RecoveryPoint = ""
+		topology.ExternalStores[index].EvidenceKey = ""
+	}
+	sort.Slice(topology.ExternalStores, func(i, j int) bool {
+		return externalStoreIdentityKey(topology.ExternalStores[i]) < externalStoreIdentityKey(topology.ExternalStores[j])
+	})
+	return topology
+}
+
+func validateBackupStorageIdentity(topology InstanceBackupStorageTopology) error {
+	topology = backupStorageIdentity(topology)
+	if err := validateBackupStorageTopology(topology); err != nil {
+		return err
+	}
+	for _, external := range topology.ExternalStores {
+		if err := validateExternalStoreIdentity(external); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sameBackupStorageIdentity(left, right InstanceBackupStorageTopology) bool {
+	return reflect.DeepEqual(backupStorageIdentity(left), backupStorageIdentity(right))
 }
 
 func validateBackupStorageTopology(topology InstanceBackupStorageTopology) error {
@@ -595,6 +676,8 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		ExternalPrerequisites: []InstanceBackupExternalStoreReference{},
 		ValidationBufferBytes: InstanceBackupValidationBufferSize,
 		ExclusiveLockVerified: options.ExclusiveLockHeld,
+		TargetStorageTopology: normalizeBackupStorageTopology(options.TargetStorageTopology),
+		CheckpointTopology:    normalizeBackupStorageTopology(options.CurrentStorageTopology),
 	}
 	if archivePath == "" || targetHome == "" {
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide an archive path and target home", fmt.Errorf("archive path and target home are required"))
@@ -611,12 +694,29 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a valid target home", err)
 	}
 	plan.ArchivePath, plan.TargetHome = archiveAbs, targetAbs
-	_, _, exists, nonEmpty, err := validateInstanceRestoreDestination(targetAbs, options.CurrentBackupOut, options.DiscardCurrentBackup, options.PreserveRelativeFile)
+	_, currentBackupAbs, exists, nonEmpty, err := validateInstanceRestoreDestination(targetAbs, archiveAbs, options.CurrentBackupOut, options.DiscardCurrentBackup, options.PreserveRelativeFile)
 	if err != nil {
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "correct the target and current-backup paths before restore", err)
 	}
 	if exists && nonEmpty && strings.TrimSpace(options.CurrentBackupOut) == "" {
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a current instance backup path before replacing non-empty state", fmt.Errorf("current instance backup path is required when restoring over an existing home dir"))
+	}
+	plan.CheckpointPath = currentBackupAbs
+	if err := validateBackupStorageIdentity(plan.TargetStorageTopology); err != nil {
+		return preflightDenied(plan, RestorePreflightStorageTopology, "configure the exact target storage provider, endpoint, region, bucket, and prefix", err)
+	}
+	if exists && nonEmpty {
+		if err := validateBackupStorageTopology(plan.CheckpointTopology); err != nil {
+			return preflightDenied(plan, RestorePreflightStorageTopology, "supply exact external recovery references for the pre-restore safety checkpoint", err)
+		}
+		for _, external := range plan.CheckpointTopology.ExternalStores {
+			if err := validateExternalRecoveryReference(external); err != nil {
+				return preflightDenied(plan, RestorePreflightStorageTopology, "supply exact external recovery references for the pre-restore safety checkpoint", err)
+			}
+		}
+		if !sameBackupStorageIdentity(plan.TargetStorageTopology, plan.CheckpointTopology) {
+			return preflightDenied(plan, RestorePreflightStorageTopology, "checkpoint the current instance against its configured external store identity", fmt.Errorf("current checkpoint topology does not match target storage topology"))
+		}
 	}
 	file, err := os.Open(archiveAbs)
 	if err != nil {
@@ -694,6 +794,9 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	plan.Environment = manifest.Environment
 	plan.ArchiveRelease = manifest.ReleaseIdentity
 	plan.ExternalPrerequisites = append([]InstanceBackupExternalStoreReference{}, manifest.StorageTopology.ExternalStores...)
+	if !sameBackupStorageIdentity(manifest.StorageTopology, plan.TargetStorageTopology) {
+		return preflightDenied(plan, RestorePreflightStorageTopology, "restore only after configuring the exact external provider, endpoint, region, bucket, and prefix recorded by the backup", fmt.Errorf("archive storage topology does not match target storage topology"))
+	}
 	expectedMembers := make(map[string]InstanceBackupMember, len(manifest.Members))
 	for _, member := range manifest.Members {
 		expectedMembers[member.Path] = member
@@ -709,18 +812,68 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		_ = gzr.Close()
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "make the target tree readable for preflight", err)
 	}
-	if targetBytes > math.MaxUint64-plan.RequiredBytes || options.MinimumFreeBytes > math.MaxUint64-plan.RequiredBytes-targetBytes {
+	currentDatabaseBytes := uint64(0)
+	if exists && nonEmpty {
+		if info, statErr := os.Stat(filepath.Join(targetAbs, instanceBackupDBName)); statErr != nil {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightArchiveInvalid, "repair the current control-plane database before checkpointing", statErr)
+		} else if !info.Mode().IsRegular() {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightArchiveInvalid, "repair the current control-plane database before checkpointing", fmt.Errorf("current database is not a regular file"))
+		} else {
+			currentDatabaseBytes = uint64(info.Size())
+		}
+	}
+	if currentDatabaseBytes > math.MaxUint64-plan.RequiredBytes || options.MinimumFreeBytes > math.MaxUint64-plan.RequiredBytes-currentDatabaseBytes {
 		_ = gzr.Close()
 		return preflightDenied(plan, RestorePreflightInsufficientDisk, "use representable disk requirements", fmt.Errorf("required byte count overflows uint64"))
 	}
-	plan.RequiredBytes += targetBytes + options.MinimumFreeBytes
+	plan.RequiredBytes += currentDatabaseBytes + options.MinimumFreeBytes
 	capacityPath, err := existingInstancePath(filepath.Dir(targetAbs))
 	if err != nil {
 		_ = gzr.Close()
 		return preflightDenied(plan, RestorePreflightInsufficientDisk, "make target filesystem capacity measurable", err)
 	}
 	plan.AvailableBytes, err = instanceFilesystemFreeBytes(capacityPath)
-	if err != nil || plan.AvailableBytes < plan.RequiredBytes {
+	if err != nil {
+		_ = gzr.Close()
+		return preflightDenied(plan, RestorePreflightInsufficientDisk, "make target filesystem capacity measurable", err)
+	}
+	if exists && nonEmpty {
+		plan.CheckpointRequiredBytes, err = instanceArchiveCapacityBound(targetBytes)
+		if err != nil {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "use representable checkpoint disk requirements", err)
+		}
+		checkpointPath, pathErr := existingInstancePath(filepath.Dir(currentBackupAbs))
+		if pathErr != nil {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "make checkpoint filesystem capacity measurable", pathErr)
+		}
+		plan.CheckpointAvailableBytes, err = instanceFilesystemFreeBytes(checkpointPath)
+		if err != nil {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "make checkpoint filesystem capacity measurable", err)
+		}
+		targetFilesystem, targetIdentityErr := instanceFilesystemIdentity(capacityPath)
+		checkpointFilesystem, checkpointIdentityErr := instanceFilesystemIdentity(checkpointPath)
+		if targetIdentityErr != nil || checkpointIdentityErr != nil {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "identify restore and checkpoint filesystems", errors.Join(targetIdentityErr, checkpointIdentityErr))
+		}
+		if targetFilesystem == checkpointFilesystem {
+			if plan.CheckpointRequiredBytes > math.MaxUint64-plan.RequiredBytes {
+				_ = gzr.Close()
+				return preflightDenied(plan, RestorePreflightInsufficientDisk, "use representable combined disk requirements", fmt.Errorf("required byte count overflows uint64"))
+			}
+			plan.RequiredBytes += plan.CheckpointRequiredBytes
+		}
+		if plan.CheckpointAvailableBytes < plan.CheckpointRequiredBytes {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "free enough checkpoint disk space before archive decompression", fmt.Errorf("checkpoint available bytes %d are below required bytes %d", plan.CheckpointAvailableBytes, plan.CheckpointRequiredBytes))
+		}
+	}
+	if plan.AvailableBytes < plan.RequiredBytes {
 		if err == nil {
 			err = fmt.Errorf("available bytes %d are below required bytes %d", plan.AvailableBytes, plan.RequiredBytes)
 		}
@@ -891,6 +1044,15 @@ func existingInstancePath(value string) (string, error) {
 		}
 		value = parent
 	}
+}
+
+func instanceArchiveCapacityBound(uncompressedBytes uint64) (uint64, error) {
+	const fixedArchiveOverhead = uint64(1 << 20)
+	compressionOverhead := uncompressedBytes/16 + 1
+	if compressionOverhead > math.MaxUint64-uncompressedBytes || fixedArchiveOverhead > math.MaxUint64-uncompressedBytes-compressionOverhead {
+		return 0, fmt.Errorf("checkpoint archive capacity overflows uint64")
+	}
+	return uncompressedBytes + compressionOverhead + fixedArchiveOverhead, nil
 }
 
 func preflightLegacyV1(ctx context.Context, plan InstanceRestorePreflightPlan, file *os.File, target string, options InstanceRestorePreflightOptions) (InstanceRestorePreflightPlan, error) {
@@ -1175,7 +1337,7 @@ func instanceTreeRegularBytes(root, ignoredRelativeFile string) (uint64, error) 
 	return total, err
 }
 
-func verifyRestorePlanInputs(plan InstanceRestorePreflightPlan, archivePath, targetHome, ignoredRelativeFile string) error {
+func verifyRestorePlanInputs(plan InstanceRestorePreflightPlan, archivePath, targetHome, checkpointPath, ignoredRelativeFile string) error {
 	archiveAbs, err := filepath.Abs(archivePath)
 	if err != nil {
 		return err
@@ -1189,6 +1351,16 @@ func verifyRestorePlanInputs(plan InstanceRestorePreflightPlan, archivePath, tar
 	}
 	if targetAbs != plan.TargetHome {
 		return &InstanceRestorePreflightError{ReasonCode: RestorePreflightStaleTarget, Remediation: "rerun preflight for the selected target", Err: fmt.Errorf("target path changed after preflight")}
+	}
+	checkpointAbs := ""
+	if strings.TrimSpace(checkpointPath) != "" {
+		checkpointAbs, err = filepath.Abs(checkpointPath)
+		if err != nil {
+			return err
+		}
+	}
+	if checkpointAbs != plan.CheckpointPath {
+		return &InstanceRestorePreflightError{ReasonCode: RestorePreflightStaleTarget, Remediation: "rerun preflight for the selected safety checkpoint", Err: fmt.Errorf("checkpoint path changed after preflight")}
 	}
 	archiveDigest, err := fileSHA256(archivePath)
 	if err != nil {

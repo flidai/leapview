@@ -2,7 +2,12 @@
 
 package platform
 
-import "golang.org/x/sys/windows"
+import (
+	"path/filepath"
+	"strings"
+
+	"golang.org/x/sys/windows"
+)
 
 func instanceFilesystemFreeBytes(path string) (uint64, error) {
 	pointer, err := windows.UTF16PtrFromString(path)
@@ -14,4 +19,12 @@ func instanceFilesystemFreeBytes(path string) (uint64, error) {
 		return 0, err
 	}
 	return available, nil
+}
+
+func instanceFilesystemIdentity(path string) (string, error) {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	return strings.ToLower(filepath.VolumeName(abs)), nil
 }

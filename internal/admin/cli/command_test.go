@@ -12,11 +12,12 @@ import (
 )
 
 type fakeOperations struct {
-	called           string
-	options          Options
-	requeueEvent     string
-	recoveryPoints   []adminoffline.ExternalRecoveryPoint
-	externalEvidence map[string]string
+	called                string
+	options               Options
+	requeueEvent          string
+	recoveryPoints        []adminoffline.ExternalRecoveryPoint
+	currentRecoveryPoints []adminoffline.ExternalRecoveryPoint
+	externalEvidence      map[string]string
 }
 
 func (operations *fakeOperations) AuditOutbox(_ context.Context, request adminoffline.AuditOutboxRequest, _ io.Writer) error {
@@ -56,6 +57,7 @@ func (operations *fakeOperations) Restore(_ context.Context, request adminofflin
 	operations.options.ConfirmRestore, operations.options.DatabaseOnly = request.Confirm, request.DatabaseOnly
 	operations.options.PreflightOnly = request.PreflightOnly
 	operations.externalEvidence = request.ExternalEvidence
+	operations.currentRecoveryPoints = request.CurrentExternalRecoveryPoints
 	return nil
 }
 func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error {
@@ -158,12 +160,15 @@ func TestCommandLoadsExternalRecoveryInputs(t *testing.T) {
 		t.Fatalf("external recovery points = %#v", operations.recoveryPoints)
 	}
 	command = Command(context.Background(), operations)
-	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only", "--external-evidence", evidencePath})
+	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only", "--external-evidence", evidencePath, "--current-external-recovery-points", recoveryPath})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if operations.externalEvidence["managed-data-version"] != "version-42" {
 		t.Fatalf("external evidence = %#v", operations.externalEvidence)
+	}
+	if len(operations.currentRecoveryPoints) != 1 || operations.currentRecoveryPoints[0].RecoveryPoint != "version-42" {
+		t.Fatalf("current external recovery points = %#v", operations.currentRecoveryPoints)
 	}
 }
 
