@@ -3,6 +3,7 @@ package adminoffline
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -546,7 +547,7 @@ func (archive instanceArchive) BackupDatabase(ctx context.Context, options admin
 func (archive instanceArchive) BackupInstance(ctx context.Context, options adminoffline.BackupOptions) error {
 	platformOptions := platform.InstanceBackupOptions{
 		HomeDir: archive.home, DBPath: archive.dbPath, OutPath: options.Path,
-		ExcludeRelativePaths: options.ExcludeRelativePaths,
+		ExcludeRelativePaths: options.ExcludeRelativePaths, Environment: options.Environment,
 	}
 	if options.Writer != nil {
 		return platform.BackupInstanceToWriter(ctx, platformOptions, options.Writer)
@@ -597,10 +598,35 @@ func (archive instanceArchive) RestoreInstance(ctx context.Context, options admi
 		ExpectedEnvironment:  options.ExpectedEnvironment,
 		PreserveRelativeFile: instancelock.FileName,
 		ResetRelativePaths:   options.ResetRelativePaths,
+		ExclusiveLockHeld:    true,
+		RequireExclusiveLock: true,
 	}
 	if options.Reader != nil {
 		platformOptions.BackupPath = ""
 		return platform.RestoreInstanceFromReader(ctx, platformOptions, options.Reader)
 	}
 	return platform.RestoreInstance(ctx, platformOptions)
+}
+
+func (archive instanceArchive) PreflightInstance(ctx context.Context, options adminoffline.RestoreOptions) (adminoffline.RestorePreflightResult, error) {
+	path := options.Path
+	if options.Reader != nil {
+		temporary, err := securefs.CopyPrivateTemporaryFile(options.Reader, os.TempDir(), "leapview-preflight-*.tar.gz")
+		if err != nil {
+			return adminoffline.RestorePreflightResult{}, err
+		}
+		defer os.Remove(temporary)
+		path = temporary
+	}
+	plan, preflightErr := platform.PreflightInstanceRestore(ctx, platform.InstanceRestorePreflightOptions{
+		ArchivePath: path, TargetHomeDir: archive.home, ExpectedEnvironment: options.ExpectedEnvironment,
+		PreserveRelativeFile: instancelock.FileName, ResetRelativePaths: options.ResetRelativePaths,
+		ExclusiveLockHeld: true, RequireExclusiveLock: true,
+	})
+	document, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return adminoffline.RestorePreflightResult{}, err
+	}
+	document = append(document, '\n')
+	return adminoffline.RestorePreflightResult{Document: document}, preflightErr
 }

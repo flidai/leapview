@@ -34,6 +34,7 @@ type Options struct {
 	RestoreBefore     string
 	ConfirmRestore    bool
 	DatabaseOnly      bool
+	PreflightOnly     bool
 }
 
 // Operations are the offline administrative use cases exposed by the CLI.
@@ -131,13 +132,14 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	restore := operationCommand(operations, "restore", "Restore LeapView from a validated instance backup", func(command *cobra.Command) error {
 		return operations.Restore(ctx, adminoffline.RestoreRequest{
 			From: values.RestoreFrom, CurrentBackup: values.RestoreBefore,
-			Confirm: values.ConfirmRestore, DatabaseOnly: values.DatabaseOnly,
+			Confirm: values.ConfirmRestore, DatabaseOnly: values.DatabaseOnly, PreflightOnly: values.PreflightOnly,
 		}, command.InOrStdin(), command.OutOrStdout())
 	})
 	restore.Flags().StringVar(&values.RestoreFrom, "from", "", "backup archive path to restore")
 	restore.Flags().StringVar(&values.RestoreBefore, "current-out", "", "path for a backup of the current instance before replacement; - creates and discards a validated temporary checkpoint")
 	restore.Flags().BoolVar(&values.ConfirmRestore, "confirm", false, "confirm replacement of the configured LeapView instance")
 	restore.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "restore only the platform SQLite database")
+	restore.Flags().BoolVar(&values.PreflightOnly, "preflight-only", false, "emit the read-only restore plan without creating a checkpoint or replacing target state")
 
 	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore)
 	delivery := deliveryPoolCommand(ctx, operations)

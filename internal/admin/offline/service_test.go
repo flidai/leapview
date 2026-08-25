@@ -149,6 +149,9 @@ type fakeArchive struct {
 	backupInstance  BackupOptions
 	restoreDatabase RestoreOptions
 	restoreInstance RestoreOptions
+	preflight       RestoreOptions
+	preflightResult RestorePreflightResult
+	preflightErr    error
 }
 
 type fakeDeliveryRepair struct {
@@ -185,6 +188,10 @@ func (archive *fakeArchive) RestoreDatabase(_ context.Context, options RestoreOp
 func (archive *fakeArchive) RestoreInstance(_ context.Context, options RestoreOptions) error {
 	archive.restoreInstance = options
 	return nil
+}
+func (archive *fakeArchive) PreflightInstance(_ context.Context, options RestoreOptions) (RestorePreflightResult, error) {
+	archive.preflight = options
+	return archive.preflightResult, archive.preflightErr
 }
 
 func TestInitializeOwnsValidationRecoveryAndAccessSequencing(t *testing.T) {
@@ -390,6 +397,26 @@ func TestArchiveUseCasesOwnLayoutAndOutputMapping(t *testing.T) {
 		archive.restoreInstance.ExpectedEnvironment != "prod" ||
 		!strings.Contains(out.String(), "instance restored from: "+backupPath) {
 		t.Fatalf("restore options=%#v output=%q", archive.restoreInstance, out.String())
+	}
+}
+
+func TestRestorePreflightWritesMachinePlanWithoutRestore(t *testing.T) {
+	home := t.TempDir()
+	locker := &fakeLocker{}
+	archive := &fakeArchive{preflightResult: RestorePreflightResult{Document: []byte(`{"schemaVersion":1,"allowed":true}`)}}
+	service := New(Config{
+		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"), Environment: "prod",
+		DuckLakeCatalog: filepath.Join(home, "ducklake", "catalog.duckdb"), DuckLakeData: filepath.Join(home, "ducklake", "data"),
+		ArtifactDir: filepath.Join(home, "artifacts"), RuntimeDir: filepath.Join(home, "runtime"),
+		ManagedDataDir: filepath.Join(home, "managed-data"), ManagedDataBackend: "local",
+	}, Dependencies{Locker: locker, State: &fakeState{environment: "prod", existing: true}, Archive: archive})
+	var out bytes.Buffer
+	if err := service.Restore(context.Background(), RestoreRequest{From: "backup.tar.gz", PreflightOnly: true}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if archive.restoreInstance.Path != "" || archive.preflight.Path != "backup.tar.gz" ||
+		!strings.Contains(out.String(), `"allowed":true`) || locker.acquired != 1 || locker.lock.released != 1 {
+		t.Fatalf("preflight=%#v restore=%#v output=%q locks=%d/%d", archive.preflight, archive.restoreInstance, out.String(), locker.acquired, locker.lock.released)
 	}
 }
 

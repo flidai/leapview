@@ -49,6 +49,7 @@ func (operations *fakeOperations) Restore(_ context.Context, request adminofflin
 	operations.called = "restore"
 	operations.options.RestoreFrom, operations.options.RestoreBefore = request.From, request.CurrentBackup
 	operations.options.ConfirmRestore, operations.options.DatabaseOnly = request.Confirm, request.DatabaseOnly
+	operations.options.PreflightOnly = request.PreflightOnly
 	return nil
 }
 func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error {
@@ -116,6 +117,18 @@ func TestCommandRejectsInvalidNestedSubcommandsWithoutUsage(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "Usage:") {
 		t.Fatalf("invalid command emitted usage: %q", output.String())
+	}
+}
+
+func TestCommandRoutesRestorePreflightWithoutConfirmation(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "restore" || !operations.options.PreflightOnly || operations.options.ConfirmRestore {
+		t.Fatalf("restore options = %#v", operations.options)
 	}
 }
 

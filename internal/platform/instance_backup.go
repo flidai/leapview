@@ -11,21 +11,23 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
 
 	securejoin "github.com/cyphar/filepath-securejoin"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 )
 
 const (
-	instanceBackupManifestName = "leapview-backup.json"
-	instanceBackupDBName       = "leapview.db"
-	instanceBackupVersion      = 1
-	instanceRestoreDirMode     = securefs.PrivateDirMode
-	instanceRestoreFileMode    = securefs.PrivateFileMode
-	instanceRestoreDBMode      = securefs.PrivateFileMode
+	instanceBackupManifestName  = "leapview-backup.json"
+	instanceBackupDBName        = "leapview.db"
+	instanceBackupLegacyVersion = 1
+	instanceRestoreDirMode      = securefs.PrivateDirMode
+	instanceRestoreFileMode     = securefs.PrivateFileMode
+	instanceRestoreDBMode       = securefs.PrivateFileMode
 
 	// InstanceRestoreCheckpointPattern reserves a private filename namespace
 	// for the disposable current-state checkpoint created during restore.
@@ -43,16 +45,28 @@ type InstanceBackupOptions struct {
 	DBPath               string
 	OutPath              string
 	ExcludeRelativePaths []string
+	BackupID             string
+	Now                  func() time.Time
+	ReleaseIdentity      compatibility.ReleaseIdentity
+	StorageTopology      InstanceBackupStorageTopology
+	Environment          string
 }
 
 type InstanceRestoreOptions struct {
-	TargetHomeDir        string
-	BackupPath           string
-	CurrentBackupOut     string
-	DiscardCurrentBackup bool
-	ExpectedEnvironment  string
-	PreserveRelativeFile string
-	ResetRelativePaths   []string
+	TargetHomeDir         string
+	BackupPath            string
+	CurrentBackupOut      string
+	DiscardCurrentBackup  bool
+	ExpectedEnvironment   string
+	PreserveRelativeFile  string
+	ResetRelativePaths    []string
+	TargetReleaseIdentity compatibility.ReleaseIdentity
+	ExternalEvidence      map[string]string
+	MinimumFreeBytes      uint64
+	ExclusiveLockHeld     bool
+	RequireExclusiveLock  bool
+	AllowLegacyV1         bool
+	ValidatedPlan         *InstanceRestorePreflightPlan
 }
 
 type instanceBackupManifest struct {
@@ -316,6 +330,11 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 	if err != nil {
 		return err
 	}
+	instanceID, environment, err := readBackupInstanceIdentity(ctx, store)
+	if err != nil {
+		_ = store.Close()
+		return err
+	}
 	if err := store.Backup(ctx, dbCopy); err != nil {
 		_ = store.Close()
 		return err
@@ -323,97 +342,48 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 	if err := store.Close(); err != nil {
 		return err
 	}
-
-	gzw := gzip.NewWriter(out)
-	tw := tar.NewWriter(gzw)
-	manifest := instanceBackupManifest{
-		Version:   instanceBackupVersion,
-		Kind:      "leapview-instance",
-		CreatedAt: time.Now().UTC(),
-		DBPath:    instanceBackupDBName,
+	if expected := strings.TrimSpace(options.Environment); expected != "" {
+		if environment != "unbound" && environment != expected {
+			return fmt.Errorf("instance backup environment %q does not match configured environment %q", environment, expected)
+		}
+		environment = expected
 	}
-	if err := addJSONToTar(tw, instanceBackupManifestName, manifest); err != nil {
-		_ = closeArchiveStreamWriters(tw, gzw)
+	members, err := collectInstanceBackupMembers(homeAbs, dbAbs, dbCopy, excluded)
+	if err != nil {
 		return err
 	}
-	if err := addFileToTar(tw, dbCopy, instanceBackupDBName); err != nil {
-		_ = closeArchiveStreamWriters(tw, gzw)
+	backupID := strings.TrimSpace(options.BackupID)
+	if backupID == "" {
+		backupID, err = newBackupID()
+		if err != nil {
+			return err
+		}
+	}
+	now := options.Now
+	if now == nil {
+		now = time.Now
+	}
+	createdAt := now().UTC()
+	policy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
 		return err
 	}
-	if err := filepath.WalkDir(homeAbs, func(path string, entry os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		pathAbs, err := filepath.Abs(path)
-		if err != nil {
-			return err
-		}
-		if samePath(pathAbs, homeAbs) {
-			return nil
-		}
-		if samePath(pathAbs, dbAbs) || samePath(pathAbs, dbAbs+"-wal") || samePath(pathAbs, dbAbs+"-shm") {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(homeAbs, pathAbs)
-		if err != nil {
-			return err
-		}
-		rel = filepath.ToSlash(rel)
-		if rel == "." || rel == "" {
-			return nil
-		}
-		if rel == instanceBackupManifestName {
-			return nil
-		}
-		if instanceRelativePathMatches(rel, excluded) {
-			if entry.IsDir() {
-				return filepath.SkipDir
-			}
-			return nil
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		header.Name = rel
-		if info.Mode()&os.ModeSymlink != 0 {
-			target, err := os.Readlink(pathAbs)
-			if err != nil {
-				return err
-			}
-			if err := validateInstanceBackupSymlink(rel, target); err != nil {
-				return err
-			}
-			return fmt.Errorf("instance backup symlink entries are not supported: %s", rel)
-		}
-		if err := tw.WriteHeader(header); err != nil {
-			return err
-		}
-		if !info.Mode().IsRegular() {
-			return nil
-		}
-		file, err := os.Open(pathAbs)
-		if err != nil {
-			return err
-		}
-		_, copyErr := io.Copy(tw, file)
-		closeErr := file.Close()
-		if copyErr != nil {
-			return copyErr
-		}
-		return closeErr
-	}); err != nil {
-		_ = closeArchiveStreamWriters(tw, gzw)
+	inventory := make([]InstanceBackupMember, len(members))
+	for index, member := range members {
+		inventory[index] = member.manifest
+	}
+	inventoryDigest, err := inventorySHA256(inventory)
+	if err != nil {
 		return err
 	}
-	return closeArchiveStreamWriters(tw, gzw)
+	manifest := InstanceBackupManifestV2{
+		SchemaVersion: InstanceBackupManifestVersion, Kind: "leapview-instance", BackupID: backupID,
+		ReleaseIdentity: normalizeBackupReleaseIdentity(options.ReleaseIdentity),
+		InstanceID:      instanceID, Environment: environment, CreatedAt: createdAt, CompletedAt: createdAt,
+		ArchiveMode: "full-instance", StorageTopology: normalizeBackupStorageTopology(options.StorageTopology),
+		RequiredTransitionPolicyVersion: policy.PolicyVersion, Members: inventory, InventorySHA256: inventoryDigest,
+	}
+	return writeManifestV2Archive(out, manifest, members)
 }
 
 func validateInstanceBackupSource(homeDir, dbPath string) (string, string, error) {
@@ -490,12 +460,49 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	if pathWithin(targetAbs, backupAbs) {
 		return fmt.Errorf("instance restore backup path must not be inside target home dir")
 	}
+	validated, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+		ArchivePath: backupAbs, TargetHomeDir: targetAbs,
+		ExpectedEnvironment:   options.ExpectedEnvironment,
+		TargetReleaseIdentity: options.TargetReleaseIdentity,
+		ExternalEvidence:      options.ExternalEvidence, MinimumFreeBytes: options.MinimumFreeBytes,
+		PreserveRelativeFile: options.PreserveRelativeFile, ResetRelativePaths: options.ResetRelativePaths,
+		ExclusiveLockHeld: options.ExclusiveLockHeld, RequireExclusiveLock: options.RequireExclusiveLock,
+		AllowLegacyV1: options.AllowLegacyV1,
+	})
+	if err != nil {
+		return err
+	}
+	if supplied := options.ValidatedPlan; supplied != nil && !sameRestorePreflightIdentity(*supplied, validated) {
+		reason := RestorePreflightStaleArchive
+		if supplied.ArchivePath == validated.ArchivePath && supplied.ArchiveSHA256 == validated.ArchiveSHA256 {
+			reason = RestorePreflightStaleTarget
+		}
+		return &InstanceRestorePreflightError{ReasonCode: reason, Remediation: "rerun preflight and consume the resulting plan without substitution", Err: fmt.Errorf("validated restore plan no longer matches archive or target identity")}
+	}
+	plan := &validated
+	if !plan.Allowed {
+		return &InstanceRestorePreflightError{ReasonCode: plan.ReasonCode, Remediation: plan.Remediation, Err: fmt.Errorf("validated plan is denied")}
+	}
+	if err := verifyRestorePlanInputs(*plan, backupAbs, targetAbs, options.PreserveRelativeFile); err != nil {
+		return err
+	}
 	file, err := os.Open(backupAbs)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	return restoreInstanceFromReader(ctx, options, file)
+	return restoreInstanceFromReader(ctx, options, file, *plan)
+}
+
+func sameRestorePreflightIdentity(left, right InstanceRestorePreflightPlan) bool {
+	return left.Allowed == right.Allowed && left.BackupID == right.BackupID &&
+		left.ManifestVersion == right.ManifestVersion && left.ManifestSHA256 == right.ManifestSHA256 &&
+		left.PolicyVersion == right.PolicyVersion && left.ArchivePath == right.ArchivePath &&
+		left.ArchiveSHA256 == right.ArchiveSHA256 && left.TargetHome == right.TargetHome &&
+		left.TargetTreeSHA256 == right.TargetTreeSHA256 && left.Environment == right.Environment &&
+		left.ArchiveRelease == right.ArchiveRelease && left.TargetRelease == right.TargetRelease &&
+		reflect.DeepEqual(left.Replace, right.Replace) && reflect.DeepEqual(left.Preserve, right.Preserve) &&
+		reflect.DeepEqual(left.Reset, right.Reset) && reflect.DeepEqual(left.ExternalPrerequisites, right.ExternalPrerequisites)
 }
 
 // RestoreInstanceFromReader validates and restores a full-instance archive
@@ -504,10 +511,32 @@ func RestoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 	if in == nil {
 		return fmt.Errorf("instance restore input is required")
 	}
-	return restoreInstanceFromReader(ctx, options, in)
+	targetHome := strings.TrimSpace(options.TargetHomeDir)
+	if targetHome == "" {
+		return fmt.Errorf("instance restore target home dir is required")
+	}
+	temporary, err := os.CreateTemp("", ".leapview-restore-preflight-*.tar.gz")
+	if err != nil {
+		return err
+	}
+	temporaryPath := temporary.Name()
+	defer os.Remove(temporaryPath)
+	_, copyErr := io.CopyBuffer(temporary, in, make([]byte, InstanceBackupValidationBufferSize))
+	if copyErr == nil {
+		copyErr = temporary.Sync()
+	}
+	if closeErr := temporary.Close(); copyErr == nil {
+		copyErr = closeErr
+	}
+	if copyErr != nil {
+		return copyErr
+	}
+	options.BackupPath = temporaryPath
+	options.ValidatedPlan = nil
+	return RestoreInstance(ctx, options)
 }
 
-func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptions, in io.Reader) error {
+func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptions, in io.Reader, plan InstanceRestorePreflightPlan) error {
 	targetHome := strings.TrimSpace(options.TargetHomeDir)
 	currentBackupOut := strings.TrimSpace(options.CurrentBackupOut)
 	preserveRelativeFile, err := validatePreservedRelativeFile(options.PreserveRelativeFile)
@@ -571,8 +600,15 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 			_ = removeInstanceStateTree(tmpRestore)
 		}
 	}()
-	if err := extractInstanceBackupReader(ctx, in, tmpRestore); err != nil {
+	archiveDigest := sha256.New()
+	if err := extractInstanceBackupReader(ctx, io.TeeReader(in, archiveDigest), tmpRestore); err != nil {
 		return err
+	}
+	if _, err := io.CopyBuffer(archiveDigest, in, make([]byte, InstanceBackupValidationBufferSize)); err != nil {
+		return err
+	}
+	if got := fmt.Sprintf("%x", archiveDigest.Sum(nil)); got != plan.ArchiveSHA256 {
+		return &InstanceRestorePreflightError{ReasonCode: RestorePreflightStaleArchive, Remediation: "rerun preflight for the exact archive", Err: fmt.Errorf("archive checksum changed during restore")}
 	}
 	if environment := strings.TrimSpace(options.ExpectedEnvironment); environment != "" {
 		restored, err := Open(ctx, filepath.Join(tmpRestore, instanceBackupDBName))
@@ -596,6 +632,13 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 		if err := removeInstanceStateTree(resetPath); err != nil {
 			return fmt.Errorf("reset derived instance path %q: %w", relativePath, err)
 		}
+	}
+	targetDigest, err := instanceTreeSHA256(targetAbs, preserveRelativeFile)
+	if err != nil {
+		return err
+	}
+	if targetDigest != plan.TargetTreeSHA256 {
+		return &InstanceRestorePreflightError{ReasonCode: RestorePreflightStaleTarget, Remediation: "stop target changes and rerun preflight", Err: fmt.Errorf("target identity changed during restore preparation")}
 	}
 	if exists && nonEmpty {
 		if currentBackupOut == "" {
@@ -982,18 +1025,29 @@ func validateInstanceBackupSymlink(name, linkname string) error {
 }
 
 func validateInstanceBackupManifest(path string) error {
-	bytes, err := os.ReadFile(path)
+	document, err := os.ReadFile(path)
 	if err != nil {
 		return err
 	}
-	var manifest instanceBackupManifest
-	if err := json.Unmarshal(bytes, &manifest); err != nil {
+	var probe struct {
+		SchemaVersion int `json:"schemaVersion"`
+		Version       int `json:"version"`
+	}
+	if err := json.Unmarshal(document, &probe); err != nil {
 		return fmt.Errorf("read instance backup manifest: %w", err)
+	}
+	if probe.SchemaVersion == InstanceBackupManifestVersion {
+		var manifest InstanceBackupManifestV2
+		return validateManifestV2Document(document, &manifest)
+	}
+	var manifest instanceBackupManifest
+	if err := json.Unmarshal(document, &manifest); err != nil {
+		return fmt.Errorf("read legacy instance backup manifest: %w", err)
 	}
 	if manifest.Kind != "leapview-instance" {
 		return fmt.Errorf("instance backup manifest kind = %q", manifest.Kind)
 	}
-	if manifest.Version != instanceBackupVersion {
+	if manifest.Version != instanceBackupLegacyVersion {
 		return fmt.Errorf("unsupported instance backup version %d", manifest.Version)
 	}
 	if manifest.DBPath != instanceBackupDBName {

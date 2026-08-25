@@ -18,7 +18,7 @@ func (service *Service) Backup(ctx context.Context, request BackupRequest, out i
 		return err
 	}
 	defer lock.Release()
-	options := BackupOptions{Path: request.Out}
+	options := BackupOptions{Path: request.Out, Environment: service.configuredEnvironment()}
 	if request.Out == "-" {
 		options.Path = ""
 		options.Writer = out
@@ -52,8 +52,11 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 	if request.From == "" {
 		return fmt.Errorf("admin restore requires --from")
 	}
-	if !request.Confirm {
+	if !request.Confirm && !request.PreflightOnly {
 		return fmt.Errorf("admin restore requires --confirm")
+	}
+	if request.DatabaseOnly && request.PreflightOnly {
+		return fmt.Errorf("restore preflight is available only for full-instance archives")
 	}
 	if request.From == "-" && in == nil {
 		return fmt.Errorf("admin restore --from - requires standard input")
@@ -101,6 +104,20 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 	if err != nil {
 		return err
 	}
+	if request.PreflightOnly {
+		result, preflightErr := service.deps.Archive.PreflightInstance(ctx, options)
+		if len(result.Document) > 0 {
+			if _, err := out.Write(result.Document); err != nil {
+				return err
+			}
+			if result.Document[len(result.Document)-1] != '\n' {
+				if _, err := io.WriteString(out, "\n"); err != nil {
+					return err
+				}
+			}
+		}
+		return preflightErr
+	}
 	if err := service.deps.Archive.RestoreInstance(ctx, options); err != nil {
 		return err
 	}
@@ -114,11 +131,10 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 func (service *Service) restoreTargetEnvironment(ctx context.Context) (string, error) {
 	environment, exists, err := service.deps.State.ExistingEnvironment(ctx)
 	if exists && errors.Is(err, ErrStateNotFound) {
-		environment = service.configuredEnvironment()
-		if bindErr := service.deps.State.BindEnvironment(ctx, environment); bindErr != nil {
-			return "", bindErr
-		}
-		return environment, nil
+		// Restore preflight is read-only. An unbound target is validated against
+		// the configured environment and is replaced only after the archive plan
+		// has passed; the restored database carries its own durable binding.
+		return service.configuredEnvironment(), nil
 	}
 	if err != nil {
 		return "", err

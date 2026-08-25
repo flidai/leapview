@@ -845,7 +845,7 @@ func TestRestoreInstanceRejectsBackupFromAnotherEnvironmentBeforeReplacement(t *
 		t.Fatal(err)
 	}
 	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: archive, ExpectedEnvironment: "staging"})
-	if err == nil || !strings.Contains(err.Error(), `bound to environment "prod"`) {
+	if err == nil || !strings.Contains(err.Error(), RestorePreflightWrongEnvironment) || !strings.Contains(err.Error(), `archive environment "prod"`) {
 		t.Fatalf("restore environment error = %v", err)
 	}
 	if contents, readErr := os.ReadFile(marker); readErr != nil || string(contents) != "preserve" {
@@ -948,7 +948,7 @@ func TestRestoreInstanceSanitizesArchivePermissions(t *testing.T) {
 	})
 
 	targetHome := filepath.Join(dir, "target")
-	if err := RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath}); err != nil {
+	if err := RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath, AllowLegacyV1: true}); err != nil {
 		t.Fatalf("restore instance: %v", err)
 	}
 
@@ -994,8 +994,8 @@ func TestRestoreInstanceRejectsSymlinkEntries(t *testing.T) {
 	})
 
 	targetHome := filepath.Join(dir, "target")
-	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath})
-	if err == nil || !strings.Contains(err.Error(), "symlink entries are not supported") {
+	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath, AllowLegacyV1: true})
+	if err == nil || !strings.Contains(err.Error(), RestorePreflightUnsupportedEntry) {
 		t.Fatalf("restore error = %v, want symlink rejection", err)
 	}
 }
@@ -1185,6 +1185,7 @@ type testTarEntry struct {
 	dir      bool
 	symlink  bool
 	linkname string
+	typeflag byte
 }
 
 func writeInstanceBackupArchive(t *testing.T, archivePath string, entries []testTarEntry) {
@@ -1203,7 +1204,9 @@ func writeInstanceBackupArchive(t *testing.T, archivePath string, entries []test
 			Name: entry.name,
 			Mode: entry.mode,
 		}
-		if entry.dir {
+		if entry.typeflag != 0 {
+			header.Typeflag = entry.typeflag
+		} else if entry.dir {
 			header.Typeflag = tar.TypeDir
 		} else if entry.symlink {
 			header.Typeflag = tar.TypeSymlink
@@ -1215,7 +1218,7 @@ func writeInstanceBackupArchive(t *testing.T, archivePath string, entries []test
 		if err := tw.WriteHeader(header); err != nil {
 			t.Fatalf("write tar header %s: %v", entry.name, err)
 		}
-		if !entry.dir && !entry.symlink {
+		if header.Typeflag == tar.TypeReg || header.Typeflag == tar.TypeRegA {
 			if _, err := tw.Write(entry.body); err != nil {
 				t.Fatalf("write tar body %s: %v", entry.name, err)
 			}

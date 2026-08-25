@@ -98,6 +98,7 @@ type RestoreRequest struct {
 	CurrentBackup string
 	Confirm       bool
 	DatabaseOnly  bool
+	PreflightOnly bool
 }
 
 // PhysicalPoolBootstrapRequest is the offline operator input for the
@@ -248,6 +249,7 @@ type BackupOptions struct {
 	Path                 string
 	Writer               io.Writer
 	ExcludeRelativePaths []string
+	Environment          string
 }
 
 type RestoreOptions struct {
@@ -259,11 +261,16 @@ type RestoreOptions struct {
 	ResetRelativePaths   []string
 }
 
+type RestorePreflightResult struct {
+	Document []byte
+}
+
 type Archive interface {
 	BackupDatabase(context.Context, BackupOptions) error
 	BackupInstance(context.Context, BackupOptions) error
 	RestoreDatabase(context.Context, RestoreOptions) error
 	RestoreInstance(context.Context, RestoreOptions) error
+	PreflightInstance(context.Context, RestoreOptions) (RestorePreflightResult, error)
 }
 
 type Dependencies struct {

@@ -3,6 +3,7 @@ package adminoffline
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -131,6 +132,39 @@ func TestAdminRestoreRequiresConfirmation(t *testing.T) {
 	}
 }
 
+func TestAdminRestorePreflightIsReadOnlyAndMachineReadable(t *testing.T) {
+	ctx := context.Background()
+	sourceHome := filepath.Join(t.TempDir(), "source")
+	setAdminStorageEnv(t, sourceHome)
+	source := createAdminDatabase(t, ctx, sourceHome)
+	if err := source.Close(); err != nil {
+		t.Fatal(err)
+	}
+	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")
+	if err := (Operations{}).Backup(ctx, adminoffline.BackupRequest{Out: archivePath}, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+
+	targetHome := filepath.Join(t.TempDir(), "target")
+	setAdminStorageEnv(t, targetHome)
+	target := createAdminDatabase(t, ctx, targetHome)
+	if err := target.Close(); err != nil {
+		t.Fatal(err)
+	}
+	marker := filepath.Join(targetHome, "marker")
+	writeAdminFile(t, marker, "unchanged")
+	var out bytes.Buffer
+	if err := (Operations{}).Restore(ctx, adminoffline.RestoreRequest{From: archivePath, PreflightOnly: true}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"reasonCode": "restore.preflight.allowed"`) || !strings.Contains(out.String(), `"archiveSha256"`) {
+		t.Fatalf("preflight output = %s", out.String())
+	}
+	if got, err := os.ReadFile(marker); err != nil || string(got) != "unchanged" {
+		t.Fatalf("target changed during preflight: %q %v", got, err)
+	}
+}
+
 func TestAdminRestoreRejectsExternalDuckLakeCatalog(t *testing.T) {
 	ctx := context.Background()
 	sourceHome := t.TempDir()
@@ -140,9 +174,10 @@ func TestAdminRestoreRejectsExternalDuckLakeCatalog(t *testing.T) {
 	}
 	backupPath := filepath.Join(t.TempDir(), "restore.tar.gz")
 	if err := platform.BackupInstance(ctx, platform.InstanceBackupOptions{
-		HomeDir: sourceHome,
-		DBPath:  filepath.Join(sourceHome, "leapview.db"),
-		OutPath: backupPath,
+		HomeDir:     sourceHome,
+		DBPath:      filepath.Join(sourceHome, "leapview.db"),
+		OutPath:     backupPath,
+		Environment: "dev",
 	}); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
@@ -183,9 +218,10 @@ func TestAdminRestoreReplacesPlatformDatabase(t *testing.T) {
 
 	backupPath := filepath.Join(t.TempDir(), "restore.tar.gz")
 	if err := platform.BackupInstance(ctx, platform.InstanceBackupOptions{
-		HomeDir: sourceHome,
-		DBPath:  filepath.Join(sourceHome, "leapview.db"),
-		OutPath: backupPath,
+		HomeDir:     sourceHome,
+		DBPath:      filepath.Join(sourceHome, "leapview.db"),
+		OutPath:     backupPath,
+		Environment: "dev",
 	}); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
