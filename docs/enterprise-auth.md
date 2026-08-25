@@ -6,6 +6,7 @@ LeapView separates authentication, provisioning, authorization, workload identit
 
 - Use [Local authentication](/docs/security/local-auth) for self-hosted users and a controlled break-glass path.
 - Use [OIDC](/docs/security/oidc) for interactive enterprise browser login.
+- Use the [MFA security decision boundary](/docs/security/mfa-boundary) to distinguish provider-enforced MFA from application-managed assurance, which is not currently supported.
 - Use browser/device authorization for `leapview login <target>`; CLI credentials remain separate from browser and Desktop sessions.
 
 Both sign-in modes resolve an ordinary LeapView principal. Authentication proves identity; it does not grant project-resource access.

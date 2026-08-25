@@ -59,6 +59,8 @@ Test with a non-administrator user. An owner account can hide missing group prov
 
 Use provider MFA and conditional access. Restrict who may use the client, protect client-secret rotation, and monitor provider-side sign-in events. Keep redirect URI lists narrow and remove retired callbacks.
 
+LeapView currently delegates the MFA decision to the provider and does not authorize from `acr` or `amr` assurance claims. Read the [MFA security decision boundary](/docs/security/mfa-boundary) before describing the deployment's assurance level or requiring application-side step-up.
+
 When rotating the client secret, install the new value through the secret manager and coordinate restart without exposing either value. Verify login before revoking the old provider credential where the provider supports overlap.
 
 ## Validate the configuration
