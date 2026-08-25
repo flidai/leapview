@@ -303,6 +303,31 @@ func formatToolCallPreview(call transcriptToolCall) string {
 	return formatJSONPreview(string(raw), maxToolArgumentsPreviewBytes)
 }
 
+// PreviewToolInput applies the same bounded display contract used by durable
+// transcript reconstruction to a tool call that is still executing.
+func PreviewToolInput(toolCallID, name, arguments string) (inputJSON, argumentsJSON string) {
+	call := transcriptToolCall{ID: toolCallID, Name: name, Arguments: json.RawMessage(arguments)}
+	return formatToolCallPreview(call), formatJSONPreview(arguments, maxToolArgumentsPreviewBytes)
+}
+
+type ToolResultPreview struct {
+	ResultJSON string
+	Format     string
+	Summary    string
+	Error      string
+}
+
+// PreviewToolResult applies the durable transcript result limits and summaries
+// before an in-flight result is published to the browser.
+func PreviewToolResult(result string) ToolResultPreview {
+	return ToolResultPreview{
+		ResultJSON: formatJSONPreview(result, maxToolResultPreviewBytes),
+		Format:     toolPreviewFormat(result),
+		Summary:    toolSummary(result),
+		Error:      toolErrorSummary(result),
+	}
+}
+
 func formatJSONPreview(raw string, limit int) string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || limit <= 0 {

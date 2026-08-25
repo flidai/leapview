@@ -65,3 +65,32 @@ func TestLiveTranscriptInsertsDeclaredPartsByOrdinalAndDeduplicates(t *testing.T
 		t.Fatalf("transcript IDs = %v, want %v", got, want)
 	}
 }
+
+func TestLiveTranscriptMakesToolInputAndResultInspectableDuringRun(t *testing.T) {
+	transcript := []agent.ChatTranscriptItem{{ID: "user-1", Kind: "user", RunID: "run-1"}}
+	apply := func(eventType agentcore.EventType, severity string, payload map[string]any) {
+		transcript = applyLiveTranscriptEvent(transcript, "conversation-1", agent.EventEnvelope{
+			RunID: "run-1", Type: string(eventType), Severity: severity, Payload: payload,
+		})
+	}
+	part := map[string]any{
+		"output_part_id": "part-1", "output_kind": string(agentcore.OutputPartKindTool), "output_ordinal": float64(0),
+		"tool_call_id": "call-1", "tool_name": "catalog_list", "tool_arguments": `{"kind":"dashboard","limit":2}`,
+	}
+	apply(agentcore.EventTypeOutputPartAdded, string(agentcore.SeverityInfo), part)
+	if got := transcript[1]; got.Status != "pending" || got.ArgumentsJSON == "" || got.InputJSON == "" {
+		t.Fatalf("declared live tool = %#v", got)
+	}
+	apply(agentcore.EventTypeToolExecutionStart, string(agentcore.SeverityInfo), map[string]any{
+		"output_part_id": "part-1", "tool_arguments": `{"kind":"dashboard","limit":2}`,
+	})
+	if transcript[1].Status != "running" || transcript[1].ResultJSON != "" {
+		t.Fatalf("running live tool = %#v", transcript[1])
+	}
+	apply(agentcore.EventTypeToolExecutionEnd, string(agentcore.SeverityInfo), map[string]any{
+		"output_part_id": "part-1", "tool_result": "items[1]{id}:\n  dashboard:sales",
+	})
+	if got := transcript[1]; got.Status != "complete" || got.ResultJSON == "" || got.ResultFormat != "toon" {
+		t.Fatalf("completed live tool = %#v", got)
+	}
+}

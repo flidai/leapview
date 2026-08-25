@@ -375,6 +375,51 @@ test('chat thread renders tool details with compact json and toon code blocks', 
   await page.close()
 })
 
+test('chat thread keeps in-flight tool details open as the result arrives', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [{
+      id: 'part-live-tool',
+      toolCallId: 'call-live-tool',
+      kind: 'tool',
+      name: 'catalog_list',
+      status: 'running',
+      inputJson: '{\n  "name": "catalog_list",\n  "arguments": "{\\"kind\\":\\"dashboard\\"}"\n}',
+      inputFormat: 'json',
+    }]
+    await thread.updateComplete
+    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    await thread.updateComplete
+  })
+
+  const running = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+  }))
+  expect(running.expanded).toBe('true')
+  expect(running.details).toContain('catalog_list')
+
+  await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+    thread.transcript = [{
+      ...thread.transcript[0],
+      status: 'complete',
+      resultJson: 'items[1]{id}:\n  dashboard:sales',
+      resultFormat: 'toon',
+    }]
+    await thread.updateComplete
+  })
+  const complete = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+  }))
+  expect(complete.expanded).toBe('true')
+  expect(complete.details).toContain('dashboard:sales')
+  await page.close()
+})
+
 test('chat thread renders assistant markdown through shared markdown view', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

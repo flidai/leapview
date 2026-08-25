@@ -193,6 +193,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, run *runState, turnID stri
 				ParentMessageID: call.ParentMessageID,
 				ToolCallID:      call.ID,
 				ToolName:        call.Name,
+				ToolArguments:   string(call.Arguments),
 			})
 			result := a.runOneTool(groupCtx, call)
 			run.emitToolExecutionEnd(groupCtx, turnID, call, result.message)
@@ -229,6 +230,8 @@ func (r *runState) emitToolExecutionEnd(ctx context.Context, turnID string, call
 		ParentMessageID: call.ParentMessageID,
 		ToolCallID:      call.ID,
 		ToolName:        call.Name,
+		ToolArguments:   string(call.Arguments),
+		ToolResult:      message.Content,
 	})
 }
 

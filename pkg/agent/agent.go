@@ -295,7 +295,7 @@ func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, 
 func (a *Agent) declareToolOutputParts(ctx context.Context, run *runState, turnID, parentMessageID string, calls []ToolCall) []ToolCall {
 	declared := append([]ToolCall(nil), calls...)
 	for i := range declared {
-		part, _ := run.addOutputPart(ctx, turnID, OutputPartKindTool, parentMessageID, declared[i].ID, declared[i].Name)
+		part, _ := run.addOutputPart(ctx, turnID, OutputPartKindTool, parentMessageID, declared[i].ID, declared[i].Name, string(declared[i].Arguments))
 		declared[i].OutputPartID = part.ID
 		declared[i].OutputOrdinal = part.Ordinal
 		declared[i].ParentMessageID = parentMessageID

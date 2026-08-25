@@ -51,6 +51,7 @@ func applyLiveTranscriptEvent(transcript []agentcap.ChatTranscriptItem, conversa
 			item.Name = stringPayload(event.Payload, "tool_name")
 			item.Title = liveToolTitle(item.Name)
 			item.Status = "pending"
+			applyLiveToolInput(&item, event.Payload)
 		}
 		return insertOutputPart(next, item)
 	case string(agentcore.EventTypeOutputTextDelta):
@@ -77,22 +78,44 @@ func applyLiveTranscriptEvent(transcript []agentcap.ChatTranscriptItem, conversa
 			return next
 		}
 		next[idx].Status = "running"
+		applyLiveToolInput(&next[idx], event.Payload)
 		return next
 	case string(agentcore.EventTypeToolExecutionEnd):
 		idx := transcriptPartIndex(next, stringPayload(event.Payload, "output_part_id"))
 		if idx < 0 || next[idx].Kind != "tool" {
 			return next
 		}
+		applyLiveToolInput(&next[idx], event.Payload)
+		result := stringPayload(event.Payload, "tool_result")
+		preview := agentcap.PreviewToolResult(result)
+		if result != "" {
+			next[idx].ResultJSON = preview.ResultJSON
+			next[idx].ResultFormat = preview.Format
+		}
 		if event.Severity == string(agentcore.SeverityError) || event.Severity == string(agentcore.SeverityWarn) {
 			next[idx].Status = "error"
-			next[idx].Error = "Tool failed"
+			next[idx].Error = preview.Error
+			if next[idx].Error == "" {
+				next[idx].Error = "Tool failed"
+			}
 			return next
 		}
 		next[idx].Status = "complete"
+		next[idx].Summary = preview.Summary
+		next[idx].ResultSummary = next[idx].Summary
 		return next
 	default:
 		return next
 	}
+}
+
+func applyLiveToolInput(item *agentcap.ChatTranscriptItem, payload map[string]any) {
+	arguments := stringPayload(payload, "tool_arguments")
+	if item == nil || arguments == "" {
+		return
+	}
+	item.InputJSON, item.ArgumentsJSON = agentcap.PreviewToolInput(item.ToolCallID, item.Name, arguments)
+	item.InputFormat = "json"
 }
 
 func transcriptPartIndex(transcript []agentcap.ChatTranscriptItem, partID string) int {

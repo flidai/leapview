@@ -76,6 +76,8 @@ type Event struct {
 	ParentMessageID string
 	ToolCallID      string
 	ToolName        string
+	ToolArguments   string
+	ToolResult      string
 	CorrelationID   string
 	Delta           string
 	Content         string
@@ -115,7 +117,7 @@ type outputPart struct {
 	ParentMessageID string
 }
 
-func (r *runState) addOutputPart(ctx context.Context, turnID string, kind OutputPartKind, parentMessageID, toolCallID, toolName string) (outputPart, error) {
+func (r *runState) addOutputPart(ctx context.Context, turnID string, kind OutputPartKind, parentMessageID, toolCallID, toolName, toolArguments string) (outputPart, error) {
 	part := outputPart{
 		ID:              r.agent.def.IDGenerator.NewID("part"),
 		Kind:            kind,
@@ -133,6 +135,7 @@ func (r *runState) addOutputPart(ctx context.Context, turnID string, kind Output
 		ParentMessageID: parentMessageID,
 		ToolCallID:      toolCallID,
 		ToolName:        toolName,
+		ToolArguments:   toolArguments,
 	})
 	return part, err
 }
@@ -150,7 +153,7 @@ func (s *eventModelStream) ensureOpen(ctx context.Context) error {
 	if s.opened {
 		return nil
 	}
-	part, err := s.run.addOutputPart(ctx, s.turnID, OutputPartKindText, s.messageID, "", "")
+	part, err := s.run.addOutputPart(ctx, s.turnID, OutputPartKindText, s.messageID, "", "", "")
 	if err != nil {
 		return err
 	}
