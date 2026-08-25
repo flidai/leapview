@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
+  ChevronRight,
   ExternalLink,
   RefreshCw,
   Search,
@@ -627,17 +628,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return html`
       <section class="asset-page connection-asset-page" aria-label="Connection detail" @lv-record-table-action=${this.handleRecordTableAction}>
         <header class="breadcrumb-header">
-          <nav aria-label="Breadcrumb">
-            <ol>
-              ${page.breadcrumbs.map((crumb) => html`
-                <li>
-                  ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
-                    : html`<a href=${crumb.href}>${crumb.label}</a>`}
-                </li>
-              `)}
-            </ol>
-          </nav>
+          ${renderAssetBreadcrumb(page)}
           <div class="actions">
             ${actions}
             ${page.actions?.map((action) => this.renderAction(action, page))}
@@ -662,17 +653,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         @lv-record-table-action=${this.handleRecordTableAction}
       >
         <header class="breadcrumb-header">
-          <nav aria-label="Breadcrumb">
-            <ol>
-              ${page.breadcrumbs.map((crumb) => html`
-                <li>
-                  ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
-                    : html`<a href=${crumb.href}>${crumb.label}</a>`}
-                </li>
-              `)}
-            </ol>
-          </nav>
+          ${renderAssetBreadcrumb(page)}
           <div class="actions">
             ${page.connectionLifecycle ? html`
               <lv-connection-administration
@@ -970,6 +951,27 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
       <h2>${title}</h2>
       <lv-record-table .table=${table ?? null}></lv-record-table>
     </section>
+  `
+}
+
+function renderAssetBreadcrumb(page: ResourceAssetPageSignal) {
+  return html`
+    <nav aria-label="Breadcrumb">
+      <ol>
+        ${page.breadcrumbs.map((crumb, index) => html`
+          ${index > 0 ? html`
+            <li class="breadcrumb-separator" aria-hidden="true">
+              ${lucideIcon(ChevronRight, { size: 14, strokeWidth: 1.75 })}
+            </li>
+          ` : nothing}
+          <li>
+            ${crumb.current
+              ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
+              : html`<a href=${crumb.href}>${crumb.label}</a>`}
+          </li>
+        `)}
+      </ol>
+    </nav>
   `
 }
 
@@ -1447,16 +1449,16 @@ const projectStyles = css`
     min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--base-size-6);
+    gap: var(--base-size-4);
     margin: 0;
     padding: 0;
     list-style: none;
     font: var(--lv-type-body);
   }
 
-  .breadcrumb-header li:not(:last-child)::after {
-    content: '/';
-    margin-left: var(--base-size-6);
+  .breadcrumb-separator {
+    display: inline-flex;
+    align-items: center;
     color: var(--lv-fg-muted);
   }
 
@@ -1470,6 +1472,8 @@ const projectStyles = css`
     min-width: 0;
     align-items: center;
     gap: var(--base-size-8);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body);
   }
 
   .asset-body {

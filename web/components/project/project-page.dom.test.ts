@@ -112,12 +112,19 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const icon = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
+      const root = element.shadowRoot!
       const glyph = element.shadowRoot?.querySelector('h1 .asset-glyph') as HTMLElement | null
+      const parent = root.querySelector('.breadcrumb-header nav a') as HTMLElement
+      const title = root.querySelector('.breadcrumb-header h1') as HTMLElement
       return {
         svg: glyph?.querySelector('svg')?.innerHTML ?? '',
         plain: glyph?.classList.contains('breadcrumb'),
         background: glyph ? getComputedStyle(glyph).backgroundColor : '',
         borderWidth: glyph ? getComputedStyle(glyph).borderTopWidth : '',
+        separatorIcons: root.querySelectorAll('.breadcrumb-separator svg').length,
+        parentFontSize: getComputedStyle(parent).fontSize,
+        titleFontSize: getComputedStyle(title).fontSize,
+        titleFontWeight: getComputedStyle(title).fontWeight,
       }
     })
     expect(icon.svg).toContain('M6 12h12')
@@ -125,6 +132,9 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
     expect(icon.plain).toBe(true)
     expect(icon.background).toBe('rgba(0, 0, 0, 0)')
     expect(icon.borderWidth).toBe('0px')
+    expect(icon.separatorIcons).toBe(1)
+    expect(icon.titleFontSize).toBe(icon.parentFontSize)
+    expect(icon.titleFontWeight).toBe('400')
   } finally {
     await page.close()
   }
