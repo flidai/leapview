@@ -631,6 +631,78 @@ func TestReleaseIdentityContract(t *testing.T) {
 	}
 }
 
+func TestRepositoryReleaseTransitionValuesBindRealCandidate(t *testing.T) {
+	root := filepath.Join("..", "..")
+	version := strings.TrimSpace(read(t, filepath.Join(root, "VERSION")))
+	base, err := compatibility.EmbeddedPolicy()
+	require.NoError(t, err)
+	template, err := compatibility.ParseCandidateTransitionTemplate([]byte(read(t, filepath.Join(
+		root,
+		"internal", "platform", "compatibility", "release-transition-template.json",
+	))))
+	require.NoError(t, err)
+	if base.CandidateRelease != template.PredecessorRelease {
+		t.Fatalf("embedded candidate %q does not match reviewed predecessor %q", base.CandidateRelease, template.PredecessorRelease)
+	}
+
+	releaseWorkflow := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
+	for _, required := range []string{
+		`canonical_version="$(tr -d '[:space:]' < VERSION)"`,
+		`version="$canonical_version"`,
+		`BUILD_VERSION: ${{ needs.identity.outputs.version }}`,
+		`"version": os.environ["BUILD_VERSION"]`,
+		`--candidate-admission assembled-image-admission.json`,
+	} {
+		if !strings.Contains(releaseWorkflow, required) {
+			t.Fatalf("release workflow does not bind repository VERSION through admission: missing %q", required)
+		}
+	}
+
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64)
+	bound, err := base.BindCandidateWithTemplate(compatibility.ReleaseIdentity{
+		Version: version, SourceRevision: strings.Repeat("d", 40),
+		Image: image, Distribution: "public",
+	}, template.Platforms, template)
+	require.NoError(t, err)
+
+	predecessor, ok := bound.ReleaseByID(template.PredecessorRelease)
+	if !ok {
+		t.Fatalf("bound policy omits reviewed predecessor %q", template.PredecessorRelease)
+	}
+	candidateID := "v" + version
+	candidate, ok := bound.ReleaseByID(candidateID)
+	if !ok || bound.CandidateRelease != candidateID {
+		t.Fatalf("bound candidate = %#v, present=%v, policy candidate=%q", candidate, ok, bound.CandidateRelease)
+	}
+	for _, platform := range template.Platforms {
+		previousIdentity := predecessor.IdentityForPlatform(platform)
+		candidateIdentity := candidate.IdentityForPlatform(platform)
+		if previousIdentity.ReleaseID != template.PredecessorRelease || previousIdentity.Image == "" {
+			t.Fatalf("predecessor identity for %s = %#v", platform, previousIdentity)
+		}
+		if candidateIdentity.ReleaseID != candidateID || candidateIdentity.Version != version || candidateIdentity.Image != image {
+			t.Fatalf("candidate identity for %s = %#v", platform, candidateIdentity)
+		}
+		for _, transition := range []struct {
+			operation compatibility.Operation
+			current   compatibility.ReleaseIdentity
+			next      compatibility.ReleaseIdentity
+		}{
+			{operation: compatibility.OperationUpgrade, current: previousIdentity, next: candidateIdentity},
+			{operation: compatibility.OperationRollback, current: candidateIdentity, next: previousIdentity},
+		} {
+			decision := bound.Evaluate(compatibility.Request{
+				Operation: transition.operation,
+				Current:   transition.current,
+				Next:      transition.next,
+			})
+			if err := decision.Err(); err != nil {
+				t.Fatalf("%s %s decision = %#v: %v", platform, transition.operation, decision, err)
+			}
+		}
+	}
+}
+
 func TestControllerInitializationGeneratesValidPublicOrigin(t *testing.T) {
 	binaryDir := t.TempDir()
 	validator := buildConfigValidator(t, binaryDir)

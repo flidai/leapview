@@ -986,6 +986,7 @@ tasks:
     cmds:
       - >-
         go test
+        ./deploy/compose
         ./internal/app/tools/transitionpolicy
         ./internal/platform/compatibility
         ./internal/app/cli/hostinstall

@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"golang.org/x/mod/semver"
 )
 
 type publicReleaseManifest struct {
@@ -25,6 +27,10 @@ type publicReleaseArtifact struct {
 	Architecture string `json:"architecture"`
 	ArchiveURL   string `json:"archiveUrl"`
 	ChecksumURL  string `json:"checksumUrl"`
+}
+
+type releaseTransitionTemplate struct {
+	PredecessorRelease string `json:"predecessorRelease"`
 }
 
 func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
@@ -47,11 +53,22 @@ func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
 		t.Fatalf("read VERSION: %v", err)
 	}
 	version := strings.TrimSpace(string(versionContents))
+	templateContents, err := os.ReadFile("../internal/platform/compatibility/release-transition-template.json")
+	if err != nil {
+		t.Fatalf("read release transition template: %v", err)
+	}
+	var template releaseTransitionTemplate
+	if err := json.Unmarshal(templateContents, &template); err != nil {
+		t.Fatalf("decode release transition template: %v", err)
+	}
 	if manifest.SchemaVersion != 1 {
 		t.Errorf("public release schemaVersion = %d, want 1", manifest.SchemaVersion)
 	}
-	if manifest.Version != version {
-		t.Errorf("public release version = %q, VERSION = %q", manifest.Version, version)
+	if template.PredecessorRelease != manifest.Tag {
+		t.Errorf("reviewed predecessor = %q, public release tag = %q", template.PredecessorRelease, manifest.Tag)
+	}
+	if !semver.IsValid("v"+version) || semver.Compare("v"+version, manifest.Tag) <= 0 {
+		t.Errorf("candidate VERSION %q must be newer than public predecessor %q", version, manifest.Version)
 	}
 	if manifest.Tag != "v"+manifest.Version {
 		t.Errorf("public release tag = %q, want v%s", manifest.Tag, manifest.Version)
