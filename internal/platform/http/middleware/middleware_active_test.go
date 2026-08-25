@@ -123,10 +123,13 @@ func TestSecurityHeadersAndOptionalHSTS(t *testing.T) {
 				}
 			}
 			csp := response.Header().Get("Content-Security-Policy")
-			for _, want := range []string{"default-src 'self'", "object-src 'none'", "frame-ancestors 'self'", "script-src 'self' 'unsafe-eval'", "connect-src 'self'", "worker-src 'self' blob:"} {
+			for _, want := range []string{"default-src 'self'", "object-src 'none'", "frame-ancestors 'self'", "script-src 'self'", "script-src-attr 'none'", "style-src-attr 'none'", "connect-src 'self'", "worker-src 'self' blob:"} {
 				if !strings.Contains(csp, want) {
 					t.Fatalf("CSP missing %q: %q", want, csp)
 				}
+			}
+			if strings.Contains(csp, "'unsafe-eval'") || strings.Contains(csp, "'unsafe-inline'") {
+				t.Fatalf("non-document CSP contains an unsafe directive: %q", csp)
 			}
 			if strings.Contains(csp, "cdn.jsdelivr.net") {
 				t.Fatalf("CSP allows CDN scripts: %q", csp)
@@ -135,6 +138,67 @@ func TestSecurityHeadersAndOptionalHSTS(t *testing.T) {
 				t.Fatalf("HSTS presence=%v, want %v (%q)", got != "", test.hsts, got)
 			}
 		})
+	}
+}
+
+func TestSecurityHeadersRestrictCSPExceptionsToHTMLDocuments(t *testing.T) {
+	tests := []struct {
+		name              string
+		contentType       string
+		body              string
+		wantUnsafeEval    bool
+		wantDynamicStyles bool
+	}{
+		{name: "html", contentType: "text/html; charset=utf-8", body: "<!doctype html><html></html>", wantUnsafeEval: true, wantDynamicStyles: true},
+		{name: "detected html", body: "<!doctype html><html></html>", wantUnsafeEval: true, wantDynamicStyles: true},
+		{name: "json", contentType: "application/json", body: `{\"status\":\"ok\"}`},
+		{name: "event stream", contentType: "text/event-stream", body: "event: ready\\n\\n"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := SecurityHeadersMiddleware(SecurityHeaders(false))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if test.contentType != "" {
+					w.Header().Set("Content-Type", test.contentType)
+				}
+				_, _ = w.Write([]byte(test.body))
+			}))
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+			policy := response.Header().Get("Content-Security-Policy")
+			if got := strings.Contains(policy, "'unsafe-eval'"); got != test.wantUnsafeEval {
+				t.Fatalf("unsafe-eval presence = %v, want %v: %q", got, test.wantUnsafeEval, policy)
+			}
+			if got := strings.Contains(policy, "'unsafe-inline'"); got != test.wantDynamicStyles {
+				t.Fatalf("unsafe-inline presence = %v, want %v: %q", got, test.wantDynamicStyles, policy)
+			}
+			for _, want := range []string{"script-src-attr 'none'", "style-src 'self'"} {
+				if !strings.Contains(policy, want) {
+					t.Fatalf("CSP missing %q: %q", want, policy)
+				}
+			}
+			if test.wantDynamicStyles {
+				for _, want := range []string{"style-src-elem 'self' 'unsafe-inline'", "style-src-attr 'unsafe-inline'"} {
+					if !strings.Contains(policy, want) {
+						t.Fatalf("document CSP missing %q: %q", want, policy)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestSecurityHeadersPreserveHandlerOwnedCSP(t *testing.T) {
+	const policy = "default-src 'none'; frame-ancestors https://embed.example"
+	handler := SecurityHeadersMiddleware(SecurityHeaders(false))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.Header().Set("Content-Security-Policy", policy)
+		_, _ = w.Write([]byte("<!doctype html><html></html>"))
+	}))
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/public", nil))
+	if got := response.Header().Get("Content-Security-Policy"); got != policy {
+		t.Fatalf("Content-Security-Policy = %q, want handler policy %q", got, policy)
 	}
 }
 

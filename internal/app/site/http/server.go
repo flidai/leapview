@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	mapassethttp "github.com/flidai/leapview/internal/dashboard/visualization/mapasset/http"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/pkg/pagestream"
 	siteassets "github.com/flidai/leapview/site"
 )
@@ -140,11 +141,14 @@ func cloneURL(value *url.URL) *url.URL {
 
 func (s *siteServer) productionHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		policy := "default-src 'self'; base-uri 'self'; connect-src 'self'; font-src 'self'; frame-ancestors 'none'; form-action 'self'; img-src 'self' data: blob:; object-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; worker-src 'self' blob:"
+		policyConfig := apihttpmiddleware.ContentSecurityPolicyConfig{FrameAncestors: "'none'"}
 		if r.URL.Path == "/showcase" && s.showcaseOrigin != "" {
-			policy += "; frame-src " + s.showcaseOrigin
+			policyConfig.FrameSrc = s.showcaseOrigin
 		}
-		w.Header().Set("Content-Security-Policy", policy)
+		strictPolicy := apihttpmiddleware.ContentSecurityPolicy(policyConfig)
+		policyConfig.DatastarExpressions = true
+		policyConfig.DynamicStyles = true
+		documentPolicy := apihttpmiddleware.ContentSecurityPolicy(policyConfig)
 		w.Header().Set("Permissions-Policy", "camera=(), geolocation=(), microphone=()")
 		w.Header().Set("Referrer-Policy", "strict-origin-when-cross-origin")
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -165,7 +169,7 @@ func (s *siteServer) productionHeaders(next http.Handler) http.Handler {
 		default:
 			w.Header().Set("Cache-Control", "no-cache")
 		}
-		next.ServeHTTP(w, r)
+		apihttpmiddleware.ContentSecurityPolicyByMediaType(strictPolicy, documentPolicy)(next).ServeHTTP(w, r)
 	})
 }
 

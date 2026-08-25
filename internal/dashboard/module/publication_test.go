@@ -36,4 +36,16 @@ func TestEmbedWithNoAllowedOriginsDeniesFraming(t *testing.T) {
 	if got := header.Get("Content-Security-Policy"); !strings.Contains(got, "frame-ancestors 'none'") {
 		t.Fatalf("Content-Security-Policy = %q", got)
 	}
+	policy := header.Get("Content-Security-Policy")
+	for _, want := range []string{
+		"script-src 'self' 'unsafe-eval'",
+		"script-src-attr 'none'",
+		"style-src 'self'",
+		"style-src-elem 'self' 'unsafe-inline'",
+		"style-src-attr 'unsafe-inline'",
+	} {
+		if !strings.Contains(policy, want) {
+			t.Fatalf("Content-Security-Policy missing %q: %q", want, policy)
+		}
+	}
 }
