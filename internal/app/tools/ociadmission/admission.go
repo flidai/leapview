@@ -280,12 +280,26 @@ func verifyAttestation(data []byte, workflow, revision string) bool {
 	}
 	for _, entry := range entries {
 		cert := entry.VerificationResult.Signature.Certificate
-		if stringValue(cert["sourceRepository"]) != repositoryIdentity {
+		repositoryValue := firstJSONAlternative(cert, "sourceRepositoryURI", "sourceRepository")
+		if !matchesRepositoryIdentity(repositoryValue) {
 			continue
 		}
-		workflowValue := firstJSONAlternative(cert, "workflow", "workflowPath", "buildConfigURI", "subjectAlternativeName")
+		workflowValue := firstJSONAlternative(cert, "buildSignerURI", "subjectAlternativeName", "workflow", "workflowPath", "buildConfigURI")
 		revisionValue := firstJSONAlternative(cert, "sourceRepositoryDigest", "sourceDigest")
-		if strings.Contains(workflowValue, workflow) && revisionValue == revision {
+		if matchesWorkflowIdentity(workflowValue, workflow) && revisionValue == revision {
+			return true
+		}
+	}
+	return false
+}
+
+func matchesRepositoryIdentity(value string) bool {
+	return value == repositoryIdentity || value == "https://github.com/"+repositoryIdentity
+}
+
+func matchesWorkflowIdentity(value, workflow string) bool {
+	for _, expected := range []string{workflow, "https://github.com/" + workflow} {
+		if value == expected || strings.HasPrefix(value, expected+"@") {
 			return true
 		}
 	}
