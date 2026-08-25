@@ -58,14 +58,25 @@ func lifecycleDigest(ch byte) string { return "sha256:" + strings.Repeat(string(
 func TestDeliveryLifecyclePreviewIsReadOnly(t *testing.T) {
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
 	store := &lifecycleStore{}
-	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod", TargetRevision: 3}}, Store: store, Now: func() time.Time { return now }}
-	d := lifecycleDigest
-	plan, err := lifecycle.Preview(t.Context(), DeliveryPlanRequest{ID: "plan-preview", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: DeliveryOperationCodeChange, SourceDigest: d('a'), Execution: DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'), DependencyDigest: d('d'), ConfigDigest: d('e'), BindingDigest: d('f'), RuntimeDigest: d('0'), CapabilityDigest: d('1')}, Provenance: DeliveryProvenance{Builder: "test"}, Governance: DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true}, Evidence: DeliveryPlanEvidence{ImpactStatement: "no graph impact", PhysicalWorkStatement: "no physical work", ReuseStatement: "no reuse", Qualification: DeliveryQualificationEvidence{Policy: "protected", Steps: []DeliveryQualificationStep{{ID: "contracts", Kind: "contract", Description: "run contracts", Required: true, Blocking: true}}}, StalePolicy: DeliveryStalePolicy{Mode: "reject"}, Rollback: DeliveryRollbackEvidence{Class: DeliveryRollbackSafe}}})
+	pipelinePlan, err := NewPipelinePlan(PipelinePlan{
+		ID: "pipeline-plan-preview", PipelineID: "pipeline:refresh", ProjectID: "project", Environment: "prod",
+		SemanticModelID: "semantic-model:refresh", ServingGenerationID: "generation-3", ArtifactDigest: lifecycleDigest('a'),
+		SelectionDigest: lifecycleDigest('9'), MaterializationScope: []string{"orders"}, InvocationSource: "manual",
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.BaseTargetRevision != 3 || plan.BaseGenerationID != "" {
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod", TargetRevision: 3, ActiveGenerationID: "generation-3"}}, Store: store, Now: func() time.Time { return now }}
+	d := lifecycleDigest
+	plan, err := lifecycle.Preview(t.Context(), DeliveryPlanRequest{ID: "plan-preview", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: DeliveryOperationCodeChange, SourceDigest: d('a'), Execution: DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'), DependencyDigest: d('d'), ConfigDigest: d('e'), BindingDigest: d('f'), RuntimeDigest: d('0'), CapabilityDigest: d('1')}, Provenance: DeliveryProvenance{Builder: "test"}, Governance: DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true}, Evidence: DeliveryPlanEvidence{ImpactStatement: "no graph impact", PhysicalWorkStatement: "no physical work", ReuseStatement: "no reuse", Qualification: DeliveryQualificationEvidence{Policy: "protected", Steps: []DeliveryQualificationStep{{ID: "contracts", Kind: "contract", Description: "run contracts", Required: true, Blocking: true}}}, StalePolicy: DeliveryStalePolicy{Mode: "reject"}, Rollback: DeliveryRollbackEvidence{Class: DeliveryRollbackSafe}}, PipelinePlan: &pipelinePlan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan.BaseTargetRevision != 3 || plan.BaseGenerationID != "generation-3" {
 		t.Fatalf("plan base = %q/%d", plan.BaseGenerationID, plan.BaseTargetRevision)
+	}
+	if plan.PipelinePlan == nil || plan.PipelinePlan.Digest != pipelinePlan.Digest || plan.Evidence.PipelinePlan == nil || plan.Evidence.PipelinePlan.Digest != pipelinePlan.Digest {
+		t.Fatalf("pipeline plan was not preserved: plan=%#v evidence=%#v", plan.PipelinePlan, plan.Evidence.PipelinePlan)
 	}
 	if store.created != 0 {
 		t.Fatalf("preview persisted %d plans", store.created)
