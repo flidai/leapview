@@ -209,14 +209,17 @@ test('composer searches for and attaches typed @ references with spaces', async 
         element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true })
         textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       })
-		const iconClass = option.querySelector('.mention-icon svg')?.getAttribute('class')
-		return { searches, optionText, iconClass, draftAfterReference, submitted }
+		const icon = option.querySelector('.mention-icon svg')
+		const iconClass = icon?.getAttribute('class')
+		const iconColor = (icon as SVGElement | null)?.style.color
+		return { searches, optionText, iconClass, iconColor, draftAfterReference, submitted }
     })
 
     expect(result).toEqual({
       searches: ['orders by'],
       optionText: 'Orders Sales › Executive Sales › Overview Visual',
-		iconClass: 'reference-icon-table',
+		iconClass: 'reference-icon-visual',
+		iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',
       draftAfterReference: 'Compare',
       submitted: {
         input: 'Compare this with last month',

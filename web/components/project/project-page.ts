@@ -2,25 +2,9 @@ import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
-  BookOpen,
-  Cable,
-  ChartColumn,
-  Component,
   ExternalLink,
-  LayoutDashboard,
-  ListFilter,
-  PanelTop,
-  Plug,
   RefreshCw,
-  Ruler,
   Search,
-  Sigma,
-  SquareDashedMousePointer,
-  Table2,
-  TableProperties,
-  Waypoints,
-  Workflow,
-  type IconNode,
 } from 'lucide'
 import type {
   AssetVersionDrawerSignal,
@@ -37,6 +21,7 @@ import type {
   ResourceTabSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { assetPresentation } from '../shared/asset-presentation'
 import { checkSignalContract } from '../shared/signal-contract'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -989,81 +974,12 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
 }
 
 function assetTypeGlyph(type: string, size: 'table' | 'inline' = 'table') {
+  const presentation = assetPresentation(type)
   return html`
-    <span class=${`asset-glyph asset-kind-${assetPresentationToken(type)} ${size === 'inline' ? 'inline' : ''}`} aria-hidden="true">
-      ${lucideIcon(assetIconNode(type), { size: size === 'inline' ? 14 : 16, strokeWidth: 1.75 })}
+    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'inline' ? 'inline' : ''}`} aria-hidden="true">
+      ${lucideIcon(presentation.icon, { size: size === 'inline' ? 14 : 16, strokeWidth: 1.75 })}
     </span>
   `
-}
-
-function assetIconNode(type: string): IconNode {
-  switch (type) {
-    case 'catalog':
-      return BookOpen
-    case 'connection':
-      return Plug
-    case 'dashboard':
-      return LayoutDashboard
-    case 'field':
-      return Ruler
-    case 'filter':
-      return ListFilter
-    case 'metric':
-      return Sigma
-    case 'model_table':
-      return TableProperties
-    case 'page':
-      return PanelTop
-    case 'page_item':
-      return Component
-    case 'relationship':
-      return Workflow
-    case 'semantic_model':
-      return Waypoints
-    case 'source':
-      return Cable
-    case 'table':
-      return Table2
-    case 'visual':
-      return ChartColumn
-    case 'visual_element':
-      return SquareDashedMousePointer
-    default:
-      return Component
-  }
-}
-
-function assetPresentationToken(type: string): string {
-  switch (type) {
-    case 'catalog':
-    case 'connection':
-      return 'connection'
-    case 'dashboard':
-      return 'dashboard'
-    case 'field':
-    case 'relationship':
-      return 'dimension'
-    case 'filter':
-      return 'filter'
-    case 'metric':
-      return 'metric'
-    case 'model_table':
-      return 'model-table'
-    case 'page':
-    case 'page_item':
-      return 'page'
-    case 'semantic_model':
-      return 'semantic-model'
-    case 'source':
-      return 'source'
-    case 'table':
-      return 'table'
-    case 'visual':
-    case 'visual_element':
-      return 'visual'
-    default:
-      return 'default'
-  }
 }
 
 const projectStyles = css`

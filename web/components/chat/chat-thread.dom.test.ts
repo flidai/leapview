@@ -190,6 +190,7 @@ test('chat thread renders turn-scoped references inside the user message bubble'
       accessibleName: reference.getAttribute('aria-label'),
       hasVisibleMetadata: Boolean(reference.querySelector('.turn-reference-hierarchy, .turn-reference-type')),
       iconClass: reference.querySelector('.turn-reference-icon svg')?.getAttribute('class'),
+      iconColor: (reference.querySelector('.turn-reference-icon svg') as SVGElement).style.color,
     }
   })
 
@@ -201,12 +202,13 @@ test('chat thread renders turn-scoped references inside the user message bubble'
     tooltip: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
     accessibleName: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
     hasVisibleMetadata: false,
-    iconClass: 'reference-icon-line',
+    iconClass: 'reference-icon-visual',
+    iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',
   })
   await page.close()
 })
 
-test('chat thread uses the visual subtype for reference icons', async () => {
+test('chat thread uses the shared visual identity and color for references', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -230,11 +232,15 @@ test('chat thread uses the visual subtype for reference icons', async () => {
     await thread.updateComplete
   })
 
-  const classes = await page.locator('lv-chat-thread').evaluate((element: any) => (
+  const icons = await page.locator('lv-chat-thread').evaluate((element: any) => (
     Array.from(element.shadowRoot.querySelectorAll('.turn-reference-icon svg'))
-      .map((icon: any) => icon.getAttribute('class'))
+      .map((icon: any) => ({ className: icon.getAttribute('class'), color: icon.style.color }))
   ))
-  expect(classes).toEqual(['reference-icon-line', 'reference-icon-kpi', 'reference-icon-table'])
+  expect(icons).toEqual([
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+  ])
   await page.close()
 })
 
