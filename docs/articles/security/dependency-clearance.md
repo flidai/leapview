@@ -37,6 +37,14 @@ notices, deduplicated by advisory and module. They do not satisfy the scanner's
 definition of affected code and therefore do not require a waiver. A finding
 with a symbol-level call trace is recorded as reachable and blocks clearance.
 
+## Runtime OS packages
+
+The production server image combines a digest-pinned Debian base with the dated sources in `deploy/container/debian-bookworm.sources`. Both the Debian and Debian security suites use one immutable snapshot timestamp. APT binds each source to the Debian archive keyring, verifies signed repository metadata and package hashes, and therefore resolves direct and transitive packages from a frozen package universe on both release architectures. The bootstrap CA bundle comes from the separately digest-pinned Go builder before APT connects to the HTTPS snapshot.
+
+The distroless public-site runtime installs no OS packages. The authoring qualification image derives from the server runtime and inherits its frozen sources. The malicious-browser proof image is test-only, and the Ubuntu host bootstrap is an installation-time patching boundary: it intentionally consumes the current signed Ubuntu 24.04 repositories and enables unattended upgrades rather than becoming part of the immutable application image.
+
+To refresh runtime packages, choose a reviewed snapshot containing the intended security updates, update the snapshot timestamp and the pinned runtime base digest together, build both `linux/amd64` and `linux/arm64`, inspect the installed package inventory, and rerun container vulnerability and provenance checks. Do not point a release build back at a moving mirror.
+
 ## Waivers
 
 Waivers are optional JSON in `security/dependency-waivers.json`. Reports bind
