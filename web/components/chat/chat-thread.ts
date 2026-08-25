@@ -13,7 +13,7 @@ type ChatRenderUnit =
   | { kind: 'user'; item: ChatTranscriptItemSignal }
   | { kind: 'agent'; items: ChatTranscriptItemSignal[] }
 
-type ToolPreviewLanguage = 'json' | 'toon' | 'text'
+type ToolPreviewLanguage = 'json' | 'toon' | 'text' | 'yaml'
 type ChatTranscriptItemWithFormats = ChatTranscriptItemSignal & {
   inputFormat?: string
   resultFormat?: string
@@ -589,8 +589,8 @@ class ChatThread extends LitElement {
     const status = item.status || 'running'
     return html`
       <div class="tool-details" id=${detailsID}>
-        ${item.inputJson || item.argumentsJson ? this.renderToolCode('Input', item.inputJson || item.argumentsJson || '', toolInputLanguage(item)) : nothing}
-        ${item.resultJson ? this.renderToolCode(status === 'error' ? 'Error result' : 'Result', item.resultJson, toolResultLanguage(item)) : nothing}
+        ${item.argumentsJson || item.inputJson ? this.renderToolCode('Input', item.argumentsJson || item.inputJson || '', toolInputLanguage(item)) : nothing}
+        ${item.resultJson ? this.renderToolCode(toolResultLabel(item, status), item.resultJson, toolResultLanguage(item)) : nothing}
         ${!item.resultJson && item.error ? html`<div class="tool-error">${item.error}</div>` : nothing}
       </div>
     `
@@ -600,7 +600,7 @@ class ChatThread extends LitElement {
     return html`
       <div class="tool-detail-block">
         <div class="tool-detail-label">${label}</div>
-        <lv-code-block compact language=${language} .code=${value}></lv-code-block>
+        <lv-code-block compact copy language=${language} .code=${value}></lv-code-block>
       </div>
     `
   }
@@ -689,16 +689,22 @@ function toolDetailsID(key: string): string {
 }
 
 function toolInputLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
-  return previewLanguage((item as ChatTranscriptItemWithFormats).inputFormat, item.inputJson || item.argumentsJson || '', 'json')
+  return previewLanguage((item as ChatTranscriptItemWithFormats).inputFormat, item.argumentsJson || item.inputJson || '', 'json')
 }
 
 function toolResultLanguage(item: ChatTranscriptItemSignal): ToolPreviewLanguage {
   return previewLanguage((item as ChatTranscriptItemWithFormats).resultFormat, item.resultJson || '', 'toon')
 }
 
+function toolResultLabel(item: ChatTranscriptItemSignal, status: string): string {
+  if (status === 'error') return 'Error result'
+  if (item.name === 'export_dashboard_yaml' && toolResultLanguage(item) === 'yaml') return 'Dashboard YAML'
+  return 'Result'
+}
+
 function previewLanguage(format: string | undefined, value: string, fallback: ToolPreviewLanguage): ToolPreviewLanguage {
   const normalized = (format || '').trim().toLowerCase()
-  if (normalized === 'json' || normalized === 'toon' || normalized === 'text') return normalized
+  if (normalized === 'json' || normalized === 'toon' || normalized === 'text' || normalized === 'yaml') return normalized
   if (isJSON(value)) return 'json'
   return fallback
 }

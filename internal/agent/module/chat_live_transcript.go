@@ -87,7 +87,7 @@ func applyLiveTranscriptEvent(transcript []agentcap.ChatTranscriptItem, conversa
 		}
 		applyLiveToolInput(&next[idx], event.Payload)
 		result := stringPayload(event.Payload, "tool_result")
-		preview := agentcap.PreviewToolResult(result)
+		preview := agentcap.PreviewToolResult(result, stringPayload(event.Payload, "tool_display"))
 		if result != "" {
 			next[idx].ResultJSON = preview.ResultJSON
 			next[idx].ResultFormat = preview.Format

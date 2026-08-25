@@ -420,6 +420,43 @@ test('chat thread keeps in-flight tool details open as the result arrives', asyn
   await page.close()
 })
 
+test('chat thread renders tool arguments directly and exported yaml as code', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [{
+      id: 'tool-export', kind: 'tool', name: 'export_dashboard_yaml', status: 'complete',
+      inputJson: '{"name":"export_dashboard_yaml","arguments":"{\\"dashboardId\\":\\"dashboard:sales\\"}"}',
+      argumentsJson: '{\n  "dashboardId": "dashboard:sales",\n  "sourceKind": "project"\n}',
+      inputFormat: 'json',
+      resultJson: 'apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:sales\n',
+      resultFormat: 'yaml',
+    }]
+    await thread.updateComplete
+    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    await thread.updateComplete
+  })
+
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const blocks = Array.from(element.shadowRoot.querySelectorAll('lv-code-block')) as any[]
+    return {
+      languages: blocks.map((block) => block.language),
+      values: blocks.map((block) => block.code),
+      copy: blocks.map((block) => block.copy),
+      labels: Array.from(element.shadowRoot.querySelectorAll('.tool-detail-label')).map((label: any) => label.textContent),
+    }
+  })
+  expect(state.languages).toEqual(['json', 'yaml'])
+  expect(state.values[0]).toContain('"dashboardId": "dashboard:sales"')
+  expect(state.values[0]).not.toContain('export_dashboard_yaml')
+  expect(state.values[1]).toContain('kind: Dashboard')
+  expect(state.copy).toEqual([true, true])
+  expect(state.labels).toEqual(['Input', 'Dashboard YAML'])
+  await page.close()
+})
+
 test('chat thread renders assistant markdown through shared markdown view', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)

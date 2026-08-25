@@ -85,6 +85,9 @@ func eventPayloadJSON(event agentcore.Event) string {
 	if event.ToolResult != "" {
 		payload["tool_result"] = event.ToolResult
 	}
+	if event.ToolDisplay != "" {
+		payload["tool_display"] = event.ToolDisplay
+	}
 	return metadataJSON(payload)
 }
 

@@ -219,6 +219,12 @@ func (a *Agent) executeToolCalls(ctx context.Context, run *runState, turnID stri
 }
 
 func (r *runState) emitToolExecutionEnd(ctx context.Context, turnID string, call ToolCall, message Message) {
+	displayJSON := ""
+	if message.DisplayContent != nil {
+		if value, err := json.Marshal(message.DisplayContent); err == nil {
+			displayJSON = string(value)
+		}
+	}
 	_ = r.emit(ctx, Event{
 		Type:            EventTypeToolExecutionEnd,
 		Severity:        eventSeverityForToolResult(message),
@@ -232,6 +238,7 @@ func (r *runState) emitToolExecutionEnd(ctx context.Context, turnID string, call
 		ToolName:        call.Name,
 		ToolArguments:   string(call.Arguments),
 		ToolResult:      message.Content,
+		ToolDisplay:     displayJSON,
 	})
 }
 

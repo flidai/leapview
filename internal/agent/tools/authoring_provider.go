@@ -356,7 +356,13 @@ func (p DashboardAuthoringProvider) definitions(scope Scope) []agentcore.ToolDef
 			if err != nil {
 				return authoringToolError(err)
 			}
-			return agentcore.ToolResult{Content: map[string]any{"yaml": string(value)}}
+			yaml := string(value)
+			return agentcore.ToolResult{
+				Content: map[string]any{"yaml": yaml},
+				DisplayContent: map[string]any{
+					"type": "code", "language": "yaml", "content": yaml,
+				},
+			}
 		}),
 	}
 }

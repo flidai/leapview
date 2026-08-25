@@ -56,7 +56,9 @@ func TestToolLifecycleEventsExposeArgumentsAndResult(t *testing.T) {
 	}}
 	a := mustAgent(t, Definition{
 		Name: "test", SystemPrompt: "x", Model: model, Events: events,
-		Tools: []ToolDefinition{{Name: "lookup", Description: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`), Handler: noopTool()}},
+		Tools: []ToolDefinition{{Name: "lookup", Description: "lookup", InputSchema: json.RawMessage(`{"type":"object"}`), Handler: ToolHandlerFunc(func(context.Context, ToolCall) (ToolResult, error) {
+			return ToolResult{Content: map[string]any{"ok": true}, DisplayContent: map[string]any{"type": "code", "language": "yaml", "content": "kind: Dashboard\n"}}, nil
+		})}},
 	})
 
 	if _, err := a.Prompt(context.Background(), PromptRequest{Input: "go"}); err != nil {
@@ -81,6 +83,9 @@ func TestToolLifecycleEventsExposeArgumentsAndResult(t *testing.T) {
 	}
 	if ended.ToolArguments != added.ToolArguments || !strings.Contains(ended.ToolResult, "ok: true") {
 		t.Fatalf("tool end = %#v", ended)
+	}
+	if !strings.Contains(ended.ToolDisplay, `"language":"yaml"`) || !strings.Contains(ended.ToolDisplay, `"content":"kind: Dashboard\n"`) {
+		t.Fatalf("tool display = %q", ended.ToolDisplay)
 	}
 }
 

@@ -131,6 +131,22 @@ func TestDashboardAuthoringResolvesCreateForkAndLifecycleCapabilities(t *testing
 	}
 }
 
+func TestDashboardAuthoringExportProvidesTypedYAMLDisplay(t *testing.T) {
+	app := &projectAuthoringFake{}
+	provider := DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest(), Resolve: (&projectResolverFake{}).Resolve}
+	export := definitionByName(provider.Definitions(Scope{PrincipalID: "principal"}), ExportDashboardYAMLToolName)
+	result, err := export.Handler.Run(context.Background(), agentcore.ToolCall{
+		ID: "export", Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales","sourceKind":"project"}`),
+	})
+	if err != nil || result.IsError {
+		t.Fatalf("export result=%#v err=%v", result, err)
+	}
+	display, ok := result.DisplayContent.(map[string]any)
+	if !ok || display["type"] != "code" || display["language"] != "yaml" || display["content"] != "version: 1\n" {
+		t.Fatalf("export display = %#v", result.DisplayContent)
+	}
+}
+
 func projectIDForTest() projectgraph.ResourceID { return projectgraph.ResourceID("project_demo") }
 
 func toolErrorCode(result agentcore.ToolResult) string {

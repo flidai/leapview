@@ -57,6 +57,21 @@ func TestTranscriptFormatsJSONToolAndArtifactResults(t *testing.T) {
 	}
 }
 
+func TestTranscriptPrefersTypedCodeDisplayForExportResult(t *testing.T) {
+	transcript := transcriptFromMessages("conv_1", []Message{{
+		ID: "tool_export", Role: MessageRoleTool, ToolCallID: "call_export", ToolName: "export_dashboard_yaml",
+		ContentText: `yaml: "apiVersion: leapview.dev/v1\nkind: Dashboard\n"`,
+		ContentJSON: `{"display_content":{"type":"code","language":"yaml","content":"apiVersion: leapview.dev/v1\nkind: Dashboard\n"}}`,
+	}})
+
+	if len(transcript) != 1 || transcript[0].ResultFormat != "yaml" {
+		t.Fatalf("export transcript = %#v", transcript)
+	}
+	if transcript[0].ResultJSON != "apiVersion: leapview.dev/v1\nkind: Dashboard\n" {
+		t.Fatalf("export result = %q", transcript[0].ResultJSON)
+	}
+}
+
 func TestTranscriptProjectsResolvedReferencesOntoUserTurn(t *testing.T) {
 	transcript := transcriptFromMessages("conv_1", []Message{{
 		ID:          "user_1",

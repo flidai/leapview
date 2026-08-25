@@ -78,6 +78,7 @@ type Event struct {
 	ToolName        string
 	ToolArguments   string
 	ToolResult      string
+	ToolDisplay     string
 	CorrelationID   string
 	Delta           string
 	Content         string

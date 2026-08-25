@@ -88,9 +88,10 @@ func TestLiveTranscriptMakesToolInputAndResultInspectableDuringRun(t *testing.T)
 		t.Fatalf("running live tool = %#v", transcript[1])
 	}
 	apply(agentcore.EventTypeToolExecutionEnd, string(agentcore.SeverityInfo), map[string]any{
-		"output_part_id": "part-1", "tool_result": "items[1]{id}:\n  dashboard:sales",
+		"output_part_id": "part-1", "tool_result": "yaml: \"kind: Dashboard\\n\"",
+		"tool_display": `{"type":"code","language":"yaml","content":"kind: Dashboard\n"}`,
 	})
-	if got := transcript[1]; got.Status != "complete" || got.ResultJSON == "" || got.ResultFormat != "toon" {
+	if got := transcript[1]; got.Status != "complete" || got.ResultJSON != "kind: Dashboard\n" || got.ResultFormat != "yaml" {
 		t.Fatalf("completed live tool = %#v", got)
 	}
 }

@@ -77,7 +77,7 @@ func transcriptStateFromMessages(conversationID string, messages []Message) Chat
 			output := outputPartFromContentJSON(message.ContentJSON)
 			artifact, artifactSignals := toolArtifact(message.ContentJSON)
 			mergeChatArtifactSignals(&artifacts, artifactSignals)
-			resultJSON := formatJSONPreview(message.ContentText, maxToolResultPreviewBytes)
+			preview := PreviewToolResult(message.ContentText, displayContentJSON(message.ContentJSON))
 			item := ChatTranscriptItem{
 				ID:              output.ID,
 				Kind:            "tool",
@@ -89,8 +89,8 @@ func transcriptStateFromMessages(conversationID string, messages []Message) Chat
 				Status:          "complete",
 				Summary:         toolSummary(message.ContentText),
 				ResultSummary:   toolSummary(message.ContentText),
-				ResultJSON:      resultJSON,
-				ResultFormat:    toolPreviewFormat(message.ContentText),
+				ResultJSON:      preview.ResultJSON,
+				ResultFormat:    preview.Format,
 				Artifact:        artifact,
 				ConversationID:  conversationID,
 				RunID:           message.RunID,
@@ -319,13 +319,35 @@ type ToolResultPreview struct {
 
 // PreviewToolResult applies the durable transcript result limits and summaries
 // before an in-flight result is published to the browser.
-func PreviewToolResult(result string) ToolResultPreview {
+func PreviewToolResult(result, displayJSON string) ToolResultPreview {
+	if preview, ok := previewCodeDisplay(displayJSON); ok {
+		preview.Summary = toolSummary(result)
+		preview.Error = toolErrorSummary(result)
+		return preview
+	}
 	return ToolResultPreview{
 		ResultJSON: formatJSONPreview(result, maxToolResultPreviewBytes),
 		Format:     toolPreviewFormat(result),
 		Summary:    toolSummary(result),
 		Error:      toolErrorSummary(result),
 	}
+}
+
+func previewCodeDisplay(raw string) (ToolResultPreview, bool) {
+	var display struct {
+		Type     string `json:"type"`
+		Language string `json:"language"`
+		Content  string `json:"content"`
+	}
+	if err := json.Unmarshal([]byte(raw), &display); err != nil || display.Type != "code" || strings.TrimSpace(display.Content) == "" {
+		return ToolResultPreview{}, false
+	}
+	switch display.Language {
+	case "json", "shellscript", "sql", "toon", "yaml":
+	default:
+		return ToolResultPreview{}, false
+	}
+	return ToolResultPreview{ResultJSON: display.Content, Format: display.Language}, true
 }
 
 func formatJSONPreview(raw string, limit int) string {
