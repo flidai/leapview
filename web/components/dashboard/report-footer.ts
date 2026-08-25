@@ -59,10 +59,14 @@ class ReportFooter extends LitElement {
       white-space: nowrap;
     }
 
-    .status > span:last-child {
+    .status-text {
       min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
+    }
+
+    .status-text-compact {
+      display: none;
     }
 
     .dot {
@@ -97,6 +101,20 @@ class ReportFooter extends LitElement {
         display: none;
       }
 
+      .status.error {
+        display: inline-flex;
+        flex: 0 1 auto;
+        margin-right: auto;
+      }
+
+      .status.error .status-text-full {
+        display: none;
+      }
+
+      .status.error .status-text-compact {
+        display: inline;
+      }
+
       lv-report-zoom {
         max-width: 100%;
       }
@@ -115,6 +133,20 @@ class ReportFooter extends LitElement {
         display: none;
       }
 
+      .status.error {
+        display: inline-flex;
+        flex: 0 1 auto;
+        margin-right: auto;
+      }
+
+      .status.error .status-text-full {
+        display: none;
+      }
+
+      .status.error .status-text-compact {
+        display: inline;
+      }
+
       lv-report-zoom {
         max-width: 100%;
       }
@@ -130,9 +162,16 @@ class ReportFooter extends LitElement {
 
     return html`
       <footer part="footer">
-        <div class=${statusClass} title=${this.status.error || ''}>
+        <div
+          class=${statusClass}
+          role=${this.status.error ? 'alert' : 'status'}
+          aria-live=${this.status.error ? 'assertive' : 'polite'}
+          aria-atomic="true"
+          title=${this.status.error || ''}
+        >
           <span class="dot" aria-hidden="true"></span>
-          <span>${this.statusText()}</span>
+          <span class="status-text status-text-full">${this.statusText()}</span>
+          ${this.status.error ? html`<span class="status-text status-text-compact">Refresh failed</span>` : null}
         </div>
         <lv-report-zoom></lv-report-zoom>
       </footer>

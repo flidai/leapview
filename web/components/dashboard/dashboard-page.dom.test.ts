@@ -578,13 +578,14 @@ test('bottom report toolbar separates layout, fit actions, and zoom presets on c
   }
 })
 
-test('compact report footers hide refresh status before it can overlap view controls', async () => {
+test('compact report footers keep refresh failures visible and announced without overlapping view controls', async () => {
   const page = await browser.newPage({ viewport: { width: 760, height: 620 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
 
     const result = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       await element.updateComplete
       const footerHost = element.shadowRoot.querySelector('lv-report-footer') as any
       await footerHost.updateComplete
@@ -592,18 +593,34 @@ test('compact report footers hide refresh status before it can overlap view cont
       const footer = root.querySelector('footer') as HTMLElement
       const status = root.querySelector('.status') as HTMLElement
       const controls = root.querySelector('lv-report-zoom') as HTMLElement
+      const idleStatusDisplay = getComputedStyle(status).display
+
+      mergePatch({ status: { loading: false, error: 'refresh failed' } })
+      await element.updateComplete
+      await footerHost.updateComplete
+
       const statusRect = status.getBoundingClientRect()
       const controlsRect = controls.getBoundingClientRect()
       return {
         footerWidth: Math.round(footer.getBoundingClientRect().width),
-        statusDisplay: getComputedStyle(status).display,
+        idleStatusDisplay,
+        errorVisible: statusRect.width > 0 && statusRect.height > 0,
+        errorText: status.innerText.trim(),
+        errorRole: status.getAttribute('role'),
+        errorLive: status.getAttribute('aria-live'),
+        errorAtomic: status.getAttribute('aria-atomic'),
         controlsWithinFooter: controlsRect.right <= footer.getBoundingClientRect().right,
         overlap: statusRect.width > 0 && statusRect.right > controlsRect.left,
       }
     })
 
     expect(result.footerWidth).toBeLessThanOrEqual(800)
-    expect(result.statusDisplay).toBe('none')
+    expect(result.idleStatusDisplay).toBe('none')
+    expect(result.errorVisible).toBe(true)
+    expect(result.errorText).toBe('Refresh failed')
+    expect(result.errorRole).toBe('alert')
+    expect(result.errorLive).toBe('assertive')
+    expect(result.errorAtomic).toBe('true')
     expect(result.controlsWithinFooter).toBe(true)
     expect(result.overlap).toBe(false)
   } finally {
