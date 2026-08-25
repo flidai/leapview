@@ -249,7 +249,7 @@ func (s *Service) Fork(ctx context.Context, input ForkRequest) (Result, error) {
 	if source.ProjectID != sourceProjectID || source.ID != sourceID {
 		return Result{}, fmt.Errorf("%w: source lifecycle identity does not match request", authoring.ErrInvalidAuthoring)
 	}
-	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: sourceProjectID, DashboardID: source.ID, OwnerPrincipalID: source.OwnerPrincipalID, SemanticModel: source.SemanticModel, Target: AuthorizationTargetAuthoredDashboard, Visibility: source.Visibility, Action: authoring.AuthorizationActionView}); err != nil {
+	if err := s.authorizer.Authorize(ctx, AuthorizationRequest{ActorID: actorID, ProjectID: sourceProjectID, DashboardID: source.ID, Target: AuthorizationTargetProjectDashboard, Action: authoring.AuthorizationActionView}); err != nil {
 		return Result{}, err
 	}
 	if source.Status == authoring.LifecycleStatusArchived {

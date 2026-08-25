@@ -298,8 +298,15 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	if forked.Lifecycle.ID != "dashboard-fork" || forked.Lifecycle.Status != authoring.LifecycleStatusDraft || forked.Lifecycle.Draft == nil {
 		t.Fatalf("forked result = %#v", forked)
 	}
+	foundExactSourceAuthorization := false
 	foundNewDashboardFork := false
 	for _, call := range authorizer.calls[callsBeforeFork:] {
+		if call.DashboardID == first.Lifecycle.ID && call.Action == authoring.AuthorizationActionView {
+			foundExactSourceAuthorization = true
+			if call.Target != service.AuthorizationTargetProjectDashboard {
+				t.Fatalf("fork source authorization = %#v", call)
+			}
+		}
 		if call.Target == service.AuthorizationTargetNewDashboard {
 			foundNewDashboardFork = true
 			if call.DashboardID != forked.Lifecycle.ID || call.Action != authoring.AuthorizationActionEdit {
@@ -309,6 +316,9 @@ func TestCanonicalServiceCreateIdempotencyAndFork(t *testing.T) {
 	}
 	if !foundNewDashboardFork {
 		t.Fatalf("fork target authorization did not use new-dashboard path: %#v", authorizer.calls)
+	}
+	if !foundExactSourceAuthorization {
+		t.Fatalf("fork source authorization did not use exact graph-resource path: %#v", authorizer.calls)
 	}
 	if got := repository.revisions[first.Revision.RevisionID].CreatedAt; !got.Equal(time.Date(2026, 8, 18, 14, 0, 0, 0, time.UTC)) {
 		t.Fatalf("deterministic create clock = %v", got)

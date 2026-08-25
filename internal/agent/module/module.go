@@ -45,6 +45,7 @@ type Module struct {
 	documentation      agenttools.Documentation
 	queryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
 	toolContext        func(context.Context, agent.Scope) context.Context
+	allowDevAuthBypass bool
 	enableSystemPrompt bool
 	broker             *pagestream.Broker
 	logger             *slog.Logger
@@ -101,6 +102,7 @@ type Config struct {
 	Documentation      agenttools.Documentation
 	QueryMetadata      func(context.Context, string, string) agenttools.VisualQueryMetadata
 	ToolContext        func(context.Context, Scope) context.Context
+	AllowDevAuthBypass bool
 	EnableSystemPrompt bool
 	Logger             *slog.Logger
 	MCPScope           func(*http.Request) (Scope, bool)
@@ -161,6 +163,7 @@ type HTTPConfig struct {
 	Layout             func(*http.Request) webpage.Provider
 	SearchReferences   func(*http.Request, agent.TurnContext, string, int) ([]ui.AgentReferenceSignal, error)
 	ResolveTurnContext func(*http.Request, agent.Scope, agent.TurnContext) (agent.TurnContext, error)
+	ResolveGroupIDs    func(context.Context, string) ([]string, error)
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -230,7 +233,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		dashboardMetrics:  config.DashboardMetrics,
 		recordAudit:       config.RecordAudit, dispatchAPIGen: dispatchAPIGen,
 		catalog: config.Catalog, documentation: config.Documentation,
-		queryMetadata: config.QueryMetadata, toolContext: toolContext,
+		queryMetadata: config.QueryMetadata, toolContext: toolContext, allowDevAuthBypass: config.AllowDevAuthBypass,
 		enableSystemPrompt: config.EnableSystemPrompt, broker: config.HTTP.Broker, logger: config.Logger,
 		pendingChatTitles: map[string]struct{}{},
 		mcpScope:          mcpScope, mcpProtect: config.MCPProtect,
@@ -269,7 +272,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		Service: service, ActiveProjectID: m.projectID.String(), ResolveProjectID: m.projectIDResolver, Settings: config.HTTP.Settings,
 		PlatformAdmin:    config.HTTP.PlatformAdmin,
 		CurrentPrincipal: currentPrincipal, CurrentCredential: config.HTTP.CurrentCredential,
-		Broker: config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,
+		ResolveGroupIDs: config.HTTP.ResolveGroupIDs,
+		Broker:          config.HTTP.Broker, CSRFToken: config.HTTP.CSRFToken,
 		CurrentRoleLabel: config.HTTP.CurrentRoleLabel, Layout: config.HTTP.Layout, ChatSignal: m.chatSignal,
 		ChatSignalWith: m.ChatSignalWith, SearchReferences: searchReferences,
 		ResolveTurnContext: resolveTurnContext, QueueMissingTitle: m.queueMissingChatTitle,

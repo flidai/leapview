@@ -338,7 +338,7 @@ if github_summary:
         target.write(f"- Coverage: {len(covered)}/{len(allowed)} tools; successful: {len(successful)}/{len(allowed)}\n")
         target.write("- Calls: {}; raw errors: {}; argument failures: {}; unexpected selections: {}\n".format(len(all_calls), summary["failedCalls"], argument_failures, unexpected))
         target.write("- Completed scenarios: {}/{}\n".format(summary["completedScenarios"], len(records)))
-if summary["missingTools"] or summary["neverSuccessfulTools"] or hard_failures:
+if summary["missingTools"] or summary["neverSuccessfulTools"] or argument_failures or hard_failures:
     raise SystemExit(1)
 ' "$TRANSCRIPT_PATH" "$REPORT_PATH" "$ALLOWED_TOOLS"
 

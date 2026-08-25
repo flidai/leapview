@@ -40,6 +40,7 @@ func (m *Module) configureTools() {
 // ToolDefinitions is the single governed tool catalog consumed by the
 // built-in agent and protocol adapters such as MCP.
 func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinition {
+	scope = m.executionScope(scope)
 	toolScope := ToolsScope(scope)
 	definitions := (agenttools.ProviderSet{
 		Docs:      m.DocsToolProvider(),
@@ -49,6 +50,16 @@ func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinitio
 		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
 	return wrapToolContext(definitions, m.toolContext, scope)
+}
+
+// executionScope revalidates durable scope flags against the current process
+// configuration. A run queued by a development server must not retain its
+// bypass if a production server later resumes it.
+func (m *Module) executionScope(scope agentcap.Scope) agentcap.Scope {
+	if m == nil || !m.allowDevAuthBypass {
+		scope.DevAuthBypass = false
+	}
+	return scope
 }
 
 func wrapToolContext(definitions []agentcore.ToolDefinition, decorate func(context.Context, agentcap.Scope) context.Context, scope agentcap.Scope) []agentcore.ToolDefinition {
@@ -123,7 +134,7 @@ func resourceResolverForTools(resolve ResourceResolver) agenttools.ResourceResol
 
 func moduleScopeFromTools(scope agenttools.Scope) Scope {
 	return Scope{
-		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
 			ProjectID: scope.Credential.ProjectID, Restricted: scope.Credential.Restricted,
@@ -151,6 +162,7 @@ func ToolsScope(scope agentcap.Scope) agenttools.Scope {
 	return agenttools.Scope{
 		ProjectID:      scope.ProjectID,
 		PrincipalID:    scope.PrincipalID,
+		GroupIDs:       append([]string(nil), scope.GroupIDs...),
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agenttools.CredentialScope{
@@ -165,6 +177,7 @@ func scopeFromTools(scope agenttools.Scope) agentcap.Scope {
 	return agentcap.Scope{
 		ProjectID:      scope.ProjectID,
 		PrincipalID:    scope.PrincipalID,
+		GroupIDs:       append([]string(nil), scope.GroupIDs...),
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agentcap.CredentialScope{

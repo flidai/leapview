@@ -32,3 +32,13 @@ func TestWrapToolContextAppliesScopeToEveryHandler(t *testing.T) {
 		t.Fatalf("tool result = %#v", result.Content)
 	}
 }
+
+func TestExecutionScopeConfinesDevelopmentBypassToEnabledServers(t *testing.T) {
+	scope := agentcap.Scope{PrincipalID: "principal-1", ProjectID: "project:active", DevAuthBypass: true}
+	if got := (&Module{}).executionScope(scope); got.DevAuthBypass {
+		t.Fatalf("production execution scope retained development bypass: %#v", got)
+	}
+	if got := (&Module{allowDevAuthBypass: true}).executionScope(scope); !got.DevAuthBypass {
+		t.Fatalf("development execution scope removed enabled bypass: %#v", got)
+	}
+}
