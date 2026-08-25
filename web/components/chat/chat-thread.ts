@@ -600,7 +600,7 @@ class ChatThread extends LitElement {
     return html`
       <div class="tool-detail-block">
         <div class="tool-detail-label">${label}</div>
-        <lv-code-block compact copy language=${language} .code=${value}></lv-code-block>
+        <lv-code-block compact language=${language} .code=${value}></lv-code-block>
       </div>
     `
   }

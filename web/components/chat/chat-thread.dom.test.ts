@@ -444,7 +444,6 @@ test('chat thread renders tool arguments directly and exported yaml as code', as
     return {
       languages: blocks.map((block) => block.language),
       values: blocks.map((block) => block.code),
-      copy: blocks.map((block) => block.copy),
       labels: Array.from(element.shadowRoot.querySelectorAll('.tool-detail-label')).map((label: any) => label.textContent),
     }
   })
@@ -452,7 +451,6 @@ test('chat thread renders tool arguments directly and exported yaml as code', as
   expect(state.values[0]).toContain('"dashboardId": "dashboard:sales"')
   expect(state.values[0]).not.toContain('export_dashboard_yaml')
   expect(state.values[1]).toContain('kind: Dashboard')
-  expect(state.copy).toEqual([true, true])
   expect(state.labels).toEqual(['Input', 'Dashboard YAML'])
   await page.close()
 })
