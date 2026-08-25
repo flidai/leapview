@@ -712,12 +712,29 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 	if generation < 0 || packaging < 0 || generation > packaging {
 		t.Fatal("release workflow must generate every ignored build input before compiling Compose archives")
 	}
-	admission := strings.Index(release, "- name: Verify published runtime identity")
+	admission := strings.Index(release, "- name: Admit exact assembled release image")
 	binding := strings.Index(release, "--bind-release release-identity.json")
 	if admission < 0 || binding < 0 || admission > binding {
 		t.Fatal("release workflow must admit the candidate image identity before binding its transition policy")
 	}
-	for _, required := range []string{"release-transition-policy.json \"dist/$package/\"", "candidate/release-transition-policy.json"} {
+	upload := strings.Index(release[packaging:], "- name: Upload unpublished candidate")
+	if upload < 0 {
+		t.Fatal("release workflow is missing candidate upload")
+	}
+	packagingBlock := release[packaging : packaging+upload]
+	for _, required := range []string{
+		"IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}",
+		"--candidate-admission assembled-image-admission.json",
+		"--predecessor-evidence-output predecessor-verification.json",
+	} {
+		if !strings.Contains(packagingBlock, required) {
+			t.Fatalf("release policy generation does not consume admission contract %q", required)
+		}
+	}
+	if strings.Contains(packagingBlock, "steps.assemble.outputs.digest") {
+		t.Fatal("release policy generation must not consume the unadmitted assembly digest")
+	}
+	for _, required := range []string{"release-transition-policy.json predecessor-verification.json \"dist/$package/\"", "candidate/release-transition-policy.json"} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release workflow does not distribute candidate-bound policy %q", required)
 		}

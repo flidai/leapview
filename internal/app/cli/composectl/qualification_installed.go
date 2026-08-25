@@ -312,6 +312,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.verifyQualificationRuntimeIdentity(ctx, imageReference, evidenceDir); err != nil {
 		return err
 	}
+	if transitionEvidence != nil {
+		if err := c.verifyQualificationPredecessorRuntimeIdentity(ctx, transitionEvidence.Predecessor, evidenceDir); err != nil {
+			return err
+		}
+	}
 	policyDecision, err := c.verifyQualificationLegacyPolicy(
 		ctx, imageReference, evidenceDir, &legacyVolume,
 	)
@@ -942,6 +947,35 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	}
 	if expected != actual || actual.Dirty || actual.Development {
 		return fmt.Errorf("runtime identity disagrees with release identity")
+	}
+	return nil
+}
+
+func (c *Controller) verifyQualificationPredecessorRuntimeIdentity(
+	ctx context.Context,
+	expected compatibility.ReleaseIdentity,
+	evidenceDir string,
+) error {
+	runtimeOutput, err := c.qualificationDocker(
+		ctx, nil, "run", "--rm", expected.Image, "version", "--json",
+	)
+	if err != nil {
+		return fmt.Errorf("resolve predecessor runtime identity %s: %w", expected.Image, err)
+	}
+	var actual qualificationReleaseIdentity
+	if err := json.Unmarshal(runtimeOutput, &actual); err != nil {
+		return fmt.Errorf("decode predecessor runtime identity: %w", err)
+	}
+	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(evidenceDir, "predecessor-runtime-identity.json"), runtimeOutput, 0o600)
+}
+
+func verifyQualificationPredecessorIdentity(expected compatibility.ReleaseIdentity, actual qualificationReleaseIdentity) error {
+	if actual.Dirty == nil || actual.Development == nil || *actual.Dirty || *actual.Development ||
+		strings.TrimPrefix(actual.Version, "v") != strings.TrimPrefix(expected.Version, "v") || actual.Revision != expected.SourceRevision {
+		return fmt.Errorf("predecessor runtime identity disagrees with reviewed release provenance")
 	}
 	return nil
 }

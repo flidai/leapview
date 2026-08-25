@@ -173,7 +173,7 @@ jobs:
     name: Assemble attested candidate
     needs: [identity, image-platform]
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 45
     permissions:
       contents: read
       packages: write
@@ -184,7 +184,8 @@ jobs:
       revision: ${{ needs.identity.outputs.revision }}
       build_time: ${{ needs.identity.outputs.build_time }}
       release_tag: ${{ needs.identity.outputs.release_tag }}
-      image_digest: ${{ steps.assemble.outputs.digest }}
+      image_digest: ${{ steps.assembled_admission.outputs.digest }}
+      image_reference: ${{ steps.assembled_admission.outputs.image }}
 
     steps:
       - name: Checkout candidate source
@@ -248,9 +249,19 @@ jobs:
           subject-digest: ${{ steps.assemble.outputs.digest }}
           push-to-registry: true
 
+      - name: Admit exact assembled release image
+        id: assembled_admission
+        uses: ./.github/actions/oci-admission
+        with:
+          image: ${{ env.IMAGE_NAME }}@${{ steps.assemble.outputs.digest }}
+          repository: ${{ env.IMAGE_NAME }}
+          expected-workflow: flidai/leapview/.github/workflows/release.yml
+          source-revision: ${{ needs.identity.outputs.revision }}
+          output: assembled-image-admission.json
+
       - name: Verify anonymous image pull
         env:
-          IMAGE_REFERENCE: ${{ env.IMAGE_NAME }}@${{ steps.assemble.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}
         run: |
           docker logout ghcr.io
           docker buildx imagetools inspect "$IMAGE_REFERENCE"
@@ -261,7 +272,7 @@ jobs:
           EXPECTED_REVISION: ${{ needs.identity.outputs.revision }}
           EXPECTED_BUILD_TIME: ${{ needs.identity.outputs.build_time }}
           EXPECTED_RELEASE: ${{ needs.identity.outputs.release }}
-          IMAGE_REFERENCE: ${{ env.IMAGE_NAME }}@${{ steps.assemble.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}
         run: |
           docker pull "$IMAGE_REFERENCE"
           docker run --rm "$IMAGE_REFERENCE" version --json > runtime-identity.json
@@ -297,7 +308,7 @@ jobs:
           BUILD_TIME: ${{ needs.identity.outputs.build_time }}
           BUILD_DIRTY: "false"
           BUILD_RELEASE: ${{ needs.identity.outputs.release }}
-          IMAGE_REFERENCE: ${{ env.IMAGE_NAME }}@${{ steps.assemble.outputs.digest }}
+          IMAGE_REFERENCE: ${{ steps.assembled_admission.outputs.image }}
           RELEASE_TAG: ${{ needs.identity.outputs.release_tag }}
         run: |
           printf '%s\n' "$IMAGE_REFERENCE" > image-reference.txt
@@ -318,6 +329,8 @@ jobs:
           PY
           go run ./internal/app/tools/transitionpolicy \
             --bind-release release-identity.json \
+            --candidate-admission assembled-image-admission.json \
+            --predecessor-evidence-output predecessor-verification.json \
             --bind-output release-transition-policy.json
           build_ldflags="-s -w \
             -X github.com/flidai/leapview/internal/platform/buildinfo.version=$BUILD_VERSION \
@@ -342,7 +355,7 @@ jobs:
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
-            cp image-reference.txt release-identity.json release-transition-policy.json "dist/$package/"
+            cp image-reference.txt release-identity.json release-transition-policy.json predecessor-verification.json "dist/$package/"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
               (
                 cd "dist/$package"
@@ -382,11 +395,13 @@ jobs:
             image-reference.txt
             release-identity.json
             release-transition-policy.json
+            assembled-image-admission.json
+            predecessor-verification.json
             dist/*.tar.gz
             dist/*.tar.gz.sha256
 
       - name: Record immutable reference
-        run: echo '${{ env.IMAGE_NAME }}@${{ steps.assemble.outputs.digest }}' >> "$GITHUB_STEP_SUMMARY"
+        run: echo '${{ steps.assembled_admission.outputs.image }}' >> "$GITHUB_STEP_SUMMARY"
 
   qualify:
     name: Pre-publication qualification (${{ matrix.arch }})
@@ -423,7 +438,7 @@ jobs:
         id: admission
         uses: ./.github/actions/oci-admission
         with:
-          image: ${{ env.IMAGE_NAME }}@${{ needs.image.outputs.image_digest }}
+          image: ${{ needs.image.outputs.image_reference }}
           repository: ${{ env.IMAGE_NAME }}
           expected-workflow: flidai/leapview/.github/workflows/release.yml
           source-revision: ${{ needs.image.outputs.revision }}
@@ -502,6 +517,7 @@ jobs:
             ${{ runner.temp }}/installed-candidate-evidence/recovery-report.json
             ${{ runner.temp }}/installed-candidate-evidence/recovery-events.json
             ${{ runner.temp }}/installed-candidate-evidence/runtime-identity.json
+            ${{ runner.temp }}/installed-candidate-evidence/predecessor-runtime-identity.json
             ${{ runner.temp }}/installed-candidate-evidence/policy-validation.json
             ${{ runner.temp }}/installed-candidate-evidence/decision.json
             ${{ runner.temp }}/installed-candidate-evidence/transition-qualification.json
@@ -721,5 +737,7 @@ jobs:
             candidate/image-reference.txt \
             candidate/release-identity.json \
             candidate/release-transition-policy.json \
+            candidate/assembled-image-admission.json \
+            candidate/predecessor-verification.json \
             candidate/dist/*.tar.gz \
             candidate/dist/*.tar.gz.sha256

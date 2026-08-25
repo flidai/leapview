@@ -986,11 +986,12 @@ tasks:
     cmds:
       - >-
         go test
+        ./internal/app/tools/transitionpolicy
         ./internal/platform/compatibility
         ./internal/app/cli/hostinstall
         ./internal/app/cli/composectl
         ./internal/platform
-        -run 'Transition|Upgrade|Rollback|Legacy|ReleasePolicy'
+        -run 'Bind|Predecessor|Transition|Upgrade|Rollback|Legacy|ReleasePolicy'
         -count=1
       - >-
         go run ./internal/app/tools/transitionpolicy

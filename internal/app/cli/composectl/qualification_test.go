@@ -27,6 +27,7 @@ import (
 	"github.com/creachadair/jrpc2/handler"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/stretchr/testify/require"
 )
 
@@ -123,6 +124,34 @@ func TestQualificationTransitionStateRejectsApplicationMutationDespiteUnchangedM
 	require.NoError(t, err)
 	if !bytes.Equal(markerBefore, markerAfter) {
 		t.Fatal("legacy marker changed during application-state regression test")
+	}
+}
+
+func TestQualificationPredecessorIdentityRequiresReviewedRuntimeProvenance(t *testing.T) {
+	clean, released := false, false
+	expected := compatibility.ReleaseIdentity{
+		Version: "0.2.0-rc.1", SourceRevision: strings.Repeat("a", 40),
+		Image: "ghcr.io/" + "yacobolo" + "/leapview@sha256:" + strings.Repeat("b", 64),
+	}
+	actual := qualificationReleaseIdentity{
+		Version: expected.Version, Revision: expected.SourceRevision, Dirty: &clean, Development: &released,
+	}
+	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
+		t.Fatalf("valid predecessor provenance: %v", err)
+	}
+	for name, mutate := range map[string]func(*qualificationReleaseIdentity){
+		"version":     func(identity *qualificationReleaseIdentity) { identity.Version = "0.2.0-rc.2" },
+		"revision":    func(identity *qualificationReleaseIdentity) { identity.Revision = strings.Repeat("c", 40) },
+		"dirty":       func(identity *qualificationReleaseIdentity) { value := true; identity.Dirty = &value },
+		"development": func(identity *qualificationReleaseIdentity) { value := true; identity.Development = &value },
+	} {
+		t.Run(name, func(t *testing.T) {
+			candidate := actual
+			mutate(&candidate)
+			if err := verifyQualificationPredecessorIdentity(expected, candidate); err == nil {
+				t.Fatal("qualification accepted mismatched predecessor provenance")
+			}
+		})
 	}
 }
 
