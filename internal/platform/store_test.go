@@ -628,12 +628,18 @@ func TestBackupInstanceCreatesPrivateArchive(t *testing.T) {
 	}
 
 	restoreUmask := setUmask(t, 0)
-	backupPath := filepath.Join(dir, "backups", "leapview-instance.tar.gz")
+	backupDir := filepath.Join(dir, "backups")
+	if err := os.Mkdir(backupDir, 0o755); err != nil {
+		restoreUmask()
+		t.Fatalf("seed permissive backup directory: %v", err)
+	}
+	backupPath := filepath.Join(backupDir, "leapview-instance.tar.gz")
 	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: home, DBPath: dbPath, OutPath: backupPath}); err != nil {
 		restoreUmask()
 		t.Fatalf("backup instance: %v", err)
 	}
 	restoreUmask()
+	assertFileMode(t, backupDir, 0o700)
 	assertFileMode(t, backupPath, 0o600)
 }
 
