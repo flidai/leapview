@@ -213,7 +213,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
 	} else {
 		// Published source reads retain the graph-first disclosure boundary.
-		if err := a.authorizeView(ctx, actorID, ref, "", "", false); err != nil {
+		if err := a.authorizeProjectView(ctx, actorID, ref); err != nil {
 			return Source{}, err
 		}
 		lifecycle, err = a.repository.Get(ctx, ref.ProjectID, ref.DashboardID)
@@ -231,7 +231,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 		return Source{}, err
 	}
 	if draft {
-		if err := a.authorizeView(ctx, actorID, ref, lifecycle.OwnerPrincipalID, lifecycle.SemanticModel, true); err != nil {
+		if err := a.authorizeAuthoredView(ctx, actorID, ref, lifecycle); err != nil {
 			return Source{}, err
 		}
 	}
@@ -302,7 +302,7 @@ func (a *Adapter) loadInstanceRevision(ctx context.Context, ref SourceRef, actor
 func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string) (Source, error) {
 	// A project source has no authoring lifecycle to inspect before VIEW. The
 	// dashboard object itself is not touched until this scoped decision passes.
-	if err := a.authorizeView(ctx, actorID, ref, "", "", false); err != nil {
+	if err := a.authorizeProjectView(ctx, actorID, ref); err != nil {
 		return Source{}, err
 	}
 	if a.acquireRuntime == nil {
@@ -332,8 +332,8 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	if !ok {
 		return Source{}, sourceUnavailable(ref, nil)
 	}
-	if retained.Metadata.Project != ref.ProjectID ||
-		strings.TrimSpace(retained.Metadata.Name) != ref.DashboardID.String() || retained.Document.Metadata.ID != ref.DashboardID.String() {
+	if retained.Metadata.Project != ref.ProjectID || retained.Document.Metadata.ID != ref.DashboardID.String() ||
+		strings.TrimSpace(retained.Metadata.Name) == "" || strings.TrimSpace(retained.Metadata.Name) != strings.TrimSpace(retained.Document.Metadata.Name) {
 		return Source{}, fmt.Errorf("retained project source identity does not match request")
 	}
 	if err := authoring.ValidateCanonicalDocument(retained.Document); err != nil {
@@ -354,10 +354,18 @@ func (a *Adapter) loadProject(ctx context.Context, ref SourceRef, actorID string
 	}, nil
 }
 
-func (a *Adapter) authorizeView(ctx context.Context, actorID string, ref SourceRef, owner string, semanticModel graph.ResourceID, repositoryScoped bool) error {
+func (a *Adapter) authorizeProjectView(ctx context.Context, actorID string, ref SourceRef) error {
 	return a.authorizer.Authorize(ctx, service.AuthorizationRequest{
 		ActorID: actorID, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
-		OwnerPrincipalID: owner, SemanticModel: semanticModel, Action: authoring.AuthorizationActionView, RepositoryScoped: repositoryScoped,
+		Target: service.AuthorizationTargetProjectDashboard, Action: authoring.AuthorizationActionView,
+	})
+}
+
+func (a *Adapter) authorizeAuthoredView(ctx context.Context, actorID string, ref SourceRef, lifecycle authoring.DashboardLifecycle) error {
+	return a.authorizer.Authorize(ctx, service.AuthorizationRequest{
+		ActorID: actorID, ProjectID: ref.ProjectID, DashboardID: ref.DashboardID,
+		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
+		Target: service.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility, Action: authoring.AuthorizationActionView,
 	})
 }
 

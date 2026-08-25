@@ -162,11 +162,26 @@ func FromContext(ctx context.Context) (Admitter, bool) {
 
 // Current returns the currently admitted class and explicit principal.
 func Current(ctx context.Context) (Class, string, bool) {
-	request, ok := genericworkload.Current(ctx)
+	request, ok := CurrentRequest(ctx)
 	if !ok {
 		return "", "", false
 	}
-	return Class(request.Class), request.PrincipalID, true
+	return request.Class, request.PrincipalID, true
+}
+
+// CurrentRequest returns a defensive copy of the complete active admission
+// identity so nested application work can preserve principal and group
+// accounting while changing only operation-local estimates.
+func CurrentRequest(ctx context.Context) (Request, bool) {
+	request, ok := genericworkload.Current(ctx)
+	if !ok {
+		return Request{}, false
+	}
+	return Request{
+		Class: Class(request.Class), PrincipalID: request.PrincipalID,
+		GroupIDs: append([]string(nil), request.GroupIDs...), Operation: request.Operation,
+		EstimatedMemoryBytes: request.EstimatedMemoryBytes,
+	}, true
 }
 
 type ActorStats struct {

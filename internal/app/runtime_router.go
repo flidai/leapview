@@ -1238,6 +1238,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		agentConfig := agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
+			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
 			BuildVersion:       platform.buildIdentity.Version,
 			APIGenOperations:   agentAPIGenOperations(),
@@ -1330,7 +1331,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return scope, true
 			},
 			DispatchAPIGen: func(scope agentmodule.Scope, operationID string, writer http.ResponseWriter, request *http.Request) bool {
-				principal := accessmodule.Principal{ID: scope.PrincipalID, DevBypass: scope.DevAuthBypass}
+				principal := accessmodule.Principal{ID: scope.PrincipalID, DevBypass: scope.DevAuthBypass && runtimeConfig.AllowDevAuthBypass}
 				if platform.auth == nil && strings.TrimSpace(principal.ID) == "" {
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
@@ -1368,8 +1369,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return apigenapi.DispatchAPIGenOperation(operationID, apiDispatcher, apiprotocol.TransportErrorResponder{Logger: platform.logger}, writer, request)
 			},
-			QueryContext: func(ctx context.Context, scope agentmodule.Scope) context.Context {
-				principal := accessmodule.Principal{ID: scope.PrincipalID, DevBypass: scope.DevAuthBypass}
+			ToolContext: func(ctx context.Context, scope agentmodule.Scope) context.Context {
+				principal := accessmodule.Principal{ID: scope.PrincipalID, DevBypass: scope.DevAuthBypass && runtimeConfig.AllowDevAuthBypass}
 				if platform.auth == nil && strings.TrimSpace(principal.ID) == "" {
 					principal = accessmodule.LocalDeveloperPrincipal()
 				}
@@ -1381,6 +1382,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 			HTTP: agentmodule.HTTPConfig{
 				Settings: persistence.agentSettings, Broker: runtime.broker,
+				ResolveGroupIDs: func(ctx context.Context, principalID string) ([]string, error) {
+					subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principalID)
+					if err != nil {
+						return nil, err
+					}
+					groupIDs := make([]string, 0, len(subjects))
+					for _, subject := range subjects {
+						if subject.Kind == access.SubjectKindGroup {
+							groupIDs = append(groupIDs, subject.ID)
+						}
+					}
+					return groupIDs, nil
+				},
 				PlatformAdmin: func(ctx context.Context, principalID string) (bool, error) {
 					capabilities, err := routes.accessModule.CurrentEffectiveCapabilities(ctx, principalID)
 					if err != nil {

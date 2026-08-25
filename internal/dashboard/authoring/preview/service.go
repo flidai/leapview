@@ -163,7 +163,8 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	if err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
+		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
+		Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return Preview{}, err
 	}
@@ -235,9 +236,6 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	model, modelOK := active.SemanticModelProjection(lifecycle.SemanticModel)
 	if !modelOK || model == nil {
 		return Preview{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, lifecycle.SemanticModel)
-	}
-	if strings.TrimSpace(model.Name) != lifecycle.SemanticModel.String() {
-		return Preview{}, fmt.Errorf("%w: runtime semantic model %q does not match lifecycle %q", ErrSemanticMismatch, model.Name, lifecycle.SemanticModel)
 	}
 
 	compiled, err := compiler.CompileDocument(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})

@@ -48,6 +48,9 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, options.AccessModule, options.RuntimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
+		AuthorizeProjectCapability: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			return authorizeProjectRole(ctx, options.AccessModule, options.RuntimeHost, principalID, projectID, capability)
+		},
 		AcquireRuntime: options.RuntimeHost.Acquire,
 	})
 	if err != nil {

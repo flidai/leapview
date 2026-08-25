@@ -5,6 +5,7 @@ import type { IconNode, SVGProps } from 'lucide'
 
 type LucideIconOptions = {
   className?: string
+  color?: string
   size?: number | string
   strokeWidth?: number | string
 }
@@ -27,6 +28,7 @@ export function lucideIcon(iconNode: IconNode, options: LucideIconOptions = {}) 
       aria-hidden="true"
       data-lucide="icon"
       class=${ifDefined(options.className)}
+      style=${ifDefined(options.color ? `color:${options.color}` : undefined)}
     >
       ${unsafeSVG(iconNodeToSvg(iconNode))}
     </svg>

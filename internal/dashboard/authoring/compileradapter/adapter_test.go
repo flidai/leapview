@@ -24,7 +24,7 @@ type compilerFixture struct {
 
 func newCompilerFixture(t *testing.T) compilerFixture {
 	t.Helper()
-	runtime := &compilerRuntime{model: compilerModel()}
+	runtime := &compilerRuntime{modelID: "sales_model", model: compilerModel()}
 	identity, err := graph.NewServingIdentity("project", "production", "serving-sales")
 	if err != nil {
 		t.Fatal(err)
@@ -44,7 +44,7 @@ func compilerDocument() document.DashboardDocument {
 func stringPtr(value string) *string { return &value }
 
 func compilerModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "sales_model", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
+	return &semanticmodel.Model{Name: "sales", Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.status"}, Empty: "zero"}}}
 }
 
 func TestCompileUsesOneLeaseAndReturnsServingIdentity(t *testing.T) {
@@ -72,7 +72,7 @@ func TestCompileRejectsSemanticMismatchBeforeLeaseAndReleasesAllPostAcquirePaths
 		t.Fatal("document mismatch acquired a lease")
 	}
 	f = newCompilerFixture(t)
-	f.runtime.model = &semanticmodel.Model{Name: "other_model"}
+	f.runtime.modelID = "other_model"
 	if _, err := f.adapter.Compile(t.Context(), "project", "sales_model", f.doc); !errors.Is(err, compileradapter.ErrSemanticMismatch) {
 		t.Fatalf("runtime mismatch = %v", err)
 	}
@@ -139,6 +139,7 @@ func (l *compilerLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *compilerLease) Release()                        { l.releaseCalls++ }
 
 type compilerRuntime struct {
+	modelID         graph.ResourceID
 	model           *semanticmodel.Model
 	projectionCalls int
 }
@@ -146,7 +147,7 @@ type compilerRuntime struct {
 func (r *compilerRuntime) Close() error { return nil }
 func (r *compilerRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
 	r.projectionCalls++
-	if r.model == nil || r.model.Name != id.String() {
+	if r.model == nil || r.modelID != id {
 		return nil, false
 	}
 	copy := *r.model

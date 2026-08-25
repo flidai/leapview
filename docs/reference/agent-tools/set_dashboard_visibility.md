@@ -54,7 +54,8 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/set_dashboard_visibilit
     "visibility": {
       "enum": [
         "private",
-        "shared"
+        "restricted",
+        "organization"
       ],
       "type": "string"
     }

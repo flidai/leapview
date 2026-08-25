@@ -27,7 +27,7 @@ func TestAgentAPICommandsRecordOneSuccessAudit(t *testing.T) {
 	service, principalID := commandAuditService(t)
 	var audits []CommandAuditInput
 	handler := NewHandler(Options{
-		Service: service,
+		Service: service, ActiveProjectID: "project:agent-audit",
 		CurrentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: principalID}, true
 		},

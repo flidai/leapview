@@ -353,7 +353,7 @@ func enrichProjectItem(runtime projectruntime.Runtime, item *Dashboard) error {
 	if source.Document.Metadata.ID != item.ID.String() {
 		return fmt.Errorf("project dashboard source %q document id = %q", item.ID, source.Document.Metadata.ID)
 	}
-	if strings.TrimSpace(source.Metadata.Name) != item.ID.String() {
+	if strings.TrimSpace(source.Metadata.Name) == "" || strings.TrimSpace(source.Metadata.Name) != strings.TrimSpace(source.Document.Metadata.Name) {
 		return fmt.Errorf("project dashboard source %q metadata name = %q", item.ID, source.Metadata.Name)
 	}
 	if source.Metadata.Project != item.ProjectID {
@@ -491,9 +491,14 @@ func (s *Service) authorizeCandidates(ctx context.Context, actorID string, group
 	var visible []Dashboard
 	for _, group := range groups {
 		for _, item := range group {
+			target := authoringservice.AuthorizationTargetProjectDashboard
+			if item.Source == SourceInstance {
+				target = authoringservice.AuthorizationTargetAuthoredDashboard
+			}
 			err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 				ActorID: actorID, ProjectID: item.ProjectID, DashboardID: authoring.DashboardID(item.ID),
 				OwnerPrincipalID: item.Owner, SemanticModel: item.SemanticModel,
+				Target: target, Visibility: item.Visibility,
 				Action: authoring.AuthorizationActionView,
 			})
 			if err != nil {

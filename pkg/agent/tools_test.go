@@ -207,6 +207,7 @@ func TestToolOutputValidationAndHandlerFailures(t *testing.T) {
 }
 
 func TestToolExecutionIsBoundedParallelAndOrdered(t *testing.T) {
+	events := &recordingEvents{}
 	started := make(chan struct{}, 3)
 	release := make(chan struct{})
 	var running int32
@@ -241,6 +242,7 @@ func TestToolExecutionIsBoundedParallelAndOrdered(t *testing.T) {
 		Name:         "test",
 		SystemPrompt: "x",
 		Model:        model,
+		Events:       events,
 		Limits:       Limits{MaxConcurrentTools: 2, ToolTimeout: time.Second},
 		Tools: []ToolDefinition{{
 			Name:        "work",
@@ -275,6 +277,19 @@ func TestToolExecutionIsBoundedParallelAndOrdered(t *testing.T) {
 	}
 	if strings.Join(gotIDs, ",") != "call_1,call_2,call_3" {
 		t.Fatalf("tool result order = %v", gotIDs)
+	}
+	declaredIDs := make([]string, 0, 3)
+	for _, event := range events.events {
+		if event.Type != EventTypeOutputPartAdded || event.OutputKind != OutputPartKindTool {
+			continue
+		}
+		if event.OutputOrdinal != int64(len(declaredIDs)) || event.OutputPartID == "" {
+			t.Fatalf("declared tool part %d = %#v", len(declaredIDs), event)
+		}
+		declaredIDs = append(declaredIDs, event.ToolCallID)
+	}
+	if strings.Join(declaredIDs, ",") != "call_1,call_2,call_3" {
+		t.Fatalf("declared tool order = %v", declaredIDs)
 	}
 }
 

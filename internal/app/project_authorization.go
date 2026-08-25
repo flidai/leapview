@@ -33,6 +33,11 @@ type canonicalAccessModule interface {
 
 type connectionAuthorization func(context.Context, string, string, string, access.Capability) (bool, error)
 
+func authoringDevelopmentBypass(ctx context.Context, principalID string) bool {
+	principal, ok := accessmodule.PrincipalFromContext(ctx)
+	return ok && principal.DevBypass && principal.ID == strings.TrimSpace(principalID)
+}
+
 // bootstrapAwareConnectionAuthorization permits managed-data handlers to
 // consume the opaque request marker emitted by the APIGen bootstrap guard.
 // The marker is accepted only while the durable serving-state repository has

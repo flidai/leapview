@@ -1276,9 +1276,11 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
             --lv-border-width: 1px;
             --lv-fg-muted: #57606a;
             --lv-shadow-floating: 0 8px 24px rgb(0 0 0 / 12%);
-            --lv-spinner-size-md: 16px;
-            --lv-spinner-size-sm: 10px;
-            --lv-spinner-duration: 1800ms;
+            --spinner-size-small: 16px;
+            --spinner-size-medium: 32px;
+            --spinner-size-large: 64px;
+            --base-duration-1000: 1000ms;
+            --base-easing-linear: linear;
           }
         </style>
       </head>

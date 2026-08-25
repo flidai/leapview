@@ -24,6 +24,7 @@ func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *te
 		t.Fatal(err)
 	}
 	var authorized []access.ResourceRef
+	var projectCapabilities []access.Capability
 	authoring, err := BuildAuthoring(AuthoringConfig{
 		Database: store.SQLDB(),
 		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
@@ -31,16 +32,17 @@ func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *te
 		}),
 		AuthorizeResource: func(_ context.Context, _ string, _ projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			authorized = append(authorized, resource)
-			if resource.Kind() == projectgraph.KindProject && capability != access.CapabilityResourceEdit {
-				return false, errors.New("unexpected project authoring capability")
-			}
 			if resource.Kind() == projectgraph.KindSemanticModel && capability != access.CapabilityResourceRead {
 				return false, errors.New("unexpected semantic-model authoring capability")
 			}
+			return resource.Kind() == projectgraph.KindSemanticModel, nil
+		},
+		AuthorizeProjectCapability: func(_ context.Context, _ string, _ projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			projectCapabilities = append(projectCapabilities, capability)
 			// The allocated dashboard is intentionally absent from the active
 			// graph. Production composition must authorize the target project role
 			// rather than querying that future dashboard resource.
-			return resource.Kind() == projectgraph.KindProject || resource.Kind() == projectgraph.KindSemanticModel, nil
+			return capability == access.CapabilityResourceEdit || capability == access.CapabilityProjectAdmin, nil
 		},
 		AcquireRuntime: func(context.Context) (runtimehost.Lease, error) {
 			return nil, errors.New("runtime is not needed for create")
@@ -57,7 +59,7 @@ func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *te
 	if err != nil {
 		t.Fatalf("composed create failed: %v", err)
 	}
-	if result.Lifecycle.ID == "" || len(authorized) != 2 || authorized[0].Kind() != projectgraph.KindProject || authorized[1].Kind() != projectgraph.KindSemanticModel {
-		t.Fatalf("create result=%#v authorization=%#v", result, authorized)
+	if result.Lifecycle.ID == "" || len(authorized) != 1 || authorized[0].Kind() != projectgraph.KindSemanticModel || len(projectCapabilities) != 2 || projectCapabilities[0] != access.CapabilityResourceEdit || projectCapabilities[1] != access.CapabilityProjectAdmin {
+		t.Fatalf("create result=%#v resources=%#v project capabilities=%#v", result, authorized, projectCapabilities)
 	}
 }

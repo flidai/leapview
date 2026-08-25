@@ -40,14 +40,39 @@ func (m *Module) configureTools() {
 // ToolDefinitions is the single governed tool catalog consumed by the
 // built-in agent and protocol adapters such as MCP.
 func (m *Module) ToolDefinitions(scope agentcap.Scope) []agentcore.ToolDefinition {
+	scope = m.executionScope(scope)
 	toolScope := ToolsScope(scope)
-	return (agenttools.ProviderSet{
+	definitions := (agenttools.ProviderSet{
 		Docs:      m.DocsToolProvider(),
 		Catalog:   m.CatalogToolProvider(),
 		Visual:    m.VisualToolProvider(),
 		APIGen:    m.APIGenToolProvider(),
 		Authoring: m.DashboardAuthoringToolProvider(),
 	}).Definitions(toolScope)
+	return wrapToolContext(definitions, m.toolContext, scope)
+}
+
+// executionScope revalidates durable scope flags against the current process
+// configuration. A run queued by a development server must not retain its
+// bypass if a production server later resumes it.
+func (m *Module) executionScope(scope agentcap.Scope) agentcap.Scope {
+	if m == nil || !m.allowDevAuthBypass {
+		scope.DevAuthBypass = false
+	}
+	return scope
+}
+
+func wrapToolContext(definitions []agentcore.ToolDefinition, decorate func(context.Context, agentcap.Scope) context.Context, scope agentcap.Scope) []agentcore.ToolDefinition {
+	if decorate == nil {
+		return definitions
+	}
+	for index := range definitions {
+		handler := definitions[index].Handler
+		definitions[index].Handler = agentcore.ToolHandlerFunc(func(ctx context.Context, call agentcore.ToolCall) (agentcore.ToolResult, error) {
+			return handler.Run(decorate(ctx, scope), call)
+		})
+	}
+	return definitions
 }
 
 func (m *Module) DashboardAuthoringToolProvider() agenttools.DashboardAuthoringProvider {
@@ -70,12 +95,6 @@ func (m *Module) CatalogToolProvider() agenttools.CatalogProvider {
 func (m *Module) VisualToolProvider() agenttools.VisualProvider {
 	return agenttools.VisualProvider{
 		Resolve: resourceResolverForTools(m.resolveResource),
-		QueryContext: func(ctx context.Context, scope agenttools.Scope) context.Context {
-			if m.queryContext == nil {
-				return ctx
-			}
-			return m.queryContext(ctx, scopeFromTools(scope))
-		},
 		SemanticModel: func(projectID, modelID string) (model *semanticmodel.Model, ok bool) {
 			metrics, ok := m.dashboardMetrics(projectID)
 			if !ok || metrics == nil {
@@ -115,7 +134,7 @@ func resourceResolverForTools(resolve ResourceResolver) agenttools.ResourceResol
 
 func moduleScopeFromTools(scope agenttools.Scope) Scope {
 	return Scope{
-		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, ConversationID: scope.ConversationID,
+		ProjectID: scope.ProjectID, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...), ConversationID: scope.ConversationID,
 		DevAuthBypass: scope.DevAuthBypass,
 		Credential: CredentialScope{
 			ProjectID: scope.Credential.ProjectID, Restricted: scope.Credential.Restricted,
@@ -143,6 +162,7 @@ func ToolsScope(scope agentcap.Scope) agenttools.Scope {
 	return agenttools.Scope{
 		ProjectID:      scope.ProjectID,
 		PrincipalID:    scope.PrincipalID,
+		GroupIDs:       append([]string(nil), scope.GroupIDs...),
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agenttools.CredentialScope{
@@ -157,6 +177,7 @@ func scopeFromTools(scope agenttools.Scope) agentcap.Scope {
 	return agentcap.Scope{
 		ProjectID:      scope.ProjectID,
 		PrincipalID:    scope.PrincipalID,
+		GroupIDs:       append([]string(nil), scope.GroupIDs...),
 		ConversationID: scope.ConversationID,
 		DevAuthBypass:  scope.DevAuthBypass,
 		Credential: agentcap.CredentialScope{

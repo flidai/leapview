@@ -204,6 +204,55 @@ jobs:
             }
           done
 
+  agent-tool-evaluation:
+    name: Agent all-tools evaluation (diagnostic)
+    if: github.repository == 'flidai/leapview'
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+
+      - name: Set up the cached CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Detect live-model credentials
+        id: credentials
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [[ -n "${DEEPSEEK_API_KEY}" ]]; then
+            echo "available=true" >> "${GITHUB_OUTPUT}"
+          else
+            echo "available=false" >> "${GITHUB_OUTPUT}"
+            echo "DeepSeek evaluation skipped because DEEPSEEK_API_KEY is unavailable." >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Run all-tools headless evaluation
+        if: steps.credentials.outputs.available == 'true'
+        env:
+          AGENT_EVAL_REPORT: ${{ github.workspace }}/.data/agent-e2e/report.json
+          AGENT_EVAL_TRANSCRIPT: ${{ github.workspace }}/.data/agent-e2e/transcript-summary.jsonl
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: task agent:e2e
+
+      - name: Upload agent evaluation report and transcript summary
+        if: ${{ always() && steps.credentials.outputs.available == 'true' }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: agent-all-tools-evaluation
+          retention-days: 30
+          if-no-files-found: warn
+          path: |
+            .data/agent-e2e/report.json
+            .data/agent-e2e/transcript-summary.jsonl
+
   ci-gate:
     name: CI gate
     if: ${{ always() }}

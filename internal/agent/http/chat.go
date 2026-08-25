@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"strings"
 
+	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	"github.com/flidai/leapview/internal/agent/ui"
@@ -376,7 +377,16 @@ func (h *Handler) chatService(w nethttp.ResponseWriter, r *nethttp.Request) (*ag
 		nethttp.Error(w, "chat requires an authenticated principal", nethttp.StatusUnauthorized)
 		return nil, agent.Scope{}, false
 	}
-	return h.options.Service, scope, true
+	bound, err := h.bindRunScope(r.Context(), scope)
+	if err != nil {
+		status := nethttp.StatusServiceUnavailable
+		if kind, classified := apigenfailure.KindOf(err); classified && kind == "forbidden" {
+			status = nethttp.StatusForbidden
+		}
+		nethttp.Error(w, err.Error(), status)
+		return nil, agent.Scope{}, false
+	}
+	return h.options.Service, bound, true
 }
 
 func (h *Handler) chatScope(r *nethttp.Request) agent.Scope {

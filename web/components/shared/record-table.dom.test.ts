@@ -279,6 +279,7 @@ test('primary record table gives entity cells the full column width', async () =
         iconTreatments: Array.from(element.querySelectorAll<HTMLElement>('.record-entity-icon')).map((icon) => ({
           framed: icon.classList.contains('is-framed'),
           plain: icon.classList.contains('is-plain'),
+          assetClass: Array.from(icon.classList).find((name) => name.startsWith('record-asset-')),
           background: getComputedStyle(icon).backgroundColor,
           borderWidth: getComputedStyle(icon).borderTopWidth,
         })),
@@ -288,8 +289,8 @@ test('primary record table gives entity cells the full column width', async () =
     expect(state.linkWidth).toBeGreaterThanOrEqual(state.cellInnerWidth - 4)
     expect(state.titleFits).toBe(true)
     expect(state.descriptionFits).toBe(true)
-    expect(state.iconTreatments[0]).toEqual({ framed: true, plain: false, background: 'rgb(246, 248, 250)', borderWidth: '1px' })
-    expect(state.iconTreatments[1]).toEqual({ framed: false, plain: true, background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
+    expect(state.iconTreatments[0]).toEqual({ framed: true, plain: false, assetClass: 'record-asset-dashboard', background: 'rgb(246, 248, 250)', borderWidth: '1px' })
+    expect(state.iconTreatments[1]).toEqual({ framed: false, plain: true, assetClass: 'record-asset-semantic-model', background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
   } finally {
     await page.close()
   }

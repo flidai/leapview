@@ -324,6 +324,7 @@ model DashboardAuthoringListInput {
 model DashboardAuthoringListResult {
   items: Record<unknown>[];
   count: int32;
+  instanceCount: int32;
   projectCount: int32;
 }
 
@@ -378,7 +379,7 @@ model DashboardAuthoringSetVisibilityInput {
   @minLength(1)
   draftId: string;
   expectedRevision: DashboardAuthoringRevisionToken;
-  visibility: "private" | "shared";
+  visibility: "private" | "restricted" | "organization";
 }
 
 @apigen.contract(#{ kind: "agent-tool-input", tags: #["dashboard", "authoring", "intent"] })

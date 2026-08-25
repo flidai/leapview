@@ -78,7 +78,8 @@ func (a *Application) Draft(ctx context.Context, request DraftRequest) (DraftRea
 	if err := a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: request.ActorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
+		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
+		Action: authoring.AuthorizationActionEdit,
 	}); err != nil {
 		return DraftRead{}, err
 	}
@@ -148,7 +149,8 @@ func (a *Application) Revision(ctx context.Context, request RevisionRequest) (au
 	if err := a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: request.ActorID, ProjectID: projectID, DashboardID: request.DashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Action: request.Action, RepositoryScoped: true,
+		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
+		Action: request.Action,
 	}); err != nil {
 		return authoring.Revision{}, err
 	}

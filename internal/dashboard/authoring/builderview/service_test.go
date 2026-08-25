@@ -40,7 +40,7 @@ func newBuilderFixture(t *testing.T) *builderFixture {
 	}
 	repo := &builderRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{revision.ID: revision}}
 	auth := &builderAuthorizer{errors: map[authoring.AuthorizationAction]error{}}
-	runtime := &builderRuntime{model: builderModel()}
+	runtime := &builderRuntime{modelID: "sales_model", model: builderModel()}
 	identity, _ := graph.NewServingIdentity("project", "production", "state-1")
 	lease := &builderLease{runtime: runtime, identity: identity}
 	provider := &builderProvider{lease: lease}
@@ -73,7 +73,7 @@ func builderDocument() document.DashboardDocument {
 }
 func builderStringPtr(value string) *string { return &value }
 func builderModel() *semanticmodel.Model {
-	return &semanticmodel.Model{Name: "sales_model", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Label: "Order count", Input: &semanticmodel.MetricInput{Field: "orders.status"}}}}
+	return &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", GrainEntity: "status", Entities: map[string]semanticmodel.EntityDefinition{"status": {Type: "primary", Fields: []string{"status"}}}, Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Label: "Status", Type: "string", Datatype: semanticmodel.DataTypeString}}}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Dimensions: map[string]semanticmodel.SemanticDimension{"status": {Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.status"}}}}, Metrics: map[string]semanticmodel.Metric{"order_count": {Type: "aggregate", Dataset: "orders", Label: "Order count", Input: &semanticmodel.MetricInput{Field: "orders.status"}}}}
 }
 
 func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testing.T) {
@@ -90,10 +90,13 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if signal.Revision.ID != f.revision.ID.String() || signal.Revision.Number != int64(f.revision.Number) || signal.Revision.ContentHash != f.revision.ContentHash || f.provider.acquireCalls != 1 || f.lease.releases != 1 {
 		t.Fatalf("signal/token/lease = %#v/%#v acquire=%d release=%d", signal.Revision, f.revision.Token(), f.provider.acquireCalls, f.lease.releases)
 	}
+	if signal.SemanticModel.ID != "sales_model" {
+		t.Fatalf("semantic model signal id = %q, want canonical resource id", signal.SemanticModel.ID)
+	}
 }
 
 func TestBuildReleasesLeaseOnRuntimeFailuresAndProjectsDetachedModel(t *testing.T) {
-	for name, mutate := range map[string]func(*builderFixture){"missing model": func(f *builderFixture) { f.runtime.model = nil }, "wrong model": func(f *builderFixture) { f.runtime.model.Name = "other" }, "missing capability": func(f *builderFixture) { f.lease.runtime = plainBuilderRuntime{} }} {
+	for name, mutate := range map[string]func(*builderFixture){"missing model": func(f *builderFixture) { f.runtime.model = nil }, "wrong model": func(f *builderFixture) { f.runtime.modelID = "other" }, "missing capability": func(f *builderFixture) { f.lease.runtime = plainBuilderRuntime{} }} {
 		t.Run(name, func(t *testing.T) {
 			f := newBuilderFixture(t)
 			before := *f.runtime.model
@@ -200,11 +203,14 @@ func (l *builderLease) Runtime() projectruntime.Runtime { return l.runtime }
 func (l *builderLease) Identity() graph.ServingIdentity { return l.identity }
 func (l *builderLease) Release()                        { l.releases++ }
 
-type builderRuntime struct{ model *semanticmodel.Model }
+type builderRuntime struct {
+	modelID graph.ResourceID
+	model   *semanticmodel.Model
+}
 
 func (r *builderRuntime) Close() error { return nil }
 func (r *builderRuntime) SemanticModelProjection(id graph.ResourceID) (*semanticmodel.Model, bool) {
-	if r.model == nil || r.model.Name != id.String() {
+	if r.model == nil || r.modelID != id {
 		return nil, false
 	}
 	copy := *r.model

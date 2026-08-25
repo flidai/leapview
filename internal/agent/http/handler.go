@@ -9,6 +9,7 @@ import (
 	"io"
 	"log/slog"
 	stdhttp "net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -48,6 +49,7 @@ type Options struct {
 	// each request; it is never read from request paths or signal payloads.
 	ActiveProjectID        string
 	ResolveProjectID       func(context.Context) (projectgraph.ResourceID, error)
+	ResolveGroupIDs        func(context.Context, string) ([]string, error)
 	Settings               Settings
 	PlatformAdmin          func(context.Context, string) (bool, error)
 	CurrentPrincipal       func(*stdhttp.Request) (Principal, bool)
@@ -310,6 +312,15 @@ func (h *Handler) CreateTurn(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !ok {
 		return
 	}
+	scope, err := h.bindRunScope(r.Context(), scope)
+	if err != nil {
+		status := stdhttp.StatusServiceUnavailable
+		if kind, classified := apigenfailure.KindOf(err); classified && kind == "forbidden" {
+			status = stdhttp.StatusForbidden
+		}
+		writeJSONError(w, err, status)
+		return
+	}
 	var input api.AgentTurnRequest
 	if err := decodeAgentJSON(r, &input); err != nil {
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
@@ -351,6 +362,11 @@ func (h *Handler) CreateTurn(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	service, scope, ok := h.agentCommandRequest(w, r, createAgentRunOperation)
 	if !ok {
+		return
+	}
+	scope, err := h.bindRunScope(r.Context(), scope)
+	if err != nil {
+		h.writeCommandFailure(w, r, createAgentRunOperation, err)
 		return
 	}
 	var input api.AgentTurnRequest
@@ -417,6 +433,62 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	h.recordLegacyCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
+}
+
+func (h *Handler) bindRunProject(ctx context.Context, scope agent.Scope) (agent.Scope, error) {
+	projectID := strings.TrimSpace(h.options.ActiveProjectID)
+	if h.options.ResolveProjectID != nil {
+		resolved, err := h.options.ResolveProjectID(ctx)
+		if err != nil {
+			return agent.Scope{}, apigenfailure.Wrap("unavailable", fmt.Errorf("active project runtime is required: %w", err))
+		}
+		projectID = resolved.String()
+	}
+	project, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return agent.Scope{}, apigenfailure.New("unavailable", "active project runtime is required")
+	}
+	if credentialProject := strings.TrimSpace(scope.Credential.ProjectID); credentialProject != "" && credentialProject != project.String() {
+		return agent.Scope{}, apigenfailure.New("forbidden", "agent credential project does not match the active project runtime")
+	}
+	scope.ProjectID = project.String()
+	return scope, nil
+}
+
+func (h *Handler) bindRunScope(ctx context.Context, scope agent.Scope) (agent.Scope, error) {
+	bound, err := h.bindRunProject(ctx, scope)
+	if err != nil {
+		return agent.Scope{}, err
+	}
+	if h.options.ResolveGroupIDs == nil {
+		bound.GroupIDs = normalizeGroupIDs(bound.GroupIDs)
+		return bound, nil
+	}
+	groupIDs, err := h.options.ResolveGroupIDs(ctx, bound.PrincipalID)
+	if err != nil {
+		return agent.Scope{}, apigenfailure.Wrap("unavailable", fmt.Errorf("resolve agent run groups: %w", err))
+	}
+	bound.GroupIDs = normalizeGroupIDs(groupIDs)
+	return bound, nil
+}
+
+func normalizeGroupIDs(groupIDs []string) []string {
+	if len(groupIDs) == 0 {
+		return nil
+	}
+	unique := make(map[string]struct{}, len(groupIDs))
+	for _, groupID := range groupIDs {
+		groupID = strings.TrimSpace(groupID)
+		if groupID != "" {
+			unique[groupID] = struct{}{}
+		}
+	}
+	normalized := make([]string, 0, len(unique))
+	for groupID := range unique {
+		normalized = append(normalized, groupID)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
