@@ -223,7 +223,7 @@ func BackupInstance(ctx context.Context, options InstanceBackupOptions) error {
 		return err
 	}
 	outParent := filepath.Dir(outAbs)
-	if err := os.MkdirAll(outParent, 0o755); err != nil {
+	if err := securefs.EnsurePrivateDir(outParent); err != nil {
 		return err
 	}
 	homeParent := filepath.Dir(homeAbs)
@@ -237,6 +237,11 @@ func BackupInstance(ctx context.Context, options InstanceBackupOptions) error {
 	}
 	tmpArchive, err := os.CreateTemp(outParent, fmt.Sprintf(".leapview-instance-backup-%s-*.tar.gz", targetID))
 	if err != nil {
+		return err
+	}
+	if err := tmpArchive.Chmod(securefs.PrivateFileMode); err != nil {
+		_ = tmpArchive.Close()
+		_ = os.Remove(tmpArchive.Name())
 		return err
 	}
 	tmpArchivePath := tmpArchive.Name()
