@@ -52,6 +52,7 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 		name, mode, want string
 	}{
 		{"valid attestation SBOM scanner and policy", "valid", ""},
+		{"wrong repository", "wrong-repository", "identity or source revision"},
 		{"wrong workflow", "wrong-workflow", "identity or source revision"},
 		{"wrong source revision", "wrong-revision", "identity or source revision"},
 		{"missing SBOM", "missing-sbom", "no SPDX SBOM"},
@@ -78,6 +79,25 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 	}
 }
 
+func TestVerifyAttestationAcceptsGitHubCLICertificateSchema(t *testing.T) {
+	payload := []map[string]any{{
+		"verificationResult": map[string]any{
+			"signature": map[string]any{"certificate": map[string]any{
+				"sourceRepositoryURI":    "https://github.com/" + repositoryIdentity,
+				"buildSignerURI":         "https://github.com/" + testWorkflow + "@refs/heads/main",
+				"sourceRepositoryDigest": testRevision,
+			}},
+		},
+	}}
+	data, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !verifyAttestation(data, testWorkflow, testRevision) {
+		t.Fatal("verifyAttestation rejected the canonical GitHub CLI certificate schema")
+	}
+}
+
 func TestLiveAdmissionRejectsMissingVerifier(t *testing.T) {
 	policyPath, _ := testPolicy(t)
 	var output bytes.Buffer
@@ -93,16 +113,25 @@ func TestAttestationCanonicalClaimsCannotBeBypassedByFallbacks(t *testing.T) {
 		certificate map[string]any
 	}{
 		{
+			name: "empty canonical repository",
+			certificate: map[string]any{
+				"sourceRepositoryURI": "", "sourceRepository": repositoryIdentity,
+				"buildSignerURI": "https://github.com/" + testWorkflow + "@refs/heads/main", "sourceRepositoryDigest": testRevision,
+			},
+		},
+		{
 			name: "empty canonical workflow",
 			certificate: map[string]any{
-				"sourceRepository": repositoryIdentity, "workflow": "", "workflowPath": testWorkflow,
+				"sourceRepositoryURI": "https://github.com/" + repositoryIdentity,
+				"buildSignerURI":      "", "subjectAlternativeName": "https://github.com/" + testWorkflow + "@refs/heads/main",
 				"sourceRepositoryDigest": testRevision,
 			},
 		},
 		{
 			name: "empty canonical revision",
 			certificate: map[string]any{
-				"sourceRepository": repositoryIdentity, "workflow": testWorkflow,
+				"sourceRepositoryURI":    "https://github.com/" + repositoryIdentity,
+				"buildSignerURI":         "https://github.com/" + testWorkflow + "@refs/heads/main",
 				"sourceRepositoryDigest": "", "sourceDigest": testRevision,
 			},
 		},
@@ -245,7 +274,7 @@ func testEnv(values map[string]string) []string {
 func liveTools(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nworkflow='"+testWorkflow+"'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='flidai/leapview/.github/workflows/untrusted.yml'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepository\":\"flidai/leapview\",\"workflow\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$workflow\" \"$revision\"\n")
+	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nrepository='https://github.com/"+repositoryIdentity+"'\nworkflow='https://github.com/"+testWorkflow+"@refs/heads/main'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-repository ] && repository='https://github.com/attacker/example'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='https://github.com/flidai/leapview/.github/workflows/untrusted.yml@refs/heads/main'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryURI\":\"%s\",\"buildSignerURI\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$repository\" \"$workflow\" \"$revision\"\n")
 	writeTool(t, filepath.Join(dir, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *'imagetools inspect'*)\n    [ \"$OCI_TEST_MODE\" = missing-sbom ] && printf '{}\\n' || printf '{\"SPDX\":{\"SPDXID\":\"SPDXRef-DOCUMENT\"}}\\n';;\n  *) exit 64;;\nesac\n")
 	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\n[ \"$OCI_TEST_MODE\" = unavailable ] && exit 70\n[ \"$OCI_TEST_MODE\" = vulnerable ] && printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n' || printf '{\"Results\":[]}\\n'\n")
 	return dir
