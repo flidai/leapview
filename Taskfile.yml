@@ -978,6 +978,24 @@ tasks:
       # attestations are enforced, rather than trusting client provenance text.
       - go test ./internal/project/module -run '^(TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads|TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart)$' -count=1 -v
 
+  test:ubdr:transition-policy:
+    desc: Validate the versioned release-transition policy and pre-mutation denial contract
+    deps:
+      - db:generate
+      - api:generate
+    cmds:
+      - >-
+        go test
+        ./internal/platform/compatibility
+        ./internal/app/cli/hostinstall
+        ./internal/app/cli/composectl
+        ./internal/platform
+        -run 'Transition|Upgrade|Rollback|Legacy|ReleasePolicy'
+        -count=1
+      - >-
+        go run ./internal/app/tools/transitionpolicy
+        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/transition-policy
+
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:

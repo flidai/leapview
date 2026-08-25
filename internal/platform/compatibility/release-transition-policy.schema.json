@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.dev/schemas/release-transition-policy.schema.json",
+  "title": "LeapView release-transition policy",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "policyVersion", "releases", "transitions"],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "policyVersion": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._/-]{2,63}$"
+    },
+    "releases": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/release" }
+    },
+    "transitions": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/transition" }
+    }
+  },
+  "$defs": {
+    "platform": {
+      "type": "string",
+      "enum": ["linux/amd64", "linux/arm64"]
+    },
+    "rule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["allowed", "reasonCode", "remediation", "requirements"],
+      "properties": {
+        "allowed": { "type": "boolean" },
+        "reasonCode": {
+          "type": "string",
+          "pattern": "^transition\\.(allowed|denied)\\.[a-z0-9_]+$"
+        },
+        "remediation": { "type": "string" },
+        "requirements": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+          }
+        }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "image"],
+      "properties": {
+        "platform": { "$ref": "#/$defs/platform" },
+        "image": {
+          "type": "string",
+          "pattern": "^[^@\\s]+@sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "release": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "version", "sourceRevision", "distribution", "artifacts", "legacyMarkers", "defaults"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
+        },
+        "sourceRevision": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "distribution": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$"
+        },
+        "artifacts": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/artifact" }
+        },
+        "legacyMarkers": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "defaults": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["freshInstall", "upgrade", "rollback"],
+          "properties": {
+            "freshInstall": { "$ref": "#/$defs/rule" },
+            "upgrade": { "$ref": "#/$defs/rule" },
+            "rollback": { "$ref": "#/$defs/rule" }
+          }
+        }
+      }
+    },
+    "transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["operation", "from", "to", "platforms", "decision"],
+      "properties": {
+        "operation": { "type": "string", "enum": ["upgrade", "rollback"] },
+        "from": { "type": "string" },
+        "to": { "type": "string" },
+        "platforms": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "$ref": "#/$defs/platform" }
+        },
+        "decision": { "$ref": "#/$defs/rule" }
+      }
+    }
+  }
+}

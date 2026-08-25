@@ -7,9 +7,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/stretchr/testify/require"
 )
@@ -61,11 +63,22 @@ func TestUpgradeRejectsReleasedV010BeforeDockerOrStateMutation(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte(deployment), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	hostMarker := []byte("{\"image\":\"" + releasedV010 + "\"}\n")
+	database := []byte("legacy-database-checksum-input")
+	if err := os.WriteFile(filepath.Join(root, ".host-install.json"), hostMarker, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "libredash.db"), database, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("releases", "sha256-legacy"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
 	controller, err := New(Options{Root: root, DockerBin: "/bin/false"})
 	require.NoError(t, err)
 
 	err = controller.Upgrade(t.Context(), next)
-	if err == nil || !strings.Contains(err.Error(), "v0.1.0") || !strings.Contains(err.Error(), "fresh-install-only") {
+	if !errors.Is(err, compatibility.ErrV010FreshInstallOnly) || !strings.Contains(err.Error(), compatibility.ReasonDeniedFreshInstallOnly) {
 		t.Fatalf("Upgrade() error = %v, want explicit v0.1.0 incompatibility", err)
 	}
 	if contents, err := os.ReadFile(filepath.Join(root, deploymentEnvName)); err != nil || string(contents) != deployment {
@@ -76,6 +89,40 @@ func TestUpgradeRejectsReleasedV010BeforeDockerOrStateMutation(t *testing.T) {
 			t.Fatalf("upgrade rejection created %s: %v", path, err)
 		}
 	}
+	if contents, err := os.ReadFile(filepath.Join(root, ".host-install.json")); err != nil || !bytes.Equal(contents, hostMarker) {
+		t.Fatalf("host installation marker changed: %q, %v", contents, err)
+	}
+	if contents, err := os.ReadFile(filepath.Join(root, "libredash.db")); err != nil || !bytes.Equal(contents, database) {
+		t.Fatalf("legacy database changed: %q, %v", contents, err)
+	}
+	if active, err := os.Readlink(filepath.Join(root, "current")); err != nil || active != filepath.Join("releases", "sha256-legacy") {
+		t.Fatalf("active generation changed: %q, %v", active, err)
+	}
+}
+
+func TestRollbackRejectsReleasedV010BeforeDockerOrStateMutation(t *testing.T) {
+	root := t.TempDir()
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	checkpoint := filepath.Join(root, "pre-upgrade.tar.gz")
+	deployment := []byte("LEAPVIEW_IMAGE=" + current + "\nCOMPOSE_HTTPS=0\n")
+	marker := []byte("PREVIOUS_IMAGE=" + compatibility.ReleasedV010Image + "\nCHECKPOINT=" + checkpoint + "\n")
+	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), deployment, 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, rollbackEnvName), marker, 0o600))
+	require.NoError(t, os.WriteFile(checkpoint, []byte("checkpoint"), 0o600))
+	controller, err := New(Options{Root: root, DockerBin: "/bin/false"})
+	require.NoError(t, err)
+
+	err = controller.Rollback(t.Context(), true)
+	require.ErrorIs(t, err, compatibility.ErrV010FreshInstallOnly)
+	require.ErrorContains(t, err, compatibility.ReasonDeniedFreshInstallOnly)
+	contents, readErr := os.ReadFile(filepath.Join(root, deploymentEnvName))
+	require.NoError(t, readErr)
+	require.Equal(t, deployment, contents)
+	contents, readErr = os.ReadFile(filepath.Join(root, rollbackEnvName))
+	require.NoError(t, readErr)
+	require.Equal(t, marker, contents)
+	_, statErr := os.Stat(filepath.Join(root, "backups"))
+	require.True(t, os.IsNotExist(statErr), "rollback denial created backup state: %v", statErr)
 }
 
 func TestUpgradeRollbackMarkerReadFailureRestoresRunningService(t *testing.T) {
@@ -88,7 +135,7 @@ func TestUpgradeRollbackMarkerReadFailureRestoresRunningService(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, rollbackEnvName), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Options{Root: root})
+	c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 	require.NoError(t, err)
 	c.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
 	c.stopOverride = func(context.Context, int) error { return nil }
@@ -162,7 +209,7 @@ func TestUpgradeOperationFaultsPreserveInitialServiceState(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := New(Options{Root: root})
+			c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 			require.NoError(t, err)
 			starts := 0
 			c.isRunningOverride = func(context.Context) (bool, error) { return test.wasRunning, nil }
@@ -212,7 +259,10 @@ func TestUpgradeAppliesAndRollsBackDeploymentPayload(t *testing.T) {
 			))
 			update := &recordingDeploymentPayloadUpdate{}
 			manager := &recordingDeploymentPayloadManager{update: update}
-			controller, err := New(Options{Root: root, DeploymentPayloads: manager})
+			controller, err := New(Options{
+				Root: root, DeploymentPayloads: manager,
+				TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade),
+			})
 			require.NoError(t, err)
 			controller.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
 			controller.stopOverride = func(context.Context, int) error { return nil }
@@ -272,7 +322,10 @@ func TestRollbackAppliesAndRestoresDeploymentPayload(t *testing.T) {
 			))
 			update := &recordingDeploymentPayloadUpdate{}
 			manager := &recordingDeploymentPayloadManager{update: update}
-			controller, err := New(Options{Root: root, DeploymentPayloads: manager})
+			controller, err := New(Options{
+				Root: root, DeploymentPayloads: manager,
+				TransitionPolicy: testTransitionPolicy(current, previous, compatibility.OperationRollback),
+			})
 			require.NoError(t, err)
 			controller.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
 			controller.stopOverride = func(context.Context, int) error { return nil }
@@ -430,7 +483,7 @@ func TestUpgradeFaultMatrixRestoresPersistentState(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, deploymentEnvName), originalDeployment, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := New(Options{Root: root})
+			c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 			require.NoError(t, err)
 			running := test.wasRunning
 			dataPath := filepath.Join(root, "data.state")
@@ -528,7 +581,7 @@ func TestUpgradeHealthFailureJoinsCleanupFailures(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "backups"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Options{Root: root})
+	c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 	require.NoError(t, err)
 	primary := errors.New("restart failed")
 	stopErr := errors.New("stop cleanup failed")
@@ -593,6 +646,40 @@ func TestFirstLoginRetainsCredentialsUntilOutputSucceeds(t *testing.T) {
 	}
 	if _, err := os.Stat(credentialsPath); !os.IsNotExist(err) {
 		t.Fatalf("credentials remain after successful output: %v", err)
+	}
+}
+
+func testTransitionPolicy(current, next string, operation compatibility.Operation) *compatibility.Policy {
+	platform := runtime.GOOS + "/" + runtime.GOARCH
+	denied := compatibility.Rule{
+		ReasonCode:  compatibility.ReasonDeniedNoExplicitRule,
+		Remediation: "use an explicitly supported transition",
+	}
+	return &compatibility.Policy{
+		SchemaVersion: compatibility.CurrentSchemaVersion,
+		PolicyVersion: "test/v1",
+		Releases: []compatibility.Release{
+			{
+				ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "test",
+				Artifacts: []compatibility.Artifact{{Platform: platform, Image: current}},
+				Defaults: compatibility.ReleaseDefaults{
+					FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall},
+					Upgrade:      denied, Rollback: denied,
+				},
+			},
+			{
+				ID: "v1.1.0", Version: "1.1.0", SourceRevision: strings.Repeat("b", 40), Distribution: "test",
+				Artifacts: []compatibility.Artifact{{Platform: platform, Image: next}},
+				Defaults: compatibility.ReleaseDefaults{
+					FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall},
+					Upgrade:      denied, Rollback: denied,
+				},
+			},
+		},
+		Transitions: []compatibility.Transition{{
+			Operation: operation, From: "v1.0.0", To: "v1.1.0", Platforms: []string{platform},
+			Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition},
+		}},
 	}
 }
 

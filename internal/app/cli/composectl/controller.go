@@ -13,6 +13,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"time"
 
@@ -47,6 +48,7 @@ type Options struct {
 	DeploymentPayloads      DeploymentPayloadManager
 	Now                     func() time.Time
 	Sleep                   func(context.Context, time.Duration) error
+	TransitionPolicy        *compatibility.Policy
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 }
@@ -60,6 +62,7 @@ type Controller struct {
 	deploymentPayloads      DeploymentPayloadManager
 	now                     func() time.Time
 	sleep                   func(context.Context, time.Duration) error
+	transitionPolicy        *compatibility.Policy
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 	startOverride           func(context.Context) error
@@ -134,9 +137,20 @@ func New(options Options) (*Controller, error) {
 	if containers == nil {
 		containers = newDockerCLIQualificationRuntime(root, dockerBin, executor)
 	}
+	transitionPolicy := options.TransitionPolicy
+	if transitionPolicy == nil {
+		transitionPolicy, err = compatibility.EmbeddedPolicy()
+		if err != nil {
+			return nil, fmt.Errorf("load release-transition policy: %w", err)
+		}
+	}
+	if err := transitionPolicy.Validate(); err != nil {
+		return nil, fmt.Errorf("validate release-transition policy: %w", err)
+	}
 	return &Controller{
 		root: root, dockerBin: dockerBin, stdin: stdin, stdout: stdout,
 		stderr: stderr, deploymentPayloads: options.DeploymentPayloads, now: now, sleep: sleep,
+		transitionPolicy:        transitionPolicy,
 		qualificationExecutor:   executor,
 		qualificationContainers: containers,
 	}, nil
@@ -449,11 +463,14 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 		if err := requireDigest(current); err != nil {
 			return err
 		}
-		if err := compatibility.ValidateUpgradeImages(current, next); err != nil {
-			return err
-		}
 		if next == current {
 			_, err := fmt.Fprintf(c.stdout, "already running %s\n", next)
+			return err
+		}
+		decision := c.transitionPolicy.EvaluateImages(
+			compatibility.OperationUpgrade, current, next, runtime.GOOS+"/"+runtime.GOARCH,
+		)
+		if err := decision.Err(); err != nil {
 			return err
 		}
 		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, next)
@@ -602,6 +619,12 @@ func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
 			return err
 		}
 		if err := requireDigest(previous); err != nil {
+			return err
+		}
+		decision := c.transitionPolicy.EvaluateImages(
+			compatibility.OperationRollback, current, previous, runtime.GOOS+"/"+runtime.GOARCH,
+		)
+		if err := decision.Err(); err != nil {
 			return err
 		}
 		checkpoint, err := envFileValue(c.path(rollbackEnvName), "CHECKPOINT")

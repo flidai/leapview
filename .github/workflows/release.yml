@@ -479,6 +479,8 @@ jobs:
             ${{ runner.temp }}/installed-candidate-evidence/recovery-report.json
             ${{ runner.temp }}/installed-candidate-evidence/recovery-events.json
             ${{ runner.temp }}/installed-candidate-evidence/runtime-identity.json
+            ${{ runner.temp }}/installed-candidate-evidence/policy-validation.json
+            ${{ runner.temp }}/installed-candidate-evidence/decision.json
             ${{ runner.temp }}/installed-candidate-evidence/*.log
             ${{ runner.temp }}/installed-candidate-evidence/browser-failure.png
 

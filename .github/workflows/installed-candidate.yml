@@ -146,6 +146,8 @@ jobs:
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/recovery-report.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/recovery-events.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/runtime-identity.json
+            ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/policy-validation.json
+            ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/decision.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/*.log
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/browser-failure.png
 

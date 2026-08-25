@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
 type qualificationInstalledReport struct {
@@ -25,6 +28,7 @@ type qualificationInstalledReport struct {
 	StartedAt      string                       `json:"startedAt"`
 	CompletedAt    string                       `json:"completedAt"`
 	ElapsedSeconds int64                        `json:"elapsedSeconds"`
+	PolicyVersion  string                       `json:"transitionPolicyVersion"`
 	Phases         []qualificationPhaseEvidence `json:"phases"`
 	Assertions     struct {
 		OneTimeCredentials     bool `json:"oneTimeCredentials"`
@@ -37,16 +41,6 @@ type qualificationInstalledReport struct {
 		RestartPersistence     bool `json:"restartPersistence"`
 		BackupRestore          bool `json:"backupRestore"`
 	} `json:"assertions"`
-}
-
-type qualificationLegacyPolicy struct {
-	Release        string   `json:"release"`
-	SourceRevision string   `json:"sourceRevision"`
-	Image          string   `json:"image"`
-	Distribution   string   `json:"distribution"`
-	Platforms      []string `json:"platforms"`
-	StatePolicy    string   `json:"statePolicy"`
-	LegacyMarkers  []string `json:"legacyMarkers"`
 }
 
 func (c *Controller) QualifyInstalledCandidate(
@@ -100,7 +94,9 @@ func (c *Controller) QualifyInstalledCandidate(
 		"authoring-report.json",
 		"browser-failure.png",
 		"compose.log",
+		"decision.json",
 		"performance-report.json",
+		"policy-validation.json",
 		"qualification-report.json",
 		"recovery-events.json",
 		"recovery-report.json",
@@ -232,11 +228,13 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.verifyQualificationRuntimeIdentity(ctx, imageReference, evidenceDir); err != nil {
 		return err
 	}
-	if err := c.verifyQualificationLegacyPolicy(
-		ctx, imageReference, &legacyVolume,
-	); err != nil {
+	policyDecision, err := c.verifyQualificationLegacyPolicy(
+		ctx, imageReference, evidenceDir, &legacyVolume,
+	)
+	if err != nil {
 		return err
 	}
+	report.PolicyVersion = policyDecision.PolicyVersion
 	report.Assertions.V010FreshInstallPolicy = true
 	if err := phases.Finish(nil); err != nil {
 		return err
@@ -760,29 +758,60 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 func (c *Controller) verifyQualificationLegacyPolicy(
 	ctx context.Context,
 	imageReference string,
+	evidenceDir string,
 	legacyVolume *string,
-) error {
-	var policy qualificationLegacyPolicy
-	if err := readQualificationJSON(
-		c.path(filepath.Join("qualification", "v0.1.0-policy.json")),
-		&policy,
-	); err != nil {
-		return err
+) (compatibility.Decision, error) {
+	policy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		return compatibility.Decision{}, err
 	}
-	if policy.Release != "v0.1.0" ||
-		policy.SourceRevision != "5bf4aded574df459e80d81b77d1989ecd4fa7de0" ||
-		policy.Image != "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" ||
-		policy.Distribution != "authentication-required" ||
-		len(policy.Platforms) != 1 || policy.Platforms[0] != "linux/amd64" ||
-		policy.StatePolicy != "fresh-install-only" ||
-		!containsQualificationString(policy.LegacyMarkers, "libredash.db") {
-		return fmt.Errorf("released v0.1.0 compatibility policy is invalid")
+	legacyRelease, ok := policy.ReleaseByID("v0.1.0")
+	if !ok || !containsQualificationString(legacyRelease.LegacyMarkers, compatibility.LegacyV010Database) {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility policy is invalid")
+	}
+	legacyIdentity := legacyRelease.IdentityForPlatform("linux/amd64")
+	if legacyIdentity.Image != compatibility.ReleasedV010Image {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility image is invalid")
+	}
+	var candidate struct {
+		Version  string `json:"version"`
+		Revision string `json:"revision"`
+	}
+	if err := readQualificationJSON(c.path("release-identity.json"), &candidate); err != nil {
+		return compatibility.Decision{}, err
+	}
+	decision := policy.Evaluate(compatibility.Request{
+		Operation: compatibility.OperationUpgrade,
+		Current:   legacyIdentity,
+		Next: compatibility.ReleaseIdentity{
+			Version: candidate.Version, SourceRevision: candidate.Revision,
+			Image: imageReference, Distribution: "public",
+			Platform: runtime.GOOS + "/" + runtime.GOARCH,
+		},
+	})
+	if !errors.Is(decision.Err(), compatibility.ErrV010FreshInstallOnly) ||
+		decision.ReasonCode != compatibility.ReasonDeniedFreshInstallOnly {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 transition policy did not fail closed")
+	}
+	policyDigest := sha256.Sum256(compatibility.EmbeddedPolicyDocument())
+	schemaDigest := sha256.Sum256(compatibility.EmbeddedPolicySchema())
+	if err := writeQualificationJSON(filepath.Join(evidenceDir, "policy-validation.json"), map[string]any{
+		"schemaVersion": policy.SchemaVersion,
+		"policyVersion": policy.PolicyVersion,
+		"valid":         true,
+		"policySha256":  hex.EncodeToString(policyDigest[:]),
+		"schemaSha256":  hex.EncodeToString(schemaDigest[:]),
+	}); err != nil {
+		return compatibility.Decision{}, err
+	}
+	if err := writeQualificationJSON(filepath.Join(evidenceDir, "decision.json"), decision); err != nil {
+		return compatibility.Decision{}, err
 	}
 	*legacyVolume = normalizedQualificationName(
 		fmt.Sprintf("leapview-v010-policy-%s-%d", runtime.GOARCH, os.Getpid()),
 	)
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "create", *legacyVolume); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	if _, err := c.qualificationDocker(
 		ctx,
@@ -791,9 +820,9 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		"--entrypoint", "tee",
 		"--volume", *legacyVolume+":/var/lib/leapview",
 		imageReference,
-		"/var/lib/leapview/libredash.db",
+		"/var/lib/leapview/"+compatibility.LegacyV010Database,
 	); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	output, initializeErr := c.qualificationDocker(
 		ctx, nil,
@@ -807,11 +836,11 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		"admin", "initialize", "--format", "json",
 	)
 	if initializeErr == nil ||
-		!strings.Contains(string(output), "v0.1.0 state is fresh-install-only") {
-		return fmt.Errorf("candidate did not reject released v0.1.0 state")
+		!strings.Contains(string(output), compatibility.ErrV010FreshInstallOnly.Error()) {
+		return compatibility.Decision{}, fmt.Errorf("candidate did not reject released v0.1.0 state")
 	}
 	for _, check := range [][]string{
-		{"test", "-f", "/var/lib/leapview/libredash.db"},
+		{"test", "-f", "/var/lib/leapview/" + compatibility.LegacyV010Database},
 		{"test", "!", "-e", "/var/lib/leapview/leapview.db"},
 	} {
 		arguments := []string{
@@ -824,14 +853,14 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		if _, err := c.qualificationDocker(
 			ctx, nil, arguments...,
 		); err != nil {
-			return err
+			return compatibility.Decision{}, err
 		}
 	}
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "rm", *legacyVolume); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	*legacyVolume = ""
-	return nil
+	return decision, nil
 }
 
 func (c *Controller) startQualificationPerformanceBrowser(
