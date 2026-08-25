@@ -100,6 +100,28 @@ func TestRulesOnlyReferenceCatalogSettings(t *testing.T) {
 	}
 }
 
+func TestHTTPSURLRejectsAmbiguousIdentityEndpoints(t *testing.T) {
+	predicate := HTTPSURL("IDENTITY_URL")
+	for _, test := range []struct {
+		name  string
+		value string
+		want  bool
+	}{
+		{name: "origin", value: "https://identity.example.com", want: true},
+		{name: "issuer path", value: "https://identity.example.com/tenant/v2.0", want: true},
+		{name: "userinfo", value: "https://client:secret@identity.example.com", want: false},
+		{name: "query", value: "https://identity.example.com/issuer?tenant=prod", want: false},
+		{name: "fragment", value: "https://identity.example.com/issuer#metadata", want: false},
+		{name: "plain http", value: "http://identity.example.com", want: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := predicate.Evaluate(map[string]any{"IDENTITY_URL": test.value}); got != test.want {
+				t.Fatalf("HTTPSURL(%q) = %v, want %v", test.value, got, test.want)
+			}
+		})
+	}
+}
+
 func TestManagedDataStorageCatalogAndRelationships(t *testing.T) {
 	known := map[string]Setting{}
 	for _, setting := range Settings() {

@@ -393,7 +393,8 @@ func (p Predicate) Evaluate(values map[string]any) bool {
 	case PredicateHTTPSURL:
 		value, _ := values[p.Name].(string)
 		parsed, err := url.Parse(strings.TrimSpace(value))
-		return err == nil && parsed.Scheme == "https" && parsed.Host != ""
+		return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil &&
+			parsed.RawQuery == "" && parsed.Fragment == ""
 	case PredicateHTTPSOrigin:
 		value, _ := values[p.Name].(string)
 		parsed, err := url.Parse(strings.TrimSpace(value))
