@@ -144,10 +144,11 @@ jobs:
               ) // ""
             ' "$PACKAGE_ROOT/release-transition-policy.json"
           )"
-          args=(qualify installed-candidate --evidence-dir "$EVIDENCE_ROOT")
-          if [ -n "$previous_image" ]; then
-            args+=(--previous-image "$previous_image")
-          fi
+          test -n "$previous_image" || {
+            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
+            exit 1
+          }
+          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$EVIDENCE_ROOT")
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 

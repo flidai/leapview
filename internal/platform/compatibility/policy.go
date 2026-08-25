@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -49,6 +50,9 @@ var embeddedPolicyJSON []byte
 
 //go:embed release-transition-policy.schema.json
 var embeddedPolicySchemaJSON []byte
+
+//go:embed release-transition-template.json
+var embeddedTransitionTemplateJSON []byte
 
 var (
 	policySchemaOnce sync.Once
@@ -98,6 +102,19 @@ type Transition struct {
 	To        string    `json:"to"`
 	Platforms []string  `json:"platforms"`
 	Decision  Rule      `json:"decision"`
+}
+
+// CandidateTransitionTemplate is the reviewed, pre-admission intent used to
+// materialize exact transitions only after the candidate image digest exists.
+// It names an immutable predecessor already present in the base policy; the
+// candidate endpoint is deliberately absent until BindCandidate runs.
+type CandidateTransitionTemplate struct {
+	SchemaVersion      int      `json:"schemaVersion"`
+	TemplateVersion    string   `json:"templateVersion"`
+	PredecessorRelease string   `json:"predecessorRelease"`
+	Platforms          []string `json:"platforms"`
+	Upgrade            Rule     `json:"upgrade"`
+	Rollback           Rule     `json:"rollback"`
 }
 
 const (
@@ -155,6 +172,63 @@ func EmbeddedPolicy() (*Policy, error) {
 	return ParsePolicy(embeddedPolicyJSON)
 }
 
+func EmbeddedCandidateTransitionTemplate() (CandidateTransitionTemplate, error) {
+	return ParseCandidateTransitionTemplate(embeddedTransitionTemplateJSON)
+}
+
+func ParseCandidateTransitionTemplate(document []byte) (CandidateTransitionTemplate, error) {
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	var template CandidateTransitionTemplate
+	if err := decoder.Decode(&template); err != nil {
+		return CandidateTransitionTemplate{}, fmt.Errorf("decode candidate transition template: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return CandidateTransitionTemplate{}, fmt.Errorf("candidate transition template contains trailing data")
+	}
+	if err := template.validate(); err != nil {
+		return CandidateTransitionTemplate{}, err
+	}
+	return template, nil
+}
+
+func (t CandidateTransitionTemplate) validate() error {
+	if t.SchemaVersion != CurrentSchemaVersion {
+		return fmt.Errorf("candidate transition template schema version %d is unsupported", t.SchemaVersion)
+	}
+	if strings.TrimSpace(t.TemplateVersion) == "" || strings.TrimSpace(t.PredecessorRelease) == "" {
+		return fmt.Errorf("candidate transition template identity and predecessor are required")
+	}
+	if len(t.Platforms) == 0 {
+		return fmt.Errorf("candidate transition template platforms are required")
+	}
+	seen := make(map[string]struct{}, len(t.Platforms))
+	for _, platform := range t.Platforms {
+		if !supportedPlatform(platform) {
+			return fmt.Errorf("candidate transition template platform %q is unsupported", platform)
+		}
+		if _, duplicate := seen[platform]; duplicate {
+			return fmt.Errorf("candidate transition template platform %q is duplicated", platform)
+		}
+		seen[platform] = struct{}{}
+	}
+	for operation, rule := range map[Operation]Rule{OperationUpgrade: t.Upgrade, OperationRollback: t.Rollback} {
+		if err := validateRule(rule); err != nil {
+			return fmt.Errorf("candidate transition template %s: %w", operation, err)
+		}
+		if !rule.Allowed {
+			return fmt.Errorf("candidate transition template %s must be allowed", operation)
+		}
+		for _, requirement := range []string{RequirementBackupBeforeMutation, RequirementStoppedInstance} {
+			if !contains(rule.Requirements, requirement) {
+				return fmt.Errorf("candidate transition template %s omits required %q", operation, requirement)
+			}
+		}
+	}
+	return nil
+}
+
 func LoadPolicy(path string) (*Policy, []byte, error) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -187,10 +261,24 @@ func MarshalPolicy(policy *Policy) ([]byte, error) {
 // release packages; it is deliberately not embedded in the candidate image,
 // whose digest cannot contain itself.
 func (p *Policy) BindCandidate(identity ReleaseIdentity, platforms []string) (*Policy, error) {
+	template, err := EmbeddedCandidateTransitionTemplate()
+	if err != nil {
+		return nil, err
+	}
+	return p.BindCandidateWithTemplate(identity, platforms, template)
+}
+
+func (p *Policy) BindCandidateWithTemplate(identity ReleaseIdentity, platforms []string, template CandidateTransitionTemplate) (*Policy, error) {
 	if err := p.Validate(); err != nil {
 		return nil, err
 	}
+	if err := template.validate(); err != nil {
+		return nil, err
+	}
 	version := strings.TrimPrefix(strings.TrimSpace(identity.Version), "v")
+	if !semver.IsValid("v" + version) {
+		return nil, fmt.Errorf("candidate version %q is not semantic", version)
+	}
 	releaseID := strings.TrimSpace(identity.ReleaseID)
 	if releaseID == "" {
 		releaseID = "v" + version
@@ -236,6 +324,25 @@ func (p *Policy) BindCandidate(identity ReleaseIdentity, platforms []string) (*P
 			return nil, fmt.Errorf("candidate release %q already exists in the base policy", releaseID)
 		}
 	}
+	predecessor, ok := bound.ReleaseByID(template.PredecessorRelease)
+	if !ok {
+		return nil, fmt.Errorf("candidate transition predecessor %q is absent from the base policy", template.PredecessorRelease)
+	}
+	if semver.Compare("v"+predecessor.Version, "v"+version) >= 0 {
+		return nil, fmt.Errorf("candidate version %q must be newer than predecessor %q", version, predecessor.Version)
+	}
+	candidatePlatforms := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		candidatePlatforms[artifact.Platform] = struct{}{}
+	}
+	for _, platform := range template.Platforms {
+		if _, ok := candidatePlatforms[platform]; !ok {
+			return nil, fmt.Errorf("candidate transition platform %q is absent from the candidate artifacts", platform)
+		}
+		if _, ok := predecessor.artifactForPlatform(platform); !ok {
+			return nil, fmt.Errorf("candidate transition platform %q is absent from predecessor %q", platform, predecessor.ID)
+		}
+	}
 	denied := Rule{
 		ReasonCode:   ReasonDeniedNoExplicitRule,
 		Remediation:  "use an explicitly supported release transition",
@@ -250,6 +357,10 @@ func (p *Policy) BindCandidate(identity ReleaseIdentity, platforms []string) (*P
 			Upgrade:      denied, Rollback: denied,
 		},
 	})
+	bound.Transitions = append(bound.Transitions,
+		Transition{Operation: OperationUpgrade, From: predecessor.ID, To: releaseID, Platforms: append([]string(nil), template.Platforms...), Decision: template.Upgrade},
+		Transition{Operation: OperationRollback, From: releaseID, To: predecessor.ID, Platforms: append([]string(nil), template.Platforms...), Decision: template.Rollback},
+	)
 	if err := bound.Validate(); err != nil {
 		return nil, err
 	}

@@ -482,10 +482,11 @@ jobs:
               ) // ""
             ' release-transition-policy.json
           )"
-          args=(qualify installed-candidate --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
-          if [ -n "$previous_image" ]; then
-            args+=(--previous-image "$previous_image")
-          fi
+          test -n "$previous_image" || {
+            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
+            exit 1
+          }
+          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
           ./leapviewctl "${args[@]}"
 
       - name: Upload bounded qualification evidence

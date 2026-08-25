@@ -107,9 +107,9 @@ func run(evidenceDir string) error {
 	}
 	candidateImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
 	policy, err := basePolicy.BindCandidate(compatibility.ReleaseIdentity{
-		Version: "0.2.0", SourceRevision: strings.Repeat("b", 40),
+		Version: "0.3.0", SourceRevision: strings.Repeat("b", 40),
 		Image: candidateImage, Distribution: "public",
-	}, []string{"linux/amd64"})
+	}, []string{"linux/amd64", "linux/arm64"})
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,7 @@ func run(evidenceDir string) error {
 		Operation: compatibility.OperationUpgrade,
 		Current:   legacy.IdentityForPlatform("linux/amd64"),
 		Next: compatibility.ReleaseIdentity{
-			Version: "0.2.0", SourceRevision: strings.Repeat("b", 40),
+			Version: "0.3.0", SourceRevision: strings.Repeat("b", 40),
 			Image: candidateImage, Distribution: "public",
 			Platform: "linux/amd64",
 		},

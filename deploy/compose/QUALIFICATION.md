@@ -83,8 +83,10 @@ supersession, table delivery, and browser/network correctness against the same
 dashboard runtime, while the installed Olist gate owns shipped-artifact and
 process-resource budgets.
 
-The release workflows resolve `--previous-image` directly from an allowed
-upgrade in the distributed candidate-bound policy. The real predecessor image
+The release workflows require `--previous-image` and resolve it directly from
+an allowed upgrade in the distributed candidate-bound policy. A missing
+reviewed predecessor transition fails qualification before instance mutation.
+The real predecessor image
 initializes the volume, the candidate controller upgrades it, and rollback must
 restore the retained state checksum before the candidate is applied again.
 `transition-qualification.json` retains both immutable identities, the policy

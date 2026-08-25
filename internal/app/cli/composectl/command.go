@@ -161,6 +161,7 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyInstalled.Flags().StringVar(&installedQualification.Bundle, "bundle", "", "extracted immutable release bundle (defaults to this leapviewctl directory)")
 	qualifyInstalled.Flags().StringVar(&installedQualification.EvidenceDir, "evidence-dir", "", "directory for bounded qualification evidence")
 	qualifyInstalled.Flags().StringVar(&installedQualification.PreviousImage, "previous-image", "", "optional previous immutable image used to qualify upgrade and rollback")
+	qualifyInstalled.Flags().BoolVar(&installedQualification.RequireReleaseTransition, "require-release-transition", false, "fail unless a previous immutable release is qualified through upgrade and rollback")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.AllowLocal, "allow-local-image", false, "allow a local immutable registry reference during development")
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
 

@@ -59,11 +59,12 @@ type QualificationSiteImageOptions struct {
 }
 
 type QualificationInstalledOptions struct {
-	Bundle        string
-	EvidenceDir   string
-	PreviousImage string
-	AllowLocal    bool
-	MinFreeBytes  int64
+	Bundle                   string
+	EvidenceDir              string
+	PreviousImage            string
+	RequireReleaseTransition bool
+	AllowLocal               bool
+	MinFreeBytes             int64
 }
 
 type QualificationCandidate struct {

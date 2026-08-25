@@ -95,13 +95,17 @@ func TestEvaluateReleaseTransitionKeepsOperationsDistinct(t *testing.T) {
 		t.Fatal("embedded policy omits v0.1.0")
 	}
 	legacy := v010.IdentityForPlatform("linux/amd64")
+	admitted, ok := policy.ReleaseByID(policy.CandidateRelease)
+	if !ok {
+		t.Fatalf("embedded policy omits candidate %q", policy.CandidateRelease)
+	}
 	candidate := ReleaseIdentity{
 		Version: "0.2.0", SourceRevision: strings.Repeat("a", 40),
 		Image:        "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64),
 		Distribution: "public", Platform: "linux/amd64",
 	}
 
-	fresh := policy.Evaluate(Request{Operation: OperationFreshInstall, Next: legacy})
+	fresh := policy.Evaluate(Request{Operation: OperationFreshInstall, Next: admitted.IdentityForPlatform("linux/amd64")})
 	if !fresh.Allowed || fresh.ReasonCode != ReasonAllowedFreshInstall {
 		t.Fatalf("fresh-install decision = %#v", fresh)
 	}
@@ -146,20 +150,71 @@ func TestBindCandidateUsesAdmittedImageIdentity(t *testing.T) {
 	}
 	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64)
 	bound, err := base.BindCandidate(ReleaseIdentity{
-		Version: "0.2.0", SourceRevision: strings.Repeat("d", 40), Image: image, Distribution: "public",
+		Version: "0.3.0", SourceRevision: strings.Repeat("d", 40), Image: image, Distribution: "public",
 	}, []string{"linux/amd64", "linux/arm64"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bound.CandidateRelease != "v0.2.0" {
+	if bound.CandidateRelease != "v0.3.0" {
 		t.Fatalf("candidate release = %q", bound.CandidateRelease)
 	}
-	release, ok := bound.ReleaseByID("v0.2.0")
+	release, ok := bound.ReleaseByID("v0.3.0")
 	if !ok || release.IdentityForPlatform("linux/arm64").Image != image {
 		t.Fatalf("bound release = %#v, %v", release, ok)
 	}
 	if _, err := ParsePolicy(mustPolicyJSON(t, bound)); err != nil {
 		t.Fatalf("bound policy does not round trip: %v", err)
+	}
+}
+
+func TestBindCandidateMaterializesReviewedUpgradeAndRollback(t *testing.T) {
+	base, err := EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64)
+	bound, err := base.BindCandidate(ReleaseIdentity{
+		Version: "0.3.0", SourceRevision: strings.Repeat("d", 40), Image: image, Distribution: "public",
+	}, []string{"linux/amd64", "linux/arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous, ok := bound.ReleaseByID("v0.2.0-rc.1")
+	if !ok {
+		t.Fatal("reviewed predecessor is absent")
+	}
+	candidate, ok := bound.ReleaseByID("v0.3.0")
+	if !ok {
+		t.Fatal("bound candidate is absent")
+	}
+	for _, test := range []struct {
+		operation Operation
+		current   ReleaseIdentity
+		next      ReleaseIdentity
+	}{
+		{operation: OperationUpgrade, current: previous.IdentityForPlatform("linux/amd64"), next: candidate.IdentityForPlatform("linux/amd64")},
+		{operation: OperationRollback, current: candidate.IdentityForPlatform("linux/amd64"), next: previous.IdentityForPlatform("linux/amd64")},
+	} {
+		decision := bound.Evaluate(Request{Operation: test.operation, Current: test.current, Next: test.next})
+		if err := decision.Err(); err != nil {
+			t.Fatalf("%s decision = %#v: %v", test.operation, decision, err)
+		}
+	}
+}
+
+func TestBindCandidateRejectsMissingReviewedPredecessor(t *testing.T) {
+	base, err := EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Releases = base.Releases[:1]
+	base.CandidateRelease = base.Releases[0].ID
+	_, err = base.BindCandidate(ReleaseIdentity{
+		Version: "0.3.0", SourceRevision: strings.Repeat("d", 40),
+		Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64), Distribution: "public",
+	}, []string{"linux/amd64", "linux/arm64"})
+	if err == nil || !strings.Contains(err.Error(), "predecessor") {
+		t.Fatalf("missing predecessor error = %v", err)
 	}
 }
 

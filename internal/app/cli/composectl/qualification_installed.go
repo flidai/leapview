@@ -45,16 +45,29 @@ type qualificationInstalledReport struct {
 }
 
 type qualificationTransitionEvidence struct {
-	SchemaVersion        int                           `json:"schemaVersion"`
-	Predecessor          compatibility.ReleaseIdentity `json:"predecessor"`
-	Candidate            compatibility.ReleaseIdentity `json:"candidate"`
-	PolicySHA256         string                        `json:"policySha256"`
-	StateBeforeUpgrade   string                        `json:"stateBeforeUpgradeSha256"`
-	StateAfterUpgrade    string                        `json:"stateAfterUpgradeSha256"`
-	StateAfterRollback   string                        `json:"stateAfterRollbackSha256"`
-	UpgradeResult        string                        `json:"upgradeResult"`
-	RollbackResult       string                        `json:"rollbackResult"`
-	PreservationVerified bool                          `json:"preservationVerified"`
+	SchemaVersion          int                           `json:"schemaVersion"`
+	Predecessor            compatibility.ReleaseIdentity `json:"predecessor"`
+	Candidate              compatibility.ReleaseIdentity `json:"candidate"`
+	PolicySHA256           string                        `json:"policySha256"`
+	StateBeforeUpgrade     string                        `json:"stateBeforeUpgradeSha256"`
+	StateAfterUpgrade      string                        `json:"stateAfterUpgradeSha256"`
+	StateAfterRollback     string                        `json:"stateAfterRollbackSha256"`
+	InventoryBefore        qualificationTransitionState  `json:"inventoryBeforeUpgrade"`
+	InventoryAfterUpgrade  qualificationTransitionState  `json:"inventoryAfterUpgrade"`
+	InventoryAfterRollback qualificationTransitionState  `json:"inventoryAfterRollback"`
+	UpgradeResult          string                        `json:"upgradeResult"`
+	RollbackResult         string                        `json:"rollbackResult"`
+	PreservationVerified   bool                          `json:"preservationVerified"`
+}
+
+type qualificationTransitionState struct {
+	InstanceID      string `json:"instanceId"`
+	Environment     string `json:"environment"`
+	CanonicalOrigin string `json:"canonicalOrigin"`
+	PrincipalID     string `json:"principalId"`
+	PrincipalKind   string `json:"principalKind"`
+	PrincipalEmail  string `json:"principalEmail"`
+	PrincipalName   string `json:"principalDisplayName"`
 }
 
 type qualificationReleaseIdentity struct {
@@ -82,6 +95,9 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
 ) (runErr error) {
+	if options.RequireReleaseTransition && strings.TrimSpace(options.PreviousImage) == "" {
+		return fmt.Errorf("release qualification requires a reviewed predecessor transition and --previous-image")
+	}
 	if bundle := strings.TrimSpace(options.Bundle); bundle != "" {
 		bundleRoot, err := filepath.Abs(bundle)
 		if err != nil {
@@ -341,10 +357,15 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	if transitionEvidence != nil {
-		if err := c.writeQualificationTransitionState(ctx); err != nil {
+		primaryStarted = true
+		if err := c.startQualificationBootstrap(ctx); err != nil {
 			return err
 		}
-		transitionEvidence.StateBeforeUpgrade, err = c.qualificationTransitionStateChecksum(ctx)
+		var transitionCredentials qualificationCredentials
+		if err := readQualificationJSON(c.path(credentialsName), &transitionCredentials); err != nil {
+			return err
+		}
+		transitionEvidence.InventoryBefore, transitionEvidence.StateBeforeUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
 		if err != nil {
 			return err
 		}
@@ -353,12 +374,14 @@ func (c *Controller) QualifyInstalledCandidate(
 			return err
 		}
 		transitionEvidence.UpgradeResult = "success"
-		transitionEvidence.StateAfterUpgrade, err = c.qualificationTransitionStateChecksum(ctx)
+		transitionEvidence.InventoryAfterUpgrade, transitionEvidence.StateAfterUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
 		if err != nil {
 			return err
 		}
+		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterUpgrade); err != nil {
+			return fmt.Errorf("upgrade did not preserve deterministic application state: %w", err)
+		}
 	}
-	primaryStarted = true
 	if options.MinFreeBytes > 0 {
 		if err := appendOrReplaceQualificationEnv(
 			c.path(appEnvName),
@@ -378,8 +401,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
 		return err
 	}
-	if err := c.startQualificationBootstrap(ctx); err != nil {
-		return err
+	if !primaryStarted {
+		primaryStarted = true
+		if err := c.startQualificationBootstrap(ctx); err != nil {
+			return err
+		}
 	}
 	var credentialsOutput bytes.Buffer
 	originalOutput := c.stdout
@@ -598,14 +624,14 @@ func (c *Controller) QualifyInstalledCandidate(
 			return err
 		}
 		transitionEvidence.RollbackResult = "success"
-		transitionEvidence.StateAfterRollback, err = c.qualificationTransitionStateChecksum(ctx)
+		transitionEvidence.InventoryAfterRollback, transitionEvidence.StateAfterRollback, err = c.qualificationTransitionState(ctx, credentials.PublisherToken)
 		if err != nil {
 			return err
 		}
-		transitionEvidence.PreservationVerified = transitionEvidence.StateAfterRollback == transitionEvidence.StateBeforeUpgrade
-		if !transitionEvidence.PreservationVerified {
-			return fmt.Errorf("rollback did not restore the exact predecessor state checksum")
+		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterRollback); err != nil {
+			return fmt.Errorf("rollback did not restore deterministic predecessor application state: %w", err)
 		}
+		transitionEvidence.PreservationVerified = true
 		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
 			return err
 		}
@@ -646,27 +672,66 @@ func (c *Controller) QualifyInstalledCandidate(
 	return err
 }
 
-func (c *Controller) writeQualificationTransitionState(ctx context.Context) error {
-	_, err := c.qualificationCompose(
-		ctx, c.root, "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "leapview",
-		"-ceu", "printf '%s\\n' leapview-real-release-transition-v1 > /var/lib/leapview/qualification-transition-state",
-	)
-	return err
+func (c *Controller) qualificationTransitionState(ctx context.Context, publisherToken string) (qualificationTransitionState, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	var instance struct {
+		ID              string `json:"id"`
+		Environment     string `json:"environment"`
+		CanonicalOrigin string `json:"canonicalOrigin"`
+	}
+	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/instance", publisherToken, nil, "", &instance); err != nil {
+		return qualificationTransitionState{}, "", fmt.Errorf("read qualification instance state: %w", err)
+	}
+	var principal struct {
+		ID          string `json:"id"`
+		Kind        string `json:"kind"`
+		Email       string `json:"email"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/me", publisherToken, nil, "", &principal); err != nil {
+		return qualificationTransitionState{}, "", fmt.Errorf("read qualification principal state: %w", err)
+	}
+	state := qualificationTransitionState{
+		InstanceID: instance.ID, Environment: instance.Environment, CanonicalOrigin: instance.CanonicalOrigin,
+		PrincipalID: principal.ID, PrincipalKind: principal.Kind, PrincipalEmail: principal.Email, PrincipalName: principal.DisplayName,
+	}
+	for field, value := range map[string]string{
+		"instance id": state.InstanceID, "environment": state.Environment, "canonical origin": state.CanonicalOrigin,
+		"principal id": state.PrincipalID, "principal kind": state.PrincipalKind, "principal email": state.PrincipalEmail,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return qualificationTransitionState{}, "", fmt.Errorf("qualification transition %s is empty", field)
+		}
+	}
+	checksum, err := qualificationTransitionStateChecksum(state)
+	if err != nil {
+		return qualificationTransitionState{}, "", err
+	}
+	return state, checksum, nil
 }
 
-func (c *Controller) qualificationTransitionStateChecksum(ctx context.Context) (string, error) {
-	output, err := c.qualificationCompose(
-		ctx, c.root, "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "leapview",
-		"-ceu", "sha256sum /var/lib/leapview/qualification-transition-state | awk '{print $1}'",
-	)
+func qualificationTransitionStateChecksum(state qualificationTransitionState) (string, error) {
+	document, err := json.Marshal(state)
 	if err != nil {
 		return "", err
 	}
-	checksum := strings.TrimSpace(string(output))
-	if len(checksum) != 64 || !isQualificationLowerHex(checksum) {
-		return "", fmt.Errorf("invalid qualification state checksum %q", checksum)
+	digest := sha256.Sum256(document)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func verifyQualificationTransitionState(expected, actual qualificationTransitionState) error {
+	expectedChecksum, err := qualificationTransitionStateChecksum(expected)
+	if err != nil {
+		return err
 	}
-	return checksum, nil
+	actualChecksum, err := qualificationTransitionStateChecksum(actual)
+	if err != nil {
+		return err
+	}
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("application state checksum %s does not match predecessor checksum %s", actualChecksum, expectedChecksum)
+	}
+	return nil
 }
 
 func isQualificationLowerHex(value string) bool {

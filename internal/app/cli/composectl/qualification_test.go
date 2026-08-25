@@ -82,8 +82,47 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--bundle") {
+	if !strings.Contains(output.String(), "--bundle") || !strings.Contains(output.String(), "--require-release-transition") {
 		t.Fatalf("installed-candidate help = %s", output.String())
+	}
+}
+
+func TestInstalledReleaseQualificationRequiresPreviousImageBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	controller, err := New(Options{Root: root, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
+	require.NoError(t, err)
+	err = controller.QualifyInstalledCandidate(t.Context(), QualificationInstalledOptions{
+		RequireReleaseTransition: true,
+	})
+	if err == nil || !strings.Contains(err.Error(), "--previous-image") {
+		t.Fatalf("missing predecessor error = %v", err)
+	}
+	entries, readErr := os.ReadDir(root)
+	require.NoError(t, readErr)
+	if len(entries) != 0 {
+		t.Fatalf("missing predecessor qualification mutated root: %#v", entries)
+	}
+}
+
+func TestQualificationTransitionStateRejectsApplicationMutationDespiteUnchangedMarker(t *testing.T) {
+	marker := filepath.Join(t.TempDir(), "qualification-transition-state")
+	require.NoError(t, os.WriteFile(marker, []byte("unchanged-marker\n"), 0o600))
+	markerBefore, err := os.ReadFile(marker)
+	require.NoError(t, err)
+
+	expected := qualificationTransitionState{
+		InstanceID: "lvinst_qualification", Environment: "evaluation", CanonicalOrigin: "https://localhost",
+		PrincipalID: "principal_admin", PrincipalKind: "user", PrincipalEmail: "admin@localhost", PrincipalName: "Admin",
+	}
+	actual := expected
+	actual.PrincipalEmail = "mutated@localhost"
+	if err := verifyQualificationTransitionState(expected, actual); err == nil {
+		t.Fatal("application state mutation was accepted")
+	}
+	markerAfter, err := os.ReadFile(marker)
+	require.NoError(t, err)
+	if !bytes.Equal(markerBefore, markerAfter) {
+		t.Fatal("legacy marker changed during application-state regression test")
 	}
 }
 
