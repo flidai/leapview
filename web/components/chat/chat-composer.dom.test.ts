@@ -63,14 +63,18 @@ test('composer renders a compact centered prompt surface', async () => {
       const surfaceRect = surface.getBoundingClientRect()
       const surfaceStyle = getComputedStyle(surface)
       const textareaStyle = getComputedStyle(textarea)
+	  const surfaceShadow = surfaceStyle.boxShadow
+	  textarea.blur()
+	  surface.click()
       return {
         formWidth: Math.round(formRect.width),
         formLeft: Math.round(formRect.left),
         surfaceWidth: Math.round(surfaceRect.width),
         surfaceLeft: Math.round(surfaceRect.left),
+		surfaceHeight: Math.round(surfaceRect.height),
         surfaceDisplay: surfaceStyle.display,
         surfaceRadius: surfaceStyle.borderRadius,
-        surfaceShadow: surfaceStyle.boxShadow,
+		surfaceShadow,
         textareaLabel: textarea.getAttribute('aria-label'),
         textareaPlaceholder: textarea.getAttribute('placeholder'),
         textareaResize: textareaStyle.resize,
@@ -80,6 +84,7 @@ test('composer renders a compact centered prompt surface', async () => {
         buttonWidth: Math.round(button.getBoundingClientRect().width),
         buttonHeight: Math.round(button.getBoundingClientRect().height),
         buttonDisabled: button.disabled,
+		surfaceClickFocusesTextarea: root.activeElement === textarea,
       }
     })
 
@@ -88,18 +93,20 @@ test('composer renders a compact centered prompt surface', async () => {
       formLeft: 248,
       surfaceWidth: 760,
       surfaceLeft: 260,
+	  surfaceHeight: 60,
       surfaceDisplay: 'grid',
       surfaceRadius: '12px',
       surfaceShadow: 'none',
       textareaLabel: 'Ask about dashboards, metrics, or models',
       textareaPlaceholder: 'Ask about dashboards, metrics, or models...',
       textareaResize: 'none',
-      textareaMinHeight: 38,
+	  textareaMinHeight: 46,
       textareaMaxHeight: 160,
       actionsJustify: 'flex-end',
       buttonWidth: 32,
       buttonHeight: 32,
       buttonDisabled: true,
+	  surfaceClickFocusesTextarea: true,
     })
   } finally {
     await page.close()
@@ -158,7 +165,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
 
     expect(events.received).toEqual(['Revenue trend'])
     expect(events.enabledAfterInput).toBe(true)
-    expect(events.singleLineHeight).toBe(38)
+	expect(events.singleLineHeight).toBe(46)
     expect(events.multilineHeight).toBeGreaterThan(events.singleLineHeight)
     expect(events.multilineHeight).toBeLessThanOrEqual(160)
     expect(events.multilineOverflowY).toBe('hidden')
@@ -170,6 +177,51 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     expect(events.disabledButton).toBe(true)
   } finally {
     await page.close()
+  }
+})
+
+test('touch-primary composer reserves Return for newlines and enlarges the send target', async () => {
+  const context = await browser.newContext({
+	viewport: { width: 390, height: 844 },
+	hasTouch: true,
+	isMobile: true,
+  })
+  const page = await context.newPage()
+  try {
+	await page.goto(baseURL)
+	await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+	  const root = element.shadowRoot
+	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+	  const button = root.querySelector('.send-button') as HTMLButtonElement
+	  let submits = 0
+	  element.addEventListener('lv-chat-submit', () => submits += 1)
+
+	  textarea.value = 'Revenue trend'
+	  textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+	  await element.updateComplete
+	  const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, cancelable: true })
+	  textarea.dispatchEvent(enter)
+	  const buttonRect = button.getBoundingClientRect()
+
+	  return {
+		coarsePointer: matchMedia('(pointer: coarse)').matches,
+		defaultPrevented: enter.defaultPrevented,
+		submits,
+		buttonWidth: Math.round(buttonRect.width),
+		buttonHeight: Math.round(buttonRect.height),
+	  }
+	})
+
+	expect(state).toEqual({
+	  coarsePointer: true,
+	  defaultPrevented: false,
+	  submits: 0,
+	  buttonWidth: 44,
+	  buttonHeight: 44,
+	})
+  } finally {
+	await context.close()
   }
 })
 
@@ -581,6 +633,7 @@ function testDocument(): string {
             --lv-space-lg: 12px;
             --lv-space-xl: 16px;
             --lv-control-medium: 32px;
+			--lv-control-large: 40px;
             --lv-control-small: 28px;
             --lv-chat-stack-width: 760px;
 
