@@ -453,7 +453,7 @@ class ChatComposer extends LitElement {
               title="Send"
               ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
             >
-              ${this.pending ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
+              ${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
             </button>
           </div>
         </div>

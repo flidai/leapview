@@ -306,7 +306,6 @@ class SubSidebar extends LitElement {
     }
 
     .pending-spinner {
-      --lv-spinner-size: var(--lv-spinner-size-sm);
       flex: 0 0 auto;
     }
 
@@ -593,7 +592,7 @@ class SubSidebar extends LitElement {
       <span class="item-text">
         <span class="item-title-row">
           <span class="item-title">${title}</span>
-          ${item.pending ? html`<lv-loading-spinner class="pending-spinner" aria-label="Title loading"></lv-loading-spinner>` : null}
+          ${item.pending ? html`<lv-loading-spinner class="pending-spinner" size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
         </span>
         ${cleanText(item.meta) ? html`<span class="item-meta">${item.meta}</span>` : null}
       </span>

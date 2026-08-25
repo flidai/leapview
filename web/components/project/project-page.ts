@@ -707,7 +707,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
             detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
           }))}
         >
-          ${page.refresh?.running ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
+          ${page.refresh?.running ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
         </button>
       `
     }

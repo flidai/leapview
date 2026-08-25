@@ -152,7 +152,21 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       element.pending = true
       await element.updateComplete
       const pendingDisabled = button.disabled
-      const hasSpinner = Boolean(root.querySelector('lv-loading-spinner'))
+      const spinner = root.querySelector('lv-loading-spinner') as any
+      await spinner.updateComplete
+      const spinnerSvg = spinner.shadowRoot.querySelector('svg') as SVGElement
+      const spinnerCircle = spinnerSvg.querySelector('circle') as SVGCircleElement
+      const spinnerPath = spinnerSvg.querySelector('path') as SVGPathElement
+      const spinnerStyle = getComputedStyle(spinnerSvg)
+      const spinnerState = {
+        size: spinner.getAttribute('size'),
+        width: Math.round(spinner.getBoundingClientRect().width),
+        height: Math.round(spinner.getBoundingClientRect().height),
+        circleOpacity: spinnerCircle.getAttribute('stroke-opacity'),
+        pathLinecap: spinnerPath.getAttribute('stroke-linecap'),
+        animationDuration: spinnerStyle.animationDuration,
+        animationTiming: spinnerStyle.animationTimingFunction,
+      }
 
       element.pending = false
       element.disabled = true
@@ -160,7 +174,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       const textareaDisabled = textarea.disabled
       const disabledButton = button.disabled
 
-      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, pendingDisabled, hasSpinner, textareaDisabled, disabledButton }
+      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, pendingDisabled, spinnerState, textareaDisabled, disabledButton }
     })
 
     expect(events.received).toEqual(['Revenue trend'])
@@ -172,7 +186,15 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
     expect(events.afterShiftEnter).toBe(0)
     expect(events.afterEnter).toBe(1)
     expect(events.pendingDisabled).toBe(true)
-    expect(events.hasSpinner).toBe(true)
+    expect(events.spinnerState).toEqual({
+      size: 'small',
+      width: 16,
+      height: 16,
+      circleOpacity: '0.25',
+      pathLinecap: 'round',
+      animationDuration: '1s',
+      animationTiming: 'linear',
+    })
     expect(events.textareaDisabled).toBe(true)
     expect(events.disabledButton).toBe(true)
   } finally {
@@ -641,8 +663,11 @@ function testDocument(): string {
 
             --lv-transition-fast: 160ms ease;
             --lv-shadow-floating-sm: 0 8px 24px rgb(0 0 0 / .12);
-            --lv-spinner-size-md: 16px;
-            --lv-spinner-duration: 1800ms;
+            --spinner-size-small: 16px;
+            --spinner-size-medium: 32px;
+            --spinner-size-large: 64px;
+            --base-duration-1000: 1000ms;
+            --base-easing-linear: linear;
             --duration-fast: 160ms;
             --ease-lv: ease;
           }
