@@ -303,7 +303,7 @@ func testPolicyDocument(t *testing.T) map[string]any {
 func testReleaseDocument(id, version, revision, digest string) map[string]any {
 	return map[string]any{
 		"id": id, "version": version, "sourceRevision": strings.Repeat(revision, 40),
-		"distribution": "public", "legacyMarkers": []any{},
+		"distribution": "public", "legacyMarkers": []any{}, "legacyBackupVersions": []any{},
 		"artifacts": []any{map[string]any{
 			"platform": "linux/amd64",
 			"image":    "ghcr.io/flidai/leapview@sha256:" + strings.Repeat(digest, 64),

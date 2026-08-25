@@ -19,15 +19,14 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/ociref"
 	"github.com/santhosh-tekuri/jsonschema/v6"
+	"golang.org/x/mod/semver"
 )
 
 const (
@@ -111,7 +110,9 @@ type InstanceRestorePreflightOptions struct {
 	ResetRelativePaths    []string
 	ExclusiveLockHeld     bool
 	RequireExclusiveLock  bool
-	AllowLegacyV1         bool
+	CurrentBackupOut      string
+	DiscardCurrentBackup  bool
+	TransitionPolicy      *compatibility.Policy
 }
 
 type InstanceRestorePreflightPlan struct {
@@ -170,28 +171,21 @@ func preflightDenied(plan InstanceRestorePreflightPlan, reason, remediation stri
 	return plan, &InstanceRestorePreflightError{ReasonCode: reason, Remediation: remediation, Err: err}
 }
 
-func defaultInstanceReleaseIdentity() compatibility.ReleaseIdentity {
-	build := buildinfo.Current()
-	platform := runtime.GOOS + "/" + runtime.GOARCH
-	if !build.Development {
-		if policy, err := compatibility.EmbeddedPolicy(); err == nil {
-			if release, ok := policy.ReleaseByID("v" + strings.TrimPrefix(build.Version, "v")); ok && release.SourceRevision == build.Revision {
-				return release.IdentityForPlatform(platform)
-			}
-		}
+func normalizeBackupReleaseIdentity(identity compatibility.ReleaseIdentity) (compatibility.ReleaseIdentity, error) {
+	if identity == (compatibility.ReleaseIdentity{}) {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("exact backup release identity is required; unknown provenance is not a development release")
 	}
-	return compatibility.ReleaseIdentity{
-		ReleaseID: "development", Version: build.Version, SourceRevision: build.Revision,
-		Image: "development://local-binary", Distribution: "development",
-		Platform: platform,
-	}
+	return identity, nil
 }
 
-func normalizeBackupReleaseIdentity(identity compatibility.ReleaseIdentity) compatibility.ReleaseIdentity {
-	if identity == (compatibility.ReleaseIdentity{}) {
-		return defaultInstanceReleaseIdentity()
+func instanceTransitionPolicy(policy *compatibility.Policy) (*compatibility.Policy, error) {
+	if policy == nil {
+		return compatibility.EmbeddedPolicy()
 	}
-	return identity
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	return policy, nil
 }
 
 func normalizeBackupStorageTopology(topology InstanceBackupStorageTopology) InstanceBackupStorageTopology {
@@ -229,7 +223,7 @@ func backupMemberRole(name string) string {
 		return "control-plane-database"
 	case name == "managed-data" || strings.HasPrefix(name, "managed-data/"):
 		return "managed-data-object"
-	case name == "ducklake/catalog" || strings.HasPrefix(name, "ducklake/catalog/"):
+	case name == "ducklake/catalog" || strings.HasPrefix(name, "ducklake/catalog/") || strings.HasPrefix(name, "ducklake/catalog."):
 		return "ducklake-catalog"
 	case name == "ducklake/data" || strings.HasPrefix(name, "ducklake/data/"):
 		return "ducklake-data"
@@ -360,7 +354,8 @@ func writeManifestV2Archive(out io.Writer, manifest InstanceBackupManifestV2, me
 			_ = closeArchiveStreamWriters(tw, gzw)
 			return err
 		}
-		_, copyErr := io.CopyBuffer(tw, file, buffer)
+		digest := sha256.New()
+		written, copyErr := io.CopyBuffer(io.MultiWriter(tw, digest), file, buffer)
 		closeErr := file.Close()
 		if copyErr != nil {
 			_ = closeArchiveStreamWriters(tw, gzw)
@@ -369,6 +364,10 @@ func writeManifestV2Archive(out io.Writer, manifest InstanceBackupManifestV2, me
 		if closeErr != nil {
 			_ = closeArchiveStreamWriters(tw, gzw)
 			return closeErr
+		}
+		if written != member.manifest.Size || hex.EncodeToString(digest.Sum(nil)) != member.manifest.SHA256 {
+			_ = closeArchiveStreamWriters(tw, gzw)
+			return fmt.Errorf("backup member %q changed while writing archive", member.manifest.Path)
 		}
 	}
 	return closeArchiveStreamWriters(tw, gzw)
@@ -468,6 +467,9 @@ func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 		externalKeys[external.EvidenceKey] = struct{}{}
 		previousExternal = key
 	}
+	if err := validateBackupStorageTopology(manifest.StorageTopology); err != nil {
+		return err
+	}
 	seen := make(map[string]struct{}, len(manifest.Members))
 	previous := ""
 	seenDatabase := false
@@ -509,6 +511,14 @@ func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 
 func validateExternalRecoveryReference(reference InstanceBackupExternalStoreReference) error {
 	for field, value := range map[string]string{
+		"role": reference.Role, "backend": reference.Backend, "namespace": reference.Namespace,
+		"recovery point": reference.RecoveryPoint, "evidence key": reference.EvidenceKey,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return fmt.Errorf("external store %s is required", field)
+		}
+	}
+	for field, value := range map[string]string{
 		"namespace": reference.Namespace, "recovery point": reference.RecoveryPoint,
 	} {
 		if strings.IndexFunc(value, func(r rune) bool { return r < 0x20 || r == 0x7f }) >= 0 {
@@ -525,6 +535,40 @@ func validateExternalRecoveryReference(reference InstanceBackupExternalStoreRefe
 			if err != nil || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
 				return fmt.Errorf("external store %s must be a credential-free canonical reference", field)
 			}
+		}
+	}
+	return nil
+}
+
+func validateBackupStorageTopology(topology InstanceBackupStorageTopology) error {
+	if topology.ControlPlane != "local" {
+		return fmt.Errorf("control-plane storage topology must be local")
+	}
+	requiredRoles := make(map[string]bool)
+	switch topology.ManagedData {
+	case "local":
+	case "external":
+		requiredRoles["managed-data"] = false
+	default:
+		return fmt.Errorf("unsupported managed-data storage topology %q", topology.ManagedData)
+	}
+	switch topology.DuckLake {
+	case "local":
+	case "external":
+		requiredRoles["ducklake-catalog"] = false
+		requiredRoles["ducklake-data"] = false
+	default:
+		return fmt.Errorf("unsupported DuckLake storage topology %q", topology.DuckLake)
+	}
+	for _, external := range topology.ExternalStores {
+		if _, expected := requiredRoles[external.Role]; !expected {
+			return fmt.Errorf("external store role %q does not match declared storage topology", external.Role)
+		}
+		requiredRoles[external.Role] = true
+	}
+	for role, present := range requiredRoles {
+		if !present {
+			return fmt.Errorf("external storage topology requires a %q recovery reference", role)
 		}
 	}
 	return nil
@@ -567,6 +611,13 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a valid target home", err)
 	}
 	plan.ArchivePath, plan.TargetHome = archiveAbs, targetAbs
+	_, _, exists, nonEmpty, err := validateInstanceRestoreDestination(targetAbs, options.CurrentBackupOut, options.DiscardCurrentBackup, options.PreserveRelativeFile)
+	if err != nil {
+		return preflightDenied(plan, RestorePreflightArchiveInvalid, "correct the target and current-backup paths before restore", err)
+	}
+	if exists && nonEmpty && strings.TrimSpace(options.CurrentBackupOut) == "" {
+		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a current instance backup path before replacing non-empty state", fmt.Errorf("current instance backup path is required when restoring over an existing home dir"))
+	}
 	file, err := os.Open(archiveAbs)
 	if err != nil {
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "provide a readable archive", err)
@@ -615,7 +666,13 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	if versionProbe.SchemaVersion != InstanceBackupManifestVersion {
 		_ = gzr.Close()
 		plan.ManifestVersion = versionProbe.Version
-		if versionProbe.Version == 1 && options.AllowLegacyV1 {
+		policy, policyErr := instanceTransitionPolicy(options.TransitionPolicy)
+		targetRelease, identityErr := normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
+		if policyErr != nil || identityErr != nil {
+			return preflightDenied(plan, RestorePreflightIncompatibleRelease, "supply an exact target release identity and valid transition policy", errors.Join(policyErr, identityErr))
+		}
+		plan.TargetRelease = targetRelease
+		if versionProbe.Version == 1 && policy.AllowsLegacyBackup(targetRelease, 1) {
 			return preflightLegacyV1(ctx, plan, file, targetAbs, options)
 		}
 		return preflightDenied(plan, RestorePreflightUnsupportedManifest, "create a manifest v2 backup or use an explicit policy-approved v1 recovery workflow", fmt.Errorf("unsupported manifest version"))
@@ -641,6 +698,34 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	for _, member := range manifest.Members {
 		expectedMembers[member.Path] = member
 		plan.Replace = append(plan.Replace, member.Path)
+		if uint64(member.Size) > math.MaxUint64-plan.RequiredBytes {
+			_ = gzr.Close()
+			return preflightDenied(plan, RestorePreflightInsufficientDisk, "reduce the archive size", fmt.Errorf("required byte count overflows uint64"))
+		}
+		plan.RequiredBytes += uint64(member.Size)
+	}
+	targetBytes, err := instanceTreeRegularBytes(targetAbs, options.PreserveRelativeFile)
+	if err != nil {
+		_ = gzr.Close()
+		return preflightDenied(plan, RestorePreflightArchiveInvalid, "make the target tree readable for preflight", err)
+	}
+	if targetBytes > math.MaxUint64-plan.RequiredBytes || options.MinimumFreeBytes > math.MaxUint64-plan.RequiredBytes-targetBytes {
+		_ = gzr.Close()
+		return preflightDenied(plan, RestorePreflightInsufficientDisk, "use representable disk requirements", fmt.Errorf("required byte count overflows uint64"))
+	}
+	plan.RequiredBytes += targetBytes + options.MinimumFreeBytes
+	capacityPath, err := existingInstancePath(filepath.Dir(targetAbs))
+	if err != nil {
+		_ = gzr.Close()
+		return preflightDenied(plan, RestorePreflightInsufficientDisk, "make target filesystem capacity measurable", err)
+	}
+	plan.AvailableBytes, err = instanceFilesystemFreeBytes(capacityPath)
+	if err != nil || plan.AvailableBytes < plan.RequiredBytes {
+		if err == nil {
+			err = fmt.Errorf("available bytes %d are below required bytes %d", plan.AvailableBytes, plan.RequiredBytes)
+		}
+		_ = gzr.Close()
+		return preflightDenied(plan, RestorePreflightInsufficientDisk, "free enough target disk space before archive decompression", err)
 	}
 	seen := map[string]struct{}{instanceBackupManifestName: {}}
 	buffer := make([]byte, InstanceBackupValidationBufferSize)
@@ -734,37 +819,38 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		if _, ok := seen[member.Path]; !ok {
 			return preflightDenied(plan, RestorePreflightMemberMissing, "recreate the complete backup", fmt.Errorf("missing member %q", member.Path))
 		}
-		plan.RequiredBytes += uint64(member.Size)
 	}
-	targetBytes, err := instanceTreeRegularBytes(targetAbs, options.PreserveRelativeFile)
-	if err != nil {
-		return preflightDenied(plan, RestorePreflightArchiveInvalid, "make the target tree readable for preflight", err)
-	}
-	if targetBytes > math.MaxUint64-plan.RequiredBytes {
-		return preflightDenied(plan, RestorePreflightInsufficientDisk, "reduce the target or archive size", fmt.Errorf("required byte count overflows uint64"))
-	}
-	plan.RequiredBytes += targetBytes
-	if options.MinimumFreeBytes > math.MaxUint64-plan.RequiredBytes {
-		return preflightDenied(plan, RestorePreflightInsufficientDisk, "use a representable disk reserve and free enough target space", fmt.Errorf("required byte count overflows uint64"))
-	}
-	plan.RequiredBytes += options.MinimumFreeBytes
 	if expected := strings.TrimSpace(options.ExpectedEnvironment); expected != "" && manifest.Environment != expected {
 		return preflightDenied(plan, RestorePreflightWrongEnvironment, "restore into the matching environment or create a separate instance", fmt.Errorf("archive environment %q does not match %q", manifest.Environment, expected))
 	}
 	if err := ValidateDatabaseInstanceEnvironment(ctx, databaseCopyPath, manifest.Environment); err != nil {
 		return preflightDenied(plan, RestorePreflightWrongEnvironment, "recreate the backup from the declared instance environment", err)
 	}
-	policy, err := compatibility.EmbeddedPolicy()
+	databaseInstanceID, err := readBackupDatabaseInstanceID(ctx, databaseCopyPath)
+	if err != nil || databaseInstanceID != manifest.InstanceID {
+		if err == nil {
+			err = fmt.Errorf("manifest instance %q does not match archived database instance %q", manifest.InstanceID, databaseInstanceID)
+		}
+		return preflightDenied(plan, RestorePreflightChecksumMismatch, "recreate the backup from the authoritative instance database", err)
+	}
+	policy, err := instanceTransitionPolicy(options.TransitionPolicy)
 	if err != nil {
 		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "repair the embedded transition policy", err)
 	}
 	if manifest.RequiredTransitionPolicyVersion != policy.PolicyVersion {
 		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "use a binary carrying the required transition policy", fmt.Errorf("archive requires policy %q, current policy is %q", manifest.RequiredTransitionPolicyVersion, policy.PolicyVersion))
 	}
-	targetRelease := normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
+	targetRelease, err := normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
+	if err != nil {
+		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "supply the exact target release identity", err)
+	}
 	plan.TargetRelease = targetRelease
 	if manifest.ReleaseIdentity != targetRelease {
-		decision := policy.Evaluate(compatibility.Request{Operation: compatibility.OperationUpgrade, Current: manifest.ReleaseIdentity, Next: targetRelease})
+		request, directionErr := restoreTransitionRequest(manifest.ReleaseIdentity, targetRelease)
+		if directionErr != nil {
+			return preflightDenied(plan, RestorePreflightIncompatibleRelease, "use an explicitly supported upgrade or rollback identity", directionErr)
+		}
+		decision := policy.Evaluate(request)
 		if err := decision.Err(); err != nil {
 			return preflightDenied(plan, RestorePreflightIncompatibleRelease, decision.Remediation, err)
 		}
@@ -773,17 +859,6 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 		if strings.TrimSpace(options.ExternalEvidence[external.EvidenceKey]) != external.RecoveryPoint {
 			return preflightDenied(plan, RestorePreflightExternalEvidence, "supply operator evidence for every external recovery point", fmt.Errorf("missing evidence %q", external.EvidenceKey))
 		}
-	}
-	capacityPath, err := existingInstancePath(filepath.Dir(targetAbs))
-	if err != nil {
-		return preflightDenied(plan, RestorePreflightInsufficientDisk, "make target filesystem capacity measurable", err)
-	}
-	plan.AvailableBytes, err = instanceFilesystemFreeBytes(capacityPath)
-	if err != nil {
-		return preflightDenied(plan, RestorePreflightInsufficientDisk, "make target filesystem capacity measurable", err)
-	}
-	if plan.AvailableBytes < plan.RequiredBytes {
-		return preflightDenied(plan, RestorePreflightInsufficientDisk, "free enough target disk space before restore", fmt.Errorf("available bytes %d are below required bytes %d", plan.AvailableBytes, plan.RequiredBytes))
 	}
 	plan.TargetTreeSHA256, err = instanceTreeSHA256(targetAbs, options.PreserveRelativeFile)
 	if err != nil {
@@ -965,7 +1040,11 @@ func preflightLegacyV1(ctx context.Context, plan InstanceRestorePreflightPlan, f
 	if err != nil {
 		return preflightDenied(plan, RestorePreflightArchiveInvalid, "make the target tree readable for preflight", err)
 	}
-	plan.TargetRelease = normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
+	targetRelease, err := normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
+	if err != nil {
+		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "supply the exact target release identity", err)
+	}
+	plan.TargetRelease = targetRelease
 	if preserve := strings.TrimSpace(options.PreserveRelativeFile); preserve != "" {
 		plan.Preserve = []string{filepath.ToSlash(preserve)}
 	}
@@ -976,8 +1055,24 @@ func preflightLegacyV1(ctx context.Context, plan InstanceRestorePreflightPlan, f
 	sort.Strings(plan.Replace)
 	plan.Allowed = true
 	plan.ReasonCode = RestorePreflightAllowed
-	plan.Remediation = "legacy v1 acceptance was explicitly enabled; migrate this backup to manifest v2"
+	plan.Remediation = "legacy v1 acceptance is authorized by the target release policy; migrate this backup to manifest v2"
 	return plan, nil
+}
+
+func restoreTransitionRequest(archive, target compatibility.ReleaseIdentity) (compatibility.Request, error) {
+	archiveVersion := "v" + strings.TrimPrefix(strings.TrimSpace(archive.Version), "v")
+	targetVersion := "v" + strings.TrimPrefix(strings.TrimSpace(target.Version), "v")
+	if !semver.IsValid(archiveVersion) || !semver.IsValid(targetVersion) {
+		return compatibility.Request{}, fmt.Errorf("restore release versions must be semantic")
+	}
+	switch semver.Compare(archiveVersion, targetVersion) {
+	case -1:
+		return compatibility.Request{Operation: compatibility.OperationUpgrade, Current: archive, Next: target}, nil
+	case 1:
+		return compatibility.Request{Operation: compatibility.OperationRollback, Current: archive, Next: target}, nil
+	default:
+		return compatibility.Request{}, fmt.Errorf("different artifacts with the same release version are not a supported restore transition")
+	}
 }
 
 func instanceTreeSHA256(root, ignoredRelativeFile string) (string, error) {
@@ -1126,6 +1221,23 @@ func readBackupInstanceIdentity(ctx context.Context, store *Store) (string, stri
 		return "", "", err
 	}
 	return instanceID, environment, nil
+}
+
+func readBackupDatabaseInstanceID(ctx context.Context, path string) (string, error) {
+	db, err := sql.Open("sqlite", path+"?_pragma=query_only(1)")
+	if err != nil {
+		return "", err
+	}
+	defer db.Close()
+	var instanceID string
+	if err := db.QueryRowContext(ctx, `SELECT value FROM platform_settings WHERE key = ?`, instanceIDSetting).Scan(&instanceID); err != nil {
+		return "", fmt.Errorf("read archived database instance identity: %w", err)
+	}
+	instanceID = strings.TrimSpace(instanceID)
+	if instanceID == "" {
+		return "", fmt.Errorf("archived database instance identity is empty")
+	}
+	return instanceID, nil
 }
 
 func writeManifestV2JSON(value InstanceBackupManifestV2) ([]byte, error) {

@@ -118,6 +118,7 @@ func run(evidenceDir string) error {
 	baseOptions := platform.InstanceRestorePreflightOptions{
 		ArchivePath: archivePath, TargetHomeDir: targetHome, ExpectedEnvironment: "qualification",
 		TargetReleaseIdentity: identity, ExclusiveLockHeld: true, RequireExclusiveLock: true,
+		CurrentBackupOut: filepath.Join(work, "before-restore.tar.gz"),
 	}
 	plan, err := platform.PreflightInstanceRestore(ctx, baseOptions)
 	if err != nil {
@@ -194,6 +195,16 @@ func run(evidenceDir string) error {
 	}); err != nil {
 		return err
 	}
+	if err := addArchiveFixture("database instance mismatch", platform.RestorePreflightChecksumMismatch, func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
+		value.InstanceID = "different-instance"
+	}); err != nil {
+		return err
+	}
+	if err := addArchiveFixture("external topology without reference", platform.RestorePreflightUnsupportedManifest, func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
+		value.StorageTopology.ManagedData = "external"
+	}); err != nil {
+		return err
+	}
 	if err := addArchiveFixture("external evidence", platform.RestorePreflightExternalEvidence, func(value *platform.InstanceBackupManifestV2, _ *[]archiveEntry) {
 		value.StorageTopology.ManagedData = "external"
 		value.StorageTopology.ExternalStores = []platform.InstanceBackupExternalStoreReference{{Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version"}}
@@ -232,9 +243,31 @@ func run(evidenceDir string) error {
 	}
 	v1Denied := baseOptions
 	v1Denied.ArchivePath = v1Path
+	legacyPolicy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		return err
+	}
+	legacyRelease, ok := legacyPolicy.ReleaseByID(legacyPolicy.CandidateRelease)
+	if !ok {
+		return fmt.Errorf("candidate release %q is absent", legacyPolicy.CandidateRelease)
+	}
+	v1Denied.TargetReleaseIdentity = legacyRelease.IdentityForPlatform("linux/amd64")
+	v1Denied.TransitionPolicy = legacyPolicy
 	fixtures = append(fixtures, fixture{name: "legacy v1 denied", reason: platform.RestorePreflightUnsupportedManifest, archive: v1Path, options: v1Denied})
 	v1Allowed := v1Denied
-	v1Allowed.AllowLegacyV1 = true
+	allowPolicy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		return err
+	}
+	for index := range allowPolicy.Releases {
+		if allowPolicy.Releases[index].ID == allowPolicy.CandidateRelease {
+			allowPolicy.Releases[index].LegacyBackupVersions = []int{1}
+		}
+	}
+	if err := allowPolicy.Validate(); err != nil {
+		return err
+	}
+	v1Allowed.TransitionPolicy = allowPolicy
 	v1AllowedPlan, err := platform.PreflightInstanceRestore(ctx, v1Allowed)
 	if err != nil || !v1AllowedPlan.Allowed || v1AllowedPlan.ManifestVersion != 1 {
 		return fmt.Errorf("explicit legacy v1 policy was not honored: plan=%#v err=%v", v1AllowedPlan, err)
@@ -242,7 +275,7 @@ func run(evidenceDir string) error {
 	if err := writeJSON(filepath.Join(evidenceDir, "legacy-v1-fixtures.json"), map[string]any{
 		"schemaVersion": 1,
 		"deny":          map[string]any{"allowed": false, "reasonCode": platform.RestorePreflightUnsupportedManifest},
-		"explicitAllow": v1AllowedPlan,
+		"policyAllow":   v1AllowedPlan,
 	}); err != nil {
 		return err
 	}

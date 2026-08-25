@@ -21,17 +21,19 @@ var ErrStateNotFound = errors.New("offline Admin state was not found")
 // Config is the normalized immutable process configuration required by
 // offline Admin use cases.
 type Config struct {
-	HomeDir            string
-	DBPath             string
-	Environment        string
-	Production         bool
-	BootstrapEmail     string
-	DuckLakeCatalog    string
-	DuckLakeData       string
-	ArtifactDir        string
-	RuntimeDir         string
-	ManagedDataDir     string
-	ManagedDataBackend string
+	HomeDir             string
+	DBPath              string
+	Environment         string
+	Production          bool
+	BootstrapEmail      string
+	DuckLakeCatalog     string
+	DuckLakeData        string
+	ArtifactDir         string
+	RuntimeDir          string
+	ManagedDataDir      string
+	ManagedDataBackend  string
+	ManagedDataS3Bucket string
+	ManagedDataS3Prefix string
 }
 
 type InitializeRequest struct {
@@ -89,16 +91,24 @@ type AuditOutboxTerminalIntent struct {
 }
 
 type BackupRequest struct {
-	Out          string
-	DatabaseOnly bool
+	Out                    string
+	DatabaseOnly           bool
+	ExternalRecoveryPoints []ExternalRecoveryPoint
+}
+
+type ExternalRecoveryPoint struct {
+	Role          string `json:"role"`
+	RecoveryPoint string `json:"recoveryPoint"`
+	EvidenceKey   string `json:"evidenceKey"`
 }
 
 type RestoreRequest struct {
-	From          string
-	CurrentBackup string
-	Confirm       bool
-	DatabaseOnly  bool
-	PreflightOnly bool
+	From             string
+	CurrentBackup    string
+	Confirm          bool
+	DatabaseOnly     bool
+	PreflightOnly    bool
+	ExternalEvidence map[string]string
 }
 
 // PhysicalPoolBootstrapRequest is the offline operator input for the
@@ -250,6 +260,22 @@ type BackupOptions struct {
 	Writer               io.Writer
 	ExcludeRelativePaths []string
 	Environment          string
+	StorageTopology      BackupStorageTopology
+}
+
+type BackupStorageTopology struct {
+	ControlPlane   string
+	ManagedData    string
+	DuckLake       string
+	ExternalStores []BackupExternalStoreReference
+}
+
+type BackupExternalStoreReference struct {
+	Role          string
+	Backend       string
+	Namespace     string
+	RecoveryPoint string
+	EvidenceKey   string
 }
 
 type RestoreOptions struct {
@@ -259,6 +285,7 @@ type RestoreOptions struct {
 	DiscardCurrentBackup bool
 	ExpectedEnvironment  string
 	ResetRelativePaths   []string
+	ExternalEvidence     map[string]string
 }
 
 type RestorePreflightResult struct {

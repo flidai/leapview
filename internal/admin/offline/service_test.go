@@ -388,15 +388,50 @@ func TestArchiveUseCasesOwnLayoutAndOutputMapping(t *testing.T) {
 		t.Fatalf("backup options=%#v output=%q", archive.backupInstance, out.String())
 	}
 	out.Reset()
+	evidence := map[string]string{"managed-data-version": "version-42"}
 	if err := service.Restore(context.Background(), RestoreRequest{
-		From: backupPath, CurrentBackup: "-", Confirm: true,
+		From: backupPath, CurrentBackup: "-", Confirm: true, ExternalEvidence: evidence,
 	}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !archive.restoreInstance.DiscardCurrentBackup ||
 		archive.restoreInstance.ExpectedEnvironment != "prod" ||
+		archive.restoreInstance.ExternalEvidence["managed-data-version"] != "version-42" ||
 		!strings.Contains(out.String(), "instance restored from: "+backupPath) {
 		t.Fatalf("restore options=%#v output=%q", archive.restoreInstance, out.String())
+	}
+}
+
+func TestS3BackupRequiresAndRecordsExactExternalRecoveryPoint(t *testing.T) {
+	home := t.TempDir()
+	archive := &fakeArchive{}
+	service := New(Config{
+		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"),
+		DuckLakeCatalog: filepath.Join(home, "ducklake", "catalog.duckdb"),
+		DuckLakeData:    filepath.Join(home, "ducklake", "data"),
+		ArtifactDir:     filepath.Join(home, "artifacts"), RuntimeDir: filepath.Join(home, "runtime"),
+		ManagedDataDir: filepath.Join(home, "managed-data"), ManagedDataBackend: "s3",
+		ManagedDataS3Bucket: "recovery-bucket", ManagedDataS3Prefix: "/tenant-a/managed-data/",
+	}, Dependencies{Locker: &fakeLocker{}, Archive: archive})
+	if err := service.Backup(context.Background(), BackupRequest{Out: filepath.Join(t.TempDir(), "missing.tar.gz")}, io.Discard); err == nil || !strings.Contains(err.Error(), "exact external recovery point") {
+		t.Fatalf("backup without recovery point error = %v", err)
+	}
+	request := BackupRequest{
+		Out: filepath.Join(t.TempDir(), "backup.tar.gz"),
+		ExternalRecoveryPoints: []ExternalRecoveryPoint{{
+			Role: "managed-data", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
+		}},
+	}
+	if err := service.Backup(context.Background(), request, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	topology := archive.backupInstance.StorageTopology
+	if topology.ControlPlane != "local" || topology.ManagedData != "external" || topology.DuckLake != "local" || len(topology.ExternalStores) != 1 {
+		t.Fatalf("storage topology = %#v", topology)
+	}
+	reference := topology.ExternalStores[0]
+	if reference.Role != "managed-data" || reference.Backend != "s3" || reference.Namespace != "recovery-bucket/tenant-a/managed-data" || reference.RecoveryPoint != "version-42" || reference.EvidenceKey != "managed-data-version" {
+		t.Fatalf("external recovery reference = %#v", reference)
 	}
 }
 

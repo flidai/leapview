@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -36,6 +37,10 @@ func (service *Service) Backup(ctx context.Context, request BackupRequest, out i
 		return err
 	}
 	options.ExcludeRelativePaths, err = service.FullInstanceDerivedPaths()
+	if err != nil {
+		return err
+	}
+	options.StorageTopology, err = service.backupStorageTopology(request.ExternalRecoveryPoints)
 	if err != nil {
 		return err
 	}
@@ -74,6 +79,7 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 		Path:                request.From,
 		CurrentBackup:       request.CurrentBackup,
 		ExpectedEnvironment: environment,
+		ExternalEvidence:    request.ExternalEvidence,
 	}
 	if request.From == "-" {
 		options.Path = ""
@@ -126,6 +132,48 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 		fmt.Fprintf(out, "previous instance backup: %s\n", request.CurrentBackup)
 	}
 	return nil
+}
+
+func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (BackupStorageTopology, error) {
+	topology := BackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []BackupExternalStoreReference{}}
+	backend := strings.TrimSpace(service.config.ManagedDataBackend)
+	switch backend {
+	case "", "local":
+		if len(points) != 0 {
+			return BackupStorageTopology{}, fmt.Errorf("external recovery points were supplied for local managed-data storage")
+		}
+		return topology, nil
+	case "s3":
+		bucket := strings.TrimSpace(service.config.ManagedDataS3Bucket)
+		if bucket == "" {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires a configured bucket")
+		}
+		var managed *ExternalRecoveryPoint
+		for index := range points {
+			if points[index].Role != "managed-data" {
+				return BackupStorageTopology{}, fmt.Errorf("unsupported external recovery role %q", points[index].Role)
+			}
+			if managed != nil {
+				return BackupStorageTopology{}, fmt.Errorf("managed-data external recovery point is duplicated")
+			}
+			managed = &points[index]
+		}
+		if managed == nil || strings.TrimSpace(managed.RecoveryPoint) == "" || strings.TrimSpace(managed.EvidenceKey) == "" {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires an exact external recovery point and evidence key")
+		}
+		namespace := bucket
+		if prefix := strings.Trim(strings.TrimSpace(service.config.ManagedDataS3Prefix), "/"); prefix != "" {
+			namespace = path.Join(bucket, prefix)
+		}
+		topology.ManagedData = "external"
+		topology.ExternalStores = []BackupExternalStoreReference{{
+			Role: "managed-data", Backend: "s3", Namespace: namespace,
+			RecoveryPoint: strings.TrimSpace(managed.RecoveryPoint), EvidenceKey: strings.TrimSpace(managed.EvidenceKey),
+		}}
+		return topology, nil
+	default:
+		return BackupStorageTopology{}, fmt.Errorf("unsupported managed-data backend %q", backend)
+	}
 }
 
 func (service *Service) restoreTargetEnvironment(ctx context.Context) (string, error) {

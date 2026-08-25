@@ -304,6 +304,7 @@ func TestBackupInstanceArchivesDatabaseAndPersistentFiles(t *testing.T) {
 	backupPath := filepath.Join(dir, "backups", "leapview-instance.tar.gz")
 	if err := BackupInstance(ctx, InstanceBackupOptions{
 		HomeDir: home, DBPath: dbPath, OutPath: backupPath,
+		ReleaseIdentity:      testBackupReleaseIdentity("1.2.3", "a"),
 		ExcludeRelativePaths: []string{"managed-data/objects/revisions"},
 	}); err != nil {
 		t.Fatalf("backup instance: %v", err)
@@ -589,17 +590,18 @@ func TestConcurrentSiblingBackupAndRestoreOperationsRemainIsolated(t *testing.T)
 		}
 	}
 	archiveB := filepath.Join(parent, "source-b.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: homeB, DBPath: filepath.Join(homeB, instanceBackupDBName), OutPath: archiveB}); err != nil {
+	identity := testBackupReleaseIdentity("1.2.3", "a")
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: homeB, DBPath: filepath.Join(homeB, instanceBackupDBName), OutPath: archiveB, ReleaseIdentity: identity}); err != nil {
 		t.Fatal(err)
 	}
 	archiveA := filepath.Join(parent, "backup-a.tar.gz")
 	currentB := filepath.Join(parent, "custom-current-b.tar.gz")
 	errs := make(chan error, 2)
 	go func() {
-		errs <- BackupInstance(ctx, InstanceBackupOptions{HomeDir: homeA, DBPath: filepath.Join(homeA, instanceBackupDBName), OutPath: archiveA})
+		errs <- BackupInstance(ctx, InstanceBackupOptions{HomeDir: homeA, DBPath: filepath.Join(homeA, instanceBackupDBName), OutPath: archiveA, ReleaseIdentity: identity})
 	}()
 	go func() {
-		errs <- RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: homeB, BackupPath: archiveB, CurrentBackupOut: currentB})
+		errs <- RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: homeB, BackupPath: archiveB, CurrentBackupOut: currentB, TargetReleaseIdentity: identity})
 	}()
 	for range 2 {
 		if err := <-errs; err != nil {
@@ -634,7 +636,7 @@ func TestBackupInstanceCreatesPrivateArchive(t *testing.T) {
 		t.Fatalf("seed permissive backup directory: %v", err)
 	}
 	backupPath := filepath.Join(backupDir, "leapview-instance.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: home, DBPath: dbPath, OutPath: backupPath}); err != nil {
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: home, DBPath: dbPath, OutPath: backupPath, ReleaseIdentity: testBackupReleaseIdentity("1.2.3", "a")}); err != nil {
 		restoreUmask()
 		t.Fatalf("backup instance: %v", err)
 	}
@@ -767,14 +769,16 @@ func TestRestoreInstanceReplacesHomeAndBacksUpCurrent(t *testing.T) {
 	writeTestFile(t, filepath.Join(sourceHome, "data", "ducklake-file.parquet"), "ducklake-data")
 	writeTestFile(t, filepath.Join(sourceHome, "managed-data", "objects", "revisions", "stale", "data", "orders.csv"), "stale derived revision")
 	backupPath := filepath.Join(dir, "backups", "restore.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDBPath, OutPath: backupPath}); err != nil {
+	identity := testBackupReleaseIdentity("1.2.3", "a")
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDBPath, OutPath: backupPath, ReleaseIdentity: identity}); err != nil {
 		t.Fatalf("backup source instance: %v", err)
 	}
 
 	beforePath := filepath.Join(dir, "backups", "before-restore.tar.gz")
 	if err := RestoreInstance(ctx, InstanceRestoreOptions{
 		TargetHomeDir: currentHome, BackupPath: backupPath, CurrentBackupOut: beforePath,
-		ResetRelativePaths: []string{"managed-data/objects/revisions"},
+		ResetRelativePaths:    []string{"managed-data/objects/revisions"},
+		TargetReleaseIdentity: identity,
 	}); err != nil {
 		t.Fatalf("restore instance: %v", err)
 	}
@@ -809,10 +813,11 @@ func TestRestoreInstanceReplacesHomeAndBacksUpCurrent(t *testing.T) {
 
 	discardedBeforePath := filepath.Join(dir, "custom-disposable-current.tar.gz")
 	if err := RestoreInstance(ctx, InstanceRestoreOptions{
-		TargetHomeDir:        currentHome,
-		BackupPath:           backupPath,
-		CurrentBackupOut:     discardedBeforePath,
-		DiscardCurrentBackup: true,
+		TargetHomeDir:         currentHome,
+		BackupPath:            backupPath,
+		CurrentBackupOut:      discardedBeforePath,
+		DiscardCurrentBackup:  true,
+		TargetReleaseIdentity: identity,
 	}); err != nil {
 		t.Fatalf("restore instance with disposable current backup: %v", err)
 	}
@@ -836,7 +841,8 @@ func TestRestoreInstanceRejectsBackupFromAnotherEnvironmentBeforeReplacement(t *
 		t.Fatal(err)
 	}
 	archive := filepath.Join(t.TempDir(), "prod.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDB, OutPath: archive}); err != nil {
+	identity := testBackupReleaseIdentity("1.2.3", "a")
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDB, OutPath: archive, ReleaseIdentity: identity}); err != nil {
 		t.Fatal(err)
 	}
 	targetHome := t.TempDir()
@@ -844,7 +850,10 @@ func TestRestoreInstanceRejectsBackupFromAnotherEnvironmentBeforeReplacement(t *
 	if err := os.WriteFile(marker, []byte("preserve"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: archive, ExpectedEnvironment: "staging"})
+	err = RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: targetHome, BackupPath: archive, ExpectedEnvironment: "staging",
+		TargetReleaseIdentity: identity, CurrentBackupOut: filepath.Join(t.TempDir(), "before.tar.gz"),
+	})
 	if err == nil || !strings.Contains(err.Error(), RestorePreflightWrongEnvironment) || !strings.Contains(err.Error(), `archive environment "prod"`) {
 		t.Fatalf("restore environment error = %v", err)
 	}
@@ -866,7 +875,8 @@ func TestRestoreInstancePreservesLifetimeLockAcrossHomeSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 	archive := filepath.Join(dir, "source.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDB, OutPath: archive}); err != nil {
+	identity := testBackupReleaseIdentity("1.2.3", "a")
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDB, OutPath: archive, ReleaseIdentity: identity}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -876,9 +886,10 @@ func TestRestoreInstancePreservesLifetimeLockAcrossHomeSwap(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := RestoreInstance(ctx, InstanceRestoreOptions{
-		TargetHomeDir:        targetHome,
-		BackupPath:           archive,
-		PreserveRelativeFile: instancelock.FileName,
+		TargetHomeDir:         targetHome,
+		BackupPath:            archive,
+		PreserveRelativeFile:  instancelock.FileName,
+		TargetReleaseIdentity: identity,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -911,7 +922,8 @@ func TestRestoreInstanceRequiresCurrentBackupWhenTargetHasState(t *testing.T) {
 		t.Fatalf("close source store: %v", err)
 	}
 	backupPath := filepath.Join(dir, "backup.tar.gz")
-	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDBPath, OutPath: backupPath}); err != nil {
+	identity := testBackupReleaseIdentity("1.2.3", "a")
+	if err := BackupInstance(ctx, InstanceBackupOptions{HomeDir: sourceHome, DBPath: sourceDBPath, OutPath: backupPath, ReleaseIdentity: identity}); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
 	targetHome := filepath.Join(dir, "target")
@@ -922,7 +934,7 @@ func TestRestoreInstanceRequiresCurrentBackupWhenTargetHasState(t *testing.T) {
 	if err := target.Close(); err != nil {
 		t.Fatalf("close target store: %v", err)
 	}
-	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath})
+	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath, TargetReleaseIdentity: identity})
 	if err == nil || !strings.Contains(err.Error(), "current instance backup path is required") {
 		t.Fatalf("restore error = %v, want current backup path requirement", err)
 	}
@@ -948,7 +960,10 @@ func TestRestoreInstanceSanitizesArchivePermissions(t *testing.T) {
 	})
 
 	targetHome := filepath.Join(dir, "target")
-	if err := RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath, AllowLegacyV1: true}); err != nil {
+	if err := RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: targetHome, BackupPath: backupPath,
+		TargetReleaseIdentity: legacyBackupTarget(t), TransitionPolicy: legacyBackupPolicy(t),
+	}); err != nil {
 		t.Fatalf("restore instance: %v", err)
 	}
 
@@ -994,7 +1009,10 @@ func TestRestoreInstanceRejectsSymlinkEntries(t *testing.T) {
 	})
 
 	targetHome := filepath.Join(dir, "target")
-	err = RestoreInstance(ctx, InstanceRestoreOptions{TargetHomeDir: targetHome, BackupPath: backupPath, AllowLegacyV1: true})
+	err = RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: targetHome, BackupPath: backupPath,
+		TargetReleaseIdentity: legacyBackupTarget(t), TransitionPolicy: legacyBackupPolicy(t),
+	})
 	if err == nil || !strings.Contains(err.Error(), RestorePreflightUnsupportedEntry) {
 		t.Fatalf("restore error = %v, want symlink rejection", err)
 	}

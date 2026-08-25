@@ -2,12 +2,15 @@ package platform
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"math"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -88,6 +91,42 @@ func TestBackupManifestV2InventoriesMembersDeterministically(t *testing.T) {
 	}
 }
 
+func TestBackupManifestV2HashesTheBytesWrittenToTheArchive(t *testing.T) {
+	ctx := context.Background()
+	archivePath, _ := createManifestV2TestArchive(t, ctx, "prod")
+	manifest := readBackupManifestFromArchive(t, archivePath)
+	entries := readTarGzEntries(t, archivePath)
+	memberDir := t.TempDir()
+	staged := make([]instanceBackupStagedMember, 0, len(manifest.Members))
+	for index, member := range manifest.Members {
+		source := filepath.Join(memberDir, fmt.Sprintf("member-%d", index))
+		if err := os.WriteFile(source, entries[member.Path], os.FileMode(member.Mode)); err != nil {
+			t.Fatal(err)
+		}
+		staged = append(staged, instanceBackupStagedMember{manifest: member, source: source})
+	}
+	for _, member := range staged {
+		if member.manifest.Path == "artifacts/release.tar.gz" {
+			if err := os.WriteFile(member.source, []byte("tampered"), os.FileMode(member.manifest.Mode)); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	var output bytes.Buffer
+	err := writeManifestV2Archive(&output, manifest, staged)
+	if err == nil || !strings.Contains(err.Error(), "changed while writing archive") {
+		t.Fatalf("archive write error = %v", err)
+	}
+}
+
+func TestBackupMemberRoleClassifiesDuckLakeCatalogFiles(t *testing.T) {
+	for _, name := range []string{"ducklake/catalog", "ducklake/catalog/catalog.duckdb", "ducklake/catalog.duckdb"} {
+		if got := backupMemberRole(name); got != "ducklake-catalog" {
+			t.Fatalf("backupMemberRole(%q) = %q", name, got)
+		}
+	}
+}
+
 func TestRestorePreflightRejectsBeforeTargetMutation(t *testing.T) {
 	ctx := context.Background()
 	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
@@ -98,6 +137,7 @@ func TestRestorePreflightRejectsBeforeTargetMutation(t *testing.T) {
 	plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
 		ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "staging",
 		TargetReleaseIdentity: identity, ExclusiveLockHeld: true,
+		CurrentBackupOut: filepath.Join(t.TempDir(), "before.tar.gz"),
 	})
 	if err == nil || plan.ReasonCode != RestorePreflightWrongEnvironment {
 		t.Fatalf("plan=%#v err=%v", plan, err)
@@ -115,6 +155,7 @@ func TestRestorePreflightDetectsMemberChecksumAndStaleTarget(t *testing.T) {
 	options := InstanceRestorePreflightOptions{
 		ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "prod",
 		TargetReleaseIdentity: identity, ExclusiveLockHeld: true,
+		CurrentBackupOut: filepath.Join(t.TempDir(), "before.tar.gz"),
 	}
 	plan, err := PreflightInstanceRestore(ctx, options)
 	if err != nil || !plan.Allowed || plan.ArchiveSHA256 == "" || plan.TargetTreeSHA256 == "" {
@@ -136,6 +177,71 @@ func TestRestorePreflightDetectsMemberChecksumAndStaleTarget(t *testing.T) {
 	var preflightErr *InstanceRestorePreflightError
 	if err == nil || !strings.Contains(err.Error(), RestorePreflightStaleTarget) || !errors.As(err, &preflightErr) {
 		t.Fatalf("restore error = %v", err)
+	}
+}
+
+func TestRestorePreflightAndRestoreShareDestinationValidation(t *testing.T) {
+	ctx := context.Background()
+	archivePath, identity := createManifestV2TestArchive(t, ctx, "prod")
+	target := filepath.Join(t.TempDir(), "target")
+	writeTestFile(t, filepath.Join(target, "state.txt"), "unchanged")
+	unsafeCurrentBackup := filepath.Join(target, "before.tar.gz")
+	options := InstanceRestorePreflightOptions{
+		ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "prod",
+		TargetReleaseIdentity: identity, CurrentBackupOut: unsafeCurrentBackup,
+	}
+	plan, preflightErr := PreflightInstanceRestore(ctx, options)
+	if preflightErr == nil || plan.ReasonCode != RestorePreflightArchiveInvalid || !strings.Contains(preflightErr.Error(), "must not be inside") {
+		t.Fatalf("preflight plan=%#v err=%v", plan, preflightErr)
+	}
+	restoreErr := RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: target, BackupPath: archivePath, ExpectedEnvironment: "prod",
+		TargetReleaseIdentity: identity, CurrentBackupOut: unsafeCurrentBackup,
+	})
+	if restoreErr == nil || !strings.Contains(restoreErr.Error(), "must not be inside") {
+		t.Fatalf("restore error = %v", restoreErr)
+	}
+	if got := readTestFile(t, filepath.Join(target, "state.txt")); got != "unchanged" {
+		t.Fatalf("restore mutated rejected target: %q", got)
+	}
+}
+
+func TestRestoreConsumesExactExternalRecoveryEvidence(t *testing.T) {
+	ctx := context.Background()
+	baseArchive, identity := createManifestV2TestArchive(t, ctx, "prod")
+	manifest := readBackupManifestFromArchive(t, baseArchive)
+	manifest.StorageTopology.ManagedData = "external"
+	manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
+		Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix",
+		RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
+	}}
+	entries := manifestV2TestEntries(t, baseArchive, manifest)
+	entries[0].body = marshalManifestV2ForTest(t, manifest)
+	archivePath := filepath.Join(t.TempDir(), "external.tar.gz")
+	writeInstanceBackupArchive(t, archivePath, entries)
+
+	missingTarget := filepath.Join(t.TempDir(), "missing-evidence-target")
+	err := RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: missingTarget, BackupPath: archivePath, ExpectedEnvironment: "prod",
+		TargetReleaseIdentity: identity,
+	})
+	if err == nil || !strings.Contains(err.Error(), RestorePreflightExternalEvidence) {
+		t.Fatalf("restore without external evidence error = %v", err)
+	}
+	if _, statErr := os.Stat(missingTarget); !os.IsNotExist(statErr) {
+		t.Fatalf("rejected restore created target: %v", statErr)
+	}
+
+	target := filepath.Join(t.TempDir(), "target")
+	if err := RestoreInstance(ctx, InstanceRestoreOptions{
+		TargetHomeDir: target, BackupPath: archivePath, ExpectedEnvironment: "prod",
+		TargetReleaseIdentity: identity,
+		ExternalEvidence:      map[string]string{"managed-data-version": "version-42"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(target, instanceBackupDBName)); err != nil {
+		t.Fatalf("restored database missing: %v", err)
 	}
 }
 
@@ -182,14 +288,18 @@ func TestRestorePreflightRejectsUnsupportedV1Explicitly(t *testing.T) {
 		{name: instanceBackupManifestName, mode: 0o600, body: []byte(`{"version":1,"kind":"leapview-instance","dbPath":"leapview.db"}` + "\n")},
 		{name: instanceBackupDBName, mode: 0o600, body: readTestBytes(t, dbPath)},
 	})
-	plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{ArchivePath: archivePath, TargetHomeDir: filepath.Join(dir, "target")})
+	plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+		ArchivePath: archivePath, TargetHomeDir: filepath.Join(dir, "target"),
+		TargetReleaseIdentity: legacyBackupTarget(t),
+	})
 	if err == nil || plan.ReasonCode != RestorePreflightUnsupportedManifest {
 		t.Fatalf("plan=%#v err=%v", plan, err)
 	}
 	plan, err = PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
-		ArchivePath: archivePath, TargetHomeDir: filepath.Join(dir, "target"), AllowLegacyV1: true,
+		ArchivePath: archivePath, TargetHomeDir: filepath.Join(dir, "target"),
+		TargetReleaseIdentity: legacyBackupTarget(t), TransitionPolicy: legacyBackupPolicy(t),
 	})
-	if err != nil || !plan.Allowed || plan.ManifestVersion != 1 || !strings.Contains(plan.Remediation, "explicitly enabled") {
+	if err != nil || !plan.Allowed || plan.ManifestVersion != 1 || !strings.Contains(plan.Remediation, "policy") {
 		t.Fatalf("explicit v1 plan=%#v err=%v", plan, err)
 	}
 }
@@ -240,6 +350,18 @@ func TestRestorePreflightNegativeFixtureMatrixIsNonMutating(t *testing.T) {
 		{name: "wrong environment", reason: RestorePreflightWrongEnvironment, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
 			manifest.Environment = "staging"
 		}},
+		{name: "database instance mismatch", reason: RestorePreflightChecksumMismatch, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
+			manifest.InstanceID = "different-instance"
+		}},
+		{name: "external topology without reference", reason: RestorePreflightUnsupportedManifest, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
+			manifest.StorageTopology.ManagedData = "external"
+		}},
+		{name: "local topology with external reference", reason: RestorePreflightUnsupportedManifest, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
+			manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
+				Role: "managed-data", Backend: "s3", Namespace: "bucket/prefix",
+				RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
+			}}
+		}},
 		{name: "external evidence", reason: RestorePreflightExternalEvidence, mutate: func(manifest *InstanceBackupManifestV2, _ *[]testTarEntry) {
 			manifest.StorageTopology.ManagedData = "external"
 			manifest.StorageTopology.ExternalStores = []InstanceBackupExternalStoreReference{{
@@ -284,12 +406,68 @@ func TestRestorePreflightNegativeFixtureMatrixIsNonMutating(t *testing.T) {
 			plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
 				ArchivePath: archivePath, TargetHomeDir: target, ExpectedEnvironment: "prod",
 				TargetReleaseIdentity: identity, ExclusiveLockHeld: true, MinimumFreeBytes: test.minimum,
+				CurrentBackupOut: filepath.Join(t.TempDir(), "before.tar.gz"),
 			})
 			if err == nil || plan.ReasonCode != test.reason {
 				t.Fatalf("plan=%#v err=%v, want %s", plan, err, test.reason)
 			}
 			if after := hashTestTree(t, target); after != before {
 				t.Fatalf("negative preflight mutated target: before=%s after=%s", before, after)
+			}
+		})
+	}
+}
+
+func TestRestorePreflightChecksCapacityBeforeMemberDecompression(t *testing.T) {
+	ctx := context.Background()
+	baseArchive, identity := createManifestV2TestArchive(t, ctx, "prod")
+	manifest := readBackupManifestFromArchive(t, baseArchive)
+	database := manifest.Members[0]
+	for _, member := range manifest.Members {
+		if member.Path == instanceBackupDBName {
+			database = member
+			break
+		}
+	}
+	database.Size = math.MaxInt64
+	manifest.Members = []InstanceBackupMember{database}
+	digest, err := inventorySHA256(manifest.Members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest.InventorySHA256 = digest
+	archivePath := filepath.Join(t.TempDir(), "capacity.tar.gz")
+	writeInstanceBackupArchive(t, archivePath, []testTarEntry{{
+		name: instanceBackupManifestName, mode: 0o600, body: marshalManifestV2ForTest(t, manifest),
+	}})
+	plan, err := PreflightInstanceRestore(ctx, InstanceRestorePreflightOptions{
+		ArchivePath: archivePath, TargetHomeDir: filepath.Join(t.TempDir(), "target"),
+		TargetReleaseIdentity: identity,
+	})
+	if err == nil || plan.ReasonCode != RestorePreflightInsufficientDisk || !strings.Contains(plan.Remediation, "before archive decompression") {
+		t.Fatalf("capacity plan=%#v err=%v", plan, err)
+	}
+}
+
+func TestRestoreTransitionDirectionUsesArchiveAndTargetVersions(t *testing.T) {
+	older := testBackupReleaseIdentity("1.2.3", "a")
+	newer := testBackupReleaseIdentity("1.3.0", "b")
+	for _, test := range []struct {
+		name      string
+		archive   compatibility.ReleaseIdentity
+		target    compatibility.ReleaseIdentity
+		operation compatibility.Operation
+	}{
+		{name: "upgrade", archive: older, target: newer, operation: compatibility.OperationUpgrade},
+		{name: "rollback", archive: newer, target: older, operation: compatibility.OperationRollback},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			request, err := restoreTransitionRequest(test.archive, test.target)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if request.Operation != test.operation || request.Current != test.archive || request.Next != test.target {
+				t.Fatalf("transition request = %#v", request)
 			}
 		})
 	}
@@ -393,6 +571,33 @@ func testBackupReleaseIdentity(version, digestCharacter string) compatibility.Re
 		Image:        "ghcr.io/flidai/leapview@sha256:" + strings.Repeat(digestCharacter, 64),
 		Distribution: "public", Platform: "linux/amd64",
 	}
+}
+
+func legacyBackupPolicy(t *testing.T) *compatibility.Policy {
+	t.Helper()
+	policy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for index := range policy.Releases {
+		if policy.Releases[index].ID == policy.CandidateRelease {
+			policy.Releases[index].LegacyBackupVersions = []int{1}
+		}
+	}
+	if err := policy.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	return policy
+}
+
+func legacyBackupTarget(t *testing.T) compatibility.ReleaseIdentity {
+	t.Helper()
+	policy := legacyBackupPolicy(t)
+	release, ok := policy.ReleaseByID(policy.CandidateRelease)
+	if !ok {
+		t.Fatalf("candidate release %q is absent", policy.CandidateRelease)
+	}
+	return release.IdentityForPlatform("linux/amd64")
 }
 
 func hashTestTree(t *testing.T, root string) string {

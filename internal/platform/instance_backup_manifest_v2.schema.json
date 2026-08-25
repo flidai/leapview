@@ -58,7 +58,7 @@
       "additionalProperties": false,
       "required": ["role", "backend", "namespace", "recoveryPoint", "evidenceKey"],
       "properties": {
-        "role": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "role": { "type": "string", "enum": ["managed-data", "ducklake-catalog", "ducklake-data"] },
         "backend": { "type": "string", "minLength": 1, "maxLength": 64 },
         "namespace": { "type": "string", "minLength": 1, "maxLength": 512 },
         "recoveryPoint": { "type": "string", "minLength": 1, "maxLength": 512 },
@@ -77,7 +77,36 @@
           "type": "array",
           "items": { "$ref": "#/$defs/externalStore" }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "managedData": { "const": "external" } } },
+          "then": { "properties": { "externalStores": { "contains": { "properties": { "role": { "const": "managed-data" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 } } },
+          "else": { "properties": { "externalStores": { "not": { "contains": { "properties": { "role": { "const": "managed-data" } }, "required": ["role"] } } } } }
+        },
+        {
+          "if": { "properties": { "duckLake": { "const": "external" } } },
+          "then": {
+            "properties": {
+              "externalStores": {
+                "allOf": [
+                  { "contains": { "properties": { "role": { "const": "ducklake-catalog" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "properties": { "role": { "const": "ducklake-data" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 }
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "externalStores": {
+                "not": {
+                  "contains": { "properties": { "role": { "enum": ["ducklake-catalog", "ducklake-data"] } }, "required": ["role"] }
+                }
+              }
+            }
+          }
+        }
+      ]
     },
     "member": {
       "type": "object",

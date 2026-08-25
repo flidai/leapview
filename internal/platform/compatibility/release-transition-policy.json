@@ -19,6 +19,7 @@
         "libredash-backup.json",
         "libredash.db"
       ],
+      "legacyBackupVersions": [],
       "defaults": {
         "freshInstall": {
           "allowed": true,

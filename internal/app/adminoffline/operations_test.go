@@ -12,6 +12,7 @@ import (
 	admincli "github.com/flidai/leapview/internal/admin/cli"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	locking "github.com/flidai/leapview/internal/platform/locking"
 )
 
@@ -154,7 +155,9 @@ func TestAdminRestorePreflightIsReadOnlyAndMachineReadable(t *testing.T) {
 	marker := filepath.Join(targetHome, "marker")
 	writeAdminFile(t, marker, "unchanged")
 	var out bytes.Buffer
-	if err := (Operations{}).Restore(ctx, adminoffline.RestoreRequest{From: archivePath, PreflightOnly: true}, nil, &out); err != nil {
+	if err := (Operations{}).Restore(ctx, adminoffline.RestoreRequest{
+		From: archivePath, CurrentBackup: filepath.Join(t.TempDir(), "before.tar.gz"), PreflightOnly: true,
+	}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(out.String(), `"reasonCode": "restore.preflight.allowed"`) || !strings.Contains(out.String(), `"archiveSha256"`) {
@@ -174,10 +177,11 @@ func TestAdminRestoreRejectsExternalDuckLakeCatalog(t *testing.T) {
 	}
 	backupPath := filepath.Join(t.TempDir(), "restore.tar.gz")
 	if err := platform.BackupInstance(ctx, platform.InstanceBackupOptions{
-		HomeDir:     sourceHome,
-		DBPath:      filepath.Join(sourceHome, "leapview.db"),
-		OutPath:     backupPath,
-		Environment: "dev",
+		HomeDir:         sourceHome,
+		DBPath:          filepath.Join(sourceHome, "leapview.db"),
+		OutPath:         backupPath,
+		Environment:     "dev",
+		ReleaseIdentity: adminTestReleaseIdentity(),
 	}); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
@@ -218,10 +222,11 @@ func TestAdminRestoreReplacesPlatformDatabase(t *testing.T) {
 
 	backupPath := filepath.Join(t.TempDir(), "restore.tar.gz")
 	if err := platform.BackupInstance(ctx, platform.InstanceBackupOptions{
-		HomeDir:     sourceHome,
-		DBPath:      filepath.Join(sourceHome, "leapview.db"),
-		OutPath:     backupPath,
-		Environment: "dev",
+		HomeDir:         sourceHome,
+		DBPath:          filepath.Join(sourceHome, "leapview.db"),
+		OutPath:         backupPath,
+		Environment:     "dev",
+		ReleaseIdentity: adminTestReleaseIdentity(),
 	}); err != nil {
 		t.Fatalf("backup source: %v", err)
 	}
@@ -359,4 +364,15 @@ func setAdminStorageEnv(t *testing.T, home string) {
 	t.Helper()
 	t.Setenv("LEAPVIEW_HOME", home)
 	t.Setenv("LEAPVIEW_DUCKDB_DIR", filepath.Join(home, "duckdb"))
+	previous := loadArchiveReleaseIdentity
+	loadArchiveReleaseIdentity = func() (compatibility.ReleaseIdentity, error) { return adminTestReleaseIdentity(), nil }
+	t.Cleanup(func() { loadArchiveReleaseIdentity = previous })
+}
+
+func adminTestReleaseIdentity() compatibility.ReleaseIdentity {
+	return compatibility.ReleaseIdentity{
+		ReleaseID: "v1.2.3", Version: "1.2.3", SourceRevision: strings.Repeat("a", 40),
+		Image:        "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64),
+		Distribution: "public", Platform: "linux/amd64",
+	}
 }

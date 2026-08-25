@@ -50,6 +50,7 @@ type InstanceBackupOptions struct {
 	ReleaseIdentity      compatibility.ReleaseIdentity
 	StorageTopology      InstanceBackupStorageTopology
 	Environment          string
+	TransitionPolicy     *compatibility.Policy
 }
 
 type InstanceRestoreOptions struct {
@@ -65,7 +66,7 @@ type InstanceRestoreOptions struct {
 	MinimumFreeBytes      uint64
 	ExclusiveLockHeld     bool
 	RequireExclusiveLock  bool
-	AllowLegacyV1         bool
+	TransitionPolicy      *compatibility.Policy
 	ValidatedPlan         *InstanceRestorePreflightPlan
 }
 
@@ -364,7 +365,11 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 		now = time.Now
 	}
 	createdAt := now().UTC()
-	policy, err := compatibility.EmbeddedPolicy()
+	policy, err := instanceTransitionPolicy(options.TransitionPolicy)
+	if err != nil {
+		return err
+	}
+	releaseIdentity, err := normalizeBackupReleaseIdentity(options.ReleaseIdentity)
 	if err != nil {
 		return err
 	}
@@ -378,7 +383,7 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 	}
 	manifest := InstanceBackupManifestV2{
 		SchemaVersion: InstanceBackupManifestVersion, Kind: "leapview-instance", BackupID: backupID,
-		ReleaseIdentity: normalizeBackupReleaseIdentity(options.ReleaseIdentity),
+		ReleaseIdentity: releaseIdentity,
 		InstanceID:      instanceID, Environment: environment, CreatedAt: createdAt, CompletedAt: createdAt,
 		ArchiveMode: "full-instance", StorageTopology: normalizeBackupStorageTopology(options.StorageTopology),
 		RequiredTransitionPolicyVersion: policy.PolicyVersion, Members: inventory, InventorySHA256: inventoryDigest,
@@ -467,7 +472,8 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 		ExternalEvidence:      options.ExternalEvidence, MinimumFreeBytes: options.MinimumFreeBytes,
 		PreserveRelativeFile: options.PreserveRelativeFile, ResetRelativePaths: options.ResetRelativePaths,
 		ExclusiveLockHeld: options.ExclusiveLockHeld, RequireExclusiveLock: options.RequireExclusiveLock,
-		AllowLegacyV1: options.AllowLegacyV1,
+		CurrentBackupOut: options.CurrentBackupOut, DiscardCurrentBackup: options.DiscardCurrentBackup,
+		TransitionPolicy: options.TransitionPolicy,
 	})
 	if err != nil {
 		return err
@@ -492,6 +498,37 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 	}
 	defer file.Close()
 	return restoreInstanceFromReader(ctx, options, file, *plan)
+}
+
+func validateInstanceRestoreDestination(targetHome, currentBackupOut string, discardCurrentBackup bool, preserveRelativeFile string) (string, string, bool, bool, error) {
+	targetAbs, err := filepath.Abs(strings.TrimSpace(targetHome))
+	if err != nil {
+		return "", "", false, false, err
+	}
+	if info, statErr := os.Lstat(targetAbs); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
+		return "", "", false, false, fmt.Errorf("instance restore target home must not be a symlink")
+	} else if statErr != nil && !os.IsNotExist(statErr) {
+		return "", "", false, false, statErr
+	}
+	currentBackupOut = strings.TrimSpace(currentBackupOut)
+	if discardCurrentBackup && currentBackupOut == "" {
+		return "", "", false, false, fmt.Errorf("discarding the current instance backup requires a current backup path")
+	}
+	currentBackupAbs := ""
+	if currentBackupOut != "" {
+		currentBackupAbs, err = filepath.Abs(currentBackupOut)
+		if err != nil {
+			return "", "", false, false, err
+		}
+		if pathWithin(targetAbs, currentBackupAbs) {
+			return "", "", false, false, fmt.Errorf("current instance backup path must not be inside target home dir")
+		}
+	}
+	exists, nonEmpty, err := dirExistsNonEmptyExcept(targetAbs, preserveRelativeFile)
+	if err != nil {
+		return "", "", false, false, err
+	}
+	return targetAbs, currentBackupAbs, exists, nonEmpty, nil
 }
 
 func sameRestorePreflightIdentity(left, right InstanceRestorePreflightPlan) bool {
@@ -550,7 +587,7 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 	if targetHome == "" {
 		return fmt.Errorf("instance restore target home dir is required")
 	}
-	targetAbs, err := filepath.Abs(targetHome)
+	targetAbs, currentBackupAbs, exists, nonEmpty, err := validateInstanceRestoreDestination(targetHome, currentBackupOut, options.DiscardCurrentBackup, preserveRelativeFile)
 	if err != nil {
 		return err
 	}
@@ -558,25 +595,8 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 	if err != nil {
 		return err
 	}
-	if info, statErr := os.Lstat(targetAbs); statErr == nil && info.Mode()&os.ModeSymlink != 0 {
-		return fmt.Errorf("instance restore target home must not be a symlink")
-	} else if statErr != nil && !os.IsNotExist(statErr) {
-		return statErr
-	}
-	currentBackupAbs := ""
-	if currentBackupOut != "" {
-		currentBackupAbs, err = filepath.Abs(currentBackupOut)
-		if err != nil {
-			return err
-		}
-		if pathWithin(targetAbs, currentBackupAbs) {
-			return fmt.Errorf("current instance backup path must not be inside target home dir")
-		}
-		if options.DiscardCurrentBackup {
-			currentBackupAbs = filepath.Join(filepath.Dir(currentBackupAbs), fmt.Sprintf(".leapview-current-backup-%s-%d.tar.gz", targetID, time.Now().UnixNano()))
-		}
-	} else if options.DiscardCurrentBackup {
-		return fmt.Errorf("discarding the current instance backup requires a current backup path")
+	if options.DiscardCurrentBackup {
+		currentBackupAbs = filepath.Join(filepath.Dir(currentBackupAbs), fmt.Sprintf(".leapview-current-backup-%s-%d.tar.gz", targetID, time.Now().UnixNano()))
 	}
 
 	parent := filepath.Dir(targetAbs)
@@ -584,10 +604,6 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 		return err
 	}
 	if err := recoverInterruptedInstanceOperations(targetAbs); err != nil {
-		return err
-	}
-	exists, nonEmpty, err := dirExistsNonEmptyExcept(targetAbs, preserveRelativeFile)
-	if err != nil {
 		return err
 	}
 	tmpRestore, err := os.MkdirTemp(parent, fmt.Sprintf(".leapview-restore-%s-*", targetID))
@@ -649,6 +665,9 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 			DBPath:               filepath.Join(targetAbs, instanceBackupDBName),
 			OutPath:              currentBackupAbs,
 			ExcludeRelativePaths: resetRelativePaths,
+			Environment:          options.ExpectedEnvironment,
+			ReleaseIdentity:      options.TargetReleaseIdentity,
+			TransitionPolicy:     options.TransitionPolicy,
 		}); err != nil {
 			return fmt.Errorf("backup current instance: %w", err)
 		}

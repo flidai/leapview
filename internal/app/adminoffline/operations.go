@@ -188,17 +188,19 @@ func newService() (*adminoffline.Service, error) {
 		extensionAdmission = supply
 	}
 	normalized := adminoffline.Config{
-		HomeDir:            cfg.HomeDir,
-		DBPath:             cfg.DBPath(),
-		Environment:        cfg.Environment,
-		Production:         cfg.Production,
-		BootstrapEmail:     cfg.BootstrapEmail,
-		DuckLakeCatalog:    cfg.DuckLakeCatalogPath(),
-		DuckLakeData:       cfg.DuckLakeDataDir(),
-		ArtifactDir:        cfg.ArtifactDir(),
-		RuntimeDir:         cfg.RuntimeDir(),
-		ManagedDataDir:     cfg.ManagedDataDir,
-		ManagedDataBackend: cfg.ManagedDataBackend,
+		HomeDir:             cfg.HomeDir,
+		DBPath:              cfg.DBPath(),
+		Environment:         cfg.Environment,
+		Production:          cfg.Production,
+		BootstrapEmail:      cfg.BootstrapEmail,
+		DuckLakeCatalog:     cfg.DuckLakeCatalogPath(),
+		DuckLakeData:        cfg.DuckLakeDataDir(),
+		ArtifactDir:         cfg.ArtifactDir(),
+		RuntimeDir:          cfg.RuntimeDir(),
+		ManagedDataDir:      cfg.ManagedDataDir,
+		ManagedDataBackend:  cfg.ManagedDataBackend,
+		ManagedDataS3Bucket: cfg.ManagedDataS3Bucket,
+		ManagedDataS3Prefix: cfg.ManagedDataS3Prefix,
 	}
 	return adminoffline.New(normalized, adminoffline.Dependencies{
 		Locker:      instanceLocker{home: cfg.HomeDir},
