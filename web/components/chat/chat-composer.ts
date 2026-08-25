@@ -96,7 +96,7 @@ class ChatComposer extends LitElement {
 
     textarea {
       box-sizing: border-box;
-      min-height: var(--lv-control-medium);
+      min-height: calc(var(--lv-control-medium) + var(--lv-space-sm));
       max-height: 160px;
       width: 100%;
       grid-column: 1;

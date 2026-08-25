@@ -94,7 +94,7 @@ test('composer renders a compact centered prompt surface', async () => {
       textareaLabel: 'Ask about dashboards, metrics, or models',
       textareaPlaceholder: 'Ask about dashboards, metrics, or models...',
       textareaResize: 'none',
-      textareaMinHeight: 32,
+      textareaMinHeight: 38,
       textareaMaxHeight: 160,
       actionsJustify: 'flex-end',
       buttonWidth: 32,
@@ -158,7 +158,7 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
 
     expect(events.received).toEqual(['Revenue trend'])
     expect(events.enabledAfterInput).toBe(true)
-    expect(events.singleLineHeight).toBe(32)
+    expect(events.singleLineHeight).toBe(38)
     expect(events.multilineHeight).toBeGreaterThan(events.singleLineHeight)
     expect(events.multilineHeight).toBeLessThanOrEqual(160)
     expect(events.multilineOverflowY).toBe('hidden')
