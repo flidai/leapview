@@ -4,8 +4,11 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sort"
+	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/deployment"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -51,14 +54,14 @@ func (h *health) Readyz(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
 	defer cancel()
 	if err := h.config.Platform(ctx); err != nil {
-		checks["platformStore"] = err.Error()
+		checks["platformStore"] = "failed"
 		apitransport.WriteJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "not_ready", Checks: checks})
 		return
 	}
 	checks["platformStore"] = "ok"
 	if h.config.Analytics != nil {
 		if err := h.config.Analytics(); err != nil {
-			checks["analytics"] = err.Error()
+			checks["analytics"] = "failed"
 			apitransport.WriteJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "not_ready", Checks: checks})
 			return
 		}
@@ -74,12 +77,18 @@ func (h *health) Readyz(w http.ResponseWriter, r *http.Request) {
 		}
 		checks["runtimeLease"] = "ok"
 	}
-	for name, check := range h.config.Checks {
+	checkNames := make([]string, 0, len(h.config.Checks))
+	for name := range h.config.Checks {
+		checkNames = append(checkNames, name)
+	}
+	sort.Strings(checkNames)
+	for _, name := range checkNames {
+		check := h.config.Checks[name]
 		if check == nil {
 			continue
 		}
 		if err := check(ctx); err != nil {
-			checks[name] = err.Error()
+			checks[name] = stableReadinessFailure(err)
 			apitransport.WriteJSON(w, http.StatusServiceUnavailable, healthResponse{Status: "not_ready", Checks: checks})
 			return
 		}
@@ -99,7 +108,7 @@ func (h *health) runtimeReady(ctx context.Context, checks map[string]string) boo
 	}
 	projectID, err := h.config.ActiveProjectID(ctx)
 	if err != nil {
-		checks["runtime"] = err.Error()
+		checks["runtime"] = "failed"
 		return false
 	}
 	if err := projectID.Validate(); err != nil {
@@ -111,9 +120,52 @@ func (h *health) runtimeReady(ctx context.Context, checks map[string]string) boo
 			checks["runtime"] = "no_active_deployments"
 			return !h.config.RequireActiveDeployment
 		}
-		checks["projectRuntime:"+projectID.String()] = err.Error()
+		checks["runtime"] = "failed"
 		return false
 	}
-	checks["projectRuntime:"+projectID.String()] = "ok"
+	checks["runtime"] = "ok"
 	return true
+}
+
+// stableReadinessFailure preserves only the reviewed delivery-startup codes
+// that are part of the operator contract. Arbitrary dependency errors,
+// including wrapped platform paths or provider messages, collapse to a fixed
+// value before crossing the unauthenticated readiness boundary.
+func stableReadinessFailure(err error) string {
+	diagnostics := deployment.DeliveryStartupDiagnosticsOf(err)
+	if len(diagnostics) == 0 {
+		return "failed"
+	}
+	codes := make([]string, 0, len(diagnostics))
+	seen := map[deployment.DeliveryStartupDiagnosticCode]struct{}{}
+	for _, diagnostic := range diagnostics {
+		if !stableDeliveryStartupDiagnostic(diagnostic.Code) {
+			continue
+		}
+		if _, ok := seen[diagnostic.Code]; ok {
+			continue
+		}
+		seen[diagnostic.Code] = struct{}{}
+		codes = append(codes, string(diagnostic.Code))
+	}
+	if len(codes) == 0 {
+		return "failed"
+	}
+	sort.Strings(codes)
+	return strings.Join(codes, ",")
+}
+
+func stableDeliveryStartupDiagnostic(code deployment.DeliveryStartupDiagnosticCode) bool {
+	switch code {
+	case deployment.DeliveryStartupMissingPoolAdmission,
+		deployment.DeliveryStartupUnadmittedPool,
+		deployment.DeliveryStartupLegacyServingIdentity,
+		deployment.DeliveryStartupMixedServingPaths,
+		deployment.DeliveryStartupMissingTargetRevision,
+		deployment.DeliveryStartupMissingServingGeneration,
+		deployment.DeliveryStartupIndeterminatePublication:
+		return true
+	default:
+		return false
+	}
 }
