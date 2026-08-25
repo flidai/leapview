@@ -13,6 +13,7 @@ func TestTerraformProductionContracts(t *testing.T) {
 	main := readFile(t, "main.tf")
 	cloudInit := readFile(t, filepath.Join("..", "host", "cloud-init.yaml.tftpl"))
 	requireContains(t, variables, `variable "leapview_image"`)
+	requireContains(t, variables, `variable "release_transition_policy_path"`)
 	requireContains(t, variables, `@sha256:`)
 	requireContains(t, variables, `variable "ssh_allowed_cidrs"`)
 	if strings.Contains(variables, `default     = ["0.0.0.0/0", "::/0"]`) {
@@ -189,7 +190,8 @@ func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
 		"uses: ./.github/actions/oci-admission",
 		"expected-workflow: flidai/leapview/.github/workflows/artifacts.yml",
 		"source-revision: ${{ inputs.source_revision }}",
-		"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
+			"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
+			"TF_VAR_release_transition_policy_path",
 		"Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16",
 		`method: "oidc"`,
 		`identity-id: "6aac9c3e-4f33-45b5-aa4e-884839b950a7"`,

@@ -15,7 +15,7 @@ func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 	}
 	for _, required := range []string{
 		"Ubuntu 24.04 LTS", "docker-compose-v2", "docker pull", "docker create", "docker cp",
-		`leapviewctl" host install`, "repository@sha256",
+		`leapviewctl" host install`, "repository@sha256", "release-transition-policy.json",
 	} {
 		requireContains(t, bootstrap, required)
 	}
@@ -31,7 +31,7 @@ func TestBootstrapIsProviderNeutralAndDelegatesLifecycleToGo(t *testing.T) {
 func TestCloudInitOnlyDeliversBootstrapInputs(t *testing.T) {
 	cloudInit := read(t, "cloud-init.yaml.tftpl")
 	for _, required := range []string{
-		"bootstrap_b64", "config_b64", "image_b64", "/usr/local/sbin/leapview-bootstrap",
+		"bootstrap_b64", "config_b64", "image_b64", "policy_b64", "/usr/local/sbin/leapview-bootstrap",
 	} {
 		requireContains(t, cloudInit, required)
 	}
@@ -49,7 +49,8 @@ func TestProductionImageCarriesCanonicalDeploymentPayload(t *testing.T) {
 		"/usr/local/share/leapview/deployment/",
 		"deploy/compose/compose.yaml",
 		"deploy/host/files/",
-		"deployment/leapviewctl",
+			"deployment/leapviewctl",
+			"release-transition-policy.json",
 	} {
 		requireContains(t, dockerfile, required)
 	}

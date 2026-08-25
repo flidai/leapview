@@ -40,7 +40,21 @@ type qualificationInstalledReport struct {
 		V010FreshInstallPolicy bool `json:"v010FreshInstallPolicy"`
 		RestartPersistence     bool `json:"restartPersistence"`
 		BackupRestore          bool `json:"backupRestore"`
+		ReleaseTransition      bool `json:"releaseTransition"`
 	} `json:"assertions"`
+}
+
+type qualificationTransitionEvidence struct {
+	SchemaVersion        int                           `json:"schemaVersion"`
+	Predecessor          compatibility.ReleaseIdentity `json:"predecessor"`
+	Candidate            compatibility.ReleaseIdentity `json:"candidate"`
+	PolicySHA256         string                        `json:"policySha256"`
+	StateBeforeUpgrade   string                        `json:"stateBeforeUpgradeSha256"`
+	StateAfterUpgrade    string                        `json:"stateAfterUpgradeSha256"`
+	StateAfterRollback   string                        `json:"stateAfterRollbackSha256"`
+	UpgradeResult        string                        `json:"upgradeResult"`
+	RollbackResult       string                        `json:"rollbackResult"`
+	PreservationVerified bool                          `json:"preservationVerified"`
 }
 
 type qualificationReleaseIdentity struct {
@@ -227,12 +241,40 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	c.transitionPolicy = policy
+	var transitionEvidence *qualificationTransitionEvidence
 	imageReferenceBytes, err := os.ReadFile(c.path("image-reference.txt"))
 	if err != nil {
 		return err
 	}
 	imageReference := strings.TrimSpace(string(imageReferenceBytes))
 	report.Image = imageReference
+	initialImage := imageReference
+	if previous := strings.TrimSpace(options.PreviousImage); previous != "" {
+		if err := requireDigest(previous); err != nil {
+			return fmt.Errorf("previous release image: %w", err)
+		}
+		platform, err := c.targetDockerPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		decision := policy.EvaluateImages(compatibility.OperationUpgrade, previous, imageReference, platform)
+		if err := enforceTransitionRequirements(decision); err != nil {
+			return fmt.Errorf("qualify previous release transition: %w", err)
+		}
+		policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
+		if err != nil {
+			return err
+		}
+		policyDigest := sha256.Sum256(policyDocument)
+		transitionEvidence = &qualificationTransitionEvidence{
+			SchemaVersion: 1, Predecessor: decision.Current, Candidate: decision.Next,
+			PolicySHA256: hex.EncodeToString(policyDigest[:]), UpgradeResult: "not-run", RollbackResult: "not-run",
+		}
+		defer func() {
+			_ = writeQualificationJSON(filepath.Join(evidenceDir, "transition-qualification.json"), transitionEvidence)
+		}()
+		initialImage = previous
+	}
 	if !options.AllowLocal &&
 		(!strings.HasPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:") ||
 			len(strings.TrimPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:")) != 64) {
@@ -285,7 +327,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
 		"COMPOSE_PROJECT_NAME": primaryProject,
-		"LEAPVIEW_IMAGE":       imageReference,
+		"LEAPVIEW_IMAGE":       initialImage,
 		"CADDY_DOMAIN":         "localhost",
 	}); err != nil {
 		return err
@@ -294,9 +336,27 @@ func (c *Controller) QualifyInstalledCandidate(
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
-		Image:       imageReference,
+		Image:       initialImage,
 	}); err != nil {
 		return err
+	}
+	if transitionEvidence != nil {
+		if err := c.writeQualificationTransitionState(ctx); err != nil {
+			return err
+		}
+		transitionEvidence.StateBeforeUpgrade, err = c.qualificationTransitionStateChecksum(ctx)
+		if err != nil {
+			return err
+		}
+		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
+			transitionEvidence.UpgradeResult = "failure"
+			return err
+		}
+		transitionEvidence.UpgradeResult = "success"
+		transitionEvidence.StateAfterUpgrade, err = c.qualificationTransitionStateChecksum(ctx)
+		if err != nil {
+			return err
+		}
 	}
 	primaryStarted = true
 	if options.MinFreeBytes > 0 {
@@ -533,15 +593,23 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	if options.PreviousImage != "" {
-		if err := c.Upgrade(ctx, options.PreviousImage); err != nil {
+		if err := c.RollbackWithPolicy(ctx, true, c.path("release-transition-policy.json")); err != nil {
+			transitionEvidence.RollbackResult = "failure"
 			return err
 		}
-		if err := c.Upgrade(ctx, imageReference); err != nil {
+		transitionEvidence.RollbackResult = "success"
+		transitionEvidence.StateAfterRollback, err = c.qualificationTransitionStateChecksum(ctx)
+		if err != nil {
 			return err
 		}
-		if err := c.Rollback(ctx, true); err != nil {
+		transitionEvidence.PreservationVerified = transitionEvidence.StateAfterRollback == transitionEvidence.StateBeforeUpgrade
+		if !transitionEvidence.PreservationVerified {
+			return fmt.Errorf("rollback did not restore the exact predecessor state checksum")
+		}
+		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
 			return err
 		}
+		report.Assertions.ReleaseTransition = true
 	}
 	restoreRoot, err = c.restoreQualificationBackup(
 		ctx,
@@ -576,6 +644,38 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) writeQualificationTransitionState(ctx context.Context) error {
+	_, err := c.qualificationCompose(
+		ctx, c.root, "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "leapview",
+		"-ceu", "printf '%s\\n' leapview-real-release-transition-v1 > /var/lib/leapview/qualification-transition-state",
+	)
+	return err
+}
+
+func (c *Controller) qualificationTransitionStateChecksum(ctx context.Context) (string, error) {
+	output, err := c.qualificationCompose(
+		ctx, c.root, "run", "--rm", "--no-deps", "--entrypoint", "/bin/sh", "leapview",
+		"-ceu", "sha256sum /var/lib/leapview/qualification-transition-state | awk '{print $1}'",
+	)
+	if err != nil {
+		return "", err
+	}
+	checksum := strings.TrimSpace(string(output))
+	if len(checksum) != 64 || !isQualificationLowerHex(checksum) {
+		return "", fmt.Errorf("invalid qualification state checksum %q", checksum)
+	}
+	return checksum, nil
+}
+
+func isQualificationLowerHex(value string) bool {
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) bootstrapQualificationLocalPhysicalPool(ctx context.Context) error {

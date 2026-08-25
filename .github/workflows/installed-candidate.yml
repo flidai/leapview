@@ -129,9 +129,27 @@ jobs:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |
+          previous_image="$(
+            jq -r --arg platform "linux/${{ matrix.arch }}" '
+              .candidateRelease as $candidate |
+              first(
+                .transitions[]? |
+                select(.operation == "upgrade" and .to == $candidate and .decision.allowed == true and (.platforms | index($platform))) |
+                .from as $previous |
+                .releases[] |
+                select(.id == $previous) |
+                .artifacts[] |
+                select(.platform == $platform) |
+                .image
+              ) // ""
+            ' "$PACKAGE_ROOT/release-transition-policy.json"
+          )"
+          args=(qualify installed-candidate --evidence-dir "$EVIDENCE_ROOT")
+          if [ -n "$previous_image" ]; then
+            args+=(--previous-image "$previous_image")
+          fi
           env -u GH_TOKEN -u GITHUB_TOKEN \
-            "$PACKAGE_ROOT/leapviewctl" qualify installed-candidate \
-            --evidence-dir "$EVIDENCE_ROOT"
+            "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 
       - name: Upload bounded qualification evidence
         if: always()
@@ -148,6 +166,7 @@ jobs:
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/runtime-identity.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/policy-validation.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/decision.json
+            ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/transition-qualification.json
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/*.log
             ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}/browser-failure.png
 

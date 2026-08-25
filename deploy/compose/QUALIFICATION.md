@@ -83,8 +83,12 @@ supersession, table delivery, and browser/network correctness against the same
 dashboard runtime, while the installed Olist gate owns shipped-artifact and
 process-resource budgets.
 
-Pass `--previous-image` only for a post-v0.1.0 immutable digest whose release
-policy explicitly declares state compatibility. The
+The release workflows resolve `--previous-image` directly from an allowed
+upgrade in the distributed candidate-bound policy. The real predecessor image
+initializes the volume, the candidate controller upgrades it, and rollback must
+restore the retained state checksum before the candidate is applied again.
+`transition-qualification.json` retains both immutable identities, the policy
+digest, state checksums, and upgrade/rollback results. The
 released v0.1.0 image
 `ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153`
 is fresh-install-only because it uses `libredash.db`, a different container and

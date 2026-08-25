@@ -80,7 +80,7 @@ type Controller struct {
 // for the same immutable image transaction as application state and runtime.
 // Generic Compose installations leave this unset.
 type DeploymentPayloadManager interface {
-	Prepare(context.Context, string, string) (DeploymentPayloadUpdate, error)
+	Prepare(context.Context, string, string, string, []byte) (DeploymentPayloadUpdate, error)
 }
 
 type DeploymentPayloadUpdate interface {
@@ -453,18 +453,22 @@ func (c *Controller) Restore(ctx context.Context, requestedArchive string) error
 }
 
 func (c *Controller) Upgrade(ctx context.Context, next string) error {
-	return c.upgrade(ctx, next, c.transitionPolicy)
-}
-
-func (c *Controller) UpgradeWithPolicy(ctx context.Context, next, policyPath string) error {
-	policy, _, err := compatibility.LoadPolicy(policyPath)
+	document, err := compatibility.MarshalPolicy(c.transitionPolicy)
 	if err != nil {
 		return err
 	}
-	return c.upgrade(ctx, next, policy)
+	return c.upgrade(ctx, next, c.transitionPolicy, document)
 }
 
-func (c *Controller) upgrade(ctx context.Context, next string, policy *compatibility.Policy) error {
+func (c *Controller) UpgradeWithPolicy(ctx context.Context, next, policyPath string) error {
+	policy, document, err := compatibility.LoadPolicy(policyPath)
+	if err != nil {
+		return err
+	}
+	return c.upgrade(ctx, next, policy, document)
+}
+
+func (c *Controller) upgrade(ctx context.Context, next string, policy *compatibility.Policy, policyDocument []byte) error {
 	next = strings.TrimSpace(next)
 	if err := requireDigest(next); err != nil {
 		return err
@@ -489,7 +493,7 @@ func (c *Controller) upgrade(ctx context.Context, next string, policy *compatibi
 		if err := enforceTransitionRequirements(decision); err != nil {
 			return err
 		}
-		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, next)
+		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, next, platform, policyDocument)
 		if err != nil {
 			return fmt.Errorf("prepare deployment payload: %w", err)
 		}
@@ -616,18 +620,22 @@ func (c *Controller) restorePreflightFailure(ctx context.Context, wasRunning boo
 }
 
 func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
-	return c.rollback(ctx, confirmed, c.transitionPolicy)
-}
-
-func (c *Controller) RollbackWithPolicy(ctx context.Context, confirmed bool, policyPath string) error {
-	policy, _, err := compatibility.LoadPolicy(policyPath)
+	document, err := compatibility.MarshalPolicy(c.transitionPolicy)
 	if err != nil {
 		return err
 	}
-	return c.rollback(ctx, confirmed, policy)
+	return c.rollback(ctx, confirmed, c.transitionPolicy, document)
 }
 
-func (c *Controller) rollback(ctx context.Context, confirmed bool, policy *compatibility.Policy) error {
+func (c *Controller) RollbackWithPolicy(ctx context.Context, confirmed bool, policyPath string) error {
+	policy, document, err := compatibility.LoadPolicy(policyPath)
+	if err != nil {
+		return err
+	}
+	return c.rollback(ctx, confirmed, policy, document)
+}
+
+func (c *Controller) rollback(ctx context.Context, confirmed bool, policy *compatibility.Policy, policyDocument []byte) error {
 	if !confirmed {
 		return fmt.Errorf("rollback discards post-upgrade state; pass --confirm")
 	}
@@ -664,7 +672,7 @@ func (c *Controller) rollback(ctx context.Context, confirmed bool, policy *compa
 		if err := requireNonEmptyFile(checkpoint); err != nil {
 			return fmt.Errorf("rollback checkpoint is missing: %w", err)
 		}
-		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, previous)
+		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, previous, platform, policyDocument)
 		if err != nil {
 			return fmt.Errorf("prepare previous deployment payload: %w", err)
 		}
@@ -771,11 +779,11 @@ func (c *Controller) targetDockerPlatform(ctx context.Context) (string, error) {
 	return platform, nil
 }
 
-func (c *Controller) prepareDeploymentPayload(ctx context.Context, current, next string) (DeploymentPayloadUpdate, error) {
+func (c *Controller) prepareDeploymentPayload(ctx context.Context, current, next, platform string, policyDocument []byte) (DeploymentPayloadUpdate, error) {
 	if c.deploymentPayloads == nil {
 		return nil, nil
 	}
-	return c.deploymentPayloads.Prepare(ctx, current, next)
+	return c.deploymentPayloads.Prepare(ctx, current, next, platform, policyDocument)
 }
 
 func rollbackDeploymentPayload(update DeploymentPayloadUpdate) error {

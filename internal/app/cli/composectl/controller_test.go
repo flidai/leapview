@@ -417,7 +417,7 @@ type recordingDeploymentPayloadManager struct {
 	update   DeploymentPayloadUpdate
 }
 
-func (m *recordingDeploymentPayloadManager) Prepare(_ context.Context, current, next string) (DeploymentPayloadUpdate, error) {
+func (m *recordingDeploymentPayloadManager) Prepare(_ context.Context, current, next, _ string, _ []byte) (DeploymentPayloadUpdate, error) {
 	m.prepared = append(m.prepared, [2]string{current, next})
 	return m.update, nil
 }

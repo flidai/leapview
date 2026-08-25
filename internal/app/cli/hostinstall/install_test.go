@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/stretchr/testify/require"
 )
 
@@ -274,6 +275,8 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 		"LEAPVIEW_IMAGE=example.invalid/leapview@sha256:" + strings.Repeat("e", 64) +
 			"\nCADDY_IMAGE=" + nextCaddy + "\nCOMPOSE_HTTPS=1\n",
 	)
+	nextPolicy := testPolicyDocument(t, next)
+	nextPayload["release-transition-policy.json"] = nextPolicy
 	manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
 		Paths: paths,
 		Load: func(context.Context, string) (map[string][]byte, error) {
@@ -282,7 +285,7 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 		Run: func(context.Context, string, ...string) error { return nil },
 	})
 	require.NoError(t, err)
-	update, err := manager.Prepare(t.Context(), current, next)
+	update, err := manager.Prepare(t.Context(), current, next, "linux/amd64", nextPolicy)
 	require.NoError(t, err)
 	require.NotNil(t, update)
 	t.Cleanup(func() { require.NoError(t, update.Close()) })
@@ -300,6 +303,9 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	installed, err := readMarker(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
 	require.Equal(t, next, installed.Image)
+	contents, err = os.ReadFile(filepath.Join(paths.Root, "release-transition-policy.json"))
+	require.NoError(t, err)
+	require.Equal(t, nextPolicy, contents)
 
 	require.NoError(t, update.Rollback())
 	active, err = os.Readlink(filepath.Join(paths.Root, "current"))
@@ -314,6 +320,9 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	installed, err = readMarker(filepath.Join(paths.Root, installMarkerName))
 	require.NoError(t, err)
 	require.Equal(t, current, installed.Image)
+	contents, err = os.ReadFile(filepath.Join(paths.Root, "release-transition-policy.json"))
+	require.NoError(t, err)
+	require.Equal(t, testPolicyDocument(t, current), contents)
 }
 
 func TestStagedGenerationDoesNotChangeActivePayload(t *testing.T) {
@@ -378,6 +387,40 @@ func writeConfig(t *testing.T, path string, config Config) {
 	contents, err := json.Marshal(config)
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(path, contents, 0o600))
+	payload := filepath.Join(filepath.Dir(path), "payload")
+	if info, statErr := os.Stat(payload); statErr == nil && info.IsDir() {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(payload, "release-transition-policy.json"),
+			testPolicyDocument(t, config.Image),
+			0o600,
+		))
+	}
+}
+
+func testPolicyDocument(t *testing.T, image string) []byte {
+	t.Helper()
+	denied := compatibility.Rule{
+		ReasonCode:   compatibility.ReasonDeniedNoExplicitRule,
+		Remediation:  "use an explicit transition",
+		Requirements: []string{},
+	}
+	policy := &compatibility.Policy{
+		SchemaVersion:    compatibility.CurrentSchemaVersion,
+		PolicyVersion:    "test/host-policy-v1",
+		CandidateRelease: "v1.0.0",
+		Releases: []compatibility.Release{{
+			ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "test",
+			Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: image}}, LegacyMarkers: []string{},
+			Defaults: compatibility.ReleaseDefaults{
+				FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}},
+				Upgrade:      denied, Rollback: denied,
+			},
+		}},
+		Transitions: []compatibility.Transition{},
+	}
+	document, err := compatibility.MarshalPolicy(policy)
+	require.NoError(t, err)
+	return document
 }
 
 func boolPointer(value bool) *bool { return &value }

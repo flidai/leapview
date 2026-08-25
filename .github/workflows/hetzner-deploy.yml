@@ -11,6 +11,14 @@ on:
         description: Full source commit recorded by the image attestation
         required: true
         type: string
+      transition_policy_url:
+        description: HTTPS URL for the candidate-bound release-transition-policy.json
+        required: true
+        type: string
+      transition_policy_sha256:
+        description: SHA-256 of the candidate-bound transition policy
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -57,6 +65,19 @@ jobs:
 
       - name: Pin Terraform to the admitted image
         run: echo "TF_VAR_leapview_image=${{ steps.admission.outputs.image }}" >> "$GITHUB_ENV"
+
+      - name: Fetch verified candidate-bound transition policy
+        env:
+          POLICY_URL: ${{ inputs.transition_policy_url }}
+          POLICY_SHA256: ${{ inputs.transition_policy_sha256 }}
+        run: |
+          [[ "$POLICY_URL" == https://* ]]
+          [[ "$POLICY_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          policy="$RUNNER_TEMP/release-transition-policy.json"
+          curl --fail --location --retry 4 --retry-all-errors --silent --show-error \
+            --output "$policy" "$POLICY_URL"
+          printf '%s  %s\n' "$POLICY_SHA256" "$policy" | sha256sum --check
+          echo "TF_VAR_release_transition_policy_path=$policy" >> "$GITHUB_ENV"
 
       - name: Fetch ephemeral infrastructure secrets
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16

@@ -380,16 +380,16 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
-	for _, required := range []string{"cp -R deploy/compose/qualification", "./leapviewctl qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
+	for _, required := range []string{"cp -R deploy/compose/qualification", "args=(qualify installed-candidate", "transition-qualification.json", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
 		}
 	}
-	gate := strings.Index(release, "./leapviewctl qualify installed-candidate")
+	gate := strings.Index(release, "args=(qualify installed-candidate")
 	if gate < 0 || gate > strings.Index(release, "gh release create") || gate > strings.Index(release, "Publish qualified image tags") {
 		t.Fatal("installed-candidate qualification must precede all publication")
 	}
-	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "leapviewctl\" qualify installed-candidate", "Create qualification incident"} {
+	for _, required := range []string{"workflow_dispatch:", "schedule:", "ubuntu-24.04-arm", "sha256sum --check", "args=(qualify installed-candidate", "--previous-image", "transition-qualification.json", "Create qualification incident"} {
 		if !strings.Contains(workflow, required) {
 			t.Errorf("installed-candidate workflow missing %q", required)
 		}
