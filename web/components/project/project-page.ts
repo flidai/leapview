@@ -2,6 +2,7 @@ import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
+  BookOpen,
   ChevronRight,
   ExternalLink,
   RefreshCw,
