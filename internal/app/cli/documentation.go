@@ -5,6 +5,7 @@ import "github.com/spf13/cobra"
 const (
 	documentationEffectAnnotation       = "leapview.dev/effect"
 	documentationConfirmationAnnotation = "leapview.dev/confirmation"
+	documentationHelpGroupAnnotation    = "leapview.dev/help-group"
 )
 
 type commandSafety struct {

@@ -199,6 +199,7 @@ tasks:
       - bun run test:theme
       - bun run test:datastar-lit
       - bun run test:ui-command-boundaries
+      - bun run test:command-failure
       - bun run test:app-shell
       - bun run typecheck:app
       - bun run typecheck:contracts
@@ -711,6 +712,9 @@ tasks:
       - Taskfile.yml
       - cmd/leapview/**/*.go
       - internal/app/cli/**/*.go
+      - api/data-resources/**/*.tsp
+      - internal/project/contracts/**/*.go
+      - internal/project/contracts/gen/**/*.json
       - internal/project/schema/**/*.go
       - internal/project/schema/**/*.cue
       - internal/dashboard/report/**/*.go

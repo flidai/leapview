@@ -472,6 +472,20 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 			}
 		})
 	}
+	t.Run("local developer bypass retains immutable candidate and plan validation", func(t *testing.T) {
+		devBinding := binding
+		devBinding.ActorID = accessmodule.LocalDeveloperPrincipal().ID
+		runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: newSnapshot()}}
+		ctx := accessmodule.WithPrincipal(t.Context(), accessmodule.LocalDeveloperPrincipal())
+		if err := authorizeSealedPublication(ctx, devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime); err != nil {
+			t.Fatalf("local developer publication bypass error = %v", err)
+		}
+		mismatched := candidate
+		mismatched.PlanDigest = "sha256:" + strings.Repeat("b", 64)
+		if err := authorizeSealedPublication(ctx, devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: mismatched, plan: plan}, accessModule, runtime); err == nil {
+			t.Fatal("local developer publication bypass accepted mismatched candidate evidence")
+		}
+	})
 }
 
 func TestSealedPublicationAllowsRequestLocalDevelopmentBypass(t *testing.T) {

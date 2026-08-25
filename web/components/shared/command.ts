@@ -2,10 +2,11 @@ type CommandHeaders = Record<string, string>
 type CommandOperation = string | readonly string[]
 
 function csrfToken(): string {
+  if (typeof document === 'undefined') return ''
   return document.querySelector<HTMLMetaElement>('meta[name="csrf-token"]')?.content.trim() ?? ''
 }
 
-function headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders {
+export function headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders {
   const token = csrfToken()
   // Datastar evaluates headers once per request. The generated transport
   // identity is also the UI mutation's idempotency key on the server.
@@ -16,6 +17,7 @@ function headers(operation?: CommandOperation, ifMatch?: string): CommandHeaders
   return {
     ...(token ? { 'X-CSRF-Token': token } : {}),
     'X-Request-ID': requestID,
+    'Idempotency-Key': `ui:${requestID}`,
     ...(operationIDs.length > 0 ? { 'X-LeapView-Operation-ID': operationIDs.join(',') } : {}),
     ...(ifMatch?.trim() ? { 'If-Match': ifMatch.trim() } : {}),
   }
@@ -29,6 +31,6 @@ declare global {
   }
 }
 
-window.LeapViewCommand = { headers }
+if (typeof window !== 'undefined') window.LeapViewCommand = { headers }
 
 export {}

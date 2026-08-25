@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { state } from 'lit/decorators.js'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure } from '../shared/command-failure'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import type {
   ProductAPIStatusSignal,
@@ -44,8 +45,22 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   @state() private selectedSection: ProductSection = 'general'
   @state() private displayNameDraft = ''
   @state() private busy = false
+  @state() private commandBusy = false
+  @state() private commandError = ''
   @state() private message = ''
   private lastRevision = -1
+  private pendingRevision = -1
+  private pendingError = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
+
+  override disconnectedCallback(): void {
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    super.disconnectedCallback()
+  }
 
   static styles = [settingsFieldStyles, css`
     :host { display: block; min-width: 0; color: var(--lv-fg-default); font: var(--lv-type-body); }
@@ -93,12 +108,16 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   }
 
   override updated(): void {
-    const revision = this.settings.general.revision
+    const settings = this.settings
+    const revision = settings.general.revision
     if (revision !== this.lastRevision) {
       this.lastRevision = revision
       this.displayNameDraft = this.settings.general.displayName
     }
-    const active = this.settings.active as ProductSection
+    if (this.commandBusy && (revision !== this.pendingRevision || (settings.error ?? '') !== this.pendingError)) {
+      this.commandBusy = false
+    }
+    const active = settings.active as ProductSection
     if ((active === 'general' || active === 'authentication' || active === 'system') && active !== this.selectedSection) this.selectedSection = active
   }
 
@@ -110,6 +129,7 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
         ${this.selectedSection === 'general' ? this.renderGeneral(settings.general, settings.canManage) : nothing}
         ${this.selectedSection === 'authentication' ? this.renderAuthentication(settings.authentication, settings.api) : nothing}
         ${this.selectedSection === 'system' ? this.renderSystem(settings.system, settings.api) : nothing}
+        ${this.commandError ? html`<div class="notice" role="alert">${this.commandError}</div>` : nothing}
         ${this.message ? html`<div class="message" role="status">${this.message}</div>` : nothing}
       </div>
     `
@@ -117,6 +137,11 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
 
   private renderGeneral(general: ProductGeneralSignal, canManage: boolean) {
     const previewName = this.displayNameDraft.trim() || 'LeapView'
+    const disabled = this.busy || this.commandBusy
+    // Keep reset available while a name mutation is pending so a user can
+    // choose the explicit restore-default action; the in-flight command is
+    // still serialized by the page command transport and all other controls
+    // remain disabled until its signal patch or failure arrives.
     const resetDisabled = !canManage || this.busy || (general.displayName === 'LeapView' && !general.logo)
     return html`
       <section class="panel" aria-label="Instance identity settings">
@@ -132,21 +157,21 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
           </span>
         </div>
         <div class="row">
-          <div class="settings-field"><span class="settings-label">Instance name</span><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
+          <div class="settings-field"><label class="settings-label" for="product-instance-name">Instance name</label><span class="settings-description">Used in navigation and browser titles · 120 characters maximum</span></div>
           <div class="inline">
-            <input type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || this.busy} @input=${this.handleDisplayNameInput}>
-            <button class="action primary" type="button" ?disabled=${!canManage || this.busy || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
+            <input id="product-instance-name" aria-label="Instance name" type="text" maxlength="120" .value=${this.displayNameDraft} ?disabled=${!canManage || disabled} @input=${this.handleDisplayNameInput}>
+            <button class="action primary" type="button" ?disabled=${!canManage || disabled || this.displayNameDraft.trim() === general.displayName} @click=${this.saveDisplayName}>Save</button>
           </div>
         </div>
         <div class="row">
           <div class="settings-field"><span class="settings-label">Instance logo</span><span class="settings-description">JPEG, PNG, or WebP · 5 MB maximum</span></div>
           <div class="inline">
             ${general.logo ? html`<div class="logo"><img src=${general.logo.url} alt="Product logo"><span class="hint">${general.logo.width} × ${general.logo.height}</span></div>` : html`<span class="settings-value">No logo configured</span>`}
-            <label class=${`file-action ${!canManage || this.busy ? 'disabled' : ''}`}>
+            <label class=${`file-action ${!canManage || disabled ? 'disabled' : ''}`}>
               <span>${general.logo ? 'Change logo' : 'Upload logo'}</span>
-              <input type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || this.busy} @change=${this.handleLogoFile}>
+              <input id="product-logo-upload" aria-label=${general.logo ? 'Change logo' : 'Upload logo'} type="file" accept="image/jpeg,image/png,image/webp" ?disabled=${!canManage || disabled} @change=${this.handleLogoFile}>
             </label>
-            ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || this.busy} @click=${this.removeLogo}>Remove</button>` : nothing}
+            ${general.logo ? html`<button class="action danger" type="button" ?disabled=${!canManage || disabled} @click=${this.removeLogo}>Remove</button>` : nothing}
           </div>
         </div>
         <div class="row">
@@ -264,7 +289,22 @@ export class LeapViewProductSettings extends DatastarLit(LitElement) {
   }
 
   private emitCommand(command: ProductSettingsCommand): void {
+    this.commandError = ''
+    if (command.action !== 'refresh') {
+      this.message = ''
+      this.commandBusy = true
+      this.pendingRevision = this.settings.general.revision
+      this.pendingError = this.settings.error ?? ''
+    }
     this.dispatchEvent(new CustomEvent<ProductSettingsCommand>('lv-product-settings-command', { bubbles: true, composed: true, detail: command }))
+  }
+
+  private handleDatastarFetch = (event: Event): void => {
+    if (!this.commandBusy) return
+    const failure = browserCommandFailure(event, 'Product settings update')
+    if (!failure) return
+    this.commandBusy = false
+    this.commandError = failure.message
   }
 
   private handleLogoFile = async (event: Event): Promise<void> => {

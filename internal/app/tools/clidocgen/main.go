@@ -30,6 +30,7 @@ type document struct {
 const (
 	effectAnnotation       = "leapview.dev/effect"
 	confirmationAnnotation = "leapview.dev/confirmation"
+	helpGroupAnnotation    = "leapview.dev/help-group"
 )
 
 type machineManifest struct {
@@ -139,7 +140,8 @@ func generate(root *cobra.Command, out string) error {
 
 func machineCommandFrom(command *cobra.Command, path []string, item document) (machineCommand, error) {
 	effect, confirmation := "none", "never"
-	if command.Runnable() {
+	runnable := documentedRunnable(command)
+	if runnable {
 		effect = command.Annotations[effectAnnotation]
 		if effect == "" {
 			return machineCommand{}, fmt.Errorf("command %q is runnable but missing %s annotation", command.CommandPath(), effectAnnotation)
@@ -171,7 +173,7 @@ func machineCommandFrom(command *cobra.Command, path []string, item document) (m
 		Summary:          item.Summary,
 		Description:      description,
 		Usage:            command.UseLine(),
-		Runnable:         command.Runnable(),
+		Runnable:         runnable,
 		Effect:           effect,
 		Confirmation:     confirmation,
 		Arguments:        commandArguments(command.Use),
@@ -180,6 +182,10 @@ func machineCommandFrom(command *cobra.Command, path []string, item document) (m
 		Examples:         examples,
 		Subcommands:      subcommands,
 	}, nil
+}
+
+func documentedRunnable(command *cobra.Command) bool {
+	return command.Runnable() && command.Annotations[helpGroupAnnotation] != "true"
 }
 
 func defaultConfirmation(effect string) string {
@@ -248,7 +254,7 @@ func writeCommandDescription(out *strings.Builder, command *cobra.Command) {
 func writeCommandDetails(out *strings.Builder, command *cobra.Command, id string, headingLevel int) {
 	writeHeading(out, headingLevel, "Usage")
 	out.WriteString("\n```sh\n" + command.UseLine() + "\n```\n")
-	if command.Runnable() {
+	if documentedRunnable(command) {
 		writeHeading(out, headingLevel, "Behavior")
 		out.WriteString("\n| Side effect | Confirmation |\n| --- | --- |\n")
 		out.WriteString("| `" + command.Annotations[effectAnnotation] + "` | `" + command.Annotations[confirmationAnnotation] + "` |\n")

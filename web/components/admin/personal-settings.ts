@@ -9,6 +9,7 @@ import type {
   PersonalTokenSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
 import { settingsFieldStyles } from '../shared/settings-field-styles'
 import '../shared/user-avatar'
@@ -178,7 +179,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                     aria-hidden="true"
                   ></lv-user-avatar>
                 </button>
-                <input class="avatar-input" type="file" accept="image/png,image/jpeg,image/webp" tabindex="-1" @change=${this.uploadAvatar}>
+                <input class="avatar-input" type="file" accept="image/png,image/jpeg,image/webp" aria-label="Upload profile picture" tabindex="-1" @change=${this.uploadAvatar}>
                 ${this.avatarMenuOpen ? html`
                   <div class="avatar-menu" role="menu" aria-label="Profile picture actions" @keydown=${this.handleAvatarMenuKeydown}>
                     <button class="avatar-menu-item" type="button" role="menuitem" @click=${this.chooseAvatar}>
@@ -238,7 +239,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     return html`
       <section aria-label="Security and sessions">
         ${settings.security.localPasswordEnabled && settings.profile.hasLocalPassword ? html`
-          <div class="card"><div class="row"><div class="settings-field"><h3>Change password</h3><span class="settings-description">Use at least 12 characters and do not reuse the password elsewhere. Changing it signs out browser, desktop, CLI, and MCP sessions.</span></div></div><div class="row"><form @submit=${this.changePassword}><div class="form-grid"><input type="password" autocomplete="current-password" maxlength="1024" placeholder="Current password" .value=${this.currentPassword} @input=${this.onCurrentPasswordInput} required><input type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="New password" .value=${this.newPassword} @input=${this.onNewPasswordInput} required></div><div class="actions"><button class="primary" type="submit">Change password</button></div></form></div></div>
+          <div class="card"><div class="row"><div class="settings-field"><h3>Change password</h3><span class="settings-description">Use at least 12 characters and do not reuse the password elsewhere. Changing it signs out browser, desktop, CLI, and MCP sessions.</span></div></div><div class="row"><form @submit=${this.changePassword}><div class="form-grid"><input aria-label="Current password" type="password" autocomplete="current-password" maxlength="1024" placeholder="Current password" .value=${this.currentPassword} @input=${this.onCurrentPasswordInput} required><input aria-label="New password" type="password" autocomplete="new-password" minlength="12" maxlength="1024" placeholder="New password" .value=${this.newPassword} @input=${this.onNewPasswordInput} required></div><div class="actions"><button class="primary" type="submit">Change password</button></div></form></div></div>
         ` : html`<div class="card"><div class="row"><div class="settings-field"><h3>Local password</h3><span class="settings-description">Password changes are managed by your identity provider.</span></div></div></div>`}
         <div class="card"><div class="row"><div class="settings-field"><h3>Browser &amp; desktop sessions</h3><span class="settings-description">Revoke sessions you no longer recognize.</span></div></div>${settings.security.sessions.length ? settings.security.sessions.map((session) => this.renderSession(session)) : html`<div class="row"><span class="muted">No active sessions.</span></div>`}</div>
         ${settings.security.authoringSessions.length ? html`<div class="card"><div class="row"><div class="settings-field"><h3>CLI &amp; authoring sessions</h3><span class="settings-description">These sessions grant scoped access to authoring tools.</span></div></div>${settings.security.authoringSessions.map((session) => this.renderAuthoringSession(session))}</div>` : nothing}
@@ -301,7 +302,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                             <div class="permission-category">${category}</div>
                             ${capabilities.map((capability) => html`
                               <label class="permission-option">
-                                <input type="checkbox" value=${capability.value} .checked=${this.tokenCapabilities.includes(capability.value)} @change=${() => this.toggleTokenCapability(capability.value)}>
+                                <input aria-label=${capability.label} type="checkbox" value=${capability.value} .checked=${this.tokenCapabilities.includes(capability.value)} @change=${() => this.toggleTokenCapability(capability.value)}>
                                 <span class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></span>
                               </label>
                             `)}
@@ -407,12 +408,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
   private handleDatastarFetch = (event: Event): void => {
     if (!this.tokenCreatePending) return
-    const detail = (event as CustomEvent<{ type?: string, argsRaw?: { status?: string } }>).detail
-    if (detail?.type !== 'error' && detail?.type !== 'retries-failed') return
+    const failure = browserCommandFailure(event, 'Token creation')
+    if (!failure) return
     this.tokenCreatePending = false
-    this.error = detail.argsRaw?.status === '403'
-      ? 'Token creation failed because this page expired. Reload the page and try again.'
-      : 'Token creation failed. Your selections were kept; please try again.'
+    this.error = failure.message
   }
   private uploadAvatar = async (event: Event): Promise<void> => {
     const input = event.currentTarget as HTMLInputElement

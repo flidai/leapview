@@ -44,6 +44,42 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('mobile windowed tables expose horizontal scrolling and a visible swipe hint', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 560 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-windowed-table'))
+    const state = await page.evaluate(async () => {
+      const element = document.createElement('lv-windowed-table') as any
+      element.table = {
+        title: 'Customers',
+        columns: [{ key: 'id', label: 'ID', width: 300 }, { key: 'notes', label: 'Notes', width: 500 }],
+        totalRows: 1,
+        availableRows: 1,
+        blocks: { a: { start: 0, requestSeq: 0, resetVersion: 0, sort: {}, rows: [{ id: '1', notes: 'Ready' }] } },
+      }
+      document.body.append(element)
+      await element.updateComplete
+      const scrollport = element.shadowRoot.querySelector('.scrollport') as HTMLElement
+      const hint = element.shadowRoot.querySelector('.scroll-hint') as HTMLElement
+      return {
+        role: scrollport.getAttribute('role'),
+        label: scrollport.getAttribute('aria-label'),
+        tabIndex: scrollport.getAttribute('tabindex'),
+        hint: hint.textContent?.replace(/\s+/g, ' ').trim(),
+        hintDisplay: getComputedStyle(hint).display,
+        hintVisible: hint.getBoundingClientRect().height > 0,
+      }
+    })
+    expect(state).toEqual({
+      role: 'region', label: 'Scrollable Customers table', tabIndex: '0',
+      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block', hintVisible: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('windowed table loads requested blocks and rejects stale payloads', async () => {
   const page = await browser.newPage({ viewport: { width: 960, height: 560 } })
   try {

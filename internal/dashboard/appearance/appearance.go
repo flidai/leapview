@@ -1,13 +1,20 @@
 package appearance
 
 import (
+	"context"
 	"errors"
 	"fmt"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"strings"
+
+	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-var ErrInvalid = errors.New("invalid dashboard appearance")
+var (
+	ErrInvalid    = errors.New("invalid dashboard appearance")
+	ErrEmptyPatch = errors.New("dashboard appearance patch is empty")
+)
 
 const (
 	DefaultIcon  = "layout-dashboard"
@@ -42,6 +49,15 @@ type Record struct {
 	Key
 	Value
 	Revision int64
+}
+
+type Store interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]Record, error)
+	ApplyPatch(context.Context, Key, string, Patch) (Record, error)
+}
+
+func UpdateCommandBinding() uicommand.Binding {
+	return dashboardgen.GenUIActionUpdateDashboardAppearance()
 }
 
 func Default() Value { return Value{Icon: DefaultIcon, Color: DefaultColor} }

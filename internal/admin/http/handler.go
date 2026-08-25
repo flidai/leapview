@@ -259,7 +259,7 @@ func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Requ
 	if strings.TrimSpace(request.Command.Action) == "select" {
 		state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, request.Command.AccountID)
 		if err != nil {
-			nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+			h.patchServiceAccountError(w, r, request.Command.AccountID, err)
 			return
 		}
 		_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
@@ -279,15 +279,25 @@ func (h Handler) ServiceAccountCommand(w nethttp.ResponseWriter, r *nethttp.Requ
 	}
 	secret, err := adminsettings.ApplyServiceAccountCommandAudited(r.Context(), h.SettingsRepository, actorID, request.Command)
 	if err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		h.patchServiceAccountError(w, r, request.Command.AccountID, err)
 		return
 	}
 	state, err := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, request.Command.AccountID)
 	if err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
+		h.patchServiceAccountError(w, r, request.Command.AccountID, err)
 		return
 	}
 	state.CreatedSecret = secret
+	_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
+}
+
+func (h Handler) patchServiceAccountError(w nethttp.ResponseWriter, r *nethttp.Request, selectedID string, commandErr error) {
+	state, loadErr := adminsettings.LoadServiceAccounts(r.Context(), h.SettingsRepository, strings.TrimSpace(selectedID))
+	if loadErr != nil {
+		state = adminsettings.ServiceAccountsSignal{Items: []adminsettings.ServiceAccountSignal{}, Secrets: []adminsettings.ServiceAccountSecretSignal{}, SelectedID: strings.TrimSpace(selectedID)}
+	}
+	state.Error = commandErr.Error()
+	state.Loading = false
 	_ = pagestream.PatchResponse(w, r, map[string]any{"adminServiceAccounts": state})
 }
 
@@ -353,13 +363,21 @@ func (h Handler) AuditLogCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	command := adminsettings.NormalizeAuditLogCommand(request.Command)
 	state, err := adminsettings.LoadAuditLog(r.Context(), h.SettingsRepository, command.Filters, command.PageToken, command.Limit)
 	if err != nil {
-		nethttp.Error(w, err.Error(), nethttp.StatusBadRequest)
+		current := request.Current
+		current.Filters = command.Filters
+		h.patchAuditLogError(w, r, current, err)
 		return
 	}
 	if command.Action == "load_more" {
 		state.Items = append(append([]adminsettings.AuditEventSignal{}, request.Current.Items...), state.Items...)
 		state.LoadedCount = len(state.Items)
 	}
+	_ = pagestream.PatchResponse(w, r, map[string]any{"adminAuditLog": state})
+}
+
+func (h Handler) patchAuditLogError(w nethttp.ResponseWriter, r *nethttp.Request, state adminsettings.AuditLogSignal, commandErr error) {
+	state.Error = commandErr.Error()
+	state.Loading = false
 	_ = pagestream.PatchResponse(w, r, map[string]any{"adminAuditLog": state})
 }
 

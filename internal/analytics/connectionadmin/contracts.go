@@ -10,6 +10,8 @@ import (
 )
 
 type BindingScope = connectionbinding.BindingScope
+type BindingID = connectionbinding.BindingID
+type TargetID = connectionbinding.TargetID
 type BindingKey = connectionbinding.BindingKey
 type BindingHealthStatus = connectionbinding.BindingHealthStatus
 type BindingChangePlan = connectionbinding.BindingChangePlan
@@ -36,11 +38,13 @@ var (
 
 var ParseConnectionID = connectionbinding.ParseConnectionID
 
+const AuthenticationExternalBundle = connectionbinding.AuthenticationExternalBundle
+
 // Administration is the synchronous lifecycle surface consumed by the
 // project resource UI. It deliberately carries references, never credential
 // secret values.
 type Administration interface {
-	List(context.Context, string, BindingScope, string) ([]TargetBinding, error)
+	List(context.Context, string, BindingScope, TargetID) ([]TargetBinding, error)
 	Create(context.Context, string, TargetBindingInput) (TargetBinding, error)
 	PlanConfigurationChange(context.Context, string, BindingKey, TargetBindingConfiguration) (BindingChangePlan, error)
 	UpdateConfiguration(context.Context, UpdateConfigurationRequest) (TargetBinding, error)

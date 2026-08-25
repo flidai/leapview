@@ -192,6 +192,7 @@ func (s *Service) authorize(ctx context.Context, actorID string, projectID graph
 	err := s.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: projectID, DashboardID: lifecycle.ID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel, Action: action,
+		RepositoryScoped: true,
 	})
 	if err == nil {
 		return true, nil

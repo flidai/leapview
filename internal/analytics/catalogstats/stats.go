@@ -2,7 +2,12 @@
 // an analytical runtime may expose to catalog presentation surfaces.
 package catalogstats
 
-import "context"
+import (
+	"context"
+	"time"
+
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+)
 
 // Table describes one physical DuckLake table at the runtime's serving
 // snapshot. It deliberately excludes file paths and storage credentials.
@@ -14,6 +19,8 @@ type Table struct {
 	FileCount   int64
 	SizeBytes   int64
 	SnapshotID  int64
+	SnapshotAt  time.Time
+	Columns     []semanticmodel.ColumnSchema
 }
 
 // Reader is implemented by serving runtimes that can inspect their own

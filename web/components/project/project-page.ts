@@ -23,9 +23,12 @@ import {
   type IconNode,
 } from 'lucide'
 import type {
+  AssetVersionDrawerSignal,
   ConnectionAdministrationSignal,
   ConnectionsPageSignal,
   DefinitionFactSignal,
+  ModelFieldDrawerSignal,
+  RefreshRunDrawerSignal,
   RecordTableSignal,
   ResourceAssetPageSignal,
   ResourceAssetSummarySignal,
@@ -35,6 +38,7 @@ import type {
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
+import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
@@ -43,7 +47,9 @@ import '../shared/record-table'
 import '../shared/code-block'
 import '../shared/config-viewer'
 import '../shared/drawer'
+import { updateURLSearchParameter } from '../shared/url-search-state'
 import './connection-administration'
+import './dashboard-appearance-editor'
 import './pipelines-page'
 
 const emptyConnectionAdministration: ConnectionAdministrationSignal = {
@@ -52,6 +58,63 @@ const emptyConnectionAdministration: ConnectionAdministrationSignal = {
     host: '', logicalConnection: '', objectScope: '', options: '', port: '', secretKey: '', secretPath: '', sourceIdentity: '', surface: '', tlsMode: '',
   },
   status: { error: '', loading: false, message: '' },
+}
+
+const emptyModelFieldDrawer: ModelFieldDrawerSignal = { fieldKey: '', open: false }
+const emptyRefreshRunDrawer: RefreshRunDrawerSignal = { open: false, runId: '' }
+const emptyAssetVersionDrawer: AssetVersionDrawerSignal = { open: false, versionId: '' }
+
+type ModelFieldDrawerRow = Record<string, unknown> & {
+  fieldKey?: string
+  label?: string
+  logicalType?: string
+  physicalType?: string
+  nullable?: string
+  contractType?: string
+  metadataStatus?: string
+  metadataProvenance?: string
+  entities?: string
+  grain?: string
+  description?: string
+  duckLakeSnapshot?: string
+}
+
+type RefreshRunDrawerRow = Record<string, unknown> & {
+  runId?: string
+  statusLabel?: string
+  startedAt?: string
+  finishedAt?: string
+  duration?: string
+  trigger?: string
+  triggered_by?: string
+  modelId?: string
+  environment?: string
+  servingStateId?: string
+  parentRunId?: string
+  targetGeneration?: number
+  createdAt?: string
+  updatedAt?: string
+  error?: string
+}
+
+type AssetVersionDrawerRow = Record<string, unknown> & {
+  versionId?: string
+  version?: string
+  statusLabel?: string
+  published?: string
+  published_by?: string
+  contentHash?: string
+  sourceFile?: string
+  environment?: string
+  snapshotId?: string
+  servingStateId?: string
+  servingDigest?: string
+  createdAt?: string
+  activatedAt?: string
+  compiledConfiguration?: string
+  previousVersion?: string
+  changes?: string
+  changesSummary?: string
 }
 
 class LeapViewProjectPage extends DatastarLit(LitElement) {
@@ -177,12 +240,55 @@ class LeapViewConnectionsPage extends DatastarLit(LitElement) {
 }
 
 class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
+  private modelFieldDrawerPageKey = ''
+  private pushedModelFieldDrawerEntry = false
+  private refreshRunDrawerPageKey = ''
+  private pushedRefreshRunDrawerEntry = false
+  private assetVersionDrawerPageKey = ''
+  private pushedAssetVersionDrawerEntry = false
+
   static get styles() {
     return [projectStyles]
   }
 
+  override connectedCallback(): void {
+    super.connectedCallback()
+    window.addEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+    window.addEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
+    window.addEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
+  }
+
+  override disconnectedCallback(): void {
+    window.removeEventListener('popstate', this.syncModelFieldDrawerFromLocation)
+    window.removeEventListener('popstate', this.syncRefreshRunDrawerFromLocation)
+    window.removeEventListener('popstate', this.syncAssetVersionDrawerFromLocation)
+    super.disconnectedCallback()
+  }
+
   updated(): void {
     checkSignalContract('project asset page', this.page, { title: 'required', breadcrumbs: 'required', tabs: 'required' })
+    const page = this.page
+    const drawerPageKey = page?.asset.type === 'model_table' && page.activeSection === 'details'
+      ? page.asset.detailHref
+      : ''
+    if (drawerPageKey && drawerPageKey !== this.modelFieldDrawerPageKey) {
+      this.modelFieldDrawerPageKey = drawerPageKey
+      this.syncModelFieldDrawerFromLocation()
+    }
+    const refreshDrawerPageKey = page?.activeSection === 'refreshes' && page.refresh?.runsTable
+      ? `${page.asset.detailHref}/refreshes`
+      : ''
+    if (refreshDrawerPageKey && refreshDrawerPageKey !== this.refreshRunDrawerPageKey) {
+      this.refreshRunDrawerPageKey = refreshDrawerPageKey
+      this.syncRefreshRunDrawerFromLocation()
+    }
+    const versionDrawerPageKey = page?.activeSection === 'versions' && page.versions?.table
+      ? `${page.asset.detailHref}/versions`
+      : ''
+    if (versionDrawerPageKey && versionDrawerPageKey !== this.assetVersionDrawerPageKey) {
+      this.assetVersionDrawerPageKey = versionDrawerPageKey
+      this.syncAssetVersionDrawerFromLocation()
+    }
   }
 
   get page(): ResourceAssetPageSignal | null {
@@ -193,12 +299,300 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return this.signal<ConnectionAdministrationSignal>('connectionAdmin', emptyConnectionAdministration)
   }
 
+  get modelFieldDrawer(): ModelFieldDrawerSignal {
+    return this.signal<ModelFieldDrawerSignal>('modelFieldDrawer', emptyModelFieldDrawer)
+  }
+
+  get refreshRunDrawer(): RefreshRunDrawerSignal {
+    return this.signal<RefreshRunDrawerSignal>('refreshRunDrawer', emptyRefreshRunDrawer)
+  }
+
+  get assetVersionDrawer(): AssetVersionDrawerSignal {
+    return this.signal<AssetVersionDrawerSignal>('assetVersionDrawer', emptyAssetVersionDrawer)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
     if (page.drawerParent) return this.renderDrawerPage(page)
-    if (page.asset.type === 'connection') return this.renderConnectionPage(page)
-    return this.renderAssetPage(page)
+    if (page.asset.type === 'connection') return html`
+      ${this.renderConnectionPage(page)}
+      ${this.renderAssetVersionDrawer(page)}
+    `
+    return html`
+      ${this.renderAssetPage(page)}
+      ${this.renderModelFieldDrawer(page)}
+      ${this.renderRefreshRunDrawer(page)}
+      ${this.renderAssetVersionDrawer(page)}
+    `
+  }
+
+  private renderAssetVersionDrawer(page: ResourceAssetPageSignal) {
+    const version = this.selectedAssetVersion(page)
+    if (!version) return nothing
+    const versionLabel = fieldValue(version, 'version')
+    const changes = fieldValue(version, 'changes', '')
+    const changesSummary = fieldValue(version, 'changesSummary', '')
+    const configuration = fieldValue(version, 'compiledConfiguration', '')
+    return html`
+      <lv-drawer
+        open
+        size="wide"
+        label=${`Version ${versionLabel} details`}
+        .modal=${false}
+        @lv-drawer-close=${this.closeAssetVersionDrawer}
+      >
+        <div slot="title" class="source-drawer-title version-drawer-title">
+          <span aria-hidden="true">${lucideIcon(BookOpen)}</span>
+          <h1>Version ${versionLabel}</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle version-drawer-subtitle">${[fieldValue(version, 'statusLabel'), fieldValue(version, 'published')].filter((value) => value && value !== '-').join(' · ')}</p>
+        <div class="source-drawer-body version-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Status', fieldValue(version, 'statusLabel')),
+            fieldFact('Published', fieldValue(version, 'published')),
+            fieldFact('Published by', fieldValue(version, 'published_by')),
+            fieldFact('Created', fieldValue(version, 'createdAt')),
+            fieldFact('Activated', fieldValue(version, 'activatedAt')),
+          ], false)}
+          ${renderFacts('Provenance', [
+            fieldFact('Content hash', fieldValue(version, 'contentHash'), true, true),
+            fieldFact('Source file', fieldValue(version, 'sourceFile'), true, true),
+            fieldFact('Environment', fieldValue(version, 'environment')),
+            fieldFact('Snapshot', fieldValue(version, 'snapshotId'), false, true),
+            fieldFact('Serving generation', fieldValue(version, 'servingStateId'), true, true),
+            fieldFact('Serving digest', fieldValue(version, 'servingDigest'), true, true),
+          ], false)}
+          <section class="detail-section version-changes" aria-label="Changes from previous version">
+            <h2>Changes from previous version</h2>
+            ${changes
+              ? html`<pre><code>${changes}</code></pre>`
+              : html`<div class="empty">${changesSummary || 'No compiled configuration changes.'}</div>`}
+          </section>
+          <section class="detail-section" aria-label="Compiled configuration">
+            <h2>Compiled configuration</h2>
+            ${configuration
+              ? html`<lv-code-block language="json" .code=${configuration}></lv-code-block>`
+              : html`<div class="empty">No compiled configuration was recorded.</div>`}
+          </section>
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedAssetVersion(page: ResourceAssetPageSignal): AssetVersionDrawerRow | null {
+    if (page.activeSection !== 'versions') return null
+    const drawer = this.assetVersionDrawer
+    const versionId = drawer.versionId.trim()
+    if (!drawer.open || !versionId) return null
+    for (const row of page.versions?.table?.rows ?? []) {
+      const candidate = row as AssetVersionDrawerRow
+      if (fieldValue(candidate, 'versionId', '') === versionId) return candidate
+    }
+    return null
+  }
+
+  private renderRefreshRunDrawer(page: ResourceAssetPageSignal) {
+    const run = this.selectedRefreshRun(page)
+    if (!run) return nothing
+    const runId = fieldValue(run, 'runId')
+    const status = fieldValue(run, 'statusLabel')
+    const started = fieldValue(run, 'startedAt')
+    const error = fieldValue(run, 'error', '')
+    return html`
+      <lv-drawer
+        open
+        label=${`${runId} refresh details`}
+        .modal=${false}
+        @lv-drawer-close=${this.closeRefreshRunDrawer}
+      >
+        <div slot="title" class="source-drawer-title refresh-run-drawer-title">
+          <span aria-hidden="true">${lucideIcon(RefreshCw)}</span>
+          <h1>Refresh run</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle refresh-run-drawer-subtitle">${[status, started].filter((value) => value && value !== '-').join(' · ')}</p>
+        <div class="source-drawer-body refresh-run-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Status', status),
+            fieldFact('Started', started),
+            fieldFact('Finished', fieldValue(run, 'finishedAt')),
+            fieldFact('Duration', fieldValue(run, 'duration')),
+          ], false)}
+          ${renderFacts('Context', [
+            fieldFact('Trigger', fieldValue(run, 'trigger')),
+            fieldFact('Initiated by', fieldValue(run, 'triggered_by')),
+            fieldFact('Semantic model', fieldValue(run, 'modelId'), false, true),
+            fieldFact('Environment', fieldValue(run, 'environment')),
+          ], false)}
+          ${renderFacts('Execution', [
+            fieldFact('Run ID', runId, true, true),
+            fieldFact('Serving generation', fieldValue(run, 'servingStateId'), true, true),
+            fieldFact('Parent run', fieldValue(run, 'parentRunId'), true, true),
+            fieldFact('Target revision', fieldValue(run, 'targetGeneration')),
+            fieldFact('Created', fieldValue(run, 'createdAt')),
+            fieldFact('Updated', fieldValue(run, 'updatedAt')),
+          ], false)}
+          ${error ? renderFacts('Error', [fieldFact('Message', error, true)], false) : nothing}
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedRefreshRun(page: ResourceAssetPageSignal): RefreshRunDrawerRow | null {
+    if (page.activeSection !== 'refreshes') return null
+    const drawer = this.refreshRunDrawer
+    const runId = drawer.runId.trim()
+    if (!drawer.open || !runId) return null
+    for (const row of page.refresh?.runsTable?.rows ?? []) {
+      const candidate = row as RefreshRunDrawerRow
+      if (fieldValue(candidate, 'runId', '') === runId) return candidate
+    }
+    return null
+  }
+
+  private renderModelFieldDrawer(page: ResourceAssetPageSignal) {
+    const field = this.selectedModelField(page)
+    if (!field) return nothing
+    const name = fieldValue(field, 'fieldKey')
+    const label = fieldValue(field, 'label', name)
+    return html`
+      <lv-drawer
+        open
+        label=${`${name} field details`}
+        .modal=${false}
+        @lv-drawer-close=${this.closeModelFieldDrawer}
+      >
+        <div slot="title" class="source-drawer-title field-drawer-title">
+          ${assetTypeGlyph('field', 'inline')}
+          <h1>${name}</h1>
+        </div>
+        <p slot="subtitle" class="source-drawer-subtitle field-drawer-subtitle">${label}</p>
+        <div class="source-drawer-body field-drawer-body">
+          ${renderFacts('Overview', [
+            fieldFact('Label', label),
+            fieldFact('Description', fieldValue(field, 'description'), true),
+          ], false)}
+          ${renderFacts('Schema', [
+            fieldFact('Logical type', fieldValue(field, 'logicalType')),
+            fieldFact('Physical type', fieldValue(field, 'physicalType'), false, true),
+            fieldFact('Nullable', fieldValue(field, 'nullable')),
+            fieldFact('DuckLake snapshot', fieldValue(field, 'duckLakeSnapshot'), false, true),
+          ], false)}
+          ${renderFacts('Contract', [
+            fieldFact('Expected type', fieldValue(field, 'contractType'), false, true),
+            fieldFact('Status', fieldValue(field, 'metadataStatus')),
+            fieldFact('Provenance', fieldValue(field, 'metadataProvenance')),
+          ], false)}
+          ${renderFacts('Semantics', [
+            fieldFact('Entities', fieldValue(field, 'entities'), false, true),
+            fieldFact('Grain', fieldValue(field, 'grain')),
+          ], false)}
+        </div>
+      </lv-drawer>
+    `
+  }
+
+  private selectedModelField(page: ResourceAssetPageSignal): ModelFieldDrawerRow | null {
+    if (page.asset.type !== 'model_table' || page.activeSection !== 'details') return null
+    const drawer = this.modelFieldDrawer
+    const fieldKey = drawer.fieldKey.trim()
+    if (!drawer.open || !fieldKey) return null
+    for (const section of page.details?.sections ?? []) {
+      for (const row of section.table?.rows ?? []) {
+        const candidate = row as ModelFieldDrawerRow
+        if (fieldValue(candidate, 'fieldKey', '') === fieldKey) return candidate
+      }
+    }
+    return null
+  }
+
+  private handleRecordTableAction = (event: CustomEvent<{ action?: string, row?: ModelFieldDrawerRow }>): void => {
+    if (event.detail?.action === 'open-model-field') {
+      const fieldKey = fieldValue(event.detail.row ?? {}, 'fieldKey', '')
+      if (!fieldKey) return
+      const wasOpen = this.modelFieldDrawer.open
+      this.setModelFieldDrawer({ fieldKey, open: true })
+      updateURLSearchParameter('field', fieldKey, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedModelFieldDrawerEntry = true
+      return
+    }
+    if (event.detail?.action === 'open-refresh-run') {
+      const runId = fieldValue(event.detail.row ?? {}, 'runId', '')
+      if (!runId) return
+      const wasOpen = this.refreshRunDrawer.open
+      this.setRefreshRunDrawer({ open: true, runId })
+      updateURLSearchParameter('refresh', runId, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedRefreshRunDrawerEntry = true
+      return
+    }
+    if (event.detail?.action === 'open-asset-version') {
+      const versionId = fieldValue(event.detail.row ?? {}, 'versionId', '')
+      if (!versionId) return
+      const wasOpen = this.assetVersionDrawer.open
+      this.setAssetVersionDrawer({ open: true, versionId })
+      updateURLSearchParameter('version', versionId, wasOpen ? 'replace' : 'push')
+      if (!wasOpen) this.pushedAssetVersionDrawerEntry = true
+    }
+  }
+
+  private closeModelFieldDrawer = (): void => {
+    this.setModelFieldDrawer(emptyModelFieldDrawer)
+    if (this.pushedModelFieldDrawerEntry) {
+      this.pushedModelFieldDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('field', '', 'replace')
+  }
+
+  private syncModelFieldDrawerFromLocation = (): void => {
+    this.pushedModelFieldDrawerEntry = false
+    const fieldKey = new URLSearchParams(window.location.search).get('field')?.trim() ?? ''
+    this.setModelFieldDrawer({ fieldKey, open: Boolean(fieldKey) })
+  }
+
+  private setModelFieldDrawer(drawer: ModelFieldDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ modelFieldDrawer: drawer }))
+  }
+
+  private closeRefreshRunDrawer = (): void => {
+    this.setRefreshRunDrawer(emptyRefreshRunDrawer)
+    if (this.pushedRefreshRunDrawerEntry) {
+      this.pushedRefreshRunDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('refresh', '', 'replace')
+  }
+
+  private syncRefreshRunDrawerFromLocation = (): void => {
+    this.pushedRefreshRunDrawerEntry = false
+    const runId = new URLSearchParams(window.location.search).get('refresh')?.trim() ?? ''
+    this.setRefreshRunDrawer({ open: Boolean(runId), runId })
+  }
+
+  private setRefreshRunDrawer(drawer: RefreshRunDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ refreshRunDrawer: drawer }))
+  }
+
+  private closeAssetVersionDrawer = (): void => {
+    this.setAssetVersionDrawer(emptyAssetVersionDrawer)
+    if (this.pushedAssetVersionDrawerEntry) {
+      this.pushedAssetVersionDrawerEntry = false
+      window.history.back()
+      return
+    }
+    updateURLSearchParameter('version', '', 'replace')
+  }
+
+  private syncAssetVersionDrawerFromLocation = (): void => {
+    this.pushedAssetVersionDrawerEntry = false
+    const versionId = new URLSearchParams(window.location.search).get('version')?.trim() ?? ''
+    this.setAssetVersionDrawer({ open: Boolean(versionId), versionId })
+  }
+
+  private setAssetVersionDrawer(drawer: AssetVersionDrawerSignal): void {
+    void loadDatastarRuntime().then((runtime) => runtime.mergePatch({ assetVersionDrawer: drawer }))
   }
 
   private renderDrawerPage(page: ResourceAssetPageSignal) {
@@ -246,7 +640,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       ></lv-connection-administration>
     ` : nothing
     return html`
-      <section class="asset-page connection-asset-page" aria-label="Connection detail">
+      <section class="asset-page connection-asset-page" aria-label="Connection detail" @lv-record-table-action=${this.handleRecordTableAction}>
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>
@@ -277,7 +671,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderAssetPage(page: ResourceAssetPageSignal) {
     return html`
-      <section class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`} aria-label="Project asset detail">
+      <section
+        class=${`asset-page${page.activeSection === 'data' ? ' data-asset-page' : ''}`}
+        aria-label="Project asset detail"
+        @lv-record-table-action=${this.handleRecordTableAction}
+      >
         <header class="breadcrumb-header">
           <nav aria-label="Breadcrumb">
             <ol>
@@ -321,6 +719,8 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         ? this.renderDefinition(page)
       : page.activeSection === 'refreshes'
         ? this.renderRefreshes(page)
+      : page.activeSection === 'refresh'
+        ? this.renderRefreshes(page)
         : page.activeSection === 'versions'
           ? this.renderVersions(page)
         : this.renderDetails(page)
@@ -335,7 +735,11 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
           title=${action.label}
           aria-label=${action.label}
           ?disabled=${Boolean(action.disabled || page.refresh?.running)}
-          @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', { bubbles: true, composed: true }))}
+          @click=${() => this.dispatchEvent(new CustomEvent('lv-run-refresh-pipeline', {
+            bubbles: true,
+            composed: true,
+            detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
+          }))}
         >
           ${page.refresh?.running ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
         </button>
@@ -361,6 +765,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
       <section class="details" id="details" aria-label="Asset details">
         ${page.details?.semanticModelGraph ? renderSemanticModelGraph(page.details.semanticModelGraph, page) : nothing}
         <div class="details-content">
+		  ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
           ${renderFacts('Overview', page.details?.overview ?? [], true)}
           ${(page.details?.sections ?? []).map(renderDetailSection)}
         </div>
@@ -407,8 +812,10 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderRefreshes(page: ResourceAssetPageSignal) {
     return html`
-      <section class="details" id="refreshes" aria-label="Refresh runs">
-        ${renderRecordTableSection('Refreshes', page.refresh?.runsTable)}
+      <section class="details" id="refreshes" aria-label="Refreshes">
+        <div class="details-content">
+          ${page.refresh?.runsTable ? renderRecordTableSection('Refresh history', page.refresh.runsTable) : nothing}
+        </div>
       </section>
     `
   }
@@ -430,6 +837,7 @@ function renderAssetToolbar(query: string, activeType: string, tabs: ResourceTab
           <input
             type="search"
             name="q"
+            aria-label="Search project assets"
             .value=${query}
             placeholder=${placeholder}
             autocomplete="off"
@@ -513,7 +921,6 @@ function renderTabs(tabs: ResourceTabSignal[], label = 'Asset sections') {
       ${tabs.map((tab) => html`
         <a class=${tab.active ? 'active' : ''} href=${tab.href} aria-current=${tab.active ? 'page' : nothing}>
           <span>${tab.label}</span>
-          ${tab.count ? html`<span class="count">${tab.count}</span>` : nothing}
         </a>
       `)}
     </nav>
@@ -560,6 +967,16 @@ function renderFacts(title: string, facts: DefinitionFactSignal[], overview: boo
         : html`<div class="empty">No details are available.</div>`}
     </section>
   `
+}
+
+function fieldValue(field: Record<string, unknown>, key: string, fallback = '-'): string {
+  const value = field[key]
+  if (value == null || String(value).trim() === '') return fallback
+  return String(value)
+}
+
+function fieldFact(label: string, value: string, wide = false, code = false): DefinitionFactSignal {
+  return { label, value, ...(wide ? { wide: true } : {}), ...(code ? { code: true } : {}) }
 }
 
 function renderRecordTableSection(title: string, table?: RecordTableSignal) {
@@ -1210,6 +1627,23 @@ const projectStyles = css`
     align-content: start;
   }
 
+  .version-drawer-body {
+    gap: var(--base-size-20);
+  }
+
+  .version-changes pre {
+    max-height: 24rem;
+    margin: 0;
+    overflow: auto;
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-panel-muted);
+    padding: var(--base-size-12);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-code-block);
+    white-space: pre;
+  }
+
   .source-drawer-section {
     min-width: 0;
     padding-top: var(--base-size-16);
@@ -1310,6 +1744,37 @@ const projectStyles = css`
   .facts .wide p,
   .facts .wide code {
     white-space: pre-wrap;
+  }
+
+  .source-drawer-body .facts,
+  .source-drawer-body .facts.overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--base-size-12);
+  }
+
+  .source-drawer-body .facts > div {
+    grid-template-columns: minmax(7rem, .42fr) minmax(0, 1fr);
+    align-items: start;
+    gap: var(--base-size-16);
+  }
+
+  .source-drawer-body .facts .wide {
+    grid-column: auto;
+  }
+
+  .source-drawer-body .facts span:first-child {
+    font: var(--lv-type-body-compact);
+    text-transform: none;
+  }
+
+  .source-drawer-body .facts p,
+  .source-drawer-body .facts code,
+  .source-drawer-body .facts .wide p,
+  .source-drawer-body .facts .wide code {
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+    font: var(--lv-type-body-compact);
   }
 
   @media (max-width: 720px) {

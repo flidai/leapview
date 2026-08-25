@@ -985,9 +985,6 @@
           "type": "string"
         }
       },
-      "required": [
-        "datatype"
-      ],
       "type": "object",
       "unevaluatedProperties": false
     },
@@ -1042,7 +1039,6 @@
       "required": [
         "definition",
         "entities",
-        "fields",
         "grain"
       ],
       "type": "object",

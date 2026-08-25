@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -25,18 +26,24 @@ func ProjectAssetPageWithRefresh(catalog catalog.Catalog, project projectview.De
 }
 
 func ProjectAssetPageWithRefreshAndVersions(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
-	return ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, chromeOptions...)
+	return ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog, project, asset, assets, edges, activeSection, "", roleLabel, refresh, versions, "", chromeOptions...)
 }
 
-func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, chromeOptions ...webpage.Provider) g.Node {
+func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, environment, roleLabel string, refresh AssetRefreshState, versions AssetVersionsState, csrfToken string, chromeOptions ...webpage.Provider) g.Node {
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
+	attachDashboardAppearance(&page, catalog, asset)
 	page.Environment = uisignals.Optional(environment)
 	area := projectAreaForAssetType(asset.Type)
 	extras := projectDocumentExtras{}
 	attrs := []g.Node{
 		g.Attr("slot", "page"),
+	}
+	if activeSection == "details" && asset.Type == string(projectview.AssetTypeDashboard) {
+		extras.CSRFToken = csrfToken
+		commandPath := "/dashboards/" + url.PathEscape(asset.ID) + "/appearance"
+		attrs = append(attrs, g.Attr("data-on:lv-dashboard-appearance-change", "$dashboardAppearanceCommand = evt.detail; "+uiactions.CommandPost(dashboardappearance.UpdateCommandBinding(), commandPath, "dashboardAppearanceCommand")))
 	}
 	if activeSection == "data" && assetDataInspectable(asset.Type) {
 		extras.CSRFToken = refresh.CSRFToken
@@ -44,10 +51,11 @@ func ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog catalog.Catalo
 		attrs = append(attrs, g.Attr("data-on:lv-data-explorer-command", "$dataExplorerCommand = evt.detail; "+uiactions.EventPost(commandPath)))
 	}
 	if assetRefreshable(asset.Type) {
-		refreshPath := "/pipelines/" + url.PathEscape(asset.ID) + "/refresh"
 		extras.CSRFToken = refresh.CSRFToken
+		commandPath := "/pipelines/command?surface=asset&asset=" + url.QueryEscape(asset.ID) + "&section=" + url.QueryEscape(activeSection)
+		pipelineCommand := "$pipelineCommand = evt.detail; $pipelineCommandStatus = {loading: true, error: '', message: ''}; " + uiactions.CommandPost(refresh.RunCommand, commandPath, "pipelineCommand")
 		attrs = append(attrs,
-			g.Attr("data-on:lv-run-refresh-pipeline", uiactions.CommandPost(refresh.RunCommand, refreshPath)),
+			g.Attr("data-on:lv-run-refresh-pipeline", pipelineCommand),
 		)
 		if activeSection == "versions" {
 			return projectAssetRouteDocument(asset, catalog, area, roleLabel, page, uisignals.RouteKindData, g.El("lv-project-asset-page", attrs...), extras, activeSection, chromeOptions)
@@ -65,8 +73,30 @@ func ProjectAssetBootstrapSignalsForEnvironment(catalog catalog.Catalog, project
 	activeSection = normalizeProjectAssetSection(activeSection)
 	lineage := assetLineage(project.ID, asset, assets, edges)
 	page := projectAssetPageSignalWithRefreshAndVersions(project, asset, assets, edges, activeSection, lineage, refresh, versions)
+	attachDashboardAppearance(&page, catalog, asset)
 	page.Environment = uisignals.Optional(environment)
-	return projectRouteBootstrapSignals(catalog, projectAreaForAssetType(asset.Type), roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	patch := projectRouteBootstrapSignals(catalog, projectAreaForAssetType(asset.Type), roleLabel, page, uisignals.RouteKindData, nil, chromeOptions)
+	if assetRefreshable(asset.Type) {
+		patch["pipelineCommand"] = uisignals.PipelineCommandSignal{}
+		patch["pipelineCommandStatus"] = uisignals.PipelineCommandStatusSignal{}
+	}
+	return patch
+}
+
+func attachDashboardAppearance(page *uisignals.ResourceAssetPageSignal, projectCatalog catalog.Catalog, asset projectview.DevelopAssetView) {
+	if page == nil || asset.Type != string(projectview.AssetTypeDashboard) {
+		return
+	}
+	appearance, revision := dashboardappearance.Default(), int64(0)
+	for _, dashboard := range projectCatalog.Dashboards {
+		if dashboard.ID != asset.ID {
+			continue
+		}
+		appearance = dashboardappearance.Resolve(dashboard.Appearance)
+		revision = dashboard.AppearanceRevision
+		break
+	}
+	page.DashboardAppearance = &uisignals.DashboardAppearanceSignal{Icon: appearance.Icon, Color: appearance.Color, Revision: revision}
 }
 
 func ConnectionAssetBootstrapSignals(catalog catalog.Catalog, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, edges []projectview.DevelopEdgeView, activeSection, roleLabel string, versions AssetVersionsState) map[string]any {
@@ -289,14 +319,18 @@ func ValidProjectAssetSection(assetType, section string) bool {
 	case "data":
 		return assetDataInspectable(assetType)
 	case "refreshes":
-		return assetRefreshable(assetType)
+		return assetHasRefreshHistory(assetType)
 	default:
 		return false
 	}
 }
 
 type AssetRefreshState struct {
-	CSRFToken        string
+	CSRFToken string
+	// CanRun is the caller's RESOURCE_USE decision for this pipeline. It is
+	// separate from Unavailable so a read-only caller gets a disabled action
+	// without being told that refresh infrastructure is broken.
+	CanRun           bool
 	Unavailable      bool
 	RunCommand       uicommand.Binding
 	CancelCommand    uicommand.Binding
@@ -339,12 +373,15 @@ type AssetVersionsState struct {
 
 type AssetVersionState struct {
 	ServingStateID string
+	Environment    string
 	Status         string
 	Digest         string
 	CreatedBy      string
 	CreatedAt      string
 	ActivatedAt    string
+	SnapshotID     string
 	SourceFile     string
+	PayloadJSON    string
 	ContentHash    string
 }
 

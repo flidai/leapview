@@ -56,7 +56,9 @@ type Operations interface {
 // Command constructs the offline Admin command tree.
 func Command(ctx context.Context, operations Operations) *cobra.Command {
 	values := Options{}
-	parent := &cobra.Command{Use: "admin", Short: "Administrative utilities"}
+	parent := adminGroupCommand("admin", "Administrative utilities")
+	parent.SilenceErrors = true
+	parent.SilenceUsage = true
 
 	initializeFormat := "json"
 	acknowledgeCredentials := false
@@ -77,7 +79,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	initialize.Flags().StringVar(&initializeFormat, "format", "json", "output format (json)")
 	initialize.Flags().BoolVar(&acknowledgeCredentials, "acknowledge-credentials", false, "remove the recoverable initialization credential bundle after it has been stored safely")
 
-	storage := &cobra.Command{Use: "storage", Short: "Maintain analytical storage"}
+	storage := adminGroupCommand("storage", "Maintain analytical storage")
 	cleanup := operationCommand(operations, "cleanup", "Reconcile serving-state snapshots and clean DuckLake storage", func(command *cobra.Command) error {
 		return operations.StorageCleanup(ctx, adminoffline.StorageCleanupRequest{Apply: values.Apply}, command.OutOrStdout())
 	})
@@ -264,11 +266,27 @@ func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Comm
 		},
 	}
 	qualificationBootstrap.Flags().BoolVar(&qualificationApply, "apply", false, "run conformance and persist the isolated qualification admission")
-	pool := &cobra.Command{Use: "pool", Short: "Manage the delivery physical-pool admission"}
+	pool := adminGroupCommand("pool", "Manage the delivery physical-pool admission")
 	pool.AddCommand(bootstrap, qualificationBootstrap)
-	delivery := &cobra.Command{Use: "delivery", Short: "Manage plan-driven delivery state"}
+	delivery := adminGroupCommand("delivery", "Manage plan-driven delivery state")
 	delivery.AddCommand(pool)
 	return delivery
+}
+
+func adminGroupCommand(use, short string) *cobra.Command {
+	return &cobra.Command{
+		Use:   use,
+		Short: short,
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			return command.Help()
+		},
+		Annotations: map[string]string{
+			"leapview.dev/effect":       "read",
+			"leapview.dev/confirmation": "never",
+			"leapview.dev/help-group":   "true",
+		},
+	}
 }
 
 func operationCommand(operations Operations, use, short string, run func(*cobra.Command) error) *cobra.Command {

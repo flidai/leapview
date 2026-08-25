@@ -881,3 +881,42 @@ func TestReloadNoChangeAndCloseAreIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestPrepareActiveServingStateReusesRuntimeButStillRunsActivation(t *testing.T) {
+	repo := &lifecycleRepo{state: servingstate.State{ID: "generation_1", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated, Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}, artifact: servingstate.Artifact{ID: "artifact_1", ServingStateID: "generation_1", Digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}
+	factory := &lifecycleFactory{}
+	registry := NewRegistryWithFactory(RegistryOptions{Repo: repo, ProjectID: "project_demo", Environment: "prod", Factory: factory, Authorization: &lifecycleAuth{}})
+	defer registry.Close()
+
+	first, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.ActivatePrepared(first, func() error { return nil }); err != nil {
+		t.Fatal(err)
+	}
+	activeRuntime := factory.last()
+
+	repeated, err := registry.PrepareServingState(t.Context(), "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(factory.runtimes) != 1 {
+		t.Fatalf("repeated preparation built %d runtimes, want 1", len(factory.runtimes))
+	}
+	activationCalls := 0
+	if err := registry.ActivatePrepared(repeated, func() error {
+		activationCalls++
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if activationCalls != 1 {
+		t.Fatalf("metadata activation calls = %d, want 1", activationCalls)
+	}
+	select {
+	case <-activeRuntime.closed:
+		t.Fatal("repeated activation closed the active runtime")
+	default:
+	}
+}

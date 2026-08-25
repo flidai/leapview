@@ -263,7 +263,7 @@ func AdminPage(active string, data AdminData, providers ...webpage.Provider) g.N
 	}
 	if active == "principals" || active == "groups" {
 		adminAttrs = append(adminAttrs,
-			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.QueryPost("/admin/"+active+"/search", "entityListQuery", "entityListFilter")),
+			g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Get("/admin/"+active+"/search", "entityListQuery", "entityListFilter")),
 		)
 	}
 	return webpage.Render(layout, webpage.Spec{

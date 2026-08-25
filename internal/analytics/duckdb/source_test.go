@@ -328,8 +328,22 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	}
 	planner, ok := second.Planner("semantic-model:operations")
 	require.True(t, ok)
-	require.True(t, planner.CompiledModel().MatchesModel(authoredSecondModel), "snapshot discovery changed authored planner fingerprint")
+	require.False(t, planner.CompiledModel().MatchesModel(authoredSecondModel), "snapshot planner retained the unresolved authored field contract")
+	require.True(t, planner.CompiledModel().MatchesModel(secondModel), "snapshot planner did not compile the resolved DuckLake field contract")
 	require.Zero(t, resolver.calls.Load(), "snapshot activation reacquired external source")
+
+	contractModel := newModel()
+	configureSnapshotSource(contractModel)
+	contractTable := contractModel.Tables["operations_customers"]
+	contractField := contractTable.Dimensions["customer_id"]
+	contractField.Datatype = semanticmodel.DataTypeInteger
+	contractTable.Dimensions["customer_id"] = contractField
+	contractModel.Tables["operations_customers"] = contractTable
+	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
+		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": contractModel}, Database: environment,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission,
+	})
+	require.ErrorContains(t, err, `field "customer_id" datatype "Integer" is incompatible with discovered physical type "VARCHAR"`)
 
 	badModel := newModel()
 	badTable := badModel.Tables["operations_customers"]
@@ -347,8 +361,8 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "snapshot schema discovery")
-	// Discovery runs after planner/view construction. A failure must close the
-	// partially built ProjectRuntime, including its generation cache scope.
+	// A discovery failure must close the partially built ProjectRuntime,
+	// including its generation cache scope.
 	reopened, reopenErr := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure"})
 	require.NoError(t, reopenErr, "post-construction discovery failure leaked cache scope")
 	reopened.Close()

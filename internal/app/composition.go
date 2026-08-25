@@ -919,13 +919,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	// physical-pool admission is absent.
 	var canonicalDelivery *deploymentmodule.CanonicalDeliveryAdapter
 	var canonicalDeliveryMutations *deploymentmodule.CanonicalDeliveryMutations
-	candidatePreparationAdmission := deploymentmodule.CandidatePreparationAdmitterFunc(
-		func(ctx context.Context) (deploymentmodule.CandidatePreparationLease, error) {
-			return workloadController.Acquire(
-				ctx,
-				workloadmodule.ControlRequest("candidate.prepare"),
-			)
-		},
+	candidatePreparationAdmission := candidatePreparationAdmitter(
+		workloadController,
+		workloadmodule.ControlRequest("candidate.prepare"),
 	)
 	canonicalDeliveryRequired := true
 	// Sealed production serving uses delivery-owned catalog lease/GC state;
@@ -1045,6 +1041,9 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
 		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			if requestLocalDevelopmentAuthorization(ctx, principalID) {
+				return true, nil
+			}
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
 		AcquireRuntime: authoringAcquireRuntime,
@@ -1685,6 +1684,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			Auth:          auth, Reloader: runtimeHostModule, Workload: workloadController,
 			ManagedDataValidation:    managedDataModule.BindingValidation(),
 			ManagedDataResolver:      managedDataResolver,
+			RefreshSourceDigest:      canonicalRefreshSourceDigest(sealedDelivery, instanceID),
 			CanonicalRefreshExecutor: canonicalRefreshExecutor(canonicalDeliveryMutations, sealedDelivery, instanceID),
 			EnableRefreshDispatcher:  true,
 			DeploymentConfig:         deploymentConfig,

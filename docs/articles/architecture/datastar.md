@@ -36,6 +36,28 @@ The command includes stable route/component identity and typed values. Go valida
 
 Do not add an ad hoc component `fetch()` for dashboard data when the operation belongs to this lifecycle. A second transport path tends to duplicate auth handling, cancellation, loading state, and payload contracts.
 
+## Command failure and recovery
+
+Every browser command has two coordinated failure paths:
+
+- A handler that understands a domain failure patches the feature's typed error/status signal. It retains the last known-good payload and returns controls to an idle state in the same patch.
+- A terminal transport failure that cannot deliver a domain patch is classified by `browserCommandFailure` from `web/components/shared/command-failure.ts`. The component's `datastar-fetch` listener clears its local busy key and renders a durable `role="alert"` or `role="status"` recovery state.
+
+The shared classifier covers validation and authentication failures, forbidden or missing resources, revision conflicts, rate limits, unavailable services, timeouts, disconnects, and Datastar retry exhaustion. Messages remain generic where more detail would disclose a protected resource or an internal error.
+
+Recovery is explicit. A read may offer **Retry** or **Reload**. A write may only offer an automatic retry when its operation has a stable idempotency key and the server retains replay evidence; otherwise the UI explains that the result is unknown and offers a canonical reload. Components must never replay a failed write merely because the transport reconnects.
+
+Feature owners implementing a command should therefore:
+
+1. keep the last successful signal payload separate from loading/error state;
+2. set a bounded busy key before dispatch and clear it on success, typed domain failure, and terminal `datastar-fetch` failure;
+3. use generated command bindings and operation claims, including CSRF and request identity;
+4. render the failure in an accessible live region with a keyboard-reachable safe action;
+5. preserve 401, 403, 404, 409, 429, and 5xx semantics instead of translating them into success patches;
+6. test the positive command, every relevant failure class, retry exhaustion, control re-enablement, retained inputs, and the absence of blind replay.
+
+Data Explorer, dashboard authoring, project connection/pipeline administration, and the administration surfaces are reference implementations. The shared classifier's unit suite is the taxonomy contract; each surface also owns DOM coverage for its state retention and recovery actions.
+
 ## Optimistic state
 
 Optimistic feedback can make selection feel immediate. It must remain temporary presentation state keyed to the latest command. When server canonical state arrives, the component reconciles to it.

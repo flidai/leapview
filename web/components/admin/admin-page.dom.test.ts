@@ -142,7 +142,7 @@ test('profile settings renders the signed-in identity and editable local fields'
         avatarMenuClosed,
         avatarTriggerFocused,
         avatarMenuClosedOnOutsidePointer,
-        hasHiddenFileInput: Boolean(profileRoot.querySelector('input[type="file"].avatar-input')),
+        hiddenFileInputLabel: profileRoot.querySelector('input[type="file"].avatar-input')?.getAttribute('aria-label'),
         themeOptions: Array.from(profileRoot.querySelectorAll('select[name="theme"] option')).map((option) => option.textContent?.trim()),
         themeCommand,
         appliedTheme,
@@ -175,7 +175,7 @@ test('profile settings renders the signed-in identity and editable local fields'
     expect(state.avatarMenuClosed).toBe(true)
     expect(state.avatarTriggerFocused).toBe(true)
     expect(state.avatarMenuClosedOnOutsidePointer).toBe(true)
-    expect(state.hasHiddenFileInput).toBe(true)
+    expect(state.hiddenFileInputLabel).toBe('Upload profile picture')
   } finally {
     await page.close()
   }
@@ -334,7 +334,7 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({
       name: 'Sales automation', selectedPermissions: 1,
-      error: 'Token creation failed because this page expired. Reload the page and try again.',
+      error: 'Token creation is not permitted for your account.',
       createDisabled: false,
     })
     expect(state.succeeded.name).toBe('')
@@ -415,6 +415,42 @@ test('members directory list delegates search and filtering to the page stream',
     expect(state.sortedRows[0]).toContain('Local Developer')
   } finally {
     await page.close()
+  }
+})
+
+test('mobile entity lists advertise horizontal table scrolling while desktop stays quiet', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-entity-list'))
+    const mobile = await page.evaluate(async () => {
+      const list = document.querySelector('lv-admin-page')?.shadowRoot?.querySelector('lv-entity-list') as any
+      await list?.updateComplete
+      const region = list?.querySelector('.entity-list-table-wrap') as HTMLElement | null
+      const hint = list?.querySelector('.entity-list-scroll-hint') as HTMLElement | null
+      return {
+        role: region?.getAttribute('role'),
+        label: region?.getAttribute('aria-label'),
+        tabIndex: region?.getAttribute('tabindex'),
+        hint: hint?.textContent?.replace(/\s+/g, ' ').trim(),
+        hintDisplay: hint ? getComputedStyle(hint).display : '',
+      }
+    })
+    expect(mobile).toEqual({
+      role: 'region', label: 'Scrollable Members table', tabIndex: '0',
+      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
+    })
+  } finally {
+    await page.close()
+  }
+
+  const desktop = await browser.newPage({ viewport: { width: 1280, height: 760 } })
+  try {
+    await desktop.goto(baseURL)
+    await desktop.waitForFunction(() => customElements.get('lv-entity-list'))
+    expect(await desktop.locator('lv-admin-page').locator('.entity-list-scroll-hint').evaluate((element) => getComputedStyle(element).display)).toBe('none')
+  } finally {
+    await desktop.close()
   }
 })
 

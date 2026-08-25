@@ -133,6 +133,40 @@ func TestDeliveryRepositoryAcceptsFreshBuildAgainstActivePlanBase(t *testing.T) 
 	}
 }
 
+func TestDeliveryRepositoryRoundTripsPipelinePlanIdentity(t *testing.T) {
+	store, repo := openDeliveryRepository(t)
+	now := time.Now().UTC().Truncate(time.Second)
+	plan := repoDeliveryPlan(t, now)
+	plan.Operation = deployment.DeliveryOperationRestatement
+	plan.BaseGenerationID = "generation-active"
+	pipelinePlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-repo", PipelineID: "pipeline:sales", ProjectID: plan.ProjectID.String(), Environment: plan.Environment,
+		SemanticModelID: "semantic-model:sales", ServingGenerationID: plan.BaseGenerationID, ArtifactDigest: plan.SourceDigest,
+		SelectionDigest: repoDeliveryDigest('8'), MaterializationScope: []string{"sales_orders"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan.PipelinePlan = &pipelinePlan
+	plan, err = deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO delivery_target_revisions (target_id,project_id,environment,target_revision,active_generation_id,created_at,updated_at) VALUES (?,?,?,?,?,?,?)`, plan.TargetID, plan.ProjectID.String(), plan.Environment, plan.BaseTargetRevision, plan.BaseGenerationID, now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreatePlan(t.Context(), plan); err != nil {
+		t.Fatal(err)
+	}
+	roundTrip, err := repo.PlanByID(t.Context(), plan.ID)
+	if err != nil {
+		t.Fatalf("read pipeline delivery plan: %v", err)
+	}
+	if roundTrip.PipelinePlan == nil || roundTrip.PipelinePlan.Digest != pipelinePlan.Digest || roundTrip.Digest != plan.Digest {
+		t.Fatalf("pipeline plan round trip = %#v, want digest %s", roundTrip.PipelinePlan, pipelinePlan.Digest)
+	}
+}
+
 func TestDeliveryRepositoryPlanBuildSealCandidatePublication(t *testing.T) {
 	store, repo := openDeliveryRepository(t)
 	now := time.Now().UTC().Truncate(time.Second)

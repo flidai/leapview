@@ -126,6 +126,28 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 	})
 }
 
+// BrowserMutationMiddleware applies the same durable idempotency protocol as
+// generated API commands without requiring a bearer credential. Callers must
+// mount session authentication outside this middleware and provide an exact
+// resource authorization callback for replays, because a replay returns the
+// captured response without dispatching the command handler again.
+func (p *Protocol) BrowserMutationMiddleware(replayAuthorize func(*http.Request) bool, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if p == nil || next == nil || replayAuthorize == nil {
+			apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "IDEMPOTENCY_UNAVAILABLE", "Browser mutation idempotency is unavailable", nil)
+			return
+		}
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+		if requestID == "" || key == "" || key != "ui:"+requestID {
+			apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must equal ui:<X-Request-ID>", nil)
+			return
+		}
+		PrepareRequest(w, r)
+		p.serveIdempotent(w, r, next, replayAuthorize)
+	})
+}
+
 func (p *Protocol) Authenticate(w http.ResponseWriter, r *http.Request) bool {
 	PrepareRequest(w, r)
 	if p == nil || p.config.BearerToken == nil || p.config.BearerToken(r) == "" {
@@ -273,7 +295,11 @@ func IsQueryRequest(r *http.Request) bool {
 	return false
 }
 
-func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler) {
+func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, replayAuthorizeOverride ...func(*http.Request) bool) {
+	replayAuthorize := p.config.ReplayAuthorize
+	if len(replayAuthorizeOverride) > 0 {
+		replayAuthorize = replayAuthorizeOverride[0]
+	}
 	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	if key == "" || len(key) > 200 {
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must contain 1 to 200 characters", nil)
@@ -303,7 +329,7 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 	credentialHash := sha256.Sum256([]byte(credentialScope))
 	scope := callerScope + ":" + hex.EncodeToString(credentialHash[:]) + ":" + r.Method + ":" + r.URL.EscapedPath() + ":" + key
 	if p.store != nil {
-		p.serveDurableIdempotent(w, r, next, scope, digest)
+		p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize)
 		return
 	}
 
@@ -317,13 +343,13 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 		}
 		ready := existing.ready
 		p.mu.Unlock()
-		if !p.replayAuthorized(r) {
+		if !replayAuthorized(r, replayAuthorize) {
 			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
 			return
 		}
 		select {
 		case <-ready:
-			if !p.replayAuthorized(r) {
+			if !replayAuthorized(r, replayAuthorize) {
 				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
 				return
 			}
@@ -352,7 +378,7 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 	capture.flush(w)
 }
 
-func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string) {
+func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string, replayAuthorize func(*http.Request) bool) {
 	owner := apitransport.NewRequestID()
 	record, execute, err := p.store.Claim(r.Context(), scope, digest, owner, p.lease, IdempotencyLifetime)
 	if err != nil {
@@ -368,7 +394,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !execute {
-		if !p.replayAuthorized(r) {
+		if !replayAuthorized(r, replayAuthorize) {
 			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
 			return
 		}
@@ -392,7 +418,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if !execute {
-			if !p.replayAuthorized(r) {
+			if !replayAuthorized(r, replayAuthorize) {
 				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
 				return
 			}
@@ -473,8 +499,8 @@ func canonicalCredentialScope(config Config, r *http.Request) string {
 	return strings.Join(fields, " ")
 }
 
-func (p *Protocol) replayAuthorized(r *http.Request) bool {
-	return p.config.ReplayAuthorize == nil || p.config.ReplayAuthorize(r)
+func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool {
+	return authorize == nil || authorize(r)
 }
 
 func (p *Protocol) pruneInMemoryIdempotency(now time.Time) {
@@ -576,7 +602,18 @@ func safeIdempotencyResponse(status int, header http.Header, body []byte) (int, 
 }
 
 func containsCredentialField(value any) bool {
-	secretNames := map[string]bool{"token": true, "access_token": true, "accessToken": true, "refresh_token": true, "refreshToken": true, "clientSecret": true, "client_secret": true, "secret": true, "password": true, "device_code": true, "deviceCode": true, "verification_uri_complete": true}
+	secretNames := map[string]bool{
+		"token": true, "access_token": true, "accessToken": true, "refresh_token": true, "refreshToken": true,
+		"clientSecret": true, "client_secret": true, "secret": true, "password": true,
+		"device_code": true, "deviceCode": true, "verification_uri_complete": true,
+		// Provider credential references are write-only as well. Although they
+		// do not contain the secret value, persisting or replaying paths/keys
+		// would disclose durable secret locations to later callers.
+		"credentialReference": true, "credential_reference": true,
+		"credentialProjectId": true, "credential_project_id": true,
+		"credentialEnvironment": true, "credential_environment": true,
+		"secretPath": true, "secret_path": true, "secretKey": true, "secret_key": true,
+	}
 	switch typed := value.(type) {
 	case map[string]any:
 		for key, child := range typed {
@@ -618,6 +655,11 @@ func (w *protocolResponseCapture) Write(value []byte) (int, error) {
 	}
 	return w.body.Write(value)
 }
+
+// Flush satisfies http.Flusher for Datastar command responses. Bytes remain
+// captured until the idempotency record is durably committed, so flushing the
+// capture is intentionally a no-op.
+func (w *protocolResponseCapture) Flush() {}
 
 func (w *protocolResponseCapture) statusCode() int {
 	if w.status == 0 {

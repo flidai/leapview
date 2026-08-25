@@ -18,6 +18,15 @@ const page = await context.newPage()
 try {
   await page.goto(new URL('/login', baseURL).href, { waitUntil: 'domcontentloaded', timeout: 60_000 })
   await page.getByLabel('Email').fill(credentials.email)
+  // Prove an invalid local credential remains on the branded, accessible
+  // login surface before continuing with the valid qualification login.
+  await page.getByLabel('Password').fill(`${credentials.qualificationPassword}-invalid`)
+  await page.getByLabel('Password').press('Enter')
+  await page.waitForURL(/\/login\?error=invalid_credentials(?:$|&)/, { timeout: 30_000 })
+  await page.getByRole('heading', { name: /LeapView/i }).waitFor({ state: 'visible', timeout: 30_000 })
+  await page.getByRole('alert').filter({ hasText: /Invalid email or password/i }).waitFor({ state: 'visible', timeout: 30_000 })
+
+  await page.getByLabel('Email').fill(credentials.email)
   await page.getByLabel('Password').fill(credentials.qualificationPassword)
   await page.getByLabel('Password').press('Enter')
 

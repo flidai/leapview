@@ -20,6 +20,10 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{ProtectWithResources: identityResources})
 
 	want := map[string]bool{
+		"GET /dashboards/new":                          false,
+		"POST /dashboards/new":                         false,
+		"GET /dashboards/{dashboard}/fork":             false,
+		"POST /dashboards/{dashboard}/fork":            false,
 		"GET /dashboards/{dashboard}/edit":             false,
 		"GET /dashboards/{dashboard}/preview":          false,
 		"GET /dashboards/{dashboard}/export.yaml":      false,
@@ -40,12 +44,19 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 			t.Errorf("missing route %s", route)
 		}
 	}
-	if len(capabilities) < 6 {
-		t.Fatalf("captured %d route capabilities, want at least 6", len(capabilities))
+	if len(capabilities) < 10 {
+		t.Fatalf("captured %d route capabilities, want at least 10", len(capabilities))
 	}
-	for _, index := range []int{2, 3, 4, 5} {
-		if capabilities[index] != access.CapabilityResourceEdit {
-			t.Errorf("builder route index %d capability = %q, want RESOURCE_EDIT", index, capabilities[index])
+	for index, wantCapability := range []access.Capability{
+		access.CapabilityResourceRead,
+		access.CapabilityResourceRead,
+		access.CapabilityResourceEdit,
+		access.CapabilityResourceEdit,
+		access.CapabilityResourceEdit,
+		access.CapabilityResourceEdit,
+	} {
+		if capabilities[index] != wantCapability {
+			t.Errorf("route index %d capability = %q, want %q", index, capabilities[index], wantCapability)
 		}
 	}
 }

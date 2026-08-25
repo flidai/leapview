@@ -315,8 +315,15 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	repo := newFakeRepo()
 	identity := serviceIdentity
 	identity.GenerationID = string(repo.activeDeployment.ID)
+	sourceDigest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	service := Service{
 		ServingStates: repo,
+		ResolveSourceDigest: func(_ context.Context, got projectgraph.ServingIdentity) (string, error) {
+			if got != identity {
+				t.Fatalf("source digest identity = %#v, want %#v", got, identity)
+			}
+			return sourceDigest, nil
+		},
 		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
 			return CanonicalRefreshResult{}, nil
 		},
@@ -332,6 +339,9 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	}
 	if result.ServingStateID != repo.activeDeployment.ID || result.Run.Identity != identity {
 		t.Fatalf("canonical refresh result = %#v, want active identity %#v", result, identity)
+	}
+	if result.Run.PipelinePlan == nil || result.Run.PipelinePlan.ArtifactDigest != sourceDigest {
+		t.Fatalf("canonical pipeline plan = %#v, want source digest %q", result.Run.PipelinePlan, sourceDigest)
 	}
 	if repo.savedArtifact.ID != "" {
 		t.Fatalf("legacy serving candidate was created: %#v", repo.savedArtifact)

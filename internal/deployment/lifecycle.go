@@ -392,7 +392,7 @@ func (l *DeliveryLifecycle) Plan(ctx context.Context, request DeliveryPlanReques
 		ID: request.ID, ActorID: request.ActorID, TargetID: target.TargetID, ProjectID: projectgraph.ResourceID(request.ProjectID), Environment: request.Environment,
 		Operation: request.Operation, SourceDigest: request.SourceDigest, BaseGenerationID: target.ActiveGenerationID,
 		BaseTargetRevision: target.TargetRevision, Execution: request.Execution, Provenance: request.Provenance,
-		Governance: request.Governance, Evidence: request.Evidence, CreatedAt: request.CreatedAt,
+		Governance: request.Governance, Evidence: request.Evidence, PipelinePlan: request.PipelinePlan, CreatedAt: request.CreatedAt,
 	})
 	if err != nil {
 		return DeliveryPlanResult{}, err

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"strings"
 	"testing"
 
@@ -56,6 +57,32 @@ func TestCanonicalRefreshExecutorRejectsChangedBase(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("canonical refresh accepted a changed active generation")
+	}
+}
+
+func TestCanonicalRefreshSourceDigestUsesExactActiveDeliveryPlan(t *testing.T) {
+	reader := canonicalRefreshReaderStub{
+		generation: deployment.DeliveryGeneration{CandidateID: "candidate-base", ServingStateID: "state-active"},
+		candidate:  deployment.DeliveryCandidate{PlanID: "plan-base"},
+		plan:       deployment.DeliveryPlan{SourceDigest: "sha256:source"},
+	}
+	resolve := canonicalRefreshSourceDigest(reader, "target-evaluation")
+	digest, err := resolve(t.Context(), projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-active"})
+	if err != nil {
+		t.Fatalf("resolve canonical refresh source digest: %v", err)
+	}
+	if digest != reader.plan.SourceDigest {
+		t.Fatalf("source digest = %q, want %q", digest, reader.plan.SourceDigest)
+	}
+}
+
+func TestCanonicalRefreshSourceDigestRejectsChangedBase(t *testing.T) {
+	resolve := canonicalRefreshSourceDigest(canonicalRefreshReaderStub{
+		generation: deployment.DeliveryGeneration{ServingStateID: "state-new"},
+	}, "target-evaluation")
+	_, err := resolve(t.Context(), projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-old"})
+	if !errors.Is(err, refreshrun.ErrRunStale) {
+		t.Fatalf("source digest error = %v, want stale run", err)
 	}
 }
 

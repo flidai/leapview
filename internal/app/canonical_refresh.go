@@ -9,12 +9,46 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
 
 type canonicalRefreshDeliveryReader interface {
 	deployment.DeliveryReader
 	ActiveDeliveryGenerationForTarget(context.Context, string, string, string) (deployment.DeliveryGeneration, error)
+}
+
+func canonicalRefreshSourceDigest(
+	reader canonicalRefreshDeliveryReader,
+	targetID string,
+) func(context.Context, projectgraph.ServingIdentity) (string, error) {
+	return func(ctx context.Context, identity projectgraph.ServingIdentity) (string, error) {
+		if reader == nil || targetID == "" {
+			return "", fmt.Errorf("canonical refresh delivery is unavailable")
+		}
+		if err := identity.Validate(); err != nil {
+			return "", err
+		}
+		active, err := reader.ActiveDeliveryGenerationForTarget(ctx, targetID, identity.ProjectID.String(), identity.Environment)
+		if err != nil {
+			return "", fmt.Errorf("resolve canonical refresh base: %w", err)
+		}
+		if active.ServingStateID != identity.GenerationID {
+			return "", fmt.Errorf("canonical refresh base changed before admission: %w", refreshrun.ErrRunStale)
+		}
+		candidate, err := reader.DeliveryCandidateByID(ctx, active.CandidateID)
+		if err != nil {
+			return "", fmt.Errorf("resolve canonical refresh candidate: %w", err)
+		}
+		plan, err := reader.PlanByID(ctx, candidate.PlanID)
+		if err != nil {
+			return "", fmt.Errorf("resolve canonical refresh plan: %w", err)
+		}
+		if strings.TrimSpace(plan.SourceDigest) == "" {
+			return "", fmt.Errorf("canonical refresh source digest is unavailable")
+		}
+		return plan.SourceDigest, nil
+	}
 }
 
 func canonicalRefreshExecutor(

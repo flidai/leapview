@@ -2,14 +2,19 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	appearancesqlite "github.com/flidai/leapview/internal/dashboard/appearance/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+func NewAppearanceStore(database *sql.DB) dashboardappearance.Store {
+	return appearancesqlite.NewRepository(database)
+}
 
 // ApplyAppearancePatches applies only fields explicitly authored in a
 // deployment. Omitted fields retain the last UI value; "default" clears a
@@ -26,30 +31,11 @@ func ApplyAppearancePatches(ctx context.Context, tx transaction.Transaction, pro
 		if patch.Icon == nil && patch.Color == nil {
 			continue
 		}
-		if strings.TrimSpace(dashboardID) == "" {
-			return fmt.Errorf("project and dashboard are required")
+		dashboardResourceID, err := projectgraph.NewResourceID(dashboardID)
+		if err != nil {
+			return fmt.Errorf("dashboard ID: %w", err)
 		}
-		if err := dashboardappearance.ValidatePatch(patch); err != nil {
-			return err
-		}
-		icon, iconPresent := "", patch.Icon != nil
-		if patch.Icon != nil {
-			icon = dashboardappearance.StoredValue(*patch.Icon)
-		}
-		color, colorPresent := "", patch.Color != nil
-		if patch.Color != nil {
-			color = dashboardappearance.StoredValue(*patch.Color)
-		}
-		if _, err := tx.ExecContext(ctx, `
-INSERT INTO dashboard_appearances (project_id, dashboard_id, icon, color, updated_by)
-VALUES (?, ?, NULLIF(?, ''), NULLIF(?, ''), ?)
-ON CONFLICT(project_id, dashboard_id) DO UPDATE SET
-  icon = CASE WHEN ? THEN excluded.icon ELSE dashboard_appearances.icon END,
-  color = CASE WHEN ? THEN excluded.color ELSE dashboard_appearances.color END,
-  revision = dashboard_appearances.revision + 1,
-  updated_by = excluded.updated_by,
-  updated_at = CURRENT_TIMESTAMP`,
-			projectID.String(), dashboardID, icon, color, strings.TrimSpace(actorID), iconPresent, colorPresent); err != nil {
+		if _, err := appearancesqlite.ApplyPatch(ctx, tx, dashboardappearance.Key{ProjectID: projectID, DashboardID: dashboardResourceID}, actorID, patch); err != nil {
 			return err
 		}
 	}

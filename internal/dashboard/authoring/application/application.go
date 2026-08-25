@@ -7,6 +7,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -253,6 +254,39 @@ func (a *Application) Builder(ctx context.Context, request builderview.Request) 
 		return uisignals.DashboardBuilderSignal{}, err
 	}
 	return service.Build(ctx, request)
+}
+
+// AuthorizeDashboardEdit performs the repository-backed edit decision used by
+// browser routes before a draft is exposed. Newly created private dashboards
+// are intentionally absent from the active serving graph; the authoring
+// service loads their lifecycle and applies the owner/project-role context.
+func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	if err := a.validate(); err != nil {
+		return err
+	}
+	project, err := projectID(requestedProject)
+	if err != nil {
+		return err
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return fmt.Errorf("actor id is required")
+	}
+	if err := authoring.ValidateDashboardID(dashboardID); err != nil {
+		return err
+	}
+	lifecycle, err := a.repository.Get(ctx, project, dashboardID)
+	if err != nil {
+		return err
+	}
+	if lifecycle.ProjectID != project || lifecycle.ID != dashboardID {
+		return fmt.Errorf("dashboard lifecycle identity does not match request")
+	}
+	return a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
+		ActorID: actorID, ProjectID: project, DashboardID: dashboardID,
+		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
+		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
+	})
 }
 
 func (a *Application) validate() error {

@@ -463,6 +463,9 @@ func targetConnectionConfiguration(
 func targetConnectionBindingResponse(
 	binding connectionbinding.TargetBinding,
 ) analyticsgen.TargetConnectionBindingResponse {
+	// Credential references are write-only browser inputs. The durable
+	// binding retains them for provider resolution, but command responses and
+	// replays must never echo the project/path/key back to a caller.
 	response := analyticsgen.TargetConnectionBindingResponse{
 		Id: binding.ID.String(), TargetId: binding.TargetID.String(),
 		LogicalConnection:  binding.ConnectionID.String(),
@@ -476,14 +479,6 @@ func targetConnectionBindingResponse(
 		Revision:         binding.Revision,
 		ValidatedVersion: optionalString(binding.ValidatedVersion),
 		LastValidatedAt:  optionalTime(binding.LastValidatedAt),
-	}
-	if binding.CredentialReference != (connectionbinding.CredentialReference{}) {
-		response.CredentialReference = &analyticsgen.TargetConnectionCredentialReference{
-			ProjectId:   binding.CredentialReference.ProjectID.String(),
-			Environment: binding.CredentialReference.Environment,
-			SecretPath:  binding.CredentialReference.SecretPath,
-			SecretKey:   binding.CredentialReference.SecretKey,
-		}
 	}
 	return response
 }

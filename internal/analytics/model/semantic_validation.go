@@ -40,6 +40,13 @@ func validateLogicalDataType(scope string, datatype LogicalDataType) error {
 	return nil
 }
 
+func validateOptionalLogicalDataType(scope string, datatype LogicalDataType) error {
+	if datatype == "" {
+		return nil
+	}
+	return validateLogicalDataType(scope, datatype)
+}
+
 func semanticDimensionTypeForDatatype(datatype LogicalDataType) string {
 	switch datatype {
 	case DataTypeString:
@@ -61,7 +68,10 @@ func semanticDimensionTypeForDatatype(datatype LogicalDataType) string {
 
 func validateMetricInputDatatype(name, aggregation string, input MetricDimension) error {
 	if input.Datatype == "" {
-		return fmt.Errorf("semantic metric %q input requires a logical datatype", name)
+		// Model field datatypes may be resolved only after candidate SQL has
+		// materialized. The same validation runs again against the discovered
+		// DuckLake schema before a serving planner is activated.
+		return nil
 	}
 	if aggregation == "sum" || aggregation == "avg" {
 		switch input.Datatype {
@@ -121,7 +131,7 @@ func (m *Model) validateSemanticDefinitions() error {
 		sort.Strings(fieldNames)
 		for _, field := range fieldNames {
 			dimension := table.Dimensions[field]
-			if err := validateLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
 				return err
 			}
 		}
@@ -132,7 +142,7 @@ func (m *Model) validateSemanticDefinitions() error {
 		sort.Strings(columnNames)
 		for _, field := range columnNames {
 			column := table.Columns[field]
-			if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
 				return err
 			}
 		}
