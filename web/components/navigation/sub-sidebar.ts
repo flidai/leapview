@@ -223,7 +223,7 @@ class SubSidebar extends LitElement {
       border: var(--lv-border-transparent);
       border-radius: var(--lv-radius-default);
       background: transparent;
-      color: var(--fgColor-disabled);
+      color: var(--lv-fg-muted);
       cursor: pointer;
       padding: 0 var(--control-xsmall-paddingInline-normal);
       text-align: left;

@@ -1,4 +1,6 @@
+import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect, type Locator, type Page } from '@playwright/test'
+import { blockingAxeViolations, formatAxeViolations } from './axe_accessibility'
 import { hasMixedSpatialPrecision } from './spatial_precision_summary'
 
 type RouteExpectation = {
@@ -7,9 +9,20 @@ type RouteExpectation = {
   shell: boolean
 }
 
+type AccessibilityRoute = RouteExpectation & {
+  label: string
+}
+
 const baseURL = Bun.env.LEAPVIEW_BASE_URL ?? 'http://localhost:8195'
 const routeQAScope = Bun.env.LEAPVIEW_ROUTE_QA_SCOPE?.trim() || 'all'
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
+const accessibilityRoutes: AccessibilityRoute[] = [
+  { label: 'Insights', path: '/', root: 'lv-catalog-page', shell: true },
+  { label: 'Sources', path: '/sources', root: 'lv-project-page', shell: true },
+  { label: 'Dashboard', path: '/dashboards/dashboard:executive-sales/pages/overview', root: 'lv-dashboard-page', shell: true },
+  { label: 'Visual Showcase', path: dashboardPath, root: 'lv-dashboard-page', shell: true },
+]
+const wcagTags = ['wcag2a', 'wcag2aa', 'wcag21a', 'wcag21aa', 'wcag22aa']
 const routes: RouteExpectation[] = [
   { path: '/', root: 'lv-catalog-page', shell: true },
   { path: dashboardPath, root: 'lv-dashboard-page', shell: true },
@@ -28,13 +41,17 @@ const routes: RouteExpectation[] = [
 
 const browser = await chromium.launch()
 try {
-  if (routeQAScope === 'keyboard') {
+  if (routeQAScope === 'accessibility') {
+    await verifyWCAGAccessibilityRoutes()
+    console.log(`WCAG accessibility route QA passed for ${accessibilityRoutes.length} routes at ${baseURL}`)
+  } else if (routeQAScope === 'keyboard') {
     await verifyKeyboardAccessibilityJourney()
     console.log(`Keyboard accessibility route QA passed at ${baseURL}`)
   } else if (routeQAScope === 'all') {
     for (const route of routes) {
       await verifyRoute(route)
     }
+    await verifyWCAGAccessibilityRoutes()
     await verifySidebarCollapseToggle()
     await verifyKeyboardAccessibilityJourney()
     await verifyEChartsFirstNavigation()
@@ -46,7 +63,7 @@ try {
     await verifySpatialMapWindowing()
     console.log(`DatastarLit route QA passed for ${routes.length} routes at ${baseURL}`)
   } else {
-    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all" or "keyboard"`)
+    throw new Error(`Unsupported LEAPVIEW_ROUTE_QA_SCOPE=${JSON.stringify(routeQAScope)}; expected "all", "accessibility", or "keyboard"`)
   }
 } finally {
   await browser.close()
@@ -169,6 +186,48 @@ async function verifyRoute(route: RouteExpectation): Promise<void> {
     assertNoBlockingConsoleMessages(route.path, messages)
   } finally {
     await page.close()
+  }
+}
+
+async function verifyWCAGAccessibilityRoutes(): Promise<void> {
+  for (const route of accessibilityRoutes) {
+    await verifyWCAGAccessibilityRoute(route)
+  }
+}
+
+async function verifyWCAGAccessibilityRoute(route: AccessibilityRoute): Promise<void> {
+  const context = await browser.newContext({ viewport: { width: 1280, height: 820 } })
+  const page = await context.newPage()
+  const messages = collectBlockingConsoleMessages(page)
+  const updates: string[] = []
+  page.on('request', (request) => {
+    if (new URL(request.url()).pathname === '/updates') updates.push(request.url())
+  })
+
+  try {
+    const response = await page.goto(new URL(route.path, baseURL).toString(), { waitUntil: 'domcontentloaded' })
+    if (!response?.ok()) throw new Error(`${route.label} accessibility scan (${route.path}): status ${response?.status() ?? 'unknown'}`)
+    await page.waitForSelector(route.root)
+    await waitForUpdatesRequest(`${route.label} accessibility scan`, updates)
+    await page.waitForFunction(({ root, dashboard }) => {
+      const element = document.querySelector(root) as any
+      if (!element?.page) return false
+      return !dashboard || element.status?.loading === false
+    }, { root: route.root, dashboard: route.root === 'lv-dashboard-page' }, { timeout: 60_000 })
+    await page.locator(route.root).evaluate(async (element: any) => {
+      if (element.updateComplete) await element.updateComplete
+    })
+
+    const results = await new AxeBuilder({ page })
+      .withTags(wcagTags)
+      .analyze()
+    const blocking = blockingAxeViolations(results.violations)
+    if (blocking.length > 0) throw new Error(formatAxeViolations(route, blocking))
+
+    assertNoBlockingConsoleMessages(`${route.label} accessibility scan`, messages)
+    console.log(`${route.label} (${route.path}): WCAG scan passed; ${results.violations.length} non-blocking violation${results.violations.length === 1 ? '' : 's'} omitted`)
+  } finally {
+    await context.close()
   }
 }
 

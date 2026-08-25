@@ -767,7 +767,7 @@ test('mobile report tables expose horizontal scrolling and a visible swipe hint'
       }
     })
     expect(result).toEqual({
-      role: 'region', label: 'Scrollable Orders table', tabIndex: '0',
+      role: 'table', label: 'Orders', tabIndex: '0',
       hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
     })
   } finally {
@@ -891,6 +891,13 @@ test('table resize handles expose keyboard increments and accessible labels', as
       const root = table.shadowRoot
       const handle = root.querySelector('.column-resizer') as HTMLElement
       const shell = root.querySelector('.shell') as HTMLElement
+      const frame = root.querySelector('.table-frame') as HTMLElement
+      const scrollport = root.querySelector('.table-scrollport') as HTMLElement
+      const actionSizes = Array.from(root.querySelectorAll('.visual-actions .icon-action, .visual-options summary'))
+        .map((control: Element) => {
+          const bounds = control.getBoundingClientRect()
+          return { width: bounds.width, height: bounds.height }
+        })
       const before = shell.style.getPropertyValue('--lv-table-columns')
       handle.focus()
       handle.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true }))
@@ -899,11 +906,28 @@ test('table resize handles expose keyboard increments and accessible labels', as
         label: handle.getAttribute('aria-label'),
         role: handle.getAttribute('role'),
         tabIndex: handle.tabIndex,
+        valueMinimum: handle.getAttribute('aria-valuemin'),
+        valueNow: handle.getAttribute('aria-valuenow'),
+        frameRole: frame.getAttribute('role'),
+        tableRole: scrollport.getAttribute('role'),
+        tableLabel: scrollport.getAttribute('aria-label'),
+        actionSizes,
         changed: shell.style.getPropertyValue('--lv-table-columns') !== before,
       }
     })
-    expect(result).toMatchObject({ role: 'separator', tabIndex: 0, changed: true })
+    expect(result).toMatchObject({
+      role: 'separator',
+      tabIndex: 0,
+      valueMinimum: expect.stringMatching(/^\d+$/),
+      valueNow: expect.stringMatching(/^\d+$/),
+      frameRole: null,
+      tableRole: 'table',
+      tableLabel: 'Orders',
+      changed: true,
+    })
     expect(result.label).toMatch(/^Resize .+ column$/)
+    expect(result.actionSizes.length).toBeGreaterThan(0)
+    expect(result.actionSizes.every(({ width, height }: { width: number; height: number }) => width >= 32 && height >= 32)).toBe(true)
   } finally { await page.close() }
 })
 

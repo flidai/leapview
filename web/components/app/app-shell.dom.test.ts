@@ -611,7 +611,7 @@ test('sidebar renders global chat action and recent history', async () => {
     expect(state.historyItemMetrics.titleLeft).toBe(state.historyItemMetrics.navIconLeft)
     expect(state.historyItemMetrics.titleLeft).toBeLessThan(state.historyItemMetrics.navTextLeft)
     expect(state.historyItemMetrics.titleWidth).toBeGreaterThanOrEqual(state.historyItemMetrics.titleScrollWidth)
-    expect(state.historyItemMetrics.labelColor).not.toBe(state.historyItemMetrics.mutedColor)
+    expect(state.historyItemMetrics.labelColor).toBe(state.historyItemMetrics.mutedColor)
     expect(state.primaryStyle.background).toBe('rgba(0, 0, 0, 0)')
     expect(state.primaryStyle.iconBackground).not.toBe('rgba(0, 0, 0, 0)')
     expect(state.primaryStyle.iconRadius).not.toBe('0px')

@@ -248,13 +248,16 @@ class RecordTable extends LitElement {
                 const direction = this.sortDirection(column.id)
                 const sortable = column.sortable !== false && column.kind !== 'actions'
                 return html`
-                  <th style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''} class=${columnAlignClass(column)}>
+                  <th
+                    style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''}
+                    class=${columnAlignClass(column)}
+                    aria-sort=${direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : nothing}
+                  >
                     <span class="record-table-header-content">
                       <button
                         type="button"
                         class="record-table-sort"
                         aria-label=${`Sort by ${column.header || 'column'}`}
-                        aria-sort=${direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none'}
                         ?disabled=${!sortable}
                         @click=${() => sortable ? this.toggleSort(column.id) : undefined}
                       >
