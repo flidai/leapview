@@ -6,7 +6,7 @@ FROM node:24-bookworm@sha256:392e1e23f34da768d8d1f4e502b64f200d3be3465934d4b7930
 # basemap.pmtiles. The generator verifies the pinned digest before accepting it.
 FROM scratch AS mapassetseed
 
-FROM golang:1.25-bookworm@sha256:a9c020ee3d1508c7be5435c262434e3d3fc1d0e76a11afeb9ddae7d60bc86aa4 AS go-deps
+FROM golang:1.25.14-bookworm@sha256:3b4a11519ad929d1e1d261a12cff056f0c85b735253d7d861346b9c6f8b36437 AS go-deps
 WORKDIR /src
 
 COPY go.mod go.sum ./
@@ -149,6 +149,12 @@ LABEL org.opencontainers.image.title="LeapView" \
       org.opencontainers.image.created="$BUILD_TIME" \
       dev.leapview.build.dirty="$BUILD_DIRTY" \
       dev.leapview.build.release="$BUILD_RELEASE"
+
+# The pinned Go builder supplies the bootstrap CA bundle. APT then resolves
+# every direct and transitive runtime package from one immutable Debian
+# snapshot and verifies the signed repository metadata and package hashes.
+COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY deploy/container/debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata && \

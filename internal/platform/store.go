@@ -104,7 +104,11 @@ func (s *Store) Backup(ctx context.Context, path string) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("platform store is not open")
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// Backups contain the complete platform database, including audit records
+	// and other security-sensitive metadata. Keep the destination directory
+	// private even when the process umask is permissive; callers may still copy
+	// the finished file to an explicitly managed off-host destination.
+	if err := securefs.EnsurePrivateDir(filepath.Dir(path)); err != nil {
 		return err
 	}
 	if _, err := os.Stat(path); err == nil {

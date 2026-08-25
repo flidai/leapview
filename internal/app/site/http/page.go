@@ -7,7 +7,7 @@ import (
 	"github.com/flidai/leapview/internal/app/brand"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/pkg/pagestream"
 	siteassets "github.com/flidai/leapview/site"
 	g "maragu.dev/gomponents"
 	dsattr "maragu.dev/gomponents-datastar"

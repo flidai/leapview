@@ -13,8 +13,11 @@ Dashboard source history belongs in Git, but Git cannot restore user principals,
 Write the archive outside the active instance directory:
 
 ```sh
-leapview admin backup --out /srv/backups/leapview-2026-07-16.tar
+install -d -m 0700 /srv/backups
+leapview admin backup --out /srv/backups/leapview-2026-07-16.tar.gz
 ```
+
+Use a dedicated backup directory rather than a shared output directory. The direct backup path enforces mode `0700` on its parent and `0600` on the completed archive even when the process umask is permissive. Compose and supported host installations apply the same private directory, archive, checksum, and systemd `UMask=0077` contract.
 
 The output path must not already exist. Record a checksum, creation time, LeapView version, storage-backend configuration, and the identity of any corresponding external catalog or object-store recovery point.
 

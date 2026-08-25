@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	analyticsgen "github.com/flidai/leapview/internal/analytics/api/gen"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
@@ -78,7 +79,17 @@ func (handler connectionBindingAPIHandler) Create(
 		return
 	}
 	configuration := targetConnectionConfiguration(body.Configuration)
-	binding, err := handler.config.Administration.Create(r.Context(), principalID, connectionbinding.TargetBindingInput{
+	commandContext, err := connectionAdministrationCommandContext(r, "createTargetConnectionBinding", principalID, connectionbinding.AdministrationAuditEvent{
+		ProjectID: projectgraph.ResourceID(project), BindingID: connectionbinding.BindingID(body.Id),
+		TargetID: connectionbinding.TargetID(target), ConnectionID: projectgraph.ResourceID(body.LogicalConnection),
+		Actor: principalID, Action: connectionbinding.AuditBindingCreated,
+		Outcome: connectionbinding.AdministrationAuditSucceeded, Revision: 1,
+	})
+	if err != nil {
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
+		return
+	}
+	binding, err := handler.config.Administration.Create(commandContext, principalID, connectionbinding.TargetBindingInput{
 		ID: connectionbinding.BindingID(body.Id), TargetID: connectionbinding.TargetID(target), ConnectionID: projectgraph.ResourceID(body.LogicalConnection),
 		ConnectorKind: configuration.ConnectorKind, AuthenticationMode: configuration.AuthenticationMode,
 		Scope:    connectionbinding.BindingScope{ProjectID: projectgraph.ResourceID(project), Environment: handler.config.Environment},
@@ -86,6 +97,10 @@ func (handler connectionBindingAPIHandler) Create(
 		Enabled: body.Enabled,
 	})
 	if err != nil {
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
+		return
+	}
+	if err := completeConnectionBindingCommand(commandContext, analyticsgen.GenCommandOperationCreateTargetConnectionBinding()); err != nil {
 		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationCreateTargetConnectionBinding(), err)
 		return
 	}
@@ -162,8 +177,22 @@ func (handler connectionBindingAPIHandler) Update(
 		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", "Request body is invalid", nil)
 		return
 	}
+	current, err := handler.config.Administration.Get(r.Context(), principalID, key)
+	if err != nil {
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
+		return
+	}
+	commandContext, err := connectionAdministrationCommandContext(r, "updateTargetConnectionBinding", principalID, connectionbinding.AdministrationAuditEvent{
+		ProjectID: current.Scope.ProjectID, BindingID: current.ID, TargetID: current.TargetID,
+		ConnectionID: current.ConnectionID, Actor: principalID, Action: connectionbinding.AuditBindingUpdated,
+		Outcome: connectionbinding.AdministrationAuditSucceeded, Revision: current.Revision + 1,
+	})
+	if err != nil {
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
+		return
+	}
 	binding, err := handler.config.Administration.UpdateConfiguration(
-		r.Context(),
+		commandContext,
 		connectionbinding.UpdateConfigurationRequest{
 			ActorID: principalID, Key: key,
 			Configuration:    targetConnectionConfiguration(body.Configuration),
@@ -174,7 +203,21 @@ func (handler connectionBindingAPIHandler) Update(
 		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
 		return
 	}
+	if err := completeConnectionBindingCommand(commandContext, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding()); err != nil {
+		writeConnectionBindingCommandFailure(w, r, analyticsgen.GenCommandOperationUpdateTargetConnectionBinding(), err)
+		return
+	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionBindingResponse(binding))
+}
+
+func completeConnectionBindingCommand(ctx context.Context, operationID analyticsgen.GenCommandOperationID) error {
+	executor, err := apigencommand.NewExecutor(analyticsgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(ctx, operationID.APIGenOperationID(), apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error { return nil },
+	})
 }
 
 func (handler connectionBindingAPIHandler) Test(
@@ -237,14 +280,35 @@ func (handler connectionBindingAPIHandler) setEnabled(
 	if !ok {
 		return
 	}
-	var (
-		binding connectionbinding.TargetBinding
-		err     error
-	)
+	current, err := handler.config.Administration.Get(r.Context(), principalID, key)
+	if err != nil {
+		operationID := analyticsgen.GenCommandOperationDisableTargetConnectionBinding()
+		if enabled {
+			operationID = analyticsgen.GenCommandOperationEnableTargetConnectionBinding()
+		}
+		writeConnectionBindingCommandFailure(w, r, operationID, err)
+		return
+	}
+	action, operationID := connectionbinding.AuditBindingDisabled, "disableTargetConnectionBinding"
+	generatedOperationID := analyticsgen.GenCommandOperationDisableTargetConnectionBinding()
 	if enabled {
-		binding, err = handler.config.Administration.Enable(r.Context(), principalID, key)
+		action, operationID = connectionbinding.AuditBindingEnabled, "enableTargetConnectionBinding"
+		generatedOperationID = analyticsgen.GenCommandOperationEnableTargetConnectionBinding()
+	}
+	commandContext, err := connectionAdministrationCommandContext(r, operationID, principalID, connectionbinding.AdministrationAuditEvent{
+		ProjectID: current.Scope.ProjectID, BindingID: current.ID, TargetID: current.TargetID,
+		ConnectionID: current.ConnectionID, Actor: principalID, Action: action,
+		Outcome: connectionbinding.AdministrationAuditSucceeded, Revision: current.Revision + 1,
+	})
+	if err != nil {
+		writeConnectionBindingCommandFailure(w, r, generatedOperationID, err)
+		return
+	}
+	var binding connectionbinding.TargetBinding
+	if enabled {
+		binding, err = handler.config.Administration.Enable(commandContext, principalID, key)
 	} else {
-		binding, err = handler.config.Administration.Disable(r.Context(), principalID, key)
+		binding, err = handler.config.Administration.Disable(commandContext, principalID, key)
 	}
 	if err != nil {
 		operationID := analyticsgen.GenCommandOperationDisableTargetConnectionBinding()
@@ -254,7 +318,38 @@ func (handler connectionBindingAPIHandler) setEnabled(
 		writeConnectionBindingCommandFailure(w, r, operationID, err)
 		return
 	}
+	if err := completeConnectionBindingCommand(commandContext, generatedOperationID); err != nil {
+		writeConnectionBindingCommandFailure(w, r, generatedOperationID, err)
+		return
+	}
 	apitransport.WriteJSON(w, http.StatusOK, targetConnectionBindingResponse(binding))
+}
+
+func connectionAdministrationCommandContext(
+	r *http.Request,
+	operationID, principalID string,
+	event connectionbinding.AdministrationAuditEvent,
+) (context.Context, error) {
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	if requestID == "" {
+		requestID = strings.TrimSpace(r.Header.Get("X-Request-Id"))
+	}
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		correlationID = strings.TrimSpace(r.Header.Get("X-Correlation-Id"))
+	}
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	intent, err := connectionbinding.BuildConnectionAdministrationAuditIntent(connectionbinding.AdministrationAuditInvocation{
+		OperationID: operationID, PrincipalID: principalID,
+		RequestID: requestID, CorrelationID: correlationID,
+		IdempotencyKey: strings.TrimSpace(r.Header.Get("Idempotency-Key")),
+	}, event)
+	if err != nil {
+		return r.Context(), err
+	}
+	return connectionbinding.WithAuditIntent(r.Context(), intent), nil
 }
 
 func (handler connectionBindingAPIHandler) Health(

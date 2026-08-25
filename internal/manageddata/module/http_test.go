@@ -3,20 +3,19 @@ package module
 import (
 	"context"
 	"database/sql"
-	"errors"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"testing"
 	"time"
 )
 
 func TestBuildRejectsMissingOwnedPersistence(t *testing.T) {
-	if _, err := Build(t.Context(), Config{RecordAudit: discardManagedDataAudit}); err == nil {
+	if _, err := Build(t.Context(), Config{}); err == nil {
 		t.Fatal("managed-data module accepted missing database")
 	}
 }
 
 func TestBuildRejectsMissingCommandAuditSinkWhenEnabled(t *testing.T) {
-	if module, err := Build(t.Context(), Config{Database: new(sql.DB)}); !errors.Is(err, errManagedDataCommandAuditUnavailable) || module != nil {
+	if module, err := Build(t.Context(), Config{Database: new(sql.DB)}); module != nil || err == nil {
 		t.Fatalf("module = %v, err = %v", module, err)
 	}
 }

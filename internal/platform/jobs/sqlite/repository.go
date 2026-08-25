@@ -190,6 +190,13 @@ func (r *Repository) RecordWorkflow(ctx context.Context, tx transaction.Transact
 	return err
 }
 
+func (r *Repository) CancelWorkflowJob(ctx context.Context, tx transaction.Transaction, id string) error {
+	if tx == nil {
+		return fmt.Errorf("workflow transaction is required")
+	}
+	return NewRepository(tx).Cancel(ctx, id)
+}
+
 func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID string, after int64, limit int) ([]jobs.Event, error) {
 	if !canonicalLiteral(resourceKind, 128) || !canonicalLiteral(resourceID, 256) || limit < 1 || limit > 200 || after < 0 {
 		return nil, fmt.Errorf("event limit must be between 1 and 200")

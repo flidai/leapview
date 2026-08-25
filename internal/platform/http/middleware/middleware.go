@@ -276,30 +276,22 @@ func SecurityHeadersMiddleware(config SecurityHeadersConfig) func(http.Handler) 
 		if !config.Enabled {
 			return next
 		}
+		strictPolicy := ContentSecurityPolicy(ContentSecurityPolicyConfig{})
+		documentPolicy := ContentSecurityPolicy(ContentSecurityPolicyConfig{
+			DatastarExpressions: true,
+			DynamicStyles:       true,
+		})
+		withContentSecurityPolicy := ContentSecurityPolicyByMediaType(strictPolicy, documentPolicy)(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			header := w.Header()
 			header.Set("X-Content-Type-Options", "nosniff")
 			header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
 			header.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 			header.Set("X-Frame-Options", "SAMEORIGIN")
-			header.Set("Content-Security-Policy", strings.Join([]string{
-				"default-src 'self'",
-				"base-uri 'self'",
-				"object-src 'none'",
-				"frame-ancestors 'self'",
-				"form-action 'self'",
-				"script-src 'self' 'unsafe-eval'",
-				"style-src 'self' 'unsafe-inline'",
-				"img-src 'self' data: blob:",
-				"font-src 'self' data:",
-				"connect-src 'self'",
-				"worker-src 'self' blob:",
-				"manifest-src 'self'",
-			}, "; "))
 			if config.HSTS {
 				header.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 			}
-			next.ServeHTTP(w, r)
+			withContentSecurityPolicy.ServeHTTP(w, r)
 		})
 	}
 }

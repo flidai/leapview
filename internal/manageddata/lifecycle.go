@@ -7,6 +7,7 @@ import (
 	"time"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -15,6 +16,35 @@ var (
 	ErrNotFound = apigenfailure.New("not_found", "managed data record not found")
 	ErrConflict = apigenfailure.New("conflict", "managed data conflict")
 )
+
+// UploadTransition is the complete durable handoff for an upload state
+// transition. Workflow and audit are intentionally carried together so an
+// audited command cannot be reduced to an unaudited state mutation by an
+// adapter that only implements one half of the handoff.
+type UploadTransition struct {
+	Workflow    jobs.WorkflowIntent
+	AuditIntent *access.AuditIntent
+}
+
+// UploadTransitionPort owns the transaction containing either upload workflow
+// transition and its optional durable audit intent. Implementations must not
+// commit or roll back a caller-owned transaction outside this operation.
+//
+// The port is separate from Repository so the historical Repository methods
+// remain source-compatible for nonpersistent and test adapters. Durable
+// compositions wire this port explicitly.
+type UploadTransitionPort interface {
+	BeginUploadFinalizationTransition(context.Context, UploadID, UploadTransition) (UploadSession, error)
+	AbortUploadSessionTransition(context.Context, UploadID, UploadTransition) error
+}
+
+// WorkflowIntentPresent reports whether a workflow handoff contains an event
+// or queued job. It is shared by adapters so an audit-only transition does not
+// accidentally enqueue an empty workflow record.
+func WorkflowIntentPresent(intent jobs.WorkflowIntent) bool {
+	return intent.Event.Key != "" || intent.Event.ResourceKind != "" || intent.Event.ResourceID != "" || intent.Event.EventType != "" || len(intent.Event.Data) > 0 ||
+		intent.Job.ID != "" || intent.Job.Kind != "" || intent.Job.ResourceKind != "" || intent.Job.ResourceID != "" || len(intent.Job.Payload) > 0
+}
 
 type CollectionStatus string
 
@@ -160,6 +190,7 @@ type CreateUploadSessionInput struct {
 	StagingPrefix  string
 	CreatedBy      string
 	ExpiresAt      time.Time
+	AuditIntent    *access.AuditIntent
 }
 
 type UploadProgress struct {
@@ -207,6 +238,7 @@ type CreateS3MultipartUploadInput struct {
 	SHA256              string
 	SizeBytes           int64
 	IdempotencyIdentity string
+	AuditIntent         *access.AuditIntent
 }
 
 type InitializeS3MultipartUploadInput struct {
@@ -214,6 +246,7 @@ type InitializeS3MultipartUploadInput struct {
 	ObjectKey        string
 	ProviderUploadID string
 	Existing         bool
+	AuditIntent      *access.AuditIntent
 }
 
 type S3MultipartPart struct {
@@ -227,6 +260,7 @@ type BeginS3MultipartCompletionInput struct {
 	ID                  MultipartUploadID
 	IdempotencyIdentity string
 	RequestHash         string
+	AuditIntent         *access.AuditIntent
 }
 
 type S3MultipartCompletion struct {
@@ -238,6 +272,7 @@ type S3MultipartCompletion struct {
 type BeginS3MultipartAbortInput struct {
 	ID                  MultipartUploadID
 	IdempotencyIdentity string
+	AuditIntent         *access.AuditIntent
 }
 
 type S3MultipartAbort struct {

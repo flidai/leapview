@@ -156,7 +156,7 @@ interface AgentConfiguration {
 @tag("Agent")
 @doc("Agent conversation and run lifecycle. GET operations and event streams are queries; create, update, archive, start, and cancel operations mutate durable agent state.")
 @route("/agent/conversations")
-@apigen.commandDefaults(#{ guarantee: "best-effort" })
+@apigen.commandDefaults(#{ guarantee: "transactional" })
 @apigen.auditPayload(AgentCommandAuditPayload)
 interface AgentConversations {
   @summary("List agent conversations")

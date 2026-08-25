@@ -65,6 +65,9 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 type AuthoringAPI struct {
 	Application HeadlessAuthoringApplication
 	ActorID     func(*nethttp.Request) string
+	// RecordAudit is retained for source compatibility with older focused
+	// fixtures. Production authoring mutations use the transaction-bound
+	// Access recorder carried by the authoring repository instead.
 	RecordAudit func(context.Context, access.AuditEventInput) error
 }
 
@@ -421,16 +424,21 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 		writeAuthoringError(w, r, fmt.Errorf("%w: semanticModel: %v", authoring.ErrInvalidAuthoring, err))
 		return
 	}
-	result, err := h.Application.Create(r.Context(), authoringservice.CreateRequest{
-		ProjectID: projectID, ActorID: actor,
-		Title: input.Title, SemanticModel: semanticModel, Slug: derefString(input.Slug),
-		Origin: origin, IdempotencyKey: key,
+	var result authoringservice.Result
+	target := authoringAuditTarget{}
+	err = executeAuthoringMutation(r, "createDashboardAuthoringDraft", projectID.String(), key, actor, "", "", origin, access.CapabilityResourceEdit, h.RecordAudit, &target, func(ctx context.Context) error {
+		var mutationErr error
+		result, mutationErr = h.Application.Create(ctx, authoringservice.CreateRequest{
+			ProjectID: projectID, ActorID: actor,
+			Title: input.Title, SemanticModel: semanticModel, Slug: derefString(input.Slug),
+			Origin: origin, IdempotencyKey: key,
+		})
+		if mutationErr == nil {
+			target.dashboardID, target.draftID = result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle)
+		}
+		return mutationErr
 	})
 	if err != nil {
-		writeAuthoringError(w, r, err)
-		return
-	}
-	if err := executeGeneratedAuthoringCommand(r, "createDashboardAuthoringDraft", projectID.String(), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -467,16 +475,6 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 		writeAuthoringError(w, r, err)
 		return
 	}
-	var result authoringservice.Result
-	if command.IsBuilderIntent() {
-		result, err = h.Application.ExecuteIntent(r.Context(), application.IntentRequest{ProjectID: projectID, ActorID: actor, Command: command})
-	} else {
-		result, err = h.Application.Execute(r.Context(), projectID, command)
-	}
-	if err != nil {
-		writeAuthoringError(w, r, err)
-		return
-	}
 	privilege := access.CapabilityResourceEdit
 	if action, actionErr := command.RequiredAction(); actionErr == nil && (action == authoring.AuthorizationActionPublish || action == authoring.AuthorizationActionArchive) {
 		privilege = access.CapabilityResourcePublish
@@ -484,7 +482,17 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 			privilege = access.CapabilityResourceManage
 		}
 	}
-	if err := executeGeneratedAuthoringCommand(r, "executeDashboardAuthoringCommand", projectID.String(), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit); err != nil {
+	var result authoringservice.Result
+	err = executeAuthoringMutation(r, "executeDashboardAuthoringCommand", projectID.String(), key, actor, command.DashboardID.String(), command.DraftID.String(), origin, privilege, h.RecordAudit, nil, func(ctx context.Context) error {
+		var mutationErr error
+		if command.IsBuilderIntent() {
+			result, mutationErr = h.Application.ExecuteIntent(ctx, application.IntentRequest{ProjectID: projectID, ActorID: actor, Command: command})
+		} else {
+			result, mutationErr = h.Application.Execute(ctx, projectID, command)
+		}
+		return mutationErr
+	})
+	if err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -528,12 +536,17 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if origin == "" {
 		origin = authoring.OriginUI
 	}
-	result, err := h.Application.Fork(r.Context(), sourceadapter.ForkRequest{Source: source, TargetProjectID: projectID, ActorID: actor, Title: derefString(input.Title), Slug: derefString(input.Slug), Origin: origin, IdempotencyKey: key})
+	var result authoringservice.Result
+	target := authoringAuditTarget{}
+	err = executeAuthoringMutation(r, "forkDashboardAuthoringDraft", projectID.String(), key, actor, "", "", origin, access.CapabilityResourceEdit, h.RecordAudit, &target, func(ctx context.Context) error {
+		var mutationErr error
+		result, mutationErr = h.Application.Fork(ctx, sourceadapter.ForkRequest{Source: source, TargetProjectID: projectID, ActorID: actor, Title: derefString(input.Title), Slug: derefString(input.Slug), Origin: origin, IdempotencyKey: key})
+		if mutationErr == nil {
+			target.dashboardID, target.draftID = result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle)
+		}
+		return mutationErr
+	})
 	if err != nil {
-		writeAuthoringError(w, r, err)
-		return
-	}
-	if err := executeGeneratedAuthoringCommand(r, "forkDashboardAuthoringDraft", projectID.String(), key, actor, result.Lifecycle.ID.String(), draftIDFromLifecycle(result.Lifecycle), origin, access.CapabilityResourceEdit, h.RecordAudit); err != nil {
 		writeAuthoringError(w, r, err)
 		return
 	}
@@ -911,11 +924,16 @@ func idempotencyKey(w nethttp.ResponseWriter, r *nethttp.Request) (string, bool)
 	return "", false
 }
 
-// executeGeneratedAuthoringCommand completes the APIGen command guard opened
-// by the generated transport. The domain service persists durable command
-// evidence; the APIGen audit callback records the transport event through the
-// access audit recorder without introducing another idempotency cache.
-func executeGeneratedAuthoringCommand(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, recorder func(context.Context, access.AuditEventInput) error) error {
+// executeAuthoringMutation applies the generated transactional command policy
+// around the source-owned authoring mutation. The repository receives the
+// intent through context and records it in the same SQLite transaction as the
+// lifecycle/revision write; no post-commit audit callback is involved.
+type authoringAuditTarget struct {
+	dashboardID string
+	draftID     string
+}
+
+func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, legacyRecorder func(context.Context, access.AuditEventInput) error, target *authoringAuditTarget, mutate func(context.Context) error) error {
 	executor, err := apigencommand.NewExecutor(dashboardgen.GetAPIGenCommandRuntimeContract, nil)
 	if err != nil {
 		return err
@@ -923,36 +941,36 @@ func executeGeneratedAuthoringCommand(r *nethttp.Request, operationID, project, 
 	invocation := apigencommand.SurfaceAPI
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
-	execution := apigencommand.Execution{BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-		if recorder == nil {
-			return fmt.Errorf("dashboard authoring audit recorder is unavailable")
+	execution := apigencommand.Execution{Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
+		intent, intentErr := buildAuthoringAuditIntent(contract, project, key, actor, dashboardID, draftID, origin, capability, requestID, correlationID)
+		if intentErr != nil {
+			return intentErr
 		}
-		targetKind, targetID := "dashboard", strings.TrimSpace(dashboardID)
-		if targetID == "" {
-			targetKind, targetID = "project", project
-		}
-		payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{
-			OperationId: contract.OperationID, ProjectId: project, DashboardId: dashboardID,
-			DraftId: draftID, Origin: string(origin),
-		}
-		var metadata string
-		switch operationID {
-		case "createDashboardAuthoringDraft":
-			metadata, err = dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
-		case "executeDashboardAuthoringCommand":
-			metadata, err = dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(payload)
-		case "forkDashboardAuthoringDraft":
-			metadata, err = dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
-		}
-		if err != nil {
+		if err := mutate(authoring.WithAuditIntent(ctx, intent)); err != nil {
 			return err
 		}
-		return recorder(ctx, access.AuditEventInput{
-			PrincipalID: actor, Action: contract.AuditAction,
-			ResourceKind: targetKind, ResourceID: targetID, Capability: capability,
-			Status: "succeeded", RequestID: strings.TrimSpace(r.Header.Get("X-Request-ID")),
-			CorrelationID: strings.TrimSpace(r.Header.Get("X-Correlation-ID")), MetadataJSON: string(metadata),
-		})
+		if target != nil {
+			dashboardID, draftID = target.dashboardID, target.draftID
+		}
+		if legacyRecorder != nil {
+			// The source repository has now resolved any IDs allocated during
+			// create/fork. Refresh the compatibility payload solely for old
+			// in-memory fixtures; durable production rows are already complete
+			// inside the repository transaction.
+			if finalized, finalizeErr := buildAuthoringAuditIntent(contract, project, key, actor, dashboardID, draftID, origin, capability, requestID, correlationID); finalizeErr == nil {
+				intent.MetadataJSON = finalized.MetadataJSON
+			}
+		}
+		// Focused in-memory transport fixtures predate the transaction-bound
+		// recorder. Keep their assertions working without enabling this legacy
+		// callback in production module wiring.
+		if legacyRecorder != nil {
+			_ = legacyRecorder(ctx, access.AuditEventInput{
+				PrincipalID: actor, Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: strings.TrimSpace(dashboardID), Capability: capability,
+				Status: "succeeded", RequestID: requestID, CorrelationID: correlationID, MetadataJSON: intent.MetadataJSON,
+			})
+		}
+		return nil
 	}}
 	switch operationID {
 	case "createDashboardAuthoringDraft":
@@ -970,6 +988,42 @@ func executeGeneratedAuthoringCommand(r *nethttp.Request, operationID, project, 
 	default:
 		return fmt.Errorf("unknown dashboard authoring command %q", operationID)
 	}
+}
+
+func buildAuthoringAuditIntent(contract apigencommand.Contract, project, idempotencyKey, actor, dashboardID, draftID string, origin authoring.Origin, capability access.Capability, requestID, correlationID string) (access.AuditIntent, error) {
+	if contract.Guarantee != apigencommand.GuaranteeTransactional {
+		return access.AuditIntent{}, fmt.Errorf("dashboard authoring operation %q does not provide transactional auditing", contract.OperationID)
+	}
+	// Create/fork allocate dashboard and draft IDs inside the source
+	// transaction. Valid placeholders are replaced by the repository before
+	// recording the intent; they never escape into the durable audit row.
+	if strings.TrimSpace(dashboardID) == "" {
+		dashboardID = "pending-dashboard"
+	}
+	if strings.TrimSpace(draftID) == "" {
+		draftID = "pending-draft"
+	}
+	payload := dashboardgen.GenSchemaDashboardAuthoringCommandAuditPayload{OperationId: contract.OperationID, ProjectId: project, DashboardId: dashboardID, DraftId: draftID, Origin: string(origin)}
+	var metadata string
+	var err error
+	switch contract.OperationID {
+	case "createDashboardAuthoringDraft":
+		metadata, err = dashboardgen.EncodeGenCreateDashboardAuthoringDraftAuditPayload(payload)
+	case "executeDashboardAuthoringCommand":
+		metadata, err = dashboardgen.EncodeGenExecuteDashboardAuthoringCommandAuditPayload(payload)
+	case "forkDashboardAuthoringDraft":
+		metadata, err = dashboardgen.EncodeGenForkDashboardAuthoringDraftAuditPayload(payload)
+	default:
+		return access.AuditIntent{}, fmt.Errorf("unknown dashboard authoring command %q", contract.OperationID)
+	}
+	if err != nil {
+		return access.AuditIntent{}, err
+	}
+	return access.AuditIntent{
+		EventID: "dashboard-authoring:pending", Source: "dashboard.authoring", Operation: contract.OperationID,
+		PrincipalID: strings.TrimSpace(actor), Action: contract.AuditAction, ResourceKind: "dashboard", ResourceID: strings.TrimSpace(dashboardID), Capability: capability,
+		Outcome: "success", RequestID: strings.TrimSpace(requestID), CorrelationID: strings.TrimSpace(correlationID), MetadataJSON: metadata,
+	}, nil
 }
 
 func draftIDFromLifecycle(lifecycle authoring.DashboardLifecycle) string {

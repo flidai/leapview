@@ -33,6 +33,7 @@ customer site.
 | [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | Complete | — |
 | [ADR-0013](0013-separate-workload-admission-from-application-policy.md) | Separate workload admission from application policy | Accepted | 2026-08-19 | Complete | — |
 | [ADR-0014](0014-adopt-an-asset-selected-refresh-pipeline-contract.md) | Adopt an asset-selected refresh pipeline contract | Accepted | 2026-08-20 | Pending | — |
+| [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md) | Adopt durable audit and compliance controls | Accepted | 2026-08-23 | Durable foundation and prioritized producer adoption | — |
 
 ## Companion specifications
 

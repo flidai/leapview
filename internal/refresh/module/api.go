@@ -32,6 +32,11 @@ func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord)
 	if err != nil {
 		return err
 	}
+	if m != nil && m.durableAudit {
+		return executor.Execute(ctx, string(refreshgen.GenOperationCreateRefreshRun), apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error { return nil },
+		})
+	}
 	return executor.Execute(ctx, string(refreshgen.GenOperationCreateRefreshRun), apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
 			if contract.Execution == nil || contract.Execution.InitialEvent != contract.AuditAction {
@@ -64,6 +69,11 @@ func (m *Module) verifyRunCancelled(ctx context.Context, run refreshrun.RunRecor
 	executor, err := apigencommand.NewExecutor(refreshgen.GetAPIGenCommandRuntimeContract, logger)
 	if err != nil {
 		return err
+	}
+	if m != nil && m.durableAudit {
+		return executor.Execute(ctx, string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
+			Transactional: func(context.Context, apigencommand.Contract) error { return nil },
+		})
 	}
 	return executor.Execute(ctx, string(refreshgen.GenOperationCancelRefreshRun), apigencommand.Execution{
 		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
@@ -172,7 +182,18 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 	}
 	// Cancellation remains generation-fenced: use the run's originating
 	// identity for the mutation after authorizing it in the active scope.
-	row, err := m.runs.CancelRun(r.Context(), prior.Identity, runID)
+	cancelCtx := r.Context()
+	principalID := ""
+	if m.handler.CurrentPrincipal != nil {
+		if principal, ok := m.handler.CurrentPrincipal(r); ok {
+			principalID = principal.ID
+		}
+	}
+	if intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Correlation-Id")); intentErr == nil && intent != nil {
+		intent.EventID = ""
+		cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
+	}
+	row, err := m.runs.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)

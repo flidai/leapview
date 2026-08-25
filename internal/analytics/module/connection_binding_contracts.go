@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -56,6 +57,10 @@ type ConnectionAdministrationConfig struct {
 	MaxConcurrent       int
 	Audit               ConnectionRotationAuditRecorder
 	AdministrationAudit ConnectionAdministrationAuditRecorder
+	// AuditIntentRecorder is required for command-facing transactional
+	// administration and is consumed by the SQLite binding repository.
+	AuditIntentRecorder access.AuditIntentRecorder
+	RequireAuditIntent  bool
 }
 
 type RuntimeBindingLeaserConfig struct {

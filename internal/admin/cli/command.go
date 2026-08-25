@@ -44,6 +44,7 @@ type Operations interface {
 	AcknowledgeInitialCredentials(context.Context) error
 	StorageCleanup(context.Context, adminoffline.StorageCleanupRequest, io.Writer) error
 	Maintenance(context.Context, adminoffline.MaintenanceRequest, io.Writer) error
+	AuditOutbox(context.Context, adminoffline.AuditOutboxRequest, io.Writer) error
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
@@ -95,6 +96,28 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	maintenance.Flags().IntVar(&values.ArchivedAgentDays, "archived-agent-days", defaultArchivedAgentRetentionDays, "archived agent conversation retention in days; 0 disables archived conversation pruning")
 	maintenance.Flags().IntVar(&values.AuthStateDays, "auth-state-days", defaultAuthStateRetentionDays, "expired or revoked auth state retention in days; 0 disables auth-state pruning")
 
+	var requeueAuditEvent, requeueAuditState, requeueAuditFailureCode, requeueAuditPayloadDigest string
+	var requeueAuditAttempts int
+	auditOutbox := operationCommand(operations, "audit-outbox", "Inspect or recover the durable audit handoff", func(command *cobra.Command) error {
+		request := adminoffline.AuditOutboxRequest{
+			RequeueEventID: requeueAuditEvent, ExpectedState: requeueAuditState,
+			ExpectedFailureCode: requeueAuditFailureCode, ExpectedPayloadDigest: requeueAuditPayloadDigest,
+			Apply: values.Apply,
+		}
+		if command.Flags().Changed("attempt-count") || command.Flags().Changed("expected-attempts") {
+			request.ExpectedAttempts = &requeueAuditAttempts
+		}
+		return operations.AuditOutbox(ctx, request, command.OutOrStdout())
+	})
+	auditOutbox.Flags().StringVar(&requeueAuditEvent, "requeue-event", "", "exact poison or quarantined audit event identity to requeue")
+	auditOutbox.Flags().StringVar(&requeueAuditState, "expected-state", "", "expected terminal state (poison or quarantined) from inspection")
+	auditOutbox.Flags().StringVar(&requeueAuditState, "state", "", "alias for --expected-state")
+	auditOutbox.Flags().IntVar(&requeueAuditAttempts, "attempt-count", 0, "expected terminal attempt count from inspection")
+	auditOutbox.Flags().IntVar(&requeueAuditAttempts, "expected-attempts", 0, "alias for --attempt-count")
+	auditOutbox.Flags().StringVar(&requeueAuditFailureCode, "failure-code", "", "expected safe failure code from inspection")
+	auditOutbox.Flags().StringVar(&requeueAuditPayloadDigest, "payload-digest", "", "expected immutable payload digest from inspection")
+	auditOutbox.Flags().BoolVar(&values.Apply, "apply", false, "apply the exact requeue operation")
+
 	backup := operationCommand(operations, "backup", "Create a consistent LeapView instance backup", func(command *cobra.Command) error {
 		return operations.Backup(ctx, adminoffline.BackupRequest{
 			Out: values.BackupOut, DatabaseOnly: values.DatabaseOnly,
@@ -114,7 +137,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	restore.Flags().BoolVar(&values.ConfirmRestore, "confirm", false, "confirm replacement of the configured LeapView instance")
 	restore.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "restore only the platform SQLite database")
 
-	parent.AddCommand(initialize, storage, maintenance, backup, restore)
+	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore)
 	delivery := deliveryPoolCommand(ctx, operations)
 	delivery.AddCommand(deliveryAuditCommand(ctx, operations))
 	delivery.AddCommand(deliveryRepairCommand(ctx, operations))

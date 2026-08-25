@@ -22,6 +22,8 @@ Set `LEAPVIEW_PUBLIC_URL` to the application deployment's canonical HTTPS origin
 
 Browser authentication in production requires secure cookies. Configure exact public OIDC or Azure callback URLs and register those same URLs with the identity provider. Identity issuer and callback URLs must not contain URL credentials, query strings, or fragments; tenant-specific issuer paths remain supported.
 
+Production content security policy keeps executable strings and inline styles disabled on API, health, stream, and static-asset responses. Interactive HTML documents retain one explicit `unsafe-eval` exception because the pinned Datastar runtime compiles declarative `data-*` expressions; inline script attributes remain disabled. Lit and server-rendered dynamic styles are isolated with `style-src-elem` and `style-src-attr` instead of weakening the script policy. Do not add third-party script origins or widen these exceptions at the reverse proxy.
+
 ## Authentication and security secrets
 
 Production requires at least one supported authentication mode: local browser auth, generic OIDC, Azure/Entra, or API-token-only mode. Development auth bypass is forbidden.

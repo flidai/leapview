@@ -14,7 +14,9 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/flidai/leapview/internal/access"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -28,6 +30,7 @@ type SQLRunRepository struct {
 	db        *sql.DB
 	q         *platformdb.Queries
 	workflow  jobplatform.WorkflowRecorder
+	audit     access.AuditIntentRecorder
 	execution RunWorkflowConfig
 }
 
@@ -43,6 +46,39 @@ func NewSQLRunRepository(db *sql.DB) *SQLRunRepository {
 
 func NewSQLRunRepositoryWithWorkflow(db *sql.DB, workflow jobplatform.WorkflowRecorder, execution RunWorkflowConfig) *SQLRunRepository {
 	return &SQLRunRepository{db: db, q: platformdb.New(db), workflow: workflow, execution: execution}
+}
+
+func NewSQLRunRepositoryWithWorkflowAndAudit(db *sql.DB, workflow jobplatform.WorkflowRecorder, execution RunWorkflowConfig, audit access.AuditIntentRecorder) *SQLRunRepository {
+	return &SQLRunRepository{db: db, q: platformdb.New(db), workflow: workflow, execution: execution, audit: audit}
+}
+
+func (r *SQLRunRepository) ConfigureAuditIntentRecorder(audit access.AuditIntentRecorder) {
+	if r != nil {
+		r.audit = audit
+	}
+}
+
+func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction.Transaction, intent *access.AuditIntent, runID string) error {
+	if intent == nil {
+		return nil
+	}
+	if r.audit == nil {
+		return fmt.Errorf("refresh audit intent recorder is required")
+	}
+	copy := *intent
+	runID = strings.TrimSpace(runID)
+	copy.AggregateKey = "refresh_run:" + runID
+	if strings.Contains(strings.ToLower(copy.Operation), "create") {
+		copy.AggregateSequence = 1
+	} else {
+		copy.AggregateSequence = 2
+	}
+	// Resource identity remains the generated project target. The run ID is
+	// still the durable aggregate and event identity, so independent runs do
+	// not collide in the audit outbox.
+	hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + runID + "\x00" + copy.RequestID))
+	copy.EventID = "sha256:" + hex.EncodeToString(hash[:])
+	return r.audit.RecordAuditIntent(ctx, tx, copy)
 }
 
 func (r *SQLRunRepository) CreateRun(ctx context.Context, input refreshrun.RunInput) (refreshrun.RunRecord, error) {
@@ -306,6 +342,24 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 			Key: r.execution.InitialEvent, ResourceKind: r.execution.ResourceKind,
 			ResourceID: runID, EventType: r.execution.InitialEvent, Data: data,
 		}}); err != nil {
+			return refreshrun.RunRecord{}, err
+		}
+	}
+	if normalized.ParentRunID == "" {
+		intent := normalized.AuditIntent
+		if intent != nil {
+			copy := *intent
+			if data, encodeErr := refreshgen.EncodeGenCreateRefreshRunAuditPayload(refreshgen.GenSchemaRefreshQueuedAuditPayload{
+				Id: runID, PipelineId: normalized.TargetID.String(), SemanticModel: normalized.SemanticModelID.String(),
+				InvocationSource: normalized.InvocationSource, MatchingScheduleIds: append([]string{}, normalized.MatchingScheduleIDs...), PlanDigest: normalized.PlanDigest, Status: admissionStatus,
+			}); encodeErr != nil {
+				return refreshrun.RunRecord{}, encodeErr
+			} else {
+				copy.MetadataJSON = data
+			}
+			intent = &copy
+		}
+		if err := r.recordAuditIntent(ctx, tx, intent, runID); err != nil {
 			return refreshrun.RunRecord{}, err
 		}
 	}
@@ -846,6 +900,16 @@ func (r *SQLRunRepository) MarkRunTreeSupersededClaimed(ctx context.Context, job
 }
 
 func (r *SQLRunRepository) CancelRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string) (refreshrun.RunRecord, error) {
+	return r.cancelRun(ctx, identity, runID, nil)
+}
+
+// CancelRunWithAudit commits the queued cancellation and its durable audit
+// intent in the same SQLite transaction.
+func (r *SQLRunRepository) CancelRunWithAudit(ctx context.Context, identity projectgraph.ServingIdentity, runID string, intent *access.AuditIntent) (refreshrun.RunRecord, error) {
+	return r.cancelRun(ctx, identity, runID, intent)
+}
+
+func (r *SQLRunRepository) cancelRun(ctx context.Context, identity projectgraph.ServingIdentity, runID string, explicit *access.AuditIntent) (refreshrun.RunRecord, error) {
 	if err := identity.Validate(); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
 		return refreshrun.RunRecord{}, fmt.Errorf("serving identity and canonical run id are required")
 	}
@@ -917,6 +981,27 @@ func (r *SQLRunRepository) CancelRun(ctx context.Context, identity projectgraph.
 	}
 	if failedCount != 1 {
 		return refreshrun.RunRecord{}, fmt.Errorf("refresh candidate is not cancellable")
+	}
+	intent := explicit
+	if intent == nil {
+		if fromContext, ok := refreshrun.AuditIntentFromContext(ctx); ok {
+			intent = &fromContext
+		}
+	}
+	if intent != nil {
+		copy := *intent
+		if data, encodeErr := refreshgen.EncodeGenCancelRefreshRunAuditPayload(refreshgen.GenSchemaRefreshCancelledAuditPayload{
+			Id: runID, PipelineId: prior.PipelineID.String(), Status: refreshrun.RunStatusCancelled, InvocationSource: prior.InvocationSource,
+			MatchingScheduleIds: append([]string{}, prior.MatchingScheduleIDs...),
+		}); encodeErr != nil {
+			return refreshrun.RunRecord{}, encodeErr
+		} else {
+			copy.MetadataJSON = data
+		}
+		intent = &copy
+	}
+	if err := r.recordAuditIntent(ctx, tx, intent, runID); err != nil {
+		return refreshrun.RunRecord{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return refreshrun.RunRecord{}, err
@@ -1262,6 +1347,7 @@ type normalizedRunInput struct {
 	PayloadJSON              string
 	GroupIDs                 []string
 	EstimatedMemoryBytes     int64
+	AuditIntent              *access.AuditIntent
 }
 
 func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
@@ -1314,6 +1400,7 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 		TargetRevision: input.TargetRevision, TriggerType: input.TriggerType, TriggerID: input.TriggerID, InvocationSource: invocationSource, MatchingScheduleIDs: canonicalRunScheduleIDs(input.MatchingScheduleIDs), NominalTime: input.NominalTime, ConcurrencyPolicy: input.ConcurrencyPolicy,
 		PlanDigest: planDigest, MaterializationScopeJSON: materializationScopeJSON, ParentRunID: input.ParentRunID,
 		JobKind: input.JobKind, PayloadJSON: payloadJSON,
+		AuditIntent: input.AuditIntent,
 	}, nil
 }
 

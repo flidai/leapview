@@ -53,6 +53,7 @@ type Config struct {
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
 	Workflow            jobplatform.WorkflowRecorder
+	AuditIntentRecorder access.AuditIntentRecorder
 	Clock               refreshschedule.Clock
 	EnableDispatcher    bool
 	EnableScheduler     bool
@@ -97,6 +98,7 @@ type Module struct {
 	leaseTimeout       time.Duration
 	logger             *slog.Logger
 	events             EventStore
+	durableAudit       bool
 	refreshExecution   apigencommand.AsyncExecutionContract
 	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
 
@@ -140,6 +142,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
 		events:           config.Events,
+		durableAudit:     config.AuditIntentRecorder != nil,
 		refreshExecution: refreshExecution,
 		resolveIdentity:  config.ResolveIdentity,
 	}
@@ -157,17 +160,20 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return authorizePipeline(r, identity, pipelineID, access.CapabilityResourceUse, config.Authorization)
 	}
 	m.handler.RunCreated = m.verifyRunCreated
+	if config.AuditIntentRecorder != nil {
+		m.handler.BuildAuditIntent = buildRefreshAuditIntent
+	}
 	if config.Database == nil {
 		return m, nil
 	}
 	if config.Workflow == nil {
 		return nil, errors.New("refresh workflow recorder is required")
 	}
-	m.runs = refreshsqlite.NewSQLRunRepositoryWithWorkflow(config.Database, config.Workflow, refreshsqlite.RunWorkflowConfig{
+	m.runs = refreshsqlite.NewSQLRunRepositoryWithWorkflowAndAudit(config.Database, config.Workflow, refreshsqlite.RunWorkflowConfig{
 		ResourceKind: refreshExecution.ResourceKind,
 		InitialEvent: refreshExecution.InitialEvent,
 		InitialState: refreshExecution.InitialState,
-	})
+	}, config.AuditIntentRecorder)
 	m.schedules = refreshsqlite.NewRepository(config.Database)
 	m.service = config.Service
 	if m.service.Artifacts == nil {
@@ -223,9 +229,14 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		if parseErr != nil {
 			return refreshrun.RunRecord{}, parseErr
 		}
+		var intent *access.AuditIntent
+		if fromContext, ok := refreshrun.AuditIntentFromContext(ctx); ok {
+			intent = &fromContext
+		}
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
+			AuditIntent: intent,
 		})
 		if err != nil {
 			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",

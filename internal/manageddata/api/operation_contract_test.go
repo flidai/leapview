@@ -12,12 +12,12 @@ func TestGeneratedManagedDataOperationClassifications(t *testing.T) {
 		auditAction string
 		guarantee   string
 	}{
-		"createManagedDataUploadSession":       {"managed_data.upload_session.created", "best-effort"},
-		"cancelManagedDataUploadSession":       {"managed_data.upload_session.cancelled", "best-effort"},
-		"finalizeManagedDataUploadSession":     {"managed_data.upload_session.finalization_requested", "best-effort"},
-		"createManagedDataS3MultipartUpload":   {"managed_data.s3_multipart_upload.created", "best-effort"},
-		"completeManagedDataS3MultipartUpload": {"managed_data.s3_multipart_upload.completed", "best-effort"},
-		"abortManagedDataS3MultipartUpload":    {"managed_data.s3_multipart_upload.aborted", "best-effort"},
+		"createManagedDataUploadSession":       {"managed_data.upload_session.created", "transactional"},
+		"cancelManagedDataUploadSession":       {"managed_data.upload_session.cancelled", "transactional"},
+		"finalizeManagedDataUploadSession":     {"managed_data.upload_session.finalization_requested", "transactional"},
+		"createManagedDataS3MultipartUpload":   {"managed_data.s3_multipart_upload.created", "transactional"},
+		"completeManagedDataS3MultipartUpload": {"managed_data.s3_multipart_upload.completion_requested", "transactional"},
+		"abortManagedDataS3MultipartUpload":    {"managed_data.s3_multipart_upload.abort_requested", "transactional"},
 	}
 	for operationID, expected := range commands {
 		contract, ok := contracts[operationID]

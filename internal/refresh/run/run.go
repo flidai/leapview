@@ -8,6 +8,7 @@ import (
 	"unicode"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -101,6 +102,7 @@ type RunInput struct {
 	ParentRunID          string
 	JobKind              string
 	PayloadJSON          string
+	AuditIntent          *access.AuditIntent
 }
 
 type JobRecord struct {

@@ -17,8 +17,8 @@ func loadRunExecutionContract() (apigencommand.AsyncExecutionContract, error) {
 	if err := contract.Validate(); err != nil {
 		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("validate create agent run command contract: %w", err)
 	}
-	if contract.Guarantee != apigencommand.GuaranteeBestEffort {
-		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("create agent run requires best-effort Access auditing, got %q", contract.Guarantee)
+	if contract.Guarantee != apigencommand.GuaranteeTransactional {
+		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("create agent run requires transactional Access auditing, got %q", contract.Guarantee)
 	}
 	if contract.Execution == nil {
 		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("create agent run async execution contract is unavailable")

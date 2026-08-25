@@ -38,7 +38,6 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 	mountPublicDashboardRoutes(mux, publicDashboardRouteDependencies{
 		dashboard: routes.dashboardModule, dashboardTelemetry: routes.dashboardTelemetry, rateLimits: policy.rateLimits,
 	})
-	mountDevelopmentRoutes(mux, runtime.pageStreamTrace)
 	mux.With(policy.rateLimits.Auth()).Handle("/metrics", platform.telemetry.MetricsHandler(policy.metricsBearerToken, accessmodule.BearerToken))
 	mux.With(csrf).Group(routes.accessModule.MountLoginPage)
 	mountAuthenticatedRoutes(mux, authenticatedRouteDependencies{

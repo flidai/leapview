@@ -9,33 +9,35 @@
     "build": "node scripts/build.mjs",
     "evidence": "node scripts/release-evidence.mjs",
     "start": "bun run build && bun scripts/run-electron.mjs start",
-    "test": "bun test ./src && node --test scripts/accessibility-contract.test.mjs scripts/distribution-packaging.test.mjs scripts/native-maker-modules.test.mjs scripts/packaged-diagnostics.test.mjs scripts/preview-release.test.mjs scripts/release-evidence.test.mjs scripts/release-operations.test.mjs scripts/verify-installer.test.mjs scripts/workflow-contract.test.mjs ../internal/app/testing/maliciousinstance/electron/policy.test.mjs",
+    "test": "bun test ./src && node --test vendor/brace-expansion-compat.test.cjs vendor/image-size-next-compat.test.cjs scripts/accessibility-contract.test.mjs scripts/distribution-packaging.test.mjs scripts/native-maker-modules.test.mjs scripts/package-startup-policy.test.mjs scripts/packaged-diagnostics.test.mjs scripts/preview-release.test.mjs scripts/release-evidence.test.mjs scripts/release-operations.test.mjs scripts/verify-installer.test.mjs scripts/workflow-contract.test.mjs ../internal/app/testing/maliciousinstance/electron/policy.test.mjs",
     "package": "bun run build && bun scripts/run-electron.mjs package && node scripts/verify-package.mjs",
     "make": "bun run build && bun scripts/run-electron.mjs make && node scripts/verify-package.mjs && node scripts/verify-installer.mjs"
   },
   "devDependencies": {
-    "@electron-forge/cli": "7.11.2",
-    "@electron-forge/maker-base": "7.11.2",
-    "@electron-forge/maker-deb": "7.11.2",
-    "@electron-forge/maker-dmg": "7.11.2",
-    "@electron-forge/maker-squirrel": "7.11.2",
-    "@electron-forge/maker-zip": "7.11.2",
-    "@electron-forge/plugin-base": "7.11.2",
-    "@electron-forge/shared-types": "7.11.2",
+    "@electron-forge/cli": "8.0.0-alpha.9",
+    "@electron-forge/maker-base": "8.0.0-alpha.9",
+    "@electron-forge/maker-deb": "8.0.0-alpha.9",
+    "@electron-forge/maker-dmg": "8.0.0-alpha.9",
+    "@electron-forge/maker-squirrel": "8.0.0-alpha.9",
+    "@electron-forge/maker-zip": "8.0.0-alpha.9",
+    "@electron-forge/plugin-base": "8.0.0-alpha.9",
+    "@electron-forge/shared-types": "8.0.0-alpha.9",
     "@electron/asar": "3.4.1",
     "@electron/fuses": "2.1.3",
     "@fontsource-variable/inter": "5.2.8",
     "@primer/primitives": "11.9.0",
     "@tailwindcss/cli": "4.3.1",
+    "@types/debug": "4.1.13",
     "@types/node": "24.13.3",
     "electron": "43.2.0",
+    "brace-expansion": "file:vendor/brace-expansion-compat",
+    "image-size": "file:vendor/image-size-next-compat",
+    "minimatch-modern": "npm:minimatch@10.2.6",
     "node": "24.14.0",
+    "node-gyp": "12.4.0",
     "rxjs": "7.8.2",
     "tailwindcss": "4.3.1",
     "typescript": "5.9.3"
-  },
-  "overrides": {
-    "tar": "7.5.21"
   },
   "trustedDependencies": [
     "@bitdisaster/exe-icon-extractor",
@@ -44,5 +46,10 @@
     "fs-xattr",
     "macos-alias",
     "node"
-  ]
+  ],
+  "overrides": {
+    "brace-expansion": "file:vendor/brace-expansion-compat",
+    "image-size": "file:vendor/image-size-next-compat",
+    "tar": "7.5.22"
+  }
 }

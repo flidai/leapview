@@ -664,6 +664,51 @@ func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
 	}
 }
 
+func TestAPIGenDeliveryActivePathAllowsConfiguredDevelopmentBypass(t *testing.T) {
+	projectID := projectgraph.ResourceID("project_demo")
+	module := browserGuardModule(nil, LocalDeveloperPrincipal(), true)
+	module.auth = NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "dev"})
+	contract := APIGenOperationContract{
+		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
+		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	var targetAuthorizationCalls int
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID},
+		map[string]APIGenOperationContract{"getDeliveryCandidateStatus": contract},
+		APIGenResourceResolvers{Delivery: func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error) {
+			targetAuthorizationCalls++
+			return false, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{Handled: false}, nil
+	})
+	protected, ok := authorizer.Protect("getDeliveryCandidateStatus", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || protected == nil {
+		t.Fatal("delivery authorizer was not created")
+	}
+	request := apigenRequest(http.MethodGet, "/api/v1/projects/project_demo/delivery/candidates/candidate_1", map[string]string{
+		"project": "project_demo", "candidate": "candidate_1",
+	})
+	request.Header.Set("Authorization", "Bearer dev")
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("development delivery status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if targetAuthorizationCalls != 0 {
+		t.Fatalf("target authorization calls = %d, want none for configured development bypass", targetAuthorizationCalls)
+	}
+}
+
 func TestAPIGenCreateDeliveryPlanUsesBootstrapBeforeFirstGeneration(t *testing.T) {
 	module := browserGuardModule(browserGuardRepository{admin: true}, Principal{ID: "admin"}, true)
 	contract := APIGenOperationContract{

@@ -129,6 +129,104 @@ func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
 	}
 }
 
+func TestInspectLogoRejectsMalformedAndOversizedWebP(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "malformed payload",
+			raw:  testWebPVP8XHeader(1, 1),
+		},
+		{
+			name: "oversized dimension",
+			raw:  testWebPVP8XHeader(MaxLogoPixels+1, 1),
+		},
+		{
+			name: "oversized height",
+			raw:  testWebPVP8XHeader(1, MaxLogoPixels+1),
+		},
+		{
+			name: "oversized pixel count",
+			raw:  testWebPVP8XHeader(4_000, 4_001),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			logo, err := inspectLogo("image/webp", tt.raw)
+			if err == nil {
+				t.Fatal("inspectLogo accepted malformed or oversized image")
+			}
+			if logo != (Logo{}) {
+				t.Fatalf("rejected logo metadata = %#v", logo)
+			}
+		})
+	}
+}
+
+func TestServiceRejectsMalformedAndOversizedLogoWithoutPersistenceOrAudit(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	blobs := &memoryBlobs{values: map[string][]byte{}}
+	service, err := New(store.SQLDB(), blobs)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "malformed payload",
+			raw:  testWebPVP8XHeader(1, 1),
+		},
+		{
+			name: "oversized dimension",
+			raw:  testWebPVP8XHeader(MaxLogoPixels+1, 1),
+		},
+		{
+			name: "oversized height",
+			raw:  testWebPVP8XHeader(1, MaxLogoPixels+1),
+		},
+		{
+			name: "oversized pixel count",
+			raw:  testWebPVP8XHeader(4_000, 4_001),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := service.UploadLogo(t.Context(), 1, "image/webp", bytes.NewReader(tt.raw), Mutation{PrincipalID: "principal_admin", RequestID: tt.name})
+			if err == nil {
+				t.Fatal("UploadLogo accepted malformed or oversized image")
+			}
+			if len(blobs.values) != 0 {
+				t.Fatalf("rejected logo persisted %d blobs", len(blobs.values))
+			}
+			identity, getErr := service.Get(t.Context())
+			if getErr != nil {
+				t.Fatal(getErr)
+			}
+			if identity.Revision != 1 || identity.Logo != nil {
+				t.Fatalf("identity changed after rejected logo = %#v", identity)
+			}
+		})
+	}
+
+	var auditCount int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product'`).Scan(&auditCount); err != nil {
+		t.Fatal(err)
+	}
+	if auditCount != 0 {
+		t.Fatalf("rejected logo mutations wrote %d audit events", auditCount)
+	}
+}
+
 func testPNG(t *testing.T, width, height int) []byte {
 	t.Helper()
 	value := image.NewNRGBA(image.Rect(0, 0, width, height))
@@ -142,6 +240,19 @@ func testPNG(t *testing.T, width, height int) []byte {
 		t.Fatal(err)
 	}
 	return encoded.Bytes()
+}
+
+func testWebPVP8XHeader(width, height int) []byte {
+	widthMinusOne := uint32(width - 1)
+	heightMinusOne := uint32(height - 1)
+	return []byte{
+		'R', 'I', 'F', 'F', 22, 0, 0, 0,
+		'W', 'E', 'B', 'P',
+		'V', 'P', '8', 'X', 10, 0, 0, 0,
+		0, 0, 0, 0,
+		byte(widthMinusOne), byte(widthMinusOne >> 8), byte(widthMinusOne >> 16),
+		byte(heightMinusOne), byte(heightMinusOne >> 8), byte(heightMinusOne >> 16),
+	}
 }
 
 type memoryBlobs struct{ values map[string][]byte }

@@ -35,6 +35,12 @@ type Config struct {
 
 func newRepository(database *sql.DB) access.Repository { return accesssqlite.NewRepository(database) }
 
+// NewAuditStore constructs the Access-owned durable audit adapter without
+// exposing its SQLite implementation to process composition.
+func NewAuditStore(database *sql.DB) access.AuditStore {
+	return accesssqlite.NewRepository(database)
+}
+
 func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Database == nil {
 		auth := config.ExistingAuth

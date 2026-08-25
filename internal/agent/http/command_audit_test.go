@@ -32,9 +32,9 @@ func TestAgentAPICommandsRecordOneSuccessAudit(t *testing.T) {
 			return Principal{ID: principalID}, true
 		},
 		EnqueueRun: func(context.Context, agent.Scope, *agent.StartedPrompt) error { return nil },
-		RecordCommandAudit: func(_ context.Context, input CommandAuditInput) error {
+		BuildAuditIntent: func(_ context.Context, input CommandAuditInput) (*access.AuditIntent, error) {
 			audits = append(audits, input)
-			return nil
+			return commandAuditTestIntent(input), nil
 		},
 	})
 	router := chi.NewRouter()
@@ -94,7 +94,7 @@ func TestAgentAPICommandsRecordOneSuccessAudit(t *testing.T) {
 		t.Fatalf("command audits = %#v", audits)
 	}
 	for index, operationID := range want {
-		if audits[index].OperationID != operationID || audits[index].Scope.PrincipalID != principalID || audits[index].TargetID != conversationID {
+		if audits[index].OperationID != operationID || audits[index].Scope.PrincipalID != principalID {
 			t.Fatalf("command audit[%d] = %#v, want operation %s for %s", index, audits[index], operationID, conversationID)
 		}
 	}
@@ -106,6 +106,9 @@ func TestAgentConversationUpdateUsesCanonicalRevisionAndProtocolFailure(t *testi
 		Service: service,
 		CurrentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: principalID}, true
+		},
+		BuildAuditIntent: func(_ context.Context, input CommandAuditInput) (*access.AuditIntent, error) {
+			return commandAuditTestIntent(input), nil
 		},
 	})
 	router := chi.NewRouter()
@@ -187,7 +190,7 @@ func TestAgentUICommandInvocationUsesStableGeneratedIdentity(t *testing.T) {
 	}
 }
 
-func TestAgentCommandPreservesSuccessAndObservesBestEffortAuditFailure(t *testing.T) {
+func TestAgentCommandRejectsMutationWhenDurableAuditIntentCannotBeBuilt(t *testing.T) {
 	service, principalID := commandAuditService(t)
 	var logs bytes.Buffer
 	handler := NewHandler(Options{
@@ -195,19 +198,18 @@ func TestAgentCommandPreservesSuccessAndObservesBestEffortAuditFailure(t *testin
 		CurrentPrincipal: func(*http.Request) (Principal, bool) {
 			return Principal{ID: principalID}, true
 		},
-		RecordCommandAudit: func(context.Context, CommandAuditInput) error {
-			return errors.New("audit store unavailable")
+		BuildAuditIntent: func(context.Context, CommandAuditInput) (*access.AuditIntent, error) {
+			return nil, errors.New("audit store unavailable")
 		},
 		Logger: slog.New(slog.NewJSONHandler(&logs, nil)),
 	})
 	response := httptest.NewRecorder()
 	handler.CreateConversation(response, commandAuditRequest(http.MethodPost, "/agent/conversations", `{"title":"Audit me"}`))
-	if response.Code != http.StatusCreated {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf("create conversation status = %d body=%s", response.Code, response.Body.String())
 	}
-	if output := logs.String(); !strings.Contains(output, "best-effort agent command audit failed") ||
-		!strings.Contains(output, createAgentConversationOperation.APIGenOperationID()) || !strings.Contains(output, principalID) {
-		t.Fatalf("audit failure log = %s", output)
+	if output := logs.String(); strings.Contains(output, principalID) {
+		t.Fatalf("audit failure log leaked principal identity: %s", output)
 	}
 }
 
@@ -220,9 +222,9 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 		ExecuteStartedChatTurn: func(context.Context, *agent.Service, agent.Scope, *agent.StartedPrompt, ChatTurnExecution) (agent.PromptResult, error) {
 			return agent.PromptResult{}, nil
 		},
-		RecordCommandAudit: func(_ context.Context, input CommandAuditInput) error {
+		BuildAuditIntent: func(_ context.Context, input CommandAuditInput) (*access.AuditIntent, error) {
 			audits = append(audits, input)
-			return nil
+			return commandAuditTestIntent(input), nil
 		},
 	})
 	scope := agent.Scope{PrincipalID: principalID}
@@ -233,7 +235,7 @@ func TestAgentChatDraftAndActiveTurnsAuditCreatedCommandsOnce(t *testing.T) {
 	if draftResponse.Code != http.StatusOK {
 		t.Fatalf("draft chat status = %d body=%s", draftResponse.Code, draftResponse.Body.String())
 	}
-	if len(audits) != 2 || audits[0].OperationID != createAgentConversationOperation.APIGenOperationID() || audits[1].OperationID != createAgentRunOperation.APIGenOperationID() || audits[0].TargetID != audits[1].TargetID {
+	if len(audits) != 2 || audits[0].OperationID != createAgentConversationOperation.APIGenOperationID() || audits[1].OperationID != createAgentRunOperation.APIGenOperationID() || audits[1].TargetID == "" {
 		t.Fatalf("draft chat audits = %#v", audits)
 	}
 
@@ -268,10 +270,38 @@ func commandAuditService(t *testing.T) (*agent.Service, string) {
 		return agentcore.ModelResponse{Content: "ok", FinishReason: agentcore.FinishReasonStop}, nil
 	})
 	return agent.NewService(
-		agentsqlite.NewRepository(store.SQLDB()),
+		agentsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB())),
 		agent.Config{APIKey: "test", Model: "test"},
 		agent.WithModel(model),
 	), principal.ID
+}
+
+func commandAuditTestIntent(input CommandAuditInput) *access.AuditIntent {
+	action := map[string]string{
+		createAgentConversationOperation.APIGenOperationID():  "agent.conversation.created",
+		updateAgentConversationOperation.APIGenOperationID():  "agent.conversation.updated",
+		archiveAgentConversationOperation.APIGenOperationID(): "agent.conversation.archived",
+		createAgentRunOperation.APIGenOperationID():           "agent.run.created",
+		cancelAgentRunOperation.APIGenOperationID():           "agent.run.cancelled",
+	}[input.OperationID]
+	metadata, _ := json.Marshal(map[string]any{
+		"schemaVersion": 1,
+		"retention":     "security",
+		"payloadSchema": "AgentCommandAuditPayload",
+		"payload": map[string]any{
+			"operationId":  input.OperationID,
+			"resourceKind": input.TargetType,
+			"resourceId":   input.TargetID,
+			"surface":      "api",
+		},
+	})
+	return &access.AuditIntent{
+		EventID: "agent-command-pending", Source: "agent", Operation: input.OperationID,
+		PrincipalID: input.Scope.PrincipalID, Action: action, ResourceKind: input.TargetType,
+		ResourceID: input.TargetID, Capability: access.CapabilityResourceUse, Outcome: "success",
+		RequestID: input.RequestID, CorrelationID: input.CorrelationID,
+		AggregateKey: "agent-command:pending", MetadataJSON: string(metadata),
+	}
 }
 
 func commandAuditRequest(method, path, body string) *http.Request {

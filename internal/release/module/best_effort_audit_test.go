@@ -25,7 +25,7 @@ func (*failingReleaseAuditStore) ListEvents(context.Context, string, string, int
 	return nil, nil
 }
 
-func TestReleaseBestEffortAuditFailureIsObservable(t *testing.T) {
+func TestReleaseTransactionalAuditCannotUseBestEffortPath(t *testing.T) {
 	var logs bytes.Buffer
 	module := &Module{
 		api:    APIConfig{Jobs: &failingReleaseAuditStore{err: errors.New("audit store unavailable")}},
@@ -38,13 +38,7 @@ func TestReleaseBestEffortAuditFailureIsObservable(t *testing.T) {
 	)
 
 	output := logs.String()
-	for _, expected := range []string{
-		"release audit failed",
-		"operation_id=createRelease",
-		"release_id=release_1",
-		"audit_action=release.created",
-		"audit store unavailable",
-	} {
+	for _, expected := range []string{"release command contract execution failed", "operation_id=createRelease", "requires transactional auditing"} {
 		if !strings.Contains(output, expected) {
 			t.Fatalf("audit failure log = %q, missing %q", output, expected)
 		}

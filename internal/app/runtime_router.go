@@ -14,7 +14,6 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
@@ -52,6 +51,7 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -79,7 +79,7 @@ type runtimeServices struct {
 	metrics               QueryMetrics
 	workloads             workloadControl
 	broker                *pagestream.Broker
-	pageStreamTrace       *pagestream.TraceStore
+	dashboardBroker       *dashboardmodule.DeliveryBroker
 	pageStreams           *uitransport.PageStream
 	persistenceConfigured bool
 	platformHealth        platformHealth
@@ -127,6 +127,8 @@ func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.Re
 type platformServices struct {
 	asyncJobs               jobs.Repository
 	jobModule               *jobsmodule.Module
+	auditDispatcher         *access.AuditDispatcher
+	auditOutbox             access.AuditOutboxStatsReader
 	auth                    *accessmodule.Auth
 	assets                  staticasset.Resolver
 	buildIdentity           buildinfo.Identity
@@ -158,6 +160,7 @@ type persistenceInputs struct {
 	adminDatabase    *sql.DB
 	servingStateRepo servingStateRepository
 	accessRepo       access.Repository
+	auditRecorder    access.AuditIntentRecorder
 	product          *adminmodule.ProductService
 	productStatus    adminmodule.ProductStatus
 }
@@ -190,18 +193,9 @@ func newCompositionSurfaces(
 	dashboardTelemetry dashboardmodule.Telemetry,
 ) (*capabilityRoutes, *runtimeServices, *platformServices, *httpPolicy) {
 	logger := slog.Default()
-	var trace *pagestream.TraceStore
-	if !assets.Production() {
-		trace = pagestream.NewTraceStore(pagestream.TraceOptions{
-			CapacityPerStream: 512,
-			MaxStreams:        32,
-			IncludePayloads:   true,
-		})
-	}
 	routes := &capabilityRoutes{dashboardTelemetry: dashboardTelemetry}
 	runtime := &runtimeServices{
-		metrics: metrics, broker: pagestream.NewBroker(pagestream.WithTraceStore(trace)),
-		pageStreamTrace: trace,
+		metrics: metrics, broker: pagestream.NewBroker(), dashboardBroker: dashboardmodule.NewDeliveryBroker(),
 	}
 	platform := &platformServices{
 		telemetry: telemetry, logger: logger, assets: assets,
@@ -219,6 +213,7 @@ func newCompositionSurfaces(
 
 type dataAssemblyInputs struct {
 	Database         *sql.DB
+	AuditRuntime     *auditRuntime
 	PlatformHealth   platformHealth
 	AdminDatabase    *sql.DB
 	ServingStateRepo servingStateRepository
@@ -553,6 +548,17 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
+	audit := data.AuditRuntime
+	if data.Database != nil && audit == nil {
+		var err error
+		audit, err = newAuditRuntime(data.Database)
+		if err != nil {
+			return fail(fmt.Errorf("build access audit runtime: %w", err))
+		}
+	}
+	if data.Database != nil && (audit == nil || audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
+		return fail(errors.New("durable audit runtime facets are unavailable"))
+	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
@@ -606,13 +612,16 @@ func buildApplicationSurfaces(
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
 	persistence.adminDatabase = data.AdminDatabase
+	if audit != nil {
+		persistence.auditRecorder = audit.recorder
+	}
 	persistence.product = capabilities.Product
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
 	if data.Database != nil {
 		platform.jobModule = capabilities.JobModule
+		var err error
 		if platform.jobModule == nil {
-			var err error
 			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
 				Database: data.Database, Admission: workloadmodule.JobAdmitter(runtime.workloads),
 				LeaseTimeout: httpConfig.JobLeaseTimeout, Logger: httpConfig.Logger,
@@ -622,6 +631,17 @@ func buildApplicationSurfaces(
 			}
 		}
 		platform.asyncJobs = platform.jobModule
+		// Access audit intents share the platform SQL database. Inject the narrow
+		// delivery and observability facets into lifecycle consumers.
+		platform.auditOutbox = audit.stats
+		platform.auditDispatcher, err = access.NewAuditDispatcher(access.AuditDispatcherConfig{
+			Store:  audit.delivery,
+			Logger: platform.logger,
+		})
+		if err != nil {
+			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
+		}
+		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, data.Database); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}
@@ -697,7 +717,7 @@ func buildApplicationSurfaces(
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
-		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, Trace: runtime.pageStreamTrace,
+		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -758,9 +778,6 @@ func buildApplicationSurfaces(
 	}
 	if httpConfig.Logger != nil {
 		platform.logger = httpConfig.Logger
-		if runtime.pageStreamTrace != nil {
-			runtime.pageStreamTrace.SetLogger(httpConfig.Logger)
-		}
 	}
 	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
@@ -803,6 +820,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
+				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: database != nil,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -946,14 +964,14 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		agentUICommands := routes.agentModule.UICommandBindings()
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database:    database,
-			Authoring:   routes.dashboardAuthoring,
-			RecordAudit: accessAuditRecorder(routes.accessModule),
+			Database:            database,
+			Authoring:           routes.dashboardAuthoring,
+			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:          runtime.metrics,
 				ProjectID:        runtime.projectID,
 				ResolveProjectID: runtime.resolveProjectID,
-				Admission:        workloadController(&runtime.workloads), Broker: runtime.broker, Logger: platform.logger,
+				Admission:        workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -1066,7 +1084,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				CommandObserved:  routes.dashboardTelemetry.PublicCommandObserved,
 			},
 			Logger:    platform.logger,
-			Trace:     runtime.pageStreamTrace,
 			PublicURL: storage.publicURL,
 			CurrentActor: func(r *http.Request) string {
 				principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -1096,7 +1113,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if err != nil {
 			return err
 		}
-		routes.agentModule, err = agentmodule.Build(ctx, agentmodule.Config{
+		agentConfig := agentmodule.Config{
 			Database: database, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			ProductName:        brand.Name,
@@ -1273,7 +1290,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return platform.auth.APICredential(r)
 				},
 			},
-		})
+		}
+		if database != nil {
+			agentConfig.AuditIntentRecorder = persistence.auditRecorder
+		}
+		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
 		if err != nil {
 			return fmt.Errorf("build agent module: %w", err)
 		}
@@ -1330,8 +1351,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
-			EnsureClientID: func(w http.ResponseWriter, r *http.Request) {
-				_ = pagestream.EnsureClientID(w, r)
+			EnsureClientID: func(w http.ResponseWriter, r *http.Request) bool {
+				_, ok := uitransport.RequireClientID(w, r)
+				return ok
 			},
 			Broker:  runtime.broker,
 			Product: persistence.product, ProductCommands: productCommands, ProductCommandFailure: writeProductCommandFailure, ProductStatus: persistence.productStatus,
@@ -1571,6 +1593,23 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		Refresh: refreshAPIHandler, Release: releaseAPIHandler,
 	}
 	configurePageStream(routes, runtime, platform, policy)
+	healthChecks := map[string]func(context.Context) error{
+		"apiIdempotency": func(context.Context) error {
+			return platform.apiProtocol.LeaseRenewalError()
+		},
+		"mapAssets": func(ctx context.Context) error {
+			if routes.dashboardAssets == nil {
+				return nil
+			}
+			return routes.dashboardAssets.Verify(ctx)
+		},
+		"deliveryStartup": runtimeConfig.DeliveryStartup,
+	}
+	if platform.auditOutbox != nil {
+		healthChecks["auditOutbox"] = func(ctx context.Context) error {
+			return auditOutboxReadiness(ctx, platform.auditOutbox)
+		}
+	}
 	platform.health = newHealth(healthConfig{
 		Platform: func(ctx context.Context) error {
 			if runtime.platformHealth == nil {
@@ -1590,18 +1629,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			return runtime.runtimeHostModule.LeaseRenewalError()
 		},
-		Checks: map[string]func(context.Context) error{
-			"apiIdempotency": func(context.Context) error {
-				return platform.apiProtocol.LeaseRenewalError()
-			},
-			"mapAssets": func(ctx context.Context) error {
-				if routes.dashboardAssets == nil {
-					return nil
-				}
-				return routes.dashboardAssets.Verify(ctx)
-			},
-			"deliveryStartup": runtimeConfig.DeliveryStartup,
-		},
+		Checks: healthChecks,
 		ActiveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			if runtime.runtimeHostModule == nil {
 				return "", errors.New("runtime host is missing")
@@ -1638,7 +1666,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
-	platform.workers = platformlifecycle.New(
+	workerComponents := make([]platformlifecycle.Component, 0, 5)
+	if platform.auditDispatcher != nil {
+		// Start the dispatcher before audit producers and stop it after them, so
+		// shutdown does not strand intents emitted while workers are draining.
+		workerComponents = append(workerComponents, platformlifecycle.Component{Start: platform.auditDispatcher.Start, Stop: platform.auditDispatcher.Stop})
+	}
+	workerComponents = append(workerComponents,
 		platformlifecycle.Component{Start: routes.refreshModule.Start, Stop: routes.refreshModule.Stop},
 		platformlifecycle.Component{
 			Start: func(ctx context.Context) error { routes.managedDataModule.Start(ctx); return nil },
@@ -1647,6 +1681,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	platform.workers = platformlifecycle.New(workerComponents...)
 	return nil
 }
 

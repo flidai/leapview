@@ -17,9 +17,10 @@ import (
 )
 
 type Repository struct {
-	root *sql.DB
-	db   sqlExecutor
-	q    *platformdb.Queries
+	root                *sql.DB
+	db                  sqlExecutor
+	q                   *platformdb.Queries
+	auditOutboxCapacity int
 }
 
 type sqlExecutor interface {
@@ -37,7 +38,7 @@ var secretRandomReader io.Reader = rand.Reader
 
 func NewRepository(sqlDB *sql.DB) *Repository {
 	return &Repository{
-		root: sqlDB, db: sqlDB, q: platformdb.New(sqlDB),
+		root: sqlDB, db: sqlDB, q: platformdb.New(sqlDB), auditOutboxCapacity: access.MaxUndeliveredAuditIntents,
 	}
 }
 

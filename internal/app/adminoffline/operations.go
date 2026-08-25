@@ -55,6 +55,14 @@ func (Operations) Maintenance(ctx context.Context, request adminoffline.Maintena
 	return service.Maintenance(ctx, request, out)
 }
 
+func (Operations) AuditOutbox(ctx context.Context, request adminoffline.AuditOutboxRequest, out io.Writer) error {
+	service, err := newService()
+	if err != nil {
+		return err
+	}
+	return service.AuditOutbox(ctx, request, out)
+}
+
 func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
 	service, err := newService()
 	if err != nil {
@@ -199,7 +207,8 @@ func newService() (*adminoffline.Service, error) {
 		Recovery: credentialRecovery{
 			path: filepath.Join(cfg.HomeDir, adminoffline.CredentialRecoveryFileName),
 		},
-		Retention: operationalRetention{dbPath: cfg.DBPath()},
+		Retention:   operationalRetention{dbPath: cfg.DBPath()},
+		AuditOutbox: auditOutboxControl{dbPath: cfg.DBPath()},
 		Storage: storageCleaner{
 			dbPath: cfg.DBPath(), home: cfg.HomeDir,
 			catalogPath: cfg.DuckLakeCatalogPath(), dataPath: cfg.DuckLakeDataDir(),
