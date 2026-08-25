@@ -340,7 +340,19 @@ const codeBlockStyles = `
   lv-code-block[copy][compact] .code-block-fallback,
   lv-code-block[copy][dense] .shiki,
   lv-code-block[copy][dense] .code-block-fallback {
-    padding-top: calc(var(--base-size-12) + var(--control-medium-size, 32px));
+    padding-right: calc(var(--lv-chat-pre-padding-inline, var(--base-size-12)) + 5rem);
+  }
+
+  lv-code-block[copy][compact] .shiki,
+  lv-code-block[copy][compact] .code-block-fallback {
+    padding-top: var(--lv-chat-pre-padding-block, var(--base-size-8));
+    padding-left: var(--lv-chat-pre-padding-inline, var(--base-size-12));
+  }
+
+  lv-code-block[copy][dense] .shiki,
+  lv-code-block[copy][dense] .code-block-fallback {
+    padding-top: var(--base-size-12);
+    padding-left: var(--base-size-12);
   }
 
   lv-code-block .code-block-copy {
