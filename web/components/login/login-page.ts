@@ -229,6 +229,18 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
       border-top: var(--lv-border-muted);
     }
 
+    .error {
+      width: 100%;
+      box-sizing: border-box;
+      border: var(--borderWidth-default) solid var(--display-red-borderColor-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--display-red-bgColor-muted);
+      color: var(--display-red-fgColor);
+      padding: var(--base-size-8) var(--base-size-12);
+      text-align: left;
+      font: var(--lv-type-caption);
+    }
+
     @media (max-width: 520px) {
       :host {
         padding: var(--base-size-16);
@@ -258,6 +270,10 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
 
   get page(): LoginPageSignal | null {
     return this.signal<LoginPageSignal | null>('page', null)
+  }
+
+  get status(): { error?: string } {
+    return this.signal<{ error?: string }>('status', { error: '' })
   }
 
   render() {
@@ -291,6 +307,7 @@ class LeapViewLoginPage extends DatastarLit(LitElement) {
           <lv-brand-mark aria-hidden="true"></lv-brand-mark>
           <h1>${page?.title ?? leapViewBrandName}</h1>
         </div>
+        ${this.status.error ? html`<div class="error" role="alert" aria-live="assertive">${this.status.error}</div>` : ''}
         ${mustChangePassword ? html`
           <form method="post" action="/auth/local/password">
             <input type="hidden" name="gorilla.csrf.Token" value=${csrfToken()}>

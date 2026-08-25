@@ -3,6 +3,7 @@ import { state } from 'lit/decorators.js'
 import { CheckCircle2, Clock3, Copy, Table2, XCircle } from 'lucide'
 import type { AdminPageSignal, AdminContentSectionSignal, AdminPublicationSignal, AdminQueryDetailSignal, AdminQueryHistoryFilters, AdminQueryHistorySignal, AdminStorageSignal, FilterMenuCommand, FilterMenuSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { browserCommandFailure } from '../shared/command-failure'
 import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -48,6 +49,11 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
   @state() private accessCreateDialog: 'principal' | 'group' | '' = ''
   private queryFilterTimer: ReturnType<typeof setTimeout> | null = null
   private lastQueryHistoryKey = ''
+
+  override connectedCallback(): void {
+    super.connectedCallback()
+    document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+  }
 
   static styles = [pageHeaderStyles, entityDetailStyles, css`
     :host {
@@ -609,6 +615,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
 
   disconnectedCallback(): void {
     if (this.queryFilterTimer) clearTimeout(this.queryFilterTimer)
+    document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
     super.disconnectedCallback()
   }
 
@@ -866,7 +873,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
             </article>
           `
         })}
-        <span class="local-user-result" aria-live="polite">${this.publicationMessage}</span>
+        ${this.publicationMessage ? html`<span class="local-user-result" role="alert" aria-live="assertive">${this.publicationMessage}</span>` : nothing}
       </section>
     `
   }
@@ -891,6 +898,17 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       composed: true,
       detail: { projectId: publication.projectId, publication: publication.name, action },
     }))
+  }
+
+  private handleDatastarFetch = (event: Event): void => {
+    // Datastar emits this event for every command on the page. Only consume
+    // terminal failures while a publication mutation is waiting; unrelated
+    // admin surfaces must keep their own state and feedback.
+    if (!this.publicationBusy) return
+    const failure = browserCommandFailure(event, 'Publication update')
+    if (!failure) return
+    this.publicationBusy = ''
+    this.publicationMessage = failure.message
   }
 
   private renderTextFilter(key: keyof AdminQueryHistoryFilters, label: string) {

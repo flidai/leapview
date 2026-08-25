@@ -114,7 +114,7 @@ func TestStorageTableDetailFocusesOnStorageAndActiveFiles(t *testing.T) {
 	}
 }
 
-func TestAdminListsUseDebouncedPostSearchCommands(t *testing.T) {
+func TestAdminListsUseDebouncedGetSearchCommands(t *testing.T) {
 	for _, active := range []string{"principals", "groups"} {
 		t.Run(active, func(t *testing.T) {
 			var output strings.Builder
@@ -125,8 +125,8 @@ func TestAdminListsUseDebouncedPostSearchCommands(t *testing.T) {
 			if !strings.Contains(rendered, `data-on:lv-entity-list-query__debounce.200ms=`) {
 				t.Fatalf("admin list missing debounced search bridge:\n%s", rendered)
 			}
-			if !strings.Contains(rendered, "@post('/admin/"+active+"/search'") {
-				t.Fatalf("admin list missing POST search command:\n%s", rendered)
+			if !strings.Contains(rendered, "@get('/admin/"+active+"/search'") {
+				t.Fatalf("admin list missing GET search command:\n%s", rendered)
 			}
 		})
 	}

@@ -87,6 +87,57 @@ func TestGenerateRejectsRunnableCommandWithoutSafetyMetadata(t *testing.T) {
 	}
 }
 
+func TestGenerateTreatsRuntimeHelpGroupAsDocumentationOnly(t *testing.T) {
+	root := &cobra.Command{Use: "leapview"}
+	group := &cobra.Command{
+		Use:  "semantic-models",
+		Args: cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error { return command.Help() },
+		Annotations: map[string]string{
+			effectAnnotation:       "read",
+			confirmationAnnotation: "never",
+			helpGroupAnnotation:    "true",
+		},
+	}
+	group.AddCommand(&cobra.Command{
+		Use: "list",
+		Run: func(*cobra.Command, []string) {},
+		Annotations: map[string]string{
+			effectAnnotation:       "read",
+			confirmationAnnotation: "never",
+		},
+	})
+	root.AddCommand(group)
+
+	out := t.TempDir()
+	if err := generate(root, out); err != nil {
+		t.Fatalf("generate CLI documentation: %v", err)
+	}
+
+	article, err := os.ReadFile(filepath.Join(out, "semantic-models.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(article), "\n## Behavior") {
+		t.Fatalf("help-only group rendered top-level behavior:\n%s", article)
+	}
+	if !strings.Contains(string(article), "\n#### Behavior") {
+		t.Fatalf("runnable subcommand behavior is missing:\n%s", article)
+	}
+
+	contents, err := os.ReadFile(filepath.Join(out, "manifest.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var manifest machineManifest
+	if err := json.Unmarshal(contents, &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.Commands) != 2 || manifest.Commands[0].Runnable {
+		t.Fatalf("help-only group manifest entry = %#v", manifest.Commands)
+	}
+}
+
 func TestGenerateGroupsSubcommandsOnTopLevelCommandPage(t *testing.T) {
 	root := &cobra.Command{Use: "leapview"}
 	semanticModels := &cobra.Command{Use: "semantic-models", Short: "Inspect semantic models"}

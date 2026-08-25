@@ -25,11 +25,12 @@ type Model struct {
 }
 
 type Dashboard struct {
-	ID            string                    `json:"id"`
-	Title         string                    `json:"title"`
-	Description   string                    `json:"description"`
-	SemanticModel string                    `json:"semanticModel"`
-	Tags          []string                  `json:"tags"`
-	PageCount     int                       `json:"pageCount"`
-	Appearance    dashboardappearance.Value `json:"appearance"`
+	ID                 string                    `json:"id"`
+	Title              string                    `json:"title"`
+	Description        string                    `json:"description"`
+	SemanticModel      string                    `json:"semanticModel"`
+	Tags               []string                  `json:"tags"`
+	PageCount          int                       `json:"pageCount"`
+	Appearance         dashboardappearance.Value `json:"appearance"`
+	AppearanceRevision int64                     `json:"appearanceRevision,omitempty"`
 }

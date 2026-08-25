@@ -84,6 +84,7 @@ func (r *Repository) AssetVersions(ctx context.Context, projectID projectgraph.R
 			SnapshotID:     row.SnapshotID,
 			AssetID:        assetID,
 			SourceFile:     row.SourceFile,
+			PayloadJSON:    row.PayloadJson,
 			ContentHash:    row.ContentHash,
 		}
 		if row.ActivatedAt.Valid {

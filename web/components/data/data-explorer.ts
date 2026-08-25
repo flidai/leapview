@@ -755,6 +755,13 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       color: var(--lv-fg-danger);
     }
 
+    .result-failure {
+      display: inline-flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: var(--base-size-8);
+    }
+
     lv-data-explore-table {
       min-height: 0;
     }
@@ -1060,6 +1067,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                       <label>
                         <input
                           type="checkbox"
+                          aria-label=${column.label || column.key}
                           .checked=${checked}
                           ?disabled=${checked && visibleColumnKeys.length <= 1}
                           @change=${(event: Event) => this.toggleHeaderColumn(column.key, (event.target as HTMLInputElement).checked, columns, semanticActive)}
@@ -1094,6 +1102,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                   <span class="search-icon" aria-hidden="true">${lucideIcon(Search, { size: 15 })}</span>
                   <input
                     type="search"
+                    aria-label="Search data"
                     .value=${this.search}
                     @input=${(event: Event) => this.search = (event.target as HTMLInputElement).value}
                     placeholder="Search data"
@@ -1250,7 +1259,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             <span><strong>${selectedModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
             ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
             ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
-            ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
+            ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
             ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
           </div>
           ${hasQuery
@@ -1274,6 +1283,16 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return html`<button type="button" class=${`chip ${kind}`} title="Remove field" @click=${() => this.removeExploreField(id, kind, command)}>
       ${fieldLabel(id, fields)} ${lucideIcon(X, { size: 12 })}
     </button>`
+  }
+
+  private renderExploreFailure(error: string, command: DataExploreCommand) {
+    return html`
+      <span class="result-failure" role="alert">
+        <span class="result-error">${error}</span>
+        <button type="button" class="text-button" @click=${() => this.emitExplore(command, true)}>Retry</button>
+        <button type="button" class="text-button" @click=${() => this.resetExplore(command)}>Reset query</button>
+      </span>
+    `
   }
 
   private renderFilterEditor(command: DataExploreCommand, fields: DataExploreFieldSignal[]) {
@@ -1679,7 +1698,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
               <span><strong>${selectedModel?.title ?? label(command.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
               ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
               ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
-              ${result.error ? html`<span class="result-error">${result.error}</span>` : nothing}
+              ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
               ${(result.warnings ?? []).map((warning) => html`<span>${warning}</span>`)}
             </div>
             ${hasQuery

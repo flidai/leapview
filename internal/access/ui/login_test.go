@@ -28,3 +28,28 @@ func TestLoginBootstrapUsesProductName(t *testing.T) {
 		t.Fatalf("login page signal = %#v", page)
 	}
 }
+
+func TestLoginPageCarriesOnlyClosedErrorCodesIntoUpdates(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		errorCode string
+		want      string
+	}{
+		{name: "invalid credentials", errorCode: "invalid_credentials", want: "error=invalid_credentials"},
+		{name: "unknown", errorCode: "<script>alert(1)</script>"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			var output strings.Builder
+			if err := LoginPage(LoginPageOptions{ErrorCode: test.errorCode}).Render(&output); err != nil {
+				t.Fatal(err)
+			}
+			rendered := html.UnescapeString(output.String())
+			if test.want != "" && !strings.Contains(rendered, test.want) {
+				t.Fatalf("document does not contain %q", test.want)
+			}
+			if strings.Contains(rendered, "script%3Ealert") || strings.Contains(rendered, "<script>alert") {
+				t.Fatalf("document propagated an unknown login error: %s", rendered)
+			}
+		})
+	}
+}

@@ -159,19 +159,24 @@ func decodeModelResourceWithDefinition(path string, content []byte, metadata met
 		}
 	}
 	table.GrainEntity = authored.Spec.Grain.Entity
-	for name, field := range authored.Spec.Fields {
+	fields := map[string]projectcontracts.ModelField{}
+	if authored.Spec.Fields != nil {
+		fields = *authored.Spec.Fields
+	}
+	for name, field := range fields {
+		datatype := optionalString(field.Datatype)
 		table.Dimensions[name] = semanticmodel.MetricDimension{
 			Label:       optionalString(field.Label),
 			Description: optionalString(field.Description),
-			Type:        canonicalDimensionTypeName(field.Datatype),
-			Datatype:    semanticmodel.LogicalDataType(field.Datatype),
+			Type:        canonicalDimensionTypeName(datatype),
+			Datatype:    semanticmodel.LogicalDataType(datatype),
 			AIContext:   lowerAIContext(field.AiContext),
 		}
 		table.Columns[name] = semanticmodel.ModelColumn{
 			Name:        name,
 			Field:       name,
-			Type:        canonicalDimensionTypeName(field.Datatype),
-			Datatype:    semanticmodel.LogicalDataType(field.Datatype),
+			Type:        canonicalDimensionTypeName(datatype),
+			Datatype:    semanticmodel.LogicalDataType(datatype),
 			Description: optionalString(field.Description),
 			AIContext:   lowerAIContext(field.AiContext),
 		}

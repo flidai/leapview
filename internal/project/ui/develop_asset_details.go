@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectview "github.com/flidai/leapview/internal/project"
 	"github.com/flidai/leapview/internal/project/assetnav"
 	uisignals "github.com/flidai/leapview/internal/project/ui/signals"
@@ -41,7 +42,7 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 	case "semantic_model":
 		semanticModelDetailModel(&model, project, asset, assets, refresh)
 	case "model_table":
-		modelTableDetailModel(&model, project, asset, assets, refresh)
+		modelTableDetailModel(&model, project, asset, assets)
 	case "dashboard":
 		dashboardDetailModel(&model, asset, assets)
 	case "refresh_pipeline":
@@ -135,7 +136,7 @@ func semanticModelDetailModel(model *assetDetailModel, project projectview.Devel
 }
 
 func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
-	status := assetRefreshSignal(refresh).Status
+	status := assetRefreshStatus(refresh)
 	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
 		{Label: "Last refreshed", Value: emptyDash(refresh.LatestSuccessful.FinishedAt)},
@@ -143,7 +144,7 @@ func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
 	if refresh.Unavailable {
 		facts = append(facts, definitionFact{
 			Label: "Refresh guidance",
-			Value: "Refresh state could not be loaded. Review Connections and runtime setup, then retry.",
+			Value: "Refresh state could not be loaded. Check the refresh runtime and try again.",
 			Wide:  true,
 		})
 	}
@@ -564,13 +565,17 @@ func sortedMapKeysString(values map[string][]string) []string {
 	return keys
 }
 
-func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView, refresh AssetRefreshState) {
-	modelKey, tableName := modelTableKeyParts(asset)
+func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {
 	fields := modelTableFields(asset.Payload)
-	sources := modelTableSourceNames(asset.Payload)
+	schema := metaMap(asset.Payload, "Schema", "schema")
+	physicalColumns := metaSlice(schema, "Columns", "columns")
+	totalFields := len(fields)
+	if len(physicalColumns) > 0 {
+		totalFields = len(physicalColumns)
+	}
 	mode := "Unspecified"
 	if modelTableSQL(asset.Payload) != "" {
-		mode = "Definition"
+		mode = "SQL transform"
 	} else if modelTableSourceNames(asset.Payload) != nil {
 		mode = "Direct source"
 	}
@@ -578,9 +583,6 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	grainEntity := metaString(asset.Payload, "GrainEntity", "grainEntity")
 	model.Overview = append(model.Overview,
 		definitionFact{Label: "Grain entity", Value: grainEntity, Code: true},
-		definitionFact{Label: "Entities", Value: fmt.Sprint(len(entities))},
-		definitionFact{Label: "Fields", Value: fmt.Sprint(len(fields))},
-		definitionFact{Label: "Input sources", Value: fmt.Sprint(len(sources))},
 		definitionFact{Label: "Mode", Value: mode},
 	)
 	if physical := metaMap(asset.Payload, "Physical", "physical"); len(physical) > 0 {
@@ -591,19 +593,11 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 			definitionFact{Label: "DuckLake snapshot", Value: formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId")), Code: true},
 		)
 	}
-	model.Overview = append(model.Overview, refreshOverviewFacts(refresh)...)
+	model.Overview = append(model.Overview, modelLastRefreshedFact(asset))
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
-		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(fields)), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(project.ID, modelKey, tableName, asset.Payload, assets)},
+		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(asset, asset.Payload)},
 	)
-}
-
-func modelTableKeyParts(asset projectview.DevelopAssetView) (string, string) {
-	parts := strings.SplitN(asset.Key, ".", 2)
-	if len(parts) == 2 {
-		return parts[0], parts[1]
-	}
-	return "", asset.Key
 }
 
 func modelTableFields(meta map[string]any) map[string]any {
@@ -613,9 +607,21 @@ func modelTableFields(meta map[string]any) map[string]any {
 func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetView) {
 	fields := metaMap(asset.Payload, "Fields", "fields")
 	schema := metaMap(asset.Payload, "Schema", "schema")
+	observation := metaMap(asset.Payload, "SchemaObservation", "schemaObservation")
 	columns := modelTableSchemaColumns(fields, schema)
 	model.Overview = append(model.Overview, sourceFacts(asset)...)
-	model.Overview = append(model.Overview, definitionFact{Label: "Fields", Value: fmt.Sprint(len(columns))})
+	mode := firstNonEmpty(metaString(asset.Payload, "SchemaMode", "schemaMode"), metaString(observation, "Mode", "mode"), "inferred")
+	status := firstNonEmpty(metaString(observation, "Status", "status"), "not observed")
+	model.Overview = append(model.Overview,
+		definitionFact{Label: "Schema mode", Value: mode},
+		definitionFact{Label: "Schema status", Value: status},
+	)
+	if observedAt := metaString(observation, "ObservedAt", "observedAt"); observedAt != "" {
+		if parsed, err := time.Parse(time.RFC3339Nano, observedAt); err == nil {
+			observedAt = parsed.UTC().Format("2006-01-02 15:04 UTC")
+		}
+		model.Overview = append(model.Overview, definitionFact{Label: "Schema observed at", Value: observedAt})
+	}
 	model.Sections = append(model.Sections,
 		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", len(columns)), Signal: "assetDetailsSourceFieldsTable", Table: sourceFieldsGrid(fields, schema)},
 	)
@@ -646,40 +652,77 @@ func modelTableSQL(meta map[string]any) string {
 	return metaString(metaMap(metaMap(meta, "AuthoredModel", "authoredModel"), "Query", "query"), "Code", "code")
 }
 
-func modelTableFieldsGrid(projectID, modelKey, tableName string, table map[string]any, assets []projectview.DevelopAssetView) recordTable {
+func modelTableFieldsGrid(asset projectview.DevelopAssetView, table map[string]any) recordTable {
 	fields := modelTableFields(table)
 	schema := metaMap(table, "Schema", "schema")
 	schemaColumns := modelTableSchemaColumns(fields, schema)
 	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
+	physical := metaMap(table, "Physical", "physical")
+	snapshot := formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId"))
+	detailHref := assetnav.CanonicalAssetSectionHref(asset, "details")
 	rows := make([]map[string]any, 0, len(schemaColumns))
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
 		field := asMap(fields[name])
-		child := assetByTypeKey("field", modelKey+"."+tableName+"."+name, assets)
+		_, documented := fields[name]
+		contractType := metaString(field, "Datatype", "datatype")
+		logicalType := contractType
+		metadataLabel, metadataTone := "Observed", "muted"
+		if logicalType != "" {
+			metadataLabel, metadataTone = "Contracted", "success"
+		} else {
+			logicalType = string(semanticmodel.LogicalDataTypeFromPhysicalType(metaString(column, "PhysicalType", "physicalType")))
+			if documented {
+				metadataLabel = "Documented"
+			}
+		}
+		physicalType := firstNonEmpty(metaString(column, "PhysicalType", "physicalType"), "Not observed")
+		nullable := schemaNullableLabel(column, field)
+		provenance := "Observed from DuckLake"
+		if documented {
+			provenance = "Declared in YAML"
+		}
+		displayLabel := firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name))
+		typeQualifier := "Nullability not profiled"
+		if nullable == "Yes" {
+			typeQualifier = "Nullable"
+		} else if nullable == "No" {
+			typeQualifier = "Required"
+		}
 		rows = append(rows, map[string]any{
-			"name":          name,
-			"nameHref":      childHref(projectID, child),
-			"label":         firstNonEmpty(metaString(field, "Label", "label"), labelFromKey(name)),
-			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
-			"nullable":      schemaNullableLabel(column, field),
-			"entities":      emptyDash(strings.Join(entityNames[name], ", ")),
-			"grain":         boolLabel(grainFields[name]),
-			"description":   emptyDash(metaString(field, "Description", "description")),
+			"fieldKey":           name,
+			"field":              map[string]any{"label": name, "description": displayLabel},
+			"type":               map[string]any{"label": physicalType, "description": typeQualifier},
+			"description":        emptyDash(metaString(field, "Description", "description")),
+			"status":             recordTableBadgeValue(metadataLabel, metadataTone),
+			"name":               name,
+			"nameHref":           detailHref + "?field=" + url.QueryEscape(name),
+			"label":              displayLabel,
+			"logicalType":        logicalType,
+			"logical_type":       recordTableBadgeValue(logicalType, "muted"),
+			"physicalType":       physicalType,
+			"physical_type":      recordTableBadgeValue(physicalType, "muted"),
+			"nullable":           nullable,
+			"contractType":       emptyDash(contractType),
+			"metadataStatus":     metadataLabel,
+			"metadata":           recordTableBadgeValue(metadataLabel, metadataTone),
+			"metadataProvenance": provenance,
+			"entities":           emptyDash(strings.Join(entityNames[name], ", ")),
+			"grain":              boolLabel(grainFields[name]),
+			"duckLakeSnapshot":   snapshot,
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "name", Header: "Name", Kind: uisignals.Pointer("link"), HrefKey: uisignals.Pointer("nameHref"), Width: uisignals.Pointer("170px")},
-			{ID: "label", Header: "Label", Width: uisignals.Pointer("180px")},
-			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
-			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
-			{ID: "entities", Header: "Entities", Width: uisignals.Pointer("180px")},
-			{ID: "grain", Header: "Grain", Width: uisignals.Pointer("90px")},
+			{ID: "field", Header: "Field", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("240px")},
+			{ID: "type", Header: "Type", Kind: uisignals.Pointer("entity"), Width: uisignals.Pointer("170px")},
 			{ID: "description", Header: "Description"},
+			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("130px")},
 		},
-		Rows:     rows,
-		Empty:    "No schema is available for this model table.",
-		MinWidth: uisignals.Pointer("900px"),
+		Rows:      rows,
+		Empty:     "No schema is available for this model table.",
+		MinWidth:  uisignals.Pointer("760px"),
+		RowAction: uisignals.Pointer("open-model-field"),
 	}
 }
 
@@ -713,19 +756,26 @@ func sourceFieldsGrid(fields, schema map[string]any) recordTable {
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
 		field := asMap(fields[name])
+		_, declared := fields[name]
+		contractLabel, contractTone := "Observed only", "muted"
+		if declared {
+			contractLabel, contractTone = "Declared", "success"
+		}
 		rows = append(rows, map[string]any{
 			"name":          name,
 			"description":   emptyDash(metaString(field, "Description", "description")),
 			"physical_type": recordTableBadgeValue(schemaFieldType(column, field), "muted"),
 			"nullable":      schemaNullableLabel(column, field),
+			"contract":      recordTableBadgeValue(contractLabel, contractTone),
 		})
 	}
 	return recordTable{
 		Columns: []recordTableColumn{
-			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("170px")},
-			{ID: "description", Header: "Description"},
+			{ID: "name", Header: "Name", Kind: uisignals.Pointer("code"), Width: uisignals.Pointer("230px")},
 			{ID: "physical_type", Header: "Type", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
 			{ID: "nullable", Header: "Nullable", Width: uisignals.Pointer("100px")},
+			{ID: "contract", Header: "Contract", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("140px")},
+			{ID: "description", Header: "Description"},
 		},
 		Rows:     rows,
 		Empty:    "No schema is available for this source.",

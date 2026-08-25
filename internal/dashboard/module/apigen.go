@@ -65,7 +65,7 @@ func (h dashboardAPIGenHandler) SuspendDashboardPublication(w http.ResponseWrite
 	h.module.SuspendDashboardPublication(w, r, project, publication)
 }
 func (h dashboardAPIGenHandler) ListDashboards(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenListDashboardsParams) {
-	h.module.HTTP().ListDashboards(w, r)
+	h.module.ListDashboards(w, r)
 }
 func (h dashboardAPIGenHandler) GetDashboard(w http.ResponseWriter, r *http.Request, _ string) {
 	h.module.HTTP().GetDashboard(w, r)
@@ -92,7 +92,7 @@ func (h dashboardAPIGenHandler) QueryDashboardVisualData(w http.ResponseWriter, 
 	h.module.QueryDashboardVisualData(w, r, dashboard, page, visual)
 }
 func (h dashboardAPIGenHandler) ListSemanticModels(w http.ResponseWriter, r *http.Request, params dashboardgen.GenListSemanticModelsParams) {
-	h.module.SemanticAPI().ListSemanticModels(w, r)
+	h.module.ListSemanticModels(w, r)
 }
 func (h dashboardAPIGenHandler) GetSemanticModel(w http.ResponseWriter, r *http.Request, model string) {
 	h.module.SemanticAPI().GetSemanticModel(w, r)

@@ -34,6 +34,76 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 	}
 }
 
+func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "browser-replay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	protocol, err := Build(t.Context(), Config{
+		Database: store.SQLDB(),
+		PrincipalID: func(*http.Request) (string, bool) {
+			return "principal:creator", true
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var allowed atomic.Bool
+	allowed.Store(true)
+	var calls atomic.Int32
+	handler := protocol.BrowserMutationMiddleware(func(*http.Request) bool {
+		return allowed.Load()
+	}, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = w.Write([]byte("event: datastar-patch-signals\ndata: {\"ok\":true}\n\n"))
+	}))
+	request := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(`{"pipelineCommand":{"action":"run","pipelineId":"pipeline:sales"}}`))
+		r.Header.Set("X-Request-ID", "browser-command-1")
+		r.Header.Set("Idempotency-Key", "ui:browser-command-1")
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, r)
+		return recorder
+	}
+	first := request()
+	if first.Code != http.StatusOK || first.Header().Get("Idempotency-Replayed") != "" {
+		t.Fatalf("first response = %d headers=%#v body=%s", first.Code, first.Header(), first.Body.String())
+	}
+	replay := request()
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotency-Replayed") != "true" || replay.Body.String() != first.Body.String() {
+		t.Fatalf("replay = %d headers=%#v body=%s", replay.Code, replay.Header(), replay.Body.String())
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+	allowed.Store(false)
+	if denied := request(); denied.Code != http.StatusForbidden {
+		t.Fatalf("replay after authorization revocation = %d body=%s", denied.Code, denied.Body.String())
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls after denied replay = %d, want 1", calls.Load())
+	}
+}
+
+func TestBrowserMutationMiddlewareRequiresMatchingGeneratedIdentity(t *testing.T) {
+	protocol, err := Build(t.Context(), Config{PrincipalID: func(*http.Request) (string, bool) { return "principal:creator", true }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	called := false
+	handler := protocol.BrowserMutationMiddleware(func(*http.Request) bool { return true }, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
+	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(`{}`))
+	request.Header.Set("X-Request-ID", "request-1")
+	request.Header.Set("Idempotency-Key", "request-1")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest || called {
+		t.Fatalf("mismatched identity response = %d called=%t body=%s", recorder.Code, called, recorder.Body.String())
+	}
+}
+
 func TestCursorSnapshotNeverFabricatesIdentity(t *testing.T) {
 	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/project/semantic-models", nil)
 	if got := apiCursorSnapshotForRequest(request); got != "" {
@@ -62,6 +132,16 @@ func TestAdversarialIdempotencyNeverStoresOneTimeCredentials(t *testing.T) {
 	var decoded map[string]any
 	if err := json.Unmarshal(body, &decoded); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestAdversarialIdempotencyNeverStoresWriteOnlyCredentialReferences(t *testing.T) {
+	status, header, body := safeIdempotencyResponse(http.StatusCreated, http.Header{"Content-Type": []string{"application/json"}}, []byte(`{"id":"binding-1","credentialReference":{"projectId":"project-secrets","environment":"prod","secretPath":"/connections/warehouse","secretKey":"bundle"}}`))
+	if status != http.StatusConflict || header.Get("Content-Type") != "application/problem+json" {
+		t.Fatalf("safe response = %d %#v", status, header)
+	}
+	if strings.Contains(string(body), "project-secrets") || strings.Contains(string(body), "/connections/warehouse") || strings.Contains(string(body), "bundle") {
+		t.Fatal("write-only credential reference persisted in replay representation")
 	}
 }
 

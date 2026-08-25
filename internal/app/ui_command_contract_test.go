@@ -72,8 +72,6 @@ func TestUIRequestsCannotBypassTypedCommandHelpers(t *testing.T) {
 		// These helpers are the project Develop route's typed-signal bridges;
 		// they were split from develop.go during the maintainability extraction.
 		filepath.Clean("internal/project/ui/develop_asset_pages.go"): {"EventPost": true},
-		filepath.Clean("internal/project/ui/develop_catalog.go"):     {"QueryPost": true},
-		filepath.Clean("internal/project/ui/page.go"):                {"QueryPost": true},
 	}
 	fset := token.NewFileSet()
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(path string, entry fs.DirEntry, walkErr error) error {

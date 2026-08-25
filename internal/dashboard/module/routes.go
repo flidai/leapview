@@ -12,6 +12,10 @@ import (
 
 type RouteGuard struct {
 	ProtectWithResources func(access.Capability, func(*http.Request, projectgraph.ResourceID) []access.ResourceRef, http.HandlerFunc) http.HandlerFunc
+	// ProtectWithAuthoring authorizes repository-backed draft routes. Unlike
+	// graph resources, a newly created dashboard is not present in the active
+	// serving generation until publication/deployment.
+	ProtectWithAuthoring func(access.Capability, http.HandlerFunc) http.HandlerFunc
 }
 
 func (m *Module) MountPublicDocuments(r chi.Router) {
@@ -56,15 +60,35 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	if protectResource == nil {
 		return
 	}
+	protectAuthoring := guard.ProtectWithAuthoring
+	if protectAuthoring == nil {
+		protectAuthoring = func(capability access.Capability, next http.HandlerFunc) http.HandlerFunc {
+			return protectResource(capability, dashboardhttp.DashboardObjectRefs, next)
+		}
+	}
 	r.Get("/dashboards/{dashboard}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Dashboard))
 	r.Get("/dashboards/{dashboard}/pages/{page}", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Page))
+	// Draft creation is project-scoped. The shared project authorizer resolves
+	// RESOURCE_EDIT through the explicit project role bundle (the same fallback
+	// used by the generated project-root API), never as a direct unsupported
+	// project-resource grant. Forks bind two distinct RESOURCE_EDIT decisions:
+	// target project role bundle, then source dashboard resource.
+	r.Get("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+	r.Post("/dashboards/new", protectResource(access.CapabilityResourceEdit, dashboardhttp.ProjectObjectRefs, h.DashboardDraftCreate))
+	forkHandler := protectResource(
+		access.CapabilityResourceEdit,
+		dashboardhttp.ProjectObjectRefs,
+		protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
+	)
+	r.Get("/dashboards/{dashboard}/fork", forkHandler)
+	r.Post("/dashboards/{dashboard}/fork", forkHandler)
 	// Builder documents and mutations are edit-scoped. The application
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
-	r.Get("/dashboards/{dashboard}/edit", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilder))
-	r.Get("/dashboards/{dashboard}/preview", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderPreview))
-	r.Get("/dashboards/{dashboard}/export.yaml", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderExportYAML))
-	r.Post("/dashboards/{dashboard}/draft/command", protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardBuilderCommand))
+	r.Get("/dashboards/{dashboard}/edit", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilder))
+	r.Get("/dashboards/{dashboard}/preview", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderPreview))
+	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderExportYAML))
+	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderCommand))
 	r.Get("/dashboards/{dashboard}/visuals/{visual}/tiles/{revision}/{z}/{x}/{y}.mvt", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, m.VisualizationTile))
 	r.Post("/dashboards/{dashboard}/commands/visual-window", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.VisualWindow))
 	r.Post("/dashboards/{dashboard}/commands/select", protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.Select))

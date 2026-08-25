@@ -104,6 +104,9 @@ func (m *Model) validate(authored bool) error {
 		if len(grain.Fields) == 0 {
 			return fmt.Errorf("model table %q grain.entity %q requires fields", name, table.GrainEntity)
 		}
+		if table.Dimensions == nil {
+			table.Dimensions = map[string]MetricDimension{}
+		}
 		for entityName, entity := range table.Entities {
 			if err := validateSemanticIdentifier(entityName); err != nil {
 				return fmt.Errorf("model table %q entity %q is invalid: %w", name, entityName, err)
@@ -115,13 +118,16 @@ func (m *Model) validate(authored bool) error {
 				if err := validateSemanticIdentifier(field); err != nil {
 					return fmt.Errorf("model table %q entity %q field %q is invalid: %w", name, entityName, field, err)
 				}
+				if _, ok := table.Dimensions[field]; !ok {
+					table.Dimensions[field] = MetricDimension{}
+				}
 			}
 		}
 		for field, dimension := range table.Dimensions {
 			if err := validateSemanticIdentifier(field); err != nil {
 				return fmt.Errorf("model table %q field %q is invalid: %w", name, field, err)
 			}
-			if err := validateLogicalDataType("model table "+name+" field "+field, dimension.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("model table "+name+" field "+field, dimension.Datatype); err != nil {
 				return err
 			}
 			dimension.Field = name + "." + field
@@ -216,7 +222,7 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 					column.Datatype = dimension.Datatype
 				}
 			}
-			if err := validateLogicalDataType("model table "+tableName+" column "+name, column.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("model table "+tableName+" column "+name, column.Datatype); err != nil {
 				return nil, err
 			}
 			if column.SourceField == "" {
@@ -662,7 +668,7 @@ func validateExecutionTable(tableName string, table Table) error {
 		if err := validateSemanticIdentifier(field); err != nil {
 			return fmt.Errorf("model table %q field %q is invalid: %w", tableName, field, err)
 		}
-		if err := validateLogicalDataType("model table "+tableName+" field "+field, table.Dimensions[field].Datatype); err != nil {
+		if err := validateOptionalLogicalDataType("model table "+tableName+" field "+field, table.Dimensions[field].Datatype); err != nil {
 			return err
 		}
 	}
@@ -676,7 +682,7 @@ func validateExecutionTable(tableName string, table Table) error {
 		if err := validateSemanticIdentifier(field); err != nil {
 			return fmt.Errorf("model table %q column %q is invalid: %w", tableName, field, err)
 		}
-		if err := validateLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+		if err := validateOptionalLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
 			return err
 		}
 		if _, ok := table.Dimensions[field]; !ok {
@@ -686,7 +692,7 @@ func validateExecutionTable(tableName string, table Table) error {
 	// A lowered table may omit Columns when it was built directly in memory;
 	// in that case Dimensions are the executable column contract. When Columns
 	// are present, however, every semantic field and entity key must be backed
-	// by one explicitly typed column.
+	// by one column. Its datatype may remain unresolved until discovery.
 	if len(table.Columns) > 0 {
 		for _, field := range dimensionNames {
 			if _, ok := table.Columns[field]; !ok {

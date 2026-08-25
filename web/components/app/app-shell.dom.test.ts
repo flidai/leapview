@@ -837,7 +837,7 @@ test('sidebar switches between Insights and Develop and remembers the last area 
 
     const insightsState = await sidebarAreaState(page)
     expect(insightsState.area).toBe('insights')
-    expect(insightsState.items).toEqual(['Dashboards', 'Data Explorer'])
+    expect(insightsState.items).toEqual(['Dashboards', 'Data Explorer', 'Chats'])
     expect(insightsState.visibleGroupLabels).toEqual([])
 
     await page.locator('lv-app-shell').evaluate((element: any) => {
@@ -913,6 +913,7 @@ test('insights and develop navigation expose the stable route contract without s
     expect(insightsState.insights).toEqual([
       { label: 'Dashboards', href: '/', icon: expect.any(String) },
       { label: 'Data Explorer', href: '/explore', icon: expect.any(String) },
+      { label: 'Chats', href: '/chats', icon: expect.any(String) },
     ])
     expect(insightsState.develop).toEqual([])
     expect(insightsState.subtitles).toEqual([])
@@ -1237,6 +1238,7 @@ function testDocument(includeShellScript: boolean, compact = false, history = fa
         items: [
           { id: 'dashboards', label: 'Dashboards', href: '/', icon: 'dashboard' },
           { id: 'data-explorer', label: 'Data Explorer', href: '/explore', icon: 'database' },
+          { id: 'chat', label: 'Chats', href: '/chats', icon: 'chat' },
         ],
       }] : nav ? [{
         label: 'Develop',

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -621,9 +622,9 @@ func TestAdminPrincipalSearchCommandPatchesOnlyDirectoryRows(t *testing.T) {
 	auth := testAuth(store, accessmodule.AuthConfig{DevBypass: true})
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{Auth: auth}))
 
-	req := httptest.NewRequest(http.MethodPost, "/admin/principals/search", strings.NewReader(`{"entityListQuery":"analyst","entityListFilter":"all"}`))
+	signals := url.QueryEscape(`{"entityListQuery":"analyst","entityListFilter":"all"}`)
+	req := httptest.NewRequest(http.MethodGet, "/admin/principals/search?datastar="+signals, nil)
 	req.Header.Set("Authorization", "Bearer dev")
-	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(rec, req)
 

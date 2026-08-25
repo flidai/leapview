@@ -604,6 +604,7 @@ type ProjectRuntimeConfig struct {
 	BindingFingerprint       string
 	RequiredExtensions       []string
 	SkipInitialRefresh       bool
+	MaterializationOnly      bool
 	QueryCache               *resultcache.Scope
 	ResultLimits             dataquery.ResultLimits
 }
@@ -623,6 +624,7 @@ type ProjectRuntime struct {
 	sourceObservations   []analyticsmaterialize.SourceObservation
 	commitMetadata       map[string]string
 	cacheScope           *resultcache.Scope
+	viewConfig           ProjectRuntimeConfig
 }
 
 // Planner returns the activation-owned planner for one semantic model. The
@@ -695,12 +697,37 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		views:                map[string]*analyticsmaterialize.Runtime{},
 		commitMetadata:       projectCommitMetadata(config),
 		cacheScope:           config.QueryCache,
+		viewConfig:           config,
 	}
-	for modelID, model := range config.Models {
-		// Semantic datasets are query-facing aliases. Materialization is
-		// project-scoped and keyed by the referenced authored Model name, so
-		// bind every planner relation through that alias map in both snapshot
-		// and live execution modes.
+	if config.SnapshotID > 0 {
+		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
+			return nil, errors.Join(err, runtime.Close())
+		}
+		runtime.lastSnapshotID = config.SnapshotID
+	} else if !config.SkipInitialRefresh {
+		if err := runtime.Refresh(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if len(runtime.views) == 0 {
+		if err := runtime.rebuildViews(ctx); err != nil {
+			return nil, errors.Join(err, runtime.Close())
+		}
+	}
+	return runtime, nil
+}
+
+func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
+	if r == nil || r.viewConfig.MaterializationOnly {
+		return nil
+	}
+	config := r.viewConfig
+	config.Models = r.models
+	if r.lastSnapshotID > 0 {
+		config.SnapshotID = r.lastSnapshotID
+	}
+	next := make(map[string]*analyticsmaterialize.Runtime, len(r.models))
+	for modelID, model := range r.models {
 		tableRelation := func(table string) (string, error) {
 			physical := strings.TrimSpace(table)
 			if err := validateIdentifier(physical); err != nil {
@@ -712,37 +739,28 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID:             modelID,
-			Model:               model,
-			QueryCacheNamespace: projectQueryCacheNamespace(config),
-			Database:            db,
-			Sources:             sources,
-			Resolver:            sources,
-			SnapshotOnly:        config.SnapshotID > 0,
-			TableRelation:       tableRelation,
-			QueryCache:          config.QueryCache,
-			ResultLimits:        config.ResultLimits,
-			RequiredExtensions:  config.RequiredExtensions,
+			ModelID: modelID, Model: model, QueryCacheNamespace: projectQueryCacheNamespace(config),
+			Database: r.db, Sources: r.sources, Resolver: r.sources,
+			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
+			QueryCache: config.QueryCache, ResultLimits: config.ResultLimits,
+			RequiredExtensions: config.RequiredExtensions,
 		})
 		if err != nil {
-			return nil, fmt.Errorf("compile semantic model %q runtime: %w", modelID, err)
+			for _, opened := range next {
+				_ = opened.CloseView()
+			}
+			return fmt.Errorf("compile semantic model %q runtime: %w", modelID, err)
 		}
-		runtime.views[modelID] = view
+		next[modelID] = view
 	}
-	if config.SnapshotID > 0 {
-		// Compile planners from the authored definition first so their source
-		// fingerprints remain stable. Then attach immutable snapshot table
-		// schemas to the runtime models used for source-free verification.
-		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
-			return nil, errors.Join(err, runtime.Close())
-		}
-		runtime.lastSnapshotID = config.SnapshotID
-	} else if !config.SkipInitialRefresh {
-		if err := runtime.Refresh(ctx); err != nil {
-			return nil, err
+	previous := r.views
+	r.views = next
+	for _, view := range previous {
+		if err := view.CloseView(); err != nil {
+			return err
 		}
 	}
-	return runtime, nil
+	return nil
 }
 
 // discoverSnapshotModelSchemas populates executable table schemas from the
@@ -802,6 +820,16 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 			table := model.Tables[tableName]
 			table.Schema = semanticmodel.TableSchema{Columns: columns}
 			model.Tables[tableName] = table
+		}
+		// Reopened snapshots are intentionally source-free: source credentials and
+		// files may no longer exist. Validate the resolved materialized model
+		// contract against an execution snapshot, which retains model-table facts
+		// while omitting authored source state.
+		if err := model.ResolveDiscoveredModelFields(); err != nil {
+			return fmt.Errorf("snapshot schema discovery semantic model %q: %w", modelID, err)
+		}
+		if err := model.ExecutionSnapshot().ValidateDiscoveredSchemas(); err != nil {
+			return fmt.Errorf("snapshot schema discovery semantic model %q: %w", modelID, err)
 		}
 	}
 	return nil
@@ -943,7 +971,7 @@ func (r *ProjectRuntime) Refresh(ctx context.Context) error {
 	}
 	r.lastRefresh = lastRefresh
 	r.lastSnapshotID = snapshotID
-	return nil
+	return r.rebuildViews(ctx)
 }
 
 func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string, tableNames []string) error {
@@ -977,7 +1005,7 @@ func (r *ProjectRuntime) RefreshModelTables(ctx context.Context, modelID string,
 	}
 	r.lastRefresh = lastRefresh
 	r.lastSnapshotID = snapshotID
-	return nil
+	return r.rebuildViews(ctx)
 }
 
 // VerifySemantic prepares representative governed plans and proves entity
@@ -1020,7 +1048,7 @@ func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []
 	}
 	r.lastRefresh = lastRefresh
 	r.lastSnapshotID = snapshotID
-	return nil
+	return r.rebuildViews(ctx)
 }
 
 func (r *ProjectRuntime) clearQueryCaches() {

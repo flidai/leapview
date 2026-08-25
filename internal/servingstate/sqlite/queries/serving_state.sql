@@ -197,13 +197,24 @@ SELECT
   a.snapshot_id,
   a.logical_asset_id,
   a.source_file,
+  a.payload_json,
   a.content_hash
 FROM serving_states d
 JOIN assets a ON a.serving_state_id = d.id
 WHERE d.project_id = ?
   AND d.environment = ?
   AND a.logical_asset_id = ?
-  AND d.source = 'publish'
+  AND (
+    d.source = 'publish'
+    OR EXISTS (
+      SELECT 1
+      FROM delivery_publications publication
+      WHERE publication.project_id = d.project_id
+        AND publication.environment = d.environment
+        AND publication.generation_id = d.id
+        AND publication.status = 'committed'
+    )
+  )
   AND d.status IN ('active', 'draining', 'inactive', 'validated')
   AND NOT EXISTS (
     SELECT 1
@@ -211,7 +222,17 @@ WHERE d.project_id = ?
     JOIN assets newer_asset ON newer_asset.serving_state_id = newer.id
     WHERE newer.project_id = d.project_id
       AND newer.environment = d.environment
-      AND newer.source = 'publish'
+      AND (
+        newer.source = 'publish'
+        OR EXISTS (
+          SELECT 1
+          FROM delivery_publications newer_publication
+          WHERE newer_publication.project_id = newer.project_id
+            AND newer_publication.environment = newer.environment
+            AND newer_publication.generation_id = newer.id
+            AND newer_publication.status = 'committed'
+        )
+      )
       AND newer.status IN ('active', 'draining', 'inactive', 'validated')
       AND newer_asset.logical_asset_id = a.logical_asset_id
       AND newer_asset.content_hash = a.content_hash

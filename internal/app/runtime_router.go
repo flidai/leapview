@@ -170,6 +170,7 @@ type workflowInputs struct {
 	managedDataResolver      runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock     refreshmodule.Clock
 	refreshMaterializer      refreshrun.Materializer
+	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	enableRefreshDispatcher  bool
 	agent                    *agentmodule.Service
@@ -247,6 +248,7 @@ type workflowAssemblyInputs struct {
 	DeploymentConfig         deploymentmodule.Config
 	RefreshPipelineClock     refreshmodule.Clock
 	RefreshMaterializer      refreshrun.Materializer
+	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	EnableRefreshDispatcher  bool
 	QueryAudit               *analyticsmodule.QueryAuditSurface
@@ -566,6 +568,7 @@ func buildApplicationSurfaces(
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
 	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
+	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	runtime.queryAuditProvider = queryAuditProvider
@@ -716,8 +719,11 @@ func buildApplicationSurfaces(
 		projectAssetVersions = reader
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
-		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog, ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
-		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment,
+		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
+		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
+		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
+		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),
+		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},
@@ -725,6 +731,20 @@ func buildApplicationSurfaces(
 		CurrentUser: func(r *http.Request) (projecthttp.Principal, bool) {
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			return projecthttp.Principal{ID: principal.ID, DevBypass: principal.DevBypass}, ok
+		},
+		AuthorizeCreateDashboard: func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			if principal.DevBypass {
+				return true, nil
+			}
+			project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
 		},
 		Authenticate: routes.accessModule.Authenticate,
 	}
@@ -834,6 +854,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					permission analyticsmodule.ConnectionAdministrationPermission,
 					binding analyticsmodule.ConnectionTargetBinding,
 				) error {
+					if requestLocalDevelopmentAuthorization(ctx, principalID) {
+						return nil
+					}
 					var capability access.Capability
 					switch permission {
 					case analyticsmodule.PermissionManageConnectionMetadata:
@@ -875,6 +898,105 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		connectionAdministration = administration
+	}
+	if routes.projectBrowser != nil {
+		routes.projectBrowser.ConnectionAdministration = connectionAdministration
+		routes.projectBrowser.TargetID = storage.instanceID
+		if runtime.analyticsModule != nil {
+			bindings := runtime.analyticsModule.ConnectionUICommandBindings()
+			routes.projectBrowser.ConnectionCommands = projecthttp.ConnectionCommandBindings{
+				Create: bindings.Create, Update: bindings.Update, Test: bindings.Test,
+				Refresh: bindings.Refresh, Enable: bindings.Enable, Disable: bindings.Disable,
+			}
+			routes.projectBrowser.BeginConnectionCommand = func(ctx context.Context, invocation projecthttp.CreatorCommandInvocation) (context.Context, error) {
+				return runtime.analyticsModule.BeginConnectionUICommand(ctx, analyticsmodule.ConnectionUICommandInvocation{Action: invocation.Action, Project: invocation.Project, Connection: invocation.Resource, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
+			}
+		}
+		if routes.refreshModule != nil {
+			runCommand, cancelCommand := routes.refreshModule.UICommandBindings()
+			routes.projectBrowser.PipelineRunCommand, routes.projectBrowser.PipelineCancelCommand = runCommand, cancelCommand
+			routes.projectBrowser.BeginPipelineCommand = func(ctx context.Context, invocation projecthttp.CreatorCommandInvocation) (context.Context, error) {
+				return routes.refreshModule.BeginPipelineUICommand(ctx, refreshmodule.PipelineUICommandInvocation{Action: invocation.Action, Project: invocation.Project, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
+			}
+			routes.projectBrowser.RunPipeline = func(ctx context.Context, pipelineID, principalID, retryOf string) error {
+				identity, err := routes.refreshModule.ActiveServingIdentity(ctx)
+				if err != nil {
+					return err
+				}
+				return routes.refreshModule.QueuePipelineRefreshForUI(ctx, identity, pipelineID, principalID, retryOf)
+			}
+			routes.projectBrowser.CancelPipeline = func(ctx context.Context, pipelineID, runID, principalID string) error {
+				identity, err := routes.refreshModule.ActiveServingIdentity(ctx)
+				if err != nil {
+					return err
+				}
+				return routes.refreshModule.CancelPipelineRefreshForUI(ctx, identity, pipelineID, runID, principalID)
+			}
+			routes.projectBrowser.AuthorizePipeline = func(r *http.Request, pipelineID string, capability access.Capability) (bool, error) {
+				principal, ok := routes.accessModule.CurrentPrincipal(r)
+				if !ok {
+					return false, nil
+				}
+				projectID, err := runtime.resolveProjectID(r.Context())
+				if err != nil {
+					return false, err
+				}
+				resource, err := access.NewResourceRef(projectgraph.ResourceID(pipelineID), projectgraph.KindPipeline)
+				if err != nil {
+					return false, err
+				}
+				return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{resource}, capability)
+			}
+		}
+		routes.projectBrowser.AuthorizeConnectionCreate = func(r *http.Request, projectID projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			if principal.DevBypass {
+				return true, nil
+			}
+			project, err := access.NewResourceRef(projectID, projectgraph.KindProject)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{project}, capability)
+		}
+		routes.projectBrowser.AuthorizeDashboard = func(r *http.Request, dashboardID string, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			projectID, err := runtime.resolveProjectID(r.Context())
+			if err != nil {
+				return false, err
+			}
+			dashboard, err := access.NewResourceRef(projectgraph.ResourceID(dashboardID), projectgraph.KindDashboard)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{dashboard}, capability)
+		}
+		routes.projectBrowser.AuthorizeConnection = func(r *http.Request, connectionID string, capability access.Capability) (bool, error) {
+			principal, ok := routes.accessModule.CurrentPrincipal(r)
+			if !ok {
+				return false, nil
+			}
+			projectID, err := runtime.resolveProjectID(r.Context())
+			if err != nil {
+				return false, err
+			}
+			connection, err := access.NewResourceRef(projectgraph.ResourceID(connectionID), projectgraph.KindConnection)
+			if err != nil {
+				return false, err
+			}
+			return authorizeProjectResources(r.Context(), routes.accessModule, runtime.runtimeHostModule, principal.ID, projectID, []access.ResourceRef{connection}, capability)
+		}
+		if platform.apiProtocol != nil {
+			routes.projectBrowser.MutationMiddleware = func(next http.Handler) http.Handler {
+				return platform.apiProtocol.BrowserMutationMiddleware(routes.projectBrowser.AuthorizeCreatorMutationReplay, next)
+			}
+		}
 	}
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
@@ -1458,10 +1580,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if !ok {
 				return false, fmt.Errorf("active runtime lease does not expose authorization snapshot")
 			}
-			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
-			if err != nil {
-				return false, err
-			}
 			snapshot := authorizedLease.AuthorizationSnapshot()
 			if snapshot.Identity() != lease.Identity() {
 				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
@@ -1471,6 +1589,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return false, fmt.Errorf("delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
+				// Local development skips authored snapshot grants only after the
+				// active runtime identity and target-owned reader are validated.
+				if principal.DevBypass {
+					return true, nil
+				}
+				subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+				if err != nil {
+					return false, err
+				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
 			plan, err := deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
@@ -1484,9 +1611,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if plan.ProjectID != projectID {
 					return false, nil
 				}
+				// The immutable plan/project binding remains mandatory for local dev.
+				if principal.DevBypass {
+					return true, nil
+				}
+				subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
+				if err != nil {
+					return false, err
+				}
 				return deliveryProjectAllows(snapshot, subjects, projectID, capability)
 			}
 			resources, err := deliveryAuthorizationResources(plan)
+			if err != nil {
+				return false, err
+			}
+			// Local development skips only authored grants; candidate, plan, and
+			// graph-impact validation above still fail closed.
+			if principal.DevBypass {
+				return true, nil
+			}
+			subjects, err := routes.accessModule.AuthorizationSubjects(ctx, principal.ID)
 			if err != nil {
 				return false, err
 			}
@@ -2023,7 +2167,7 @@ func deliveryAuthorizationResources(plan deployment.DeliveryPlan) ([]access.Reso
 func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resources []access.ResourceRef, capability access.Capability) (bool, error) {
 	for _, resource := range resources {
 		resourceCapability := deliveryResourceCapability(resource, capability)
-		if handled, roleAllowed := deliveryProjectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
+		if handled, roleAllowed := projectRootRoleDecision(snapshot, subjects, resource, resourceCapability); handled {
 			if !roleAllowed {
 				return false, nil
 			}
@@ -2047,11 +2191,11 @@ func deliverySnapshotAllows(snapshot accesssnapshot.AuthorizationSnapshot, subje
 	return true, nil
 }
 
-// deliveryProjectRootRoleDecision applies the project-root half of canonical
-// delivery authorization. Project roots deliberately accept only
-// PROJECT_ADMIN as direct grants, so a delivery resource capability on a
-// changed root must be satisfied by an explicit project role bundle.
-func deliveryProjectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
+// projectRootRoleDecision applies the project-root half of canonical browser
+// and delivery authorization. Project roots deliberately accept only
+// PROJECT_ADMIN as direct grants, so a resource capability scoped to the root
+// must be satisfied by an explicit project role bundle.
+func projectRootRoleDecision(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.SubjectRef, resource access.ResourceRef, capability access.Capability) (handled, allowed bool) {
 	if resource.Kind() != projectgraph.KindProject || access.SupportsCapability(resource.Kind(), capability) {
 		return false, false
 	}

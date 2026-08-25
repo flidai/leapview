@@ -76,6 +76,42 @@ test('dashboard coalesces duplicate option requests for one binding context', as
   }
 })
 
+test('dashboard categorical filter options expose their visible labels to assistive technology', async () => {
+  const page = await browser.newPage({ viewport: { width: 800, height: 600 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const labels = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {
+        id: 'status', label: 'Status', field: 'orders.status', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: { kind: 'static', limit: 10, includeNull: false, values: [] },
+      }
+      leaf.binding = {
+        key: 'fb_status', id: 'status', filter: 'status', scope: 'page', default: { kind: 'unfiltered' },
+        selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true,
+        paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'list', search: false, selectAll: false, showCounts: true, showSummary: false, compact: false,
+      }
+      leaf.options = {
+        bindingKey: 'fb_status', items: [
+          { value: { kind: 'string', value: 'paid' }, label: 'Paid', selected: false, available: true, count: 7 },
+          { value: { kind: 'string', value: 'refunded' }, label: 'Refunded', selected: false, available: true },
+        ], complete: true,
+      }
+      document.body.append(leaf)
+      await leaf.updateComplete
+      return Array.from(leaf.shadowRoot.querySelectorAll<HTMLInputElement>('input')).map((input) => input.getAttribute('aria-label'))
+    })
+    expect(labels).toEqual(['Paid (7)', 'Refunded'])
+  } finally {
+    await page.close()
+  }
+})
+
 test('responsive report canvas derives browser geometry from canonical grid placement', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -700,6 +736,40 @@ test('auto layout follows the viewport and does not stack when desktop side pane
     expect(result.layout).toBe('desktop')
     expect(result.mode).toBe('fit-width')
     expect(result.horizontalScroll).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile report tables expose horizontal scrolling and a visible swipe hint', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      await table.updateComplete
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      const hint = table.shadowRoot.querySelector('.table-scroll-hint') as HTMLElement
+      return {
+        role: scrollport.getAttribute('role'),
+        label: scrollport.getAttribute('aria-label'),
+        tabIndex: scrollport.getAttribute('tabindex'),
+        hint: hint.textContent?.replace(/\s+/g, ' ').trim(),
+        hintDisplay: getComputedStyle(hint).display,
+      }
+    })
+    expect(result).toEqual({
+      role: 'region', label: 'Scrollable Orders table', tabIndex: '0',
+      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
+    })
   } finally {
     await page.close()
   }
@@ -2137,6 +2207,53 @@ test('date-range slicers rearrange at contract boundaries without removing eithe
     expect(result.inline.columns.split(' ')).toHaveLength(2)
     expect(result.stacked).toMatchObject({ variant: 'stacked', fit: 'fit', inputs: 2, columns: '240px' })
     expect(result.invalid).toMatchObject({ variant: 'stacked', fit: 'too-small', inputs: 2 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('bounded list slicers keep every option inside the authored frame', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const result = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.style.display = 'block'
+      leaf.style.width = '340px'
+      leaf.style.height = '190px'
+      leaf.definition = {
+        id: 'status', label: 'Order status', field: 'orders.status', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: {
+          kind: 'static', limit: 50,
+          values: ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable'],
+        },
+      }
+      leaf.binding = {
+        key: 'status', id: 'status', filter: 'status', scope: 'page', pageID: 'overview',
+        default: { kind: 'unfiltered' }, selectionMode: 'single', maxSelectedValues: 1,
+        readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'list', search: false, selectAll: false,
+        showCounts: false, showSummary: false, compact: false,
+      }
+      document.body.append(leaf)
+      await leaf.updateComplete
+      await new Promise(requestAnimationFrame)
+
+      const leafRect = leaf.getBoundingClientRect()
+      const options = leaf.shadowRoot.querySelector('.options') as HTMLElement
+      const optionsRect = options.getBoundingClientRect()
+      return {
+        scrollable: options.scrollHeight > options.clientHeight,
+        contained: optionsRect.bottom <= leafRect.bottom,
+        overflow: getComputedStyle(options).overflowY,
+      }
+    })
+
+    expect(result).toEqual({ scrollable: true, contained: true, overflow: 'auto' })
   } finally {
     await page.close()
   }

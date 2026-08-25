@@ -664,7 +664,7 @@ func TestAPIGenDeliveryAuthorizerUsesTargetOwnedRoleDecision(t *testing.T) {
 	}
 }
 
-func TestAPIGenDeliveryActivePathAllowsConfiguredDevelopmentBypass(t *testing.T) {
+func TestAPIGenDeliveryActivePathValidatesTargetForConfiguredDevelopmentBypass(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
 	module := browserGuardModule(nil, LocalDeveloperPrincipal(), true)
 	module.auth = NewAuth(nil, AuthConfig{DevBypass: true, DevAPIToken: "dev"})
@@ -680,7 +680,7 @@ func TestAPIGenDeliveryActivePathAllowsConfiguredDevelopmentBypass(t *testing.T)
 		map[string]APIGenOperationContract{"getDeliveryCandidateStatus": contract},
 		APIGenResourceResolvers{Delivery: func(context.Context, *http.Request, string, string, projectgraph.ResourceID, access.Capability) (bool, error) {
 			targetAuthorizationCalls++
-			return false, nil
+			return true, nil
 		}},
 	)
 	if err != nil {
@@ -704,8 +704,8 @@ func TestAPIGenDeliveryActivePathAllowsConfiguredDevelopmentBypass(t *testing.T)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("development delivery status = %d, want %d", recorder.Code, http.StatusNoContent)
 	}
-	if targetAuthorizationCalls != 0 {
-		t.Fatalf("target authorization calls = %d, want none for configured development bypass", targetAuthorizationCalls)
+	if targetAuthorizationCalls != 1 {
+		t.Fatalf("target authorization calls = %d, want one target validation for configured development bypass", targetAuthorizationCalls)
 	}
 }
 
@@ -867,6 +867,53 @@ func TestAPIGenDeliveryPlanResolutionReadsUseBootstrapBeforeFirstGeneration(t *t
 				t.Fatalf("bootstrap delivery read status = %d, want %d", recorder.Code, http.StatusNoContent)
 			}
 		})
+	}
+}
+
+func TestAPIGenDeliveryReadPreservesTargetOwnedAuthorizationForLocalDeveloper(t *testing.T) {
+	projectID, err := projectgraph.NewResourceID("project_demo")
+	if err != nil {
+		t.Fatal(err)
+	}
+	module := browserGuardModule(nil, Principal{ID: "dev", DevBypass: true}, true)
+	contract := APIGenOperationContract{
+		OperationID: "getDeliveryCandidateStatus", Method: http.MethodGet,
+		Path: "/api/v1/projects/{project}/delivery/candidates/{candidate}", Protected: true, AuthzMode: "privilege",
+		Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_READ", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+	}
+	deliveryCalled := false
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID},
+		map[string]APIGenOperationContract{"getDeliveryCandidateStatus": contract},
+		APIGenResourceResolvers{Delivery: func(_ context.Context, _ *http.Request, operationID, objectID string, project projectgraph.ResourceID, capability access.Capability) (bool, error) {
+			deliveryCalled = true
+			if operationID != "getDeliveryCandidateStatus" || objectID != "candidate_1" || project != projectID || capability != access.CapabilityResourceRead {
+				t.Fatalf("delivery authorization request = %q/%q/%s/%s", operationID, objectID, project, capability)
+			}
+			return true, nil
+		}},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	authorizer.SetBootstrapAuthorizer(func(context.Context, *http.Request, string, projectgraph.ResourceID, access.Capability) (APIGenBootstrapDecision, error) {
+		return APIGenBootstrapDecision{}, nil
+	})
+	protected, ok := authorizer.Protect("getDeliveryCandidateStatus", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || protected == nil {
+		t.Fatal("delivery authorizer was not created")
+	}
+	request := apigenRequest(http.MethodGet, "/api/v1/projects/project_demo/delivery/candidates/candidate_1", map[string]string{"project": "project_demo", "candidate": "candidate_1"})
+	recorder := httptest.NewRecorder()
+	protected.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("dev delivery read status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+	if !deliveryCalled {
+		t.Fatal("local developer bypass skipped target-owned delivery validation")
 	}
 }
 

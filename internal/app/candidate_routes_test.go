@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestServeCandidatePreviewDelegatesOpaqueScopeToDeploymentModule(t *testing.T) {
@@ -32,9 +33,31 @@ func TestServeCandidatePreviewRejectsIncompleteScope(t *testing.T) {
 	}
 }
 
+func TestServeCandidateReviewRejectsIncompleteScope(t *testing.T) {
+	handler := &candidateReviewHandlerStub{}
+	request := httptest.NewRequest(http.MethodGet, "/candidates/", nil)
+	response := httptest.NewRecorder()
+	serveCandidateReview(handler, "", "", nil, response, request)
+	if response.Code != http.StatusNotFound || handler.called {
+		t.Fatalf("incomplete review status=%d delegated=%t", response.Code, handler.called)
+	}
+}
+
 type candidatePreviewHandlerStub struct {
 	called                   bool
 	candidateID, principalID string
+}
+
+type candidateReviewHandlerStub struct{ called bool }
+
+func (stub *candidateReviewHandlerStub) ServeCandidateReview(
+	_ http.ResponseWriter,
+	_ *http.Request,
+	_ string,
+	_ projectgraph.ResourceID,
+	_ webpage.Provider,
+) {
+	stub.called = true
 }
 
 func (stub *candidatePreviewHandlerStub) ServeCandidatePreview(

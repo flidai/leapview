@@ -124,7 +124,7 @@ for (const viewport of [
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
-        totalListHeight: 240,
+        totalListHeight: viewport.name === 'mobile' ? 259 : 240,
         hasCardGrid: false,
         hasOpenLabel: false,
         sectionWidth: Math.min(viewport.width, 1152),
@@ -291,66 +291,29 @@ test('catalog page explains an empty dashboard collection', async () => {
   }
 })
 
-test('dashboard appearance picker searches aliases and emits field-level updates', async () => {
+test('dashboard list displays persisted appearance without editing controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-icon-picker'))
+    await page.waitForFunction(() => customElements.get('lv-catalog-page') && customElements.get('lv-entity-list'))
     const catalog = page.locator('lv-catalog-page')
-    await catalog.locator('button[aria-label="Customize Executive Sales Dashboard"]').click()
-    const picker = catalog.locator('lv-dashboard-icon-picker')
-    expect(await picker.count()).toBe(1)
-    const initialIconColor = await picker.locator('button.icon').first().evaluate((button) => getComputedStyle(button).color)
-    await picker.locator('input[aria-label="Search icons"]').fill('home')
-    const iconNames = await picker.locator('button.icon').evaluateAll((buttons) => buttons.map((button) => button.getAttribute('aria-label')))
-    expect(iconNames).toContain('house')
-    expect(iconNames).not.toContain('home')
-
-    const detail = await catalog.evaluate(async (element: HTMLElement) => {
-      const selected = new Promise<unknown>((resolve) => element.addEventListener('lv-dashboard-appearance-change', (event) => resolve((event as CustomEvent).detail), { once: true }))
-      const picker = element.shadowRoot!.querySelector('lv-dashboard-icon-picker') as HTMLElement
-      const orange = picker.shadowRoot!.querySelector('button[aria-label="orange"]') as HTMLButtonElement
-      orange.click()
-      return selected
-    })
-    expect(detail).toEqual({ dashboardId: 'executive-sales', color: 'orange' })
-    const selectedColorState = await picker.evaluate((element: HTMLElement) => {
-      const picker = element.shadowRoot!.querySelector('.picker') as HTMLElement
-      const icon = element.shadowRoot!.querySelector('button.icon') as HTMLElement
-      const pickerStyle = getComputedStyle(picker)
-      return { className: picker.className, iconColor: getComputedStyle(icon).color, pickerBackground: pickerStyle.backgroundColor }
-    })
-    expect(selectedColorState.className).toContain('color-orange')
-    expect(selectedColorState.iconColor).not.toBe(initialIconColor)
-    expect(selectedColorState.pickerBackground).toBe('rgb(255, 255, 255)')
-  } finally {
-    await page.close()
-  }
-})
-
-test('dashboard appearance optimistic update rolls back when the command fails', async () => {
-  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
-  try {
-    await page.goto(baseURL)
-    await page.waitForFunction(() => customElements.get('lv-dashboard-icon-picker'))
-    const catalog = page.locator('lv-catalog-page')
-    await catalog.locator('button[aria-label="Customize Executive Sales Dashboard"]').click()
     const state = await catalog.evaluate(async (element: any) => {
-      const picker = element.shadowRoot.querySelector('lv-dashboard-icon-picker') as HTMLElement
-      ;(picker.shadowRoot!.querySelector('button[aria-label="orange"]') as HTMLButtonElement).click()
       await element.updateComplete
-      const optimistic = element.appearanceOverrides['executive-sales']?.color
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: '503' } } }))
-      await element.updateComplete
+      const list = element.shadowRoot!.querySelector('lv-entity-list') as any
+      await list.updateComplete
       return {
-        optimistic,
-        rolledBack: element.appearanceOverrides['executive-sales'],
-        error: element.shadowRoot.querySelector('[role="alert"]')?.textContent?.trim(),
+        color: list.items[0].iconColor,
+        hasIcon: Boolean(list.items[0].iconNode),
+        iconButtonLabel: list.items[0].iconButtonLabel,
+        picker: Boolean(element.shadowRoot!.querySelector('lv-dashboard-icon-picker')),
+        customizeButton: Boolean(list.querySelector('button[aria-label^="Customize"]')),
       }
     })
-    expect(state.optimistic).toBe('orange')
-    expect(state.rolledBack).toBeUndefined()
-    expect(state.error).toBe('Dashboard appearance could not be saved. Please try again.')
+    expect(state.color).toBe('purple')
+    expect(state.hasIcon).toBe(true)
+    expect(state.iconButtonLabel).toBeUndefined()
+    expect(state.picker).toBe(false)
+    expect(state.customizeButton).toBe(false)
   } finally {
     await page.close()
   }

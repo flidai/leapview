@@ -208,3 +208,24 @@ spec:
 		})
 	}
 }
+
+func TestTypedModelFieldsAllowMetadataWithoutDatatypeAndMayBeOmitted(t *testing.T) {
+	base := `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:customers, name: customers}
+spec:
+  definition: {type: sql, sql: "SELECT customer_id, state FROM source.customers"}
+  entities: {customer: {type: primary, fields: [customer_id]}}
+  grain: {entity: customer}
+`
+	table, _, err := decodeModelResource("model.yaml", []byte(base+"  fields: {customer_id: {label: Customer ID}}\n"), metadata{})
+	if err != nil {
+		t.Fatalf("metadata-only field rejected: %v", err)
+	}
+	if got := table.Dimensions["customer_id"]; got.Datatype != "" || got.Label != "Customer ID" {
+		t.Fatalf("metadata-only field = %#v", got)
+	}
+	if _, _, err := decodeModelResource("model.yaml", []byte(base), metadata{}); err != nil {
+		t.Fatalf("omitted fields rejected: %v", err)
+	}
+}

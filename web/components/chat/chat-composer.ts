@@ -424,6 +424,7 @@ class ChatComposer extends LitElement {
           <textarea
             .value=${this.draft}
             ?disabled=${this.disabled}
+            aria-label=${this.placeholder.replace(/\.{3}$/, '') || 'Ask about dashboards, metrics, or models'}
             placeholder=${this.placeholder}
             rows="1"
             @input=${this.input}

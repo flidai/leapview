@@ -38,7 +38,7 @@ INSERT INTO assets (snapshot_id, logical_asset_id, serving_state_id, asset_type,
 VALUES
   ('snapshot_old', 'model_sales', 'state_old', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
   ('snapshot_dup', 'model_sales', 'state_dup', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_old'),
-  ('snapshot_new', 'model_sales', 'state_new', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_new');`); err != nil {
+	  ('snapshot_new', 'model_sales', 'state_new', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{"fields":["revenue"]}', 'hash_new');`); err != nil {
 		t.Fatalf("seed asset versions: %v", err)
 	}
 	versions, err := repo.AssetVersions(t.Context(), "project_sales", "dev", "model_sales")
@@ -51,8 +51,75 @@ VALUES
 	if versions[0].ServingStateID != "state_new" || versions[0].ContentHash != "hash_new" || versions[0].CreatedBy != "carol" {
 		t.Fatalf("latest version = %#v", versions[0])
 	}
+	if versions[0].Environment != "dev" || versions[0].SnapshotID != "snapshot_new" || versions[0].PayloadJSON != `{"fields":["revenue"]}` {
+		t.Fatalf("latest version provenance and payload = %#v", versions[0])
+	}
 	if versions[1].ServingStateID != "state_dup" || versions[1].ContentHash != "hash_old" {
 		t.Fatalf("deduplicated historical version = %#v", versions[1])
+	}
+}
+
+func TestRepositoryAssetVersionsIncludesCommittedDeliveryCandidatesOnly(t *testing.T) {
+	store, repo := openRepo(t)
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status, source, digest, created_by, created_at)
+VALUES
+  ('state_unpublished', 'project_sales', 'dev', 'validated', 'candidate', 'digest_unpublished', 'alice', '2026-08-19T10:00:00Z'),
+  ('state_committed', 'project_sales', 'dev', 'validated', 'candidate', 'digest_committed', 'bob', '2026-08-20T10:00:00Z');
+INSERT INTO assets (snapshot_id, logical_asset_id, serving_state_id, asset_type, asset_key, source_file, payload_schema, payload_json, content_hash)
+VALUES
+  ('snapshot_unpublished', 'model_sales', 'state_unpublished', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_unpublished'),
+  ('snapshot_committed', 'model_sales', 'state_committed', 'model', 'sales', 'models/sales.yml', 'project.graph.v1', '{}', 'hash_committed');`); err != nil {
+		t.Fatalf("seed candidate asset versions: %v", err)
+	}
+	seedCommittedDeliveryPublication(t, store, "state_committed")
+
+	versions, err := repo.AssetVersions(t.Context(), "project_sales", "dev", "model_sales")
+	if err != nil {
+		t.Fatalf("AssetVersions() error: %v", err)
+	}
+	if len(versions) != 1 || versions[0].ServingStateID != "state_committed" || versions[0].ContentHash != "hash_committed" {
+		t.Fatalf("AssetVersions() = %#v, want only committed delivery candidate", versions)
+	}
+}
+
+// seedCommittedDeliveryPublication creates a compact but schema-valid delivery
+// control graph. Foreign keys stay enabled; deferral only permits the sealed
+// build, seal, and candidate rows to be committed atomically like production.
+func seedCommittedDeliveryPublication(t *testing.T, store *platform.Store, generationID string) {
+	t.Helper()
+	digest := func(ch string) string { return "sha256:" + strings.Repeat(ch, 64) }
+	tx, err := store.SQLDB().BeginTx(t.Context(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollback := func() { _ = tx.Rollback() }
+	if _, err := tx.ExecContext(t.Context(), `PRAGMA defer_foreign_keys = ON`); err != nil {
+		rollback()
+		t.Fatal(err)
+	}
+	statements := []struct {
+		query string
+		args  []any
+	}{
+		{`INSERT INTO physical_pools (id, identity_digest, storage_location, storage_namespace, storage_implementation, object_naming_contract, isolation_boundary, retention_authority, retention_policy_json) VALUES (?, ?, 's3://versions-test', 'versions-test', 's3', 'names-v1', 'versions-test', 'gc', '{}')`, []any{digest("9"), digest("9")}},
+		{`INSERT INTO delivery_target_revisions (target_id, project_id, environment, target_revision, active_generation_id, created_at, updated_at) VALUES ('target_dev', 'project_sales', 'dev', 1, ?, '2026-08-20T10:00:00Z', '2026-08-20T10:02:00Z')`, []any{generationID}},
+		{`INSERT INTO delivery_plans (id, target_id, project_id, environment, operation_kind, source_digest, base_target_revision, execution_digest, execution_inputs_json, provenance_json, governance_json, provenance_digest, governance_digest, plan_digest, status, expires_at, created_at, actor_id, source_owner_id) VALUES ('plan_committed', 'target_dev', 'project_sales', 'dev', 'code_change', ?, 0, ?, '{}', '{}', '{}', ?, ?, ?, 'planned', '2026-08-21T10:00:00Z', '2026-08-20T10:00:00Z', 'principal:test', 'principal:test')`, []any{digest("a"), digest("b"), digest("c"), digest("d"), digest("e")}},
+		{`INSERT INTO delivery_writer_leases (id, attempt_id, physical_pool_id, owner_id, epoch, status, expires_at, created_at, released_at) VALUES ('lease_committed', 'attempt_committed', ?, 'principal:test', 1, 'released', '2026-08-21T10:00:00Z', '2026-08-20T10:00:00Z', '2026-08-20T10:01:00Z')`, []any{digest("9")}},
+		{`INSERT INTO delivery_build_attempts (id, plan_id, plan_digest, source_digest, execution_digest, physical_pool_id, writer_lease_id, status, seal_id, candidate_id, revision, created_at, updated_at, terminal_at) VALUES ('attempt_committed', 'plan_committed', ?, ?, ?, ?, 'lease_committed', 'sealed', 'seal_committed', 'candidate_committed', 5, '2026-08-20T10:00:00Z', '2026-08-20T10:01:00Z', '2026-08-20T10:01:00Z')`, []any{digest("e"), digest("a"), digest("b"), digest("9")}},
+		{`INSERT INTO delivery_catalog_seals (id, attempt_id, plan_id, plan_digest, execution_digest, physical_pool_id, catalog_digest, compatibility_digest, object_key, object_size, closure_digest, qualification_digest, status, created_at, verified_at, serving_artifact_id, serving_artifact_digest, serving_state_id) VALUES ('seal_committed', 'attempt_committed', 'plan_committed', ?, ?, ?, ?, ?, 'catalogs/versions-test', 1, ?, ?, 'verified', '2026-08-20T10:00:00Z', '2026-08-20T10:01:00Z', 'artifact_committed', ?, ?)`, []any{digest("e"), digest("b"), digest("9"), digest("f"), digest("0"), digest("1"), digest("2"), digest("4"), generationID}},
+		{`INSERT INTO delivery_candidates (id, plan_id, plan_digest, target_id, project_id, environment, source_digest, execution_digest, base_target_revision, seal_id, catalog_digest, compatibility_digest, catalog_object_key, physical_pool_id, qualification_digest, status, created_at, ready_at, serving_artifact_id, serving_artifact_digest, serving_state_id) VALUES ('candidate_committed', 'plan_committed', ?, 'target_dev', 'project_sales', 'dev', ?, ?, 0, 'seal_committed', ?, ?, 'catalogs/versions-test', ?, ?, 'ready', '2026-08-20T10:00:00Z', '2026-08-20T10:01:00Z', 'artifact_committed', ?, ?)`, []any{digest("e"), digest("a"), digest("b"), digest("f"), digest("0"), digest("9"), digest("2"), digest("4"), generationID}},
+		{`INSERT INTO delivery_generations (id, candidate_id, plan_id, plan_digest, target_id, project_id, environment, catalog_digest, catalog_object_key, physical_pool_id, rollback_class, status, created_at, activated_at, serving_artifact_id, serving_artifact_digest, serving_state_id, compatibility_digest) VALUES (?, 'candidate_committed', 'plan_committed', ?, 'target_dev', 'project_sales', 'dev', ?, 'catalogs/versions-test', ?, 'rollback_safe', 'active', '2026-08-20T10:01:00Z', '2026-08-20T10:02:00Z', 'artifact_committed', ?, ?, ?)`, []any{generationID, digest("e"), digest("f"), digest("9"), digest("4"), generationID, digest("0")}},
+		{`INSERT INTO delivery_publications (id, request_digest, target_id, project_id, environment, plan_id, plan_digest, candidate_id, generation_id, expected_target_revision, result_target_revision, status, created_at, completed_at) VALUES ('publication_committed', ?, 'target_dev', 'project_sales', 'dev', 'plan_committed', ?, 'candidate_committed', ?, 0, 1, 'committed', '2026-08-20T10:01:00Z', '2026-08-20T10:02:00Z')`, []any{digest("3"), digest("e"), generationID}},
+	}
+	for _, statement := range statements {
+		if _, err := tx.ExecContext(t.Context(), statement.query, statement.args...); err != nil {
+			rollback()
+			t.Fatalf("seed delivery graph: %v", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit delivery graph: %v", err)
 	}
 }
 

@@ -354,19 +354,6 @@ func (a *APIGenAuthorizer) authorizeDeliveryRequest(w http.ResponseWriter, r *ht
 		http.Error(w, http.StatusText(http.StatusNotFound), http.StatusNotFound)
 		return
 	}
-	if principal.DevBypass {
-		allowed, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
-			return
-		}
-		if !allowed {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
-			return
-		}
-		next.ServeHTTP(w, r)
-		return
-	}
 	objectID := deliveryObjectID(operationID, r)
 	allowed, err := a.delivery(r.Context(), r, operationID, objectID, projectID, capability)
 	if err != nil {

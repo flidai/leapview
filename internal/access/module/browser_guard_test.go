@@ -5,7 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -38,6 +40,23 @@ func TestPrincipalIsHumanExcludesServicePrincipals(t *testing.T) {
 				t.Fatalf("IsHuman() = %t, want %t", got, test.want)
 			}
 		})
+	}
+}
+
+func TestLoginErrorCodeRejectsUnknownValues(t *testing.T) {
+	for _, test := range []struct {
+		query string
+		want  string
+	}{
+		{query: "invalid_credentials", want: "invalid_credentials"},
+		{query: "session_expired", want: "session_expired"},
+		{query: "forbidden", want: "forbidden"},
+		{query: "<script>alert(1)</script>"},
+	} {
+		request := httptest.NewRequest(http.MethodGet, "/login?error="+url.QueryEscape(test.query), nil)
+		if got := loginErrorCode(request); got != test.want {
+			t.Fatalf("loginErrorCode(%q) = %q, want %q", test.query, got, test.want)
+		}
 	}
 }
 
@@ -90,6 +109,72 @@ func TestAuthenticateRejectsMissingPrincipal(t *testing.T) {
 	}
 }
 
+func TestAuthMiddlewareRedirectsAnInvalidSessionToBrandedRecovery(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/dashboards/dashboard:sales", nil)
+	request.AddCookie(&http.Cookie{Name: "lv_session", Value: "expired-session"})
+	auth.Middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("protected handler ran for an invalid session")
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusFound || recorder.Header().Get("Location") != "/login?error=session_expired" {
+		t.Fatalf("expired session response = %d location %q", recorder.Code, recorder.Header().Get("Location"))
+	}
+	var cleared, returned bool
+	for _, cookie := range recorder.Result().Cookies() {
+		switch cookie.Name {
+		case "lv_session":
+			cleared = cookie.MaxAge == -1 && cookie.Value == ""
+		case AuthReturnCookieName:
+			returned = cookie.Value != ""
+		}
+	}
+	if !cleared || !returned {
+		t.Fatalf("expired session cookies cleared=%t return-target=%t", cleared, returned)
+	}
+}
+
+func TestAuthenticateRedirectsExpiredBrowserNavigationAndDoesNotReplayCommands(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{LocalAuth: true})
+	module, err := newSurface(surfaceConfig{Repository: func() (access.Repository, error) { return repository, nil }, Auth: auth})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, test := range []struct {
+		name, method string
+		wantStatus   int
+		wantLocation string
+	}{
+		{name: "navigation", method: http.MethodGet, wantStatus: http.StatusFound, wantLocation: "/login?error=session_expired"},
+		{name: "command", method: http.MethodPost, wantStatus: http.StatusUnauthorized},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			request := httptest.NewRequest(test.method, "/models/model:orders/details", nil)
+			request.AddCookie(&http.Cookie{Name: "lv_session", Value: "expired-session"})
+			module.Authenticate(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				t.Fatal("protected handler ran for expired session")
+			})).ServeHTTP(recorder, request)
+			if recorder.Code != test.wantStatus || recorder.Header().Get("Location") != test.wantLocation {
+				t.Fatalf("response = %d location %q", recorder.Code, recorder.Header().Get("Location"))
+			}
+		})
+	}
+}
+
 func TestAuthenticateInstallsInjectedPrincipalInRequestContext(t *testing.T) {
 	principal := Principal{ID: "principal", Kind: access.PrincipalKindUser}
 	module := browserGuardModule(nil, principal, true)
@@ -115,6 +200,9 @@ func TestRequirePlatformAdminRejectsNonAdmin(t *testing.T) {
 	})).ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/admin/system", nil))
 	if recorder.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusForbidden)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "administration page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden administration recovery body = %q", body)
 	}
 }
 

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"log/slog"
 	"sort"
 	"strings"
@@ -15,6 +14,7 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	platformsecret "github.com/flidai/leapview/internal/platform/security/secret"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var ErrConfirmationRequired = apigenfailure.New("confirmation_required", "connection binding change confirmation required")
@@ -161,16 +161,29 @@ func (service *Administration) List(
 	if _, err := ParseTargetID(targetID.String()); err != nil {
 		return nil, err
 	}
-	authorizationScope := TargetBinding{TargetID: targetID, Scope: scope}
-	if err := service.authorize(
-		ctx, strings.TrimSpace(actorID), PermissionManageConnectionMetadata, authorizationScope,
-	); err != nil {
-		return nil, ErrUnauthorizedBinding
-	}
 	bindings, err := service.repository.List(ctx, scope, targetID)
 	if err != nil {
 		return nil, err
 	}
+	// A list request has no single connection resource to authorize. Resolve
+	// the repository rows first, then authorize each concrete binding so the
+	// production authorizer receives the resource identity it requires. Rows
+	// the caller cannot manage are omitted rather than leaking metadata or
+	// making an otherwise valid project-wide listing fail because one binding
+	// is outside the caller's grants.
+	authorized := bindings[:0]
+	for _, binding := range bindings {
+		if err := service.authorize(
+			ctx, strings.TrimSpace(actorID), PermissionManageConnectionMetadata, binding,
+		); err != nil {
+			if errors.Is(err, ErrUnauthorizedBinding) {
+				continue
+			}
+			return nil, err
+		}
+		authorized = append(authorized, binding)
+	}
+	bindings = authorized
 	sort.Slice(bindings, func(i, j int) bool {
 		return bindings[i].ConnectionID < bindings[j].ConnectionID
 	})

@@ -56,6 +56,9 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 	if m == nil {
 		return fmt.Errorf("semantic model is required")
 	}
+	if err := m.ResolveDiscoveredModelFields(); err != nil {
+		return err
+	}
 	if err := m.validateSemanticDefinitions(); err != nil {
 		return err
 	}
@@ -138,6 +141,82 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 				return fmt.Errorf("metric %q references unknown field %q", metricName, ref)
 			}
 		}
+	}
+	return nil
+}
+
+// ResolveDiscoveredModelFields makes the materialized DuckLake schema the
+// complete model field set. Authored fields remain metadata overlays and an
+// explicitly authored datatype is a blocking contract assertion; omitted
+// datatypes and undeclared output columns are resolved from physical facts.
+func (m *Model) ResolveDiscoveredModelFields() error {
+	if m == nil {
+		return fmt.Errorf("semantic model is required")
+	}
+	for _, tableName := range m.TableNames() {
+		table := m.Tables[tableName]
+		observed := make(map[string]ColumnSchema, len(table.Schema.Columns))
+		for _, column := range table.Schema.Columns {
+			if strings.TrimSpace(column.Name) == "" {
+				return fmt.Errorf("model table %q discovered an unnamed column", tableName)
+			}
+			observed[column.Name] = column
+		}
+		if len(observed) == 0 {
+			continue
+		}
+		if table.Dimensions == nil {
+			table.Dimensions = map[string]MetricDimension{}
+		}
+		if table.Columns == nil {
+			table.Columns = map[string]ModelColumn{}
+		}
+		for field := range table.Dimensions {
+			if _, ok := observed[field]; !ok {
+				return fmt.Errorf("model table %q documented field %q is not in discovered schema", tableName, field)
+			}
+		}
+		for field := range table.Columns {
+			if _, ok := observed[field]; !ok {
+				return fmt.Errorf("model table %q column %q is not in discovered schema", tableName, field)
+			}
+		}
+		for _, column := range table.Schema.Columns {
+			derived := LogicalDataTypeFromPhysicalType(column.PhysicalType)
+			dimension := table.Dimensions[column.Name]
+			if dimension.Datatype != "" {
+				if err := validateDiscoveredDatatype(tableName, column.Name, dimension.Datatype, column.PhysicalType); err != nil {
+					return err
+				}
+			} else {
+				dimension.Datatype = derived
+			}
+			dimension.Field = tableName + "." + column.Name
+			dimension.Table = tableName
+			dimension.Name = column.Name
+			dimension.Type = semanticDimensionTypeForDatatype(dimension.Datatype)
+			if dimension.Label == "" {
+				dimension.Label = titleFromIdentifier(column.Name)
+			}
+			table.Dimensions[column.Name] = dimension
+
+			modelColumn := table.Columns[column.Name]
+			if modelColumn.Datatype != "" {
+				if err := validateDiscoveredDatatype(tableName, column.Name, modelColumn.Datatype, column.PhysicalType); err != nil {
+					return err
+				}
+			} else {
+				modelColumn.Datatype = dimension.Datatype
+			}
+			modelColumn.Name = column.Name
+			modelColumn.Field = tableName + "." + column.Name
+			if modelColumn.SourceField == "" {
+				modelColumn.SourceField = column.Name
+			}
+			modelColumn.Type = semanticDimensionTypeForDatatype(modelColumn.Datatype)
+			table.Columns[column.Name] = modelColumn
+		}
+		m.Tables[tableName] = table
 	}
 	return nil
 }

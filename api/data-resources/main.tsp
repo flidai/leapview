@@ -414,7 +414,7 @@ model ModelDefinition {
 }
 
 model ModelField {
-  datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
+  datatype?: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   label?: string;
   description?: string;
   aiContext?: AIContext;
@@ -479,7 +479,7 @@ model ModelSpec {
   entities: Record<ModelEntity>;
   grain: ModelGrain;
   @apigen.propertyNames(Identifier)
-  fields: Record<ModelField>;
+  fields?: Record<ModelField>;
   checks?: ModelCheck[];
 }
 

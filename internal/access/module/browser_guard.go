@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 )
 
 // Authenticate establishes the canonical browser principal and rejects
@@ -40,6 +41,20 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			principal, credential, ok = m.auth.Authenticate(r)
 		}
 		if !ok || strings.TrimSpace(principal.ID) == "" {
+			if m.auth != nil && hasSessionCookie(r) {
+				http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: m.auth.cookieSecure})
+				if uitransport.IsHTMLNavigation(r) && !wantsJSON(r) {
+					if target := authenticationReturnTarget(r); target != "" {
+						http.SetCookie(w, m.auth.authReturnCookie(target))
+					}
+					redirect := m.auth.defaultLoginRedirect()
+					if m.auth.localAuth {
+						redirect = "/login?error=session_expired"
+					}
+					http.Redirect(w, r, redirect, http.StatusFound)
+					return
+				}
+			}
 			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 			return
 		}
@@ -86,7 +101,7 @@ func (m *Module) RequirePlatformAdmin(next http.Handler) http.Handler {
 			return
 		}
 		if !allowed {
-			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 			return
 		}
 		next.ServeHTTP(w, r)

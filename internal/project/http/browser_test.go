@@ -6,6 +6,7 @@ import (
 	"errors"
 	stdhttp "net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"sort"
 	"strings"
@@ -45,7 +46,7 @@ func TestMountAuthenticatedRegistersCanonicalSurfacesOnly(t *testing.T) {
 		t.Fatalf("walk routes: %v", err)
 	}
 	sort.Strings(got)
-	want := []string{"GET /", "GET /connections", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "POST /models/search", "GET /pipelines", "GET /pipelines/{asset}/{section}", "GET /semantic-models", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "POST /semantic-models/search", "GET /sources", "GET /sources/{asset}/{section}", "POST /sources/search", "POST /catalog/search", "POST /connections/search", "POST /dashboards/search"}
+	want := []string{"GET /", "GET /catalog/search", "GET /connections", "GET /connections/search", "GET /connections/{asset}/{section}", "GET /dashboards", "GET /dashboards/search", "GET /dashboards/{asset}/definition", "GET /dashboards/{asset}/details", "GET /dashboards/{asset}/lineage", "GET /dashboards/{asset}/versions", "GET /explore", "POST /explore/command", "GET /models", "GET /models/search", "GET /models/{asset}/{section}", "POST /models/{asset}/data/command", "GET /pipelines", "GET /pipelines/{asset}/{section}", "POST /pipelines/command", "GET /semantic-models", "GET /semantic-models/search", "GET /semantic-models/{asset}/{section}", "POST /semantic-models/{asset}/data/command", "GET /sources", "GET /sources/search", "GET /sources/{asset}/{section}", "POST /connections/administration/configuration", "POST /connections/administration/lifecycle", "POST /dashboards/{asset}/appearance"}
 	sort.Strings(want)
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("routes = %v, want %v", got, want)
@@ -107,11 +108,27 @@ func (s browserAssetVersionsStub) AssetVersions(context.Context, projectgraph.Re
 }
 
 type browserRefreshStateStub struct {
-	state refreshpresentation.AssetRefreshState
-	err   error
+	state                    refreshpresentation.AssetRefreshState
+	err                      error
+	requestedModelID         *projectgraph.ResourceID
+	requestedSemanticModelID *projectgraph.ResourceID
 }
 
 func (s browserRefreshStateStub) AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	return s.state, s.err
+}
+
+func (s browserRefreshStateStub) ModelRefreshState(_ context.Context, _ projectgraph.ResourceID, _ string, modelID projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	if s.requestedModelID != nil {
+		*s.requestedModelID = modelID
+	}
+	return s.state, s.err
+}
+
+func (s browserRefreshStateStub) SemanticModelRefreshState(_ context.Context, _ projectgraph.ResourceID, _ string, semanticModelID projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error) {
+	if s.requestedSemanticModelID != nil {
+		*s.requestedSemanticModelID = semanticModelID
+	}
 	return s.state, s.err
 }
 
@@ -119,7 +136,7 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	h := &BrowserHandler{
 		Environment: "dev",
 		AssetVersions: browserAssetVersionsStub{versions: []servingstate.AssetVersion{
-			{ServingStateID: "state:current", Status: "active", ContentHash: "sha256:current", CreatedAt: "2026-08-20T12:00:00Z"},
+			{ServingStateID: "state:current", Environment: "dev", Status: "active", ContentHash: "sha256:current", CreatedAt: "2026-08-20T12:00:00Z", SnapshotID: "snapshot:2", PayloadJSON: `{"kind":"Model"}`},
 			{ServingStateID: "state:old", Status: "inactive", ContentHash: "sha256:old", CreatedAt: "2026-08-19T12:00:00Z"},
 		}},
 	}
@@ -129,6 +146,9 @@ func TestAssetVersionsStateKeepsCurrentHashAndLoadsHistory(t *testing.T) {
 	}
 	if state.CurrentContentHash != "sha256:current" || len(state.Versions) != 2 || state.Versions[1].ContentHash != "sha256:old" {
 		t.Fatalf("versions state = %#v", state)
+	}
+	if state.Versions[0].Environment != "dev" || state.Versions[0].SnapshotID != "snapshot:2" || state.Versions[0].PayloadJSON != `{"kind":"Model"}` {
+		t.Fatalf("versions drawer state = %#v", state.Versions[0])
 	}
 }
 
@@ -166,6 +186,52 @@ func TestAssetRefreshStateMapsPipelinePresentation(t *testing.T) {
 	}
 }
 
+func TestAssetRefreshStateMapsModelRunHistory(t *testing.T) {
+	requestedModelID := projectgraph.ResourceID("")
+	h := &BrowserHandler{
+		Environment: "dev",
+		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:model", Status: "succeeded", TriggerType: "dependency"}},
+			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:model", Status: "succeeded"},
+		}, requestedModelID: &requestedModelID},
+	}
+	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
+		ID: "model:sales_customers", Key: "sales_customers", Type: string(projectview.AssetTypeModelTable),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:model" || state.LatestSuccessful.ID != "run:model" {
+		t.Fatalf("model refresh state = %#v", state)
+	}
+	if requestedModelID != "sales_customers" {
+		t.Fatalf("model refresh target = %q, want authored model key", requestedModelID)
+	}
+}
+
+func TestAssetRefreshStateMapsSemanticModelRunHistory(t *testing.T) {
+	requestedSemanticModelID := projectgraph.ResourceID("")
+	h := &BrowserHandler{
+		Environment: "dev",
+		RefreshState: browserRefreshStateStub{state: refreshpresentation.AssetRefreshState{
+			Runs:             []refreshpresentation.AssetRefreshRun{{ID: "run:semantic", Status: "succeeded", TriggerType: "schedule"}},
+			LatestSuccessful: refreshpresentation.AssetRefreshRun{ID: "run:semantic", Status: "succeeded"},
+		}, requestedSemanticModelID: &requestedSemanticModelID},
+	}
+	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
+		ID: "semantic-model:sales", Key: "sales", Type: string(projectview.AssetTypeSemanticModel),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(state.Runs) != 1 || state.Runs[0].ID != "run:semantic" || state.LatestSuccessful.ID != "run:semantic" {
+		t.Fatalf("semantic model refresh state = %#v", state)
+	}
+	if requestedSemanticModelID != "semantic-model:sales" {
+		t.Fatalf("semantic model refresh target = %q, want canonical semantic-model ID", requestedSemanticModelID)
+	}
+}
+
 func TestAssetRefreshStateMarksMissingReaderUnavailable(t *testing.T) {
 	state, err := (&BrowserHandler{}).assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{ID: "pipeline:daily", Type: string(projectview.AssetTypeRefreshPipeline)})
 	if err != nil {
@@ -176,10 +242,78 @@ func TestAssetRefreshStateMarksMissingReaderUnavailable(t *testing.T) {
 	}
 }
 
+func TestPipelineMutationProjectionRequiresResourceUse(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/pipelines", nil)
+	var gotID string
+	h := &BrowserHandler{AuthorizePipeline: func(_ *stdhttp.Request, pipelineID string, capability access.Capability) (bool, error) {
+		if capability != access.CapabilityResourceUse {
+			t.Fatalf("capability = %q, want RESOURCE_USE", capability)
+		}
+		gotID = pipelineID
+		return false, nil
+	}}
+	if h.pipelineMutationAllowed(request, "pipeline:sales") {
+		t.Fatal("read-only pipeline unexpectedly exposed mutation controls")
+	}
+	if gotID != "pipeline:sales" {
+		t.Fatalf("authorization ID = %q, want canonical asset ID", gotID)
+	}
+}
+
+func TestPipelineMutationProjectionAllowsConfiguredDevelopmentBypass(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/pipelines", nil)
+	authorizerCalled := false
+	h := &BrowserHandler{
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizePipeline: func(*stdhttp.Request, string, access.Capability) (bool, error) {
+			authorizerCalled = true
+			return false, nil
+		},
+	}
+	if !h.pipelineMutationAllowed(request, "pipeline:sales") {
+		t.Fatal("configured development bypass did not expose pipeline mutation controls")
+	}
+	if authorizerCalled {
+		t.Fatal("development bypass unexpectedly consulted the serving-state resource authorizer")
+	}
+}
+
+func TestDashboardCreationProjectionAllowsConfiguredDevelopmentBypass(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/", nil)
+	authorizerCalled := false
+	h := &BrowserHandler{
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizeCreateDashboard: func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error) {
+			authorizerCalled = true
+			return false, nil
+		},
+	}
+	if !h.dashboardCreationAllowed(request) {
+		t.Fatal("configured development bypass did not expose dashboard creation")
+	}
+	if authorizerCalled {
+		t.Fatal("development bypass unexpectedly consulted the serving-state project authorizer")
+	}
+}
+
 type browserProjectDefinitionStub struct {
 	definition projectmanifest.Project
 	compiled   map[string]*semanticquery.CompiledModel
 	err        error
+}
+
+type browserSourceSchemaStub struct {
+	observation SourceSchemaObservation
+	found       bool
+	err         error
+}
+
+func (s browserSourceSchemaStub) SourceSchemaObservation(context.Context, projectgraph.ResourceID, string, string, projectgraph.ResourceID) (SourceSchemaObservation, bool, error) {
+	return s.observation, s.found, s.err
 }
 
 type browserDataQueryStub struct {
@@ -224,10 +358,13 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Fields (1)", `"label":"Input sources","value":"1"`} {
+	for _, want := range []string{"Fields (1)", `"label":"Mode","value":"SQL transform"`} {
 		if !strings.Contains(string(encoded), want) {
 			t.Fatalf("bootstrap = %s, missing %q", encoded, want)
 		}
+	}
+	if strings.Contains(string(encoded), `"label":"Input sources"`) {
+		t.Fatalf("bootstrap = %s, duplicate input source count remains in overview", encoded)
 	}
 	definitionPatch, ok := h.assetBootstrap(httptest.NewRecorder(), httptest.NewRequest(stdhttp.MethodGet, "/updates?surface=asset&asset="+assetID+"&section=definition", nil))
 	if !ok {
@@ -285,10 +422,13 @@ func TestPipelineDefinitionBootstrapDoesNotDependOnRefreshState(t *testing.T) {
 	if !strings.Contains(string(detailsJSON), `"status":"unavailable"`) || !strings.Contains(string(detailsJSON), `"disabled":true`) {
 		t.Fatalf("details bootstrap = %s, want unavailable refresh state and disabled action", detailsJSON)
 	}
-	for _, want := range []string{"Refresh guidance", "Review Connections", "Review connections", "Run now unavailable"} {
+	for _, want := range []string{"Refresh guidance", "refresh runtime", "Run now unavailable"} {
 		if !strings.Contains(string(detailsJSON), want) {
 			t.Fatalf("details bootstrap = %s, missing actionable unavailable-state text %q", detailsJSON, want)
 		}
+	}
+	if strings.Contains(string(detailsJSON), `"href":"/connections"`) {
+		t.Fatalf("details bootstrap = %s, must not infer a connection failure", detailsJSON)
 	}
 
 	for _, section := range []string{"bogus", "data"} {
@@ -474,6 +614,7 @@ func TestModelAssetBootstrapUsesAuthoredSQLWhenRuntimeProjectionIsTargetBound(t 
 
 func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 	const assetID = "model:zip_geolocations"
+	snapshotAt := time.Date(2026, 8, 24, 14, 32, 0, 0, time.UTC)
 	h := &BrowserHandler{
 		Environment: "dev",
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -481,6 +622,8 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		}},
 		PhysicalCatalog: browserPhysicalCatalogStub{"zip_geolocations": {
 			RowCount: 99_441, ColumnCount: 5, FileCount: 2, SizeBytes: 1_572_864, SnapshotID: 17,
+			SnapshotAt: snapshotAt,
+			Schema:     semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{{Name: "zip_prefix", PhysicalType: "VARCHAR"}}},
 		}},
 	}
 	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
@@ -490,8 +633,17 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		t.Fatalf("projectAssetReadModel() error = %v", err)
 	}
 	physical, ok := asset.Payload["Physical"].(map[string]any)
-	if !ok || physical["RowCount"] != int64(99_441) || physical["SizeBytes"] != int64(1_572_864) || physical["SnapshotID"] != int64(17) {
+	if !ok || physical["RowCount"] != int64(99_441) || physical["SizeBytes"] != int64(1_572_864) || physical["SnapshotID"] != int64(17) || physical["SnapshotAt"] != snapshotAt.Format(time.RFC3339) {
 		t.Fatalf("physical payload = %#v", asset.Payload["Physical"])
+	}
+	schema, ok := asset.Payload["Schema"].(map[string]any)
+	columns, columnsOK := schema["columns"].([]any)
+	if !ok || !columnsOK || len(columns) != 1 {
+		t.Fatalf("schema payload = %#v", asset.Payload["Schema"])
+	}
+	column, columnOK := columns[0].(map[string]any)
+	if !columnOK || column["physicalType"] != "VARCHAR" {
+		t.Fatalf("schema payload = %#v", asset.Payload["Schema"])
 	}
 }
 
@@ -515,6 +667,73 @@ func TestModelAssetReadModelRemainsAvailableWhenServingCatalogStatisticsAreUnava
 	}
 	if _, ok := asset.Payload["Physical"]; ok {
 		t.Fatalf("physical payload = %#v, want unavailable statistics omitted", asset.Payload["Physical"])
+	}
+}
+
+func TestSourceAssetReadModelUsesActiveGenerationObservedSchema(t *testing.T) {
+	const assetID = "source:orders"
+	observedAt := time.Date(2026, 8, 24, 7, 30, 0, 0, time.UTC)
+	h := &BrowserHandler{
+		Environment: "dev",
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
+			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+				SchemaMode: "compatible",
+				Fields: map[string]semanticmodel.SourceField{
+					"order_id": {Datatype: semanticmodel.DataTypeString, Description: "Order identifier"},
+				},
+			}},
+		}},
+		SourceSchemas: browserSourceSchemaStub{observation: SourceSchemaObservation{
+			Schema: semanticmodel.TableSchema{Columns: []semanticmodel.ColumnSchema{
+				{Name: "review_id", Ordinal: 0, PhysicalType: "VARCHAR"},
+				{Name: "order_id", Ordinal: 1, PhysicalType: "VARCHAR"},
+			}},
+			Mode: "compatible", Status: "success", ObservedAt: observedAt, SchemaDigest: "sha256:observed",
+		}, found: true},
+	}
+	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
+		ID: assetID, ProjectID: "project:test", ServingStateID: "state:active", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("projectAssetReadModel() error = %v", err)
+	}
+	schema, ok := asset.Payload["Schema"].(map[string]any)
+	if !ok || len(schema["columns"].([]any)) != 2 {
+		t.Fatalf("source schema = %#v, want two observed columns", asset.Payload["Schema"])
+	}
+	observation, ok := asset.Payload["SchemaObservation"].(map[string]any)
+	if !ok || observation["Status"] != "success" || observation["ObservedAt"] != observedAt.Format(time.RFC3339) {
+		t.Fatalf("source observation = %#v, want active generation evidence", asset.Payload["SchemaObservation"])
+	}
+	fields := asset.Payload["Fields"].(map[string]any)
+	if len(fields) != 1 || fields["order_id"] == nil {
+		t.Fatalf("source contract fields = %#v, want authored contract retained", fields)
+	}
+}
+
+func TestSourceAssetReadModelFallsBackWhenObservedSchemaIsUnavailable(t *testing.T) {
+	const assetID = "source:orders"
+	h := &BrowserHandler{
+		Environment: "dev",
+		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
+			ID: "project:test", Sources: map[string]semanticmodel.Source{assetID: {
+				SchemaMode: "compatible", Fields: map[string]semanticmodel.SourceField{"order_id": {Datatype: semanticmodel.DataTypeString}},
+			}},
+		}},
+		SourceSchemas: browserSourceSchemaStub{err: errors.New("provenance unavailable")},
+	}
+	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
+		ID: assetID, ProjectID: "project:test", ServingStateID: "state:legacy", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("projectAssetReadModel() error = %v, want authored fallback", err)
+	}
+	if _, ok := asset.Payload["SchemaObservation"]; ok {
+		t.Fatalf("schema observation = %#v, want unavailable evidence omitted", asset.Payload["SchemaObservation"])
+	}
+	fields := asset.Payload["Fields"].(map[string]any)
+	if fields["order_id"] == nil || asset.Payload["SchemaMode"] != "compatible" {
+		t.Fatalf("source fallback payload = %#v, want authored contract", asset.Payload)
 	}
 }
 
@@ -940,11 +1159,12 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 
 func TestSourceSurfacesRetainOnlyAuthorizedConnectionContext(t *testing.T) {
 	source := servingstate.Asset{ID: "source:orders", ProjectID: "project:test", ServingStateID: "state", Type: "source", Key: "orders", Title: "Orders", PayloadJSON: `{}`}
+	otherSource := servingstate.Asset{ID: "source:customers", ProjectID: "project:test", ServingStateID: "state", Type: "source", Key: "customers", Title: "Customers", PayloadJSON: `{}`}
 	connection := servingstate.Asset{ID: "connection:warehouse", ProjectID: "project:test", ServingStateID: "state", Type: "connection", Key: "warehouse", Title: "Warehouse", PayloadJSON: `{}`}
 	edge := servingstate.AssetEdge{ID: "edge:source-connection", ProjectID: "project:test", ServingStateID: "state", FromAssetID: source.ID, ToAssetID: connection.ID, Type: "uses_connection"}
 	newHandler := func() *BrowserHandler {
 		return &BrowserHandler{
-			Graph:            browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{source, connection}, Edges: []servingstate.AssetEdge{edge}}},
+			Graph:            browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{source, otherSource, connection}, Edges: []servingstate.AssetEdge{edge}}},
 			ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 			Environment:      "dev",
 			CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
@@ -971,12 +1191,13 @@ func TestSourceSurfacesRetainOnlyAuthorizedConnectionContext(t *testing.T) {
 	assertParent("bootstrap", bootstrap)
 
 	searchRecorder := httptest.NewRecorder()
-	h.SourcesSearch(searchRecorder, httptest.NewRequest(stdhttp.MethodPost, "/sources/search?projectAssetQuery=orders", nil))
+	signals := url.QueryEscape(`{"projectAssetQuery":"orders"}`)
+	h.SourcesSearch(searchRecorder, httptest.NewRequest(stdhttp.MethodGet, "/sources/search?datastar="+signals, nil))
 	if searchRecorder.Code != stdhttp.StatusOK {
 		t.Fatalf("source search status = %d, want 200", searchRecorder.Code)
 	}
-	if body := searchRecorder.Body.String(); !strings.Contains(body, "Warehouse") || !strings.Contains(body, "/connections/connection:warehouse/details") {
-		t.Fatalf("source search payload = %q, missing parent context", body)
+	if body := searchRecorder.Body.String(); !strings.Contains(body, "Warehouse") || !strings.Contains(body, "/connections/connection:warehouse/details") || strings.Contains(body, "Customers") {
+		t.Fatalf("source search payload = %q, want matching source with parent context only", body)
 	}
 
 	pageRecorder := httptest.NewRecorder()
@@ -1044,6 +1265,9 @@ func TestSourcesRequiresVisibleSourceRatherThanUnrelatedResource(t *testing.T) {
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
 	}
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden source recovery body = %q", body)
+	}
 }
 
 func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
@@ -1056,5 +1280,8 @@ func TestExploreRequiresVisibleSemanticModel(t *testing.T) {
 	h.Explore(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore", nil))
 	if recorder.Code != stdhttp.StatusForbidden {
 		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusForbidden)
+	}
+	if body := recorder.Body.String(); !strings.Contains(body, "data page") || !strings.Contains(body, "Return to Insights") {
+		t.Fatalf("forbidden Explorer recovery body = %q", body)
 	}
 }

@@ -32,7 +32,7 @@ beforeAll(async () => {
       response.end(testDocument())
       return
     }
-    const fileRoot = url.pathname.startsWith('/static/vendor/') ? projectRoot : root
+    const fileRoot = url.pathname.startsWith('/static/vendor/') || url.pathname === '/static/command.js' ? projectRoot : root
     const file = normalize(join(fileRoot, url.pathname))
     if (!file.startsWith(fileRoot)) {
       response.writeHead(404)
@@ -78,6 +78,7 @@ test('product settings renders redacted sections and emits typed identity comman
       let command: unknown = null
       element.addEventListener('lv-product-settings-command', (event: CustomEvent) => { command = event.detail })
       const input = element.shadowRoot.querySelector('input[type="text"]') as HTMLInputElement
+      const logoLabel = element.shadowRoot.querySelector('input[type="file"]')?.getAttribute('aria-label')
       input.value = 'Acme BI'
       input.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       ;(Array.from(element.shadowRoot.querySelectorAll('button')) as HTMLButtonElement[]).find((button) => button.textContent?.trim() === 'Save')?.click()
@@ -93,6 +94,8 @@ test('product settings renders redacted sections and emits typed identity comman
       return {
         generalText,
         inputValue: input.value,
+        inputLabel: input.getAttribute('aria-label'),
+        logoLabel,
         authText: element.shadowRoot.textContent.replace(/\s+/g, ' ').trim(),
         saveCommand,
         resetCommand,
@@ -102,6 +105,8 @@ test('product settings renders redacted sections and emits typed identity comman
     expect(state.generalText).toContain('Instance identity')
     expect(state.generalText).toContain('Powered by LeapView')
     expect(state.inputValue).toBe('Acme BI')
+    expect(state.inputLabel).toBe('Instance name')
+    expect(state.logoLabel).toBe('Change logo')
     expect(state.generalText).toContain('Instance ID')
     expect(state.authText).toContain('Managed by deployment')
     expect(state.authText).toContain('API and protocol availability')
@@ -125,7 +130,7 @@ test('logo upload preserves product ETag and CSRF token', async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ productSettings: {
         active: 'general', canManage: true,
-        general: { displayName: 'Acme', revision: 7, updatedAt: '', instanceId: '', canonicalOrigin: '', environment: '' },
+        general: { displayName: 'Acme', revision: 7, updatedAt: '', instanceId: '', canonicalOrigin: '', environment: '', logo: { url: '/logo.png', sha256: 'abc', mediaType: 'image/png', sizeBytes: 3, width: 16, height: 8 } },
         authentication: { browserEnabled: false, apiTokenOnly: false, local: { available: false, enabled: false }, oidc: { available: false, enabled: false }, azure: { available: false, enabled: false }, scim: { available: false, enabled: false }, managedBy: 'deployment' },
         api: { bearerCredentials: { available: false, enabled: false }, servicePrincipals: { available: false, enabled: false }, oauth: { available: false, enabled: false }, mcp: { available: false, enabled: false }, externalMcpIssuer: false },
         system: { instanceId: '', canonicalOrigin: '', environment: '', build: { version: '', revision: '', buildTime: '', dirty: false, development: false }, storageBackend: '', agent: { available: false, configured: false, modelConfigured: false }, limits: { queryResultMaxRows: 0, queryResultMaxBytes: 0, managedDataMaxFiles: 0, managedDataMaxFileBytes: 0, managedDataMaxRevisionBytes: 0 }, runtime: { health: '', controlPlane: '', environment: '' } },
@@ -145,5 +150,5 @@ test('logo upload preserves product ETag and CSRF token', async () => {
 })
 
 function testDocument(): string {
-  return `<!doctype html><html><head><meta name="csrf-token" content="test-csrf"><style>body { ${typographyTestTokens} }</style></head><body><lv-product-settings></lv-product-settings><script type="module" src="/product-settings-under-test.js"></script></body></html>`
+  return `<!doctype html><html><head><meta name="csrf-token" content="test-csrf"><style>body { ${typographyTestTokens} }</style></head><body><lv-product-settings></lv-product-settings><script src="/static/command.js"></script><script type="module" src="/product-settings-under-test.js"></script></body></html>`
 }

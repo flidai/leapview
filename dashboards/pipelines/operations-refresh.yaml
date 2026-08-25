@@ -1,0 +1,8 @@
+apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata:
+  id: pipeline:operations-refresh
+  name: operations-refresh
+spec:
+  selection:
+    semanticModel: operations

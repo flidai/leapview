@@ -116,14 +116,17 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 	second.ID = "binding_reporting"
 	second.ConnectionID = "reporting"
 	repository := &administrationRepository{binding: binding, bindings: []TargetBinding{second, binding}}
-	var authorized TargetBinding
+	var authorized []TargetBinding
 	service, err := NewAdministration(AdministrationConfig{
 		Repository: repository,
 		Authorize: func(_ context.Context, actor string, permission AdministrationPermission, binding TargetBinding) error {
 			if actor != "operator-1" || permission != PermissionManageConnectionMetadata {
 				return ErrUnauthorizedBinding
 			}
-			authorized = binding
+			if binding.ConnectionID == "" {
+				t.Fatalf("list authorization received an empty connection resource: %#v", binding)
+			}
+			authorized = append(authorized, binding)
 			return nil
 		},
 		Dependencies: staticDependencyInspector{},
@@ -134,8 +137,8 @@ func TestAdministrationListsOnlyTheRequestedTargetScope(t *testing.T) {
 
 	bindings, err := service.List(context.Background(), "operator-1", binding.Scope, binding.TargetID)
 	require.NoError(t, err)
-	if authorized.TargetID != binding.TargetID || authorized.Scope != binding.Scope {
-		t.Fatalf("authorized scope = %#v", authorized)
+	if len(authorized) != 2 || authorized[0].TargetID != binding.TargetID || authorized[0].Scope != binding.Scope || authorized[1].Scope != binding.Scope {
+		t.Fatalf("authorized bindings = %#v", authorized)
 	}
 	if len(bindings) != 2 ||
 		bindings[0].ConnectionID != second.ConnectionID ||

@@ -83,6 +83,11 @@ type AssetLineageNodeSignal struct {
 	VisibleUpstreamCount   *int64  `json:"visibleUpstreamCount,omitempty" yaml:"visibleUpstreamCount,omitempty"`
 }
 
+type AssetVersionDrawerSignal struct {
+	Open      bool   `json:"open" yaml:"open"`
+	VersionID string `json:"versionId" yaml:"versionId"`
+}
+
 type CatalogDashboardSignal struct {
 	AppearanceColor string           `json:"appearanceColor" yaml:"appearanceColor"`
 	AppearanceIcon  string           `json:"appearanceIcon" yaml:"appearanceIcon"`
@@ -280,6 +285,12 @@ type ConnectionsPageSignal struct {
 	Kind        RouteKind                 `json:"kind" yaml:"kind"`
 	Query       *string                   `json:"query,omitempty" yaml:"query,omitempty"`
 	Title       string                    `json:"title" yaml:"title"`
+}
+
+type DashboardAppearanceSignal struct {
+	Color    string `json:"color" yaml:"color"`
+	Icon     string `json:"icon" yaml:"icon"`
+	Revision int64  `json:"revision" yaml:"revision"`
 }
 
 type DashboardAppliedFilterState struct {
@@ -1242,6 +1253,11 @@ type FilterMenuSignal struct {
 	SummaryLabel *string                   `json:"summaryLabel,omitempty" yaml:"summaryLabel,omitempty"`
 }
 
+type ModelFieldDrawerSignal struct {
+	FieldKey string `json:"fieldKey" yaml:"fieldKey"`
+	Open     bool   `json:"open" yaml:"open"`
+}
+
 type PipelineCommandSignal struct {
 	Action     string `json:"action" yaml:"action"`
 	AssetID    string `json:"assetId" yaml:"assetId"`
@@ -1339,6 +1355,11 @@ type RecordTableSignal struct {
 	Rows           []map[string]any           `json:"rows" yaml:"rows"`
 }
 
+type RefreshRunDrawerSignal struct {
+	Open  bool   `json:"open" yaml:"open"`
+	RunID string `json:"runId" yaml:"runId"`
+}
+
 type ResourceActionSignal struct {
 	Command  *string `json:"command,omitempty" yaml:"command,omitempty"`
 	Disabled *bool   `json:"disabled,omitempty" yaml:"disabled,omitempty"`
@@ -1374,11 +1395,14 @@ type ResourceAssetListSignal struct {
 }
 
 type ResourceAssetPageEnvelope struct {
-	Chrome          ChromeSignal                    `json:"chrome" yaml:"chrome"`
-	ConnectionAdmin *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
-	Page            ResourceAssetPageSignal         `json:"page" yaml:"page"`
-	Runtime         RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
-	Status          DashboardStatus                 `json:"status" yaml:"status"`
+	Chrome             ChromeSignal                    `json:"chrome" yaml:"chrome"`
+	ConnectionAdmin    *ConnectionAdministrationSignal `json:"connectionAdmin,omitempty" yaml:"connectionAdmin,omitempty"`
+	ModelFieldDrawer   *ModelFieldDrawerSignal         `json:"modelFieldDrawer,omitempty" yaml:"modelFieldDrawer,omitempty"`
+	RefreshRunDrawer   *RefreshRunDrawerSignal         `json:"refreshRunDrawer,omitempty" yaml:"refreshRunDrawer,omitempty"`
+	AssetVersionDrawer *AssetVersionDrawerSignal       `json:"assetVersionDrawer,omitempty" yaml:"assetVersionDrawer,omitempty"`
+	Page               ResourceAssetPageSignal         `json:"page" yaml:"page"`
+	Runtime            RouteRuntimeSignal              `json:"runtime" yaml:"runtime"`
+	Status             DashboardStatus                 `json:"status" yaml:"status"`
 }
 
 type ResourceAssetPageSignal struct {
@@ -1388,6 +1412,7 @@ type ResourceAssetPageSignal struct {
 	AssetID             string                         `json:"assetId" yaml:"assetId"`
 	Breadcrumbs         []ResourceBreadcrumbSignal     `json:"breadcrumbs" yaml:"breadcrumbs"`
 	ConnectionLifecycle *ConnectionLifecycleSignal     `json:"connectionLifecycle,omitempty" yaml:"connectionLifecycle,omitempty"`
+	DashboardAppearance *DashboardAppearanceSignal     `json:"dashboardAppearance,omitempty" yaml:"dashboardAppearance,omitempty"`
 	Definition          *ResourceAssetDefinitionSignal `json:"definition,omitempty" yaml:"definition,omitempty"`
 	Details             *ResourceAssetDetailsSignal    `json:"details,omitempty" yaml:"details,omitempty"`
 	DrawerParent        *ResourceAssetPageSignal       `json:"drawerParent,omitempty" yaml:"drawerParent,omitempty"`
@@ -1401,10 +1426,11 @@ type ResourceAssetPageSignal struct {
 }
 
 type ResourceAssetRefreshSignal struct {
-	LastSuccessful string             `json:"lastSuccessful" yaml:"lastSuccessful"`
-	Running        bool               `json:"running" yaml:"running"`
-	RunsTable      *RecordTableSignal `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
-	Status         string             `json:"status" yaml:"status"`
+	Facts          *[]DefinitionFactSignal `json:"facts,omitempty" yaml:"facts,omitempty"`
+	LastSuccessful string                  `json:"lastSuccessful" yaml:"lastSuccessful"`
+	Running        bool                    `json:"running" yaml:"running"`
+	RunsTable      *RecordTableSignal      `json:"runsTable,omitempty" yaml:"runsTable,omitempty"`
+	Status         string                  `json:"status" yaml:"status"`
 }
 
 type ResourceAssetSummarySignal struct {

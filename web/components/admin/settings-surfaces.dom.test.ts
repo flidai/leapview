@@ -18,7 +18,7 @@ beforeAll(async () => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
     if (url.pathname === '/') {
       response.setHeader('content-type', 'text/html')
-      response.end('<!doctype html><main><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration><script type="module" src="/settings-surfaces.js"></script></main>')
+      response.end('<!doctype html><main><lv-admin-page data-on:lv-service-account-command="service-account-command" data-on:lv-audit-log-command="audit-log-command"><lv-project-registry></lv-project-registry><lv-service-accounts></lv-service-accounts><lv-audit-log></lv-audit-log><lv-principal-administration></lv-principal-administration><lv-group-administration></lv-group-administration></lv-admin-page><script type="module" src="/settings-surfaces.js"></script></main>')
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -51,10 +51,62 @@ test('settings surfaces render typed signals and emit commands', async () => {
       let detail: unknown = null
       element.addEventListener('lv-service-account-command', (event: CustomEvent) => { detail = event.detail })
       ;(element.shadowRoot.querySelector('tbody button') as HTMLButtonElement).click()
-      return { text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(), detail }
+      return {
+        text: element.shadowRoot.textContent?.replace(/\s+/g, ' ').trim(),
+        detail,
+        displayNameLabel: element.shadowRoot.querySelector('input[name="displayName"]')?.getAttribute('aria-label'),
+      }
     })
     expect(result.text).toContain('CI')
     expect(result.detail).toEqual({ action: 'select', accountId: 'svc-1' })
+    expect(result.displayNameLabel).toBe('New account')
+  } finally { await page.close() }
+})
+
+test('service account and audit controls unlock when a no-op command finishes', async () => {
+  const page = await browser.newPage()
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-service-accounts') && customElements.get('lv-audit-log'))
+    const result = await page.evaluate(async () => {
+      const runtime = await import('/settings-surfaces.js') as any
+      const serviceState = { items: [{ id: 'svc-1', displayName: 'CI', kind: 'service_principal' }], secrets: [], selectedId: '', loading: false, hasMore: false }
+      const auditState = { items: [], filters: {}, loadedCount: 0, loading: false, hasMore: false }
+      runtime.setDatastarLitRuntimeForTests?.({
+        root: { adminServiceAccounts: serviceState, adminAuditLog: auditState },
+        getPath: (path: string) => path === 'adminServiceAccounts' ? serviceState : path === 'adminAuditLog' ? auditState : undefined,
+        effect: (fn: () => void) => { fn(); return () => {} },
+      })
+      const accounts = document.querySelector('lv-service-accounts') as any
+      const audit = document.querySelector('lv-audit-log') as any
+      accounts.requestUpdate(); audit.requestUpdate()
+      await accounts.updateComplete; await audit.updateComplete
+      ;(accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).click()
+      await accounts.updateComplete
+      const accountDisabled = (accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled
+      ;(audit.shadowRoot.querySelector('form') as HTMLFormElement).dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
+      await audit.updateComplete
+      const auditDisabled = (audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const auditLabels = Array.from(audit.shadowRoot.querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
+      const unrelatedOwner = document.createElement('lv-other-page')
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: unrelatedOwner } }))
+      await accounts.updateComplete; await audit.updateComplete
+      const accountStillDisabled = (accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled
+      const auditStillDisabled = (audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled
+      const owner = document.querySelector('lv-admin-page') as Element
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: owner } }))
+      await accounts.updateComplete; await audit.updateComplete
+      return {
+        accountDisabled,
+        auditDisabled,
+        accountStillDisabled,
+        auditStillDisabled,
+        auditLabels,
+        accountUnlocked: !(accounts.shadowRoot.querySelector('tbody button') as HTMLButtonElement).disabled,
+        auditUnlocked: !(audit.shadowRoot.querySelector('button[type="submit"]') as HTMLButtonElement).disabled,
+      }
+    })
+    expect(result).toEqual({ accountDisabled: true, auditDisabled: true, accountStillDisabled: true, auditStillDisabled: true, auditLabels: ['Project', 'Actor', 'Action', 'Resource kind', 'Resource ID'], accountUnlocked: true, auditUnlocked: true })
   } finally { await page.close() }
 })
 
@@ -209,6 +261,7 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       let detail: unknown = null
       element.addEventListener('lv-access-admin-command', (event: CustomEvent) => { detail = event.detail })
       const form = dialog.querySelector('form') as HTMLFormElement
+      const labels = Array.from(dialog.querySelectorAll('input')).map((input) => input.getAttribute('aria-label'))
       ;(form.elements.namedItem('email') as HTMLInputElement).value = 'new@example.com'
       ;(form.elements.namedItem('displayName') as HTMLInputElement).value = 'New User'
       form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
@@ -218,12 +271,14 @@ test('principal creation opens as a modal and transitions to the one-time passwo
       return {
         open: (element.shadowRoot.querySelector('dialog') as HTMLDialogElement).open,
         detail,
+        labels,
         formAfterSuccess: Boolean(element.shadowRoot.querySelector('dialog form')),
         successText: element.shadowRoot.querySelector('dialog')?.textContent?.replace(/\s+/g, ' ').trim(),
       }
     })
     expect(result.open).toBe(true)
     expect(result.detail).toEqual({ action: 'create_principal', email: 'new@example.com', displayName: 'New User' })
+    expect(result.labels).toEqual(['Email', 'Display name'])
     expect(result.formAfterSuccess).toBe(false)
     expect(result.successText).toContain('temporary-password-value')
     expect(result.successText).toContain('Copy password')

@@ -46,12 +46,56 @@ func (a *Adapter) Authorize(ctx context.Context, request service.AuthorizationRe
 	if err := request.ProjectID.Validate(); err != nil {
 		return fmt.Errorf("%w: project id: %v", ErrInvalid, err)
 	}
-	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
-		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
-	}
 	capability, err := capabilityForAction(request.Action)
 	if err != nil {
 		return err
+	}
+	if request.ProjectScoped {
+		if request.Action != authoring.AuthorizationActionEdit {
+			return fmt.Errorf("%w: project-scoped authorization requires edit action", ErrInvalid)
+		}
+		resource, err := access.NewResourceRef(request.ProjectID, graph.KindProject)
+		if err != nil {
+			return fmt.Errorf("%w: project resource: %v", ErrInvalid, err)
+		}
+		allowed, err := a.authorize(ctx, actorID, request.ProjectID, resource, capability)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return access.ErrForbidden
+		}
+		if err := request.SemanticModel.Validate(); err != nil {
+			return fmt.Errorf("%w: semantic model: %v", ErrInvalid, err)
+		}
+		semanticResource, err := access.NewResourceRef(request.SemanticModel, graph.KindSemanticModel)
+		if err != nil {
+			return fmt.Errorf("%w: semantic model resource: %v", ErrInvalid, err)
+		}
+		allowed, err = a.authorize(ctx, actorID, request.ProjectID, semanticResource, access.CapabilityResourceRead)
+		if err != nil {
+			return err
+		}
+		if !allowed {
+			return access.ErrForbidden
+		}
+		return nil
+	}
+	if err := authoring.ValidateDashboardID(request.DashboardID); err != nil {
+		return fmt.Errorf("%w: dashboard id: %v", ErrInvalid, err)
+	}
+	if request.RepositoryScoped && strings.TrimSpace(request.OwnerPrincipalID) == actorID {
+		projectResource, err := access.NewResourceRef(request.ProjectID, graph.KindProject)
+		if err != nil {
+			return fmt.Errorf("%w: project resource: %v", ErrInvalid, err)
+		}
+		allowed, err := a.authorize(ctx, actorID, request.ProjectID, projectResource, capability)
+		if err != nil {
+			return err
+		}
+		if allowed {
+			return nil
+		}
 	}
 	resource, err := access.NewResourceRef(request.DashboardID, graph.KindDashboard)
 	if err != nil {

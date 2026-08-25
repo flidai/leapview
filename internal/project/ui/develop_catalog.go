@@ -74,7 +74,7 @@ func ConnectionsPageWithAdministrationForEnvironment(catalog catalog.Catalog, pr
 	}
 	rootAttributes := []g.Node{
 		g.Attr("slot", "page"),
-		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; "+uiactions.QueryPost("/connections/search", "entityListQuery")),
+		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; "+uiactions.Get("/connections/search", "entityListQuery")),
 	}
 	rootAttributes = append(rootAttributes, connectionAdministrationRouteBridge(commands)...)
 	return projectRouteDocument("Connections", catalog, "connections", roleLabel, page, uisignals.RouteKindConnections,
@@ -149,7 +149,7 @@ func connectionAdministrationRouteBridge(commands ConnectionCommandBindings) []g
 
 func projectAssetFilterRouteBridge(area string) []g.Node {
 	endpoint := projectAssetSearchHref(area)
-	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.QueryPost(endpoint, "projectAssetType", "projectAssetQuery")
+	filter := "$projectAssetType = evt.detail.type; $projectAssetQuery = evt.detail.query; " + uiactions.Get(endpoint, "projectAssetType", "projectAssetQuery")
 	return []g.Node{g.Attr("data-on:lv-project-asset-filter__debounce.200ms", filter)}
 }
 
@@ -303,17 +303,14 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	if assetRefreshable(asset.Type) && activeSection != "definition" {
 		runLabel := "Run now"
 		if refresh.Unavailable {
-			runLabel = "Run now unavailable; review connections"
+			runLabel = "Run now unavailable"
 		}
 		actions = append([]uisignals.ResourceActionSignal{{
 			Label:    runLabel,
 			Icon:     uisignals.Pointer("refresh"),
 			Command:  uisignals.Pointer("run-refresh-pipeline"),
-			Disabled: uisignals.Optional(refresh.Unavailable || assetRefreshSignal(refresh).Running),
+			Disabled: uisignals.Optional(!refresh.CanRun || refresh.Unavailable || assetRefreshSignal(refresh).Running),
 		}}, actions...)
-		if refresh.Unavailable {
-			actions = append(actions, uisignals.ResourceActionSignal{Label: "Review connections", Href: uisignals.Pointer("/connections"), Icon: uisignals.Pointer("open")})
-		}
 	}
 	if asset.Href != "" {
 		actions = append(actions, uisignals.ResourceActionSignal{Label: "Open asset", Href: uisignals.Pointer(asset.Href), Icon: uisignals.Pointer("open")})
@@ -326,13 +323,13 @@ func projectAssetPageSignalWithRefreshAndVersions(project projectview.DevelopVie
 	if assetDataInspectable(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "data", Label: "Data", Href: projectAssetDataHref(asset), Active: activeSection == "data"})
 	}
-	if assetRefreshable(asset.Type) {
+	if assetHasRefreshHistory(asset.Type) {
 		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "refreshes", Label: "Refreshes", Href: assetnav.CanonicalAssetSectionHref(asset, "refreshes"), Active: activeSection == "refreshes"})
 	}
 	if assetHasVersions(versions) {
-		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions", Count: uisignals.Pointer(int64(len(versions.Versions)))})
+		page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "versions", Label: "Versions", Href: assetnav.CanonicalAssetSectionHref(asset, "versions"), Active: activeSection == "versions"})
 	}
-	page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "lineage", Label: "Lineage", Href: assetnav.CanonicalAssetSectionHref(asset, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))})
+	page.Tabs = append(page.Tabs, uisignals.ResourceTabSignal{ID: "lineage", Label: "Lineage", Href: assetnav.CanonicalAssetSectionHref(asset, "lineage"), Active: activeSection == "lineage"})
 	return page
 }
 
@@ -362,7 +359,7 @@ func connectionAssetPageSignalWithVersions(project projectview.DevelopView, asse
 	page.Tabs = []uisignals.ResourceTabSignal{
 		{ID: "details", Label: "Details", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "details"), Active: activeSection == "details"},
 		{ID: "definition", Label: "Definition", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "definition"), Active: activeSection == "definition"},
-		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage", Count: uisignals.Pointer(int64(lineage.Count))},
+		{ID: "lineage", Label: "Lineage", Href: assetnav.ConnectionAssetSectionHref(asset.ID, "lineage"), Active: activeSection == "lineage"},
 	}
 	return page
 }
@@ -383,8 +380,10 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 		ActiveSection: activeSection,
 		Asset:         projectAssetSummarySignal(project.ID, asset, assetsByID(assets), edges),
 	}
-	if assetRefreshable(asset.Type) {
+	if asset.Type == "refresh_pipeline" || asset.Type == "semantic_model" {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
+	} else if asset.Type == "model_table" {
+		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
 	}
 	if activeSection == "details" {
 		page.Details = uisignals.Pointer(projectAssetDetailsSignalWithRefresh(project, asset, assets, edges, refresh))
@@ -400,7 +399,7 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 			UsedByTable: lineage.UsedBy,
 		})
 	}
-	if activeSection == "refreshes" && assetRefreshable(asset.Type) {
+	if activeSection == "refreshes" && assetHasRefreshHistory(asset.Type) && page.Refresh != nil {
 		runsTable := assetRefreshesTable(refresh)
 		page.Refresh.RunsTable = &runsTable
 	}

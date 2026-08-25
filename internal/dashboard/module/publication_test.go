@@ -8,6 +8,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestPublicationExecutionContextUsesPublicationPrincipal(t *testing.T) {
@@ -24,6 +25,16 @@ func TestPublicationExecutionContextUsesPublicationPrincipal(t *testing.T) {
 	}
 	if metadata.Surface != dataquery.SurfacePublicDashboard || metadata.ObjectType != "dashboard_publication" || metadata.ObjectID != "website-showcase" {
 		t.Fatalf("public metadata = %#v", metadata)
+	}
+}
+
+func TestCanonicalPublicationResourceIDPreservesSemanticModelDependency(t *testing.T) {
+	resource := canonicalPublicationResourceID("semantic-model:visuals")
+	if err := resource.Validate(); err != nil {
+		t.Fatalf("semantic model dependency is invalid: %v", err)
+	}
+	if resource.CanonicalID() != "semantic-model:visuals" || resource.Kind() != projectgraph.KindSemanticModel {
+		t.Fatalf("semantic model dependency = %q/%q", resource.CanonicalID(), resource.Kind())
 	}
 }
 

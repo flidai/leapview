@@ -53,6 +53,8 @@ type RecordCell = {
   statusLabel?: string
   expandedContent?: string
   copyLabel?: string
+  additions?: number
+  deletions?: number
 }
 
 type RecordAction = {
@@ -66,7 +68,7 @@ type RecordAction = {
 type RecordColumn = {
   id: string
   header: string
-  kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
+  kind?: 'text' | 'code' | 'expression' | 'badge' | 'status' | 'query' | 'diff' | 'number' | 'link' | 'tags' | 'entity' | 'button' | 'actions'
   align?: 'left' | 'right'
   hrefKey?: string
   width?: string
@@ -200,6 +202,11 @@ function columnAlignClass(column: RecordColumn): string {
   return column.align === 'right' || column.kind === 'number' ? 'is-right' : ''
 }
 
+function columnWidth(column: RecordColumn): string {
+  if (column.width) return column.width
+  return column.kind === 'entity' ? 'clamp(220px, 45vw, 280px)' : ''
+}
+
 class RecordTable extends LitElement {
   @property({ attribute: false }) table: RecordTablePayload | null = null
   @property({ attribute: 'table' }) tableAttribute = ''
@@ -235,7 +242,12 @@ class RecordTable extends LitElement {
     return html`
       <style>${recordTableStyles}</style>
       ${this.hasColumnSelector(table) ? html`<span class="record-table-corner-selector">${this.renderColumnSelector(table, columns)}</span>` : nothing}
-      <div class=${`record-table-wrap variant-${this.variant} density-${table.density}`}>
+      <div
+        class=${`record-table-wrap variant-${this.variant} density-${table.density}`}
+        role="region"
+        aria-label="Scrollable table"
+        tabindex="0"
+      >
         <table class="record-table" style=${table.minWidth ? `min-width: ${table.minWidth}` : ''}>
           <thead>
             <tr>
@@ -243,7 +255,7 @@ class RecordTable extends LitElement {
                 const direction = this.sortDirection(column.id)
                 const sortable = column.sortable !== false && column.kind !== 'actions'
                 return html`
-                  <th style=${column.width ? `width: ${column.width}` : ''} class=${columnAlignClass(column)}>
+                  <th style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''} class=${columnAlignClass(column)}>
                     <span class="record-table-header-content">
                       <button
                         type="button"
@@ -267,6 +279,7 @@ class RecordTable extends LitElement {
           </tbody>
         </table>
       </div>
+      ${table.minWidth && table.minWidth !== '0' ? html`<p class="record-table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>` : nothing}
     `
   }
 
@@ -298,6 +311,7 @@ class RecordTable extends LitElement {
               <label>
                 <input
                   type="checkbox"
+                  aria-label=${column.header}
                   .checked=${checked}
                   ?disabled=${checked && visibleToggleableIDs.size <= 1}
                   @change=${(event: Event) => this.toggleColumn(table, column.id, (event.currentTarget as HTMLInputElement).checked)}
@@ -439,6 +453,8 @@ class RecordTable extends LitElement {
         return label === '-' ? html`<span class="record-muted">-</span>` : this.renderStatusCell(value, label)
       case 'query':
         return this.renderQueryCell(value, row)
+      case 'diff':
+        return this.renderDiffCell(value, label)
       case 'number':
         return label === '-' ? html`<span class="record-muted">-</span>` : html`<span class="record-number">${label}</span>`
       case 'link':
@@ -456,6 +472,18 @@ class RecordTable extends LitElement {
       default:
         return label === '-' ? html`<span class="record-muted">-</span>` : html`<span>${label}</span>`
     }
+  }
+
+  private renderDiffCell(value: unknown, label: string): TemplateResult {
+    if (label === '-' || typeof value !== 'object' || value == null) return html`<span class="record-muted">-</span>`
+    const additions = Number((value as RecordCell).additions ?? 0)
+    const deletions = Number((value as RecordCell).deletions ?? 0)
+    return html`
+      <span class="record-diff" aria-label=${label}>
+        <span class="record-diff-additions">+${additions}</span>
+        <span class="record-diff-deletions">-${deletions}</span>
+      </span>
+    `
   }
 
   private renderRow(row: RecordRow, columns: RecordColumn[], rowAction: string, index: number): TemplateResult {
@@ -814,6 +842,21 @@ const recordTableStyles = `
     min-width: 0;
     max-width: 100%;
     overflow-x: auto;
+    scrollbar-width: thin;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  lv-record-table .record-table-wrap:focus-visible {
+    outline: 2px solid var(--lv-fg-accent, currentColor);
+    outline-offset: 2px;
+  }
+
+  lv-record-table .record-table-scroll-hint {
+    display: none;
+    margin: var(--base-size-4) var(--base-size-8) 0;
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-caption);
+    text-align: right;
   }
 
   lv-record-table .record-table-column-selector {
@@ -891,8 +934,16 @@ const recordTableStyles = `
     table-layout: fixed;
   }
 
+  @media (max-width: 640px) {
+    lv-record-table .record-table-scroll-hint {
+      display: block;
+    }
+
+  }
+
   lv-record-table .record-table th,
   lv-record-table .record-table td {
+    box-sizing: border-box;
     border-bottom: 0;
     padding: var(--base-size-8);
     text-align: left;
@@ -1270,6 +1321,23 @@ const recordTableStyles = `
 
   lv-record-table .record-number {
     font-variant-numeric: tabular-nums;
+  }
+
+  lv-record-table .record-diff {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--base-size-8);
+    font: var(--lv-type-code-inline);
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+
+  lv-record-table .record-diff-additions {
+    color: var(--lv-fg-accent);
+  }
+
+  lv-record-table .record-diff-deletions {
+    color: var(--lv-fg-danger);
   }
 
   lv-record-table .record-link,

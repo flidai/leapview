@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -17,6 +18,7 @@ import (
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
@@ -265,6 +267,111 @@ func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.Queu
 	return m.service.QueuePipelineRefresh(ctx, input)
 }
 
+// UICommandBindings exposes the generated browser command identities for
+// monitor surfaces that do not yet have an asset-specific refresh snapshot.
+func (*Module) UICommandBindings() (uicommand.Binding, uicommand.Binding) {
+	return refreshgen.GenUIActionCreateRefreshRun(), refreshgen.GenUIActionCancelRefreshRun()
+}
+
+type PipelineUICommandInvocation struct {
+	Action         string
+	Project        string
+	IdempotencyKey string
+	RequestID      string
+	CorrelationID  string
+}
+
+func (*Module) BeginPipelineUICommand(ctx context.Context, invocation PipelineUICommandInvocation) (context.Context, error) {
+	if invocation.Action == "cancel" {
+		started, _, err := refreshgen.BeginGenCancelRefreshRunCommand(ctx, refreshgen.GenCancelRefreshRunCommandInvocation{Surface: apigencommand.SurfaceUI, Project: invocation.Project, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
+		return started, err
+	}
+	if invocation.Action != "run" && invocation.Action != "retry" {
+		return ctx, errors.New("unsupported pipeline UI command")
+	}
+	started, _, err := refreshgen.BeginGenCreateRefreshRunCommand(ctx, refreshgen.GenCreateRefreshRunCommandInvocation{Surface: apigencommand.SurfaceUI, Project: invocation.Project, IdempotencyKey: invocation.IdempotencyKey, RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID})
+	return started, err
+}
+
+// ActiveServingIdentity resolves the exact generation used by refresh writes.
+// Browser commands use this fence instead of accepting a project or generation
+// selector from the client.
+func (m *Module) ActiveServingIdentity(ctx context.Context) (projectgraph.ServingIdentity, error) {
+	if m == nil {
+		return projectgraph.ServingIdentity{}, errors.New("refresh service is unavailable")
+	}
+	if m.resolveIdentity != nil {
+		return m.resolveIdentity(ctx)
+	}
+	return projectgraph.ServingIdentity{}, errors.New("refresh serving identity resolver is unavailable")
+}
+
+// QueuePipelineRefreshForUI queues a browser-originated run after the caller
+// has authorized the pipeline. It retains the same generated audit and
+// dispatch guarantees as the API command path.
+func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, retryOf string) error {
+	if m == nil || m.service.Runs == nil {
+		return errors.New("refresh service is unavailable")
+	}
+	pipeline, err := projectgraph.NewResourceID(pipelineID)
+	if err != nil {
+		return err
+	}
+	if retryOf != "" && m.runs != nil {
+		scope, scopeErr := refreshrun.ReadScopeForIdentity(identity)
+		if scopeErr != nil {
+			return scopeErr
+		}
+		prior, getErr := m.runs.GetRun(ctx, scope, retryOf)
+		if getErr != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipeline || prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
+			return errors.New("refresh retry is invalid")
+		}
+	}
+	// ADR-0014 models a retry as a fresh manual invocation. The prior run is
+	// validated above for UI safety, but it is not retained as mutable execution
+	// state on the new immutable pipeline occurrence.
+	result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
+		Identity: identity, PipelineID: pipeline, PrincipalID: principalID,
+		EstimatedMemoryBytes: 1, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
+	})
+	if err != nil {
+		return err
+	}
+	if err := m.verifyRunCreated(ctx, result.Run); err != nil {
+		return err
+	}
+	m.Dispatch(ctx)
+	return nil
+}
+
+// CancelPipelineRefreshForUI cancels a queued root pipeline run and verifies
+// its generated lifecycle audit before acknowledging the browser command.
+func (m *Module) CancelPipelineRefreshForUI(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, runID, principalID string) error {
+	if m == nil || m.runs == nil {
+		return errors.New("refresh service is unavailable")
+	}
+	if strings.TrimSpace(principalID) == "" {
+		return errors.New("refresh principal is unavailable")
+	}
+	pipeline, err := projectgraph.NewResourceID(pipelineID)
+	if err != nil {
+		return errors.New("refresh run not found")
+	}
+	scope, err := refreshrun.ReadScopeForIdentity(identity)
+	if err != nil {
+		return err
+	}
+	prior, err := m.runs.GetRun(ctx, scope, runID)
+	if err != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.ParentRunID != "" || prior.PipelineID != pipeline || prior.TargetID != pipeline {
+		return errors.New("refresh run not found")
+	}
+	row, err := m.runs.CancelRun(ctx, prior.Identity, runID)
+	if err != nil {
+		return err
+	}
+	return m.verifyRunCancelled(ctx, row)
+}
+
 // DataVersion returns the latest persisted semantic-model version for the
 // active serving generation in the requested project/environment scope.
 func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelID string) (AssetDataVersion, bool, error) {
@@ -373,6 +480,89 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 		return state, err
 	} else if ok {
 		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+	}
+	return state, nil
+}
+
+// ModelRefreshState returns the durable child-run history for one model table.
+// Model runs are targeted explicitly by the refresh service, so the history
+// remains correct when multiple pipelines materialize the same model.
+func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, modelID projectgraph.ResourceID) (AssetRefreshState, error) {
+	state := AssetRefreshState{}
+	if err := projectID.Validate(); err != nil {
+		return state, err
+	}
+	if err := modelID.Validate(); err != nil {
+		return state, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	if m == nil || m.runs == nil {
+		state.Unavailable = true
+		return state, nil
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
+	if err := scope.Validate(); err != nil {
+		return state, err
+	}
+	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, modelID, refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		return state, err
+	}
+	state.Runs = make([]AssetRefreshRun, 0, len(runs))
+	for _, run := range runs {
+		state.Runs = append(state.Runs, assetRefreshRun(run))
+	}
+	if len(state.Runs) > 0 {
+		state.Latest = state.Runs[0]
+	}
+	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModelTable, modelID)
+	if err != nil {
+		return state, err
+	}
+	if ok {
+		state.LatestSuccessful = assetRefreshRun(latest)
+	}
+	return state, nil
+}
+
+// SemanticModelRefreshState returns root pipeline runs that materialize the
+// requested semantic model. A semantic model may be refreshed by multiple
+// pipelines, so the projection is keyed by semantic-model identity rather
+// than by one pipeline target.
+func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, semanticModelID projectgraph.ResourceID) (AssetRefreshState, error) {
+	state := AssetRefreshState{}
+	if err := projectID.Validate(); err != nil {
+		return state, err
+	}
+	if err := semanticModelID.Validate(); err != nil {
+		return state, err
+	}
+	environment = string(servingstate.NormalizeEnvironment(servingstate.Environment(environment)))
+	if m == nil || m.runs == nil {
+		state.Unavailable = true
+		return state, nil
+	}
+	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
+	if err := scope.Validate(); err != nil {
+		return state, err
+	}
+	runs, err := m.runs.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
+	if err != nil {
+		return state, err
+	}
+	state.Runs = make([]AssetRefreshRun, 0, len(runs))
+	for _, run := range runs {
+		state.Runs = append(state.Runs, assetRefreshRun(run))
+	}
+	if len(state.Runs) > 0 {
+		state.Latest = state.Runs[0]
+	}
+	latest, ok, err := m.runs.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
+	if err != nil {
+		return state, err
+	}
+	if ok {
+		state.LatestSuccessful = assetRefreshRun(latest)
 	}
 	return state, nil
 }

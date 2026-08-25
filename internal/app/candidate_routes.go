@@ -23,6 +23,10 @@ type candidatePreviewHandler interface {
 	ServeCandidatePreview(http.ResponseWriter, *http.Request, string, string, webpage.Provider)
 }
 
+type candidateReviewHandler interface {
+	ServeCandidateReview(http.ResponseWriter, *http.Request, string, projectgraph.ResourceID, webpage.Provider)
+}
+
 type candidateRouteDependencies struct {
 	access           *accessmodule.Module
 	product          *adminmodule.ProductService
@@ -68,6 +72,29 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	http.Redirect(w, r, candidateRouteBase(candidate.ID)+"/dashboards/"+url.PathEscape(dashboardID), http.StatusFound)
+}
+
+// candidateReview renders the bounded reviewer handoff. It never resolves a
+// runtime provider: candidate dashboard data remains owner-only and is served
+// exclusively through candidatePreview/candidateDashboard.
+func candidateReview(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) {
+	if deps.access == nil || deps.deployments == nil || deps.runtimeHost == nil {
+		http.Error(w, "Candidate review is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	if _, ok := deps.access.CurrentPrincipal(r); !ok {
+		http.Error(w, "Authentication required", http.StatusUnauthorized)
+		return
+	}
+	projectID := deps.runtimeHost.ProjectID()
+	if err := projectID.Validate(); err != nil {
+		http.Error(w, "Candidate review is unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	serveCandidateReview(
+		deps.deployments, strings.TrimSpace(chi.URLParam(r, "candidate")), projectID,
+		applicationLayout(deps.access, deps.agent, deps.product, deps.assets, r), w, r,
+	)
 }
 
 func candidateDashboard(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request, action func(dashboardmodule.HTTP)) {
@@ -221,4 +248,20 @@ func serveCandidatePreview(
 	handler.ServeCandidatePreview(w, r, candidateID, principalID, layout)
 }
 
+func serveCandidateReview(
+	handler candidateReviewHandler,
+	candidateID string,
+	projectID projectgraph.ResourceID,
+	layout webpage.Provider,
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	if handler == nil || strings.TrimSpace(candidateID) == "" || projectID.Validate() != nil {
+		http.NotFound(w, r)
+		return
+	}
+	handler.ServeCandidateReview(w, r, strings.TrimSpace(candidateID), projectID, layout)
+}
+
 var _ candidatePreviewHandler = (*deploymentmodule.Module)(nil)
+var _ candidateReviewHandler = (*deploymentmodule.Module)(nil)

@@ -11,13 +11,19 @@ import (
 	"path"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectview "github.com/flidai/leapview/internal/project"
+	"github.com/flidai/leapview/internal/project/assetnav"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -46,18 +52,31 @@ type AssetVersionsReader interface {
 // without coupling refresh persistence to project UI rendering.
 type AssetRefreshStateReader interface {
 	AssetRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
+	ModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
+	SemanticModelRefreshState(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) (refreshpresentation.AssetRefreshState, error)
 }
 
 // ModelPhysicalMetadata is the credential-free DuckLake table rollup shown on
 // a model's catalog detail page.
 type ModelPhysicalMetadata struct {
 	RowCount, ColumnCount, FileCount, SizeBytes, SnapshotID int64
+	SnapshotAt                                              time.Time
+	Schema                                                  semanticmodel.TableSchema
 }
 
 // PhysicalCatalogReader reads statistics from the exact active serving
 // runtime, rather than from the node's mutable authoring catalog.
 type PhysicalCatalogReader interface {
 	ModelPhysicalMetadata(context.Context, projectgraph.ResourceID, string) (map[string]ModelPhysicalMetadata, error)
+}
+
+type SourceSchemaObservation = projectview.SourceSchemaObservationReadModel
+
+// SourceSchemaReader reads the persisted, non-secret schema evidence captured
+// for one source in the exact serving generation shown by the project graph.
+// It must not introspect a live source on behalf of an HTTP request.
+type SourceSchemaReader interface {
+	SourceSchemaObservation(context.Context, projectgraph.ResourceID, string, string, projectgraph.ResourceID) (SourceSchemaObservation, bool, error)
 }
 
 type CatalogAuthorizer interface {
@@ -71,6 +90,11 @@ type CatalogAuthorizer interface {
 // manifest models or reacquire a separate serving lease for details.
 type ProjectDefinitionReader interface {
 	ProjectDefinitionSnapshot(context.Context) (projectmanifest.Project, map[string]*semanticquery.CompiledModel, error)
+}
+
+type DashboardAppearanceStore interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardappearance.Record, error)
+	ApplyPatch(context.Context, dashboardappearance.Key, string, dashboardappearance.Patch) (dashboardappearance.Record, error)
 }
 
 // ErrSemanticModelUnavailable indicates that the active generation could not
@@ -90,20 +114,61 @@ type Principal struct {
 	DevBypass bool
 }
 
+// ConnectionCommandBindings is the project HTTP composition contract for the
+// connection administration actions rendered by the project UI.
+type ConnectionCommandBindings = projectui.ConnectionCommandBindings
+
+type CreatorCommandInvocation struct {
+	Action         string
+	Project        string
+	Resource       string
+	IdempotencyKey string
+	RequestID      string
+	CorrelationID  string
+	Revision       int64
+}
+
 type BrowserHandler struct {
-	Graph                   GraphReader
-	AssetVersions           AssetVersionsReader
-	RefreshState            AssetRefreshStateReader
-	PhysicalCatalog         PhysicalCatalogReader
-	ProjectDefinitionReader ProjectDefinitionReader
-	QueryExecutor           DataQueryExecutor
-	Catalog                 CatalogAuthorizer
-	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
-	Environment             string
-	Layout                  func(*stdhttp.Request) webpage.Provider
-	CSRFToken               func(*stdhttp.Request) string
-	CurrentUser             func(*stdhttp.Request) (Principal, bool)
-	Authenticate            func(stdhttp.Handler) stdhttp.Handler
+	Graph                    GraphReader
+	AssetVersions            AssetVersionsReader
+	RefreshState             AssetRefreshStateReader
+	PhysicalCatalog          PhysicalCatalogReader
+	SourceSchemas            SourceSchemaReader
+	ProjectDefinitionReader  ProjectDefinitionReader
+	DashboardAppearances     DashboardAppearanceStore
+	QueryExecutor            DataQueryExecutor
+	Catalog                  CatalogAuthorizer
+	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
+	Environment              string
+	TargetID                 string
+	ConnectionAdministration connectionadmin.Administration
+	ConnectionCommands       projectui.ConnectionCommandBindings
+	PipelineRunCommand       uicommand.Binding
+	PipelineCancelCommand    uicommand.Binding
+	RunPipeline              func(context.Context, string, string, string) error
+	// CancelPipeline receives both the pipeline and run identifiers from the
+	// command. Implementations must verify that the run belongs to that
+	// pipeline before mutating it; keeping the pipeline ID in this callback
+	// prevents an opaque run ID from becoming a cross-pipeline capability.
+	CancelPipeline    func(context.Context, string, string, string) error
+	AuthorizePipeline func(*stdhttp.Request, string, access.Capability) (bool, error)
+	// AuthorizeConnectionCreate checks the project-root capability required by
+	// the generated createTargetConnectionBinding command. Updates remain
+	// resource-scoped in the administration service.
+	AuthorizeConnectionCreate func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	// AuthorizeCreateDashboard evaluates the project-root edit capability used
+	// to expose the browser's new-draft affordance. The catalog remains usable
+	// for read-only principals when this decision is denied.
+	AuthorizeCreateDashboard func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error)
+	AuthorizeDashboard       func(*stdhttp.Request, string, access.Capability) (bool, error)
+	AuthorizeConnection      func(*stdhttp.Request, string, access.Capability) (bool, error)
+	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
+	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
+	Layout                   func(*stdhttp.Request) webpage.Provider
+	CSRFToken                func(*stdhttp.Request) string
+	CurrentUser              func(*stdhttp.Request) (Principal, bool)
+	Authenticate             func(stdhttp.Handler) stdhttp.Handler
 }
 
 // MountAuthenticated mounts only canonical browser paths. Legacy tenant
@@ -117,6 +182,20 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 			return next
 		}
 		return h.Authenticate(stdhttp.HandlerFunc(next)).ServeHTTP
+	}
+	wrapMutation := func(next stdhttp.HandlerFunc) stdhttp.HandlerFunc {
+		var handler stdhttp.Handler = next
+		if h.MutationMiddleware == nil {
+			handler = stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+				stdhttp.Error(w, "browser mutation idempotency is unavailable", stdhttp.StatusServiceUnavailable)
+			})
+		} else {
+			handler = h.MutationMiddleware(handler)
+		}
+		if h.Authenticate != nil {
+			handler = h.Authenticate(handler)
+		}
+		return handler.ServeHTTP
 	}
 	r.Get("/", wrap(h.Insights))
 	r.Get("/explore", wrap(h.Explore))
@@ -136,16 +215,20 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/dashboards/{asset}/definition", wrap(h.DashboardAsset))
 	r.Get("/dashboards/{asset}/versions", wrap(h.DashboardAsset))
 	r.Get("/dashboards/{asset}/lineage", wrap(h.DashboardAsset))
+	r.Post("/dashboards/{asset}/appearance", wrapMutation(h.DashboardAppearanceCommand))
 	r.Get("/pipelines", wrap(h.Pipelines))
 	r.Get("/pipelines/{asset}/{section}", wrap(h.PipelineAsset))
+	r.Post("/pipelines/command", wrapMutation(h.PipelineCommand))
 	r.Get("/connections", wrap(h.Connections))
 	r.Get("/connections/{asset}/{section}", wrap(h.ConnectionAsset))
-	r.Post("/catalog/search", wrap(h.CatalogSearch))
-	r.Post("/sources/search", wrap(h.SourcesSearch))
-	r.Post("/connections/search", wrap(h.ConnectionsSearch))
-	r.Post("/models/search", wrap(h.ModelsSearch))
-	r.Post("/semantic-models/search", wrap(h.SemanticModelsSearch))
-	r.Post("/dashboards/search", wrap(h.DashboardsSearch))
+	r.Post("/connections/administration/configuration", wrapMutation(h.ConnectionAdministrationConfigurationCommand))
+	r.Post("/connections/administration/lifecycle", wrapMutation(h.ConnectionAdministrationLifecycleCommand))
+	r.Get("/catalog/search", wrap(h.CatalogSearch))
+	r.Get("/sources/search", wrap(h.SourcesSearch))
+	r.Get("/connections/search", wrap(h.ConnectionsSearch))
+	r.Get("/models/search", wrap(h.ModelsSearch))
+	r.Get("/semantic-models/search", wrap(h.SemanticModelsSearch))
+	r.Get("/dashboards/search", wrap(h.DashboardsSearch))
 }
 
 func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -153,17 +236,44 @@ func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q")}, h.csrf(r), h.layout(r)))
+	canCreateDraft := h.dashboardCreationAllowed(r)
+	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q"), CanCreateDraft: canCreateDraft}, h.csrf(r), h.layout(r)))
+}
+
+func (h *BrowserHandler) dashboardCreationAllowed(r *stdhttp.Request) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false
+	}
+	if principal.DevBypass {
+		return true
+	}
+	if h.AuthorizeCreateDashboard == nil {
+		return false
+	}
+	projectID, err := h.boundProject(r.Context())
+	if err != nil {
+		return false
+	}
+	allowed, err := h.AuthorizeCreateDashboard(r, projectID, access.CapabilityResourceEdit)
+	return err == nil && allowed
 }
 
 func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindDashboard, projectgraph.KindModel, projectgraph.KindSemanticModel}) {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("entityListQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("entityListQuery"))
+	var signals struct {
+		Query string `json:"entityListQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "catalog search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	patch := projectui.CatalogListPatchForCatalogsQuery([]projectnavigation.Catalog{h.navigationCatalog(r)}, query)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -288,44 +398,33 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	section := requestedAssetSection(r)
+	if asset.Type == string(projectview.AssetTypeModelTable) && section == "refresh" {
+		target := assetnav.CanonicalAssetSectionHref(asset, "refreshes")
+		if query := r.URL.Query().Encode(); query != "" {
+			target += "?" + query
+		}
+		stdhttp.Redirect(w, r, target, stdhttp.StatusPermanentRedirect)
+		return
+	}
 	if !projectui.ValidProjectAssetSection(asset.Type, section) {
 		stdhttp.NotFound(w, r)
 		return
 	}
-	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	projection, err := h.assetPageState(r, projectID, assets, edges, assetID, section)
 	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return
-	}
-	asset, found = projectview.AssetByID(assets, assetID)
-	if !found {
-		stdhttp.NotFound(w, r)
-		return
-	}
-	asset, err = h.enrichModelPhysicalMetadata(r.Context(), asset)
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return
-	}
-	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
-	versions, err := h.assetVersionsState(r.Context(), projectID, asset, section)
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return
-	}
-	if asset.Type == string(projectview.AssetTypeConnection) {
-		writeDocument(w, projectui.ConnectionAssetPageWithVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, h.layout(r)))
-		return
-	}
-	refresh := projectui.AssetRefreshState{}
-	if section != "definition" {
-		refresh, err = h.assetRefreshState(r.Context(), projectID, asset)
-		if err != nil {
-			refresh = projectui.AssetRefreshState{Unavailable: true}
+		if errors.Is(err, errAssetNotFound) {
+			stdhttp.NotFound(w, r)
+			return
 		}
+		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
+		return
 	}
-	refresh.CSRFToken = h.csrf(r)
-	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r)))
+	if projection.Asset.Type == string(projectview.AssetTypeConnection) {
+		administration, _ := h.connectionAdministrationView(r.Context(), projectID, projection.Assets, projection.Edges, r)
+		writeDocument(w, projectui.ConnectionAssetPageWithAdministrationForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Versions, administration, h.ConnectionCommands, h.csrf(r), []webpage.Provider{h.layout(r)}))
+		return
+	}
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {
@@ -346,31 +445,42 @@ func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Requ
 	if !ok {
 		return
 	}
-	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
+	catalog := h.navigationCatalog(r)
+	project := projectview.DevelopView{ID: projectID.String(), Title: catalog.Project.Title, Description: catalog.Project.Description}
 	contextAssets := assets
 	assets = projectview.FilterProjectLandingAssets(assets, activeType, strings.TrimSpace(r.URL.Query().Get("q")))
-	writeDocument(w, projectui.ProjectAreaPageWithContext(h.navigationCatalog(r), project, assets, contextAssets, edges, area, activeType, r.URL.Query().Get("q"), h.Environment, "", h.csrf(r), h.layout(r)))
+	writeDocument(w, projectui.ProjectAreaPageWithContext(catalog, project, assets, contextAssets, edges, area, activeType, r.URL.Query().Get("q"), h.Environment, "", h.csrf(r), h.layout(r)))
 }
 
 func (h *BrowserHandler) Pipelines(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindPipeline}) {
 		return
 	}
-	_, assets, _, ok := h.assets(w, r)
+	projectID, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return
 	}
-	pipelines := projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "")
-	pipelines, err := h.projectAssetReadModels(r.Context(), pipelines)
+	state, err := h.pipelineMonitorState(r, projectID, assets)
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
-	for _, asset := range pipelines {
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
-	}
 	writeDocument(w, projectui.PipelinesPage(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)))
+}
+
+// pipelineMutationAllowed is used while building every pipeline projection,
+// including SSE refreshes after a command. Read access to the pipeline is not
+// sufficient to expose run, retry, or cancel controls; all of those actions
+// require the resource's canonical ID and RESOURCE_USE capability.
+func (h *BrowserHandler) pipelineMutationAllowed(r *stdhttp.Request, pipelineID string) bool {
+	if h == nil || h.AuthorizePipeline == nil || r == nil {
+		return false
+	}
+	if principal, ok := h.currentPrincipal(r); ok && principal.DevBypass {
+		return true
+	}
+	allowed, err := h.AuthorizePipeline(r, strings.TrimSpace(pipelineID), access.CapabilityResourceUse)
+	return err == nil && allowed
 }
 
 func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -387,7 +497,8 @@ func (h *BrowserHandler) Connections(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	writeDocument(w, projectui.ConnectionsPage(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), "", h.layout(r)))
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	writeDocument(w, projectui.ConnectionsPageWithAdministrationForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", h.csrf(r), administration, h.ConnectionCommands, h.layout(r)))
 }
 
 func (h *BrowserHandler) SourcesSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -409,7 +520,7 @@ func (h *BrowserHandler) DashboardsSearch(w stdhttp.ResponseWriter, r *stdhttp.R
 func (h *BrowserHandler) projectAreaSearch(w stdhttp.ResponseWriter, r *stdhttp.Request, typ string) {
 	kind, ok := catalogKindForAssetType(typ)
 	if !ok {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return
 	}
 	if !h.authorizeAny(w, r, []projectgraph.Kind{kind}) {
@@ -419,10 +530,14 @@ func (h *BrowserHandler) projectAreaSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if !ok {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("projectAssetQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("projectAssetQuery"))
+	var signals struct {
+		Query string `json:"projectAssetQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "project asset search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	patch := projectui.ProjectAssetListResultsPatchWithContext(projectID.String(), projectview.FilterProjectLandingAssets(assets, typ, query), assets, edges)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
@@ -431,21 +546,26 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindConnection}) {
 		return
 	}
-	_, assets, edges, ok := h.assets(w, r)
+	projectID, assets, edges, ok := h.assets(w, r)
 	if !ok {
 		return
 	}
-	query := strings.TrimSpace(r.URL.Query().Get("entityListQuery"))
-	if query == "" {
-		query = strings.TrimSpace(r.FormValue("entityListQuery"))
+	var signals struct {
+		Query string `json:"entityListQuery"`
 	}
+	if err := pagestream.ReadSignals(r, &signals); err != nil {
+		stdhttp.Error(w, "connection search signals are required", stdhttp.StatusBadRequest)
+		return
+	}
+	query := strings.TrimSpace(signals.Query)
 	assets = projectview.FilterConnections(assets, query)
 	assets, err := h.projectAssetReadModels(r.Context(), assets)
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return
 	}
-	patch := projectui.ConnectionsListResultsPatch(assets, edges)
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	patch := projectui.ConnectionsListResultsPatchWithAdministration(assets, edges, administration)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch(patch))
 }
 
@@ -526,23 +646,19 @@ func (h *BrowserHandler) connectionsBootstrap(w stdhttp.ResponseWriter, r *stdht
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
 	}
-	return projectui.ConnectionsBootstrapSignalsForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", h.layout(r)), true
+	administration, _ := h.connectionAdministrationView(r.Context(), projectID, assets, edges, r)
+	return projectui.ConnectionsBootstrapSignalsWithAdministrationForEnvironment(h.navigationCatalog(r), projectID.String(), assets, edges, r.URL.Query().Get("q"), h.Environment, "", administration, h.layout(r)), true
 }
 
 func (h *BrowserHandler) pipelinesBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {
-	_, assets, _, ok := h.assets(w, r)
+	projectID, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return nil, false
 	}
-	pipelines := projectview.FilterProjectLandingAssets(assets, string(projectview.AssetTypeRefreshPipeline), "")
-	pipelines, err := h.projectAssetReadModels(r.Context(), pipelines)
+	state, err := h.pipelineMonitorState(r, projectID, assets)
 	if err != nil {
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
-	}
-	state := projectui.PipelineMonitorState{Environment: h.Environment, CSRFToken: h.csrf(r), Pipelines: make([]projectui.PipelineMonitorPipeline, 0, len(pipelines))}
-	for _, asset := range pipelines {
-		state.Pipelines = append(state.Pipelines, projectui.PipelineMonitorPipeline{Asset: asset})
 	}
 	return projectui.PipelinesBootstrapSignals(h.navigationCatalog(r), state, r.URL.Query().Get("view"), "", h.layout(r)), true
 }
@@ -569,42 +685,23 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 		stdhttp.NotFound(w, r)
 		return nil, false
 	}
-	assets, err := h.projectAssetReadModels(r.Context(), assets)
+	projection, err := h.assetPageState(r, projectID, assets, edges, assetID, section)
 	if err != nil {
+		if errors.Is(err, errAssetNotFound) {
+			stdhttp.NotFound(w, r)
+			return nil, false
+		}
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return nil, false
 	}
-	asset, found = projectview.AssetByID(assets, assetID)
-	if !found {
-		stdhttp.NotFound(w, r)
-		return nil, false
-	}
-	asset, err = h.enrichModelPhysicalMetadata(r.Context(), asset)
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return nil, false
-	}
-	project := projectview.DevelopView{ID: projectID.String(), Title: h.navigationCatalog(r).Project.Title, Description: h.navigationCatalog(r).Project.Description}
-	versions, err := h.assetVersionsState(r.Context(), projectID, asset, section)
-	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return nil, false
-	}
-	if asset.Type == string(projectview.AssetTypeConnection) {
-		return projectui.ConnectionAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", versions, h.layout(r)), true
+	if projection.Asset.Type == string(projectview.AssetTypeConnection) {
+		administration, _ := h.connectionAdministrationView(r.Context(), projectID, projection.Assets, projection.Edges, r)
+		return projectui.ConnectionAssetBootstrapSignalsWithAdministrationForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Versions, administration, h.layout(r)), true
 	}
 	if r.URL.Query().Get("surface") == "asset" {
-		refresh := projectui.AssetRefreshState{}
-		if section != "definition" {
-			refresh, err = h.assetRefreshState(r.Context(), projectID, asset)
-			if err != nil {
-				refresh = projectui.AssetRefreshState{Unavailable: true}
-			}
-		}
-		refresh.CSRFToken = h.csrf(r)
-		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(h.navigationCatalog(r), project, asset, assets, edges, section, h.Environment, "", refresh, versions, h.layout(r))
-		if r.URL.Query().Get("section") == "data" && (asset.Type == string(projectview.AssetTypeModelTable) || asset.Type == string(projectview.AssetTypeSemanticModel)) {
-			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, asset.ID, projectsignals.DataExplorerCommand{})
+		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
+		if r.URL.Query().Get("section") == "data" && (projection.Asset.Type == string(projectview.AssetTypeModelTable) || projection.Asset.Type == string(projectview.AssetTypeSemanticModel)) {
+			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, projection.Asset.ID, projectsignals.DataExplorerCommand{})
 			if !explorerOK {
 				return nil, false
 			}
@@ -642,9 +739,9 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 	state.Versions = make([]projectui.AssetVersionState, 0, len(versions))
 	for _, version := range versions {
 		state.Versions = append(state.Versions, projectui.AssetVersionState{
-			ServingStateID: string(version.ServingStateID), Status: version.Status, Digest: version.Digest,
+			ServingStateID: string(version.ServingStateID), Environment: string(version.Environment), Status: version.Status, Digest: version.Digest,
 			CreatedBy: version.CreatedBy, CreatedAt: version.CreatedAt, ActivatedAt: version.ActivatedAt,
-			SourceFile: version.SourceFile, ContentHash: version.ContentHash,
+			SnapshotID: version.SnapshotID, SourceFile: version.SourceFile, PayloadJSON: version.PayloadJSON, ContentHash: version.ContentHash,
 		})
 	}
 	return state, nil
@@ -652,11 +749,33 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModelTable) && asset.Type != string(projectview.AssetTypeSemanticModel) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
 		return projectui.AssetRefreshState{Unavailable: true}, nil
+	}
+	if asset.Type == string(projectview.AssetTypeModelTable) {
+		modelKey := strings.TrimSpace(asset.Key)
+		if modelKey == "" {
+			modelKey = strings.TrimPrefix(asset.ID, "model:")
+		}
+		modelID, err := projectgraph.NewResourceID(modelKey)
+		if err != nil {
+			return state, err
+		}
+		return refreshStateToProjectUI(h.RefreshState.ModelRefreshState(ctx, projectID, h.Environment, modelID))
+	}
+	if asset.Type == string(projectview.AssetTypeSemanticModel) {
+		semanticModelRef := strings.TrimSpace(asset.ID)
+		if semanticModelRef == "" {
+			semanticModelRef = strings.TrimSpace(asset.Key)
+		}
+		semanticModelID, err := projectgraph.NewResourceID(semanticModelRef)
+		if err != nil {
+			return state, err
+		}
+		return refreshStateToProjectUI(h.RefreshState.SemanticModelRefreshState(ctx, projectID, h.Environment, semanticModelID))
 	}
 	pipelineID, err := projectgraph.NewResourceID(asset.ID)
 	if err != nil {
@@ -743,11 +862,23 @@ func (h *BrowserHandler) projectAssetReadModel(ctx context.Context, asset projec
 	if err != nil {
 		return projectview.DevelopAssetView{}, err
 	}
-	return h.enrichModelPhysicalMetadata(ctx, enriched)
+	return h.enrichAssetRuntimeMetadata(ctx, enriched)
+}
+
+func (h *BrowserHandler) enrichAssetRuntimeMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	enriched, err := h.enrichModelPhysicalMetadata(ctx, asset)
+	if err != nil {
+		return projectview.DevelopAssetView{}, err
+	}
+	return h.enrichSourceSchemaObservation(ctx, enriched)
 }
 
 func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
-	if asset.Type != string(projectview.AssetTypeModelTable) || h.PhysicalCatalog == nil {
+	if asset.Type != string(projectview.AssetTypeModelTable) {
+		return asset, nil
+	}
+	if h.PhysicalCatalog == nil {
+		asset.Payload["PhysicalStatus"] = "unavailable"
 		return asset, nil
 	}
 	projectID, err := projectgraph.NewResourceID(asset.ProjectID)
@@ -759,16 +890,48 @@ func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset 
 		// Physical catalog statistics enrich the authored definition but are not
 		// required to browse it. A temporarily unavailable DuckLake snapshot must
 		// not regress the entire model detail route.
+		asset.Payload["PhysicalStatus"] = "unavailable"
 		return asset, nil
 	}
 	_, tableName := projectModelTableKeyParts(asset.Key)
 	physical, ok := statistics[tableName]
 	if !ok {
+		asset.Payload["PhysicalStatus"] = "not refreshed"
 		return asset, nil
 	}
-	asset.Payload["Physical"] = map[string]any{
+	physicalPayload := map[string]any{
 		"RowCount": physical.RowCount, "ColumnCount": physical.ColumnCount,
 		"FileCount": physical.FileCount, "SizeBytes": physical.SizeBytes, "SnapshotID": physical.SnapshotID,
+	}
+	if !physical.SnapshotAt.IsZero() {
+		physicalPayload["SnapshotAt"] = physical.SnapshotAt.UTC().Format(time.RFC3339)
+	}
+	asset.Payload["Physical"] = physicalPayload
+	asset.Payload["PhysicalStatus"] = "available"
+	for key, value := range projectview.ModelSchemaPayload(physical.Schema) {
+		asset.Payload[key] = value
+	}
+	return asset, nil
+}
+
+func (h *BrowserHandler) enrichSourceSchemaObservation(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
+	if asset.Type != string(projectview.AssetTypeSource) || h.SourceSchemas == nil {
+		return asset, nil
+	}
+	projectID, projectErr := projectgraph.NewResourceID(asset.ProjectID)
+	sourceID, sourceErr := projectgraph.NewResourceID(asset.ID)
+	servingStateID := strings.TrimSpace(asset.ServingStateID)
+	if projectErr != nil || sourceErr != nil || servingStateID == "" {
+		return asset, nil
+	}
+	observation, found, err := h.SourceSchemas.SourceSchemaObservation(ctx, projectID, h.Environment, servingStateID, sourceID)
+	if err != nil || !found {
+		// Observed schema enriches the authored definition. Historical generations
+		// without gate provenance remain browsable with their contract fields.
+		return asset, nil
+	}
+	for key, value := range projectview.SourceSchemaObservationPayload(observation) {
+		asset.Payload[key] = value
 	}
 	return asset, nil
 }
@@ -926,42 +1089,59 @@ func (h *BrowserHandler) ProtectStream(next stdhttp.Handler) stdhttp.Handler {
 }
 
 func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectgraph.ResourceID, []projectview.DevelopAssetView, []projectview.DevelopEdgeView, bool) {
+	projectID, assets, edges, err := h.loadAssets(r)
+	if err == nil {
+		return projectID, assets, edges, true
+	}
+	status := stdhttp.StatusServiceUnavailable
+	var loadErr assetLoadError
+	if errors.As(err, &loadErr) {
+		status = loadErr.status
+	}
+	stdhttp.Error(w, stdhttp.StatusText(status), status)
+	return "", nil, nil, false
+}
+
+type assetLoadError struct {
+	status int
+	err    error
+}
+
+func (e assetLoadError) Error() string { return e.err.Error() }
+func (e assetLoadError) Unwrap() error { return e.err }
+
+// loadAssets is the transport-free read path used after successful mutations.
+// Its callers can preserve a committed command response when reprojection is
+// temporarily unavailable, without fabricating an HTTP response writer.
+func (h *BrowserHandler) loadAssets(r *stdhttp.Request) (projectgraph.ResourceID, []projectview.DevelopAssetView, []projectview.DevelopEdgeView, error) {
 	projectID, err := h.boundProject(r.Context())
 	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
 	}
 	if h.Graph == nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("project graph is unavailable")}
 	}
 	graph, ok, err := h.Graph.ActiveServingStateGraph(r.Context(), projectID, h.Environment)
 	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
 	}
 	if !ok {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("active project graph is unavailable")}
 	}
 	if h.CurrentUser == nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("current principal resolver is unavailable")}
 	}
 	principal, authenticated := h.CurrentUser(r)
 	if !authenticated {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusUnauthorized), stdhttp.StatusUnauthorized)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusUnauthorized, err: errors.New("current principal is unauthenticated")}
 	}
 	if !principal.DevBypass {
 		if h.Catalog == nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return "", nil, nil, false
+			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: errors.New("project catalog is unavailable")}
 		}
 		allowedPage, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindConnection, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard, projectgraph.KindPipeline})
 		if err != nil {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
-			return "", nil, nil, false
+			return "", nil, nil, assetLoadError{status: stdhttp.StatusServiceUnavailable, err: err}
 		}
 		allowed := make(map[projectgraph.ResourceID]struct{}, len(allowedPage.Items))
 		for _, item := range allowedPage.Items {
@@ -1004,8 +1184,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 	}
 	decoded, err := projectview.DecodeDevelopCatalog(projectGraph)
 	if err != nil {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusInternalServerError), stdhttp.StatusInternalServerError)
-		return "", nil, nil, false
+		return "", nil, nil, assetLoadError{status: stdhttp.StatusInternalServerError, err: err}
 	}
 	assets := make([]projectview.DevelopAssetView, 0, len(decoded.Assets))
 	for _, asset := range decoded.Assets {
@@ -1015,7 +1194,7 @@ func (h *BrowserHandler) assets(w stdhttp.ResponseWriter, r *stdhttp.Request) (p
 	for _, edge := range decoded.Edges {
 		edges = append(edges, projectview.DevelopEdgeViewFromCatalogRecord(edge))
 	}
-	return projectID, assets, edges, true
+	return projectID, assets, edges, nil
 }
 
 func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Request, kinds []projectgraph.Kind) bool {
@@ -1048,20 +1227,20 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 				return true
 			}
 		}
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
 	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, kinds)
 	if err != nil {
 		if errors.Is(err, projectcatalog.ErrNotFound) {
-			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+			uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 			return false
 		}
 		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 		return false
 	}
 	if len(page.Items) == 0 {
-		stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusForbidden), stdhttp.StatusForbidden)
+		uitransport.WriteBrowserAuthorizationError(w, r, stdhttp.StatusForbidden)
 		return false
 	}
 	return true
@@ -1110,7 +1289,49 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 			out.Dashboards = append(out.Dashboards, projectnavigation.Dashboard{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
 		}
 	}
+	h.enrichDashboardAppearances(r.Context(), projectID, &out)
 	return out
+}
+
+func (h *BrowserHandler) enrichDashboardAppearances(ctx context.Context, projectID projectgraph.ResourceID, catalog *projectnavigation.Catalog) {
+	if catalog == nil {
+		return
+	}
+	byID := make(map[string]*projectnavigation.Dashboard, len(catalog.Dashboards))
+	for index := range catalog.Dashboards {
+		byID[catalog.Dashboards[index].ID] = &catalog.Dashboards[index]
+	}
+	if h.ProjectDefinitionReader != nil {
+		if project, _, err := h.ProjectDefinitionReader.ProjectDefinitionSnapshot(ctx); err == nil {
+			for _, source := range project.DashboardSources {
+				dashboard := byID[source.Document.Metadata.ID]
+				if dashboard == nil || source.Document.Spec.Appearance == nil {
+					continue
+				}
+				if source.Document.Spec.Appearance.Icon != nil {
+					dashboard.Appearance.Icon = strings.TrimSpace(*source.Document.Spec.Appearance.Icon)
+				}
+				if source.Document.Spec.Appearance.Color != nil {
+					dashboard.Appearance.Color = strings.TrimSpace(string(*source.Document.Spec.Appearance.Color))
+				}
+			}
+		}
+	}
+	if h.DashboardAppearances == nil {
+		return
+	}
+	overrides, err := h.DashboardAppearances.ListProject(ctx, projectID)
+	if err != nil {
+		return
+	}
+	for dashboardID, record := range overrides {
+		dashboard := byID[dashboardID.String()]
+		if dashboard == nil {
+			continue
+		}
+		dashboard.Appearance = dashboardappearance.Resolve(record.Value)
+		dashboard.AppearanceRevision = record.Revision
+	}
 }
 
 func listCatalogAll(ctx context.Context, catalog CatalogAuthorizer, principalID string, devAuthBypass bool, kinds []projectgraph.Kind) (projectcatalog.Page, error) {

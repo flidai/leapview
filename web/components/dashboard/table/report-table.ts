@@ -670,6 +670,25 @@ export class ReportTable extends LitElement {
       scrollbar-gutter: stable;
     }
 
+    .table-scrollport:focus-visible {
+      outline: 2px solid var(--lv-fg-accent, currentColor);
+      outline-offset: -2px;
+    }
+
+    .table-scroll-hint {
+      display: none;
+      margin: var(--base-size-4) var(--base-size-8) 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-align: right;
+    }
+
+    @media (max-width: 640px) {
+      .table-scroll-hint {
+        display: block;
+      }
+    }
+
     .table-plane {
       position: relative;
       isolation: isolate;
@@ -1615,6 +1634,7 @@ export class ReportTable extends LitElement {
                       <label>
                         <input
                           type="checkbox"
+                          aria-label=${column.columnDef.header}
                           .checked=${checked}
                           ?disabled=${!columnCanHide(column) || checked && columns.length <= 1}
                           @change=${columnVisibilityHandler(column, (next) => {
@@ -1633,7 +1653,7 @@ export class ReportTable extends LitElement {
         ${this.table?.error ? html`<div class="error" role="status" aria-live="polite">${this.table.error}</div>` : nothing}
         <div class="table-frame" role="table" aria-label=${this.table?.title ?? 'Orders'}>
           ${loading ? html`<div class="loading" aria-hidden="true"></div>` : nothing}
-          <div class="table-scrollport" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
+          <div class="table-scrollport" role="region" aria-label=${`Scrollable ${this.table?.title ?? 'Orders'} table`} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
             <div class="table-plane">
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
               ${this.renderGroupHeaderRows(headers)}
@@ -1654,6 +1674,7 @@ export class ReportTable extends LitElement {
             </div>
           </div>
         </div>
+        <p class="table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
         <div class="footer">
           <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.table.rowCap.toLocaleString()}` : nothing}</span>
           <span>${selectedText}</span>

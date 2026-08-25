@@ -16,9 +16,11 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -69,14 +71,137 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
 		BackHref:       "/dashboards/" + url.PathEscape(dashboardID),
+		ForkHref:       dashboardBuilderBasePath(dashboardID) + "/fork",
 		PreviewHref:    dashboardBuilderPreviewPath(dashboardID, builder),
-		ExportYAMLHref: dashboardBuilderBasePath(dashboardID) + "/export.yaml",
-		PageBaseHref:   dashboardBuilderBasePath(dashboardID) + "/edit",
-		CommandPath:    dashboardBuilderBasePath(dashboardID) + "/draft/command",
+		ExportYAMLHref: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
+		PageBaseHref:   dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
+		CommandPath:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
 		CommandBinding: dashboardBuilderCommandBinding,
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
 	}
+}
+
+// DashboardDraftCreate renders a discoverable browser entry point for the
+// existing headless create operation. The form accepts only bounded metadata;
+// the application still generates identities and the initial authored
+// document transactionally.
+func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Request) {
+	project, err := h.projectIDForRequest(r.Context())
+	if err != nil || h.Authoring == nil || h.currentActor(r) == "" {
+		writeBuilderError(w, r, access.ErrForbidden)
+		return
+	}
+	if r.Method == nethttp.MethodGet {
+		csrfToken := ""
+		if h.CSRFToken != nil {
+			csrfToken = h.CSRFToken(r)
+		}
+		if err := ui.DashboardDraftCreatePageWithKey(project.String(), csrfToken, "/dashboards/new", httptransport.NewRequestID()).Render(w); err != nil {
+			nethttp.Error(w, "dashboard draft unavailable", nethttp.StatusInternalServerError)
+		}
+		return
+	}
+	creator, ok := h.Authoring.(browserDraftCreator)
+	if !ok {
+		writeBuilderError(w, r, errors.New("dashboard authoring create operation is unavailable"))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeBuilderError(w, r, fmt.Errorf("read dashboard draft form: %w", err))
+		return
+	}
+	idempotencyKey, err := browserFormRequestID(r)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	semanticModel, err := projectgraph.NewResourceID(strings.TrimSpace(r.FormValue("semanticModel")))
+	if err != nil {
+		writeBuilderError(w, r, fmt.Errorf("%w: semantic model: %v", authoring.ErrInvalidAuthoring, err))
+		return
+	}
+	actor := h.currentActor(r)
+	result, err := creator.Create(r.Context(), authoringservice.CreateRequest{
+		ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
+		SemanticModel: semanticModel, Visibility: authoring.VisibilityPrivate, Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if err := result.Lifecycle.Validate(); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	draftID := ""
+	if result.Lifecycle.Draft != nil {
+		draftID = result.Lifecycle.Draft.ID.String()
+	}
+	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
+}
+
+// DashboardDraftFork renders and executes the browser fork action. Forks use
+// the active project source so provenance records exact serving evidence; the
+// source remains unchanged and production approval/activation stay outside
+// the browser workflow.
+func (h Handler) DashboardDraftFork(w nethttp.ResponseWriter, r *nethttp.Request) {
+	project, err := h.projectIDForRequest(r.Context())
+	if err != nil || h.Authoring == nil || h.currentActor(r) == "" {
+		writeBuilderError(w, r, access.ErrForbidden)
+		return
+	}
+	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
+	if r.Method == nethttp.MethodGet {
+		csrfToken := ""
+		if h.CSRFToken != nil {
+			csrfToken = h.CSRFToken(r)
+		}
+		if err := ui.DashboardDraftForkPageWithKey(dashboardID, csrfToken, dashboardBuilderBasePath(dashboardID)+"/fork", httptransport.NewRequestID()).Render(w); err != nil {
+			nethttp.Error(w, "dashboard fork unavailable", nethttp.StatusInternalServerError)
+		}
+		return
+	}
+	creator, ok := h.Authoring.(browserDraftCreator)
+	if !ok {
+		writeBuilderError(w, r, errors.New("dashboard authoring fork operation is unavailable"))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeBuilderError(w, r, fmt.Errorf("read dashboard fork form: %w", err))
+		return
+	}
+	idempotencyKey, err := browserFormRequestID(r)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	result, err := creator.Fork(r.Context(), sourceadapter.ForkRequest{
+		Source:          sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: project, DashboardID: authoring.DashboardID(dashboardID)},
+		TargetProjectID: project, ActorID: h.currentActor(r), Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
+		Origin: authoring.OriginUI, IdempotencyKey: idempotencyKey,
+	})
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if err := result.Lifecycle.Validate(); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	draftID := ""
+	if result.Lifecycle.Draft != nil {
+		draftID = result.Lifecycle.Draft.ID.String()
+	}
+	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
+}
+
+func browserFormRequestID(r *nethttp.Request) (string, error) {
+	value := strings.TrimSpace(r.FormValue("idempotencyKey"))
+	if value == "" {
+		return "", fmt.Errorf("%w: idempotencyKey is required", authoring.ErrInvalidPayload)
+	}
+	return value, nil
 }
 
 // DashboardBuilderUpdates emits the typed builder projection on the canonical
@@ -464,6 +589,16 @@ func dashboardBuilderBasePath(dashboardID string) string {
 	return "/dashboards/" + url.PathEscape(dashboardID)
 }
 
+func dashboardBuilderDraftRoute(dashboardID, draftID, suffix string) string {
+	base := dashboardBuilderBasePath(dashboardID) + suffix
+	if strings.TrimSpace(draftID) == "" {
+		return base
+	}
+	values := url.Values{}
+	values.Set("draft", draftID)
+	return base + "?" + values.Encode()
+}
+
 func dashboardBuilderPreviewPath(dashboardID string, builder uisignals.DashboardBuilderSignal) string {
 	values := url.Values{}
 	values.Set("page", firstBuilderPage(builder))
@@ -491,7 +626,7 @@ func (h Handler) currentActor(r *nethttp.Request) string {
 	return strings.TrimSpace(h.CurrentPrincipalID(r))
 }
 
-func writeBuilderError(w nethttp.ResponseWriter, _ *nethttp.Request, err error) {
+func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 	status := nethttp.StatusInternalServerError
 	switch {
 	case errors.Is(err, access.ErrForbidden):
@@ -504,6 +639,10 @@ func writeBuilderError(w nethttp.ResponseWriter, _ *nethttp.Request, err error) 
 		status = nethttp.StatusConflict
 	case errors.Is(err, authoring.ErrInvalidAuthoring), errors.Is(err, authoring.ErrInvalidIdentifier), errors.Is(err, authoring.ErrInvalidPayload):
 		status = nethttp.StatusBadRequest
+	}
+	if status == nethttp.StatusForbidden {
+		webtransport.WriteBrowserAuthorizationError(w, r, status)
+		return
 	}
 	message := "dashboard builder unavailable"
 	switch status {

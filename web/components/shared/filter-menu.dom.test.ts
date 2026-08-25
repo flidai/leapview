@@ -77,6 +77,7 @@ test('filter menu renders backend-owned options and emits search/toggle/clear co
       await element.updateComplete
       const openText = root.textContent ?? ''
       const search = root.querySelector<HTMLInputElement>('.search input')!
+      const searchLabel = search.getAttribute('aria-label')
       search.value = 'age'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 250))
@@ -103,12 +104,13 @@ test('filter menu renders backend-owned options and emits search/toggle/clear co
       element.menu = { ...element.menu, loading: false, error: 'Filter options failed.' }
       await element.updateComplete
       const errorText = root.textContent ?? ''
-      return { initialTriggerText, openText, searchCommand, toggleCommand, clearCommand, closedAfterEscape, emptyText, loadingText, errorText }
+      return { initialTriggerText, openText, searchLabel, searchCommand, toggleCommand, clearCommand, closedAfterEscape, emptyText, loadingText, errorText }
     })
 
     expect(state.initialTriggerText).toMatch(/User/)
     expect(state.openText).toMatch(/Me \(dev@example\.com\)/)
     expect(state.openText).toMatch(/agent/)
+    expect(state.searchLabel).toBe('Search User')
     expect(state.searchCommand).toMatchObject({ menuId: 'principal', action: 'search', search: 'age', selected: ['dev'] })
     expect(state.toggleCommand).toMatchObject({ menuId: 'principal', action: 'toggle', value: 'agent', selected: ['dev'] })
     expect(state.clearCommand).toMatchObject({ menuId: 'principal', action: 'clear', selected: ['dev'] })

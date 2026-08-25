@@ -104,6 +104,7 @@ type CanonicalRefreshResult struct {
 type Service struct {
 	ServingStates            ServingStateRepository
 	ResolveActive            func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
+	ResolveSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
 	Runs                     WorkflowRepository
 	Artifacts                ArtifactLoader
@@ -235,7 +236,17 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		}
 	}
 	runIdentity := mustStateIdentity(candidate.State)
-	plan, err = plan.BindGeneration(runIdentity, active.Artifact.Digest)
+	planArtifactDigest := active.Artifact.Digest
+	if s.CanonicalExecutor != nil {
+		if s.ResolveSourceDigest == nil {
+			return QueueAssetResult{}, fmt.Errorf("canonical refresh source digest resolver is required")
+		}
+		planArtifactDigest, err = s.ResolveSourceDigest(ctx, input.Identity)
+		if err != nil {
+			return QueueAssetResult{}, fmt.Errorf("resolve canonical refresh source digest: %w", err)
+		}
+	}
+	plan, err = plan.BindGeneration(runIdentity, planArtifactDigest)
 	if err != nil {
 		return QueueAssetResult{}, err
 	}

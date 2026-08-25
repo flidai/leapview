@@ -33,3 +33,39 @@ func TestValidateDiscoveredSchemasRejectsIncompatibleAuthoredDatatype(t *testing
 		t.Fatal("ValidateDiscoveredSchemas accepted incompatible datatype")
 	}
 }
+
+func TestResolveDiscoveredModelFieldsDerivesUndeclaredAndUntypedFields(t *testing.T) {
+	nullable := true
+	model := &Model{Tables: map[string]Table{"customers": {
+		Dimensions: map[string]MetricDimension{"customer_id": {Label: "Customer ID"}},
+		Schema: TableSchema{Columns: []ColumnSchema{
+			{Name: "customer_id", PhysicalType: "VARCHAR", Nullable: &nullable},
+			{Name: "lifetime_value", PhysicalType: "DECIMAL(18,2)", Nullable: &nullable},
+		}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err != nil {
+		t.Fatal(err)
+	}
+	table := model.Tables["customers"]
+	if got := table.Dimensions["customer_id"]; got.Datatype != DataTypeString || got.Label != "Customer ID" {
+		t.Fatalf("documented field = %#v", got)
+	}
+	if got := table.Dimensions["lifetime_value"]; got.Datatype != DataTypeDecimal || got.Label != "Lifetime value" {
+		t.Fatalf("inferred field = %#v", got)
+	}
+	if got := table.Columns["lifetime_value"]; got.Datatype != DataTypeDecimal || got.SourceField != "lifetime_value" {
+		t.Fatalf("inferred column = %#v", got)
+	}
+}
+
+func TestResolveDiscoveredModelFieldsRejectsMissingDocumentedField(t *testing.T) {
+	model := &Model{Tables: map[string]Table{"customers": {
+		Dimensions: map[string]MetricDimension{"missing": {Label: "Missing"}},
+		Schema:     TableSchema{Columns: []ColumnSchema{{Name: "customer_id", PhysicalType: "VARCHAR"}}},
+	}}}
+
+	if err := model.ResolveDiscoveredModelFields(); err == nil {
+		t.Fatal("ResolveDiscoveredModelFields accepted documented field missing from DuckLake schema")
+	}
+}

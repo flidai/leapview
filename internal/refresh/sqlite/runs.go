@@ -711,6 +711,45 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, scope refreshrun.
 	return out, nil
 }
 
+// ListSemanticModelRuns returns root pipeline runs that materialize one
+// semantic model, independent of which refresh pipeline initiated them.
+func (r *SQLRunRepository) ListSemanticModelRuns(ctx context.Context, scope refreshrun.ReadScope, semanticModelID projectgraph.ResourceID, page refreshrun.RunPage) ([]refreshrun.RunRecord, error) {
+	if err := scope.Validate(); err != nil {
+		return nil, err
+	}
+	if err := semanticModelID.Validate(); err != nil {
+		return nil, err
+	}
+	limit := runPageLimit(page)
+	cursor := runPageCursor{}
+	if after := strings.TrimSpace(page.After); after != "" {
+		resolved, ok, err := r.runPageCursor(ctx, scope, "", "", after)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return []refreshrun.RunRecord{}, nil
+		}
+		cursor = resolved
+	}
+	rows, err := r.q.ListSemanticModelMaterializationRuns(ctx, platformdb.ListSemanticModelMaterializationRunsParams{
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, SemanticModelID: semanticModelID.String(),
+		CursorCreatedAt: cursor.CreatedAt, CursorSequence: cursor.Sequence, Limit: int64(limit),
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]refreshrun.RunRecord, 0, len(rows))
+	for _, row := range rows {
+		run, mapErr := materializationRunFromSemanticModelListRow(row)
+		if mapErr != nil {
+			return nil, mapErr
+		}
+		out = append(out, run)
+	}
+	return out, nil
+}
+
 func (r *SQLRunRepository) ListChildRuns(ctx context.Context, scope refreshrun.ReadScope, parentRunID string) ([]refreshrun.RunRecord, error) {
 	if err := scope.Validate(); err != nil {
 		return nil, err
@@ -767,6 +806,29 @@ func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, scope 
 		return refreshrun.RunRecord{}, false, err
 	}
 	run, mapErr := materializationRunFromLatestRow(row)
+	if mapErr != nil {
+		return refreshrun.RunRecord{}, false, mapErr
+	}
+	return run, true, nil
+}
+
+func (r *SQLRunRepository) LatestSuccessfulSemanticModelRun(ctx context.Context, scope refreshrun.ReadScope, semanticModelID projectgraph.ResourceID) (refreshrun.RunRecord, bool, error) {
+	if err := scope.Validate(); err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	if err := semanticModelID.Validate(); err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	row, err := r.q.LatestSuccessfulSemanticModelMaterializationRun(ctx, platformdb.LatestSuccessfulSemanticModelMaterializationRunParams{
+		ProjectID: scope.ProjectID.String(), Environment: scope.Environment, SemanticModelID: semanticModelID.String(), Status: refreshrun.RunStatusSucceeded,
+	})
+	if err == sql.ErrNoRows {
+		return refreshrun.RunRecord{}, false, nil
+	}
+	if err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	run, mapErr := materializationRunFromLatestSemanticModelRow(row)
 	if mapErr != nil {
 		return refreshrun.RunRecord{}, false, mapErr
 	}
@@ -1204,6 +1266,24 @@ func materializationRunFromListRow(row platformdb.ListMaterializationRunsRow) (r
 }
 
 func materializationRunFromTargetListRow(row platformdb.ListTargetMaterializationRunsRow) (refreshrun.RunRecord, error) {
+	return materializationRunFromDB(materializationRunDBRow{
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
+		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
+	})
+}
+
+func materializationRunFromSemanticModelListRow(row platformdb.ListSemanticModelMaterializationRunsRow) (refreshrun.RunRecord, error) {
+	return materializationRunFromDB(materializationRunDBRow{
+		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
+		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
+		TargetID: row.TargetID, TargetRevision: row.TargetRevision, TriggerType: row.TriggerType, TriggerID: row.TriggerID, InvocationSource: row.InvocationSource, NominalTime: row.NominalTime, PlanDigest: row.PlanDigest, MaterializationScopeJSON: row.MaterializationScopeJson, MatchingScheduleIDsJSON: row.MatchingScheduleIdsJson, ParentRunID: row.ParentRunID, Status: row.Status,
+		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt, StartedAt: row.StartedAt, FinishedAt: row.FinishedAt, Error: row.Error,
+	})
+}
+
+func materializationRunFromLatestSemanticModelRow(row platformdb.LatestSuccessfulSemanticModelMaterializationRunRow) (refreshrun.RunRecord, error) {
 	return materializationRunFromDB(materializationRunDBRow{
 		ID: row.ID, ProjectID: row.ProjectID, Environment: row.Environment, GenerationID: row.GenerationID, SemanticModelID: row.SemanticModelID, PipelineID: row.PipelineID,
 		PrincipalID: row.PrincipalID, PrincipalDisplayName: row.PrincipalDisplayName, TargetType: row.TargetType,
