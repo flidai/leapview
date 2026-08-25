@@ -105,17 +105,26 @@ test('fixed project areas keep canonical asset links', async () => {
   }
 })
 
-test('semantic model asset details use the Waypoints SVG identity', async () => {
+test('semantic model breadcrumb uses the plain list-page icon identity', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=semantic-detail`)
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const icon = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return element.shadowRoot?.querySelector('h1 .asset-glyph svg')?.innerHTML ?? ''
+      const glyph = element.shadowRoot?.querySelector('h1 .asset-glyph') as HTMLElement | null
+      return {
+        svg: glyph?.querySelector('svg')?.innerHTML ?? '',
+        plain: glyph?.classList.contains('breadcrumb'),
+        background: glyph ? getComputedStyle(glyph).backgroundColor : '',
+        borderWidth: glyph ? getComputedStyle(glyph).borderTopWidth : '',
+      }
     })
-    expect(icon).toContain('M6 12h12')
-    expect(icon).not.toContain('M21 8a2 2 0 00-1-1.73')
+    expect(icon.svg).toContain('M6 12h12')
+    expect(icon.svg).not.toContain('M21 8a2 2 0 00-1-1.73')
+    expect(icon.plain).toBe(true)
+    expect(icon.background).toBe('rgba(0, 0, 0, 0)')
+    expect(icon.borderWidth).toBe('0px')
   } finally {
     await page.close()
   }

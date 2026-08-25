@@ -632,7 +632,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
               ${page.breadcrumbs.map((crumb) => html`
                 <li>
                   ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'inline')}<span>${crumb.label}</span></h1>`
+                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
                     : html`<a href=${crumb.href}>${crumb.label}</a>`}
                 </li>
               `)}
@@ -667,7 +667,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
               ${page.breadcrumbs.map((crumb) => html`
                 <li>
                   ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'inline')}<span>${crumb.label}</span></h1>`
+                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
                     : html`<a href=${crumb.href}>${crumb.label}</a>`}
                 </li>
               `)}
@@ -973,11 +973,12 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
   `
 }
 
-function assetTypeGlyph(type: string, size: 'table' | 'inline' = 'table') {
+function assetTypeGlyph(type: string, size: 'table' | 'inline' | 'breadcrumb' = 'table') {
   const presentation = assetPresentation(type)
+  const iconSize = size === 'inline' ? 14 : 16
   return html`
-    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'inline' ? 'inline' : ''}`} aria-hidden="true">
-      ${lucideIcon(presentation.icon, { size: size === 'inline' ? 14 : 16, strokeWidth: 1.75 })}
+    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'table' ? '' : size}`} aria-hidden="true">
+      ${lucideIcon(presentation.icon, { size: iconSize, strokeWidth: 1.75 })}
     </span>
   `
 }
@@ -1354,6 +1355,13 @@ const projectStyles = css`
   .asset-glyph.inline {
     width: var(--base-size-20);
     height: var(--base-size-20);
+  }
+
+  .asset-glyph.breadcrumb {
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+    border: 0;
+    background: transparent;
   }
 
   .asset-kind-catalog {
