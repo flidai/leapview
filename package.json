@@ -92,7 +92,8 @@
     "monaco-editor-core": "^0.55.1",
     "p5": "^2.3.0",
     "shiki": "^4.3.0",
-    "sql-formatter": "^15.8.2"
+    "sql-formatter": "^15.8.2",
+    "yaml": "2.8.1"
   },
   "overrides": {
     "dompurify": "3.4.13",

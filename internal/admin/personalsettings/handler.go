@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type PrincipalProvider func(*http.Request) (string, bool)

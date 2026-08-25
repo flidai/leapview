@@ -2,6 +2,8 @@ package module
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -9,6 +11,58 @@ import (
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 )
+
+// BuildAuditIntent resolves the generated command contract into a durable
+// source intent. The repository fills IDs that are not known until insertion.
+func BuildAuditIntent(ctx context.Context, input agenthttp.CommandAuditInput) (*access.AuditIntent, error) {
+	operationID := strings.TrimSpace(input.OperationID)
+	contract, ok := agentgen.GetAPIGenOperationContract(operationID)
+	if !ok || contract.Command == nil {
+		return nil, fmt.Errorf("generated agent command contract %q is unavailable", operationID)
+	}
+	command := contract.Command
+	if !command.Audit.Required || strings.TrimSpace(command.Audit.SuccessAction) == "" || (command.Audit.Guarantee != "best-effort" && command.Audit.Guarantee != "transactional") {
+		return nil, fmt.Errorf("generated agent command contract %q does not define a durable audit", operationID)
+	}
+	capability, ok := agentCommandCapability(command.Privilege)
+	if command.AuthzMode == "authenticated" && strings.TrimSpace(command.Privilege) == "" {
+		capability, ok = access.CapabilityResourceUse, true
+	}
+	if !ok || (command.AuthzMode != "privilege" && command.AuthzMode != "authenticated") || contract.AuthzMode != command.AuthzMode {
+		return nil, fmt.Errorf("generated agent command contract %q has invalid authorization", operationID)
+	}
+	targetType := strings.TrimSpace(input.TargetType)
+	if command.Target != nil {
+		targetType = strings.TrimSpace(command.Target.Type)
+	}
+	surface := strings.TrimSpace(input.Surface)
+	if surface == "" {
+		surface = "api"
+	}
+	metadata, err := encodeAgentCommandAuditPayload(operationID, agentgen.GenSchemaAgentCommandAuditPayload{
+		OperationId: operationID, ResourceKind: targetType, ResourceId: strings.TrimSpace(input.TargetID), Surface: surface,
+	})
+	if err != nil {
+		return nil, err
+	}
+	resourceID := strings.TrimSpace(input.TargetID)
+	hash := sha256.Sum256([]byte(operationID + "\x00" + input.Scope.PrincipalID + "\x00" + targetType + "\x00" + resourceID + "\x00" + input.RequestID))
+	return &access.AuditIntent{
+		EventID: "sha256:" + hex.EncodeToString(hash[:]), Source: command.Owner, Operation: operationID,
+		PrincipalID: strings.TrimSpace(input.Scope.PrincipalID), Action: command.Audit.SuccessAction, ResourceKind: targetType, ResourceID: resourceID,
+		Capability: capability, Outcome: agentAuditOutcome(operationID), RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID),
+		AggregateKey: targetType + ":" + resourceID, MetadataJSON: metadata,
+	}, nil
+}
+
+func agentAuditOutcome(operationID string) string {
+	switch operationID {
+	case string(agentgen.GenOperationCreateAgentRun):
+		return "accepted"
+	default:
+		return "success"
+	}
+}
 
 func (m *Module) recordCommandAudit(ctx context.Context, input agenthttp.CommandAuditInput) error {
 	operationID := strings.TrimSpace(input.OperationID)

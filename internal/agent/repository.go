@@ -4,6 +4,7 @@ import (
 	"context"
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -133,6 +134,13 @@ type RunInput struct {
 
 type RunWorkflowUnitOfWork interface {
 	ActivateRunWorkflow(context.Context, string, string, string, jobs.WorkflowIntent) (Run, error)
+}
+
+// RunWorkflowAuditUnitOfWork is the durable command boundary used when a
+// transport supplied an Access audit intent. Implementations commit the
+// intent with the queued run transition and workflow enqueue.
+type RunWorkflowAuditUnitOfWork interface {
+	ActivateRunWorkflowWithAudit(context.Context, string, string, string, jobs.WorkflowIntent, *access.AuditIntent) (Run, error)
 }
 
 // RunTerminalWorkflow atomically persists a terminal run transition and its

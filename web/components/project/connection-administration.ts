@@ -7,7 +7,7 @@ import type {
   ConnectionLifecycleSignal,
 } from '../../generated/signals'
 import { lucideIcon } from '../shared/lucide-icons'
-import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
+import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import '../shared/drawer'
 import '../shared/loading-spinner'
 
@@ -20,6 +20,7 @@ class LeapViewConnectionAdministration extends LitElement {
   @state() private selectedLogical = ''
   @state() private authenticationMode = 'external_bundle'
   @state() private terminalFailure: BrowserCommandFailure | null = null
+  private commandPending = false
 
   static get styles() {
     return css`
@@ -130,6 +131,8 @@ class LeapViewConnectionAdministration extends LitElement {
       return
     }
     if (action.id === 'disable' && !window.confirm(`Disable ${lifecycle.logicalConnection}? Dependent sources will stop using this connection until it is enabled and tested again.`)) return
+    this.commandPending = true
+    this.terminalFailure = null
     this.dispatchEvent(new CustomEvent('lv-connection-administration-action', {
       bubbles: true,
       composed: true,
@@ -213,6 +216,8 @@ class LeapViewConnectionAdministration extends LitElement {
     if (this.administration.command.logicalConnection === lifecycle.logicalConnection) {
       command.confirmationToken = this.administration.command.confirmationToken
     }
+    this.commandPending = true
+    this.terminalFailure = null
     this.dispatchEvent(new CustomEvent('lv-connection-administration-save', { bubbles: true, composed: true, detail: command }))
   }
 
@@ -277,8 +282,15 @@ class LeapViewConnectionAdministration extends LitElement {
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {
+    if (!this.commandPending || !ownsBrowserCommandFetch(this, event)) return
+    const detail = (event as CustomEvent<{ type?: string }>).detail
+    if (detail?.type === 'finished') {
+      this.commandPending = false
+      return
+    }
     const failure = browserCommandFailure(event, 'Connection action')
     if (!failure) return
+    this.commandPending = false
     this.terminalFailure = failure
   }
 

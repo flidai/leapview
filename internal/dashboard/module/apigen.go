@@ -15,7 +15,7 @@ func (h dashboardAPIGenHandler) authoringAPI() dashboardhttp.AuthoringAPI {
 	if actor == nil {
 		actor = h.module.handler.CurrentPrincipalID
 	}
-	return dashboardhttp.AuthoringAPI{Application: h.module.authoring, ActorID: actor, RecordAudit: h.module.recordAudit}
+	return dashboardhttp.AuthoringAPI{Application: h.module.authoring, ActorID: actor}
 }
 
 func (h dashboardAPIGenHandler) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request, _ string) {

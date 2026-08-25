@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	connectionadmin "github.com/flidai/leapview/internal/analytics/connectionadmin"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -33,6 +32,7 @@ import (
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
 	refreshpresentation "github.com/flidai/leapview/internal/refresh/presentation"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 	g "maragu.dev/gomponents"
 )
@@ -165,7 +165,6 @@ type BrowserHandler struct {
 	BeginConnectionCommand   func(context.Context, CreatorCommandInvocation) (context.Context, error)
 	BeginPipelineCommand     func(context.Context, CreatorCommandInvocation) (context.Context, error)
 	MutationMiddleware       func(stdhttp.Handler) stdhttp.Handler
-	Trace                    *pagestream.TraceStore
 	Layout                   func(*stdhttp.Request) webpage.Provider
 	CSRFToken                func(*stdhttp.Request) string
 	CurrentUser              func(*stdhttp.Request) (Principal, bool)
@@ -237,16 +236,30 @@ func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	canCreateDraft := false
-	if h.AuthorizeCreateDashboard != nil {
-		if projectID, err := h.boundProject(r.Context()); err == nil {
-			principal, ok := h.CurrentUser(r)
-			if ok && principal.ID != "" {
-				canCreateDraft, _ = h.AuthorizeCreateDashboard(r, projectID, access.CapabilityResourceEdit)
-			}
-		}
-	}
+	canCreateDraft := h.dashboardCreationAllowed(r)
 	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, projectui.CatalogListOptions{Query: r.URL.Query().Get("q"), CanCreateDraft: canCreateDraft}, h.csrf(r), h.layout(r)))
+}
+
+func (h *BrowserHandler) dashboardCreationAllowed(r *stdhttp.Request) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false
+	}
+	if principal.DevBypass {
+		return true
+	}
+	if h.AuthorizeCreateDashboard == nil {
+		return false
+	}
+	projectID, err := h.boundProject(r.Context())
+	if err != nil {
+		return false
+	}
+	allowed, err := h.AuthorizeCreateDashboard(r, projectID, access.CapabilityResourceEdit)
+	return err == nil && allowed
 }
 
 func (h *BrowserHandler) CatalogSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -602,7 +615,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 			return
 		}
 	}
-	_ = uitransport.PatchOnce(h.Trace, w, r, pagestream.SignalPatch(patch))
+	uitransport.PatchAndWait(w, r, pagestream.SignalPatch(patch))
 }
 
 func (h *BrowserHandler) projectBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Request) (map[string]any, bool) {

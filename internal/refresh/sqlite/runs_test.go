@@ -2,6 +2,8 @@ package sqlite
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -9,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/platform"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
@@ -70,6 +73,80 @@ INSERT INTO serving_states (id, project_id, environment, status) VALUES ('genera
 	recorded, err := events.ListEvents(t.Context(), "refresh", run.ID, 0, 10)
 	if err != nil || len(recorded) != 1 || recorded[0].EventType != "refresh.queued" {
 		t.Fatalf("initial events = %#v, %v", recorded, err)
+	}
+}
+
+func TestSQLRunRepositoryCancellationAuditUsesCancelledStatus(t *testing.T) {
+	store, repository, _ := seedRefreshJob(t, refreshrun.RunStatusQueued, "+5 minutes")
+	if _, err := store.SQLDB().ExecContext(t.Context(), `UPDATE serving_states SET source = 'refresh' WHERE id = ?`, testRunIdentity.GenerationID); err != nil {
+		t.Fatal(err)
+	}
+	var recorded access.AuditIntent
+	repository.ConfigureAuditIntentRecorder(access.AuditIntentRecorderFunc(func(_ context.Context, _ transaction.Transaction, intent access.AuditIntent) error {
+		recorded = intent
+		return nil
+	}))
+	_, err := repository.CancelRunWithAudit(t.Context(), testRunIdentity, "run_1", &access.AuditIntent{
+		Source: "LeapViewAPI.Refresh", Operation: "cancelRefreshRun", PrincipalID: "user:test", RequestID: "request-cancel",
+		ResourceKind: "project", ResourceID: testRunIdentity.ProjectID.String(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(recorded.MetadataJSON), &payload); err != nil {
+		t.Fatalf("decode cancellation audit payload %q: %v", recorded.MetadataJSON, err)
+	}
+	nested, ok := payload["payload"].(map[string]any)
+	if !ok {
+		t.Fatalf("cancellation audit payload body = %#v", payload["payload"])
+	}
+	if nested["status"] != string(refreshrun.RunStatusCancelled) {
+		t.Fatalf("cancellation audit payload = %q status = %v, want %q", recorded.MetadataJSON, nested["status"], refreshrun.RunStatusCancelled)
+	}
+	assertRefreshAuditIdentity(t, recorded, "run_1", 2)
+}
+
+func TestSQLRunRepositoryCreateAuditPreservesProjectIdentityAndUsesRunAggregate(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+INSERT INTO serving_states (id, project_id, environment, status) VALUES ('generation_a', 'project_sales', 'dev', 'validated');
+INSERT INTO principals (id, email, display_name) VALUES ('user:test', 'test@example.test', 'Test');`); err != nil {
+		t.Fatal(err)
+	}
+	var recorded access.AuditIntent
+	repository := NewSQLRunRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, RunWorkflowConfig{}, access.AuditIntentRecorderFunc(func(_ context.Context, _ transaction.Transaction, intent access.AuditIntent) error {
+		recorded = intent
+		return nil
+	}))
+	input := testSQLiteRootRunInput(testRunIdentity, "pipeline_daily", "semantic_sales", "user:test")
+	input.AuditIntent = &access.AuditIntent{
+		Source: "LeapViewAPI.Refresh", Operation: "createRefreshRun", PrincipalID: "user:test", RequestID: "request-create",
+		ResourceKind: "project", ResourceID: testRunIdentity.ProjectID.String(), AggregateKey: "project:" + testRunIdentity.ProjectID.String(),
+	}
+	run, err := repository.CreateRun(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRefreshAuditIdentity(t, recorded, run.ID, 1)
+}
+
+func assertRefreshAuditIdentity(t *testing.T, intent access.AuditIntent, runID string, sequence int64) {
+	t.Helper()
+	if intent.ResourceKind != "project" || intent.ResourceID != testRunIdentity.ProjectID.String() {
+		t.Fatalf("audit resource = %s/%s, want project/%s", intent.ResourceKind, intent.ResourceID, testRunIdentity.ProjectID)
+	}
+	if intent.AggregateKey != "refresh_run:"+runID || intent.AggregateSequence != sequence {
+		t.Fatalf("audit aggregate = %s/%d, want refresh_run:%s/%d", intent.AggregateKey, intent.AggregateSequence, runID, sequence)
+	}
+	hash := sha256.Sum256([]byte(intent.Operation + "\x00" + intent.PrincipalID + "\x00" + runID + "\x00" + intent.RequestID))
+	wantEventID := "sha256:" + hex.EncodeToString(hash[:])
+	if intent.EventID != wantEventID {
+		t.Fatalf("audit event id = %q, want run-specific %q", intent.EventID, wantEventID)
 	}
 }
 

@@ -12,7 +12,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/agent"
@@ -20,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/agent/ui"
 	"github.com/flidai/leapview/internal/platform"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -209,14 +209,8 @@ func TestChatUpdatesForwardsDatastarConversationPatches(t *testing.T) {
 	go func() { defer close(done); handler.ChatUpdates(response, request) }()
 	streamID := chatStreamID(agent.Scope{PrincipalID: fixture.owner}, "chat-client")
 	deadline := time.Now().Add(time.Second)
-	for broker.SubscriberCount(streamID) == 0 && time.Now().Before(deadline) {
-		time.Sleep(time.Millisecond)
-	}
-	if broker.SubscriberCount(streamID) == 0 {
-		t.Fatal("chat updates stream did not subscribe")
-	}
-	broker.Publish(streamID, pagestream.SignalPatch{"agent": map[string]any{"conversations": []map[string]any{{"id": liveConversation.ID, "title": liveConversation.Title}}}})
 	for !strings.Contains(response.body(), "Live title") && time.Now().Before(deadline) {
+		broker.Publish(streamID, pagestream.SignalPatch{"agent": map[string]any{"conversations": []map[string]any{{"id": liveConversation.ID, "title": liveConversation.Title}}}})
 		time.Sleep(time.Millisecond)
 	}
 	cancel()

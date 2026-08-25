@@ -205,6 +205,34 @@ func TestPipelineCommandAndReplayAllowConfiguredDevelopmentBypass(t *testing.T) 
 	}
 }
 
+func TestConnectionCommandsAllowConfiguredDevelopmentBypass(t *testing.T) {
+	projectAuthorizerCalled := false
+	resourceAuthorizerCalled := false
+	h := &BrowserHandler{
+		CurrentUser: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizeConnectionCreate: func(*http.Request, projectgraph.ResourceID, access.Capability) (bool, error) {
+			projectAuthorizerCalled = true
+			return false, nil
+		},
+		AuthorizeConnection: func(*http.Request, string, access.Capability) (bool, error) {
+			resourceAuthorizerCalled = true
+			return false, nil
+		},
+	}
+	request := httptest.NewRequest(http.MethodPost, "/connections/administration/configuration", nil)
+	if !h.connectionCreateAllowed(request, "project:test") {
+		t.Fatal("configured development bypass did not allow connection creation")
+	}
+	if !h.connectionMutationAllowed(request, "connection:warehouse", access.CapabilityResourceManage) {
+		t.Fatal("configured development bypass did not allow connection mutation")
+	}
+	if projectAuthorizerCalled || resourceAuthorizerCalled {
+		t.Fatal("development bypass unexpectedly consulted serving-state connection authorizers")
+	}
+}
+
 func TestPipelineAssetCommandSuccessPreservesDetailProjection(t *testing.T) {
 	const projectID = "project:test"
 	const assetID = "pipeline:sales"

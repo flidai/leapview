@@ -9,6 +9,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehost "github.com/flidai/leapview/internal/runtimehost"
 )
@@ -25,6 +26,9 @@ func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *te
 	var authorized []access.ResourceRef
 	authoring, err := BuildAuthoring(AuthoringConfig{
 		Database: store.SQLDB(),
+		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+			return nil
+		}),
 		AuthorizeResource: func(_ context.Context, _ string, _ projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			authorized = append(authorized, resource)
 			if resource.Kind() == projectgraph.KindProject && capability != access.CapabilityResourceEdit {

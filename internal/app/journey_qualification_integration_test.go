@@ -38,8 +38,13 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 
 	// The real authoring application is required so /dashboards/new and
 	// /dashboards/{dashboard}/fork cannot silently stop at a nil test seam.
+	audit, err := newAuditRuntime(store.SQLDB())
+	if err != nil {
+		t.Fatalf("build audit runtime: %v", err)
+	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database: store.SQLDB(),
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: audit.recorder,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, options.AccessModule, options.RuntimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},

@@ -15,7 +15,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	_ "github.com/duckdb/duckdb-go/v2"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
@@ -28,6 +27,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type synchronizedResponseRecorder struct {
@@ -309,7 +309,10 @@ func TestAdminQueryHistoryCommandPublishesLoadMorePatch(t *testing.T) {
 	if err != nil || len(expectedNext) != 1 {
 		t.Fatalf("next page = %d, err=%v", len(expectedNext), err)
 	}
-	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 	defer unsubscribe()
 
 	body := strings.NewReader(`{"adminQueryHistory":{"table":{"rows":[{"id":"existing","query":{"label":"select 1","expandedContent":"select 1"}}]}},"adminQueryHistoryCommand":{"action":"load_more","pageToken":"` + nextCursor + `","limit":2}}`)
@@ -364,7 +367,10 @@ func TestAdminQueryHistoryCommandPublishesFilteredResetPatch(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 	defer unsubscribe()
 
 	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"reset","limit":50,"filters":{"projects":["project:sales"],"surfaces":["api"],"statuses":["success"],"search":"orders"}}}`)
@@ -423,7 +429,10 @@ func TestAdminQueryHistoryCommandSearchesFilterMenuOptions(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 	defer unsubscribe()
 
 	body := strings.NewReader(`{"adminQueryHistory":{"filterMenus":[{"id":"project","label":"Project"}]},"adminQueryHistoryCommand":{"action":"filter_search","limit":50,"filterMenu":{"menuId":"project","action":"search","search":"oper"}}}`)
@@ -473,7 +482,10 @@ func TestAdminQueryHistoryCommandTogglesFilterAndResetsTable(t *testing.T) {
 		}
 		time.Sleep(time.Millisecond)
 	}
-	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 	defer unsubscribe()
 
 	body := strings.NewReader(`{"adminQueryHistory":{"table":{"rows":[{"id":"old"}]}},"adminQueryHistoryCommand":{"action":"filter_toggle","limit":50,"filterMenu":{"menuId":"surface","action":"toggle","value":"agent","selected":[]}}}`)
@@ -543,7 +555,10 @@ func TestAdminQueryHistoryCommandPublishesDetailPatch(t *testing.T) {
 	if err != nil || len(events) != 1 {
 		t.Fatalf("query events = %d, err=%v", len(events), err)
 	}
-	updates, unsubscribe := server.runtime.broker.Subscribe("admin-queries:test-client")
+	updates, unsubscribe, err := server.runtime.broker.Subscribe("admin-queries:test-client")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
 	defer unsubscribe()
 
 	body := strings.NewReader(`{"adminQueryHistoryCommand":{"action":"select_detail","eventId":"` + events[0].ID + `","limit":50}}`)
@@ -654,17 +669,8 @@ func TestAdminQueryHistoryUpdatesForwardsPatches(t *testing.T) {
 	}()
 
 	deadline := time.After(10 * time.Second)
-	for server.runtime.broker.SubscriberCount("admin-queries:test-client") == 0 {
-		select {
-		case <-deadline:
-			t.Fatal("timed out waiting for query history updates subscriber")
-		default:
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	server.runtime.broker.Publish("admin-queries:test-client", pagestream.SignalPatch{"adminQueryHistory": map[string]any{"loadedCountLabel": "sentinel"}})
-	deadline = time.After(10 * time.Second)
 	for !strings.Contains(rec.BodyString(), "sentinel") {
+		server.runtime.broker.Publish("admin-queries:test-client", pagestream.SignalPatch{"adminQueryHistory": map[string]any{"loadedCountLabel": "sentinel"}})
 		select {
 		case <-deadline:
 			t.Fatalf("timed out waiting for forwarded patch:\n%s", rec.BodyString())

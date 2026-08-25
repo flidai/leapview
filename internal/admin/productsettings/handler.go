@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/admin/product"
 	signals "github.com/flidai/leapview/internal/admin/ui/signals"
 	"github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 // CommandSignals is the Datastar request envelope. Keeping the root key

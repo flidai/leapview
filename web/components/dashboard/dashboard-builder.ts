@@ -14,7 +14,7 @@ import type {
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
-import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
+import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 
@@ -50,6 +50,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private localVisualID = ''
   @state() private visualType = 'bar'
   @state() private terminalFailure: BrowserCommandFailure | null = null
+  private commandPending = false
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
 
   // Add-page uses server-generated identifiers. Keep the page set that was
@@ -882,8 +883,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {
+    if (!this.commandPending || !ownsBrowserCommandFetch(this, event)) return
+    const detail = (event as CustomEvent<{ type?: string }>).detail
+    if (detail?.type === 'finished') {
+      this.commandPending = false
+      return
+    }
     const failure = browserCommandFailure(event, 'Dashboard builder action')
     if (!failure) return
+    this.commandPending = false
     this.terminalFailure = failure
   }
 
@@ -1169,6 +1177,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private emitCommand(action: string, detail: Record<string, unknown> = {}): void {
+    this.commandPending = true
+    this.terminalFailure = null
     this.emit('lv-builder-command', { ...this.commandDetail(), action, ...detail })
   }
 

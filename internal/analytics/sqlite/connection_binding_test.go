@@ -8,8 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,6 +122,108 @@ func TestConnectionBindingRepositoryListsOnlyRequestedTargetScope(t *testing.T) 
 	if len(other) != 0 {
 		t.Fatalf("other-scope bindings = %#v", other)
 	}
+}
+
+func TestConnectionBindingRepositoryRollsBackMutationWhenAuditIntentFails(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	binding := testTargetBinding(t)
+	repository := NewConnectionBindingRepositoryWithAudit(store.SQLDB(), failingConnectionAuditIntentRecorder{err: errors.New("injected audit failure")})
+	intent := connectionAdministrationIntent(t, binding, connectionbinding.AuditBindingCreated, 1)
+	err = repository.Create(connectionbinding.WithAuditIntent(ctx, intent), binding)
+	if err == nil || !strings.Contains(err.Error(), "injected audit failure") {
+		t.Fatalf("Create() audit error = %v", err)
+	}
+	if _, err := repository.Binding(ctx, binding.Scope, binding.TargetID, binding.ConnectionID); !errors.Is(err, connectionbinding.ErrBindingNotFound) {
+		t.Fatalf("binding after rolled-back create = %v", err)
+	}
+}
+
+func TestConnectionBindingRepositoryRollsBackSaveWhenAuditIntentFails(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	binding := testTargetBinding(t)
+	if err := NewConnectionBindingRepository(store.SQLDB()).Create(ctx, binding); err != nil {
+		t.Fatal(err)
+	}
+	updated, err := binding.UpdateConfiguration(binding.Configuration(), binding.UpdatedAt.Add(time.Minute))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Ensure this test exercises a real revisioned update even when the
+	// configuration helper is idempotent for a particular fixture.
+	if updated.Revision == binding.Revision {
+		configuration := binding.Configuration()
+		configuration.Endpoint.Host = "warehouse-next.internal"
+		updated, err = binding.UpdateConfiguration(configuration, binding.UpdatedAt.Add(time.Minute))
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	repository := NewConnectionBindingRepositoryWithAudit(store.SQLDB(), failingConnectionAuditIntentRecorder{err: errors.New("injected audit failure")})
+	intent := connectionAdministrationIntent(t, updated, connectionbinding.AuditBindingUpdated, updated.Revision)
+	if _, err := repository.Save(connectionbinding.WithAuditIntent(ctx, intent), updated, binding.Revision); err == nil || !strings.Contains(err.Error(), "injected audit failure") {
+		t.Fatalf("Save() audit error = %v", err)
+	}
+	loaded, err := repository.Binding(ctx, binding.Scope, binding.TargetID, binding.ConnectionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Revision != binding.Revision || loaded.Endpoint.Host != binding.Endpoint.Host {
+		t.Fatalf("binding after rolled-back save = %#v", loaded)
+	}
+}
+
+func TestConnectionBindingRepositoryAuditIntentIsIdempotentAcrossRetry(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	binding := testTargetBinding(t)
+	audit := accesssqlite.NewRepository(store.SQLDB())
+	repository := NewConnectionBindingRepositoryWithAudit(store.SQLDB(), audit)
+	intent := connectionAdministrationIntent(t, binding, connectionbinding.AuditBindingCreated, 1)
+	if err := repository.Create(connectionbinding.WithAuditIntent(ctx, intent), binding); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Create(connectionbinding.WithAuditIntent(ctx, intent), binding); !errors.Is(err, connectionbinding.ErrIncompatibleBinding) {
+		t.Fatalf("duplicate create error = %v", err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("audit outbox rows for idempotent event = %d, want 1", count)
+	}
+}
+
+type failingConnectionAuditIntentRecorder struct{ err error }
+
+func (recorder failingConnectionAuditIntentRecorder) RecordAuditIntent(context.Context, transaction.Transaction, access.AuditIntent) error {
+	return recorder.err
+}
+
+func connectionAdministrationIntent(t *testing.T, binding connectionbinding.TargetBinding, action connectionbinding.AdministrationAuditAction, revision int64) access.AuditIntent {
+	t.Helper()
+	intent, err := connectionbinding.BuildConnectionAdministrationAuditIntent(connectionbinding.AdministrationAuditInvocation{
+		OperationID: map[connectionbinding.AdministrationAuditAction]string{
+			connectionbinding.AuditBindingCreated:  "createTargetConnectionBinding",
+			connectionbinding.AuditBindingUpdated:  "updateTargetConnectionBinding",
+			connectionbinding.AuditBindingEnabled:  "enableTargetConnectionBinding",
+			connectionbinding.AuditBindingDisabled: "disableTargetConnectionBinding",
+		}[action], PrincipalID: "operator-1",
+	}, connectionbinding.AdministrationAuditEvent{
+		ProjectID: binding.Scope.ProjectID, BindingID: binding.ID, TargetID: binding.TargetID,
+		ConnectionID: binding.ConnectionID, Actor: "operator-1", Action: action,
+		Outcome: connectionbinding.AdministrationAuditSucceeded, Revision: revision,
+	})
+	require.NoError(t, err)
+	return intent
 }
 
 func testTargetBinding(t *testing.T) connectionbinding.TargetBinding {

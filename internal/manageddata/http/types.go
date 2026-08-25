@@ -76,8 +76,10 @@ type Options struct {
 	RecordUploadCreated   func(context.Context, control.UploadResult) error
 	RecordUploadCancelled func(context.Context, control.UploadResult) error
 	AbortUpload           func(context.Context, control.UploadRequest) (control.UploadResult, error)
-	RecordCommandAudit    func(context.Context, CommandAuditInput) error
-	Logger                *slog.Logger
+	// BuildAuditIntent resolves generated command policy into a durable intent
+	// that the domain repository records inside its source transaction.
+	BuildAuditIntent func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
+	Logger           *slog.Logger
 }
 
 type Handler struct {

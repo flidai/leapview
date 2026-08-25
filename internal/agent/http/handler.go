@@ -16,7 +16,6 @@ import (
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	"github.com/flidai/leapview/internal/agent/api"
@@ -28,6 +27,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -66,6 +66,7 @@ type Options struct {
 	EnqueueChatRun         func(context.Context, agent.Scope, *agent.StartedPrompt, string) error
 	CancelQueuedRun        func(context.Context, agent.Scope, string, string) (bool, error)
 	RecordCommandAudit     func(context.Context, CommandAuditInput) error
+	BuildAuditIntent       func(context.Context, CommandAuditInput) (*access.AuditIntent, error)
 	Logger                 *slog.Logger
 	APIGenToolContracts    map[string]agenttool.Contract
 }
@@ -93,6 +94,12 @@ func (h *Handler) CreateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		writeJSONError(w, err, stdhttp.StatusBadRequest)
 		return
 	}
+	if withIntent, intentErr := h.withAuditIntent(r, createAgentConversationOperation, scope, "conversation", ""); intentErr != nil {
+		h.writeCommandFailure(w, r, createAgentConversationOperation, apigenfailure.Wrap("unavailable", intentErr))
+		return
+	} else {
+		r = withIntent
+	}
 	conversation, err := service.CreateConversation(r.Context(), scope, input.Title)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
@@ -101,7 +108,7 @@ func (h *Handler) CreateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		h.writeCommandFailure(w, r, createAgentConversationOperation, err)
 		return
 	}
-	h.recordCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
+	h.recordLegacyCommandAudit(r, createAgentConversationOperation, scope, "conversation", conversation.ID)
 	response := agentConversationDTO(conversation)
 	if etag, revisionErr := agent.ConversationRevision(conversation); revisionErr == nil {
 		w.Header().Set("ETag", etag)
@@ -168,6 +175,12 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		return
 	}
 	conversationID := chi.URLParam(r, "conversation")
+	if withIntent, intentErr := h.withAuditIntent(r, updateAgentConversationOperation, scope, "conversation", conversationID); intentErr != nil {
+		h.writeCommandFailure(w, r, updateAgentConversationOperation, apigenfailure.Wrap("unavailable", intentErr))
+		return
+	} else {
+		r = withIntent
+	}
 	conversation, err := service.UpdateConversationWithRevision(r.Context(), scope, conversationID, input.Title, func(current agent.Conversation) error {
 		currentRevision, revisionErr := agent.ConversationRevision(current)
 		if revisionErr != nil {
@@ -184,7 +197,7 @@ func (h *Handler) UpdateConversation(w stdhttp.ResponseWriter, r *stdhttp.Reques
 		h.writeCommandFailure(w, r, updateAgentConversationOperation, err)
 		return
 	}
-	h.recordCommandAudit(r, updateAgentConversationOperation, scope, "conversation", conversation.ID)
+	h.recordLegacyCommandAudit(r, updateAgentConversationOperation, scope, "conversation", conversation.ID)
 	response := agentConversationDTO(conversation)
 	if etag, revisionErr := agent.ConversationRevision(conversation); revisionErr == nil {
 		w.Header().Set("ETag", etag)
@@ -197,7 +210,14 @@ func (h *Handler) ArchiveConversation(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	if !ok {
 		return
 	}
-	conversation, err := service.ArchiveConversation(r.Context(), scope, chi.URLParam(r, "conversation"))
+	conversationID := chi.URLParam(r, "conversation")
+	if withIntent, intentErr := h.withAuditIntent(r, archiveAgentConversationOperation, scope, "conversation", conversationID); intentErr != nil {
+		h.writeCommandFailure(w, r, archiveAgentConversationOperation, apigenfailure.Wrap("unavailable", intentErr))
+		return
+	} else {
+		r = withIntent
+	}
+	conversation, err := service.ArchiveConversation(r.Context(), scope, conversationID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			err = apigenfailure.Wrap("not_found", err)
@@ -205,7 +225,7 @@ func (h *Handler) ArchiveConversation(w stdhttp.ResponseWriter, r *stdhttp.Reque
 		h.writeCommandFailure(w, r, archiveAgentConversationOperation, err)
 		return
 	}
-	h.recordCommandAudit(r, archiveAgentConversationOperation, scope, "conversation", conversation.ID)
+	h.recordLegacyCommandAudit(r, archiveAgentConversationOperation, scope, "conversation", conversation.ID)
 	w.WriteHeader(stdhttp.StatusNoContent)
 }
 
@@ -342,8 +362,15 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.New("invalid", "agent run input is required"))
 		return
 	}
+	conversationID := chi.URLParam(r, "conversation")
+	if withIntent, intentErr := h.withAuditIntent(r, createAgentRunOperation, scope, "conversation", conversationID); intentErr != nil {
+		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.Wrap("unavailable", intentErr))
+		return
+	} else {
+		r = withIntent
+	}
 	started, err := service.StartDurablePrompt(r.Context(), agent.PromptInput{
-		Scope: scope, ConversationID: chi.URLParam(r, "conversation"), Input: input.Input, CorrelationID: input.CorrelationID, RequestID: r.Header.Get("Idempotency-Key"),
+		Scope: scope, ConversationID: conversationID, Input: input.Input, CorrelationID: input.CorrelationID, RequestID: r.Header.Get("Idempotency-Key"),
 	}, agent.PromptDispatch{})
 	if err != nil {
 		switch {
@@ -388,7 +415,7 @@ func (h *Handler) CreateRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		h.writeCommandFailure(w, r, createAgentRunOperation, apigenfailure.Wrap("unavailable", err))
 		return
 	}
-	h.recordCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
+	h.recordLegacyCommandAudit(r, createAgentRunOperation, scope, "conversation", started.ConversationID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 }
 
@@ -399,6 +426,12 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	}
 	conversationID := chi.URLParam(r, "conversation")
 	runID := chi.URLParam(r, "run")
+	if withIntent, intentErr := h.withAuditIntent(r, cancelAgentRunOperation, scope, "conversation", conversationID); intentErr != nil {
+		h.writeCommandFailure(w, r, cancelAgentRunOperation, apigenfailure.Wrap("unavailable", intentErr))
+		return
+	} else {
+		r = withIntent
+	}
 	if h.options.CancelQueuedRun != nil {
 		cancelled, err := h.options.CancelQueuedRun(r.Context(), scope, conversationID, runID)
 		if err != nil {
@@ -414,7 +447,7 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 				h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 				return
 			}
-			h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
+			h.recordLegacyCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
 			w.Header().Set("Location", "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID)
 			writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 			return
@@ -441,7 +474,7 @@ func (h *Handler) CancelRun(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		h.writeCommandFailure(w, r, cancelAgentRunOperation, err)
 		return
 	}
-	h.recordCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
+	h.recordLegacyCommandAudit(r, cancelAgentRunOperation, scope, "conversation", conversationID)
 	w.Header().Set("Location", "/api/v1/agent/conversations/"+conversationID+"/runs/"+runID)
 	writeJSON(w, stdhttp.StatusAccepted, agentRunDTO(run, scope))
 }

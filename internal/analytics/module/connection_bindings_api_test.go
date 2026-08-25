@@ -91,6 +91,35 @@ func TestConnectionBindingAPINeverReturnsRawProviderErrors(t *testing.T) {
 	}
 }
 
+func TestConnectionBindingAPIInjectsAuditIntentForTransactionalDisable(t *testing.T) {
+	now := time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC)
+	binding := testAPIBinding(t, now)
+	repository := &apiBindingRepository{binding: binding}
+	administration, err := connectionbinding.NewAdministration(connectionbinding.AdministrationConfig{
+		Repository: repository,
+		Authorize: func(context.Context, string, connectionbinding.AdministrationPermission, connectionbinding.TargetBinding) error {
+			return nil
+		},
+		Dependencies:       apiDependencyInspector{},
+		RequireAuditIntent: true,
+		Now:                func() time.Time { return now },
+	})
+	require.NoError(t, err)
+	handler := connectionBindingAPIHandler{config: ConnectionBindingAPIGenConfig{
+		Administration: administration, Environment: "prod",
+		CurrentPrincipal: func(*http.Request) (string, bool) { return "operator-1", true },
+	}}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/disable", nil)
+	handler.Disable(recorder, request, "sales", "target-1", "warehouse")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if repository.binding.Enabled {
+		t.Fatal("disable command did not persist binding mutation")
+	}
+}
+
 func newTestConnectionAdministration(
 	t *testing.T,
 	repository *apiBindingRepository,

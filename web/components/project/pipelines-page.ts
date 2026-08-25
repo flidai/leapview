@@ -3,7 +3,7 @@ import { state } from 'lit/decorators.js'
 import { CheckCircle2, Circle, Clock3, XCircle } from 'lucide'
 import type { PipelineCommandSignal, PipelineCommandStatusSignal, PipelineListItemSignal, PipelinePageSignal, RecordTableSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
-import { browserCommandFailure, type BrowserCommandFailure } from '../shared/command-failure'
+import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -589,6 +589,7 @@ class LeapViewPipelinesPage extends DatastarLit(LitElement) {
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {
+    if (!this.commandStatus.loading || !ownsBrowserCommandFetch(this, event)) return
     const failure = browserCommandFailure(event, 'Pipeline action')
     if (!failure) return
     this.terminalFailure = failure

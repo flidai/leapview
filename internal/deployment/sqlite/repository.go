@@ -9,11 +9,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploydb "github.com/flidai/leapview/internal/deployment/internal/db"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	graph "github.com/flidai/leapview/internal/project/graph"
+	publicjobs "github.com/flidai/leapview/pkg/jobs"
 )
 
 type Repository struct {
@@ -36,6 +38,8 @@ type Repository struct {
 type ActivationHooks struct {
 	LinkRelease    func(context.Context, transaction.Transaction, deployment.CreateInput) error
 	RecordWorkflow jobplatform.WorkflowRecorder
+	CancelJob      jobplatform.WorkflowJobCanceller
+	Audit          access.AuditIntentRecorder
 	// CommitPublication replaces the final SQLite commit only in tests or
 	// controlled adapters. A hook may commit and return an error to model a
 	// lost activation acknowledgement; production leaves it nil and commits
@@ -125,10 +129,24 @@ func (r *Repository) CreateDeployment(ctx context.Context, input deployment.Crea
 			return deployment.Deployment{}, err
 		}
 	}
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
+		return deployment.Deployment{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return deployment.Deployment{}, err
 	}
 	return r.DeploymentByID(ctx, input.ID)
+}
+
+func (r *Repository) recordAuditIntent(ctx context.Context, tx *sql.Tx) error {
+	intent, ok := deployment.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r.hooks.Audit == nil {
+		return fmt.Errorf("deployment audit intent recorder is required")
+	}
+	return r.hooks.Audit.RecordAuditIntent(ctx, tx, intent)
 }
 
 func (r *Repository) DeploymentByID(ctx context.Context, id string) (deployment.Deployment, error) {
@@ -343,13 +361,29 @@ func (r *Repository) CancelDeployment(ctx context.Context, id string) (deploymen
 	if id == "" || id != strings.TrimSpace(id) {
 		return deployment.Deployment{}, deployment.ErrConflict
 	}
-	result, err := deploydb.New(r.db).CancelProjectDeployment(ctx, id)
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return deployment.Deployment{}, err
+	}
+	defer tx.Rollback()
+	result, err := deploydb.New(tx).CancelProjectDeployment(ctx, id)
 	if err != nil {
 		return deployment.Deployment{}, err
 	}
 	n, _ := result.RowsAffected()
 	if n != 1 {
 		return deployment.Deployment{}, deployment.ErrConflict
+	}
+	if r.hooks.CancelJob != nil {
+		if err := r.hooks.CancelJob.CancelWorkflowJob(ctx, tx, "deployment:"+id+":activate"); err != nil && !errors.Is(err, publicjobs.ErrConflict) {
+			return deployment.Deployment{}, err
+		}
+	}
+	if err := r.recordAuditIntent(ctx, tx); err != nil {
+		return deployment.Deployment{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return deployment.Deployment{}, err
 	}
 	return r.DeploymentByID(ctx, id)
 }

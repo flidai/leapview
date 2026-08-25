@@ -150,6 +150,12 @@ LABEL org.opencontainers.image.title="LeapView" \
       dev.leapview.build.dirty="$BUILD_DIRTY" \
       dev.leapview.build.release="$BUILD_RELEASE"
 
+# The pinned Go builder supplies the bootstrap CA bundle. APT then resolves
+# every direct and transitive runtime package from one immutable Debian
+# snapshot and verifies the signed repository metadata and package hashes.
+COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY deploy/container/debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
+
 RUN apt-get update && \
     apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata && \
     rm -rf /var/lib/apt/lists/*

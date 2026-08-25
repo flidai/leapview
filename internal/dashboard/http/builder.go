@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
@@ -23,9 +22,10 @@ import (
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
-	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -232,9 +232,10 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
-	clientID := pagestream.EnsureClientID(w, r)
-	streamID := "dashboard_builder:" + clientID + ":" + projectID + ":" + dashboardID
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(h.traceStore(), streamID, "dashboard_builder.bootstrap"))
+	if _, ok := webtransport.RequireClientID(w, r); !ok {
+		return
+	}
+	updates := pagestream.NewSignalStream(w, r)
 	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder))); err != nil {
 		return
 	}
@@ -625,13 +626,6 @@ func (h Handler) currentActor(r *nethttp.Request) string {
 	return strings.TrimSpace(h.CurrentPrincipalID(r))
 }
 
-func (h Handler) traceStore() *pagestream.TraceStore {
-	if h.Broker == nil {
-		return nil
-	}
-	return h.Broker.TraceStore()
-}
-
 func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) {
 	status := nethttp.StatusInternalServerError
 	switch {
@@ -647,7 +641,7 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 		status = nethttp.StatusBadRequest
 	}
 	if status == nethttp.StatusForbidden {
-		uitransport.WriteBrowserAuthorizationError(w, r, status)
+		webtransport.WriteBrowserAuthorizationError(w, r, status)
 		return
 	}
 	message := "dashboard builder unavailable"

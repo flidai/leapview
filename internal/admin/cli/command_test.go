@@ -10,8 +10,14 @@ import (
 )
 
 type fakeOperations struct {
-	called  string
-	options Options
+	called       string
+	options      Options
+	requeueEvent string
+}
+
+func (operations *fakeOperations) AuditOutbox(_ context.Context, request adminoffline.AuditOutboxRequest, _ io.Writer) error {
+	operations.called, operations.requeueEvent, operations.options.Apply = "audit-outbox", request.RequeueEventID, request.Apply
+	return nil
 }
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
@@ -75,6 +81,18 @@ func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	if !operations.options.Apply || operations.options.AuditDays != 10 || operations.options.QueryDays != 11 ||
 		operations.options.ArchivedAgentDays != 12 || operations.options.AuthStateDays != 13 {
 		t.Fatalf("options = %#v", operations.options)
+	}
+}
+
+func TestCommandOwnsAuditOutboxRecoveryFlags(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"audit-outbox", "--requeue-event", "audit-event-1", "--apply"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "audit-outbox" || operations.requeueEvent != "audit-event-1" || !operations.options.Apply {
+		t.Fatalf("audit outbox call = %q %q apply=%v", operations.called, operations.requeueEvent, operations.options.Apply)
 	}
 }
 

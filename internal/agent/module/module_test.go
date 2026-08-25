@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -19,6 +20,7 @@ func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
 
 	module, err := Build(t.Context(), Config{
 		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test"),
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
 		},
@@ -52,7 +54,8 @@ func TestBuildAllowsUnboundProjectUntilActiveResolverBinds(t *testing.T) {
 
 	var active projectgraph.ResourceID
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(),
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			return active, nil
 		},

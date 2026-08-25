@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"path/filepath"
@@ -9,11 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/go-cmp/cmp"
 	ocidigest "github.com/opencontainers/go-digest"
@@ -45,6 +49,142 @@ func TestReleaseRepositoryRoundTripsAndValidatesImmutableProvenance(t *testing.T
 	if _, err := repo.Get(t.Context(), projectID, created.ID); !errors.Is(err, release.ErrProvenanceInvalid) {
 		t.Fatalf("Get(tampered provenance) error = %v, want ErrProvenanceInvalid", err)
 	}
+}
+
+func TestReleaseCreateAuditIntentIsAtomicAndIdempotent(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_audit")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	intent := access.AuditIntent{
+		EventID: "release-create-audit", Source: "release", Operation: "createRelease", PrincipalID: "principal_1",
+		Action: "release.created", ResourceKind: "project", ResourceID: "commerce", Capability: access.CapabilityResourcePublish,
+		Outcome: "success", AggregateKey: "release:commerce:rel_audit", AggregateSequence: 1,
+		MetadataJSON: `{"createdBy":"principal_1","operationId":"createRelease","projectDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","projectId":"commerce","releaseId":"rel_audit","status":"draft"}`,
+	}
+	repo := NewRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, accesssqlite.NewRepository(store.SQLDB()))
+	input := release.CreateInput{ID: "rel_audit", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "audit", CreatedBy: "principal_1", Provenance: &provenance}
+	if _, err := repo.Create(release.WithAuditIntent(t.Context(), intent), input); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("audit outbox count = %d, want 1", count)
+	}
+	// A replay returns the immutable row without creating a duplicate intent.
+	if _, err := repo.Create(release.WithAuditIntent(t.Context(), intent), input); err != nil {
+		t.Fatalf("idempotent release replay: %v", err)
+	}
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("replayed audit outbox count = %d, want 1", count)
+	}
+}
+
+func TestReleaseCreateRollsBackWhenAuditIntentFails(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_audit_failure")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	repo := NewRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return errors.New("injected audit failure")
+	}))
+	intent := access.AuditIntent{EventID: "release-create-rollback", Source: "release", Operation: "createRelease", Action: "release.created", Outcome: "success", AggregateKey: "release:commerce:rollback", AggregateSequence: 1, MetadataJSON: `{}`}
+	input := release.CreateInput{ID: "rel_rollback", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("7"), IdempotencyKey: "rollback", CreatedBy: "principal_1", Provenance: &provenance}
+	if _, err := repo.Create(release.WithAuditIntent(t.Context(), intent), input); err == nil {
+		t.Fatal("release create unexpectedly succeeded")
+	}
+	var count int
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM api_releases WHERE id = ?`, input.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled-back release count = %d, want 0", count)
+	}
+}
+
+func TestReleaseArtifactAuditIsAtomicAndIdempotent(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_artifact_audit")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	repo := NewRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_artifact_audit", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "artifact-audit", CreatedBy: "principal_1", Provenance: &provenance})
+	require.NoError(t, err)
+	metadata, err := releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{OperationId: "uploadReleaseArtifact", ReleaseId: created.ID, GenerationId: identity.GenerationID, Digest: created.ArtifactDigest, SizeBytes: 42})
+	require.NoError(t, err)
+	intent := access.AuditIntent{EventID: "release-artifact-audit", Source: "release", Operation: "uploadReleaseArtifact", PrincipalID: "principal_1", Action: "release.artifact_uploaded", ResourceKind: "project", ResourceID: "commerce", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:commerce:" + created.ID, AggregateSequence: 2, MetadataJSON: metadata}
+	artifact := release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: created.ArtifactDigest, ActualDigest: created.ArtifactDigest, SizeBytes: 42}
+	require.NoError(t, repo.RecordArtifact(release.WithAuditIntent(t.Context(), intent), artifact))
+	var count int
+	require.NoError(t, store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count))
+	require.Equal(t, 1, count)
+	// A replay with the same durable intent cannot create a second outbox row.
+	if err := repo.RecordArtifact(release.WithAuditIntent(t.Context(), intent), artifact); !errors.Is(err, release.ErrConflict) {
+		t.Fatalf("artifact replay error = %v, want ErrConflict", err)
+	}
+}
+
+func TestReleaseArtifactAuditFailureRollsBackArtifactTransition(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_artifact_rollback")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	require.NoError(t, err)
+	created, err := NewRepository(store.SQLDB()).Create(t.Context(), release.CreateInput{ID: "rel_artifact_rollback", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "artifact-rollback", CreatedBy: "principal_1", Provenance: &provenance})
+	require.NoError(t, err)
+	repo := NewRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return errors.New("injected artifact audit failure")
+	}))
+	intent := access.AuditIntent{EventID: "release-artifact-rollback", Source: "release", Operation: "uploadReleaseArtifact", PrincipalID: "principal_1", Action: "release.artifact_uploaded", ResourceKind: "project", ResourceID: "commerce", Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:commerce:" + created.ID, AggregateSequence: 2, MetadataJSON: `{}`}
+	artifact := release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: created.ArtifactDigest, ActualDigest: created.ArtifactDigest, SizeBytes: 42}
+	if err := repo.RecordArtifact(release.WithAuditIntent(t.Context(), intent), artifact); err == nil {
+		t.Fatal("artifact transition unexpectedly succeeded")
+	}
+	var uploadedAt sql.NullString
+	require.NoError(t, store.SQLDB().QueryRowContext(t.Context(), `SELECT artifact_uploaded_at FROM api_releases WHERE id = ?`, created.ID).Scan(&uploadedAt))
+	if uploadedAt.Valid {
+		t.Fatalf("artifact timestamp persisted after audit rollback: %q", uploadedAt.String)
+	}
+}
+
+func TestReleaseFinalizationAuditIsAtomicAndReplaySafe(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	identity := testServingIdentity("commerce", "dev", "generation_finalize_audit")
+	insertServingState(t, store, identity)
+	provenance := testReleaseProvenance(t, identity)
+	repo := NewRepositoryWithWorkflowAndAudit(store.SQLDB(), nil, accesssqlite.NewRepository(store.SQLDB()))
+	created, err := repo.Create(t.Context(), release.CreateInput{ID: "rel_finalize_audit", ServingIdentity: identity, ProjectDigest: provenance.Artifact.ProjectDigest, ArtifactDigest: provenance.Artifact.ContentDigest, RequestDigest: testDigest("6"), IdempotencyKey: "finalize-audit", CreatedBy: "principal_1", Provenance: &provenance})
+	require.NoError(t, err)
+	require.NoError(t, repo.RecordArtifact(t.Context(), release.Artifact{ReleaseID: created.ID, ServingIdentity: identity, ExpectedDigest: created.ArtifactDigest, ActualDigest: created.ArtifactDigest, SizeBytes: 42}))
+	metadata, err := releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: "finalizeRelease", ReleaseId: created.ID, ProjectId: identity.ProjectID.String(), Status: "validating"})
+	require.NoError(t, err)
+	intent := access.AuditIntent{EventID: "release-finalize-audit", Source: "release", Operation: "finalizeRelease", PrincipalID: "principal_1", Action: "release.validating", ResourceKind: "project", ResourceID: identity.ProjectID.String(), Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:" + identity.ProjectID.String() + ":" + created.ID, AggregateSequence: 3, MetadataJSON: metadata}
+	ctx := release.WithAuditIntent(t.Context(), intent)
+	if _, err := repo.BeginFinalization(ctx, identity.ProjectID.String(), created.ID, jobs.WorkflowIntent{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.BeginFinalization(ctx, identity.ProjectID.String(), created.ID, jobs.WorkflowIntent{}); err != nil {
+		t.Fatalf("finalization replay: %v", err)
+	}
+	var count int
+	require.NoError(t, store.SQLDB().QueryRowContext(t.Context(), `SELECT COUNT(*) FROM audit_outbox WHERE event_id = ?`, intent.EventID).Scan(&count))
+	require.Equal(t, 1, count)
 }
 
 func TestConnectionCatalogReportsActiveServingGenerationRevision(t *testing.T) {

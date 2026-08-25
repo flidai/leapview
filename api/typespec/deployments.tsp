@@ -902,6 +902,7 @@ interface Deployments {
   @apigen.failsWith(InvalidDeploymentFailure)
   @apigen.command(#{
     auditAction: "deployment.queued",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
@@ -936,6 +937,7 @@ interface Deployments {
   @apigen.failsWith(InvalidDeploymentFailure)
   @apigen.command(#{
     auditAction: "deployment.cancelled",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "queue_unavailable", statusCode: 503, code: "ASYNC_QUEUE_UNAVAILABLE", publicDetail: "Deployment cancellation could not be persisted." },
     ],
@@ -965,6 +967,7 @@ interface Deployments {
   @apigen.failsWith(InvalidDeploymentFailure)
   @apigen.command(#{
     auditAction: "deployment.queued",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
@@ -995,6 +998,7 @@ interface Deployments {
   @apigen.failsWith(InvalidDeploymentFailure)
   @apigen.command(#{
     auditAction: "deployment.queued",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "authorization_unavailable", statusCode: 503, code: "AUTHORIZATION_UNAVAILABLE", publicDetail: "Publication activation authorization could not be evaluated." },
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
@@ -1016,6 +1020,7 @@ interface Deployments {
   @apigen.failsWith(InvalidDeploymentFailure)
   @apigen.command(#{
     auditAction: "deployment.approval_requested",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded publication credential is required." },
       #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
@@ -1036,6 +1041,7 @@ interface Deployments {
   @apigen.failsWith(DeploymentNotFoundFailure)
   @apigen.command(#{
     auditAction: "deployment.approved",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
       #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
@@ -1057,6 +1063,7 @@ interface Deployments {
   @apigen.failsWith(DeploymentNotFoundFailure)
   @apigen.command(#{
     auditAction: "deployment.denied",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
       #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
@@ -1078,6 +1085,7 @@ interface Deployments {
   @apigen.failsWith(DeploymentNotFoundFailure)
   @apigen.command(#{
     auditAction: "deployment.approval_revoked",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "approval_credential_required", statusCode: 401, code: "APPROVAL_CREDENTIAL_REQUIRED", publicDetail: "A bounded approval credential is required." },
       #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "The deployment approval is not valid for this action." },
@@ -1110,6 +1118,7 @@ interface Deployments {
   @apigen.failsWith(DeploymentConflictFailure)
   @apigen.command(#{
     auditAction: "deployment.activation_requested",
+    guarantee: "transactional",
     failures: #[
       #{ kind: "approval_conflict", statusCode: 409, code: "DEPLOYMENT_APPROVAL_REQUIRED", publicDetail: "An approved deployment is required for activation." },
       #{ kind: "approval_invalid", statusCode: 422, code: "INVALID_DEPLOYMENT_APPROVAL", publicDetail: "The deployment approval is invalid." },

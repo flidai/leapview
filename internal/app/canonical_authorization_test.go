@@ -17,17 +17,37 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/runtimehost"
+	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 )
 
 type tusTargetResolverFunc func(context.Context, string) (projectgraph.ResourceID, projectgraph.ResourceID, error)
 
 type canonicalRuntimeActivatorFake struct {
+	activeID      string
+	activeErr     error
 	prepareID     string
 	prepareErr    error
 	activateErr   error
 	activateCalls int
 	commitCalls   int
+}
+
+func (f *canonicalRuntimeActivatorFake) ActiveArtifact(context.Context) (servingstate.State, servingstate.Artifact, error) {
+	if f.activeErr != nil {
+		return servingstate.State{}, servingstate.Artifact{}, f.activeErr
+	}
+	if f.activeID == "" {
+		return servingstate.State{}, servingstate.Artifact{}, servingstate.ErrNotFound
+	}
+	return servingstate.State{ID: servingstate.ID(f.activeID)}, servingstate.Artifact{}, nil
+}
+
+func (f *canonicalRuntimeActivatorFake) Acquire(context.Context) (runtimehost.Lease, error) {
+	if f.activeID == "" {
+		return nil, errors.New("no active test runtime")
+	}
+	return tusLease{identity: projectgraph.ServingIdentity{GenerationID: f.activeID}}, nil
 }
 
 type canonicalTargetReaderFake struct {
@@ -329,6 +349,15 @@ func TestActivateCanonicalServingStatePreparesBeforeCommit(t *testing.T) {
 	if committed != 0 || activateFailure.activateCalls != 1 {
 		t.Fatalf("activation failure committed=%d activate=%d", committed, activateFailure.activateCalls)
 	}
+
+	alreadyActive := &canonicalRuntimeActivatorFake{activeID: "state_pending"}
+	committed = 0
+	if err := activateCanonicalServingState(t.Context(), alreadyActive, "state_pending", func() error { committed++; return nil }); err != nil {
+		t.Fatalf("already-active retry: %v", err)
+	}
+	if alreadyActive.prepareID != "" || alreadyActive.activateCalls != 0 || committed != 1 {
+		t.Fatalf("already-active retry prepared=%q activated=%d committed=%d", alreadyActive.prepareID, alreadyActive.activateCalls, committed)
+	}
 }
 
 func TestVerifyCanonicalDeliveryTargetRejectsStaleCommittedReplay(t *testing.T) {
@@ -415,7 +444,7 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: test.snapshot}}
-			err := authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime, false)
+			err := authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("authorizeSealedPublication() error=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -437,7 +466,7 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 				t.Fatal(err)
 			}
 			runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: snapshot}}
-			err = authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: projectImpactPlan}, accessModule, runtime, false)
+			err = authorizeSealedPublication(context.Background(), binding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: projectImpactPlan}, accessModule, runtime)
 			if (err != nil) != test.wantErr {
 				t.Fatalf("authorizeSealedPublication() error=%v, wantErr=%t", err, test.wantErr)
 			}
@@ -447,15 +476,42 @@ func TestSealedCoordinatorAuthorizationBindsEveryGraphImpactResource(t *testing.
 		devBinding := binding
 		devBinding.ActorID = accessmodule.LocalDeveloperPrincipal().ID
 		runtime := tusRuntime{project: projectgraph.ResourceID("project_demo"), lease: tusLease{identity: identity, snapshot: newSnapshot()}}
-		if err := authorizeSealedPublication(context.Background(), devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime, true); err != nil {
+		ctx := accessmodule.WithPrincipal(t.Context(), accessmodule.LocalDeveloperPrincipal())
+		if err := authorizeSealedPublication(ctx, devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan}, accessModule, runtime); err != nil {
 			t.Fatalf("local developer publication bypass error = %v", err)
 		}
 		mismatched := candidate
 		mismatched.PlanDigest = "sha256:" + strings.Repeat("b", 64)
-		if err := authorizeSealedPublication(context.Background(), devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: mismatched, plan: plan}, accessModule, runtime, true); err == nil {
+		if err := authorizeSealedPublication(ctx, devBinding, "target_demo", sealedAuthorizationDeliveryStub{candidate: mismatched, plan: plan}, accessModule, runtime); err == nil {
 			t.Fatal("local developer publication bypass accepted mismatched candidate evidence")
 		}
 	})
+}
+
+func TestSealedPublicationAllowsRequestLocalDevelopmentBypass(t *testing.T) {
+	planDigest := "sha256:" + strings.Repeat("a", 64)
+	plan := deployment.DeliveryPlan{
+		ID: "plan_demo", Digest: planDigest, TargetID: "target_demo",
+		ProjectID: "project_demo", Environment: "dev",
+	}
+	candidate := deployment.DeliveryCandidate{
+		ID: "candidate_demo", PlanID: plan.ID, PlanDigest: planDigest,
+		TargetID: plan.TargetID, ProjectID: plan.ProjectID,
+	}
+	binding := sealedcontrol.SealBinding{
+		ProjectID: "project_demo", Environment: "dev", TargetID: "target_demo",
+		CandidateID: candidate.ID, GenerationID: "generation_demo", PlanDigest: planDigest,
+		ActorID: "dev", Operation: "publish",
+	}
+	ctx := accessmodule.WithPrincipal(t.Context(), accessmodule.LocalDeveloperPrincipal())
+	err := authorizeSealedPublication(
+		ctx, binding, "target_demo",
+		sealedAuthorizationDeliveryStub{candidate: candidate, plan: plan},
+		tusAccess{}, nil,
+	)
+	if err != nil {
+		t.Fatalf("request-local development publication authorization: %v", err)
+	}
 }
 
 func TestValidTusTransportIDRequiresCanonicalOpaqueToken(t *testing.T) {

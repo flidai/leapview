@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	platformdb "github.com/flidai/leapview/internal/deployment/internal/db"
 )
@@ -71,6 +72,9 @@ func (r *Repository) CreateApproval(
 		return deployment.Approval{}, err
 	}
 	if err := appendApprovalEventTx(ctx, tx, approval, "approval_requested", approval.RequestedBy, approval.RequestedAt); err != nil {
+		return deployment.Approval{}, err
+	}
+	if err := r.recordApprovalAuditIntent(ctx, tx, approval); err != nil {
 		return deployment.Approval{}, err
 	}
 	if err := tx.Commit(); err != nil {
@@ -172,10 +176,55 @@ func (r *Repository) SaveApproval(
 			return deployment.Approval{}, err
 		}
 	}
+	if err := r.recordApprovalAuditIntent(ctx, tx, approval); err != nil {
+		return deployment.Approval{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return deployment.Approval{}, err
 	}
 	return approval, nil
+}
+
+func (r *Repository) recordApprovalAuditIntent(ctx context.Context, tx *sql.Tx, approval deployment.Approval) error {
+	intent, ok := deployment.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r.hooks.Audit == nil {
+		return fmt.Errorf("deployment audit intent recorder is required")
+	}
+	if approval.ID != "" {
+		// Approval revisions restart at one for each replacement approval. Keep
+		// those independent revision streams in independent audit aggregates;
+		// otherwise every replacement request collides with the first request's
+		// (deployment:<id>:approval, 1) outbox row.
+		intent.AggregateKey = approvalAuditAggregateKey(intent.AggregateKey, approval.ID)
+	}
+	intent.AggregateSequence = approval.Revision
+	if approval.ID != "" {
+		// Request-approval intents are built before the repository allocates its
+		// random approval identity. Fill only that generated metadata field here;
+		// all other metadata remains transport-owned and canonical.
+		metadata, err := access.RewriteGeneratedAuditEnvelopePayload(intent.MetadataJSON, map[string]any{"approvalId": approval.ID})
+		if err != nil {
+			return err
+		}
+		intent.MetadataJSON = metadata
+	}
+	return r.hooks.Audit.RecordAuditIntent(ctx, tx, intent)
+}
+
+func approvalAuditAggregateKey(key, approvalID string) string {
+	key = strings.TrimSpace(key)
+	approvalID = strings.TrimSpace(approvalID)
+	if approvalID == "" {
+		return key
+	}
+	const marker = ":approval"
+	if index := strings.LastIndex(key, marker); index >= 0 {
+		return key[:index+len(marker)] + ":" + approvalID
+	}
+	return key + ":" + approvalID
 }
 
 // appendApprovalEventTx bridges the deployment approval projection to the

@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/manageddata"
 	apigenapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -41,7 +42,7 @@ func TestBuildKeepsPersistencePrivateAndExposesNamedServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), ServingStates: states, RecordAudit: discardManagedDataAudit,
+		Database: store.SQLDB(), ServingStates: states, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		AuthorizeConnection: allowAllConnectionAuthorization,
 		Product: ProductConfig{
 			Backend:          "local",
@@ -70,7 +71,7 @@ func TestModuleHTTPConcurrentCancelEmitsOneEventAndCleansTusState(t *testing.T) 
 	jobs := jobssqlite.NewRepository(store.SQLDB())
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs, RecordAudit: discardManagedDataAudit,
+		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		CurrentPrincipal:    func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
 		AuthorizeConnection: allowAllConnectionAuthorization,
 		Product:             ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
@@ -268,7 +269,7 @@ func TestNewManagedDataStorageRejectsUnknownBackend(t *testing.T) {
 }
 
 func TestNewManagedDataControlRequiresStorage(t *testing.T) {
-	_, err := newManagedDataControl(nil, managedDataStorage{}, ProductConfig{})
+	_, err := newManagedDataControl(nil, nil, managedDataStorage{}, ProductConfig{})
 	if err == nil || !errors.Is(err, control.ErrInvalid) {
 		t.Fatalf("error = %v, want control.ErrInvalid", err)
 	}

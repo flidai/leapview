@@ -10,6 +10,7 @@ import (
 	"reflect"
 	"sort"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -279,6 +280,26 @@ func TestPipelineMutationProjectionAllowsConfiguredDevelopmentBypass(t *testing.
 	}
 }
 
+func TestDashboardCreationProjectionAllowsConfiguredDevelopmentBypass(t *testing.T) {
+	request := httptest.NewRequest(stdhttp.MethodGet, "/", nil)
+	authorizerCalled := false
+	h := &BrowserHandler{
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) {
+			return Principal{ID: "dev", DevBypass: true}, true
+		},
+		AuthorizeCreateDashboard: func(*stdhttp.Request, projectgraph.ResourceID, access.Capability) (bool, error) {
+			authorizerCalled = true
+			return false, nil
+		},
+	}
+	if !h.dashboardCreationAllowed(request) {
+		t.Fatal("configured development bypass did not expose dashboard creation")
+	}
+	if authorizerCalled {
+		t.Fatal("development bypass unexpectedly consulted the serving-state project authorizer")
+	}
+}
+
 type browserProjectDefinitionStub struct {
 	definition projectmanifest.Project
 	compiled   map[string]*semanticquery.CompiledModel
@@ -493,6 +514,53 @@ func TestUpdatesStopsAfterFailedAreaBootstrap(t *testing.T) {
 			t.Fatalf("%s update body = %q, want only bootstrap error", route, body)
 		}
 	}
+}
+
+func TestCatalogUpdatesRemainOpenAfterBootstrap(t *testing.T) {
+	h := &BrowserHandler{
+		CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{DevBypass: true}, true },
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	request := httptest.NewRequest(stdhttp.MethodGet, "/updates?route=catalog", nil).WithContext(ctx)
+	recorder := &notifyingResponseRecorder{
+		ResponseRecorder: httptest.NewRecorder(),
+		wrote:            make(chan struct{}),
+	}
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.Updates(recorder, request)
+	}()
+
+	select {
+	case <-recorder.wrote:
+	case <-time.After(time.Second):
+		t.Fatal("catalog updates did not write its bootstrap patch")
+	}
+	select {
+	case <-done:
+		t.Fatal("catalog updates closed after its bootstrap patch")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("catalog updates did not stop after cancellation")
+	}
+}
+
+type notifyingResponseRecorder struct {
+	*httptest.ResponseRecorder
+	wrote chan struct{}
+	once  sync.Once
+}
+
+func (r *notifyingResponseRecorder) Write(p []byte) (int, error) {
+	n, err := r.ResponseRecorder.Write(p)
+	r.once.Do(func() { close(r.wrote) })
+	return n, err
 }
 
 func TestModelAssetBootstrapUsesAuthoredSQLWhenRuntimeProjectionIsTargetBound(t *testing.T) {

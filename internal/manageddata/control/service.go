@@ -18,7 +18,6 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/flidai/leapview/pkg/jobs"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -33,6 +32,7 @@ type Service struct {
 	verifyConcurrency int
 	transport         Transport
 	now               func() time.Time
+	transitions       manageddata.UploadTransitionPort
 	finalizeMu        sync.Mutex
 	finalizers        map[string]*finalizeLock
 }
@@ -68,7 +68,7 @@ func New(repo Repository, blobs storage.BlobStore, config Config) (*Service, err
 	}
 	return &Service{
 		repo: repo, blobs: blobs, limits: config.Limits, uploadTTL: config.UploadTTL,
-		verifyConcurrency: concurrency, transport: config.Transport, now: clock,
+		verifyConcurrency: concurrency, transport: config.Transport, now: clock, transitions: config.Transitions,
 		finalizers: map[string]*finalizeLock{},
 	}, nil
 }
@@ -157,7 +157,7 @@ func (s *Service) BeginUpload(ctx context.Context, request BeginUploadRequest) (
 	session, err := s.repo.CreateUploadSession(ctx, manageddata.CreateUploadSessionInput{
 		ID: manageddata.UploadID(uploadID), CollectionID: projectgraph.ResourceID(collection.ID), BaseRevisionID: baseRevision,
 		Manifest: manifest, StorageBackend: s.transport.Backend(), StagingPrefix: "uploads/" + uploadID,
-		CreatedBy: strings.TrimSpace(request.Actor), ExpiresAt: expiresAt,
+		CreatedBy: strings.TrimSpace(request.Actor), ExpiresAt: expiresAt, AuditIntent: request.AuditIntent,
 	})
 	if errors.Is(err, manageddata.ErrConflict) {
 		session, err = s.repo.UploadSessionByID(ctx, manageddata.UploadID(uploadID))
@@ -287,8 +287,14 @@ func (s *Service) BeginFinalizeUpload(ctx context.Context, request UploadRequest
 		return upload, nil
 	}
 	if session.Status == manageddata.UploadStatusCommitting {
-		if request.Workflow.Job.ID != "" {
-			if _, queueErr := s.repo.BeginUploadFinalization(ctx, session.ID, request.Workflow); queueErr != nil {
+		if manageddata.WorkflowIntentPresent(request.Workflow) || request.AuditIntent != nil {
+			if s.transitions == nil {
+				return UploadResult{}, transitionPortRequired()
+			}
+			_, queueErr := s.transitions.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{
+				Workflow: request.Workflow, AuditIntent: request.AuditIntent,
+			})
+			if queueErr != nil {
 				return UploadResult{}, repositoryError(queueErr)
 			}
 		}
@@ -314,7 +320,16 @@ func (s *Service) BeginFinalizeUpload(ctx context.Context, request UploadRequest
 	if len(upload.MissingBlobs) > 0 {
 		return upload, ErrIncomplete
 	}
-	session, err = s.repo.BeginUploadFinalization(ctx, session.ID, request.Workflow)
+	if manageddata.WorkflowIntentPresent(request.Workflow) || request.AuditIntent != nil {
+		if s.transitions == nil {
+			return upload, transitionPortRequired()
+		}
+		session, err = s.transitions.BeginUploadFinalizationTransition(ctx, session.ID, manageddata.UploadTransition{
+			Workflow: request.Workflow, AuditIntent: request.AuditIntent,
+		})
+	} else {
+		session, err = s.repo.BeginUploadFinalization(ctx, session.ID, request.Workflow)
+	}
 	if err != nil {
 		if errors.Is(err, manageddata.ErrConflict) {
 			concurrent, loadErr := s.repo.UploadSessionByID(ctx, session.ID)
@@ -445,14 +460,13 @@ func (s *Service) AbortUpload(ctx context.Context, request UploadRequest) (Uploa
 	}
 	if session.Status == manageddata.UploadStatusOpen {
 		var abortErr error
-		if request.Workflow.Event.EventType != "" {
-			if workflowRepo, ok := s.repo.(interface {
-				AbortUploadSessionWithWorkflow(context.Context, manageddata.UploadID, jobs.WorkflowIntent) error
-			}); ok {
-				abortErr = workflowRepo.AbortUploadSessionWithWorkflow(ctx, session.ID, request.Workflow)
-			} else {
-				abortErr = s.repo.AbortUploadSession(ctx, session.ID)
+		if manageddata.WorkflowIntentPresent(request.Workflow) || request.AuditIntent != nil {
+			if s.transitions == nil {
+				return UploadResult{}, transitionPortRequired()
 			}
+			abortErr = s.transitions.AbortUploadSessionTransition(ctx, session.ID, manageddata.UploadTransition{
+				Workflow: request.Workflow, AuditIntent: request.AuditIntent,
+			})
 		} else {
 			abortErr = s.repo.AbortUploadSession(ctx, session.ID)
 		}
@@ -890,6 +904,13 @@ func newUploadID(project, connection, idempotencyKey string) (string, error) {
 	return "upload_" + hex.EncodeToString(value[:]), nil
 }
 
+// DeterministicUploadID returns the idempotent upload-session identity used by
+// the command producer. It is exposed so transports can construct an audit
+// intent before entering the source transaction.
+func DeterministicUploadID(project, connection, idempotencyKey string) (string, error) {
+	return newUploadID(project, connection, idempotencyKey)
+}
+
 func revisionID(uploadID string) manageddata.RevisionID {
 	sum := sha256.Sum256([]byte(uploadID))
 	return manageddata.RevisionID("revision_" + hex.EncodeToString(sum[:]))
@@ -933,6 +954,10 @@ func repositoryError(err error) error {
 	default:
 		return ErrInternal
 	}
+}
+
+func transitionPortRequired() error {
+	return fmt.Errorf("%w: managed-data workflow/audit transition port is required", ErrInternal)
 }
 
 func storageError(err error) error {

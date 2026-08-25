@@ -12,7 +12,6 @@ import (
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionadmin"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -20,6 +19,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectui "github.com/flidai/leapview/internal/project/ui"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type creatorConnectionCommand struct {
@@ -61,12 +61,7 @@ func (h *BrowserHandler) ConnectionAdministrationConfigurationCommand(w stdhttp.
 		return
 	}
 	if command.Action == "create" {
-		if h.AuthorizeConnectionCreate == nil {
-			h.connectionCommandPatch(w, r, command, "Connection administration is unavailable.")
-			return
-		}
-		allowed, authErr := h.AuthorizeConnectionCreate(r, projectID, access.CapabilityProjectAdmin)
-		if authErr != nil || !allowed {
+		if !h.connectionCreateAllowed(r, projectID) {
 			h.connectionCommandPatch(w, r, command, "Connection operation is forbidden.")
 			return
 		}
@@ -77,12 +72,7 @@ func (h *BrowserHandler) ConnectionAdministrationConfigurationCommand(w stdhttp.
 		return
 	}
 	if command.Action == "update" {
-		if h.AuthorizeConnection == nil {
-			h.connectionCommandPatch(w, r, command, "Connection administration is unavailable.")
-			return
-		}
-		allowed, authErr := h.AuthorizeConnection(r, connectionID, access.CapabilityResourceManage)
-		if authErr != nil || !allowed {
+		if !h.connectionMutationAllowed(r, connectionID, access.CapabilityResourceManage) {
 			h.connectionCommandPatch(w, r, command, "Connection operation is forbidden.")
 			return
 		}
@@ -163,12 +153,7 @@ func (h *BrowserHandler) ConnectionAdministrationLifecycleCommand(w stdhttp.Resp
 		h.connectionCommandPatch(w, r, command, "Connection binding was not found.")
 		return
 	}
-	if h.AuthorizeConnection == nil {
-		h.connectionCommandPatch(w, r, command, "Connection administration is unavailable.")
-		return
-	}
-	allowed, authErr := h.AuthorizeConnection(r, connectionID, access.CapabilityResourceManage)
-	if authErr != nil || !allowed {
+	if !h.connectionMutationAllowed(r, connectionID, access.CapabilityResourceManage) {
 		h.connectionCommandPatch(w, r, command, "Connection operation is forbidden.")
 		return
 	}
@@ -473,21 +458,19 @@ func (h *BrowserHandler) AuthorizeCreatorMutationReplay(r *stdhttp.Request) bool
 		}
 		if payload.Command.Action == "create" {
 			projectID, projectErr := h.boundProject(r.Context())
-			if projectErr != nil || h.AuthorizeConnectionCreate == nil {
+			if projectErr != nil {
 				return false
 			}
-			allowed, authErr := h.AuthorizeConnectionCreate(r, projectID, access.CapabilityProjectAdmin)
-			return authErr == nil && allowed
+			return h.connectionCreateAllowed(r, projectID)
 		}
 		connectionID := strings.TrimSpace(payload.Command.AssetID)
 		if connectionID == "" {
 			connectionID = strings.TrimSpace(payload.Command.LogicalConnection)
 		}
-		if connectionID == "" || h.AuthorizeConnection == nil {
+		if connectionID == "" {
 			return false
 		}
-		allowed, authErr := h.AuthorizeConnection(r, connectionID, access.CapabilityResourceManage)
-		return authErr == nil && allowed
+		return h.connectionMutationAllowed(r, connectionID, access.CapabilityResourceManage)
 	default:
 		return false
 	}
@@ -504,6 +487,42 @@ func resolveConnectionID(command projectsignals.ConnectionAdministrationCommandS
 		}
 	}
 	return logical
+}
+
+func (h *BrowserHandler) connectionCreateAllowed(r *stdhttp.Request, projectID projectgraph.ResourceID) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false
+	}
+	if principal.DevBypass {
+		return true
+	}
+	if h.AuthorizeConnectionCreate == nil {
+		return false
+	}
+	allowed, err := h.AuthorizeConnectionCreate(r, projectID, access.CapabilityProjectAdmin)
+	return err == nil && allowed
+}
+
+func (h *BrowserHandler) connectionMutationAllowed(r *stdhttp.Request, connectionID string, capability access.Capability) bool {
+	if h == nil || r == nil {
+		return false
+	}
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false
+	}
+	if principal.DevBypass {
+		return true
+	}
+	if h.AuthorizeConnection == nil {
+		return false
+	}
+	allowed, err := h.AuthorizeConnection(r, strings.TrimSpace(connectionID), capability)
+	return err == nil && allowed
 }
 
 // canonicalPipelineCommand keeps the browser contract tolerant of older
@@ -583,9 +602,7 @@ func (h *BrowserHandler) connectionAdministrationView(ctx context.Context, proje
 	if !ok || strings.TrimSpace(principal.ID) == "" {
 		return view, nil
 	}
-	if h.AuthorizeConnectionCreate != nil {
-		view.CanCreate, _ = h.AuthorizeConnectionCreate(r, projectID, access.CapabilityProjectAdmin)
-	}
+	view.CanCreate = h.connectionCreateAllowed(r, projectID)
 	bindings, err := h.ConnectionAdministration.List(ctx, principal.ID, connectionadmin.BindingScope{ProjectID: projectID, Environment: h.Environment}, connectionadmin.TargetID(h.TargetID))
 	if err != nil {
 		return view, err

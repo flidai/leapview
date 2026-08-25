@@ -3,6 +3,7 @@ package sqlite
 import (
 	"context"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,10 +29,11 @@ func TestPruneOperationalHistoryDryRunCountsWithoutDeleting(t *testing.T) {
 	if !result.DryRun {
 		t.Fatal("DryRun = false, want true")
 	}
-	if result.AuditEventsDeleted != 1 || result.QueryEventsDeleted != 1 || result.ArchivedAgentConversationsDeleted != 1 {
+	if result.AuditEventsDeleted != 1 || result.DeliveredAuditIntentsDeleted != 1 || result.QueryEventsDeleted != 1 || result.ArchivedAgentConversationsDeleted != 1 {
 		t.Fatalf("result = %#v, want one candidate per retention class", result)
 	}
 	requireTableCount(t, ctx, store, "audit_events", 2)
+	requireTableCount(t, ctx, store, "audit_outbox", 3)
 	requireTableCount(t, ctx, store, "query_events", 2)
 	requireTableCount(t, ctx, store, "agent_conversations", 3)
 	requireTableCount(t, ctx, store, "agent_runs", 2)
@@ -57,10 +59,11 @@ func TestPruneOperationalHistoryDeletesOnlyExpiredOperationalRows(t *testing.T) 
 	if result.DryRun {
 		t.Fatal("DryRun = true, want false")
 	}
-	if result.AuditEventsDeleted != 1 || result.QueryEventsDeleted != 1 || result.ArchivedAgentConversationsDeleted != 1 {
+	if result.AuditEventsDeleted != 1 || result.DeliveredAuditIntentsDeleted != 1 || result.QueryEventsDeleted != 1 || result.ArchivedAgentConversationsDeleted != 1 {
 		t.Fatalf("result = %#v, want one deletion per retention class", result)
 	}
 	requireTableCount(t, ctx, store, "audit_events", 1)
+	requireTableCount(t, ctx, store, "audit_outbox", 2)
 	requireTableCount(t, ctx, store, "query_events", 1)
 	requireTableCount(t, ctx, store, "agent_conversations", 2)
 	requireTableCount(t, ctx, store, "agent_runs", 1)
@@ -68,6 +71,31 @@ func TestPruneOperationalHistoryDeletesOnlyExpiredOperationalRows(t *testing.T) 
 	requireAgentEventCount(t, ctx, store, 1)
 	requireRowExists(t, ctx, store, "agent_conversations", "agent_active_old")
 	requireRowExists(t, ctx, store, "agent_conversations", "agent_archived_recent")
+}
+
+func TestPruneOperationalHistoryUsesAuditIntentCreationTime(t *testing.T) {
+	ctx := context.Background()
+	store := testMaintenanceStore(t, ctx)
+	now := time.Date(2026, 7, 6, 12, 0, 0, 0, time.UTC)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO audit_outbox
+		(event_id, source, operation, action, outcome, aggregate_key, aggregate_sequence, payload_digest, state, created_at, delivered_at)
+		VALUES ('outbox_delivered_late', 'test', 'late', 'late', 'success', 'outbox_delivered_late', 0, ?, 'delivered', ?, ?)`,
+		digest, sqliteTime(now.Add(-(366 * 24 * time.Hour))), sqliteTime(now.Add(-time.Hour))); err != nil {
+		t.Fatalf("seed late delivered audit outbox: %v", err)
+	}
+
+	result, err := PruneOperationalHistory(ctx, store.SQLDB(), RetentionOptions{
+		Now:               now,
+		AuditEventsMaxAge: 365 * 24 * time.Hour,
+	})
+	if err != nil {
+		t.Fatalf("prune operational history: %v", err)
+	}
+	if result.DeliveredAuditIntentsDeleted != 1 {
+		t.Fatalf("delivered audit intents deleted = %d, want 1", result.DeliveredAuditIntentsDeleted)
+	}
+	requireTableCount(t, ctx, store, "audit_outbox", 0)
 }
 
 func TestPruneOperationalHistoryDeletesStaleAuthState(t *testing.T) {
@@ -224,6 +252,16 @@ func seedOperationalHistory(t *testing.T, ctx context.Context, store *platform.S
 		('audit_old', 'project_demo', 'principal_1', 'old', 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?),
 		('audit_recent', 'project_demo', 'principal_1', 'recent', 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?)`, oldAudit, recentAudit); err != nil {
 		t.Fatalf("seed audit events: %v", err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := db.ExecContext(ctx, `INSERT INTO audit_outbox
+		(event_id, source, operation, action, outcome, aggregate_key, aggregate_sequence, payload_digest, state, created_at, delivered_at)
+	VALUES
+		('outbox_old', 'test', 'old', 'old', 'success', 'outbox_old', 0, ?, 'delivered', ?, ?),
+		('outbox_recent', 'test', 'recent', 'recent', 'success', 'outbox_recent', 0, ?, 'delivered', ?, ?),
+		('outbox_pending_old', 'test', 'pending', 'pending', 'success', 'outbox_pending_old', 0, ?, 'pending', ?, NULL)`,
+		digest, oldAudit, oldAudit, digest, recentAudit, recentAudit, digest, oldAudit); err != nil {
+		t.Fatalf("seed audit outbox: %v", err)
 	}
 	oldQuery := sqliteTime(now.Add(-(91 * 24 * time.Hour)))
 	recentQuery := sqliteTime(now.Add(-(10 * 24 * time.Hour)))

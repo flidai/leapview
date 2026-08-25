@@ -8,7 +8,6 @@ import (
 	nethttp "net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
@@ -34,7 +33,9 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -98,8 +99,7 @@ func ResolveDashboard(metrics Metrics, dashboardID string) (dashboardresolver.Re
 
 type SignalBroker interface {
 	Subscribe(streamID string) (<-chan pagestream.SignalPatch, func())
-	PublishEnvelope(streamID string, envelope pagestream.Envelope)
-	TraceStore() *pagestream.TraceStore
+	PublishEnvelope(streamID string, envelope dashboardstream.Envelope)
 }
 
 type SharedCommandPrepare func(
@@ -352,7 +352,10 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 		nethttp.NotFound(w, r)
 		return
 	}
-	clientID := pagestream.EnsureClientID(w, r)
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
+		return
+	}
 	resolved, err := resolveDashboard(metrics, dashboardID)
 	if err != nil {
 		nethttp.NotFound(w, r)

@@ -34,6 +34,38 @@ type CommandAuditInput struct {
 	Surface       string
 }
 
+// withAuditIntent resolves a generated command intent before a mutation and
+// carries it into the source-owned repository transaction. When no durable
+// builder is configured, the legacy best-effort producer remains available.
+func (h *Handler) withAuditIntent(r *stdhttp.Request, operationID agentgen.GenCommandOperationID, scope agent.Scope, targetType, targetID string) (*stdhttp.Request, error) {
+	if h == nil || h.options.BuildAuditIntent == nil {
+		return r, nil
+	}
+	requestID := firstNonEmptyHeader(r, "Idempotency-Key", "X-Request-Id", "X-Request-ID")
+	correlationID := firstNonEmptyHeader(r, "X-Correlation-Id", "X-Correlation-ID")
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	surface := "api"
+	switch strings.ToLower(firstNonEmptyHeader(r, "X-LeapView-Invocation-Surface", "X-LeapView-Client")) {
+	case "cli":
+		surface = "cli"
+	case "ui":
+		surface = "ui"
+	}
+	intent, err := h.options.BuildAuditIntent(r.Context(), CommandAuditInput{
+		OperationID: operationID.APIGenOperationID(), Scope: scope, TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
+		RequestID: requestID, CorrelationID: correlationID, Surface: surface,
+	})
+	if err != nil {
+		return r, err
+	}
+	if intent == nil {
+		return r, nil
+	}
+	return r.WithContext(agent.WithAuditIntent(r.Context(), *intent)), nil
+}
+
 func (h *Handler) recordCommandAudit(
 	r *stdhttp.Request,
 	operationID agentgen.GenCommandOperationID,
@@ -42,7 +74,7 @@ func (h *Handler) recordCommandAudit(
 	targetID string,
 ) {
 	operationIDValue := operationID.APIGenOperationID()
-	if h == nil || h.options.RecordCommandAudit == nil {
+	if h == nil {
 		return
 	}
 	requestID := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID")
@@ -66,8 +98,17 @@ func (h *Handler) recordCommandAudit(
 		logger.ErrorContext(r.Context(), "agent command contract executor is unavailable", "operation_id", operationIDValue, "error", err)
 		return
 	}
-	err = executor.Execute(r.Context(), operationIDValue, apigencommand.Execution{
+	execution := apigencommand.Execution{
+		Transactional: func(context.Context, apigencommand.Contract) error {
+			// The source repository already committed the mutation and audit
+			// intent atomically. This callback marks the generated invocation as
+			// complete so the outer command guard can release the response.
+			return nil
+		},
 		BestEffortAudit: func(ctx context.Context, _ apigencommand.Contract) error {
+			if h.options.RecordCommandAudit == nil {
+				return apigencommand.ErrExecutionUnavailable
+			}
 			return h.options.RecordCommandAudit(ctx, CommandAuditInput{
 				OperationID: operationIDValue, Scope: scope,
 				TargetType: strings.TrimSpace(targetType), TargetID: strings.TrimSpace(targetID),
@@ -81,10 +122,15 @@ func (h *Handler) recordCommandAudit(
 			slog.String("target_id", strings.TrimSpace(targetID)),
 			slog.String("request_id", requestID),
 		},
-	})
+	}
+	err = executor.Execute(r.Context(), operationIDValue, execution)
 	if err != nil {
 		logger.ErrorContext(r.Context(), "agent command contract execution failed", "operation_id", operationIDValue, "error", err)
 	}
+}
+
+func (h *Handler) recordLegacyCommandAudit(r *stdhttp.Request, operationID agentgen.GenCommandOperationID, scope agent.Scope, targetType, targetID string) {
+	h.recordCommandAudit(r, operationID, scope, targetType, targetID)
 }
 
 // uiRequestIdentity returns a deterministic identity for a browser command

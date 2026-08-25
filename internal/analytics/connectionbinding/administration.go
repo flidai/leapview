@@ -66,27 +66,32 @@ type AdministrationConfig struct {
 	Authorize    AdministrationAuthorizer
 	Dependencies DependencyInspector
 	Pools        AdministrationPoolDirectory
-	Audit        AdministrationAuditRecorder
-	Logger       *slog.Logger
-	Now          func() time.Time
+	// RequireAuditIntent marks command-facing administration services. Such
+	// services accept only a source-built intent in the context; internal
+	// non-command callers may continue using the legacy best-effort recorder.
+	RequireAuditIntent bool
+	Audit              AdministrationAuditRecorder
+	Logger             *slog.Logger
+	Now                func() time.Time
 }
 
 type Administration struct {
-	repository   BindingCatalog
-	ensureScope  func(context.Context, BindingScope) error
-	authorize    AdministrationAuthorizer
-	dependencies DependencyInspector
-	pools        AdministrationPoolDirectory
-	audit        AdministrationAuditRecorder
-	logger       *slog.Logger
-	now          func() time.Time
+	repository         BindingCatalog
+	ensureScope        func(context.Context, BindingScope) error
+	authorize          AdministrationAuthorizer
+	dependencies       DependencyInspector
+	pools              AdministrationPoolDirectory
+	requireAuditIntent bool
+	audit              AdministrationAuditRecorder
+	logger             *slog.Logger
+	now                func() time.Time
 }
 
 func NewAdministration(config AdministrationConfig) (*Administration, error) {
 	if config.Repository == nil || config.Authorize == nil || config.Dependencies == nil || config.Now == nil {
 		return nil, fmt.Errorf("%w: binding repository, authorizer, dependency inspector, and clock are required", ErrInvalidBinding)
 	}
-	if config.Audit == nil {
+	if config.Audit == nil && !config.RequireAuditIntent {
 		return nil, fmt.Errorf("%w: recorder is required", ErrAdministrationAuditUnavailable)
 	}
 	logger := config.Logger
@@ -96,7 +101,8 @@ func NewAdministration(config AdministrationConfig) (*Administration, error) {
 	return &Administration{
 		repository: config.Repository, authorize: config.Authorize,
 		ensureScope:  config.EnsureScope,
-		dependencies: config.Dependencies, pools: config.Pools, audit: config.Audit, logger: logger, now: config.Now,
+		dependencies: config.Dependencies, pools: config.Pools, requireAuditIntent: config.RequireAuditIntent,
+		audit: config.Audit, logger: logger, now: config.Now,
 	}, nil
 }
 
@@ -125,6 +131,9 @@ func (service *Administration) Create(
 		ctx, strings.TrimSpace(actorID), PermissionManageConnectionMetadata, binding,
 	); err != nil {
 		return TargetBinding{}, ErrUnauthorizedBinding
+	}
+	if err := service.requireMutationAudit(ctx, AuditBindingCreated, binding, binding.Revision); err != nil {
+		return TargetBinding{}, err
 	}
 	if service.ensureScope != nil {
 		if err := service.ensureScope(ctx, binding.Scope); err != nil {
@@ -261,6 +270,9 @@ func (service *Administration) UpdateConfiguration(
 	); err != nil {
 		return TargetBinding{}, ErrUnauthorizedBinding
 	}
+	if err := service.requireMutationAudit(ctx, AuditBindingUpdated, binding, binding.Revision+1); err != nil {
+		return TargetBinding{}, err
+	}
 	updated, err := binding.UpdateConfiguration(request.Configuration, service.now().UTC())
 	if err != nil {
 		return TargetBinding{}, err
@@ -382,6 +394,9 @@ func (service *Administration) Disable(
 	); err != nil {
 		return TargetBinding{}, ErrUnauthorizedBinding
 	}
+	if err := service.requireMutationAudit(ctx, AuditBindingDisabled, binding, binding.Revision+1); err != nil {
+		return TargetBinding{}, err
+	}
 	now := service.now().UTC()
 	if service.pools != nil {
 		pool, poolErr := service.pools.Pool(binding)
@@ -430,6 +445,9 @@ func (service *Administration) Enable(
 	); err != nil {
 		return TargetBinding{}, ErrUnauthorizedBinding
 	}
+	if err := service.requireMutationAudit(ctx, AuditBindingEnabled, binding, binding.Revision+1); err != nil {
+		return TargetBinding{}, err
+	}
 	enabled, err := binding.Enable(service.now().UTC())
 	if err != nil || enabled.Revision == binding.Revision {
 		return enabled, err
@@ -449,6 +467,24 @@ func (service *Administration) binding(ctx context.Context, key BindingKey) (Tar
 		return TargetBinding{}, ErrProviderUnavailable
 	}
 	return service.repository.Binding(ctx, key.Scope, key.TargetID, key.ConnectionID)
+}
+
+func (service *Administration) requireMutationAudit(
+	ctx context.Context,
+	action AdministrationAuditAction,
+	binding TargetBinding,
+	expectedRevision int64,
+) error {
+	if service == nil || !service.requireAuditIntent {
+		return nil
+	}
+	intent, ok := AuditIntentFromContext(ctx)
+	if !ok || intent.Action != string(action) || intent.ResourceID != binding.ConnectionID.String() ||
+		intent.AggregateKey != "connection_binding:"+binding.ID.String() ||
+		intent.AggregateSequence != expectedRevision {
+		return ErrAdministrationAuditUnavailable
+	}
+	return nil
 }
 
 func bindingHealthWithoutPool(binding TargetBinding) BindingHealthStatus {

@@ -22,7 +22,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 		if contract.Namespace != "LeapViewAPI.Dashboard" || command.Owner != contract.Namespace || command.AuthzMode != "authenticated" || command.Privilege != "" {
 			t.Errorf("%s ownership/authz = %#v", operationID, command)
 		}
-		if !command.Audit.Required || command.Audit.SuccessAction != auditAction || command.Audit.Guarantee != "best-effort" {
+		if !command.Audit.Required || command.Audit.SuccessAction != auditAction || command.Audit.Guarantee != "transactional" {
 			t.Errorf("%s audit = %#v", operationID, command.Audit)
 		}
 		if command.Target == nil || command.Target.Parameter != "project" || command.Target.Type != "project" {

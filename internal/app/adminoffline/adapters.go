@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	adminsqlite "github.com/flidai/leapview/internal/admin/sqlite"
@@ -407,6 +408,54 @@ type operationalRetention struct {
 	dbPath string
 }
 
+type auditOutboxControl struct {
+	dbPath string
+}
+
+func (control auditOutboxControl) Status(ctx context.Context) (adminoffline.AuditOutboxStatus, error) {
+	store, err := platform.Open(ctx, control.dbPath)
+	if err != nil {
+		return adminoffline.AuditOutboxStatus{}, err
+	}
+	defer store.Close()
+	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	inspection, err := operator.InspectAuditOutbox(ctx, time.Now().UTC(), access.MaxAuditOutboxInspectionRows)
+	if err != nil {
+		return adminoffline.AuditOutboxStatus{}, err
+	}
+	terminals := make([]adminoffline.AuditOutboxTerminalIntent, 0, len(inspection.Terminals))
+	for _, item := range inspection.Terminals {
+		terminals = append(terminals, adminoffline.AuditOutboxTerminalIntent{
+			EventID: item.EventID, State: string(item.State), AttemptCount: item.AttemptCount,
+			LastErrorCode: item.LastErrorCode, PayloadDigest: item.PayloadDigest,
+			AggregateKey: item.AggregateKey, AggregateSequence: item.AggregateSequence,
+			LeaseGeneration: item.LeaseGeneration, CreatedAt: item.CreatedAt,
+		})
+	}
+	stats := inspection.Stats
+	return adminoffline.AuditOutboxStatus{
+		Pending: stats.Pending, Retry: stats.Retry, Leased: stats.Leased, Delivered: stats.Delivered,
+		Poison: stats.Poison, Quarantined: stats.Quarantined, OldestUndeliveredAge: stats.OldestUndeliveredAge,
+		AttemptCount: stats.AttemptCount, Capacity: stats.Capacity, CapacityRemaining: stats.CapacityRemaining,
+		Terminals: terminals, TerminalsTruncated: inspection.Truncated,
+	}, nil
+}
+
+func (control auditOutboxControl) RequeueExact(ctx context.Context, request adminoffline.AuditOutboxRequest) error {
+	store, err := platform.Open(ctx, control.dbPath)
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	attempts := request.ExpectedAttempts
+	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	return operator.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{
+		EventID: request.RequeueEventID, ExpectedState: access.AuditIntentState(request.ExpectedState),
+		ExpectedAttempts: attempts, ExpectedFailureCode: request.ExpectedFailureCode,
+		ExpectedPayloadDigest: request.ExpectedPayloadDigest,
+	})
+}
+
 func (retention operationalRetention) Prune(ctx context.Context, policy adminoffline.RetentionPolicy) (adminoffline.RetentionResult, error) {
 	store, err := platform.Open(ctx, retention.dbPath)
 	if err != nil {
@@ -422,6 +471,7 @@ func (retention operationalRetention) Prune(ctx context.Context, policy adminoff
 	})
 	return adminoffline.RetentionResult{
 		AuditEventsDeleted:                  result.AuditEventsDeleted,
+		DeliveredAuditIntentsDeleted:        result.DeliveredAuditIntentsDeleted,
 		QueryEventsDeleted:                  result.QueryEventsDeleted,
 		ArchivedAgentConversationsDeleted:   result.ArchivedAgentConversationsDeleted,
 		ExpiredOAuthStatesDeleted:           result.ExpiredOAuthStatesDeleted,

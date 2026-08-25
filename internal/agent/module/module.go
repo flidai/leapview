@@ -11,7 +11,6 @@ import (
 
 	"github.com/Yacobolo/toolbelt/apigen/runtime/agenttool"
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/agent"
 	agentapi "github.com/flidai/leapview/internal/agent/api"
@@ -28,6 +27,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	agentcore "github.com/flidai/leapview/pkg/agent"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type Module struct {
@@ -83,12 +83,13 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database         *sql.DB
-	Model            ModelConfig
-	Service          *agent.Service
-	Jobs             JobStore
-	RunWorkloadClass string
-	ProjectID        projectgraph.ResourceID
+	Database            *sql.DB
+	Model               ModelConfig
+	Service             *agent.Service
+	Jobs                JobStore
+	AuditIntentRecorder access.AuditIntentRecorder
+	RunWorkloadClass    string
+	ProjectID           projectgraph.ResourceID
 	// ResolveProjectID returns the exact project bound to the active serving
 	// lease. It is required for fresh installations where ProjectID is empty at
 	// process startup, and is evaluated for each project-dependent operation.
@@ -178,7 +179,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
 	if service == nil && config.Database != nil {
-		repository := newRepository(config.Database, workflow)
+		repository := newRepository(config.Database, workflow, config.AuditIntentRecorder)
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
 		})
@@ -186,6 +187,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if service != nil {
 		if config.RecordAudit == nil {
 			return nil, fmt.Errorf("agent command audit recorder is required")
+		}
+		if config.Database != nil {
+			if err := service.ConfigureAuditIntentRecorder(config.AuditIntentRecorder); err != nil {
+				return nil, fmt.Errorf("configure transactional agent command audit: %w", err)
+			}
 		}
 		service.ConfigureDefaultModel(func(modelConfig agent.Config) agentcore.Model {
 			return agentopenai.NewModel(modelConfig, nil)
@@ -248,6 +254,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if resolveTurnContext == nil {
 		resolveTurnContext = m.ResolveTurnContext
 	}
+	var buildAuditIntent func(context.Context, agenthttp.CommandAuditInput) (*access.AuditIntent, error)
+	if config.Database != nil {
+		buildAuditIntent = BuildAuditIntent
+	}
 	currentPrincipal := func(r *http.Request) (agenthttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
 			return agenthttp.Principal{}, false
@@ -265,7 +275,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		ResolveTurnContext: resolveTurnContext, QueueMissingTitle: m.queueMissingChatTitle,
 		ExecuteStartedChatTurn: m.executeStartedChatTurn,
 		EnqueueRun:             m.EnqueueRun, EnqueueChatRun: m.EnqueueChatRun,
-		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, Logger: config.Logger,
+		CancelQueuedRun: m.CancelQueuedRun, RecordCommandAudit: m.recordCommandAudit, BuildAuditIntent: buildAuditIntent, Logger: config.Logger,
 		APIGenToolContracts: apiGenToolContracts(m.apiOperations),
 	})
 	m.configureTools()

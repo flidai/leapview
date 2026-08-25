@@ -4,13 +4,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type Authorize func(route, section string, next http.Handler) (http.Handler, bool)
 
 type PageStreamConfig struct {
-	Trace     *pagestream.TraceStore
 	Handlers  map[string]http.Handler
 	Authorize Authorize
 }
@@ -53,17 +52,17 @@ func Route(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("route"))
 }
 
-// PatchOnce writes and flushes one traced bootstrap patch, then returns.
-func PatchOnce(trace *pagestream.TraceStore, w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) error {
-	clientID := pagestream.EnsureClientID(w, r)
-	route := Route(r)
-	streamID := route + ":" + clientID
-	updates := pagestream.NewSignalStream(w, r, pagestream.WithStreamTrace(trace, streamID, route+".bootstrap"))
+// PatchOnce writes and flushes one bootstrap patch, then returns.
+func PatchOnce(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) error {
+	if _, err := EnsureClientID(w, r); err != nil {
+		return err
+	}
+	updates := pagestream.NewSignalStream(w, r)
 	return updates.Patch(patch)
 }
 
-func PatchAndWait(trace *pagestream.TraceStore, w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) {
-	if err := PatchOnce(trace, w, r, patch); err != nil {
+func PatchAndWait(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) {
+	if err := PatchOnce(w, r, patch); err != nil {
 		return
 	}
 	<-r.Context().Done()

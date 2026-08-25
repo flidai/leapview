@@ -194,6 +194,12 @@ func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction,
 	}
 	return m.repository.RecordWorkflow(ctx, tx, intent)
 }
+func (m *Module) CancelWorkflowJob(ctx context.Context, tx transaction.Transaction, id string) error {
+	if m == nil || m.repository == nil {
+		return jobs.ErrStoreRequired
+	}
+	return m.repository.CancelWorkflowJob(ctx, tx, id)
+}
 func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
 	if m == nil || m.repository == nil || m.config.Database == nil {
 		return jobs.ErrStoreRequired

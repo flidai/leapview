@@ -18,6 +18,21 @@ export type BrowserCommandFailure = {
 type DatastarFetchDetail = {
   type?: string
   argsRaw?: { status?: string | number }
+  el?: Element
+}
+
+/**
+ * Datastar's fetch lifecycle is document-global. A command component may only
+ * consume events from the element whose data-on attribute initiated its
+ * request. Nested components use their shadow host as that command owner.
+ */
+export function ownsBrowserCommandFetch(element: Element, event: Event): boolean {
+  const owner = (event as CustomEvent<DatastarFetchDetail>).detail?.el
+  if (!(owner instanceof Element)) return false
+  if (owner === element) return true
+  const root = element.getRootNode()
+  const rootHost = 'host' in root ? (root as ShadowRoot).host : null
+  return owner === rootHost
 }
 
 /**

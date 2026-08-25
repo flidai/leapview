@@ -5,13 +5,13 @@ import (
 	stdhttp "net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 

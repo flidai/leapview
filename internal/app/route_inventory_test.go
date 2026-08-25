@@ -84,7 +84,7 @@ func TestRouteInventory(t *testing.T) {
 		rows = append(rows, fmt.Sprintf("%s|%s|%s|%s", key, contract.owner, contract.access, contract.privilege))
 	}
 	sort.Strings(rows)
-	const expectedRouteContractDigest = "10cac0c750dafef8fb46588629710e429399e3813106161d5406aa79b2b09b37"
+	const expectedRouteContractDigest = "cb26e3ace2f753c888337f7330e765c6c23694638fd16e3b27715b3b0e279764"
 	digest := fmt.Sprintf("%x", sha256.Sum256([]byte(strings.Join(rows, "\n"))))
 	if digest != expectedRouteContractDigest {
 		t.Fatalf("route ownership/auth contract changed: got digest %s\n%s", digest, strings.Join(rows, "\n"))
@@ -245,8 +245,6 @@ GET /.well-known/leapview
 GET /.well-known/oauth-authorization-server
 GET /.well-known/oauth-protected-resource
 GET /.well-known/oauth-protected-resource/mcp
-GET /__dev/pagestream/signals
-GET /__dev/pagestream/traces
 GET /admin
 GET /admin/api-tokens
 GET /admin/agent

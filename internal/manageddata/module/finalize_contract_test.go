@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/control"
@@ -31,7 +32,7 @@ func TestFinalizeManagedDataUploadGeneratedExecutionContractEndToEnd(t *testing.
 	jobStore := jobssqlite.NewRepository(store.SQLDB())
 	managedRoot := filepath.Join(t.TempDir(), "managed")
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Jobs: jobStore, Workflow: jobStore, RecordAudit: discardManagedDataAudit,
+		Database: store.SQLDB(), Jobs: jobStore, Workflow: jobStore, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
 		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) {
 			return true, nil

@@ -329,11 +329,13 @@ func SetPublicDashboardSecurityHeaders(header http.Header, presentation string, 
 	} else {
 		header.Set("X-Frame-Options", "DENY")
 	}
-	header.Set("Content-Security-Policy", strings.Join([]string{
-		"default-src 'self'", "base-uri 'none'", "object-src 'none'", "frame-ancestors " + frameAncestors,
-		"form-action 'none'", "script-src 'self' 'unsafe-eval'", "style-src 'self' 'unsafe-inline'",
-		"img-src 'self' data: blob:", "font-src 'self' data:", "connect-src 'self'", "worker-src 'self' blob:",
-	}, "; "))
+	header.Set("Content-Security-Policy", apihttpmiddleware.ContentSecurityPolicy(apihttpmiddleware.ContentSecurityPolicyConfig{
+		BaseURI:             "'none'",
+		FrameAncestors:      frameAncestors,
+		FormAction:          "'none'",
+		DatastarExpressions: true,
+		DynamicStyles:       true,
+	}))
 	header.Set("Referrer-Policy", "no-referrer")
 	header.Set("X-Robots-Tag", "noindex")
 	header.Set("X-Content-Type-Options", "nosniff")

@@ -45,6 +45,7 @@ import '../shared/entity-list'
 import '../shared/loading-spinner'
 import '../shared/record-table'
 import '../shared/code-block'
+import '../shared/config-viewer'
 import '../shared/drawer'
 import { updateURLSearchParameter } from '../shared/url-search-state'
 import './connection-administration'
@@ -774,12 +775,24 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
 
   private renderDefinition(page: ResourceAssetPageSignal) {
     const sections = page.definition?.sections ?? []
+    const configuration = sections.find((section) => section.lang === 'yaml' || section.lang === 'json' || section.title.toLowerCase() === 'configuration')
+    const transform = sections.find((section) => section.lang === 'sql' || section.title.toLowerCase() === 'sql' || section.title.toLowerCase() === 'transform')
+    const otherSections = sections.filter((section) => section !== configuration && section !== transform)
+    const fallbackSections = otherSections.length > 0 ? otherSections : configuration?.code ? [] : sections
     return html`
       <section class="details definition" id="definition" aria-label="Asset definition">
         <div class="details-content">
-          ${sections.length > 0
-            ? sections.map(renderDetailSection)
-            : html`<div class="empty">No authored definition is available.</div>`}
+          ${configuration?.code
+            ? html`<section class="detail-section configuration-section" aria-label="Configuration">
+                <h2>Configuration</h2>
+                <lv-config-viewer .configuration=${configuration.code} .language=${configuration.lang}></lv-config-viewer>
+              </section>`
+            : nothing}
+          ${fallbackSections.length > 0
+            ? fallbackSections.map(renderDetailSection)
+            : configuration?.code || transform?.code
+              ? nothing
+              : html`<div class="empty">No authored definition is available.</div>`}
         </div>
       </section>
     `

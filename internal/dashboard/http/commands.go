@@ -6,12 +6,13 @@ import (
 	"errors"
 	nethttp "net/http"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
+	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type commandPrepare func(command.Service, command.Request, dashboard.Filters) (command.PreparedRefresh, error)
@@ -87,7 +88,7 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	broker := h.Broker
 	if broker == nil {
-		broker = pagestream.NewBroker()
+		broker = dashboardstream.NewDeliveryBroker()
 	}
 	coordinatorContext := h.analyticalStreamContext(context.WithoutCancel(r.Context()), streamID)
 	coordinator := registry.Ensure(streamID, coordinatorContext, func(event dashboardstream.RefreshEvent) {
@@ -172,7 +173,7 @@ func (h Handler) persistPreparedSelections(
 		return nil
 	}
 	definition := resolved.Definition
-	clientID := pagestream.ClientIDFromRequest(r, signals.Runtime.ClientID)
+	clientID := webtransport.ClientIDFromRequest(r, signals.Runtime.ClientID)
 	key, keyErr := h.dashboardSessionKey(r, definition, clientID, signals.Runtime.StreamInstanceID)
 	if keyErr != nil {
 		return keyErr

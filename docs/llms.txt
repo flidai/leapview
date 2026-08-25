@@ -90,6 +90,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Roles, grants, and policies](/docs/security/authorization): Assign least-privilege access to securable resources.
 - [Service principals and API tokens](/docs/security/tokens): Authenticate non-human workloads with scoped credentials.
 - [Audit events](/docs/security/audit): Inspect security and administrative activity.
+- [Audit privacy and retention](/docs/security/audit-privacy): Minimize, retain, and protect audit records and exports.
 - [Dependency security clearance](/docs/security/dependency-clearance): Generate and verify content-bound dependency security evidence.
 - [Security governance and release assurance](/docs/security/governance): Operate fail-closed repository, provenance, and promotion controls.
 
@@ -240,6 +241,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
 - [Cross-role journey qualification](/docs/architecture/journey-qualification): Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.
 - [GitHub-hosted CI](/docs/architecture/github-hosted-ci): Understand LeapView's ephemeral runners, bounded caches, and portable validation contract.
+- [Durable audit and compliance controls](/docs/architecture/durable-audit-compliance): Understand audit guarantee classes, evidence boundaries, and compliance controls.
 - [Storage architecture](/docs/storage-architecture): Understand DuckLake, DuckDB, snapshots, and serving pointers.
 - [Datastar signal flow](/docs/architecture/datastar): Understand server-owned state and SSE response contracts.
 - [Filter and slicer target architecture](/docs/architecture/filters-slicers): Understand semantic filter definitions, scoped bindings, canonical state, pane controls, slicers, and governed option queries.

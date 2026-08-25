@@ -43,8 +43,8 @@ func loadFinalizeUploadExecutionContract() (apigencommand.AsyncExecutionContract
 	if err := contract.Validate(); err != nil {
 		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("validate finalize managed-data upload command contract: %w", err)
 	}
-	if contract.Guarantee != apigencommand.GuaranteeBestEffort {
-		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("finalize managed-data upload requires best-effort Access auditing, got %q", contract.Guarantee)
+	if contract.Guarantee != apigencommand.GuaranteeTransactional {
+		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("finalize managed-data upload requires transactional Access auditing, got %q", contract.Guarantee)
 	}
 	if contract.Execution == nil {
 		return apigencommand.AsyncExecutionContract{}, fmt.Errorf("finalize managed-data upload async execution contract is unavailable")

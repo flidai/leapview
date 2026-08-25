@@ -13,6 +13,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	publicationdb "github.com/flidai/leapview/internal/dashboard/internal/db"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -20,12 +21,20 @@ import (
 )
 
 type Repository struct {
-	db *sql.DB
-	q  *publicationdb.Queries
+	db    *sql.DB
+	q     *publicationdb.Queries
+	audit access.AuditIntentRecorder
 }
 
 func NewRepository(db *sql.DB) *Repository {
 	return &Repository{db: db, q: publicationdb.New(db)}
+}
+
+// NewRepositoryWithAudit wires publication mutations to Access' narrow
+// transaction-scoped audit-intent port. The recorder participates in the
+// transaction opened by this repository and never commits or rolls it back.
+func NewRepositoryWithAudit(db *sql.DB, audit access.AuditIntentRecorder) *Repository {
+	return &Repository{db: db, q: publicationdb.New(db), audit: audit}
 }
 
 func mapPublication(row publicationdb.DashboardPublication) (publication.Publication, error) {
@@ -188,10 +197,36 @@ func (r *Repository) mutate(
 	if err := insertEvent(ctx, q, row.ID, eventType, actorID, row.ServingStateID); err != nil {
 		return publication.Publication{}, err
 	}
+	if err := r.recordAuditIntent(ctx, tx, row.ID, &row); err != nil {
+		return publication.Publication{}, err
+	}
 	if err := tx.Commit(); err != nil {
 		return publication.Publication{}, err
 	}
 	return r.Get(ctx, projectID, name)
+}
+
+func (r *Repository) recordAuditIntent(ctx context.Context, tx *sql.Tx, publicationID string, row *publication.Publication) error {
+	intent, ok := publication.AuditIntentFromContext(ctx)
+	if !ok {
+		return nil
+	}
+	if r.audit == nil {
+		return fmt.Errorf("dashboard publication audit intent recorder is required")
+	}
+	if row == nil {
+		return fmt.Errorf("dashboard publication audit intent publication is required")
+	}
+	// Publication events are the source-owned aggregate sequence. Counting
+	// after inserting the event gives each committed command a deterministic,
+	// monotonic sequence while preserving the stable aggregate identity built
+	// by the command producer.
+	sequence, err := r.q.WithTx(tx).CountDashboardPublicationEvents(ctx, publicationID)
+	if err != nil {
+		return fmt.Errorf("dashboard publication audit intent sequence: %w", err)
+	}
+	intent.AggregateSequence = sequence
+	return r.audit.RecordAuditIntent(ctx, tx, intent)
 }
 
 func ReconcileTx(

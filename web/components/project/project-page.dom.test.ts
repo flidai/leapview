@@ -216,7 +216,7 @@ test('connections list and asset detail render without workspace terminology', a
   }
 })
 
-test('asset Definition tab renders authored YAML and SQL as separate code sections', async () => {
+test('asset Definition tab renders an outline and highlighted Transform SQL', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=model-definition`)
@@ -224,22 +224,23 @@ test('asset Definition tab renders authored YAML and SQL as separate code sectio
     const definition = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot!
+      const viewer = root.querySelector('lv-config-viewer') as any
+      await viewer?.updateComplete
       return {
         activeTab: root.querySelector('.tabs a[aria-current="page"]')?.textContent?.trim(),
         label: root.querySelector('#definition')?.getAttribute('aria-label'),
-        sections: Array.from(root.querySelectorAll('#definition .detail-section')).map((section: any) => ({
-          title: section.querySelector('h2')?.textContent?.trim(),
-          code: section.querySelector('lv-code-block')?.code,
-          language: section.querySelector('lv-code-block')?.getAttribute('language'),
-        })),
+        configuration: viewer?.configuration,
+        sqlRows: viewer?.shadowRoot?.querySelectorAll('.sql-row').length ?? 0,
+        transformSections: root.querySelectorAll('.transform-section').length,
+        sqlCode: (viewer?.shadowRoot?.querySelector('.sql-row lv-code-block') as any)?.code,
       }
     })
     expect(definition.activeTab).toBe('Definition')
     expect(definition.label).toBe('Asset definition')
-    expect(definition.sections).toEqual([
-      { title: 'Configuration', code: 'kind: Model\n', language: 'yaml' },
-      { title: 'SQL', code: 'select * from source.orders', language: 'sql' },
-    ])
+    expect(definition.configuration).toContain('definition:')
+    expect(definition.sqlRows).toBe(1)
+    expect(definition.transformSections).toBe(0)
+    expect(definition.sqlCode).toBe('select * from source.orders\n')
   } finally {
     await page.close()
   }
@@ -648,7 +649,11 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
     await page.waitForFunction(() => customElements.get('lv-pipelines-page'))
     const state = await page.locator('lv-pipelines-page').evaluate(async (element: any) => {
       await element.updateComplete
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+      await element.updateComplete
+      const unrelatedIgnored = element.terminalFailure == null
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await element.updateComplete
       const feedback = element.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
@@ -658,8 +663,10 @@ test('pipeline terminal command failure clears loading and offers reload guidanc
         failureKind: element.terminalFailure?.kind,
         retryLabel: retry?.textContent?.trim(),
         pendingAfterFailure: element.commandPendingFor('pipeline:sales'),
+        unrelatedIgnored,
       }
     })
+    expect(state.unrelatedIgnored).toBe(true)
     expect(state.failureKind).toBe('unavailable')
     expect(state.message).toContain('previous state was kept')
     expect(state.retryLabel).toBe('Reload latest pipeline state')
@@ -683,7 +690,13 @@ test('connection terminal command failure keeps the drawer state and offers relo
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await admin?.updateComplete
       const drawerOpenAfterClick = Boolean(admin.shadowRoot?.querySelector('lv-drawer'))
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', argsRaw: { status: 503 } } }))
+      const form = admin.shadowRoot?.querySelector('form') as HTMLFormElement | null
+      form?.requestSubmit()
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: document.body, argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
+      await admin?.updateComplete
+      const unrelatedIgnored = admin.terminalFailure == null
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
       await new Promise<void>((resolve) => queueMicrotask(() => resolve()))
       await admin?.updateComplete
       const alert = admin.shadowRoot?.querySelector('[role="alert"]') as HTMLElement | null
@@ -696,8 +709,10 @@ test('connection terminal command failure keeps the drawer state and offers relo
         drawerOpenAfterClick,
         drawerOpenStateAfterClick: admin.drawerOpen,
         drawerOpen: drawerOpenAfterClick && drawerOpenBeforeRetry,
+        unrelatedIgnored,
       }
     })
+    expect(state.unrelatedIgnored).toBe(true)
     expect(state.failureKind).toBe('unavailable')
     expect(state.message).toContain('previous state was kept')
     expect(state.retryLabel).toBe('Reload latest connection state')
@@ -719,7 +734,7 @@ function testDocument(rootName: string): string {
   } : rootName === 'connection-detail' ? {
     kind: 'connection', title: 'Warehouse', assetId: 'conn', activeSection: 'details', asset: { id: 'conn', key: 'connection:conn', title: 'Warehouse', description: 'Primary warehouse.', type: 'connection', typeLabel: 'Connection', detailHref: '/connections/conn/details', openHref: '/connections/conn/details' }, breadcrumbs: [{ label: 'Connections', href: '/connections' }, { label: 'Warehouse', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/connections/conn/details', active: true }, { id: 'definition', label: 'Definition', href: '/connections/conn/definition' }, { id: 'lineage', label: 'Lineage', href: '/connections/conn/lineage' }], connectionLifecycle: lifecycle(), details: { overview: [{ label: 'Kind', value: 'DuckDB' }, { label: 'Scope', value: 'Project' }], sections: [] },
   } : rootName === 'model-definition' ? {
-    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
+    kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'definition', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition', active: true }], definition: { sections: [{ title: 'Configuration', code: 'kind: Model\nspec:\n  definition:\n    type: sql\n    sql: |\n      select * from source.orders\n', lang: 'yaml' }, { title: 'SQL', code: 'select * from source.orders', lang: 'sql' }] },
   } : rootName === 'model-refresh' ? {
     kind: 'data', title: 'orders', assetId: 'model:orders', activeSection: 'refreshes', asset: { id: 'model:orders', key: 'orders', title: 'orders', type: 'model_table', typeLabel: 'Model table', detailHref: '/models/model:orders/details', openHref: '/models/model:orders/details' }, breadcrumbs: [{ label: 'Models', href: '/models' }, { label: 'orders', current: true }], tabs: [{ id: 'details', label: 'Details', href: '/models/model:orders/details' }, { id: 'definition', label: 'Definition', href: '/models/model:orders/definition' }, { id: 'refreshes', label: 'Refreshes', href: '/models/model:orders/refreshes', active: true }], refresh: { status: 'available', running: false, lastSuccessful: '2026-08-24T14:32:00Z', facts: [{ label: 'Status', value: 'available' }, { label: 'Last refreshed', value: '2026-08-24 14:32 UTC', wide: true }, { label: 'Rows', value: '99,441' }, { label: 'Physical size', value: '7.6 MiB' }, { label: 'Data files', value: '1' }, { label: 'DuckLake snapshot', value: '2', code: true }], runsTable: { columns: [{ id: 'status', header: 'Status', kind: 'status' }, { id: 'started', header: 'Started' }, { id: 'duration', header: 'Duration' }, { id: 'trigger', header: 'Trigger' }, { id: 'triggered_by', header: 'Initiated by' }], rows: [{ status: { label: 'failed', tone: 'danger' }, started: '2026-08-24T14:32:00Z', duration: '5s', trigger: 'Pipeline', triggered_by: 'Local Developer', runId: 'run:model:orders', statusLabel: 'failed', startedAt: '2026-08-24T14:32:00Z', finishedAt: '2026-08-24T14:32:05Z', modelId: 'sales', environment: 'dev', servingStateId: 'generation:1', parentRunId: 'run:pipeline:sales', targetGeneration: 2, createdAt: '2026-08-24T14:31:59Z', updatedAt: '2026-08-24T14:32:05Z', error: 'Artifact digest mismatch' }], empty: 'No refresh runs.', rowAction: 'open-refresh-run' } },
   } : rootName === 'semantic-refreshes' ? {

@@ -13,6 +13,13 @@ type WorkflowRecorder interface {
 	RecordWorkflow(context.Context, transaction.Transaction, publicjobs.WorkflowIntent) error
 }
 
+// WorkflowJobCanceller cancels a queued job inside a capability-owned
+// transaction. It exists for commands whose domain transition and async-job
+// cancellation must commit atomically.
+type WorkflowJobCanceller interface {
+	CancelWorkflowJob(context.Context, transaction.Transaction, string) error
+}
+
 // WorkflowRecorderFunc adapts a transaction-bound workflow callback.
 type WorkflowRecorderFunc func(context.Context, transaction.Transaction, publicjobs.WorkflowIntent) error
 

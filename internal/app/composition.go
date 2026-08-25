@@ -355,10 +355,37 @@ type sealedRuntimeActivator interface {
 	ActivatePreparedContext(context.Context, *runtimehost.Prepared, func() error) error
 }
 
+type sealedRuntimeActiveReader interface {
+	ActiveArtifact(context.Context) (servingstate.State, servingstate.Artifact, error)
+}
+
+type sealedRuntimeLeaseReader interface {
+	Acquire(context.Context) (runtimehost.Lease, error)
+}
+
 func activateCanonicalServingState(ctx context.Context, runtime sealedRuntimeActivator, generationID string, activate func() error) error {
 	generationID = strings.TrimSpace(generationID)
 	if runtime == nil || generationID == "" || activate == nil {
 		return fmt.Errorf("canonical sealed runtime, generation, and activation callback are required")
+	}
+	if leaseReader, ok := runtime.(sealedRuntimeLeaseReader); ok {
+		lease, err := leaseReader.Acquire(ctx)
+		if err == nil && lease != nil {
+			activeGenerationID := lease.Identity().GenerationID
+			lease.Release()
+			if activeGenerationID == generationID {
+				return activate()
+			}
+		}
+	}
+	if activeReader, ok := runtime.(sealedRuntimeActiveReader); ok {
+		active, _, err := activeReader.ActiveArtifact(ctx)
+		switch {
+		case err == nil && string(active.ID) == generationID:
+			return activate()
+		case err != nil && !errors.Is(err, servingstate.ErrNotFound):
+			return fmt.Errorf("resolve active canonical sealed serving state: %w", err)
+		}
 	}
 	prepared, err := runtime.PrepareServingState(ctx, generationID)
 	if err != nil {
@@ -383,7 +410,6 @@ func authorizeSealedPublication(
 	delivery sealedDeliveryAuthorizationReader,
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
-	devBypass bool,
 ) error {
 	if binding.ActorID == "" || binding.CandidateID == "" || binding.GenerationID == "" || binding.ProjectID == "" || binding.Environment == "" || binding.TargetID != targetID {
 		return fmt.Errorf("sealed publication actor and root scope are required")
@@ -418,11 +444,7 @@ func authorizeSealedPublication(
 		if resourceErr != nil {
 			return fmt.Errorf("sealed publication graph impact: %w", resourceErr)
 		}
-		// Non-production local development still validates the exact immutable
-		// candidate, plan, target, and graph-impact tuple above. It bypasses only
-		// the active project's authored grants so repeated `task dev` publication
-		// remains possible after the first generation activates.
-		if devBypass {
+		if requestLocalDevelopmentAuthorization(ctx, binding.ActorID) {
 			return nil
 		}
 		var allowed bool
@@ -443,7 +465,7 @@ func authorizeSealedPublication(
 	if err != nil {
 		return fmt.Errorf("sealed publication resource: %w", err)
 	}
-	if devBypass {
+	if requestLocalDevelopmentAuthorization(ctx, binding.ActorID) {
 		return nil
 	}
 	allowed, err := authorizeProjectResources(ctx, accessModule, runtimeHost, binding.ActorID, requestedProject, []access.ResourceRef{resource}, capability)
@@ -454,6 +476,11 @@ func authorizeSealedPublication(
 		return fmt.Errorf("sealed publication live authorization denied")
 	}
 	return nil
+}
+
+func requestLocalDevelopmentAuthorization(ctx context.Context, actorID string) bool {
+	principal, ok := accessmodule.PrincipalFromContext(ctx)
+	return ok && principal.DevBypass && strings.TrimSpace(principal.ID) == strings.TrimSpace(actorID)
 }
 
 func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
@@ -529,6 +556,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		cleanupErr := cleanup.Close(context.WithoutCancel(ctx))
 		return nil, nil, nil, errors.Join(err, cleanupErr)
 	}
+	auditRuntime, err := newAuditRuntime(store.SQLDB())
+	if err != nil {
+		return fail(fmt.Errorf("build access audit runtime: %w", err))
+	}
 	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
 		return fail(err)
 	}
@@ -577,7 +608,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
 	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{
-		Database: store.SQLDB(), CredentialMode: credentialMode,
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, CredentialMode: credentialMode,
 		CredentialTarget: instanceID, CredentialProject: projectID, Environment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
 			InfisicalBaseURL: cfg.InfisicalBaseURL, InfisicalUniversalClientID: cfg.InfisicalUniversalClientID,
@@ -702,7 +733,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		},
 		AuthorizeConnection: manageddatamodule.ConnectionAuthorizer(authorizeConnection),
 		Jobs:                jobModule, Workflow: jobModule,
-		RecordAudit: managedDataCommandAuditRecorder(accessModule),
+		AuditIntentRecorder: auditRuntime.recorder,
 		Worker: manageddatamodule.MaintenanceWorkerConfig{
 			Interval: cfg.ManagedDataGCInterval,
 			Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
@@ -715,7 +746,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database:        store.SQLDB(),
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ExtensionPreparation: extensionSupply,
@@ -776,8 +807,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 						return nil
 					}
 				}
-				devBypass := !production && accessModule.Auth() != nil && accessModule.Auth().DevBypass() && binding.ActorID == accessmodule.LocalDeveloperPrincipal().ID
-				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule, devBypass)
+				return authorizeSealedPublication(ctx, binding, instanceID, sealedDelivery, accessModule, runtimeHostModule)
 			},
 			VerifySeal: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
 				slog.Default().InfoContext(ctx, "sealed publication seal verification started", "deployment", binding.DeploymentID, "candidate", binding.CandidateID, "bootstrap", binding.Bootstrap)
@@ -1009,8 +1039,11 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return runtimeHostModule.Acquire(ctx)
 	}
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database: store.SQLDB(),
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+			if requestLocalDevelopmentAuthorization(ctx, principalID) {
+				return true, nil
+			}
 			return authorizeProjectResources(ctx, accessModule, runtimeHostModule, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},
 		AcquireRuntime: authoringAcquireRuntime,
@@ -1471,7 +1504,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 	}
 	deploymentConfig := deploymentmodule.Config{
-		Database: store.SQLDB(), States: servingStateRepo, Runtime: deploymentRuntime,
+		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, States: servingStateRepo, Runtime: deploymentRuntime,
 		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
@@ -1629,7 +1662,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
 	routes, runtime, platformServices, policy, err := buildApplicationSurfaces(ctx, runtimeMetrics,
 		dataAssemblyInputs{
-			Database: store.SQLDB(), PlatformHealth: store, AdminDatabase: store.SQLDB(),
+			Database: store.SQLDB(), AuditRuntime: auditRuntime, PlatformHealth: store, AdminDatabase: store.SQLDB(),
 			ServingStateRepo: servingStateRepo, StorageRetention: retention,
 			AccessRepo: accessRepo,
 		},

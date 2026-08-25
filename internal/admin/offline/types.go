@@ -50,6 +50,44 @@ type MaintenanceRequest struct {
 	AuthStateDays     int
 }
 
+type AuditOutboxRequest struct {
+	RequeueEventID        string
+	ExpectedState         string
+	ExpectedAttempts      *int
+	ExpectedFailureCode   string
+	ExpectedPayloadDigest string
+	Apply                 bool
+}
+
+type AuditOutboxStatus struct {
+	Pending              int64
+	Retry                int64
+	Leased               int64
+	Delivered            int64
+	Poison               int64
+	Quarantined          int64
+	OldestUndeliveredAge time.Duration
+	AttemptCount         int64
+	Capacity             int64
+	CapacityRemaining    int64
+	Terminals            []AuditOutboxTerminalIntent
+	TerminalsTruncated   bool
+}
+
+// AuditOutboxTerminalIntent is a payload-free index row suitable for an
+// operator incident record and an exact recovery compare-and-swap.
+type AuditOutboxTerminalIntent struct {
+	EventID           string
+	State             string
+	AttemptCount      int
+	LastErrorCode     string
+	PayloadDigest     string
+	AggregateKey      string
+	AggregateSequence int64
+	LeaseGeneration   int64
+	CreatedAt         time.Time
+}
+
 type BackupRequest struct {
 	Out          string
 	DatabaseOnly bool
@@ -163,6 +201,7 @@ type RetentionPolicy struct {
 
 type RetentionResult struct {
 	AuditEventsDeleted                  int64
+	DeliveredAuditIntentsDeleted        int64
 	QueryEventsDeleted                  int64
 	ArchivedAgentConversationsDeleted   int64
 	ExpiredOAuthStatesDeleted           int64
@@ -173,6 +212,11 @@ type RetentionResult struct {
 
 type Retention interface {
 	Prune(context.Context, RetentionPolicy) (RetentionResult, error)
+}
+
+type AuditOutboxControl interface {
+	Status(context.Context) (AuditOutboxStatus, error)
+	RequeueExact(context.Context, AuditOutboxRequest) error
 }
 
 type StorageCleaner interface {
@@ -228,6 +272,7 @@ type Dependencies struct {
 	Initializer    Initializer
 	Recovery       CredentialRecovery
 	Retention      Retention
+	AuditOutbox    AuditOutboxControl
 	Storage        StorageCleaner
 	PhysicalPool   PhysicalPoolBootstrap
 	DeliveryRepair DeliveryRepair

@@ -64,6 +64,7 @@ const fixtures = new Map<string, FixtureBuild>([
   ],
   ['chat-thread', split('chat-thread', 'web/components/chat/chat-page.ts', '.tmp/chat-thread-test', 'chat-under-test.js', 'chunks/[name]-[hash].[ext]')],
   ['code-block', single('code-block', 'web/components/shared/code-block.ts', '.tmp/code-block-test/code-block-under-test.js')],
+  ['config-viewer', single('config-viewer', 'web/components/shared/config-viewer.ts', '.tmp/config-viewer-test/config-viewer-under-test.js')],
   ['data-explorer', single('data-explorer', 'web/components/data/data-explorer.ts', '.tmp/data-explorer-test/data-explorer-under-test.js')],
   ['windowed-table', single('windowed-table', 'web/components/shared/windowed-table.ts', '.tmp/windowed-table-test/windowed-table-under-test.js')],
   ['filter-menu', single('filter-menu', 'web/components/shared/filter-menu.ts', '.tmp/filter-menu-test/filter-menu-under-test.js')],

@@ -1460,7 +1460,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -1740,7 +1740,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -2313,7 +2313,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -3213,7 +3213,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -3825,7 +3825,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -21225,7 +21225,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: dashboardId
@@ -23700,7 +23700,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: dashboardId
@@ -24092,7 +24092,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: dashboardId
@@ -30887,7 +30887,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -31590,7 +31590,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -32318,7 +32318,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -32708,7 +32708,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -32778,7 +32778,7 @@ paths:
   /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/abort:
     post:
       operationId: abortManagedDataS3MultipartUpload
-      summary: Abort an S3 multipart upload
+      summary: Request abortion of an S3 multipart upload
       parameters:
         - name: project
           in: path
@@ -33079,7 +33079,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -33097,7 +33097,7 @@ paths:
               ref: ManagedDataS3MultipartAuditPayload
             schema_version: !!float 1
           required: true
-          success_action: managed_data.s3_multipart_upload.aborted
+          success_action: managed_data.s3_multipart_upload.abort_requested
         authz_mode: privilege
         failures:
           - code: BACKEND_UNAVAILABLE
@@ -33149,7 +33149,7 @@ paths:
   ? /api/v1/projects/{project}/connections/{connection}/upload-sessions/{uploadSession}/s3-multipart-uploads/{multipartUpload}/complete
   : post:
       operationId: completeManagedDataS3MultipartUpload
-      summary: Complete an S3 multipart upload
+      summary: Request completion of an S3 multipart upload
       parameters:
         - name: project
           in: path
@@ -33461,7 +33461,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: connectionId
@@ -33479,7 +33479,7 @@ paths:
               ref: ManagedDataS3MultipartAuditPayload
             schema_version: !!float 1
           required: true
-          success_action: managed_data.s3_multipart_upload.completed
+          success_action: managed_data.s3_multipart_upload.completion_requested
         authz_mode: privilege
         failures:
           - code: BACKEND_UNAVAILABLE
@@ -34712,7 +34712,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -35048,7 +35048,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -35384,7 +35384,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: operationId
@@ -42943,7 +42943,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: deploymentId
@@ -43691,7 +43691,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: deploymentId
@@ -44075,7 +44075,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: approvalId
@@ -44438,7 +44438,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: approvalId
@@ -44803,7 +44803,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: approvalId
@@ -45168,7 +45168,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: approvalId
@@ -45561,7 +45561,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: deploymentId
@@ -46262,7 +46262,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: deploymentId
@@ -46671,7 +46671,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: deploymentId
@@ -49629,7 +49629,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: id
@@ -50276,7 +50276,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: id
@@ -51383,7 +51383,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: createdBy
@@ -52056,7 +52056,7 @@ paths:
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: digest
@@ -53748,7 +53748,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: logicalConnection
@@ -54436,7 +54436,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: logicalConnection
@@ -54807,7 +54807,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: logicalConnection
@@ -55175,7 +55175,7 @@ paths:
         additional_exposures:
           - ui
         audit:
-          guarantee: best-effort
+          guarantee: transactional
           payload:
             fields:
               - name: logicalConnection

@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -20,8 +20,10 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	"github.com/flidai/leapview/internal/platform"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type spatialTileAcceptanceMetrics struct {
@@ -237,6 +239,14 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	if !ok || contract.Command == nil {
 		t.Fatal("generated suspend publication command contract is missing")
 	}
+	outbox := accesssqlite.NewRepository(store.SQLDB())
+	dispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{Store: outbox})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if delivered, err := dispatcher.DispatchOne(t.Context(), "publication-test"); err != nil || !delivered {
+		t.Fatalf("dispatch publication audit delivered=%v err=%v", delivered, err)
+	}
 	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
 		ResourceKind: "project", ResourceID: "project:test", Action: contract.Command.Audit.SuccessAction,
 	})
@@ -297,14 +307,14 @@ func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testin
 
 func TestPublicationBrokerRelaysEventsAcrossReplicas(t *testing.T) {
 	store := testStore(t)
-	first := publicationsqlite.NewBroker(store.SQLDB(), nil, nil)
-	second := publicationsqlite.NewBroker(store.SQLDB(), nil, nil)
+	first := publicationsqlite.NewBroker(store.SQLDB(), nil)
+	second := publicationsqlite.NewBroker(store.SQLDB(), nil)
 	updates, unsubscribe := first.Subscribe("shared-public-stream")
 	defer unsubscribe()
 
-	second.PublishEnvelope("shared-public-stream", pagestream.Envelope{
+	second.PublishEnvelope("shared-public-stream", dashboardstream.Envelope{
 		Signals:  pagestream.SignalPatch{"status": map[string]any{"generation": 2}},
-		Delivery: pagestream.DeliveryMetadata{Generation: 2, Boundary: true},
+		Delivery: dashboardstream.DeliveryMetadata{Generation: 2, Boundary: true},
 	})
 	select {
 	case patch := <-updates:

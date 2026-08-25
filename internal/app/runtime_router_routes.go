@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/Yacobolo/toolbelt/pagestream"
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
@@ -116,15 +115,6 @@ func mountPublicDashboardRoutes(mux *chi.Mux, dependencies publicDashboardRouteD
 		dependencies.dashboard.MountPublicCommands(r)
 	})
 	dependencies.dashboard.MountPublicStream(mux.With(dependencies.rateLimits.PublicStream(func() { dependencies.dashboardTelemetry.PublicRateLimitObserved("stream") })))
-}
-
-func mountDevelopmentRoutes(mux *chi.Mux, trace *pagestream.TraceStore) {
-	if trace == nil {
-		return
-	}
-	traceHandler := uitransport.TraceHandler{Store: trace}
-	mux.Get("/__dev/pagestream/traces", traceHandler.Traces)
-	mux.Get("/__dev/pagestream/signals", traceHandler.Signals)
 }
 
 func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDependencies, csrf func(http.Handler) http.Handler) {
