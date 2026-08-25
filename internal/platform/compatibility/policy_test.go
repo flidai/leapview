@@ -58,6 +58,11 @@ func TestReleaseTransitionPolicyRejectsInvalidDocuments(t *testing.T) {
 			transition := doc["transitions"].([]any)[0].(map[string]any)
 			transition["operation"] = "reinstall"
 		}, want: "operation"},
+		{name: "unknown requirement", mutate: func(doc map[string]any) {
+			transition := doc["transitions"].([]any)[0].(map[string]any)
+			decision := transition["decision"].(map[string]any)
+			decision["requirements"] = []any{"backup-before-mutation", "stopped-instance", "trust-me"}
+		}, want: "unsupported requirement"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			var doc map[string]any
@@ -101,12 +106,60 @@ func TestEvaluateReleaseTransitionKeepsOperationsDistinct(t *testing.T) {
 		t.Fatalf("fresh-install decision = %#v", fresh)
 	}
 	upgrade := policy.Evaluate(Request{Operation: OperationUpgrade, Current: legacy, Next: candidate})
-	if upgrade.Allowed || upgrade.ReasonCode != ReasonDeniedFreshInstallOnly {
+	if upgrade.Allowed || upgrade.ReasonCode != ReasonDeniedUnknownRelease {
 		t.Fatalf("upgrade decision = %#v", upgrade)
 	}
 	rollback := policy.Evaluate(Request{Operation: OperationRollback, Current: candidate, Next: legacy})
-	if rollback.Allowed || rollback.ReasonCode != ReasonDeniedFreshInstallOnly {
+	if rollback.Allowed || rollback.ReasonCode != ReasonDeniedUnknownRelease {
 		t.Fatalf("rollback decision = %#v", rollback)
+	}
+}
+
+func TestEvaluateReleaseTransitionRequiresBothExactEndpoints(t *testing.T) {
+	policy, err := ParsePolicy(mustPolicyJSON(t, testPolicyDocument(t)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	from, _ := policy.ReleaseByID("v1.0.0")
+	to, _ := policy.ReleaseByID("v1.1.0")
+	for _, test := range []struct {
+		name    string
+		current ReleaseIdentity
+		next    ReleaseIdentity
+	}{
+		{name: "unknown source", current: ReleaseIdentity{Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64), Platform: "linux/amd64"}, next: to.IdentityForPlatform("linux/amd64")},
+		{name: "unknown target", current: from.IdentityForPlatform("linux/amd64"), next: ReleaseIdentity{Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64), Platform: "linux/amd64"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			decision := policy.Evaluate(Request{Operation: OperationUpgrade, Current: test.current, Next: test.next})
+			if decision.Allowed || decision.ReasonCode != ReasonDeniedUnknownRelease {
+				t.Fatalf("decision = %#v", decision)
+			}
+		})
+	}
+}
+
+func TestBindCandidateUsesAdmittedImageIdentity(t *testing.T) {
+	base, err := EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("e", 64)
+	bound, err := base.BindCandidate(ReleaseIdentity{
+		Version: "0.2.0", SourceRevision: strings.Repeat("d", 40), Image: image, Distribution: "public",
+	}, []string{"linux/amd64", "linux/arm64"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bound.CandidateRelease != "v0.2.0" {
+		t.Fatalf("candidate release = %q", bound.CandidateRelease)
+	}
+	release, ok := bound.ReleaseByID("v0.2.0")
+	if !ok || release.IdentityForPlatform("linux/arm64").Image != image {
+		t.Fatalf("bound release = %#v, %v", release, ok)
+	}
+	if _, err := ParsePolicy(mustPolicyJSON(t, bound)); err != nil {
+		t.Fatalf("bound policy does not round trip: %v", err)
 	}
 }
 
@@ -151,7 +204,7 @@ func TestRejectLegacyStateRecognizesSQLiteOptionsWithoutMutation(t *testing.T) {
 	}
 }
 
-func TestValidateUpgradeImagesRejectsReleasedV010InEitherDirection(t *testing.T) {
+func TestValidateUpgradeImagesRejectsUnknownEndpointInEitherDirection(t *testing.T) {
 	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
 	for _, test := range []struct {
 		name    string
@@ -162,7 +215,9 @@ func TestValidateUpgradeImagesRejectsReleasedV010InEitherDirection(t *testing.T)
 		{name: "target", current: current, next: ReleasedV010Image},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			if err := ValidateUpgradeImages(test.current, test.next); !errors.Is(err, ErrV010FreshInstallOnly) {
+			var decisionErr *DecisionError
+			err := ValidateUpgradeImages(test.current, test.next)
+			if !errors.As(err, &decisionErr) || decisionErr.Decision.ReasonCode != ReasonDeniedUnknownRelease {
 				t.Fatalf("ValidateUpgradeImages() error = %v", err)
 			}
 		})
@@ -172,8 +227,9 @@ func TestValidateUpgradeImagesRejectsReleasedV010InEitherDirection(t *testing.T)
 func testPolicyDocument(t *testing.T) map[string]any {
 	t.Helper()
 	return map[string]any{
-		"schemaVersion": 1,
-		"policyVersion": "ubdr/v1",
+		"schemaVersion":    1,
+		"policyVersion":    "ubdr/v1",
+		"candidateRelease": "v1.1.0",
 		"releases": []any{
 			testReleaseDocument("v1.0.0", "1.0.0", "a", "b"),
 			testReleaseDocument("v1.1.0", "1.1.0", "c", "d"),
@@ -183,7 +239,7 @@ func testPolicyDocument(t *testing.T) map[string]any {
 			"platforms": []any{"linux/amd64"},
 			"decision": map[string]any{
 				"allowed": true, "reasonCode": "transition.allowed.explicit",
-				"remediation": "", "requirements": []any{"backup-before-mutation"},
+				"remediation": "", "requirements": []any{"backup-before-mutation", "stopped-instance"},
 			},
 		}},
 	}

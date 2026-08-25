@@ -4,12 +4,16 @@
   "title": "LeapView release-transition policy",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "policyVersion", "releases", "transitions"],
+  "required": ["schemaVersion", "policyVersion", "candidateRelease", "releases", "transitions"],
   "properties": {
     "schemaVersion": { "const": 1 },
     "policyVersion": {
       "type": "string",
       "pattern": "^[a-z0-9][a-z0-9._/-]{2,63}$"
+    },
+    "candidateRelease": {
+      "type": "string",
+      "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:-[0-9A-Za-z.-]+)?$"
     },
     "releases": {
       "type": "array",

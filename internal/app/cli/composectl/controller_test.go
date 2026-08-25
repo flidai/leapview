@@ -7,7 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -74,12 +73,13 @@ func TestUpgradeRejectsReleasedV010BeforeDockerOrStateMutation(t *testing.T) {
 	if err := os.Symlink(filepath.Join("releases", "sha256-legacy"), filepath.Join(root, "current")); err != nil {
 		t.Fatal(err)
 	}
-	controller, err := New(Options{Root: root, DockerBin: "/bin/false"})
+	controller, err := New(Options{Root: root, DockerBin: "/bin/false", DockerPlatform: "linux/amd64"})
 	require.NoError(t, err)
 
 	err = controller.Upgrade(t.Context(), next)
-	if !errors.Is(err, compatibility.ErrV010FreshInstallOnly) || !strings.Contains(err.Error(), compatibility.ReasonDeniedFreshInstallOnly) {
-		t.Fatalf("Upgrade() error = %v, want explicit v0.1.0 incompatibility", err)
+	var decisionErr *compatibility.DecisionError
+	if !errors.As(err, &decisionErr) || decisionErr.Decision.ReasonCode != compatibility.ReasonDeniedUnknownRelease {
+		t.Fatalf("Upgrade() error = %v, want unknown endpoint denial", err)
 	}
 	if contents, err := os.ReadFile(filepath.Join(root, deploymentEnvName)); err != nil || string(contents) != deployment {
 		t.Fatalf("deployment state changed before rejection: %q, %v", contents, err)
@@ -109,12 +109,13 @@ func TestRollbackRejectsReleasedV010BeforeDockerOrStateMutation(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), deployment, 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, rollbackEnvName), marker, 0o600))
 	require.NoError(t, os.WriteFile(checkpoint, []byte("checkpoint"), 0o600))
-	controller, err := New(Options{Root: root, DockerBin: "/bin/false"})
+	controller, err := New(Options{Root: root, DockerBin: "/bin/false", DockerPlatform: "linux/amd64"})
 	require.NoError(t, err)
 
 	err = controller.Rollback(t.Context(), true)
-	require.ErrorIs(t, err, compatibility.ErrV010FreshInstallOnly)
-	require.ErrorContains(t, err, compatibility.ReasonDeniedFreshInstallOnly)
+	var decisionErr *compatibility.DecisionError
+	require.ErrorAs(t, err, &decisionErr)
+	require.Equal(t, compatibility.ReasonDeniedUnknownRelease, decisionErr.Decision.ReasonCode)
 	contents, readErr := os.ReadFile(filepath.Join(root, deploymentEnvName))
 	require.NoError(t, readErr)
 	require.Equal(t, deployment, contents)
@@ -135,7 +136,7 @@ func TestUpgradeRollbackMarkerReadFailureRestoresRunningService(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(root, rollbackEnvName), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
+	c, err := New(Options{Root: root, DockerPlatform: "linux/amd64", TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 	require.NoError(t, err)
 	c.isRunningOverride = func(context.Context) (bool, error) { return true, nil }
 	c.stopOverride = func(context.Context, int) error { return nil }
@@ -152,6 +153,61 @@ func TestUpgradeRollbackMarkerReadFailureRestoresRunningService(t *testing.T) {
 	if starts != 1 {
 		t.Fatalf("service restart calls = %d, want 1", starts)
 	}
+}
+
+func TestUpgradeEnforcesRequirementsBeforeMutation(t *testing.T) {
+	root := t.TempDir()
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	next := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"), 0o600))
+	policy := testTransitionPolicy(current, next, compatibility.OperationUpgrade)
+	policy.Transitions = nil
+	policy.Releases[0].Defaults.Upgrade = compatibility.Rule{
+		Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition,
+	}
+	controller, err := New(Options{Root: root, DockerPlatform: "linux/amd64", TransitionPolicy: policy})
+	require.NoError(t, err)
+	mutated := false
+	controller.isRunningOverride = func(context.Context) (bool, error) { mutated = true; return false, nil }
+	controller.backupArchiveOverride = func(context.Context, string) error { mutated = true; return nil }
+	controller.setImageOverride = func(string) error { mutated = true; return nil }
+
+	err = controller.Upgrade(t.Context(), next)
+	require.ErrorContains(t, err, compatibility.RequirementBackupBeforeMutation)
+	require.False(t, mutated)
+}
+
+func TestUpgradeUsesDockerTargetPlatformForExactPreviousReleaseCandidate(t *testing.T) {
+	t.Setenv("DOCKER_DEFAULT_PLATFORM", "linux/arm64")
+	root := t.TempDir()
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	next := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"), 0o600))
+	policy := testTransitionPolicy(current, next, compatibility.OperationUpgrade)
+	for index := range policy.Releases {
+		policy.Releases[index].Artifacts[0].Platform = "linux/arm64"
+	}
+	policy.Transitions[0].Platforms = []string{"linux/arm64"}
+	controller, err := New(Options{Root: root, DockerBin: "/bin/false", TransitionPolicy: policy})
+	require.NoError(t, err)
+	controller.isRunningOverride = func(context.Context) (bool, error) { return false, nil }
+	backupErr := errors.New("reached admitted transition backup")
+	controller.backupArchiveOverride = func(context.Context, string) error { return backupErr }
+
+	err = controller.Upgrade(t.Context(), next)
+	require.ErrorIs(t, err, backupErr)
+}
+
+func TestDockerTargetPlatformComesFromServerEngine(t *testing.T) {
+	t.Setenv("DOCKER_DEFAULT_PLATFORM", "")
+	root := t.TempDir()
+	docker := filepath.Join(root, "docker")
+	require.NoError(t, os.WriteFile(docker, []byte("#!/bin/sh\n[ \"$1\" = version ] || exit 2\nprintf 'linux/arm64\\n'\n"), 0o700))
+	controller, err := New(Options{Root: root, DockerBin: docker})
+	require.NoError(t, err)
+	platform, err := controller.targetDockerPlatform(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "linux/arm64", platform)
 }
 
 func TestRestorePreflightFailurePreservesRunningStateAndJoinsRestartError(t *testing.T) {
@@ -209,7 +265,7 @@ func TestUpgradeOperationFaultsPreserveInitialServiceState(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("LEAPVIEW_IMAGE="+current+"\nCOMPOSE_HTTPS=0\n"), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
+			c, err := New(Options{Root: root, DockerPlatform: "linux/amd64", TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 			require.NoError(t, err)
 			starts := 0
 			c.isRunningOverride = func(context.Context) (bool, error) { return test.wasRunning, nil }
@@ -260,7 +316,7 @@ func TestUpgradeAppliesAndRollsBackDeploymentPayload(t *testing.T) {
 			update := &recordingDeploymentPayloadUpdate{}
 			manager := &recordingDeploymentPayloadManager{update: update}
 			controller, err := New(Options{
-				Root: root, DeploymentPayloads: manager,
+				Root: root, DeploymentPayloads: manager, DockerPlatform: "linux/amd64",
 				TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade),
 			})
 			require.NoError(t, err)
@@ -323,7 +379,7 @@ func TestRollbackAppliesAndRestoresDeploymentPayload(t *testing.T) {
 			update := &recordingDeploymentPayloadUpdate{}
 			manager := &recordingDeploymentPayloadManager{update: update}
 			controller, err := New(Options{
-				Root: root, DeploymentPayloads: manager,
+				Root: root, DeploymentPayloads: manager, DockerPlatform: "linux/amd64",
 				TransitionPolicy: testTransitionPolicy(current, previous, compatibility.OperationRollback),
 			})
 			require.NoError(t, err)
@@ -483,7 +539,7 @@ func TestUpgradeFaultMatrixRestoresPersistentState(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(root, deploymentEnvName), originalDeployment, 0o600); err != nil {
 				t.Fatal(err)
 			}
-			c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
+			c, err := New(Options{Root: root, DockerPlatform: "linux/amd64", TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 			require.NoError(t, err)
 			running := test.wasRunning
 			dataPath := filepath.Join(root, "data.state")
@@ -581,7 +637,7 @@ func TestUpgradeHealthFailureJoinsCleanupFailures(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "backups"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	c, err := New(Options{Root: root, TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
+	c, err := New(Options{Root: root, DockerPlatform: "linux/amd64", TransitionPolicy: testTransitionPolicy(current, next, compatibility.OperationUpgrade)})
 	require.NoError(t, err)
 	primary := errors.New("restart failed")
 	stopErr := errors.New("stop cleanup failed")
@@ -650,14 +706,19 @@ func TestFirstLoginRetainsCredentialsUntilOutputSucceeds(t *testing.T) {
 }
 
 func testTransitionPolicy(current, next string, operation compatibility.Operation) *compatibility.Policy {
-	platform := runtime.GOOS + "/" + runtime.GOARCH
+	platform := "linux/amd64"
+	candidateRelease := "v1.1.0"
+	if operation == compatibility.OperationRollback {
+		candidateRelease = "v1.0.0"
+	}
 	denied := compatibility.Rule{
 		ReasonCode:  compatibility.ReasonDeniedNoExplicitRule,
 		Remediation: "use an explicitly supported transition",
 	}
 	return &compatibility.Policy{
-		SchemaVersion: compatibility.CurrentSchemaVersion,
-		PolicyVersion: "test/v1",
+		SchemaVersion:    compatibility.CurrentSchemaVersion,
+		PolicyVersion:    "test/v1",
+		CandidateRelease: candidateRelease,
 		Releases: []compatibility.Release{
 			{
 				ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "test",
@@ -678,7 +739,9 @@ func testTransitionPolicy(current, next string, operation compatibility.Operatio
 		},
 		Transitions: []compatibility.Transition{{
 			Operation: operation, From: "v1.0.0", To: "v1.1.0", Platforms: []string{platform},
-			Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition},
+			Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: []string{
+				compatibility.RequirementBackupBeforeMutation, compatibility.RequirementStoppedInstance,
+			}},
 		}},
 	}
 }

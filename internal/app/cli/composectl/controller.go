@@ -13,7 +13,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"time"
 
@@ -49,6 +48,7 @@ type Options struct {
 	Now                     func() time.Time
 	Sleep                   func(context.Context, time.Duration) error
 	TransitionPolicy        *compatibility.Policy
+	DockerPlatform          string
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 }
@@ -63,6 +63,7 @@ type Controller struct {
 	now                     func() time.Time
 	sleep                   func(context.Context, time.Duration) error
 	transitionPolicy        *compatibility.Policy
+	dockerPlatform          string
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
 	startOverride           func(context.Context) error
@@ -151,6 +152,7 @@ func New(options Options) (*Controller, error) {
 		root: root, dockerBin: dockerBin, stdin: stdin, stdout: stdout,
 		stderr: stderr, deploymentPayloads: options.DeploymentPayloads, now: now, sleep: sleep,
 		transitionPolicy:        transitionPolicy,
+		dockerPlatform:          strings.TrimSpace(options.DockerPlatform),
 		qualificationExecutor:   executor,
 		qualificationContainers: containers,
 	}, nil
@@ -451,6 +453,18 @@ func (c *Controller) Restore(ctx context.Context, requestedArchive string) error
 }
 
 func (c *Controller) Upgrade(ctx context.Context, next string) error {
+	return c.upgrade(ctx, next, c.transitionPolicy)
+}
+
+func (c *Controller) UpgradeWithPolicy(ctx context.Context, next, policyPath string) error {
+	policy, _, err := compatibility.LoadPolicy(policyPath)
+	if err != nil {
+		return err
+	}
+	return c.upgrade(ctx, next, policy)
+}
+
+func (c *Controller) upgrade(ctx context.Context, next string, policy *compatibility.Policy) error {
 	next = strings.TrimSpace(next)
 	if err := requireDigest(next); err != nil {
 		return err
@@ -467,10 +481,12 @@ func (c *Controller) Upgrade(ctx context.Context, next string) error {
 			_, err := fmt.Fprintf(c.stdout, "already running %s\n", next)
 			return err
 		}
-		decision := c.transitionPolicy.EvaluateImages(
-			compatibility.OperationUpgrade, current, next, runtime.GOOS+"/"+runtime.GOARCH,
-		)
-		if err := decision.Err(); err != nil {
+		platform, err := c.targetDockerPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		decision := policy.EvaluateImages(compatibility.OperationUpgrade, current, next, platform)
+		if err := enforceTransitionRequirements(decision); err != nil {
 			return err
 		}
 		payloadUpdate, err := c.prepareDeploymentPayload(ctx, current, next)
@@ -600,6 +616,18 @@ func (c *Controller) restorePreflightFailure(ctx context.Context, wasRunning boo
 }
 
 func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
+	return c.rollback(ctx, confirmed, c.transitionPolicy)
+}
+
+func (c *Controller) RollbackWithPolicy(ctx context.Context, confirmed bool, policyPath string) error {
+	policy, _, err := compatibility.LoadPolicy(policyPath)
+	if err != nil {
+		return err
+	}
+	return c.rollback(ctx, confirmed, policy)
+}
+
+func (c *Controller) rollback(ctx context.Context, confirmed bool, policy *compatibility.Policy) error {
 	if !confirmed {
 		return fmt.Errorf("rollback discards post-upgrade state; pass --confirm")
 	}
@@ -621,10 +649,12 @@ func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
 		if err := requireDigest(previous); err != nil {
 			return err
 		}
-		decision := c.transitionPolicy.EvaluateImages(
-			compatibility.OperationRollback, current, previous, runtime.GOOS+"/"+runtime.GOARCH,
-		)
-		if err := decision.Err(); err != nil {
+		platform, err := c.targetDockerPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		decision := policy.EvaluateImages(compatibility.OperationRollback, current, previous, platform)
+		if err := enforceTransitionRequirements(decision); err != nil {
 			return err
 		}
 		checkpoint, err := envFileValue(c.path(rollbackEnvName), "CHECKPOINT")
@@ -696,6 +726,49 @@ func (c *Controller) Rollback(ctx context.Context, confirmed bool) error {
 		}
 		return nil
 	})
+}
+
+func enforceTransitionRequirements(decision compatibility.Decision) error {
+	if err := decision.Err(); err != nil {
+		return err
+	}
+	for _, required := range []string{
+		compatibility.RequirementBackupBeforeMutation,
+		compatibility.RequirementStoppedInstance,
+	} {
+		found := false
+		for _, requirement := range decision.Requirements {
+			if requirement == required {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return fmt.Errorf("allowed %s transition omits enforced requirement %q", decision.Operation, required)
+		}
+	}
+	return nil
+}
+
+func (c *Controller) targetDockerPlatform(ctx context.Context) (string, error) {
+	if platform := strings.TrimSpace(c.dockerPlatform); platform != "" {
+		return platform, nil
+	}
+	if platform := strings.TrimSpace(os.Getenv("DOCKER_DEFAULT_PLATFORM")); platform != "" {
+		return platform, nil
+	}
+	var output bytes.Buffer
+	command := exec.CommandContext(ctx, c.dockerBin, "version", "--format", "{{.Server.Os}}/{{.Server.Arch}}")
+	command.Stdout = &output
+	command.Stderr = c.stderr
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("resolve Docker target platform: %w", err)
+	}
+	platform := strings.TrimSpace(output.String())
+	if platform == "" || strings.ContainsAny(platform, " \t\r\n") {
+		return "", fmt.Errorf("Docker returned invalid target platform %q", platform)
+	}
+	return platform, nil
 }
 
 func (c *Controller) prepareDeploymentPayload(ctx context.Context, current, next string) (DeploymentPayloadUpdate, error) {

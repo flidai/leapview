@@ -43,6 +43,27 @@ type qualificationInstalledReport struct {
 	} `json:"assertions"`
 }
 
+type qualificationReleaseIdentity struct {
+	Version     string `json:"version"`
+	Revision    string `json:"revision"`
+	Image       string `json:"image"`
+	Dirty       *bool  `json:"dirty"`
+	Development *bool  `json:"development"`
+}
+
+func (identity qualificationReleaseIdentity) transitionIdentity(image, platform string) (compatibility.ReleaseIdentity, error) {
+	if identity.Dirty == nil || identity.Development == nil || *identity.Dirty || *identity.Development {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity has unknown or non-release provenance")
+	}
+	if strings.TrimSpace(identity.Image) != image {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity image does not match admitted candidate")
+	}
+	return compatibility.ReleaseIdentity{
+		Version: identity.Version, SourceRevision: identity.Revision,
+		Image: image, Distribution: "public", Platform: platform,
+	}, nil
+}
+
 func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
@@ -201,6 +222,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := verifyQualificationChecksums(c.root); err != nil {
 		return err
 	}
+	policy, _, err := compatibility.LoadPolicy(c.path("release-transition-policy.json"))
+	if err != nil {
+		return err
+	}
+	c.transitionPolicy = policy
 	imageReferenceBytes, err := os.ReadFile(c.path("image-reference.txt"))
 	if err != nil {
 		return err
@@ -761,10 +787,7 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 	evidenceDir string,
 	legacyVolume *string,
 ) (compatibility.Decision, error) {
-	policy, err := compatibility.EmbeddedPolicy()
-	if err != nil {
-		return compatibility.Decision{}, err
-	}
+	policy := c.transitionPolicy
 	legacyRelease, ok := policy.ReleaseByID("v0.1.0")
 	if !ok || !containsQualificationString(legacyRelease.LegacyMarkers, compatibility.LegacyV010Database) {
 		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility policy is invalid")
@@ -773,27 +796,28 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 	if legacyIdentity.Image != compatibility.ReleasedV010Image {
 		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility image is invalid")
 	}
-	var candidate struct {
-		Version  string `json:"version"`
-		Revision string `json:"revision"`
-	}
+	var candidate qualificationReleaseIdentity
 	if err := readQualificationJSON(c.path("release-identity.json"), &candidate); err != nil {
+		return compatibility.Decision{}, err
+	}
+	candidateIdentity, err := candidate.transitionIdentity(imageReference, "linux/"+runtime.GOARCH)
+	if err != nil {
 		return compatibility.Decision{}, err
 	}
 	decision := policy.Evaluate(compatibility.Request{
 		Operation: compatibility.OperationUpgrade,
 		Current:   legacyIdentity,
-		Next: compatibility.ReleaseIdentity{
-			Version: candidate.Version, SourceRevision: candidate.Revision,
-			Image: imageReference, Distribution: "public",
-			Platform: runtime.GOOS + "/" + runtime.GOARCH,
-		},
+		Next:      candidateIdentity,
 	})
 	if !errors.Is(decision.Err(), compatibility.ErrV010FreshInstallOnly) ||
 		decision.ReasonCode != compatibility.ReasonDeniedFreshInstallOnly {
 		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 transition policy did not fail closed")
 	}
-	policyDigest := sha256.Sum256(compatibility.EmbeddedPolicyDocument())
+	policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
+	if err != nil {
+		return compatibility.Decision{}, err
+	}
+	policyDigest := sha256.Sum256(policyDocument)
 	schemaDigest := sha256.Sum256(compatibility.EmbeddedPolicySchema())
 	if err := writeQualificationJSON(filepath.Join(evidenceDir, "policy-validation.json"), map[string]any{
 		"schemaVersion": policy.SchemaVersion,
@@ -1157,6 +1181,7 @@ func (c *Controller) restoreQualificationBackup(
 		"leapview.env.example",
 		"leapviewctl",
 		"release-identity.json",
+		"release-transition-policy.json",
 		"SHA256SUMS",
 	}
 	for _, name := range required {

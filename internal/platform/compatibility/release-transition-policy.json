@@ -1,6 +1,7 @@
 {
   "schemaVersion": 1,
   "policyVersion": "ubdr/v1",
+  "candidateRelease": "v0.1.0",
   "releases": [
     {
       "id": "v0.1.0",

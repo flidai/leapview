@@ -316,6 +316,9 @@ jobs:
               }, target, indent=2)
               target.write("\n")
           PY
+          go run ./internal/app/tools/transitionpolicy \
+            --bind-release release-identity.json \
+            --bind-output release-transition-policy.json
           build_ldflags="-s -w \
             -X github.com/flidai/leapview/internal/platform/buildinfo.version=$BUILD_VERSION \
             -X github.com/flidai/leapview/internal/platform/buildinfo.revision=$BUILD_REVISION \
@@ -339,7 +342,7 @@ jobs:
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
-            cp image-reference.txt release-identity.json "dist/$package/"
+            cp image-reference.txt release-identity.json release-transition-policy.json "dist/$package/"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
               (
                 cd "dist/$package"
@@ -378,6 +381,7 @@ jobs:
           path: |
             image-reference.txt
             release-identity.json
+            release-transition-policy.json
             dist/*.tar.gz
             dist/*.tar.gz.sha256
 
@@ -696,5 +700,6 @@ jobs:
             "${release_flags[@]}" \
             candidate/image-reference.txt \
             candidate/release-identity.json \
+            candidate/release-transition-policy.json \
             candidate/dist/*.tar.gz \
             candidate/dist/*.tar.gz.sha256

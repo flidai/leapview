@@ -57,10 +57,11 @@ var (
 )
 
 type Policy struct {
-	SchemaVersion int          `json:"schemaVersion"`
-	PolicyVersion string       `json:"policyVersion"`
-	Releases      []Release    `json:"releases"`
-	Transitions   []Transition `json:"transitions"`
+	SchemaVersion    int          `json:"schemaVersion"`
+	PolicyVersion    string       `json:"policyVersion"`
+	CandidateRelease string       `json:"candidateRelease"`
+	Releases         []Release    `json:"releases"`
+	Transitions      []Transition `json:"transitions"`
 }
 
 type Release struct {
@@ -98,6 +99,11 @@ type Transition struct {
 	Platforms []string  `json:"platforms"`
 	Decision  Rule      `json:"decision"`
 }
+
+const (
+	RequirementBackupBeforeMutation = "backup-before-mutation"
+	RequirementStoppedInstance      = "stopped-instance"
+)
 
 type ReleaseIdentity struct {
 	ReleaseID      string `json:"releaseId,omitempty"`
@@ -147,6 +153,107 @@ func (e *DecisionError) Unwrap() error {
 
 func EmbeddedPolicy() (*Policy, error) {
 	return ParsePolicy(embeddedPolicyJSON)
+}
+
+func LoadPolicy(path string) (*Policy, []byte, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil, nil, fmt.Errorf("release-transition policy path is required")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return nil, nil, fmt.Errorf("read release-transition policy: %w", err)
+	}
+	policy, err := ParsePolicy(contents)
+	if err != nil {
+		return nil, nil, err
+	}
+	return policy, contents, nil
+}
+
+func MarshalPolicy(policy *Policy) ([]byte, error) {
+	if err := policy.Validate(); err != nil {
+		return nil, err
+	}
+	contents, err := json.MarshalIndent(policy, "", "  ")
+	if err != nil {
+		return nil, fmt.Errorf("encode release-transition policy: %w", err)
+	}
+	return append(contents, '\n'), nil
+}
+
+// BindCandidate produces the runtime policy only after the admitted candidate
+// image digest exists. The resulting document is the artifact distributed with
+// release packages; it is deliberately not embedded in the candidate image,
+// whose digest cannot contain itself.
+func (p *Policy) BindCandidate(identity ReleaseIdentity, platforms []string) (*Policy, error) {
+	if err := p.Validate(); err != nil {
+		return nil, err
+	}
+	version := strings.TrimPrefix(strings.TrimSpace(identity.Version), "v")
+	releaseID := strings.TrimSpace(identity.ReleaseID)
+	if releaseID == "" {
+		releaseID = "v" + version
+	}
+	if identity.ReleaseID != "" && releaseID != "v"+version {
+		return nil, fmt.Errorf("candidate release id does not match version")
+	}
+	if len(identity.SourceRevision) != 40 || !isLowerHex(identity.SourceRevision) {
+		return nil, fmt.Errorf("candidate source revision must be a 40-character lowercase Git SHA")
+	}
+	if err := ociref.ValidateImmutable(identity.Image); err != nil {
+		return nil, fmt.Errorf("candidate image: %w", err)
+	}
+	if strings.TrimSpace(identity.Distribution) == "" {
+		return nil, fmt.Errorf("candidate distribution is required")
+	}
+	if len(platforms) == 0 {
+		return nil, fmt.Errorf("candidate platforms are required")
+	}
+	artifacts := make([]Artifact, 0, len(platforms))
+	seen := make(map[string]struct{}, len(platforms))
+	for _, platform := range platforms {
+		platform = strings.TrimSpace(platform)
+		if !supportedPlatform(platform) {
+			return nil, fmt.Errorf("candidate platform %q is unsupported", platform)
+		}
+		if _, ok := seen[platform]; ok {
+			return nil, fmt.Errorf("candidate platform %q is duplicated", platform)
+		}
+		seen[platform] = struct{}{}
+		artifacts = append(artifacts, Artifact{Platform: platform, Image: identity.Image})
+	}
+	encoded, err := json.Marshal(p)
+	if err != nil {
+		return nil, err
+	}
+	var bound Policy
+	if err := json.Unmarshal(encoded, &bound); err != nil {
+		return nil, err
+	}
+	for _, release := range bound.Releases {
+		if release.ID == releaseID {
+			return nil, fmt.Errorf("candidate release %q already exists in the base policy", releaseID)
+		}
+	}
+	denied := Rule{
+		ReasonCode:   ReasonDeniedNoExplicitRule,
+		Remediation:  "use an explicitly supported release transition",
+		Requirements: []string{},
+	}
+	bound.CandidateRelease = releaseID
+	bound.Releases = append(bound.Releases, Release{
+		ID: releaseID, Version: version, SourceRevision: identity.SourceRevision,
+		Distribution: identity.Distribution, Artifacts: artifacts, LegacyMarkers: []string{},
+		Defaults: ReleaseDefaults{
+			FreshInstall: Rule{Allowed: true, ReasonCode: ReasonAllowedFreshInstall, Requirements: []string{}},
+			Upgrade:      denied, Rollback: denied,
+		},
+	})
+	if err := bound.Validate(); err != nil {
+		return nil, err
+	}
+	return &bound, nil
 }
 
 func EmbeddedPolicyDocument() []byte {
@@ -206,6 +313,9 @@ func (p *Policy) validate() error {
 	if strings.TrimSpace(p.PolicyVersion) == "" {
 		return fmt.Errorf("release-transition policyVersion is required")
 	}
+	if strings.TrimSpace(p.CandidateRelease) == "" {
+		return fmt.Errorf("release-transition candidateRelease is required")
+	}
 	if len(p.Releases) == 0 {
 		return fmt.Errorf("release-transition policy requires at least one release")
 	}
@@ -239,7 +349,7 @@ func (p *Policy) validate() error {
 			if err := ociref.ValidateImmutable(artifact.Image); err != nil {
 				return fmt.Errorf("release %q platform %q image: %w", release.ID, artifact.Platform, err)
 			}
-			if prior, exists := images[artifact.Image]; exists {
+			if prior, exists := images[artifact.Image]; exists && prior != release.ID {
 				return fmt.Errorf("release image %q is ambiguous between %q and %q", artifact.Image, prior, release.ID)
 			}
 			images[artifact.Image] = release.ID
@@ -281,6 +391,13 @@ func (p *Policy) validate() error {
 		if err := validateRule(transition.Decision); err != nil {
 			return fmt.Errorf("transition %s %q to %q: %w", transition.Operation, transition.From, transition.To, err)
 		}
+		if transition.Decision.Allowed {
+			for _, required := range []string{RequirementBackupBeforeMutation, RequirementStoppedInstance} {
+				if !contains(transition.Decision.Requirements, required) {
+					return fmt.Errorf("allowed transition %s %q to %q omits required %q", transition.Operation, transition.From, transition.To, required)
+				}
+			}
+		}
 		for _, platform := range transition.Platforms {
 			if _, ok := from.artifactForPlatform(platform); !ok {
 				return fmt.Errorf("transition %s %q to %q platform %q is absent from source release", transition.Operation, transition.From, transition.To, platform)
@@ -294,6 +411,9 @@ func (p *Policy) validate() error {
 			}
 			keys[key] = struct{}{}
 		}
+	}
+	if _, ok := releases[p.CandidateRelease]; !ok {
+		return fmt.Errorf("candidateRelease %q references an unknown release", p.CandidateRelease)
 	}
 	return nil
 }
@@ -323,6 +443,9 @@ func validateRule(rule Rule) error {
 	}
 	seen := make(map[string]struct{}, len(rule.Requirements))
 	for _, requirement := range rule.Requirements {
+		if requirement != RequirementBackupBeforeMutation && requirement != RequirementStoppedInstance {
+			return fmt.Errorf("unsupported requirement %q", requirement)
+		}
 		if _, ok := seen[requirement]; ok {
 			return fmt.Errorf("duplicate requirement %q", requirement)
 		}
@@ -382,53 +505,30 @@ func (p *Policy) Evaluate(request Request) Decision {
 			return p.unknownDecision(decision)
 		}
 		decision.Next = next.IdentityForPlatform(request.Next.Platform)
+		if next.ID != p.CandidateRelease {
+			return p.unknownDecision(decision)
+		}
 		return applyRule(decision, next.Defaults.FreshInstall)
 	}
 
-	if request.Operation == OperationUpgrade {
-		current, currentOK := p.resolve(request.Current)
-		next, nextOK := p.resolve(request.Next)
-		if currentOK && nextOK {
-			decision.Current = current.IdentityForPlatform(request.Current.Platform)
-			decision.Next = next.IdentityForPlatform(request.Next.Platform)
-			if rule, ok := p.transitionRule(request.Operation, current.ID, next.ID, request.Current.Platform); ok {
-				return applyRule(decision, rule)
-			}
-			return applyRule(decision, current.Defaults.Upgrade)
-		}
-		if currentOK {
-			decision.Current = current.IdentityForPlatform(request.Current.Platform)
-			if request.Next.ReleaseID != "" {
-				return p.unknownDecision(decision)
-			}
-			return applyRule(decision, current.Defaults.Upgrade)
-		}
-		if nextOK {
-			decision.Next = next.IdentityForPlatform(request.Next.Platform)
-			return applyRule(decision, next.Defaults.Upgrade)
-		}
+	current, currentOK := p.resolve(request.Current)
+	next, nextOK := p.resolve(request.Next)
+	if !currentOK || !nextOK || request.Current.Platform != request.Next.Platform {
 		return p.unknownDecision(decision)
 	}
-
-	next, nextOK := p.resolve(request.Next)
-	current, currentOK := p.resolve(request.Current)
-	if currentOK && nextOK {
-		decision.Current = current.IdentityForPlatform(request.Current.Platform)
-		decision.Next = next.IdentityForPlatform(request.Next.Platform)
-		if rule, ok := p.transitionRule(request.Operation, current.ID, next.ID, request.Current.Platform); ok {
-			return applyRule(decision, rule)
-		}
-		return applyRule(decision, next.Defaults.Rollback)
+	decision.Current = current.IdentityForPlatform(request.Current.Platform)
+	decision.Next = next.IdentityForPlatform(request.Next.Platform)
+	if request.Operation == OperationUpgrade && next.ID != p.CandidateRelease ||
+		request.Operation == OperationRollback && current.ID != p.CandidateRelease {
+		return p.unknownDecision(decision)
 	}
-	if nextOK {
-		decision.Next = next.IdentityForPlatform(request.Next.Platform)
-		return applyRule(decision, next.Defaults.Rollback)
+	if rule, ok := p.transitionRule(request.Operation, current.ID, next.ID, request.Current.Platform); ok {
+		return applyRule(decision, rule)
 	}
-	if currentOK {
-		decision.Current = current.IdentityForPlatform(request.Current.Platform)
-		return applyRule(decision, current.Defaults.Rollback)
+	if request.Operation == OperationUpgrade {
+		return applyRule(decision, current.Defaults.Upgrade)
 	}
-	return p.unknownDecision(decision)
+	return applyRule(decision, next.Defaults.Rollback)
 }
 
 func (p *Policy) resolve(identity ReleaseIdentity) (Release, bool) {

@@ -1188,3 +1188,28 @@ func TestVerifyQualificationChecksumsRejectsPathsOutsideRelease(t *testing.T) {
 		t.Fatalf("path traversal error = %v", err)
 	}
 }
+
+func TestQualificationReleaseIdentityRejectsUnknownProvenance(t *testing.T) {
+	clean := false
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	valid := qualificationReleaseIdentity{
+		Version: "1.0.0", Revision: strings.Repeat("b", 40), Image: image,
+		Dirty: &clean, Development: &clean,
+	}
+	if _, err := valid.transitionIdentity(image, "linux/amd64"); err != nil {
+		t.Fatalf("valid identity: %v", err)
+	}
+	for _, test := range []struct {
+		name     string
+		identity qualificationReleaseIdentity
+	}{
+		{name: "missing provenance", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: image}},
+		{name: "mismatched admitted image", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("c", 64), Dirty: &clean, Development: &clean}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := test.identity.transitionIdentity(image, "linux/amd64"); err == nil {
+				t.Fatal("unknown release provenance was accepted")
+			}
+		})
+	}
+}

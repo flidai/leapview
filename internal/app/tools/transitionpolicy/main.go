@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
@@ -36,11 +35,62 @@ type transitionStateHash struct {
 
 func main() {
 	evidenceDir := flag.String("evidence-dir", ".tmp/qualification/ubdr/transition-policy", "bounded evidence output directory")
+	bindRelease := flag.String("bind-release", "", "release-identity JSON containing the admitted candidate image")
+	bindOutput := flag.String("bind-output", "", "write the candidate-bound release-transition policy")
 	flag.Parse()
+	if strings.TrimSpace(*bindRelease) != "" || strings.TrimSpace(*bindOutput) != "" {
+		if err := bind(*bindRelease, *bindOutput); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		return
+	}
 	if err := run(*evidenceDir); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+func bind(releasePath, outputPath string) error {
+	if strings.TrimSpace(releasePath) == "" || strings.TrimSpace(outputPath) == "" {
+		return fmt.Errorf("--bind-release and --bind-output are required together")
+	}
+	var release struct {
+		Version     string `json:"version"`
+		Revision    string `json:"revision"`
+		BuildTime   string `json:"buildTime"`
+		Dirty       bool   `json:"dirty"`
+		Development bool   `json:"development"`
+		Image       string `json:"image"`
+	}
+	contents, err := os.ReadFile(releasePath)
+	if err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(contents))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&release); err != nil {
+		return fmt.Errorf("decode admitted release identity: %w", err)
+	}
+	if release.Dirty || release.Development {
+		return fmt.Errorf("candidate-bound policy requires a clean released identity")
+	}
+	base, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		return err
+	}
+	bound, err := base.BindCandidate(compatibility.ReleaseIdentity{
+		Version: release.Version, SourceRevision: release.Revision,
+		Image: release.Image, Distribution: "public",
+	}, []string{"linux/amd64", "linux/arm64"})
+	if err != nil {
+		return err
+	}
+	encoded, err := compatibility.MarshalPolicy(bound)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(outputPath, encoded, 0o600)
 }
 
 func run(evidenceDir string) error {
@@ -51,11 +101,23 @@ func run(evidenceDir string) error {
 	if err := os.MkdirAll(evidenceDir, 0o700); err != nil {
 		return err
 	}
-	policy, err := compatibility.EmbeddedPolicy()
+	basePolicy, err := compatibility.EmbeddedPolicy()
 	if err != nil {
 		return err
 	}
-	policyDigest := sha256.Sum256(compatibility.EmbeddedPolicyDocument())
+	candidateImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	policy, err := basePolicy.BindCandidate(compatibility.ReleaseIdentity{
+		Version: "0.2.0", SourceRevision: strings.Repeat("b", 40),
+		Image: candidateImage, Distribution: "public",
+	}, []string{"linux/amd64"})
+	if err != nil {
+		return err
+	}
+	policyDocument, err := compatibility.MarshalPolicy(policy)
+	if err != nil {
+		return err
+	}
+	policyDigest := sha256.Sum256(policyDocument)
 	schemaDigest := sha256.Sum256(compatibility.EmbeddedPolicySchema())
 	if err := writeJSON(filepath.Join(evidenceDir, "policy-validation.json"), map[string]any{
 		"schemaVersion": policy.SchemaVersion,
@@ -71,14 +133,13 @@ func run(evidenceDir string) error {
 	if !ok {
 		return fmt.Errorf("embedded policy omits v0.1.0")
 	}
-	candidateImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
 	decision := policy.Evaluate(compatibility.Request{
 		Operation: compatibility.OperationUpgrade,
 		Current:   legacy.IdentityForPlatform("linux/amd64"),
 		Next: compatibility.ReleaseIdentity{
 			Version: "0.2.0", SourceRevision: strings.Repeat("b", 40),
 			Image: candidateImage, Distribution: "public",
-			Platform: runtime.GOOS + "/" + runtime.GOARCH,
+			Platform: "linux/amd64",
 		},
 	})
 	if !errors.Is(decision.Err(), compatibility.ErrV010FreshInstallOnly) {
@@ -112,7 +173,9 @@ func run(evidenceDir string) error {
 	if err != nil {
 		return err
 	}
-	controller, err := composectl.New(composectl.Options{Root: root, DockerBin: "/bin/false"})
+	controller, err := composectl.New(composectl.Options{
+		Root: root, DockerBin: "/bin/false", DockerPlatform: "linux/amd64", TransitionPolicy: policy,
+	})
 	if err != nil {
 		return err
 	}

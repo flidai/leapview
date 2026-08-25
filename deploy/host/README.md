@@ -49,8 +49,8 @@ leapviewctl status
 leapviewctl logs
 leapviewctl backup
 leapviewctl restore <archive>
-leapviewctl upgrade ghcr.io/flidai/leapview@sha256:<digest>
-leapviewctl rollback --confirm
+leapviewctl upgrade --transition-policy release-transition-policy.json ghcr.io/flidai/leapview@sha256:<digest>
+leapviewctl rollback --transition-policy release-transition-policy.json --confirm
 ```
 
 The maintained deployment workflow verifies the GitHub artifact attestation for

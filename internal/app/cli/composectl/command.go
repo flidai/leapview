@@ -100,24 +100,30 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 			return controller.Restore(ctx, args[0])
 		},
 	}
+	upgradePolicy := ""
 	upgrade := &cobra.Command{
 		Use:   "upgrade <image-digest>",
 		Short: "Upgrade with paired image and state rollback",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			return controller.Upgrade(ctx, args[0])
+			return controller.UpgradeWithPolicy(ctx, args[0], upgradePolicy)
 		},
 	}
+	upgrade.Flags().StringVar(&upgradePolicy, "transition-policy", "", "candidate-bound release-transition policy")
+	_ = upgrade.MarkFlagRequired("transition-policy")
 	rollbackConfirmed := false
+	rollbackPolicy := ""
 	rollback := &cobra.Command{
 		Use:   "rollback",
 		Short: "Restore the previous paired image and state checkpoint",
 		Args:  cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return controller.Rollback(ctx, rollbackConfirmed)
+			return controller.RollbackWithPolicy(ctx, rollbackConfirmed, rollbackPolicy)
 		},
 	}
 	rollback.Flags().BoolVar(&rollbackConfirmed, "confirm", false, "confirm that post-upgrade state will be discarded")
+	rollback.Flags().StringVar(&rollbackPolicy, "transition-policy", "", "candidate-bound release-transition policy used for the upgrade")
+	_ = rollback.MarkFlagRequired("transition-policy")
 
 	imageQualification := QualificationImageOptions{}
 	qualifyImage := &cobra.Command{

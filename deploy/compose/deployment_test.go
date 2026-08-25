@@ -10,6 +10,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/mod/semver"
 )
@@ -711,6 +712,16 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 	if generation < 0 || packaging < 0 || generation > packaging {
 		t.Fatal("release workflow must generate every ignored build input before compiling Compose archives")
 	}
+	admission := strings.Index(release, "- name: Verify published runtime identity")
+	binding := strings.Index(release, "--bind-release release-identity.json")
+	if admission < 0 || binding < 0 || admission > binding {
+		t.Fatal("release workflow must admit the candidate image identity before binding its transition policy")
+	}
+	for _, required := range []string{"release-transition-policy.json \"dist/$package/\"", "candidate/release-transition-policy.json"} {
+		if !strings.Contains(release, required) {
+			t.Fatalf("release workflow does not distribute candidate-bound policy %q", required)
+		}
+	}
 	dockerfile := read(t, filepath.Join("..", "..", "Dockerfile"))
 	if !strings.Contains(dockerfile, "/usr/local/libexec/leapviewctl") {
 		t.Fatal("application image must carry the matching Linux controller for provider extraction")
@@ -779,6 +790,8 @@ esac
 
 	oldImage := "example.com/leapview@sha256:" + strings.Repeat("a", 64)
 	newImage := "example.com/leapview@sha256:" + strings.Repeat("b", 64)
+	transitionPolicy := filepath.Join(root, "release-transition-policy.json")
+	writeReleaseTransitionPolicy(t, transitionPolicy, oldImage, newImage)
 	runController(t, root, fakeDocker, "", "init", "--admin-email", "admin@example.com", "--domain", "dash.example.com", "--image", oldImage)
 	for _, name := range []string{"deployment.env", "leapview.env", "initial-credentials.json"} {
 		info, err := os.Stat(filepath.Join(root, name))
@@ -805,31 +818,53 @@ esac
 	}
 	runController(t, root, fakeDocker, "", "restore", backupPath)
 	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "pull leapview")
-	if output, err := runControllerResult(root, fakeDocker, "", "upgrade", newImage); err == nil || !strings.Contains(output, "previous image and service state were restored") {
+	if output, err := runControllerResult(root, fakeDocker, "", "upgrade", "--transition-policy", transitionPolicy, newImage); err == nil || !strings.Contains(output, "previous image and service state were restored") {
 		t.Fatalf("failed pull result = %v, %s", err, output)
 	}
 	requireDeploymentImage(t, root, oldImage)
 	t.Setenv("FAKE_DOCKER_FAIL_COMMAND", "")
 
-	output, err := runControllerResult(root, fakeDocker, newImage, "upgrade", newImage)
+	output, err := runControllerResult(root, fakeDocker, newImage, "upgrade", "--transition-policy", transitionPolicy, newImage)
 	if err == nil || !strings.Contains(output, "previous image and state were restored") {
 		t.Fatalf("failed upgrade result = %v, %s", err, output)
 	}
 	requireDeploymentImage(t, root, oldImage)
-	runController(t, root, fakeDocker, "", "upgrade", newImage)
+	runController(t, root, fakeDocker, "", "upgrade", "--transition-policy", transitionPolicy, newImage)
 	requireDeploymentImage(t, root, newImage)
 	t.Setenv("FAKE_DOCKER_FAIL_RESTORE_ONCE", "1")
-	if output, err := runControllerResult(root, fakeDocker, "", "rollback", "--confirm"); err == nil || !strings.Contains(output, "pre-rollback image and state were reinstated") {
+	if output, err := runControllerResult(root, fakeDocker, "", "rollback", "--transition-policy", transitionPolicy, "--confirm"); err == nil || !strings.Contains(output, "pre-rollback image and state were reinstated") {
 		t.Fatalf("failed rollback result = %v, %s", err, output)
 	}
 	requireDeploymentImage(t, root, newImage)
 	t.Setenv("FAKE_DOCKER_FAIL_RESTORE_ONCE", "")
-	runController(t, root, fakeDocker, "", "rollback", "--confirm")
+	runController(t, root, fakeDocker, "", "rollback", "--transition-policy", transitionPolicy, "--confirm")
 	requireDeploymentImage(t, root, oldImage)
 	log, err := os.ReadFile(filepath.Join(root, "docker.log"))
 	if err != nil || !strings.Contains(string(log), "admin restore") {
 		t.Fatalf("controller did not restore paired state: %v\n%s", err, log)
 	}
+}
+
+func writeReleaseTransitionPolicy(t *testing.T, path, previousImage, candidateImage string) {
+	t.Helper()
+	denied := compatibility.Rule{
+		ReasonCode: compatibility.ReasonDeniedNoExplicitRule, Remediation: "use an explicit transition", Requirements: []string{},
+	}
+	requirements := []string{compatibility.RequirementBackupBeforeMutation, compatibility.RequirementStoppedInstance}
+	policy := &compatibility.Policy{
+		SchemaVersion: compatibility.CurrentSchemaVersion, PolicyVersion: "test/release-v2", CandidateRelease: "v2.0.0",
+		Releases: []compatibility.Release{
+			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+		},
+		Transitions: []compatibility.Transition{
+			{Operation: compatibility.OperationUpgrade, From: "v1.0.0", To: "v2.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},
+			{Operation: compatibility.OperationRollback, From: "v2.0.0", To: "v1.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},
+		},
+	}
+	contents, err := compatibility.MarshalPolicy(policy)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, contents, 0o600))
 }
 
 func TestControllerInitializationIsRetryableAndRequiresPinnedProxy(t *testing.T) {
@@ -965,7 +1000,7 @@ func runController(t *testing.T, root, docker, failImage string, args ...string)
 func runControllerResult(root, docker, failImage string, args ...string) (string, error) {
 	command := exec.Command(filepath.Join(root, "leapviewctl"), args...)
 	command.Dir = root
-	command.Env = append(os.Environ(), "LEAPVIEWCTL_ROOT="+root, "LEAPVIEWCTL_DOCKER_BIN="+docker, "FAKE_DOCKER_FAIL_IMAGE="+failImage)
+	command.Env = append(os.Environ(), "LEAPVIEWCTL_ROOT="+root, "LEAPVIEWCTL_DOCKER_BIN="+docker, "DOCKER_DEFAULT_PLATFORM=linux/amd64", "FAKE_DOCKER_FAIL_IMAGE="+failImage)
 	output, err := command.CombinedOutput()
 	return string(output), err
 }
