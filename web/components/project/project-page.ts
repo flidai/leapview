@@ -1463,7 +1463,7 @@ const projectStyles = css`
   }
 
   .breadcrumb-header nav a {
-    color: var(--lv-fg-muted);
+    color: var(--lv-fg-default);
     text-decoration: none;
   }
 

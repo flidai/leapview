@@ -123,7 +123,9 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
         borderWidth: glyph ? getComputedStyle(glyph).borderTopWidth : '',
         separatorIcons: root.querySelectorAll('.breadcrumb-separator svg').length,
         parentFontSize: getComputedStyle(parent).fontSize,
+        parentColor: getComputedStyle(parent).color,
         titleFontSize: getComputedStyle(title).fontSize,
+        titleColor: getComputedStyle(title).color,
         titleFontWeight: getComputedStyle(title).fontWeight,
       }
     })
@@ -134,6 +136,7 @@ test('semantic model breadcrumb uses the plain list-page icon identity', async (
     expect(icon.borderWidth).toBe('0px')
     expect(icon.separatorIcons).toBe(1)
     expect(icon.titleFontSize).toBe(icon.parentFontSize)
+    expect(icon.titleColor).toBe(icon.parentColor)
     expect(icon.titleFontWeight).toBe('400')
   } finally {
     await page.close()
