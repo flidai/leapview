@@ -491,6 +491,12 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if strings.Contains(performance, "measures:") || !strings.Contains(performance, "metrics: [{ field: 'order_count' }, { field: 'revenue' }]") {
 		t.Error("performance governed query must use semantic metrics")
 	}
+	passwordChange := strings.Index(authoringWorker, "getByLabel('New password').press('Enter')")
+	reauthentication := strings.Index(authoringWorker, "getByLabel('Email').waitFor({ state: 'visible', timeout: 30_000 })")
+	authenticatedNavigation := strings.Index(authoringWorker, "page.waitForURL((url) => !url.pathname.startsWith('/login')")
+	if passwordChange < 0 || reauthentication < passwordChange || authenticatedNavigation < reauthentication {
+		t.Error("authoring qualification must reauthenticate after password-change session revocation")
+	}
 	for _, required := range []string{"Automated step", "Human check", "Interruption recovery", "fresh-install-only", "./leapviewctl qualify installed-candidate"} {
 		if !strings.Contains(runbook, required) {
 			t.Errorf("qualification runbook missing %q", required)
