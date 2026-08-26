@@ -888,7 +888,8 @@ func (c *Controller) prepareQualificationRecoveryData(
 	); err != nil {
 		return err
 	}
-	inputDir := filepath.Join(workDir, "input")
+	recoveryRoot := filepath.Join(workDir, "qualification-recovery")
+	inputDir := filepath.Join(recoveryRoot, "input")
 	if err := os.MkdirAll(inputDir, 0o700); err != nil {
 		return err
 	}
@@ -903,7 +904,7 @@ func (c *Controller) prepareQualificationRecoveryData(
 		"project-a": qualificationRecoveryReleaseProjectName,
 		"project-b": qualificationRecoveryDeploymentProjectName,
 	} {
-		target := filepath.Join(workDir, name)
+		target := filepath.Join(recoveryRoot, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
@@ -922,28 +923,26 @@ func (c *Controller) prepareQualificationRecoveryData(
 		}
 	}
 	candidate := c.qualificationContainers.Existing(options.ContainerID)
-	_, _ = candidate.Exec(
-		ctx, nil,
-		"rm", "-rf", "/var/lib/leapview/qualification-recovery",
+	exists, err := c.qualificationContainerPathExists(
+		ctx,
+		options.ContainerID,
+		"/var/lib/leapview/qualification-recovery",
 	)
-	if _, err := candidate.Exec(
-		ctx, nil,
-		"mkdir", "-p", "/var/lib/leapview/qualification-recovery",
-	); err != nil {
+	if err != nil {
 		return err
 	}
-	for _, name := range []string{"input", "project-a", "project-b"} {
-		source := filepath.Join(workDir, name)
-		if err := makeQualificationContainerReadable(source); err != nil {
-			return err
-		}
-		if _, err := candidate.CopyTo(
-			ctx,
-			source,
-			"/var/lib/leapview/qualification-recovery/"+name,
-		); err != nil {
-			return err
-		}
+	if exists {
+		return fmt.Errorf("qualification recovery destination already exists")
+	}
+	if err := makeQualificationContainerReadable(recoveryRoot); err != nil {
+		return err
+	}
+	if _, err := candidate.CopyTo(
+		ctx,
+		recoveryRoot,
+		"/var/lib/leapview/qualification-recovery",
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1130,17 +1129,14 @@ func (c *Controller) runQualificationClientCommand(
 	token string,
 	arguments ...string,
 ) ([]byte, error) {
-	return c.qualificationContainers.Existing(clientContainer).Exec(
+	return c.qualificationContainers.Existing(clientContainer).ExecEnvironment(
 		ctx, nil,
-		append(
-			[]string{
-				"env",
-				"LEAPVIEW_API_TOKEN=" + token,
-				"LEAPVIEW_TARGET=https://localhost",
-				"LEAPVIEW_HOME=/client-home",
-			},
-			arguments...,
-		)...,
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": token,
+			"LEAPVIEW_TARGET":    "https://localhost",
+			"LEAPVIEW_HOME":      "/client-home",
+		},
+		arguments...,
 	)
 }
 
@@ -1230,11 +1226,10 @@ func (c *Controller) armQualificationActivationBarrier(
 }
 
 func (c *Controller) clearQualificationActivationBarrier(ctx context.Context, containerID string) error {
-	_, err := c.qualificationContainers.Existing(containerID).Exec(ctx, nil, "rm", "-f",
+	return c.removeQualificationContainerPathsWithTooling(ctx, containerID,
 		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
 		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
 	)
-	return err
 }
 
 func (c *Controller) waitForQualificationActivationBarrier(
@@ -1628,38 +1623,18 @@ func (c *Controller) qualificationContainerDiskKiB(
 	ctx context.Context,
 	containerID string,
 ) (int64, error) {
-	output, err := c.qualificationContainers.Existing(containerID).
-		Exec(ctx, nil, "du", "-sk", "/var/lib/leapview")
-	if err != nil {
-		return 0, err
-	}
-	fields := strings.Fields(string(output))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("container disk usage is empty")
-	}
-	return parseQualificationInteger(fields[0], "container disk usage")
-}
-
-func (c *Controller) countQualificationContainerPaths(
-	ctx context.Context,
-	containerID string,
-	root string,
-	pattern string,
-) (int64, error) {
-	output, err := c.qualificationContainers.Existing(containerID).Exec(
-		ctx, nil,
-		"find", root, "-maxdepth", "1", "-name", pattern, "-print",
+	bytesUsed, err := c.qualificationContainerTreeBytes(
+		ctx,
+		containerID,
+		"/var/lib/leapview",
 	)
 	if err != nil {
 		return 0, err
 	}
-	count := int64(0)
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.TrimSpace(line) != "" {
-			count++
-		}
+	if bytesUsed == 0 {
+		return 0, nil
 	}
-	return count, nil
+	return (bytesUsed + 1023) / 1024, nil
 }
 
 func (c *Controller) waitForQualificationComposeOneoff(

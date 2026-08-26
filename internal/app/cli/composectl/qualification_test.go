@@ -718,7 +718,26 @@ func TestParseQualificationPoolBootstrapResult(t *testing.T) {
 
 func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 	root := t.TempDir()
-	executor := &recordingQualificationExecutor{output: []byte("39996109\t/var/lib/leapview\n")}
+	var requests []qualificationCommandRequest
+	executor := qualificationExecutorFunc(func(_ context.Context, request qualificationCommandRequest) ([]byte, error) {
+		requests = append(requests, request)
+		if len(request.Arguments) == 3 && request.Arguments[0] == "cp" {
+			target := request.Arguments[2]
+			if err := os.MkdirAll(target, 0o700); err != nil {
+				return nil, err
+			}
+			for name, contents := range map[string]string{
+				"leapview.db":     "persistent",
+				"leapview.db-wal": "transient-wal",
+				"leapview.db-shm": "transient-shm",
+			} {
+				if err := os.WriteFile(filepath.Join(target, name), []byte(contents), 0o600); err != nil {
+					return nil, err
+				}
+			}
+		}
+		return nil, nil
+	})
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker",
 		qualificationExecutor: executor,
@@ -731,21 +750,14 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 		"performance disk",
 	)
 	require.NoError(t, err)
-	wantArguments := []string{
-		"exec",
-		"leapview-app",
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
-		"/var/lib/leapview",
-	}
-	if got != 39996109 || len(executor.requests) != 1 ||
-		!slices.Equal(executor.requests[0].Arguments, wantArguments) {
+	if got != int64(len("persistent")) || len(requests) != 1 ||
+		len(requests[0].Arguments) != 3 ||
+		requests[0].Arguments[0] != "cp" ||
+		requests[0].Arguments[1] != "leapview-app:/var/lib/leapview" {
 		t.Fatalf(
 			"disk usage = %d, request = %#v",
 			got,
-			executor.requests,
+			requests,
 		)
 	}
 }
@@ -833,7 +845,12 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 		t.Fatalf("docker requests = %d, want clear + cp", len(executor.requests))
 	}
 	if got, want := executor.requests[0].Arguments, []string{
-		"exec", "app-container", "rm", "-f",
+		"run", "--rm",
+		"--user", "0:0",
+		"--volumes-from", "app-container",
+		"--entrypoint", "/bin/rm",
+		qualificationBrowserImage,
+		"-f",
 		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
 		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
 	}; !slices.Equal(got, want) {

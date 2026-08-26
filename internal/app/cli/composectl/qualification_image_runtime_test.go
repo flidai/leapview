@@ -46,12 +46,9 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 	executor := qualificationExecutorFunc(func(_ context.Context, request qualificationCommandRequest) ([]byte, error) {
 		arguments := append([]string(nil), request.Arguments...)
 		requests = append(requests, arguments)
-		joined := strings.Join(arguments, " ")
 		switch {
-		case strings.Contains(joined, "--entrypoint id") && slices.Contains(arguments, "-u"):
-			return []byte("1000\n"), nil
-		case strings.Contains(joined, "--entrypoint id") && slices.Contains(arguments, "-g"):
-			return []byte("1000\n"), nil
+		case len(arguments) > 1 && arguments[0] == "image" && arguments[1] == "inspect" && slices.Contains(arguments, "{{.Config.User}}"):
+			return []byte("65532:65532\n"), nil
 		case len(arguments) > 0 && arguments[0] == "port":
 			return []byte(strings.TrimPrefix(server.URL, "http://") + "\n"), nil
 		case len(arguments) > 0 && arguments[0] == "inspect" && slices.Contains(arguments, "{{.State.Health.Status}}"):
@@ -73,7 +70,7 @@ func TestProductionImageRuntimeQualificationIsOwnedByGo(t *testing.T) {
 	}
 	assertQualificationDockerRun(t, requests, image, "8080", []string{
 		"--read-only",
-		"--tmpfs", "/var/lib/leapview:rw,exec,nosuid,nodev,mode=0700,uid=1000,gid=1000,size=128m",
+		"--tmpfs", "/var/lib/leapview:rw,exec,nosuid,nodev,mode=0700,uid=65532,gid=65532,size=128m",
 		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
 		"--env", "LEAPVIEW_API_TOKEN_ONLY_AUTH=1",
 	})

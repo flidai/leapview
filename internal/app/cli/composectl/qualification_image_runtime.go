@@ -33,11 +33,7 @@ func (c *Controller) qualifyProductionImageRuntime(
 	if _, err := c.qualificationDocker(ctx, nil, "pull", image); err != nil {
 		return result, fmt.Errorf("pull production image: %w", err)
 	}
-	runtimeUID, err := c.qualificationImageIdentity(ctx, image, "-u")
-	if err != nil {
-		return result, err
-	}
-	runtimeGID, err := c.qualificationImageIdentity(ctx, image, "-g")
+	runtimeUID, runtimeGID, err := c.qualificationImageIdentity(ctx, image)
 	if err != nil {
 		return result, err
 	}
@@ -158,16 +154,33 @@ func (c *Controller) QualifySiteImage(
 	return err
 }
 
-func (c *Controller) qualificationImageIdentity(ctx context.Context, image, flag string) (string, error) {
-	output, err := c.qualificationDocker(ctx, nil, "run", "--rm", "--entrypoint", "id", image, flag)
+func (c *Controller) qualificationImageIdentity(ctx context.Context, image string) (string, string, error) {
+	output, err := c.qualificationDocker(
+		ctx,
+		nil,
+		"image", "inspect", image,
+		"--format", "{{.Config.User}}",
+	)
 	if err != nil {
-		return "", fmt.Errorf("inspect production image identity %s: %w", flag, err)
+		return "", "", fmt.Errorf("inspect production image identity: %w", err)
 	}
-	value := strings.TrimSpace(string(output))
-	if _, err := strconv.ParseUint(value, 10, 32); err != nil {
-		return "", fmt.Errorf("production image identity %s is invalid: %w", flag, err)
+	identity := strings.TrimSpace(string(output))
+	if identity != "65532:65532" {
+		return "", "", fmt.Errorf(
+			"production image identity %q is not the required 65532:65532",
+			identity,
+		)
 	}
-	return value, nil
+	parts := strings.Split(identity, ":")
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("production image identity %q is not numeric uid:gid", identity)
+	}
+	for _, value := range parts {
+		if parsed, err := strconv.ParseUint(value, 10, 32); err != nil || parsed == 0 {
+			return "", "", fmt.Errorf("production image identity %q is invalid", identity)
+		}
+	}
+	return parts[0], parts[1], nil
 }
 
 func (c *Controller) qualificationPublishedURL(ctx context.Context, container, port string) (string, error) {

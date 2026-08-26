@@ -59,6 +59,19 @@ func TestDockerCLIContainerMapsLifecycleOperations(t *testing.T) {
 	}{
 		{func() ([]byte, error) { return container.Exec(t.Context(), stdin, "sh", "-c", "echo ready") },
 			[]string{"exec", "-i", "qualification-browser", "sh", "-c", "echo ready"}},
+		{func() ([]byte, error) {
+			return container.ExecEnvironment(
+				t.Context(), nil,
+				map[string]string{"TOKEN": "secret", "TARGET": "https://localhost"},
+				"leapview", "version",
+			)
+		}, []string{
+			"exec",
+			"--env", "TARGET=https://localhost",
+			"--env", "TOKEN=secret",
+			"qualification-browser",
+			"leapview", "version",
+		}},
 		{func() ([]byte, error) { return container.CopyTo(t.Context(), "/host/file", "/work/file") },
 			[]string{"cp", "/host/file", "qualification-browser:/work/file"}},
 		{func() ([]byte, error) { return container.Restart(t.Context()) },

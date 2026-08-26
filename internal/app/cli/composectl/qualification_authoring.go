@@ -19,7 +19,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
-const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.61.1-noble"
+const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.61.1-noble@sha256:5b8f294aff9041b7191c34a4bab3ac270157a28774d4b0660e9743297b697e48"
 
 const (
 	qualificationReviewerEmail       = "authoring-reviewer@qualification.invalid"
@@ -783,16 +783,13 @@ func (c *Controller) bootstrapQualificationServingGeneration(
 	if containerID == "" {
 		return fmt.Errorf("qualification application container is not running")
 	}
-	environment := []string{
-		"LEAPVIEW_API_TOKEN=" + publisherToken,
-		"LEAPVIEW_TARGET=http://localhost:8080",
-	}
-	devOutput, err := c.qualificationContainers.Existing(containerID).Exec(
+	devOutput, err := c.qualificationContainers.Existing(containerID).ExecEnvironment(
 		ctx,
 		nil,
-		"env",
-		environment[0],
-		environment[1],
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": publisherToken,
+			"LEAPVIEW_TARGET":    "http://localhost:8080",
+		},
 		"leapview", "dev", "--once", "--no-browser",
 		"--bootstrap",
 		"--project", options.Project,

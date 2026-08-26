@@ -167,7 +167,7 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	for _, required := range []string{
 		"FROM build AS extension-supply",
 		"./internal/app/tools/extensionsupply",
-		"COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions",
+		"COPY --from=extension-supply /out/extension-supply /runtime-root/usr/local/share/leapview/extensions",
 		"LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH=/usr/local/share/leapview/extensions/extension-supply.json",
 	} {
 		if !strings.Contains(dockerfile, required) {
@@ -185,7 +185,12 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native offline extension supply", "extension-supply.json.sha256", "duckdb_extension"} {
+	for _, required := range []string{
+		"Verify target-native offline extension supply",
+		`docker cp "$inspection_container:/usr/local/share/leapview/extensions/." "$supply_root"`,
+		"go run ./internal/app/tools/extensionsupply",
+		"--check",
+	} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release qualification missing extension supply check %q", required)
 		}
@@ -196,7 +201,7 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 	root := filepath.Join("..", "..")
 	publicReleaseImage := readPublicReleaseImage(t)
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
-	if !strings.Contains(dockerfile, "COPY evaluation ./evaluation") {
+	if !strings.Contains(dockerfile, "COPY evaluation /runtime-root/app/evaluation") {
 		t.Fatal("runtime image does not include the self-contained evaluation project and data")
 	}
 	dashboard := read(t, filepath.Join(root, "evaluation", "project", "dashboards", "sales-overview.yaml"))

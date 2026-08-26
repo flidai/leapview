@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -110,13 +111,31 @@ func (container *testcontainersQualificationContainer) Exec(
 	stdin io.Reader,
 	command ...string,
 ) ([]byte, error) {
+	return container.ExecEnvironment(ctx, stdin, nil, command...)
+}
+
+func (container *testcontainersQualificationContainer) ExecEnvironment(
+	ctx context.Context,
+	stdin io.Reader,
+	environment map[string]string,
+	command ...string,
+) ([]byte, error) {
 	if err := container.requireContainer(); err != nil {
 		return nil, err
 	}
 	if stdin != nil {
 		return nil, fmt.Errorf("Testcontainers qualification exec does not support stdin")
 	}
-	exitCode, output, err := container.container.Exec(ctx, command, tcexec.Multiplexed())
+	values := make([]string, 0, len(environment))
+	for name, value := range environment {
+		values = append(values, name+"="+value)
+	}
+	sort.Strings(values)
+	options := []tcexec.ProcessOption{tcexec.Multiplexed()}
+	if len(values) > 0 {
+		options = append(options, tcexec.WithEnv(values))
+	}
+	exitCode, output, err := container.container.Exec(ctx, command, options...)
 	if err != nil {
 		return nil, err
 	}

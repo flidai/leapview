@@ -1,5 +1,5 @@
-# Frozen release-image package universe. Update the timestamp only in a
-# reviewed dependency refresh that rebuilds and scans both release platforms.
+# Frozen qualification-tooling package universe. Update the timestamp only in
+# a reviewed dependency refresh that rebuilds and scans both release platforms.
 Types: deb
 URIs: https://snapshot.debian.org/archive/debian/20260820T000000Z/
 Suites: bookworm bookworm-updates

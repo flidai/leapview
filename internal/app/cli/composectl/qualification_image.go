@@ -84,6 +84,9 @@ func (c *Controller) QualifyImage(
 	if options.RequireImmutable && !qualificationImmutableImagePattern.MatchString(options.Image) {
 		return errors.New("production qualification requires an immutable repository@sha256 digest")
 	}
+	if err := c.qualifyProductionImageContract(ctx, options.Image); err != nil {
+		return err
+	}
 	if _, err := c.qualifyProductionImageRuntime(ctx, options.Image); err != nil {
 		return err
 	}
@@ -357,11 +360,12 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
+	syncOutput, err := c.qualificationContainers.Existing(containerID).ExecEnvironment(
 		ctx, nil,
-		"env",
-		"LEAPVIEW_API_TOKEN="+credentials.PublisherToken,
-		"LEAPVIEW_TARGET=http://localhost:8080",
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": credentials.PublisherToken,
+			"LEAPVIEW_TARGET":    "http://localhost:8080",
+		},
 		"leapview", "data", "sync",
 		"--project", "/app/evaluation/project/leapview.yaml",
 		"--connection", "sample",
