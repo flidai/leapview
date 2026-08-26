@@ -462,6 +462,126 @@ func validateManifestV2Document(document []byte, manifest *InstanceBackupManifes
 	return validateManifestV2(manifest)
 }
 
+type InstanceBackupEvidenceExpectation struct {
+	ArtifactIdentity string
+	PolicyVersion    string
+	TargetScope      string
+}
+
+// ValidateInstanceBackupManifestDocument is the backup owner's canonical
+// evidence validator. It applies the same schema, topology, inventory, and
+// release checks used by restore preflight and additionally binds scheduled
+// ledger intent when an expectation is supplied.
+func ValidateInstanceBackupManifestDocument(document []byte, expected InstanceBackupEvidenceExpectation) (InstanceBackupManifestV2, error) {
+	var manifest InstanceBackupManifestV2
+	if err := validateManifestV2Document(document, &manifest); err != nil {
+		return InstanceBackupManifestV2{}, err
+	}
+	if expected.ArtifactIdentity != "" && manifest.ReleaseIdentity.Image != expected.ArtifactIdentity {
+		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest release does not match scheduled artifact")
+	}
+	if expected.PolicyVersion != "" && manifest.RequiredTransitionPolicyVersion != expected.PolicyVersion {
+		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest policy does not match scheduled policy")
+	}
+	if expected.TargetScope != "" && expected.TargetScope != "instance:"+manifest.InstanceID {
+		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest instance does not match scheduled target")
+	}
+	return manifest, nil
+}
+
+// ReadInstanceBackupManifestDocument returns the exact manifest bytes written
+// as the first member of a v2 archive. The returned document is validated by
+// the same owner validator used by restore preflight.
+func ReadInstanceBackupManifestDocument(archivePath string) ([]byte, InstanceBackupManifestV2, error) {
+	file, err := os.Open(strings.TrimSpace(archivePath))
+	if err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	defer file.Close()
+	gzr, err := gzip.NewReader(file)
+	if err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	header, err := tar.NewReader(gzr).Next()
+	if err != nil || header.Name != instanceBackupManifestName ||
+		(header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeRegA) ||
+		header.Size < 1 || header.Size > instanceBackupManifestMaxBytes {
+		if err == nil {
+			err = fmt.Errorf("backup archive does not begin with a bounded v2 manifest")
+		}
+		_ = gzr.Close()
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	// Recreate the reader so the manifest body follows the validated header.
+	if err := gzr.Close(); err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	gzr, err = gzip.NewReader(file)
+	if err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	defer gzr.Close()
+	tr := tar.NewReader(gzr)
+	header, err = tr.Next()
+	if err != nil {
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	document, err := io.ReadAll(io.LimitReader(tr, instanceBackupManifestMaxBytes+1))
+	if err != nil || len(document) > instanceBackupManifestMaxBytes || int64(len(document)) != header.Size {
+		if err == nil {
+			err = fmt.Errorf("backup manifest is truncated or exceeds its size limit")
+		}
+		return nil, InstanceBackupManifestV2{}, err
+	}
+	manifest, err := ValidateInstanceBackupManifestDocument(document, InstanceBackupEvidenceExpectation{})
+	return document, manifest, err
+}
+
+// ValidateInstanceRestorePreflightDocument is the restore owner's canonical
+// validator for a persisted successful preflight report and its exact manifest.
+func ValidateInstanceRestorePreflightDocument(document []byte, manifestDocument []byte, expected InstanceBackupEvidenceExpectation) (InstanceRestorePreflightPlan, InstanceBackupManifestV2, error) {
+	manifest, err := ValidateInstanceBackupManifestDocument(manifestDocument, expected)
+	if err != nil {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	var plan InstanceRestorePreflightPlan
+	if err := decoder.Decode(&plan); err != nil {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, fmt.Errorf("decode restore preflight evidence: %w", err)
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, fmt.Errorf("restore preflight evidence contains trailing data")
+	}
+	manifestDigest := sha256.Sum256(manifestDocument)
+	if plan.SchemaVersion != 1 || !plan.Allowed || plan.ReasonCode != RestorePreflightAllowed ||
+		plan.BackupID != manifest.BackupID || plan.ManifestVersion != manifest.SchemaVersion ||
+		plan.ManifestSHA256 != hex.EncodeToString(manifestDigest[:]) ||
+		plan.PolicyVersion != manifest.RequiredTransitionPolicyVersion || plan.Environment != manifest.Environment ||
+		plan.ArchiveRelease != manifest.ReleaseIdentity ||
+		(expected.ArtifactIdentity != "" && plan.TargetRelease.Image != expected.ArtifactIdentity) ||
+		!plan.ExclusiveLockVerified || plan.ArchiveSHA256 == "" || plan.TargetTreeSHA256 == "" {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, fmt.Errorf("restore preflight evidence is incomplete or does not bind the supplied manifest and schedule")
+	}
+	if !reflect.DeepEqual(plan.ExternalPrerequisites, manifest.StorageTopology.ExternalStores) ||
+		!sameBackupStorageIdentity(plan.TargetStorageTopology, manifest.StorageTopology) {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, fmt.Errorf("restore preflight evidence does not preserve archive storage topology")
+	}
+	if err := validateBackupStorageIdentity(plan.TargetStorageTopology); err != nil {
+		return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, fmt.Errorf("restore preflight target topology: %w", err)
+	}
+	for _, external := range plan.ExternalPrerequisites {
+		if err := validateExternalRecoveryReference(external); err != nil {
+			return InstanceRestorePreflightPlan{}, InstanceBackupManifestV2{}, err
+		}
+	}
+	return plan, manifest, nil
+}
+
 func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 	if manifest.SchemaVersion != InstanceBackupManifestVersion {
 		return fmt.Errorf("unsupported backup manifest version %d", manifest.SchemaVersion)

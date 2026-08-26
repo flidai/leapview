@@ -10,7 +10,9 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -44,6 +46,7 @@ import (
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
@@ -481,6 +484,72 @@ func authorizeSealedPublication(
 func requestLocalDevelopmentAuthorization(ctx context.Context, actorID string) bool {
 	principal, ok := accessmodule.PrincipalFromContext(ctx)
 	return ok && principal.DevBypass && strings.TrimSpace(principal.ID) == strings.TrimSpace(actorID)
+}
+
+func productionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, environment, instanceID string) (*refreshmodule.RecoveryLifecycle, error) {
+	if !cfg.Production || !cfg.RecoveryQualificationEnabled {
+		return nil, nil
+	}
+	if build.Development || build.Dirty || build.Version == buildinfo.DevelopmentVersion || build.Revision == buildinfo.UnknownValue {
+		return nil, fmt.Errorf("scheduled recovery qualification requires exact released build provenance")
+	}
+	policy, err := compatibility.EmbeddedPolicy()
+	const managedPolicyPath = "/run/leapview/release-transition-policy.json"
+	if _, statErr := os.Stat(managedPolicyPath); statErr == nil {
+		policy, _, err = compatibility.LoadPolicy(managedPolicyPath)
+	} else if !os.IsNotExist(statErr) {
+		return nil, statErr
+	}
+	if err != nil {
+		return nil, err
+	}
+	template, err := compatibility.EmbeddedCandidateTransitionTemplate()
+	if err != nil {
+		return nil, err
+	}
+	predecessor, ok := policy.ReleaseByID(template.PredecessorRelease)
+	if !ok {
+		return nil, fmt.Errorf("scheduled recovery qualification predecessor %q is absent from the managed policy", template.PredecessorRelease)
+	}
+	platformName := runtime.GOOS + "/" + runtime.GOARCH
+	releaseID := "v" + strings.TrimPrefix(build.Version, "v")
+	releaseIdentity := compatibility.ReleaseIdentity{
+		ReleaseID: releaseID, Version: strings.TrimPrefix(build.Version, "v"), SourceRevision: build.Revision,
+		Image: strings.TrimSpace(cfg.Image), Distribution: "public", Platform: platformName,
+	}
+	admittedRelease, ok := policy.ReleaseByID(releaseID)
+	if !ok || admittedRelease.IdentityForPlatform(platformName) != releaseIdentity {
+		return nil, fmt.Errorf("scheduled recovery qualification requires the managed policy bound to the running immutable release")
+	}
+	workRoot := strings.TrimSpace(cfg.RecoveryQualificationWorkDir)
+	if workRoot == "" {
+		workRoot = filepath.Join(os.TempDir(), "leapview-recovery-qualification-"+instanceID)
+	}
+	workRoot, err = filepath.Abs(workRoot)
+	if err != nil {
+		return nil, err
+	}
+	evidenceRoot, err := filepath.Abs(filepath.Join(cfg.ArtifactDir(), "recovery-qualification"))
+	if err != nil {
+		return nil, err
+	}
+	for _, directory := range []string{workRoot, evidenceRoot} {
+		if err := securefs.EnsurePrivateDir(directory); err != nil {
+			return nil, err
+		}
+	}
+	qualification := refreshmodule.ProductionRecoveryQualificationConfig{
+		HomeDir: cfg.HomeDir, DBPath: cfg.DBPath(), InstanceID: instanceID, Environment: environment,
+		ReleaseIdentity: releaseIdentity, StorageTopology: platform.InstanceBackupStorageTopology{
+			ControlPlane: "local", ManagedData: cfg.ManagedDataBackend, DuckLake: "local",
+			ExternalStores: []platform.InstanceBackupExternalStoreReference{},
+		},
+		TransitionPolicy: policy, WorkRoot: workRoot, EvidenceRoot: evidenceRoot,
+		ControllerPath: cfg.RecoveryQualificationController, BundleRoot: cfg.RecoveryQualificationBundle,
+		PredecessorImage: predecessor.IdentityForPlatform(platformName).Image,
+		Cron:             cfg.RecoveryQualificationCron, Timezone: "UTC", StaleAfter: 36 * time.Hour,
+	}
+	return refreshmodule.NewProductionRecoveryLifecycle(qualification), nil
 }
 
 func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
@@ -1098,6 +1167,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	identity := buildinfo.Current()
+	recoveryLifecycle, err := productionRecoveryLifecycle(cfg, identity, string(environment), instanceID)
+	if err != nil {
+		return fail(err)
+	}
 	{
 		// The canonical adapter is assembled only after the runtime binding
 		// leaser exists. Missing or unadmitted pool configuration leaves the
@@ -1693,6 +1766,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			RefreshSourceDigest:      canonicalRefreshSourceDigest(sealedDelivery, instanceID),
 			CanonicalRefreshExecutor: canonicalRefreshExecutor(canonicalDeliveryMutations, sealedDelivery, instanceID),
 			EnableRefreshDispatcher:  true,
+			RecoveryLifecycle:        recoveryLifecycle,
+			RecoveryInterval:         time.Minute,
 			DeploymentConfig:         deploymentConfig,
 		},
 		runtimeAssemblyInputs{

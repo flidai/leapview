@@ -16,6 +16,7 @@ import (
 
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/compatibility"
+	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -26,10 +27,14 @@ const (
 )
 
 type ScenarioOutcome struct {
+	// Timing fields are retained only to fail closed for older adapters. The
+	// ledger derives measurements from its persisted execution phases and owner
+	// evidence; adapters must leave these values zero.
 	RecoveryPointAt    time.Time
 	RestoreCompletedAt time.Time
 	ReadyAt            time.Time
 	Artifacts          []EvidenceArtifact
+	cleanup            func() error
 }
 
 type EvidenceArtifact struct {
@@ -152,8 +157,80 @@ func (lifecycle Lifecycle) RunOnce(ctx context.Context) error {
 			}
 		}
 	}
-	_, err = lifecycle.Repository.Retain(ctx, RetentionPolicy{Now: lifecycle.now(), ComplianceWindow: lifecycle.ComplianceWindow})
-	return err
+	if _, err = lifecycle.Repository.Retain(ctx, RetentionPolicy{Now: lifecycle.now(), ComplianceWindow: lifecycle.ComplianceWindow}); err != nil {
+		return err
+	}
+	return lifecycle.garbageCollectEvidence(ctx)
+}
+
+func (lifecycle Lifecycle) garbageCollectEvidence(ctx context.Context) error {
+	lock, err := acquireEvidenceMutationLock(ctx, lifecycle.EvidenceRoot)
+	if err != nil {
+		return err
+	}
+	defer lock.Release()
+	occurrences, err := lifecycle.Repository.Occurrences(ctx)
+	if err != nil {
+		return err
+	}
+	return GarbageCollectEvidence(lifecycle.EvidenceRoot, occurrences)
+}
+
+func acquireEvidenceMutationLock(ctx context.Context, root string) (*instancelock.Lock, error) {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, err
+	}
+	for {
+		lock, err := instancelock.AcquireNamed(root, ".recovery-evidence.lock")
+		if err == nil {
+			return lock, nil
+		}
+		if !strings.Contains(err.Error(), "another process") {
+			return nil, err
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+}
+
+// GarbageCollectEvidence removes only unreferenced content-addressed evidence
+// files. References are treated as a set so a digest shared by multiple
+// occurrences survives until the final reference is gone.
+func GarbageCollectEvidence(root string, occurrences []Occurrence) error {
+	referenced := make(map[string]struct{})
+	for _, occurrence := range occurrences {
+		for _, evidence := range occurrence.Evidence {
+			referenced[evidence.SHA256] = struct{}{}
+		}
+	}
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	removed := false
+	for _, entry := range entries {
+		name := entry.Name()
+		if len(name) != 64+len(".json") || !strings.HasSuffix(name, ".json") || !validSHA256(strings.TrimSuffix(name, ".json")) {
+			continue
+		}
+		if _, keep := referenced[strings.TrimSuffix(name, ".json")]; keep {
+			continue
+		}
+		if err := os.Remove(filepath.Join(root, name)); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+		removed = true
+	}
+	if removed {
+		return (osEvidenceDurability{}).SyncDirectory(root)
+	}
+	return nil
 }
 
 func (lifecycle Lifecycle) execute(ctx context.Context, occurrence Occurrence) error {
@@ -191,10 +268,21 @@ func (lifecycle Lifecycle) execute(ctx context.Context, occurrence Occurrence) e
 	outcome, runErr := adapter.Execute(executeCtx, occurrence)
 	cancel()
 	if heartbeatErr := <-heartbeatDone; heartbeatErr != nil {
+		if outcome.cleanup != nil {
+			_ = outcome.cleanup()
+		}
 		return heartbeatErr
 	}
 	completed := lifecycle.now()
+	evidenceLock, lockErr := acquireEvidenceMutationLock(ctx, lifecycle.EvidenceRoot)
+	if lockErr != nil {
+		return lifecycle.Repository.Fail(ctx, occurrence.ID, occurrence.Fence, completed, Result{}, NewFailure("evidence_store_unavailable", lockErr.Error()))
+	}
+	defer evidenceLock.Release()
 	result, resultErr := outcome.result(occurrence, started, completed, lifecycle.EvidenceRoot)
+	if outcome.cleanup != nil {
+		resultErr = errors.Join(resultErr, outcome.cleanup())
+	}
 	if resultErr != nil {
 		runErr = errors.Join(runErr, NewFailure("invalid_measurement", resultErr.Error()))
 		result = Result{}
@@ -209,26 +297,16 @@ func (outcome ScenarioOutcome) result(occurrence Occurrence, started, completed 
 	if completed.Before(started) {
 		return Result{}, fmt.Errorf("qualification completion precedes start")
 	}
-	result := Result{RecoveryPointAt: outcome.RecoveryPointAt}
-	if !outcome.RestoreCompletedAt.IsZero() {
-		if outcome.RestoreCompletedAt.Before(started) || outcome.RestoreCompletedAt.After(completed) {
-			return Result{}, fmt.Errorf("restore completion is outside the persisted execution interval")
-		}
-		result.RestoreDuration = outcome.RestoreCompletedAt.Sub(started)
-	}
-	if !outcome.ReadyAt.IsZero() {
-		readinessStart := started
-		if !outcome.RestoreCompletedAt.IsZero() {
-			readinessStart = outcome.RestoreCompletedAt
-		}
-		if outcome.ReadyAt.Before(readinessStart) || outcome.ReadyAt.After(completed) {
-			return Result{}, fmt.Errorf("readiness completion is outside the persisted execution interval")
-		}
-		result.ReadinessDuration = outcome.ReadyAt.Sub(readinessStart)
+	if !outcome.RecoveryPointAt.IsZero() || !outcome.RestoreCompletedAt.IsZero() || !outcome.ReadyAt.IsZero() {
+		return Result{}, fmt.Errorf("qualification adapters must not provide ledger timing fields")
 	}
 	artifacts, err := validateScenarioArtifacts(occurrence, outcome.Artifacts)
 	if err != nil {
 		return Result{}, err
+	}
+	result := Result{RecoveryPointAt: recoveryPointFromArtifacts(artifacts)}
+	if result.RecoveryPointAt.IsZero() || result.RecoveryPointAt.After(completed) {
+		return Result{}, fmt.Errorf("owner evidence recovery point is missing or after ledger completion")
 	}
 	for _, artifact := range artifacts {
 		reference, err := retainUBDRArtifact(artifact, evidenceRoot)
@@ -271,16 +349,6 @@ func (publisher FileEvidencePublisher) Publish(_ context.Context, occurrence Occ
 	return nil
 }
 
-type qualificationState struct {
-	InstanceID      string `json:"instanceId"`
-	Environment     string `json:"environment"`
-	CanonicalOrigin string `json:"canonicalOrigin"`
-	PrincipalID     string `json:"principalId"`
-	PrincipalKind   string `json:"principalKind"`
-	PrincipalEmail  string `json:"principalEmail"`
-	PrincipalName   string `json:"principalDisplayName"`
-}
-
 func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact) ([]validatedEvidenceArtifact, error) {
 	required := map[string]int{}
 	switch occurrence.Operation {
@@ -303,7 +371,7 @@ func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact)
 		if required[input.Kind] != 1 || seen[input.Kind] {
 			return nil, fmt.Errorf("recovery qualification operation %s received an unexpected or duplicate %s artifact", occurrence.Operation, input.Kind)
 		}
-		artifact, err := readUBDRArtifact(input.Kind, input.Path, occurrence.ArtifactIdentity)
+		artifact, err := readUBDRArtifact(input.Kind, input.Path, occurrence)
 		if err != nil {
 			return nil, err
 		}
@@ -311,35 +379,36 @@ func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact)
 		validated = append(validated, artifact)
 	}
 	if occurrence.Operation == OperationRestore {
-		var manifest platform.InstanceBackupManifestV2
-		var plan platform.InstanceRestorePreflightPlan
+		var manifestDocument, planDocument []byte
 		for _, artifact := range validated {
 			switch artifact.reference.Kind {
 			case EvidenceBackupManifestV2:
-				if err := json.Unmarshal(artifact.contents, &manifest); err != nil {
-					return nil, err
-				}
+				manifestDocument = artifact.contents
 			case EvidenceRestorePreflight:
-				if err := json.Unmarshal(artifact.contents, &plan); err != nil {
-					return nil, err
-				}
+				planDocument = artifact.contents
 			}
 		}
-		manifestDigest := sha256.Sum256(artifactContents(validated, EvidenceBackupManifestV2))
-		if plan.BackupID != manifest.BackupID || plan.ManifestSHA256 != hex.EncodeToString(manifestDigest[:]) {
-			return nil, fmt.Errorf("restore preflight evidence does not bind the supplied backup manifest")
+		_, manifest, err := platform.ValidateInstanceRestorePreflightDocument(planDocument, manifestDocument, platform.InstanceBackupEvidenceExpectation{
+			ArtifactIdentity: occurrence.ArtifactIdentity, PolicyVersion: occurrence.PolicyVersion, TargetScope: occurrence.TargetScope,
+		})
+		if err != nil {
+			return nil, err
+		}
+		for index := range validated {
+			validated[index].recoveryPointAt = manifest.CompletedAt
 		}
 	}
 	return validated, nil
 }
 
-func artifactContents(artifacts []validatedEvidenceArtifact, kind string) []byte {
+func recoveryPointFromArtifacts(artifacts []validatedEvidenceArtifact) time.Time {
+	var point time.Time
 	for _, artifact := range artifacts {
-		if artifact.reference.Kind == kind {
-			return artifact.contents
+		if !artifact.recoveryPointAt.IsZero() && (point.IsZero() || artifact.recoveryPointAt.Before(point)) {
+			point = artifact.recoveryPointAt
 		}
 	}
-	return nil
+	return point
 }
 
 func validSHA256(value string) bool {
@@ -350,16 +419,17 @@ func validSHA256(value string) bool {
 // ValidateUBDRArtifact validates the existing UBDR owner report and returns a
 // content-bound reference. It deliberately does not invent a parallel report.
 func ValidateUBDRArtifact(kind, path string) (EvidenceReference, error) {
-	artifact, err := readUBDRArtifact(kind, path, "")
+	artifact, err := readUBDRArtifact(kind, path, Occurrence{})
 	return artifact.reference, err
 }
 
 type validatedEvidenceArtifact struct {
-	reference EvidenceReference
-	contents  []byte
+	reference       EvidenceReference
+	contents        []byte
+	recoveryPointAt time.Time
 }
 
-func readUBDRArtifact(kind, path, expectedArtifact string) (validatedEvidenceArtifact, error) {
+func readUBDRArtifact(kind, path string, expected Occurrence) (validatedEvidenceArtifact, error) {
 	abs, err := filepath.Abs(strings.TrimSpace(path))
 	if err != nil || !filepath.IsAbs(abs) {
 		return validatedEvidenceArtifact{}, fmt.Errorf("resolve qualification evidence path: %w", err)
@@ -386,40 +456,27 @@ func readUBDRArtifact(kind, path, expectedArtifact string) (validatedEvidenceArt
 	}
 	switch kind {
 	case EvidenceTransitionQualification:
-		var report struct {
-			SchemaVersion        int                           `json:"schemaVersion"`
-			Predecessor          compatibility.ReleaseIdentity `json:"predecessor"`
-			Candidate            compatibility.ReleaseIdentity `json:"candidate"`
-			PolicySHA256         string                        `json:"policySha256"`
-			StateBeforeUpgrade   string                        `json:"stateBeforeUpgradeSha256"`
-			StateAfterUpgrade    string                        `json:"stateAfterUpgradeSha256"`
-			StateAfterRollback   string                        `json:"stateAfterRollbackSha256"`
-			UpgradeResult        string                        `json:"upgradeResult"`
-			RollbackResult       string                        `json:"rollbackResult"`
-			PreservationVerified bool                          `json:"preservationVerified"`
-			InventoryBefore      qualificationState            `json:"inventoryBeforeUpgrade"`
-			InventoryAfter       qualificationState            `json:"inventoryAfterUpgrade"`
-			InventoryRollback    qualificationState            `json:"inventoryAfterRollback"`
+		report, err := compatibility.ValidateTransitionQualificationEvidence(contents, compatibility.TransitionQualificationExpectation{
+			CandidateImage: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion, TargetScope: expected.TargetScope,
+		})
+		if err != nil {
+			return validatedEvidenceArtifact{}, err
 		}
-		if err := json.Unmarshal(contents, &report); err != nil || report.SchemaVersion != 1 ||
-			report.UpgradeResult != "success" || report.RollbackResult != "success" || !report.PreservationVerified ||
-			!validSHA256(report.PolicySHA256) || !validSHA256(report.StateBeforeUpgrade) ||
-			report.StateBeforeUpgrade != report.StateAfterUpgrade || report.StateBeforeUpgrade != report.StateAfterRollback ||
-			report.InventoryBefore != report.InventoryAfter || report.InventoryBefore != report.InventoryRollback ||
-			report.InventoryBefore.InstanceID == "" || report.Predecessor.Image == report.Candidate.Image ||
-			ValidateArtifactIdentity(report.Predecessor.Image) != nil || ValidateArtifactIdentity(report.Candidate.Image) != nil ||
-			(expectedArtifact != "" && report.Candidate.Image != expectedArtifact) {
-			return validatedEvidenceArtifact{}, fmt.Errorf("transition qualification evidence is incomplete or does not qualify the scheduled artifact")
-		}
+		sum := sha256.Sum256(contents)
+		digest := hex.EncodeToString(sum[:])
+		uri := (&url.URL{Scheme: "artifact", Host: "qualification", Path: "/" + kind + "/" + digest + ".json"}).String()
+		return validatedEvidenceArtifact{reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents, recoveryPointAt: report.RecoveryPointAt}, nil
 	case EvidenceBackupManifestV2:
-		var manifest platform.InstanceBackupManifestV2
-		if err := json.Unmarshal(contents, &manifest); err != nil || manifest.SchemaVersion != platform.InstanceBackupManifestVersion ||
-			manifest.Kind != "leapview-instance" || manifest.BackupID == "" || manifest.InstanceID == "" ||
-			!validSHA256(manifest.InventorySHA256) || len(manifest.Members) == 0 ||
-			ValidateArtifactIdentity(manifest.ReleaseIdentity.Image) != nil ||
-			(expectedArtifact != "" && manifest.ReleaseIdentity.Image != expectedArtifact) {
-			return validatedEvidenceArtifact{}, fmt.Errorf("backup manifest v2 evidence is incomplete or does not bind the scheduled artifact")
+		manifest, err := platform.ValidateInstanceBackupManifestDocument(contents, platform.InstanceBackupEvidenceExpectation{
+			ArtifactIdentity: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion, TargetScope: expected.TargetScope,
+		})
+		if err != nil {
+			return validatedEvidenceArtifact{}, err
 		}
+		sum := sha256.Sum256(contents)
+		digest := hex.EncodeToString(sum[:])
+		uri := (&url.URL{Scheme: "artifact", Host: "qualification", Path: "/" + kind + "/" + digest + ".json"}).String()
+		return validatedEvidenceArtifact{reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents, recoveryPointAt: manifest.CompletedAt}, nil
 	case EvidenceRestorePreflight:
 		var plan platform.InstanceRestorePreflightPlan
 		if err := json.Unmarshal(contents, &plan); err != nil || plan.SchemaVersion != 1 || !plan.Allowed ||
@@ -439,6 +496,32 @@ func readUBDRArtifact(kind, path, expectedArtifact string) (validatedEvidenceArt
 }
 
 func retainUBDRArtifact(artifact validatedEvidenceArtifact, root string) (EvidenceReference, error) {
+	return retainUBDRArtifactWithDurability(artifact, root, osEvidenceDurability{})
+}
+
+type evidenceDurability interface {
+	SyncFile(*os.File) error
+	Rename(string, string) error
+	SyncDirectory(string) error
+}
+
+type osEvidenceDurability struct{}
+
+func (osEvidenceDurability) SyncFile(file *os.File) error { return file.Sync() }
+func (osEvidenceDurability) Rename(source, destination string) error {
+	return os.Rename(source, destination)
+}
+func (osEvidenceDurability) SyncDirectory(path string) error {
+	directory, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	syncErr := directory.Sync()
+	closeErr := directory.Close()
+	return errors.Join(syncErr, closeErr)
+}
+
+func retainUBDRArtifactWithDurability(artifact validatedEvidenceArtifact, root string, durability evidenceDurability) (EvidenceReference, error) {
 	reference, contents := artifact.reference, artifact.contents
 	if !filepath.IsAbs(root) {
 		return EvidenceReference{}, fmt.Errorf("qualification evidence root must be absolute")
@@ -470,14 +553,17 @@ func retainUBDRArtifact(artifact validatedEvidenceArtifact, root string) (Eviden
 		temporary.Close()
 		return EvidenceReference{}, err
 	}
-	if err := temporary.Sync(); err != nil {
+	if err := durability.SyncFile(temporary); err != nil {
 		temporary.Close()
 		return EvidenceReference{}, err
 	}
 	if err := temporary.Close(); err != nil {
 		return EvidenceReference{}, err
 	}
-	if err := os.Rename(temporaryPath, destination); err != nil {
+	if err := durability.Rename(temporaryPath, destination); err != nil {
+		return EvidenceReference{}, err
+	}
+	if err := durability.SyncDirectory(root); err != nil {
 		return EvidenceReference{}, err
 	}
 	return reference, nil

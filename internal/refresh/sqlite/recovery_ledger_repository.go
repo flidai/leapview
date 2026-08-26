@@ -447,11 +447,15 @@ func (repository *Repository) Complete(ctx context.Context, id string, fence rec
 		if err := validateRecoveryMutationChronology(row, now, &result, true); err != nil {
 			return err
 		}
+		restoreDuration, readinessDuration, err := recoveryPhaseDurations(row, now)
+		if err != nil {
+			return err
+		}
 		changed, err := queries.CompleteRecoveryQualificationOccurrence(ctx, platformdb.CompleteRecoveryQualificationOccurrenceParams{
 			FinishedAt: recoveryNullTime(now), RecoveryPointAt: recoveryNullTime(result.RecoveryPointAt),
 			RecoveryPointAgeSeconds: sql.NullInt64{Int64: max(0, int64(now.Sub(result.RecoveryPointAt)/time.Second)), Valid: true},
-			RestoreDurationMillis:   sql.NullInt64{Int64: result.RestoreDuration.Milliseconds(), Valid: true},
-			ReadinessDurationMillis: sql.NullInt64{Int64: result.ReadinessDuration.Milliseconds(), Valid: true},
+			RestoreDurationMillis:   sql.NullInt64{Int64: restoreDuration.Milliseconds(), Valid: true},
+			ReadinessDurationMillis: sql.NullInt64{Int64: readinessDuration.Milliseconds(), Valid: true},
 			EvidenceRefsJson:        encoded, OccurrenceID: id, LeaseOwner: fence.Owner,
 			FenceGeneration: fence.Generation, LeaseValidAt: recoveryNullTime(now),
 		})
@@ -681,7 +685,11 @@ func (repository *Repository) Occurrence(ctx context.Context, id string) (recove
 }
 
 func (repository *Repository) Occurrences(ctx context.Context) ([]recovery.Occurrence, error) {
-	rows, err := repository.q.ListRecoveryQualificationOccurrences(ctx)
+	return recoveryOccurrences(ctx, repository.q)
+}
+
+func recoveryOccurrences(ctx context.Context, queries *platformdb.Queries) ([]recovery.Occurrence, error) {
+	rows, err := queries.ListRecoveryQualificationOccurrences(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -764,12 +772,21 @@ func (repository *Repository) Status(ctx context.Context, now time.Time) (recove
 	if now.IsZero() {
 		return recovery.StatusSnapshot{}, fmt.Errorf("recovery qualification status time is required")
 	}
-	occurrences, err := repository.Occurrences(ctx)
+	if repository == nil || repository.db == nil {
+		return recovery.StatusSnapshot{}, fmt.Errorf("recovery qualification database is required")
+	}
+	tx, err := repository.db.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+	if err != nil {
+		return recovery.StatusSnapshot{}, err
+	}
+	defer tx.Rollback()
+	queries := repository.q.WithTx(tx)
+	occurrences, err := recoveryOccurrences(ctx, queries)
 	if err != nil {
 		return recovery.StatusSnapshot{}, err
 	}
 	snapshot := recovery.StatusSnapshot{GeneratedAt: now}
-	schedules, err := repository.q.ListRecoveryQualificationSchedules(ctx)
+	schedules, err := queries.ListRecoveryQualificationSchedules(ctx)
 	if err != nil {
 		return recovery.StatusSnapshot{}, err
 	}
@@ -856,7 +873,7 @@ func (repository *Repository) Status(ctx context.Context, now time.Time) (recove
 			}
 		}
 	}
-	snapshot.RecoveredExpiredLeases, err = repository.q.CountAbandonedRecoveryQualificationAttempts(ctx)
+	snapshot.RecoveredExpiredLeases, err = queries.CountAbandonedRecoveryQualificationAttempts(ctx)
 	if err != nil {
 		return recovery.StatusSnapshot{}, err
 	}
@@ -1083,6 +1100,25 @@ func validateRecoveryMutationChronology(row platformdb.RecoveryQualificationOccu
 		return fmt.Errorf("recovery qualification durations exceed persisted execution interval")
 	}
 	return nil
+}
+
+func recoveryPhaseDurations(row platformdb.RecoveryQualificationOccurrence, completed time.Time) (time.Duration, time.Duration, error) {
+	started, err := recoveryParseNullTime(row.StartedAt)
+	if err != nil {
+		return 0, 0, err
+	}
+	if started.IsZero() || completed.Before(started) {
+		return 0, 0, fmt.Errorf("recovery qualification persisted execution phase is incomplete")
+	}
+	elapsed := completed.Sub(started)
+	switch row.Operation {
+	case recovery.OperationRestore:
+		return elapsed, 0, nil
+	case recovery.OperationUpgrade, recovery.OperationRollback:
+		return 0, elapsed, nil
+	default:
+		return 0, 0, nil
+	}
 }
 
 func validateRecoveryMutation(id string, fence recovery.Fence, now time.Time) error {

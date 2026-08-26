@@ -114,6 +114,26 @@ reviewed definitions and adapters are configured, status reports
 `unconfigured: true`; an empty ledger must not be interpreted as successful
 qualification.
 
+Production composition registers the four owner adapters when
+`LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true`. Supply the exact released
+`LEAPVIEW_IMAGE`, the admitted candidate bundle with its candidate-bound policy
+through `LEAPVIEW_RECOVERY_QUALIFICATION_BUNDLE`, and its `leapviewctl` through
+`LEAPVIEW_RECOVERY_QUALIFICATION_CONTROLLER`. The work directory must be an
+absolute private path outside `LEAPVIEW_HOME`; evidence is retained beneath the
+instance artifact directory and excluded from subsequent qualification
+backups. `LEAPVIEW_RECOVERY_QUALIFICATION_CRON` controls the reviewed schedule.
+Startup fails closed if the managed policy is not bound to the running image or
+does not contain the exact predecessor identity. The controller must execute the isolated
+release qualification environment available to the service account; the
+ledger never substitutes synthetic reports when it is unavailable.
+
+Backup and restore adapters call the platform backup, preflight, and restore
+owners against an isolated restore target. Upgrade and rollback adapters call
+the installed-candidate transition owner with the immutable predecessor and
+candidate bundle. Recovery points are read from those validated owner reports;
+restore and readiness durations are derived only from ledger-owned persisted
+start and completion phases.
+
 Persisted failures use bounded machine codes and credential-scrubbed summaries.
 Full owner errors belong only in restricted transient logs. URL credentials,
 DSNs, JSON secrets, signed URL parameters, provider credentials, and multiline

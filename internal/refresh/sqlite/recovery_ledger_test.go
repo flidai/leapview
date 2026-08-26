@@ -407,6 +407,50 @@ func TestRecoveryLifecycleChronologyRejectsImpossibleEvidence(t *testing.T) {
 	}
 }
 
+func TestRecoveryStatusSnapshotIsConsistentDuringConcurrentEnqueue(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC)
+	definition := recovery.Definition{
+		ScheduleID: "concurrent-status", Scenario: "managed-instance", Operation: recovery.OperationBackup,
+		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
+	}
+	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+		t.Fatal(err)
+	}
+	start := make(chan struct{})
+	errCh := make(chan error, 1)
+	go func() {
+		<-start
+		for range 25 {
+			if _, err := repository.EnqueueDue(t.Context(), now, 1); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		errCh <- nil
+	}()
+	close(start)
+	for range 100 {
+		snapshot, err := repository.Status(t.Context(), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		pending := int64(0)
+		for _, operation := range snapshot.Operations {
+			pending += operation.Pending
+		}
+		if snapshot.Due != snapshot.MissingRuns+pending {
+			t.Fatalf("status mixed SQLite snapshots: due=%d missing=%d pending=%d", snapshot.Due, snapshot.MissingRuns, pending)
+		}
+	}
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestRecoveryScheduleRevisionPreservesOverdueArtifactIdentity(t *testing.T) {
 	repository, closeStore := openRecoveryRepository(t)
 	defer closeStore()
@@ -469,8 +513,7 @@ func successfulRecoveryResult(completedAt time.Time, kind string) recovery.Resul
 		digestByte = "d"
 	}
 	return recovery.Result{
-		RecoveryPointAt: completedAt.Add(-15 * time.Minute), RestoreDuration: 15 * time.Second,
-		ReadinessDuration: 10 * time.Second,
+		RecoveryPointAt: completedAt.Add(-15 * time.Minute),
 		Evidence: []recovery.EvidenceReference{{
 			Kind: kind + "-report", URI: "artifact://qualification/" + kind + ".json",
 			SHA256: strings.Repeat(digestByte, 64),

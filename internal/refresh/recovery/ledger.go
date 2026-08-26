@@ -272,6 +272,9 @@ func (result Result) validate(completedAt time.Time, requireRecoveryPoint bool) 
 	if result.RestoreDuration < 0 || result.ReadinessDuration < 0 {
 		return fmt.Errorf("recovery qualification durations must not be negative")
 	}
+	if result.RestoreDuration != 0 || result.ReadinessDuration != 0 {
+		return fmt.Errorf("recovery qualification durations are owned by persisted ledger phases")
+	}
 	if requireRecoveryPoint && len(result.Evidence) == 0 {
 		return fmt.Errorf("successful recovery qualification requires at least one evidence reference")
 	}

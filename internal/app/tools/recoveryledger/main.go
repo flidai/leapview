@@ -368,8 +368,7 @@ func ledgerInput(scheduleID, scenario, operation string, planned time.Time) reco
 
 func ledgerResult(completed time.Time, operation string) recovery.Result {
 	return recovery.Result{
-		RecoveryPointAt: completed.Add(-15 * time.Minute), RestoreDuration: 30 * time.Second,
-		ReadinessDuration: 20 * time.Second,
+		RecoveryPointAt: completed.Add(-15 * time.Minute),
 		Evidence: []recovery.EvidenceReference{{
 			Kind: operation + "-report", URI: "artifact://qualification/" + operation + ".json",
 			SHA256: strings.Repeat("b", 64),

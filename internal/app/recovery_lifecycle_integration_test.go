@@ -7,14 +7,46 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 )
+
+func TestProductionCompositionConfiguresRecoveryOwnersWithoutLifecycleInjection(t *testing.T) {
+	policy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, ok := policy.ReleaseByID(policy.CandidateRelease)
+	if !ok {
+		t.Fatal("embedded candidate release is missing")
+	}
+	identity := release.IdentityForPlatform(runtime.GOOS + "/" + runtime.GOARCH)
+	root := t.TempDir()
+	cfg := config.Config{
+		Production: true, HomeDir: filepath.Join(root, "instance"), Environment: "qualification",
+		Image: identity.Image, ManagedDataBackend: "local", RecoveryQualificationEnabled: true,
+		RecoveryQualificationController: filepath.Join(root, "leapviewctl"),
+		RecoveryQualificationBundle:     filepath.Join(root, "bundle"),
+		RecoveryQualificationWorkDir:    filepath.Join(root, "work"), RecoveryQualificationCron: "@hourly",
+	}
+	lifecycle, err := productionRecoveryLifecycle(cfg, buildinfo.Identity{
+		Version: identity.Version, Revision: identity.SourceRevision, BuildTime: "2026-08-26T00:00:00Z",
+	}, "qualification", "lvinst_production_composition")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle == nil || len(lifecycle.Adapters) != 4 || lifecycle.Definitions == nil {
+		t.Fatalf("normal production composition did not register owner lifecycle: %#v", lifecycle)
+	}
+}
 
 func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
@@ -26,7 +58,7 @@ func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testi
 		t.Fatal(err)
 	}
 	now := time.Date(2026, 8, 26, 4, 5, 0, 0, time.UTC)
-	artifact := "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	artifact := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
 	evidence := writeRecoveryLifecycleEvidence(t, t.TempDir(), artifact, now)
 	retainedEvidence := filepath.Join(t.TempDir(), "retained")
 	definitions := recoveryLifecycleDefinitions(artifact)
@@ -76,9 +108,7 @@ func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testi
 	} {
 		outputs := artifactOutputs
 		adapters[operation] = refreshmodule.RecoveryScenarioAdapterFunc(func(context.Context, refreshmodule.Occurrence) (refreshmodule.RecoveryScenarioOutcome, error) {
-			return refreshmodule.RecoveryScenarioOutcome{
-				RecoveryPointAt: now.Add(-15 * time.Minute), Artifacts: outputs,
-			}, nil
+			return refreshmodule.RecoveryScenarioOutcome{Artifacts: outputs}, nil
 		})
 	}
 	lifecycle := &refreshmodule.RecoveryLifecycle{
@@ -157,26 +187,32 @@ func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now tim
 	}
 	predecessor := compatibility.ReleaseIdentity{
 		ReleaseID: "v0.2.0", Version: "0.2.0", SourceRevision: strings.Repeat("8", 40),
-		Image: "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("9", 64), Distribution: "public", Platform: "linux/amd64",
+		Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("9", 64), Distribution: "public", Platform: "linux/amd64",
 	}
 	state := map[string]string{
 		"instanceId": "lvinst_recovery_lifecycle", "environment": "qualification", "canonicalOrigin": "https://qualification.example",
 		"principalId": "principal_qualification", "principalKind": "user", "principalEmail": "qualification@example.com", "principalDisplayName": "Qualification",
 	}
 	transition := write("transition-qualification.json", map[string]any{
-		"schemaVersion": 1, "predecessor": predecessor, "candidate": candidate,
+		"schemaVersion": 1, "policyVersion": "ubdr-v1", "recoveryPointAt": now.Add(-20 * time.Minute), "predecessor": predecessor, "candidate": candidate,
 		"policySha256": strings.Repeat("c", 64), "stateBeforeUpgradeSha256": strings.Repeat("d", 64),
 		"stateAfterUpgradeSha256": strings.Repeat("d", 64), "stateAfterRollbackSha256": strings.Repeat("d", 64),
 		"inventoryBeforeUpgrade": state, "inventoryAfterUpgrade": state, "inventoryAfterRollback": state,
 		"upgradeResult": "success", "rollbackResult": "success", "preservationVerified": true,
 	})
+	members := []platform.InstanceBackupMember{{Path: "leapview.db", Role: "control-plane-database", Size: 1, Mode: 0o600, SHA256: strings.Repeat("e", 64)}}
+	inventoryDocument, err := json.Marshal(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inventoryDigest := sha256.Sum256(inventoryDocument)
 	manifest := platform.InstanceBackupManifestV2{
 		SchemaVersion: platform.InstanceBackupManifestVersion, Kind: "leapview-instance", BackupID: "lvbackup_recovery_lifecycle",
 		ReleaseIdentity: candidate, InstanceID: "lvinst_recovery_lifecycle", Environment: "qualification",
-		CreatedAt: now.Add(-20 * time.Minute), CompletedAt: now.Add(-19 * time.Minute), ArchiveMode: "instance",
+		CreatedAt: now.Add(-20 * time.Minute), CompletedAt: now.Add(-19 * time.Minute), ArchiveMode: "full-instance",
 		StorageTopology:                 platform.InstanceBackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{}},
-		RequiredTransitionPolicyVersion: "ubdr-v1", Members: []platform.InstanceBackupMember{{Path: "leapview.db", Role: "control-plane", Size: 1, Mode: 0o600, SHA256: strings.Repeat("e", 64)}},
-		InventorySHA256: strings.Repeat("f", 64),
+		RequiredTransitionPolicyVersion: "ubdr-v1", Members: members,
+		InventorySHA256: fmt.Sprintf("%x", inventoryDigest[:]),
 	}
 	backup := write("leapview-backup.json", manifest)
 	manifestDocument, err := os.ReadFile(backup)
@@ -187,8 +223,11 @@ func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now tim
 	restore := write("preflight-report.json", platform.InstanceRestorePreflightPlan{
 		SchemaVersion: 1, Allowed: true, ReasonCode: platform.RestorePreflightAllowed,
 		BackupID: manifest.BackupID, ManifestVersion: platform.InstanceBackupManifestVersion,
-		ManifestSHA256: fmt.Sprintf("%x", manifestDigest[:]), ArchiveSHA256: strings.Repeat("2", 64),
-		ExclusiveLockVerified: true, Replace: []string{"leapview.db"}, Preserve: []string{}, Reset: []string{},
+		ManifestSHA256: fmt.Sprintf("%x", manifestDigest[:]), PolicyVersion: "ubdr-v1", ArchiveSHA256: strings.Repeat("2", 64),
+		TargetTreeSHA256: strings.Repeat("3", 64), Environment: "qualification", ArchiveRelease: candidate, TargetRelease: candidate,
+		TargetStorageTopology: manifest.StorageTopology, CheckpointTopology: platform.InstanceBackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{}},
+		ExternalPrerequisites: []platform.InstanceBackupExternalStoreReference{}, ExclusiveLockVerified: true,
+		Replace: []string{"leapview.db"}, Preserve: []string{}, Reset: []string{},
 	})
 	return recoveryLifecycleEvidence{transition: transition, backup: backup, restore: restore}
 }
@@ -196,9 +235,13 @@ func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now tim
 func recoveryLifecycleDefinitions(artifact string) []refreshmodule.RecoveryDefinition {
 	definitions := make([]refreshmodule.RecoveryDefinition, 0, 4)
 	for _, operation := range []string{refreshmodule.OperationBackup, refreshmodule.OperationRestore, refreshmodule.OperationUpgrade, refreshmodule.OperationRollback} {
+		targetScope := "instance:lvinst_recovery_lifecycle"
+		if operation == refreshmodule.OperationUpgrade || operation == refreshmodule.OperationRollback {
+			targetScope = "release:v0.3.0"
+		}
 		definitions = append(definitions, refreshmodule.RecoveryDefinition{
 			ScheduleID: "production-" + operation, Scenario: "ubdr-foundation", Operation: operation,
-			PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: artifact,
+			PolicyVersion: "ubdr-v1", TargetScope: targetScope, ArtifactIdentity: artifact,
 			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
 		})
 	}
