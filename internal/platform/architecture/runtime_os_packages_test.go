@@ -32,6 +32,7 @@ func TestProductionRuntimeUsesPinnedShelllessChainguardImage(t *testing.T) {
 		"COPY --from=runtime-layout /runtime-root/ /",
 		"USER 65532:65532",
 		"SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt",
+		"HOME=/var/lib/leapview/home",
 		"ZONEINFO=/usr/local/share/leapview/zoneinfo.zip",
 		`HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/leapview", "healthcheck"]`,
 		`ENTRYPOINT ["/usr/local/bin/leapview"]`,

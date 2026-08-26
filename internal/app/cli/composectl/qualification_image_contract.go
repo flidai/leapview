@@ -17,6 +17,7 @@ import (
 
 const (
 	qualificationRuntimeCAPath       = "/etc/ssl/certs/ca-certificates.crt"
+	qualificationRuntimeHomePath     = "/var/lib/leapview/home"
 	qualificationRuntimeZoneinfoPath = "/usr/local/share/leapview/zoneinfo.zip"
 )
 
@@ -212,6 +213,7 @@ func (c *Controller) qualifyProductionImageEnvironment(ctx context.Context, imag
 	}
 	for name, wanted := range map[string]string{
 		"SSL_CERT_FILE": qualificationRuntimeCAPath,
+		"HOME":          qualificationRuntimeHomePath,
 		"ZONEINFO":      qualificationRuntimeZoneinfoPath,
 	} {
 		if environment[name] != wanted {

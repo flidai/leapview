@@ -214,6 +214,7 @@ USER 65532:65532
 
 ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
     ZONEINFO=/usr/local/share/leapview/zoneinfo.zip \
+    HOME=/var/lib/leapview/home \
     LEAPVIEW_ADDR=:8080 \
     LEAPVIEW_ENVIRONMENT=prod \
     LEAPVIEW_HOME=/var/lib/leapview/home \

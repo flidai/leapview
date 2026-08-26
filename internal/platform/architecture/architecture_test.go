@@ -2420,6 +2420,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"WORKDIR /app",
 		"COPY --from=web /src/static /runtime-root/app/static",
 		"COPY --from=sourcegen /src/.data/map-assets /runtime-root/app/.data/map-assets",
+		"HOME=/var/lib/leapview/home",
 		"LEAPVIEW_HOME=/var/lib/leapview/home",
 		"LEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data",
 		"LEAPVIEW_PRODUCTION=1",
