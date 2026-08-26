@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	platformdb "github.com/flidai/leapview/internal/access/internal/db"
@@ -78,24 +77,10 @@ func (r *Repository) disablePrincipal(ctx context.Context, id string, provisione
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if err := r.q.RevokeSessionsByPrincipal(ctx, id); err != nil {
-		return access.Principal{}, err
-	}
 	if err := r.q.RevokeAPITokensByPrincipal(ctx, id); err != nil {
 		return access.Principal{}, err
 	}
-	if err := r.q.DeactivateOAuthSessionsByPrincipal(ctx, id); err != nil {
-		return access.Principal{}, err
-	}
-	now := nullableTime(time.Now().UTC())
-	if err := r.q.DeactivateAuthoringCredentialsByPrincipal(ctx, platformdb.DeactivateAuthoringCredentialsByPrincipalParams{
-		ReplacedAt: now, PrincipalID: id,
-	}); err != nil {
-		return access.Principal{}, err
-	}
-	if err := r.q.RevokeAuthoringSessionsByPrincipal(ctx, platformdb.RevokeAuthoringSessionsByPrincipalParams{
-		RevokedAt: now, PrincipalID: id,
-	}); err != nil {
+	if err := r.revokeInteractiveSessionsByPrincipal(ctx, id); err != nil {
 		return access.Principal{}, err
 	}
 	return r.PrincipalByID(ctx, id)

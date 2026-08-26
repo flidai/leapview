@@ -119,6 +119,7 @@ test('code block highlights product and documentation languages with GitHub them
 
       const compact = document.createElement('lv-code-block') as any
       compact.compact = true
+      compact.copy = true
       compact.language = 'json'
       compact.code = '{"compact":true}'
       document.body.append(compact)
@@ -151,6 +152,7 @@ test('code block highlights product and documentation languages with GitHub them
         compactAttr: compact.hasAttribute('compact'),
         compactWhiteSpace: getComputedStyle(compactPre).whiteSpace,
         compactOverflowX: getComputedStyle(compactPre).overflowX,
+        compactPaddingTop: getComputedStyle(compactPre).paddingTop,
       }
     })
 
@@ -177,6 +179,7 @@ test('code block highlights product and documentation languages with GitHub them
     expect(state.compactAttr).toBe(true)
     expect(state.compactWhiteSpace).toBe('pre')
     expect(state.compactOverflowX).toBe('auto')
+    expect(state.compactPaddingTop).toBe('8px')
   } finally {
     await page.close()
   }

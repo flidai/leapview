@@ -3,24 +3,10 @@ import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
   BookOpen,
-  Cable,
-  ChartColumn,
-  Component,
+  ChevronRight,
   ExternalLink,
-  LayoutDashboard,
-  ListFilter,
-  PanelTop,
-  Plug,
   RefreshCw,
-  Ruler,
   Search,
-  Sigma,
-  SquareDashedMousePointer,
-  Table2,
-  TableProperties,
-  Waypoints,
-  Workflow,
-  type IconNode,
 } from 'lucide'
 import type {
   AssetVersionDrawerSignal,
@@ -37,6 +23,7 @@ import type {
   ResourceTabSignal,
 } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
+import { assetPresentation } from '../shared/asset-presentation'
 import { checkSignalContract } from '../shared/signal-contract'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
@@ -642,17 +629,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
     return html`
       <section class="asset-page connection-asset-page" aria-label="Connection detail" @lv-record-table-action=${this.handleRecordTableAction}>
         <header class="breadcrumb-header">
-          <nav aria-label="Breadcrumb">
-            <ol>
-              ${page.breadcrumbs.map((crumb) => html`
-                <li>
-                  ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'inline')}<span>${crumb.label}</span></h1>`
-                    : html`<a href=${crumb.href}>${crumb.label}</a>`}
-                </li>
-              `)}
-            </ol>
-          </nav>
+          ${renderAssetBreadcrumb(page)}
           <div class="actions">
             ${actions}
             ${page.actions?.map((action) => this.renderAction(action, page))}
@@ -677,17 +654,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
         @lv-record-table-action=${this.handleRecordTableAction}
       >
         <header class="breadcrumb-header">
-          <nav aria-label="Breadcrumb">
-            <ol>
-              ${page.breadcrumbs.map((crumb) => html`
-                <li>
-                  ${crumb.current
-                    ? html`<h1>${assetTypeGlyph(page.asset.type, 'inline')}<span>${crumb.label}</span></h1>`
-                    : html`<a href=${crumb.href}>${crumb.label}</a>`}
-                </li>
-              `)}
-            </ol>
-          </nav>
+          ${renderAssetBreadcrumb(page)}
           <div class="actions">
             ${page.connectionLifecycle ? html`
               <lv-connection-administration
@@ -741,7 +708,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
             detail: { action: 'run', assetId: page.assetId, pipelineId: page.assetId, runId: '' },
           }))}
         >
-          ${page.refresh?.running ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
+          ${page.refresh?.running ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(RefreshCw)}
         </button>
       `
     }
@@ -988,82 +955,35 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
   `
 }
 
-function assetTypeGlyph(type: string, size: 'table' | 'inline' = 'table') {
+function renderAssetBreadcrumb(page: ResourceAssetPageSignal) {
   return html`
-    <span class=${`asset-glyph asset-kind-${assetPresentationToken(type)} ${size === 'inline' ? 'inline' : ''}`} aria-hidden="true">
-      ${lucideIcon(assetIconNode(type), { size: size === 'inline' ? 14 : 16, strokeWidth: 1.75 })}
-    </span>
+    <nav aria-label="Breadcrumb">
+      <ol>
+        ${page.breadcrumbs.map((crumb, index) => html`
+          ${index > 0 ? html`
+            <li class="breadcrumb-separator" aria-hidden="true">
+              ${lucideIcon(ChevronRight, { size: 14, strokeWidth: 1.75 })}
+            </li>
+          ` : nothing}
+          <li>
+            ${crumb.current
+              ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
+              : html`<a href=${crumb.href}>${crumb.label}</a>`}
+          </li>
+        `)}
+      </ol>
+    </nav>
   `
 }
 
-function assetIconNode(type: string): IconNode {
-  switch (type) {
-    case 'catalog':
-      return BookOpen
-    case 'connection':
-      return Plug
-    case 'dashboard':
-      return LayoutDashboard
-    case 'field':
-      return Ruler
-    case 'filter':
-      return ListFilter
-    case 'metric':
-      return Sigma
-    case 'model_table':
-      return TableProperties
-    case 'page':
-      return PanelTop
-    case 'page_item':
-      return Component
-    case 'relationship':
-      return Workflow
-    case 'semantic_model':
-      return Waypoints
-    case 'source':
-      return Cable
-    case 'table':
-      return Table2
-    case 'visual':
-      return ChartColumn
-    case 'visual_element':
-      return SquareDashedMousePointer
-    default:
-      return Component
-  }
-}
-
-function assetPresentationToken(type: string): string {
-  switch (type) {
-    case 'catalog':
-    case 'connection':
-      return 'connection'
-    case 'dashboard':
-      return 'dashboard'
-    case 'field':
-    case 'relationship':
-      return 'dimension'
-    case 'filter':
-      return 'filter'
-    case 'metric':
-      return 'metric'
-    case 'model_table':
-      return 'model-table'
-    case 'page':
-    case 'page_item':
-      return 'page'
-    case 'semantic_model':
-      return 'semantic-model'
-    case 'source':
-      return 'source'
-    case 'table':
-      return 'table'
-    case 'visual':
-    case 'visual_element':
-      return 'visual'
-    default:
-      return 'default'
-  }
+function assetTypeGlyph(type: string, size: 'table' | 'inline' | 'breadcrumb' = 'table') {
+  const presentation = assetPresentation(type)
+  const iconSize = size === 'inline' ? 14 : 16
+  return html`
+    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'table' ? '' : size}`} aria-hidden="true">
+      ${lucideIcon(presentation.icon, { size: iconSize, strokeWidth: 1.75 })}
+    </span>
+  `
 }
 
 const projectStyles = css`
@@ -1440,6 +1360,13 @@ const projectStyles = css`
     height: var(--base-size-20);
   }
 
+  .asset-glyph.breadcrumb {
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+    border: 0;
+    background: transparent;
+  }
+
   .asset-kind-catalog {
     background: var(--lv-asset-catalog-bg, var(--lv-bg-panel-muted));
     border-color: var(--lv-asset-catalog-border, var(--lv-line-muted));
@@ -1523,21 +1450,27 @@ const projectStyles = css`
     min-width: 0;
     flex-wrap: wrap;
     align-items: center;
-    gap: var(--base-size-6);
+    gap: var(--base-size-4);
     margin: 0;
     padding: 0;
     list-style: none;
     font: var(--lv-type-body);
   }
 
-  .breadcrumb-header li:not(:last-child)::after {
-    content: '/';
-    margin-left: var(--base-size-6);
+  .breadcrumb-header ol > li {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+  }
+
+  .breadcrumb-separator {
+    display: inline-flex;
+    align-items: center;
     color: var(--lv-fg-muted);
   }
 
   .breadcrumb-header nav a {
-    color: var(--lv-fg-muted);
+    color: var(--lv-fg-default);
     text-decoration: none;
   }
 
@@ -1546,6 +1479,8 @@ const projectStyles = css`
     min-width: 0;
     align-items: center;
     gap: var(--base-size-8);
+    color: var(--lv-fg-default);
+    font: var(--lv-type-body);
   }
 
   .asset-body {

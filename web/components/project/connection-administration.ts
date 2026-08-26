@@ -119,7 +119,7 @@ class LeapViewConnectionAdministration extends LitElement {
         ?disabled=${this.commandBusy}
         @click=${() => this.handleAction(action, lifecycle)}
       >
-        ${primary && this.commandBusy ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
+        ${primary && this.commandBusy ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : nothing}
         ${action.label}
       </button>
     `
@@ -195,7 +195,7 @@ class LeapViewConnectionAdministration extends LitElement {
           <div class="drawer-footer">
           <button class="button" type="button" @click=${() => { this.drawerOpen = false }}>Cancel</button>
           <button class="button primary" type="submit" form="connection-configuration-form" ?disabled=${this.commandBusy}>
-            ${this.commandBusy ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : nothing}
+            ${this.commandBusy ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : nothing}
             ${confirm ? 'Confirm update' : lifecycle.exists ? 'Save changes' : 'Configure'}
           </button>
           </div>

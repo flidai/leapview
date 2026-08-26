@@ -26,22 +26,28 @@ func (m *Module) SearchReferences(r *http.Request, _ agent.TurnContext, query st
 	if m == nil || m.catalog == nil {
 		return nil, errors.New("catalog is not configured")
 	}
-	principalID := ""
+	principal := Principal{}
 	if m.currentPrincipal != nil {
-		if principal, ok := m.currentPrincipal(r); ok {
-			principalID = strings.TrimSpace(principal.ID)
+		if current, ok := m.currentPrincipal(r); ok {
+			principal = current
+			principal.ID = strings.TrimSpace(principal.ID)
 		}
 	}
-	if principalID == "" {
+	if principal.ID == "" {
 		return nil, errors.New("catalog principal is unavailable")
 	}
 	projectID, err := m.activeProjectID(r.Context())
 	if err != nil {
 		return nil, err
 	}
-	page, err := m.catalog.Search(r.Context(), agenttools.Scope{ProjectID: projectID, PrincipalID: principalID}, agenttools.CatalogSearchRequest{
-		Query: strings.TrimSpace(query), Kinds: catalogReferenceKinds, Limit: limit,
-	})
+	scope := agenttools.Scope{ProjectID: projectID, PrincipalID: principal.ID, DevAuthBypass: principal.DevAuthBypass}
+	query = strings.TrimSpace(query)
+	var page agenttools.CatalogPage
+	if query == "" {
+		page, err = m.catalog.List(r.Context(), scope, agenttools.CatalogListRequest{ChildKinds: catalogReferenceKinds, Limit: limit})
+	} else {
+		page, err = m.catalog.Search(r.Context(), scope, agenttools.CatalogSearchRequest{Query: query, Kinds: catalogReferenceKinds, Limit: limit})
+	}
 	if err != nil {
 		return nil, err
 	}

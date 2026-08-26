@@ -20,7 +20,7 @@ Set `LEAPVIEW_PUBLIC_URL` to the application deployment's canonical HTTPS origin
 
 `LEAPVIEW_TRUST_PROXY_HEADERS` must be enabled only when requests arrive through a trusted proxy that overwrites client-address headers. Never trust forwarding headers from an arbitrary public client.
 
-Browser authentication in production requires secure cookies. Configure exact public OIDC or Azure callback URLs and register those same URLs with the identity provider. Identity issuer and callback URLs must not contain URL credentials, query strings, or fragments; tenant-specific issuer paths remain supported.
+Browser authentication in production requires secure cookies. Secure deployments use `__Host-` cookie names for browser sessions, CSRF state, OIDC state, and authentication return targets so browsers enforce a secure, host-only, root-path boundary. Enabling secure cookies therefore invalidates legacy unprefixed browser cookies and requires users to sign in again. Configure exact public OIDC or Azure callback URLs and register those same URLs with the identity provider. Identity issuer and callback URLs must not contain URL credentials, query strings, or fragments; tenant-specific issuer paths remain supported.
 
 Production content security policy keeps executable strings and inline styles disabled on API, health, stream, and static-asset responses. Interactive HTML documents retain one explicit `unsafe-eval` exception because the pinned Datastar runtime compiles declarative `data-*` expressions; inline script attributes remain disabled. Lit and server-rendered dynamic styles are isolated with `style-src-elem` and `style-src-attr` instead of weakening the script policy. Do not add third-party script origins or widen these exceptions at the reverse proxy.
 

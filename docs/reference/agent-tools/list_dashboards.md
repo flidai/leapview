@@ -34,6 +34,9 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â
     "count": {
       "type": "integer"
     },
+    "instanceCount": {
+      "type": "integer"
+    },
     "items": {
       "items": {
         "additionalProperties": {},
@@ -47,6 +50,7 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/list_dashboards.json) Â
   },
   "required": [
     "count",
+    "instanceCount",
     "items",
     "projectCount"
   ],

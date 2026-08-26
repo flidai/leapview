@@ -90,7 +90,7 @@ func TestDesktopAuthorizationEstablishesHttpOnlySessionWithoutReturningSecret(t 
 		t.Fatalf("redeem cookies = %#v, want one session cookie", cookies)
 	}
 	session := cookies[0]
-	if session.Name != "lv_session" || session.Value == "" || !session.HttpOnly ||
+	if session.Name != fixture.module.auth.SessionCookieName() || session.Value == "" || !session.HttpOnly ||
 		!session.Secure || session.SameSite != http.SameSiteLaxMode {
 		t.Fatalf("session cookie = %#v, want secure HttpOnly SameSite=Lax cookie", session)
 	}
@@ -137,7 +137,7 @@ func TestDesktopAuthorizationEstablishesHttpOnlySessionWithoutReturningSecret(t 
 		t.Fatalf("disconnect status = %d, want %d: %s", disconnect.Code, http.StatusNoContent, disconnect.Body.String())
 	}
 	cleared := disconnect.Result().Cookies()
-	if len(cleared) != 1 || cleared[0].Name != "lv_session" || cleared[0].MaxAge != -1 {
+	if len(cleared) != 1 || cleared[0].Name != fixture.module.auth.SessionCookieName() || cleared[0].MaxAge != -1 {
 		t.Fatalf("disconnect cookies = %#v, want expired session cookie", cleared)
 	}
 	revokedStatus := httptest.NewRecorder()
@@ -332,7 +332,7 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	module.auth.devBypass = false
 	return desktopAuthTestFixture{
 		module:         module,
-		browserSession: &http.Cookie{Name: "lv_session", Value: token},
+		browserSession: &http.Cookie{Name: module.auth.SessionCookieName(), Value: token},
 		database:       store.SQLDB(),
 	}
 }

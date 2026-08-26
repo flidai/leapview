@@ -153,27 +153,29 @@ type ChatStatus struct {
 }
 
 type ChatTranscriptItemSignal struct {
-	ArgumentsJSON  *string                 `json:"argumentsJson,omitempty" yaml:"argumentsJson,omitempty"`
-	Artifact       *ChatArtifactSignal     `json:"artifact,omitempty" yaml:"artifact,omitempty"`
-	ConversationID *string                 `json:"conversationId,omitempty" yaml:"conversationId,omitempty"`
-	CreatedAt      *string                 `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
-	Error          *string                 `json:"error,omitempty" yaml:"error,omitempty"`
-	ID             string                  `json:"id" yaml:"id"`
-	InputFormat    *string                 `json:"inputFormat,omitempty" yaml:"inputFormat,omitempty"`
-	InputJSON      *string                 `json:"inputJson,omitempty" yaml:"inputJson,omitempty"`
-	Kind           string                  `json:"kind" yaml:"kind"`
-	Markdown       *string                 `json:"markdown,omitempty" yaml:"markdown,omitempty"`
-	Name           *string                 `json:"name,omitempty" yaml:"name,omitempty"`
-	References     *[]AgentReferenceSignal `json:"references,omitempty" yaml:"references,omitempty"`
-	ResultFormat   *string                 `json:"resultFormat,omitempty" yaml:"resultFormat,omitempty"`
-	ResultJSON     *string                 `json:"resultJson,omitempty" yaml:"resultJson,omitempty"`
-	ResultSummary  *string                 `json:"resultSummary,omitempty" yaml:"resultSummary,omitempty"`
-	RunID          *string                 `json:"runId,omitempty" yaml:"runId,omitempty"`
-	Status         *string                 `json:"status,omitempty" yaml:"status,omitempty"`
-	Summary        *string                 `json:"summary,omitempty" yaml:"summary,omitempty"`
-	Text           *string                 `json:"text,omitempty" yaml:"text,omitempty"`
-	Title          *string                 `json:"title,omitempty" yaml:"title,omitempty"`
-	ToolCallID     *string                 `json:"toolCallId,omitempty" yaml:"toolCallId,omitempty"`
+	ArgumentsJSON   *string                 `json:"argumentsJson,omitempty" yaml:"argumentsJson,omitempty"`
+	Artifact        *ChatArtifactSignal     `json:"artifact,omitempty" yaml:"artifact,omitempty"`
+	ConversationID  *string                 `json:"conversationId,omitempty" yaml:"conversationId,omitempty"`
+	CreatedAt       *string                 `json:"createdAt,omitempty" yaml:"createdAt,omitempty"`
+	Error           *string                 `json:"error,omitempty" yaml:"error,omitempty"`
+	ID              string                  `json:"id" yaml:"id"`
+	InputFormat     *string                 `json:"inputFormat,omitempty" yaml:"inputFormat,omitempty"`
+	InputJSON       *string                 `json:"inputJson,omitempty" yaml:"inputJson,omitempty"`
+	Kind            string                  `json:"kind" yaml:"kind"`
+	Markdown        *string                 `json:"markdown,omitempty" yaml:"markdown,omitempty"`
+	Name            *string                 `json:"name,omitempty" yaml:"name,omitempty"`
+	OutputOrdinal   *int64                  `json:"outputOrdinal,omitempty" yaml:"outputOrdinal,omitempty"`
+	ParentMessageID *string                 `json:"parentMessageId,omitempty" yaml:"parentMessageId,omitempty"`
+	References      *[]AgentReferenceSignal `json:"references,omitempty" yaml:"references,omitempty"`
+	ResultFormat    *string                 `json:"resultFormat,omitempty" yaml:"resultFormat,omitempty"`
+	ResultJSON      *string                 `json:"resultJson,omitempty" yaml:"resultJson,omitempty"`
+	ResultSummary   *string                 `json:"resultSummary,omitempty" yaml:"resultSummary,omitempty"`
+	RunID           *string                 `json:"runId,omitempty" yaml:"runId,omitempty"`
+	Status          *string                 `json:"status,omitempty" yaml:"status,omitempty"`
+	Summary         *string                 `json:"summary,omitempty" yaml:"summary,omitempty"`
+	Text            *string                 `json:"text,omitempty" yaml:"text,omitempty"`
+	Title           *string                 `json:"title,omitempty" yaml:"title,omitempty"`
+	ToolCallID      *string                 `json:"toolCallId,omitempty" yaml:"toolCallId,omitempty"`
 }
 
 type ChromeSignal struct {

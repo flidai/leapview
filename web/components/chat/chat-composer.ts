@@ -72,6 +72,7 @@ class ChatComposer extends LitElement {
       background: var(--lv-bg-panel);
       padding: var(--lv-space-sm);
       box-shadow: none;
+      cursor: text;
       transition:
         background var(--lv-transition-fast),
         border-color var(--lv-transition-fast),
@@ -92,11 +93,12 @@ class ChatComposer extends LitElement {
       background: var(--lv-bg-control);
       color: var(--lv-fg-muted);
       box-shadow: none;
+      cursor: not-allowed;
     }
 
     textarea {
       box-sizing: border-box;
-      min-height: var(--lv-control-medium);
+      min-height: calc(var(--lv-control-large) + var(--lv-space-sm));
       max-height: 160px;
       width: 100%;
       grid-column: 1;
@@ -327,6 +329,16 @@ class ChatComposer extends LitElement {
         padding: calc(var(--lv-space-lg) + var(--lv-space-sm)) var(--lv-space-md) var(--lv-space-md);
       }
     }
+
+    @media (pointer: coarse) {
+      .actions {
+        min-height: calc(var(--lv-control-large) + var(--lv-space-xs));
+      }
+
+      .send-button {
+        --lv-button-height: calc(var(--lv-control-large) + var(--lv-space-xs));
+      }
+    }
   `
 
 	protected willUpdate(changed: Map<string, unknown>) {
@@ -411,7 +423,10 @@ class ChatComposer extends LitElement {
 					` : null}
 				</div>
 			` : null}
-        <div class=${['composer-surface', blocked ? 'is-disabled' : ''].filter(Boolean).join(' ')}>
+        <div
+			class=${['composer-surface', blocked ? 'is-disabled' : ''].filter(Boolean).join(' ')}
+			@click=${this.focusComposer}
+		>
 			${this.references.length ? html`
 				<div class="selected-references" aria-label="Attached context">
 					${this.references.map((reference) => html`
@@ -438,7 +453,7 @@ class ChatComposer extends LitElement {
               title="Send"
               ?disabled=${this.disabled || this.pending || this.draft.trim() === ''}
             >
-              ${this.pending ? html`<lv-loading-spinner aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
+              ${this.pending ? html`<lv-loading-spinner size="small" aria-hidden="true"></lv-loading-spinner>` : lucideIcon(Send)}
             </button>
           </div>
         </div>
@@ -458,6 +473,7 @@ class ChatComposer extends LitElement {
 	private keydown(event: KeyboardEvent) {
 		const mention = this.activeMention()
 		const mentions = this.mentionSuggestions()
+		const touchPrimary = window.matchMedia('(pointer: coarse)').matches
 		if (mention) {
 			if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
 				if (mentions.length === 0) return
@@ -467,7 +483,7 @@ class ChatComposer extends LitElement {
 				void this.updateComplete.then(() => this.scrollActiveMentionIntoView())
 				return
 			}
-			if (event.key === 'Enter' && !event.shiftKey && mentions.length > 0) {
+			if (event.key === 'Enter' && !event.shiftKey && !touchPrimary && mentions.length > 0) {
 				event.preventDefault()
 				this.selectMention(mentions[this.mentionIndex] ?? mentions[0])
 				return
@@ -478,10 +494,16 @@ class ChatComposer extends LitElement {
 				return
 			}
 		}
-    if (event.key !== 'Enter' || event.shiftKey) return
+    if (event.key !== 'Enter' || event.shiftKey || touchPrimary) return
     event.preventDefault()
     this.dispatchSubmit()
   }
+
+	private focusComposer(event: MouseEvent) {
+		const target = event.target
+		if (target instanceof Element && target.closest('button, textarea, a, input, select')) return
+		this.shadowRoot?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+	}
 
   private submit(event: Event) {
     event.preventDefault()

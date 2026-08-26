@@ -285,7 +285,8 @@ func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProje
 	return a.authorizer.Authorize(ctx, authoringservice.AuthorizationRequest{
 		ActorID: actorID, ProjectID: project, DashboardID: dashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
-		Action: authoring.AuthorizationActionEdit, RepositoryScoped: true,
+		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
+		Action: authoring.AuthorizationActionEdit,
 	})
 }
 

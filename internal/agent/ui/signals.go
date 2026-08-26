@@ -61,12 +61,15 @@ func ChatTranscriptItems(items []agent.ChatTranscriptItem) []ChatTranscriptItemS
 
 func chatTranscriptItem(item agent.ChatTranscriptItem) ChatTranscriptItemSignal {
 	out := ChatTranscriptItemSignal{
-		ID: item.ID, Kind: item.Kind, Text: Optional(item.Text), Markdown: Optional(item.Markdown),
+		ID: item.ID, Kind: item.Kind, ParentMessageID: Optional(item.ParentMessageID), Text: Optional(item.Text), Markdown: Optional(item.Markdown),
 		ToolCallID: Optional(item.ToolCallID), Name: Optional(item.Name), Title: Optional(item.Title),
 		Status: Optional(item.Status), Summary: Optional(item.Summary), ResultSummary: Optional(item.ResultSummary),
 		InputJSON: Optional(item.InputJSON), InputFormat: Optional(item.InputFormat), ArgumentsJSON: Optional(item.ArgumentsJSON),
 		ResultJSON: Optional(item.ResultJSON), ResultFormat: Optional(item.ResultFormat), Error: Optional(item.Error),
 		ConversationID: Optional(item.ConversationID), RunID: Optional(item.RunID), CreatedAt: Optional(item.CreatedAt),
+	}
+	if item.Kind != "user" {
+		out.OutputOrdinal = Pointer(item.OutputOrdinal)
 	}
 	if len(item.References) > 0 {
 		references := make([]AgentReferenceSignal, 0, len(item.References))

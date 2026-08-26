@@ -190,6 +190,7 @@ test('chat thread renders turn-scoped references inside the user message bubble'
       accessibleName: reference.getAttribute('aria-label'),
       hasVisibleMetadata: Boolean(reference.querySelector('.turn-reference-hierarchy, .turn-reference-type')),
       iconClass: reference.querySelector('.turn-reference-icon svg')?.getAttribute('class'),
+      iconColor: (reference.querySelector('.turn-reference-icon svg') as SVGElement).style.color,
     }
   })
 
@@ -201,12 +202,13 @@ test('chat thread renders turn-scoped references inside the user message bubble'
     tooltip: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
     accessibleName: 'Revenue by month · Sales › Executive Sales › Overview · Visual',
     hasVisibleMetadata: false,
-    iconClass: 'reference-icon-line',
+    iconClass: 'reference-icon-visual',
+    iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',
   })
   await page.close()
 })
 
-test('chat thread uses the visual subtype for reference icons', async () => {
+test('chat thread uses the shared visual identity and color for references', async () => {
   const page = await browser.newPage()
   await page.goto(baseURL)
   await page.evaluate(async () => {
@@ -230,11 +232,15 @@ test('chat thread uses the visual subtype for reference icons', async () => {
     await thread.updateComplete
   })
 
-  const classes = await page.locator('lv-chat-thread').evaluate((element: any) => (
+  const icons = await page.locator('lv-chat-thread').evaluate((element: any) => (
     Array.from(element.shadowRoot.querySelectorAll('.turn-reference-icon svg'))
-      .map((icon: any) => icon.getAttribute('class'))
+      .map((icon: any) => ({ className: icon.getAttribute('class'), color: icon.style.color }))
   ))
-  expect(classes).toEqual(['reference-icon-line', 'reference-icon-kpi', 'reference-icon-table'])
+  expect(icons).toEqual([
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+    { className: 'reference-icon-visual', color: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))' },
+  ])
   await page.close()
 })
 
@@ -372,6 +378,86 @@ test('chat thread renders tool details with compact json and toon code blocks', 
   expect(state.compact).toEqual([true, true, true])
   expect(state.text).toContain('items[2]{id,title}:')
   expect(state.hasRawPre).toBe(false)
+  await page.close()
+})
+
+test('chat thread keeps in-flight tool details open as the result arrives', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [{
+      id: 'part-live-tool',
+      toolCallId: 'call-live-tool',
+      kind: 'tool',
+      name: 'catalog_list',
+      status: 'running',
+      inputJson: '{\n  "name": "catalog_list",\n  "arguments": "{\\"kind\\":\\"dashboard\\"}"\n}',
+      inputFormat: 'json',
+    }]
+    await thread.updateComplete
+    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    await thread.updateComplete
+  })
+
+  const running = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+  }))
+  expect(running.expanded).toBe('true')
+  expect(running.details).toContain('catalog_list')
+
+  await page.locator('lv-chat-thread').evaluate(async (thread: any) => {
+    thread.transcript = [{
+      ...thread.transcript[0],
+      status: 'complete',
+      resultJson: 'items[1]{id}:\n  dashboard:sales',
+      resultFormat: 'toon',
+    }]
+    await thread.updateComplete
+  })
+  const complete = await page.locator('lv-chat-thread').evaluate((element: any) => ({
+    expanded: element.shadowRoot.querySelector('.tool-trigger')?.getAttribute('aria-expanded'),
+    details: element.shadowRoot.querySelector('.tool-details')?.textContent || '',
+  }))
+  expect(complete.expanded).toBe('true')
+  expect(complete.details).toContain('dashboard:sales')
+  await page.close()
+})
+
+test('chat thread renders tool arguments directly and exported yaml as code', async () => {
+  const page = await browser.newPage()
+  await page.goto(baseURL)
+  await page.evaluate(async () => {
+    await customElements.whenDefined('lv-chat-thread')
+    const thread = document.querySelector('lv-chat-thread') as any
+    thread.transcript = [{
+      id: 'tool-export', kind: 'tool', name: 'export_dashboard_yaml', status: 'complete',
+      inputJson: '{"name":"export_dashboard_yaml","arguments":"{\\"dashboardId\\":\\"dashboard:sales\\"}"}',
+      argumentsJson: '{\n  "dashboardId": "dashboard:sales",\n  "sourceKind": "project"\n}',
+      inputFormat: 'json',
+      resultJson: 'apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata:\n  id: dashboard:sales\n',
+      resultFormat: 'yaml',
+    }]
+    await thread.updateComplete
+    thread.shadowRoot.querySelector<HTMLButtonElement>('.tool-trigger')!.click()
+    await thread.updateComplete
+  })
+
+  const state = await page.locator('lv-chat-thread').evaluate((element: any) => {
+    const blocks = Array.from(element.shadowRoot.querySelectorAll('lv-code-block')) as any[]
+    return {
+      languages: blocks.map((block) => block.language),
+      values: blocks.map((block) => block.code),
+      labels: Array.from(element.shadowRoot.querySelectorAll('.tool-detail-label')).map((label: any) => label.textContent),
+    }
+  })
+  expect(state.languages).toEqual(['json', 'yaml'])
+  expect(state.values[0]).toContain('"dashboardId": "dashboard:sales"')
+  expect(state.values[0]).not.toContain('export_dashboard_yaml')
+  expect(state.values[1]).toContain('kind: Dashboard')
+  expect(state.labels).toEqual(['Input', 'Dashboard YAML'])
   await page.close()
 })
 

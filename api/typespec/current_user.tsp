@@ -135,9 +135,17 @@ model CurrentPrincipalPatchRequest {
   displayName?: string;
 }
 
+@minLength(1)
+@maxLength(1024)
+scalar CurrentLocalPassword extends string;
+
+@minLength(12)
+@maxLength(1024)
+scalar NewLocalPassword extends string;
+
 model CurrentPasswordChangeRequest {
-  currentPassword: string;
-  newPassword: string;
+  currentPassword: CurrentLocalPassword;
+  newPassword: NewLocalPassword;
 }
 
 model CurrentThemeUpdateRequest {

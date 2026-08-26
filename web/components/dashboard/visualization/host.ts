@@ -2,6 +2,7 @@ import { LitElement, css, html } from 'lit'
 import { property, query, state } from 'lit/decorators.js'
 import type { VisualizationEnvelope } from '../../../generated/visualization'
 import validateGeneratedEnvelope from '../../../generated/visualization/validate'
+import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
@@ -199,17 +200,6 @@ export class VisualizationHost extends LitElement {
       color: var(--lv-fg-muted);
       font: var(--lv-type-body);
     }
-    .loading-spinner {
-      width: var(--base-size-20);
-      height: var(--base-size-20);
-      box-sizing: border-box;
-      border: var(--base-size-2) solid var(--lv-line-muted);
-      border-top-color: var(--lv-fg-link);
-      border-radius: var(--lv-radius-full);
-      animation: visualization-loading-spin var(--lv-duration-slow) linear infinite;
-    }
-    @keyframes visualization-loading-spin { to { transform: rotate(360deg); } }
-    @media (prefers-reduced-motion: reduce) { .loading-spinner { animation: none; } }
     .toolbar {
       position: relative;
       z-index: var(--zIndex-sticky);
@@ -333,7 +323,7 @@ export class VisualizationHost extends LitElement {
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
-          <span class="loading-spinner" aria-hidden="true"></span>
+          <lv-loading-spinner size="medium" aria-hidden="true"></lv-loading-spinner>
           <span>${loadingLabel}</span>
         </div>` : null}
       </div>

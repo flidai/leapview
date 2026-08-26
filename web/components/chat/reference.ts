@@ -1,42 +1,5 @@
-import {
-  Box,
-  ChartArea,
-  ChartBar,
-  ChartCandlestick,
-  ChartColumn,
-  ChartColumnBig,
-  ChartColumnDecreasing,
-  ChartLine,
-  ChartNetwork,
-  ChartNoAxesCombined,
-  ChartPie,
-  ChartScatter,
-  CircleDot,
-  Columns3,
-  Database,
-  File,
-  Filter,
-  Funnel,
-  Gauge,
-  GitBranch,
-  Grid2X2,
-  Grid3X3,
-  LayoutDashboard,
-  Map,
-  PanelsTopLeft,
-  Plug,
-  Radar,
-  Search,
-  Sigma,
-  SigmaSquare,
-  Table2,
-  TableCellsSplit,
-  TableProperties,
-  Workflow,
-  Waypoints,
-  type IconNode,
-} from 'lucide'
 import type { AgentContextSignal, AgentReferenceSignal, ChatTranscriptItemSignal } from '../../generated/signals'
+import { assetAccentColor, assetPresentation } from '../shared/asset-presentation'
 import { lucideIcon } from '../shared/lucide-icons'
 
 export type ChatContextReference = AgentReferenceSignal
@@ -129,61 +92,10 @@ export function mergeReferences(...groups: AgentReferenceSignal[][]): AgentRefer
   return uniqueReferences(groups.flat())
 }
 
-type ReferenceIcon = { name: string; icon: IconNode }
-
-const visualReferenceIcons: Record<string, ReferenceIcon> = {
-  line: { name: 'line', icon: ChartLine },
-  area: { name: 'area', icon: ChartArea },
-  bar: { name: 'bar', icon: ChartBar },
-  column: { name: 'column', icon: ChartColumn },
-  pie: { name: 'pie', icon: ChartPie },
-  donut: { name: 'donut', icon: ChartPie },
-  scatter: { name: 'scatter', icon: ChartScatter },
-  funnel: { name: 'funnel', icon: Funnel },
-  treemap: { name: 'treemap', icon: Grid2X2 },
-  gauge: { name: 'gauge', icon: Gauge },
-  heatmap: { name: 'heatmap', icon: Grid3X3 },
-  sankey: { name: 'sankey', icon: Workflow },
-  graph: { name: 'graph', icon: ChartNetwork },
-  map: { name: 'map', icon: Map },
-  candlestick: { name: 'candlestick', icon: ChartCandlestick },
-  boxplot: { name: 'boxplot', icon: Box },
-  combo: { name: 'combo', icon: ChartNoAxesCombined },
-  waterfall: { name: 'waterfall', icon: ChartColumnDecreasing },
-  histogram: { name: 'histogram', icon: ChartColumnBig },
-  radar: { name: 'radar', icon: Radar },
-  tree: { name: 'tree', icon: GitBranch },
-  sunburst: { name: 'sunburst', icon: CircleDot },
-  kpi: { name: 'kpi', icon: SigmaSquare },
-  table: { name: 'table', icon: Table2 },
-  matrix: { name: 'matrix', icon: TableCellsSplit },
-  pivot: { name: 'pivot', icon: TableProperties },
-}
-
-export function referenceIcon(kind: string, visualType = '') {
-  const normalizedKind = kind.trim().toLocaleLowerCase()
-  const normalizedVisualType = visualType.trim().toLocaleLowerCase()
-  let resolved: ReferenceIcon
-  if (normalizedKind === 'visual') {
-		resolved = visualReferenceIcons[normalizedVisualType] ?? { name: 'visual', icon: ChartColumn }
-  } else {
-    resolved = referenceKindIcon(normalizedKind)
-  }
-  return lucideIcon(resolved.icon, { className: `reference-icon-${resolved.name}` })
-}
-
-function referenceKindIcon(kind: string): ReferenceIcon {
-  switch (kind) {
-    case 'dashboard': return { name: 'dashboard', icon: LayoutDashboard }
-    case 'page': return { name: 'page', icon: PanelsTopLeft }
-    case 'filter': return { name: 'filter', icon: Filter }
-    case 'semantic_model': return { name: 'semantic-model', icon: Waypoints }
-    case 'dataset':
-	case 'metric': return { name: 'metric', icon: Sigma }
-    case 'field': return { name: 'field', icon: Columns3 }
-    case 'source': return { name: 'source', icon: Plug }
-    case 'table': return { name: 'table', icon: Table2 }
-    case 'asset': return { name: 'asset', icon: File }
-    default: return { name: 'search', icon: Search }
-  }
+export function referenceIcon(kind: string, _visualType = '') {
+  const presentation = assetPresentation(kind)
+  return lucideIcon(presentation.icon, {
+    className: `reference-icon-${presentation.iconName}`,
+    color: assetAccentColor(kind),
+  })
 }

@@ -57,6 +57,7 @@
     "qa:movielens-performance": "LEAPVIEW_PERF_SCENARIO=scripts/performance/movielens.json bun run qa:dashboard-performance"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.13.0",
     "@fontsource-variable/inter": "^5.2.8",
     "@playwright/test": "^1.61.1",
     "@primer/primitives": "11.9.0",

@@ -63,14 +63,18 @@ test('composer renders a compact centered prompt surface', async () => {
       const surfaceRect = surface.getBoundingClientRect()
       const surfaceStyle = getComputedStyle(surface)
       const textareaStyle = getComputedStyle(textarea)
+	  const surfaceShadow = surfaceStyle.boxShadow
+	  textarea.blur()
+	  surface.click()
       return {
         formWidth: Math.round(formRect.width),
         formLeft: Math.round(formRect.left),
         surfaceWidth: Math.round(surfaceRect.width),
         surfaceLeft: Math.round(surfaceRect.left),
+		surfaceHeight: Math.round(surfaceRect.height),
         surfaceDisplay: surfaceStyle.display,
         surfaceRadius: surfaceStyle.borderRadius,
-        surfaceShadow: surfaceStyle.boxShadow,
+		surfaceShadow,
         textareaLabel: textarea.getAttribute('aria-label'),
         textareaPlaceholder: textarea.getAttribute('placeholder'),
         textareaResize: textareaStyle.resize,
@@ -80,6 +84,7 @@ test('composer renders a compact centered prompt surface', async () => {
         buttonWidth: Math.round(button.getBoundingClientRect().width),
         buttonHeight: Math.round(button.getBoundingClientRect().height),
         buttonDisabled: button.disabled,
+		surfaceClickFocusesTextarea: root.activeElement === textarea,
       }
     })
 
@@ -88,18 +93,20 @@ test('composer renders a compact centered prompt surface', async () => {
       formLeft: 248,
       surfaceWidth: 760,
       surfaceLeft: 260,
+	  surfaceHeight: 60,
       surfaceDisplay: 'grid',
       surfaceRadius: '12px',
       surfaceShadow: 'none',
       textareaLabel: 'Ask about dashboards, metrics, or models',
       textareaPlaceholder: 'Ask about dashboards, metrics, or models...',
       textareaResize: 'none',
-      textareaMinHeight: 32,
+	  textareaMinHeight: 46,
       textareaMaxHeight: 160,
       actionsJustify: 'flex-end',
       buttonWidth: 32,
       buttonHeight: 32,
       buttonDisabled: true,
+	  surfaceClickFocusesTextarea: true,
     })
   } finally {
     await page.close()
@@ -145,7 +152,21 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       element.pending = true
       await element.updateComplete
       const pendingDisabled = button.disabled
-      const hasSpinner = Boolean(root.querySelector('lv-loading-spinner'))
+      const spinner = root.querySelector('lv-loading-spinner') as any
+      await spinner.updateComplete
+      const spinnerSvg = spinner.shadowRoot.querySelector('svg') as SVGElement
+      const spinnerCircle = spinnerSvg.querySelector('circle') as SVGCircleElement
+      const spinnerPath = spinnerSvg.querySelector('path') as SVGPathElement
+      const spinnerStyle = getComputedStyle(spinnerSvg)
+      const spinnerState = {
+        size: spinner.getAttribute('size'),
+        width: Math.round(spinner.getBoundingClientRect().width),
+        height: Math.round(spinner.getBoundingClientRect().height),
+        circleOpacity: spinnerCircle.getAttribute('stroke-opacity'),
+        pathLinecap: spinnerPath.getAttribute('stroke-linecap'),
+        animationDuration: spinnerStyle.animationDuration,
+        animationTiming: spinnerStyle.animationTimingFunction,
+      }
 
       element.pending = false
       element.disabled = true
@@ -153,23 +174,76 @@ test('composer preserves submit, multiline, disabled, and pending behavior', asy
       const textareaDisabled = textarea.disabled
       const disabledButton = button.disabled
 
-      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, pendingDisabled, hasSpinner, textareaDisabled, disabledButton }
+      return { received, enabledAfterInput, singleLineHeight, multilineHeight, multilineOverflowY, afterShiftEnter, afterEnter, pendingDisabled, spinnerState, textareaDisabled, disabledButton }
     })
 
     expect(events.received).toEqual(['Revenue trend'])
     expect(events.enabledAfterInput).toBe(true)
-    expect(events.singleLineHeight).toBe(32)
+	expect(events.singleLineHeight).toBe(46)
     expect(events.multilineHeight).toBeGreaterThan(events.singleLineHeight)
     expect(events.multilineHeight).toBeLessThanOrEqual(160)
     expect(events.multilineOverflowY).toBe('hidden')
     expect(events.afterShiftEnter).toBe(0)
     expect(events.afterEnter).toBe(1)
     expect(events.pendingDisabled).toBe(true)
-    expect(events.hasSpinner).toBe(true)
+    expect(events.spinnerState).toEqual({
+      size: 'small',
+      width: 16,
+      height: 16,
+      circleOpacity: '0.25',
+      pathLinecap: 'round',
+      animationDuration: '1s',
+      animationTiming: 'linear',
+    })
     expect(events.textareaDisabled).toBe(true)
     expect(events.disabledButton).toBe(true)
   } finally {
     await page.close()
+  }
+})
+
+test('touch-primary composer reserves Return for newlines and enlarges the send target', async () => {
+  const context = await browser.newContext({
+	viewport: { width: 390, height: 844 },
+	hasTouch: true,
+	isMobile: true,
+  })
+  const page = await context.newPage()
+  try {
+	await page.goto(baseURL)
+	await page.waitForFunction(() => customElements.get('lv-chat-composer'))
+	const state = await page.locator('lv-chat-composer').evaluate(async (element: any) => {
+	  const root = element.shadowRoot
+	  const textarea = root.querySelector('textarea') as HTMLTextAreaElement
+	  const button = root.querySelector('.send-button') as HTMLButtonElement
+	  let submits = 0
+	  element.addEventListener('lv-chat-submit', () => submits += 1)
+
+	  textarea.value = 'Revenue trend'
+	  textarea.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+	  await element.updateComplete
+	  const enter = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, composed: true, cancelable: true })
+	  textarea.dispatchEvent(enter)
+	  const buttonRect = button.getBoundingClientRect()
+
+	  return {
+		coarsePointer: matchMedia('(pointer: coarse)').matches,
+		defaultPrevented: enter.defaultPrevented,
+		submits,
+		buttonWidth: Math.round(buttonRect.width),
+		buttonHeight: Math.round(buttonRect.height),
+	  }
+	})
+
+	expect(state).toEqual({
+	  coarsePointer: true,
+	  defaultPrevented: false,
+	  submits: 0,
+	  buttonWidth: 44,
+	  buttonHeight: 44,
+	})
+  } finally {
+	await context.close()
   }
 })
 
@@ -209,14 +283,17 @@ test('composer searches for and attaches typed @ references with spaces', async 
         element.addEventListener('lv-chat-submit', (event: CustomEvent) => resolve(event.detail), { once: true })
         textarea.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
       })
-		const iconClass = option.querySelector('.mention-icon svg')?.getAttribute('class')
-		return { searches, optionText, iconClass, draftAfterReference, submitted }
+		const icon = option.querySelector('.mention-icon svg')
+		const iconClass = icon?.getAttribute('class')
+		const iconColor = (icon as SVGElement | null)?.style.color
+		return { searches, optionText, iconClass, iconColor, draftAfterReference, submitted }
     })
 
     expect(result).toEqual({
       searches: ['orders by'],
       optionText: 'Orders Sales › Executive Sales › Overview Visual',
-		iconClass: 'reference-icon-table',
+		iconClass: 'reference-icon-visual',
+		iconColor: 'var(--lv-asset-visual-accent, var(--lv-fg-muted))',
       draftAfterReference: 'Compare',
       submitted: {
         input: 'Compare this with last month',
@@ -578,6 +655,7 @@ function testDocument(): string {
             --lv-space-lg: 12px;
             --lv-space-xl: 16px;
             --lv-control-medium: 32px;
+			--lv-control-large: 40px;
             --lv-control-small: 28px;
             --lv-chat-stack-width: 760px;
 
@@ -585,8 +663,11 @@ function testDocument(): string {
 
             --lv-transition-fast: 160ms ease;
             --lv-shadow-floating-sm: 0 8px 24px rgb(0 0 0 / .12);
-            --lv-spinner-size-md: 16px;
-            --lv-spinner-duration: 1800ms;
+            --spinner-size-small: 16px;
+            --spinner-size-medium: 32px;
+            --spinner-size-large: 64px;
+            --base-duration-1000: 1000ms;
+            --base-easing-linear: linear;
             --duration-fast: 160ms;
             --ease-lv: ease;
           }

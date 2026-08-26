@@ -1,6 +1,7 @@
 package module
 
 import (
+	"encoding/json"
 	"strings"
 
 	agentcap "github.com/flidai/leapview/internal/agent"
@@ -24,94 +25,153 @@ func appendServerUserTranscript(transcript []agentcap.ChatTranscriptItem, conver
 func applyLiveTranscriptEvent(transcript []agentcap.ChatTranscriptItem, conversationID string, event agentcap.EventEnvelope) []agentcap.ChatTranscriptItem {
 	next := append([]agentcap.ChatTranscriptItem{}, transcript...)
 	switch event.Type {
-	case string(agentcore.EventTypeMessageDelta):
+	case string(agentcore.EventTypeOutputPartAdded):
+		partID := stringPayload(event.Payload, "output_part_id")
+		kind := stringPayload(event.Payload, "output_kind")
+		if partID == "" || (kind != string(agentcore.OutputPartKindText) && kind != string(agentcore.OutputPartKindTool)) {
+			return next
+		}
+		if transcriptPartIndex(next, partID) >= 0 {
+			return next
+		}
+		item := agentcap.ChatTranscriptItem{
+			ID:              partID,
+			OutputOrdinal:   int64Payload(event.Payload, "output_ordinal"),
+			ParentMessageID: stringPayload(event.Payload, "parent_message_id"),
+			ConversationID:  conversationID,
+			RunID:           event.RunID,
+			CreatedAt:       event.CreatedAt,
+		}
+		if kind == string(agentcore.OutputPartKindText) {
+			item.Kind = "assistant"
+			item.Status = "streaming"
+		} else {
+			item.Kind = "tool"
+			item.ToolCallID = stringPayload(event.Payload, "tool_call_id")
+			item.Name = stringPayload(event.Payload, "tool_name")
+			item.Title = liveToolTitle(item.Name)
+			item.Status = "pending"
+			applyLiveToolInput(&item, event.Payload)
+		}
+		return insertOutputPart(next, item)
+	case string(agentcore.EventTypeOutputTextDelta):
 		delta := stringPayload(event.Payload, "delta")
-		if delta == "" {
+		idx := transcriptPartIndex(next, stringPayload(event.Payload, "output_part_id"))
+		if delta == "" || idx < 0 || next[idx].Kind != "assistant" {
 			return next
 		}
-		for i := len(next) - 1; i >= 0; i-- {
-			if next[i].Kind == "assistant" && next[i].Status == "streaming" && next[i].RunID == event.RunID {
-				next[i].Markdown += delta
-				return next
-			}
-		}
-		return append(next, agentcap.ChatTranscriptItem{
-			ID:             "live:assistant:" + event.RunID,
-			Kind:           "assistant",
-			Markdown:       delta,
-			Status:         "streaming",
-			ConversationID: conversationID,
-			RunID:          event.RunID,
-			CreatedAt:      event.CreatedAt,
-		})
-	case string(agentcore.EventTypeToolStart):
-		callID := stringPayload(event.Payload, "tool_call_id")
-		name := stringPayload(event.Payload, "tool_name")
-		if callID == "" {
-			return next
-		}
-		if idx := transcriptToolIndex(next, callID); idx >= 0 {
-			next[idx].Status = "running"
-			return next
-		}
-		return append(next, agentcap.ChatTranscriptItem{
-			ID:             "live:tool:" + callID,
-			Kind:           "tool",
-			ToolCallID:     callID,
-			Name:           name,
-			Title:          liveToolTitle(name),
-			Status:         "running",
-			ConversationID: conversationID,
-			RunID:          event.RunID,
-			CreatedAt:      event.CreatedAt,
-		})
-	case string(agentcore.EventTypeToolEnd):
-		callID := stringPayload(event.Payload, "tool_call_id")
-		if callID == "" {
-			return next
-		}
-		idx := transcriptToolIndex(next, callID)
+		next[idx].Markdown += delta
+		return next
+	case string(agentcore.EventTypeOutputPartDone):
+		idx := transcriptPartIndex(next, stringPayload(event.Payload, "output_part_id"))
 		if idx < 0 {
-			name := stringPayload(event.Payload, "tool_name")
-			next = append(next, agentcap.ChatTranscriptItem{
-				ID:             "live:tool:" + callID,
-				Kind:           "tool",
-				ToolCallID:     callID,
-				Name:           name,
-				Title:          liveToolTitle(name),
-				ConversationID: conversationID,
-				RunID:          event.RunID,
-				CreatedAt:      event.CreatedAt,
-			})
-			idx = len(next) - 1
+			return next
+		}
+		if content, ok := payloadString(event.Payload, "content"); ok {
+			next[idx].Markdown = content
+		}
+		next[idx].Status = "complete"
+		return next
+	case string(agentcore.EventTypeToolExecutionStart):
+		idx := transcriptPartIndex(next, stringPayload(event.Payload, "output_part_id"))
+		if idx < 0 || next[idx].Kind != "tool" {
+			return next
+		}
+		next[idx].Status = "running"
+		applyLiveToolInput(&next[idx], event.Payload)
+		return next
+	case string(agentcore.EventTypeToolExecutionEnd):
+		idx := transcriptPartIndex(next, stringPayload(event.Payload, "output_part_id"))
+		if idx < 0 || next[idx].Kind != "tool" {
+			return next
+		}
+		applyLiveToolInput(&next[idx], event.Payload)
+		result := stringPayload(event.Payload, "tool_result")
+		preview := agentcap.PreviewToolResult(result, stringPayload(event.Payload, "tool_display"))
+		if result != "" {
+			next[idx].ResultJSON = preview.ResultJSON
+			next[idx].ResultFormat = preview.Format
 		}
 		if event.Severity == string(agentcore.SeverityError) || event.Severity == string(agentcore.SeverityWarn) {
 			next[idx].Status = "error"
-			next[idx].Error = "Tool failed"
+			next[idx].Error = preview.Error
+			if next[idx].Error == "" {
+				next[idx].Error = "Tool failed"
+			}
 			return next
 		}
 		next[idx].Status = "complete"
+		next[idx].Summary = preview.Summary
+		next[idx].ResultSummary = next[idx].Summary
 		return next
 	default:
 		return next
 	}
 }
 
-func transcriptToolIndex(transcript []agentcap.ChatTranscriptItem, callID string) int {
+func applyLiveToolInput(item *agentcap.ChatTranscriptItem, payload map[string]any) {
+	arguments := stringPayload(payload, "tool_arguments")
+	if item == nil || arguments == "" {
+		return
+	}
+	item.InputJSON, item.ArgumentsJSON = agentcap.PreviewToolInput(item.ToolCallID, item.Name, arguments)
+	item.InputFormat = "json"
+}
+
+func transcriptPartIndex(transcript []agentcap.ChatTranscriptItem, partID string) int {
+	if partID == "" {
+		return -1
+	}
 	for i := range transcript {
-		if transcript[i].Kind == "tool" && transcript[i].ToolCallID == callID {
+		if transcript[i].ID == partID {
 			return i
 		}
 	}
 	return -1
 }
 
-func stringPayload(payload map[string]any, key string) string {
-	if payload == nil {
-		return ""
+func insertOutputPart(transcript []agentcap.ChatTranscriptItem, item agentcap.ChatTranscriptItem) []agentcap.ChatTranscriptItem {
+	insertAt := len(transcript)
+	for i := range transcript {
+		if transcript[i].RunID == item.RunID && transcript[i].Kind != "user" && transcript[i].OutputOrdinal > item.OutputOrdinal {
+			insertAt = i
+			break
+		}
 	}
-	value, _ := payload[key].(string)
+	transcript = append(transcript, agentcap.ChatTranscriptItem{})
+	copy(transcript[insertAt+1:], transcript[insertAt:])
+	transcript[insertAt] = item
+	return transcript
+}
+
+func stringPayload(payload map[string]any, key string) string {
+	value, _ := payloadString(payload, key)
 	return value
+}
+
+func payloadString(payload map[string]any, key string) (string, bool) {
+	if payload == nil {
+		return "", false
+	}
+	value, ok := payload[key].(string)
+	return value, ok
+}
+
+func int64Payload(payload map[string]any, key string) int64 {
+	if payload == nil {
+		return 0
+	}
+	switch value := payload[key].(type) {
+	case float64:
+		return int64(value)
+	case int64:
+		return value
+	case json.Number:
+		parsed, _ := value.Int64()
+		return parsed
+	default:
+		return 0
+	}
 }
 
 func liveToolTitle(name string) string {

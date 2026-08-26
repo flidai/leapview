@@ -105,17 +105,43 @@ test('fixed project areas keep canonical asset links', async () => {
   }
 })
 
-test('semantic model asset details use the Waypoints SVG identity', async () => {
+test('semantic model breadcrumb uses the plain list-page icon identity', async () => {
   const page = await browser.newPage()
   try {
     await page.goto(`${baseURL}/?root=semantic-detail`)
     await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
     const icon = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
       await element.updateComplete
-      return element.shadowRoot?.querySelector('h1 .asset-glyph svg')?.innerHTML ?? ''
+      const root = element.shadowRoot!
+      const glyph = element.shadowRoot?.querySelector('h1 .asset-glyph') as HTMLElement | null
+      const parent = root.querySelector('.breadcrumb-header nav a') as HTMLElement
+      const title = root.querySelector('.breadcrumb-header h1') as HTMLElement
+      const parentBox = parent.getBoundingClientRect()
+      const titleBox = title.getBoundingClientRect()
+      return {
+        svg: glyph?.querySelector('svg')?.innerHTML ?? '',
+        plain: glyph?.classList.contains('breadcrumb'),
+        background: glyph ? getComputedStyle(glyph).backgroundColor : '',
+        borderWidth: glyph ? getComputedStyle(glyph).borderTopWidth : '',
+        separatorIcons: root.querySelectorAll('.breadcrumb-separator svg').length,
+        parentFontSize: getComputedStyle(parent).fontSize,
+        parentColor: getComputedStyle(parent).color,
+        titleFontSize: getComputedStyle(title).fontSize,
+        titleColor: getComputedStyle(title).color,
+        titleFontWeight: getComputedStyle(title).fontWeight,
+        verticalCenterDelta: Math.abs((parentBox.top + parentBox.bottom) / 2 - (titleBox.top + titleBox.bottom) / 2),
+      }
     })
-    expect(icon).toContain('M6 12h12')
-    expect(icon).not.toContain('M21 8a2 2 0 00-1-1.73')
+    expect(icon.svg).toContain('M6 12h12')
+    expect(icon.svg).not.toContain('M21 8a2 2 0 00-1-1.73')
+    expect(icon.plain).toBe(true)
+    expect(icon.background).toBe('rgba(0, 0, 0, 0)')
+    expect(icon.borderWidth).toBe('0px')
+    expect(icon.separatorIcons).toBe(1)
+    expect(icon.titleFontSize).toBe(icon.parentFontSize)
+    expect(icon.titleColor).toBe(icon.parentColor)
+    expect(icon.titleFontWeight).toBe('400')
+    expect(icon.verticalCenterDelta).toBeLessThan(0.5)
   } finally {
     await page.close()
   }

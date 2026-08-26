@@ -7,6 +7,7 @@ import (
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	"github.com/go-chi/chi/v5"
 )
@@ -39,7 +40,7 @@ func Routes(routes *capabilityRoutes, runtime *runtimeServices, platform *platfo
 		dashboard: routes.dashboardModule, dashboardTelemetry: routes.dashboardTelemetry, rateLimits: policy.rateLimits,
 	})
 	mux.With(policy.rateLimits.Auth()).Handle("/metrics", platform.telemetry.MetricsHandler(policy.metricsBearerToken, accessmodule.BearerToken))
-	mux.With(csrf).Group(routes.accessModule.MountLoginPage)
+	mux.With(apihttpmiddleware.PrivateResponse, csrf).Group(routes.accessModule.MountLoginPage)
 	mountAuthenticatedRoutes(mux, authenticatedRouteDependencies{
 		access: routes.accessModule, projectBrowser: routes.projectBrowser, agent: routes.agentModule,
 		admin: routes.adminModule, dashboard: routes.dashboardModule, runtimeHost: runtime.runtimeHostModule,

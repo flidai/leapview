@@ -625,17 +625,19 @@ func admitPhysicalQuery(ctx context.Context, request dataquery.Query, execute fu
 	}
 	class := workload.Interactive
 	principalID := "system:query"
+	var groupIDs []string
 	if request.Surface == dataquery.SurfaceAgent {
 		class = workload.Background
-		if activeClass, activePrincipal, admitted := workload.Current(ctx); admitted && activeClass == workload.Background {
-			principalID = activePrincipal
+		if active, admitted := workload.CurrentRequest(ctx); admitted && active.Class == workload.Background {
+			principalID = active.PrincipalID
+			groupIDs = active.GroupIDs
 		}
 	}
 	operation := request.Operation
 	if operation == "" {
 		operation = string(request.Kind)
 	}
-	lease, err := admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
+	lease, err := admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, GroupIDs: groupIDs, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		state := dataquery.ExecutionRejected
 		if reason, found := workload.ReasonOf(err); found && reason == workload.QueueTimeout {

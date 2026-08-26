@@ -163,10 +163,15 @@ func (m admittedMetrics) ExecuteDataQuery(ctx context.Context, request dataquery
 		operation = string(request.Kind)
 	}
 	principalID := "system:query"
+	var groupIDs []string
 	if class == workload.Background {
 		principalID = "system:dashboard-query"
+		if active, admitted := workload.CurrentRequest(ctx); admitted && active.Class == class {
+			principalID = active.PrincipalID
+			groupIDs = active.GroupIDs
+		}
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, GroupIDs: groupIDs, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection
@@ -216,10 +221,15 @@ func (m admittedMetrics) ExecuteDataQueryArrow(ctx context.Context, request data
 		operation = string(request.Kind)
 	}
 	principalID := "system:query"
+	var groupIDs []string
 	if class == workload.Background {
 		principalID = "system:dashboard-query"
+		if active, admitted := workload.CurrentRequest(ctx); admitted && active.Class == class {
+			principalID = active.PrincipalID
+			groupIDs = active.GroupIDs
+		}
 	}
-	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, Operation: operation, EstimatedMemoryBytes: 64 << 20})
+	lease, err := m.admitter.Acquire(ctx, workload.Request{Class: class, PrincipalID: principalID, GroupIDs: groupIDs, Operation: operation, EstimatedMemoryBytes: 64 << 20})
 	if err != nil {
 		result := dataquery.Result{ExecutionState: executionStateForWorkloadError(ctx, err)}
 		var rejection *workload.Rejection

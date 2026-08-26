@@ -2,7 +2,6 @@ import { LitElement, html, svg, nothing, type TemplateResult } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import {
   ArrowUpDown,
-  BarChart3,
   Braces,
   CheckCircle2,
   ChevronDown,
@@ -13,17 +12,10 @@ import {
   Database,
   ExternalLink,
   FileText,
-  Filter,
-  Gauge,
-  KeyRound,
-  Layers3,
   ListTree,
   RefreshCw,
   Server,
-  Sigma,
-  Table2,
   Waves,
-  Waypoints,
   XCircle,
 } from 'lucide'
 import {
@@ -36,6 +28,7 @@ import {
   type SortingState,
 } from '@tanstack/lit-table'
 import { lucideIcon } from './lucide-icons'
+import { assetPresentation } from './asset-presentation'
 import './code-block'
 
 type RecordCellTone = 'default' | 'accent' | 'success' | 'attention' | 'danger' | 'muted'
@@ -255,13 +248,16 @@ class RecordTable extends LitElement {
                 const direction = this.sortDirection(column.id)
                 const sortable = column.sortable !== false && column.kind !== 'actions'
                 return html`
-                  <th style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''} class=${columnAlignClass(column)}>
+                  <th
+                    style=${columnWidth(column) ? `width: ${columnWidth(column)}` : ''}
+                    class=${columnAlignClass(column)}
+                    aria-sort=${direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : nothing}
+                  >
                     <span class="record-table-header-content">
                       <button
                         type="button"
                         class="record-table-sort"
                         aria-label=${`Sort by ${column.header || 'column'}`}
-                        aria-sort=${direction === 'asc' ? 'ascending' : direction === 'desc' ? 'descending' : 'none'}
                         ?disabled=${!sortable}
                         @click=${() => sortable ? this.toggleSort(column.id) : undefined}
                       >
@@ -545,9 +541,10 @@ class RecordTable extends LitElement {
     const description = cellDescription(value)
     const icon = cellIcon(value)
     const iconTreatment = cellIconTreatment(value)
+    const iconPresentation = assetPresentation(icon)
     const content = html`
       <span class=${icon ? 'record-entity' : 'record-entity record-entity-no-icon'}>
-        ${icon ? this.renderIcon(icon, `record-entity-icon is-${iconTreatment} record-icon-${iconToken(icon)}`) : nothing}
+        ${icon ? this.renderIcon(icon, `record-entity-icon is-${iconTreatment} record-icon-${iconToken(icon)} record-asset-${iconPresentation.token}`) : nothing}
         <span class="record-entity-copy">
           <span class="record-entity-label">${label}</span>
           ${description ? html`<span class="record-entity-description">${description}</span>` : nothing}
@@ -779,31 +776,10 @@ function sanitizeVisibleColumnIDs(values: string[], allowedIDs: string[]): strin
 
 function iconForName(name: string): any {
   switch (name) {
-    case 'catalog':
-    case 'connection':
     case 'database':
       return Database
-    case 'dashboard':
-      return BarChart3
-    case 'model_table':
-    case 'table':
-      return Table2
-    case 'semantic_model':
-      return Waypoints
-    case 'source':
     case 'schema':
       return Server
-    case 'field':
-      return KeyRound
-    case 'metric':
-      return Sigma
-    case 'filter':
-      return Filter
-    case 'visual':
-      return Gauge
-    case 'page':
-      return FileText
-    case 'relationship':
     case 'lineage':
       return ListTree
     case 'view':
@@ -821,7 +797,7 @@ function iconForName(name: string): any {
     case 'cancel':
       return XCircle
     default:
-      return Layers3
+      return assetPresentation(name).icon
   }
 }
 
@@ -1415,29 +1391,31 @@ const recordTableStyles = `
     background: var(--lv-bg-control, var(--lv-bg-panel-muted));
   }
 
-  lv-record-table .variant-primary .record-icon-dashboard {
-    border-color: var(--lv-asset-dashboard-border, var(--lv-line-muted));
-    background: var(--lv-asset-dashboard-bg, var(--lv-bg-panel-muted));
-    color: var(--lv-asset-dashboard-accent, var(--lv-fg-muted));
-  }
+  lv-record-table .variant-primary .record-asset-catalog { color: var(--lv-asset-catalog-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-connection { color: var(--lv-asset-connection-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-dashboard { color: var(--lv-asset-dashboard-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-dimension { color: var(--lv-asset-dimension-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-filter { color: var(--lv-asset-filter-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-metric { color: var(--lv-asset-metric-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-model-table { color: var(--lv-asset-model-table-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-page { color: var(--lv-asset-page-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-semantic-model { color: var(--lv-asset-semantic-model-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-source { color: var(--lv-asset-source-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-table { color: var(--lv-asset-table-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-visual { color: var(--lv-asset-visual-accent, var(--lv-fg-muted)); }
 
-  lv-record-table .variant-primary .record-icon-semantic_model {
-    border-color: var(--lv-asset-semantic-model-border, var(--lv-line-muted));
-    background: var(--lv-asset-semantic-model-bg, var(--lv-bg-panel-muted));
-    color: var(--lv-asset-semantic-model-accent, var(--lv-fg-muted));
-  }
-
-  lv-record-table .variant-primary .record-icon-model_table {
-    border-color: var(--lv-asset-model-table-border, var(--lv-line-muted));
-    background: var(--lv-asset-model-table-bg, var(--lv-bg-panel-muted));
-    color: var(--lv-asset-model-table-accent, var(--lv-fg-muted));
-  }
-
-  lv-record-table .variant-primary .record-icon-source {
-    border-color: var(--lv-asset-source-border, var(--lv-line-muted));
-    background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted));
-    color: var(--lv-asset-source-accent, var(--lv-fg-muted));
-  }
+  lv-record-table .variant-primary .record-asset-catalog:not(.is-plain) { border-color: var(--lv-asset-catalog-border, var(--lv-line-muted)); background: var(--lv-asset-catalog-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-connection:not(.is-plain) { border-color: var(--lv-asset-connection-border, var(--lv-line-muted)); background: var(--lv-asset-connection-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-dashboard:not(.is-plain) { border-color: var(--lv-asset-dashboard-border, var(--lv-line-muted)); background: var(--lv-asset-dashboard-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-dimension:not(.is-plain) { border-color: var(--lv-asset-dimension-border, var(--lv-line-muted)); background: var(--lv-asset-dimension-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-filter:not(.is-plain) { border-color: var(--lv-asset-filter-border, var(--lv-line-muted)); background: var(--lv-asset-filter-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-metric:not(.is-plain) { border-color: var(--lv-asset-metric-border, var(--lv-line-muted)); background: var(--lv-asset-metric-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-model-table:not(.is-plain) { border-color: var(--lv-asset-model-table-border, var(--lv-line-muted)); background: var(--lv-asset-model-table-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-page:not(.is-plain) { border-color: var(--lv-asset-page-border, var(--lv-line-muted)); background: var(--lv-asset-page-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-semantic-model:not(.is-plain) { border-color: var(--lv-asset-semantic-model-border, var(--lv-line-muted)); background: var(--lv-asset-semantic-model-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-source:not(.is-plain) { border-color: var(--lv-asset-source-border, var(--lv-line-muted)); background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-table:not(.is-plain) { border-color: var(--lv-asset-table-border, var(--lv-line-muted)); background: var(--lv-asset-table-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-visual:not(.is-plain) { border-color: var(--lv-asset-visual-border, var(--lv-line-muted)); background: var(--lv-asset-visual-bg, var(--lv-bg-panel-muted)); }
 
   lv-record-table .record-entity-icon.is-plain,
   lv-record-table .variant-primary .record-entity-icon.is-plain {

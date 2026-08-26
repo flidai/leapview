@@ -231,7 +231,7 @@ const (
 
 The first implementation should use an OpenAI-compatible request/response contract instead of a generalized provider interface. Provider adapters live outside the core for V1.
 
-For `Purpose=turn`, the model client may stream assistant deltas while building the final `ModelResponse`. For `Purpose=compaction`, the model client must not emit normal assistant `message_delta` events; compaction progress is reported through compaction events only. The harness appends only final turn assistant messages to transcript state.
+For `Purpose=turn`, the model client may stream assistant deltas while building the final `ModelResponse`. The harness declares one stable, ordered text output part before the first delta and targets that part with every `output_text_delta`. For `Purpose=compaction`, the model client must not emit normal assistant output events; compaction progress is reported through compaction events only. The harness appends only final turn assistant messages to transcript state.
 
 Implementation note: keep the model streaming callback narrower than the full agent event sink. A model adapter should be able to emit model deltas, not arbitrary agent lifecycle events.
 
@@ -397,10 +397,11 @@ Initial event types:
 - `model_request`
 - `model_response`
 - `model_retry`
-- `message_delta`
-- `message_end`
-- `tool_start`
-- `tool_end`
+- `output_part_added`
+- `output_text_delta`
+- `output_part_done`
+- `tool_execution_start`
+- `tool_execution_end`
 - `compaction_start`
 - `compaction_end`
 - `compaction_error`
@@ -414,10 +415,12 @@ Event requirements:
 - Every event has severity: `debug`, `info`, `warn`, or `error`.
 - Events may include request/correlation IDs supplied by the host application.
 - Tool events include tool call ID and tool name.
+- Every visible text or tool part is introduced by `output_part_added` with a stable part ID, a run-local output ordinal, and a parent assistant-message ID.
+- Delta, completion, and tool-execution events target an already-declared output part by ID and never move it.
 - Provider events include provider/model metadata when the model adapter supplies it.
 - Usage events include token/cost data when available.
-- Events are emitted in causal order: run start, turn start, model deltas/end, tool starts/ends, turn end, optional compaction, run end.
-- Tool completion events may reflect actual completion order, but tool-result messages are appended in assistant tool-call order.
+- Events are emitted in causal order: run start, turn start, ordered output declaration, text deltas/completion, ordered tool declarations, tool execution, turn end, optional compaction, run end.
+- Tool declarations and transcript messages use assistant tool-call order. Tool execution completion events may reflect actual completion order, but only update their declared parts.
 - Event emission is best-effort. The harness calls `Emit(ctx, event)` synchronously at harness boundaries, but sink errors must not break agent execution. Provider streaming should still use a narrow delta path so subscribers do not block provider reads indefinitely.
 
 LeapView can bridge these events to Datastar SSE patches.

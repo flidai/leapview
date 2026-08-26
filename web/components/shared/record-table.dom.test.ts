@@ -228,6 +228,37 @@ test('record table column toggles expose the column header as their accessible n
   }
 })
 
+test('record table exposes sort state on the column header instead of its button', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 620 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-record-table'))
+    const table = page.locator('lv-record-table')
+    await table.evaluate((element: any) => {
+      element.table = {
+        columns: [
+          { id: 'name', header: 'Name' },
+          { id: 'status', header: 'Status' },
+        ],
+        rows: [{ name: 'Orders', status: 'Paid' }],
+      }
+    })
+    await table.evaluate((element: any) => element.updateComplete)
+
+    const nameHeader = table.getByRole('columnheader', { name: 'Sort by Name' })
+    const nameSort = table.getByRole('button', { name: 'Sort by Name' })
+    expect(await nameHeader.getAttribute('aria-sort')).toBeNull()
+    expect(await nameSort.getAttribute('aria-sort')).toBeNull()
+
+    await nameSort.click()
+    await table.evaluate((element: any) => element.updateComplete)
+    expect(await nameHeader.getAttribute('aria-sort')).toBe('ascending')
+    expect(await nameSort.getAttribute('aria-sort')).toBeNull()
+  } finally {
+    await page.close()
+  }
+})
+
 test('primary record table gives entity cells the full column width', async () => {
   const page = await browser.newPage({ viewport: { width: 760, height: 520 } })
   try {
@@ -279,6 +310,7 @@ test('primary record table gives entity cells the full column width', async () =
         iconTreatments: Array.from(element.querySelectorAll<HTMLElement>('.record-entity-icon')).map((icon) => ({
           framed: icon.classList.contains('is-framed'),
           plain: icon.classList.contains('is-plain'),
+          assetClass: Array.from(icon.classList).find((name) => name.startsWith('record-asset-')),
           background: getComputedStyle(icon).backgroundColor,
           borderWidth: getComputedStyle(icon).borderTopWidth,
         })),
@@ -288,8 +320,8 @@ test('primary record table gives entity cells the full column width', async () =
     expect(state.linkWidth).toBeGreaterThanOrEqual(state.cellInnerWidth - 4)
     expect(state.titleFits).toBe(true)
     expect(state.descriptionFits).toBe(true)
-    expect(state.iconTreatments[0]).toEqual({ framed: true, plain: false, background: 'rgb(246, 248, 250)', borderWidth: '1px' })
-    expect(state.iconTreatments[1]).toEqual({ framed: false, plain: true, background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
+    expect(state.iconTreatments[0]).toEqual({ framed: true, plain: false, assetClass: 'record-asset-dashboard', background: 'rgb(246, 248, 250)', borderWidth: '1px' })
+    expect(state.iconTreatments[1]).toEqual({ framed: false, plain: true, assetClass: 'record-asset-semantic-model', background: 'rgba(0, 0, 0, 0)', borderWidth: '0px' })
   } finally {
     await page.close()
   }

@@ -197,7 +197,9 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 			return result, nil
 		}
 
-		resp, err := a.completeTurn(ctx, run, turnID, false)
+		messageID := a.def.IDGenerator.NewID("msg")
+		stream := &eventModelStream{run: run, turnID: turnID, messageID: messageID}
+		resp, err := a.completeTurn(ctx, run, turnID, stream, false)
 		if err != nil {
 			if errors.Is(err, errContextLimitStop) {
 				result.StopReason = StopReasonContextLimit
@@ -207,24 +209,20 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 			return result, err
 		}
 		finish := NormalizeFinishReason(resp.FinishReason)
+		textPart := stream.finish(ctx, resp.Content)
+		toolCalls := a.declareToolOutputParts(ctx, run, turnID, messageID, resp.ToolCalls)
 		assistant := Message{
-			ID:           a.def.IDGenerator.NewID("msg"),
-			Role:         RoleAssistant,
-			Content:      resp.Content,
-			ToolCalls:    append([]ToolCall(nil), resp.ToolCalls...),
-			FinishReason: finish,
-			Usage:        resp.Usage,
+			ID:              messageID,
+			OutputPartID:    textPart.ID,
+			OutputOrdinal:   textPart.Ordinal,
+			ParentMessageID: messageID,
+			Role:            RoleAssistant,
+			Content:         resp.Content,
+			ToolCalls:       toolCalls,
+			FinishReason:    finish,
+			Usage:           resp.Usage,
 		}
 		a.appendTranscript(assistant)
-		_ = run.emit(ctx, Event{
-			Type:             EventTypeMessageEnd,
-			Severity:         SeverityInfo,
-			TurnID:           turnID,
-			MessageID:        assistant.ID,
-			FinishReason:     finish,
-			Usage:            resp.Usage,
-			ProviderMetadata: cloneMetadata(resp.ProviderMetadata),
-		})
 		result.FinalMessage = assistant
 
 		if finish == FinishReasonTruncated {
@@ -244,7 +242,7 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 			return result, nil
 		}
 
-		toolMessages, err := a.executeToolCalls(ctx, run, turnID, resp.ToolCalls)
+		toolMessages, err := a.executeToolCalls(ctx, run, turnID, toolCalls)
 		if err != nil {
 			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 				return result, err
@@ -267,10 +265,10 @@ func (a *Agent) runLoop(ctx context.Context, run *runState) (RunResult, error) {
 	return result, nil
 }
 
-func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, retried bool) (ModelResponse, error) {
+func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, stream *eventModelStream, retried bool) (ModelResponse, error) {
 	req := a.buildModelRequest(run, turnID)
 	_ = run.emit(ctx, Event{Type: EventTypeModelRequest, Severity: SeverityDebug, TurnID: turnID})
-	resp, err := a.def.Model.Complete(ctx, req, eventModelStream{run: run, turnID: turnID})
+	resp, err := a.def.Model.Complete(ctx, req, stream)
 	if err != nil {
 		if !retried && isContextLengthError(err) {
 			_ = run.emit(ctx, Event{Type: EventTypeModelRetry, Severity: SeverityWarn, TurnID: turnID, Error: agentErrorPtr(ErrorCodeLimit, "model context limit reached", err)})
@@ -278,7 +276,7 @@ func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, 
 			if a.estimateModelInputTokens(a.snapshotTranscript()) > a.def.Limits.HardInputLimitTokens {
 				return ModelResponse{}, errContextLimitStop
 			}
-			return a.completeTurn(ctx, run, turnID, true)
+			return a.completeTurn(ctx, run, turnID, stream, true)
 		}
 		return ModelResponse{}, NewError(ErrorCodeModel, "model request failed", err)
 	}
@@ -292,6 +290,17 @@ func (a *Agent) completeTurn(ctx context.Context, run *runState, turnID string, 
 		ProviderMetadata: cloneMetadata(resp.ProviderMetadata),
 	})
 	return resp, nil
+}
+
+func (a *Agent) declareToolOutputParts(ctx context.Context, run *runState, turnID, parentMessageID string, calls []ToolCall) []ToolCall {
+	declared := append([]ToolCall(nil), calls...)
+	for i := range declared {
+		part, _ := run.addOutputPart(ctx, turnID, OutputPartKindTool, parentMessageID, declared[i].ID, declared[i].Name, string(declared[i].Arguments))
+		declared[i].OutputPartID = part.ID
+		declared[i].OutputOrdinal = part.Ordinal
+		declared[i].ParentMessageID = parentMessageID
+	}
+	return declared
 }
 
 func (a *Agent) buildModelRequest(run *runState, turnID string) ModelRequest {

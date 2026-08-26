@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -190,6 +191,78 @@ func TestServicePromptPersistsRunEventsMessagesAndTranscript(t *testing.T) {
 	requests := model.Requests()
 	if len(requests) != 2 || len(requests[1].Messages) == 0 || requests[1].Messages[len(requests[1].Messages)-1].Role != agentcore.RoleTool {
 		t.Fatalf("second model request did not include tool result: %#v", requests)
+	}
+}
+
+func TestServiceLiveOutputPartIdentityMatchesDurableTranscript(t *testing.T) {
+	ctx := context.Background()
+	store := openAgentAppStore(t, ctx)
+	defer store.Close()
+	principal := createAgentAppPrincipal(t, ctx, store, "ordered-output@example.com")
+
+	step := 0
+	model := agentcore.ModelFunc(func(ctx context.Context, _ agentcore.ModelRequest, stream agentcore.ModelStream) (agentcore.ModelResponse, error) {
+		step++
+		switch step {
+		case 1:
+			if err := stream.Delta(ctx, "text 1"); err != nil {
+				return agentcore.ModelResponse{}, err
+			}
+			return agentcore.ModelResponse{
+				Content:      "text 1",
+				ToolCalls:    []agentcore.ToolCall{{ID: "call_2", Name: "lookup", Arguments: json.RawMessage(`{}`)}},
+				FinishReason: agentcore.FinishReasonToolCalls,
+			}, nil
+		default:
+			if err := stream.Delta(ctx, "text 3"); err != nil {
+				return agentcore.ModelResponse{}, err
+			}
+			if err := stream.Delta(ctx, "text 4"); err != nil {
+				return agentcore.ModelResponse{}, err
+			}
+			return agentcore.ModelResponse{Content: "text 3text 4", FinishReason: agentcore.FinishReasonStop}, nil
+		}
+	})
+	service := NewService(store, Config{APIKey: "key", Model: "fake-model"}, WithModel(model))
+	service.SetToolProviders(fakeToolProvider("lookup"))
+	scope := Scope{ProjectID: "test", PrincipalID: principal.ID}
+	conversation, err := service.CreateConversation(ctx, scope, "Ordered output")
+	if err != nil {
+		t.Fatalf("create conversation: %v", err)
+	}
+
+	var livePartIDs []string
+	result, err := service.Prompt(ctx, PromptInput{
+		Scope: scope, ConversationID: conversation.ID, Input: "go",
+		OnEvent: func(event EventEnvelope) {
+			if event.Type == string(agentcore.EventTypeOutputPartAdded) {
+				if partID, _ := event.Payload["output_part_id"].(string); partID != "" {
+					livePartIDs = append(livePartIDs, partID)
+				}
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	state, err := service.ConversationTranscriptState(ctx, scope, conversation.ID)
+	if err != nil {
+		t.Fatalf("conversation transcript: %v", err)
+	}
+	if len(state.Transcript) != 4 {
+		t.Fatalf("transcript = %#v, want user/text/tool/text", state.Transcript)
+	}
+	durablePartIDs := []string{state.Transcript[1].ID, state.Transcript[2].ID, state.Transcript[3].ID}
+	if !reflect.DeepEqual(durablePartIDs, livePartIDs) {
+		t.Fatalf("durable part IDs = %v, live part IDs = %v", durablePartIDs, livePartIDs)
+	}
+	for ordinal, item := range state.Transcript[1:] {
+		if item.RunID != result.RunID || item.OutputOrdinal != int64(ordinal) || item.ParentMessageID == "" {
+			t.Fatalf("output part %d = %#v", ordinal, item)
+		}
+	}
+	if state.Transcript[1].Markdown != "text 1" || state.Transcript[2].ToolCallID != "call_2" || state.Transcript[3].Markdown != "text 3text 4" {
+		t.Fatalf("ordered transcript = %#v", state.Transcript)
 	}
 }
 

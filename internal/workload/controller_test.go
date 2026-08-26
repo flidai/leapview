@@ -168,26 +168,44 @@ func TestPrincipalAndGroupQueueCaps(t *testing.T) {
 }
 
 func TestGroupNormalizationAndNestedReuse(t *testing.T) {
-	c := testController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{Interactive: {MaximumRunning: 1}}})
-	outer := acquireMemory(t, c, Interactive, "actor", 7, "z", "a", "a")
+	c := testController(t, Config{MaxRunning: 1, Classes: map[Class]Policy{Background: {MaximumRunning: 1}}})
+	outer := acquireMemory(t, c, Background, "actor", 7, "z", "a", "a")
 	if got := outer.Context(); got == nil {
 		t.Fatal("nil execution context")
 	}
 	class, principal, ok := Current(outer.Context())
-	if !ok || class != Interactive || principal != "actor" {
+	if !ok || class != Background || principal != "actor" {
 		t.Fatalf("Current() = %s/%s/%v", class, principal, ok)
 	}
-	nested, err := c.Acquire(outer.Context(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: []string{"a", "z"}, Operation: "nested", EstimatedMemoryBytes: 7})
+	current, ok := CurrentRequest(outer.Context())
+	if !ok || current.Class != Background || current.PrincipalID != "actor" || !reflect.DeepEqual(current.GroupIDs, []string{"a", "z"}) {
+		t.Fatalf("CurrentRequest() = %#v/%v", current, ok)
+	}
+	current.GroupIDs[0] = "mutated"
+	again, _ := CurrentRequest(outer.Context())
+	if !reflect.DeepEqual(again.GroupIDs, []string{"a", "z"}) {
+		t.Fatalf("CurrentRequest() leaked group mutation: %#v", again.GroupIDs)
+	}
+	nested, err := c.Acquire(outer.Context(), Request{Class: Background, PrincipalID: "actor", GroupIDs: []string{"a", "z"}, Operation: "nested", EstimatedMemoryBytes: 7})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if nested.Context() != outer.Context() {
 		t.Fatal("equivalent nested admission did not reuse context")
 	}
+	if got := c.Stats().Running; got != 1 {
+		t.Fatalf("nested admission counted %d running leases, want 1", got)
+	}
 	nested.Release()
-	_, err = c.Acquire(outer.Context(), Request{Class: Interactive, PrincipalID: "actor", GroupIDs: []string{"other"}, Operation: "conflict", EstimatedMemoryBytes: 7})
+	if got := c.Stats().Running; got != 1 {
+		t.Fatalf("nested release changed outer accounting to %d running leases, want 1", got)
+	}
+	_, err = c.Acquire(outer.Context(), Request{Class: Background, PrincipalID: "actor", GroupIDs: []string{"other"}, Operation: "conflict", EstimatedMemoryBytes: 7})
 	assertReason(t, err, ConflictingNestedAdmission)
 	outer.Release()
+	if got := c.Stats().Running; got != 0 {
+		t.Fatalf("outer release left %d running leases, want 0", got)
+	}
 }
 
 func TestCallerGroupSliceCannotMutateAccountingOrEvents(t *testing.T) {

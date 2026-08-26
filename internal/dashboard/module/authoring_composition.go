@@ -32,15 +32,17 @@ type RevisionID = authoring.RevisionID
 // AuthorizeResource is the canonical access decision port needed to authorize
 // dashboard authoring operations.
 type AuthorizeResource func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error)
+type AuthorizeProjectCapability func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error)
 
 // AuthoringConfig contains only capability composition ports. Project export
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
-	Database            *sql.DB
-	AuditIntentRecorder access.AuditIntentRecorder
-	AuthorizeResource   AuthorizeResource
-	AcquireRuntime      func(context.Context) (runtimehost.Lease, error)
+	Database                   *sql.DB
+	AuditIntentRecorder        access.AuditIntentRecorder
+	AuthorizeResource          AuthorizeResource
+	AuthorizeProjectCapability AuthorizeProjectCapability
+	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
 }
 
 // BuildAuthoring constructs the complete dashboard authoring application and
@@ -49,8 +51,8 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	if config.Database == nil {
 		return nil, fmt.Errorf("dashboard authoring database is required")
 	}
-	if config.AuthorizeResource == nil {
-		return nil, fmt.Errorf("dashboard authoring access authorizer is required")
+	if config.AuthorizeResource == nil || config.AuthorizeProjectCapability == nil {
+		return nil, fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
 	}
 	if config.AcquireRuntime == nil {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
@@ -59,7 +61,10 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("dashboard authoring audit intent recorder is required")
 	}
 	repository := authoringsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
-	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.AuthorizeResource(config.AuthorizeResource))
+	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
+		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),
+		AuthorizeProjectCapability: authoringaccessadapter.AuthorizeProjectCapability(config.AuthorizeProjectCapability),
+	})
 	if err != nil {
 		return nil, fmt.Errorf("build dashboard authoring access adapter: %w", err)
 	}

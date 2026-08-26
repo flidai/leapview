@@ -20,6 +20,7 @@ import (
 type Scope struct {
 	ProjectID      string
 	PrincipalID    string
+	GroupIDs       []string
 	ConversationID string
 	DevAuthBypass  bool
 	Credential     CredentialScope

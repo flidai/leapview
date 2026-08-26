@@ -107,9 +107,6 @@ func (a *Adapter) Compile(ctx context.Context, projectID, semanticModelID graph.
 	if !ok || model == nil {
 		return authoringservice.Compilation{}, fmt.Errorf("%w: semantic model %q is unavailable in active runtime", ErrSemanticMismatch, semanticModelID)
 	}
-	if model.Name != semanticModelID.String() {
-		return authoringservice.Compilation{}, fmt.Errorf("%w: runtime semantic model %q does not match requested %q", ErrSemanticMismatch, model.Name, semanticModelID)
-	}
 
 	compiled, err := compiler.CompileDocument(authored, map[string]*semanticmodel.Model{semanticModelID.String(): model})
 	if err != nil {

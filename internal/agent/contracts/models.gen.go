@@ -163,9 +163,10 @@ type DashboardAuthoringListInput struct {
 }
 
 type DashboardAuthoringListResult struct {
-	Items        []map[string]any `json:"items" yaml:"items"`
-	Count        int32            `json:"count" yaml:"count"`
-	ProjectCount int32            `json:"projectCount" yaml:"projectCount"`
+	Items         []map[string]any `json:"items" yaml:"items"`
+	Count         int32            `json:"count" yaml:"count"`
+	InstanceCount int32            `json:"instanceCount" yaml:"instanceCount"`
+	ProjectCount  int32            `json:"projectCount" yaml:"projectCount"`
 }
 
 type DashboardAuthoringPreviewInput struct {

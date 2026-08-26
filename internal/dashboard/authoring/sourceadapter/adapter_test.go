@@ -49,7 +49,8 @@ func newSourceFixture(t *testing.T) sourceFixture {
 	lifecycle.Published = &authoring.Published{Revision: published.Token(), Compilation: compiled, PublishedAt: time.Date(2026, 8, 18, 2, 0, 0, 0, time.UTC), Provenance: provenance}
 	repo := &sourceRepository{lifecycle: lifecycle, revisions: map[authoring.RevisionID]authoring.Revision{published.ID: published, draft.ID: draft}}
 	auth := &sourceAuthorizer{}
-	projectDoc := sourceDocumentWithID("project-sales", "Project title")
+	projectDoc := sourceDocumentWithID("dashboard:project-sales", "Project title")
+	projectDoc.Metadata.Name = "project-sales"
 	runtime := &sourceRuntime{source: authoring.AuthoredDashboardSource{Document: projectDoc, Metadata: authoring.AuthoredDashboardMetadata{Project: "project", Name: "project-sales", Title: "Project title", Domain: "revenue"}, Path: "dashboards/project-sales.yaml"}}
 	lease := &sourceLease{runtime: runtime, identity: identity}
 	authSvc, err := service.NewService(service.Options{Repository: repo, Authorizer: auth, Compiler: sourceCompiler{}, Now: func() time.Time { return time.Date(2026, 8, 18, 3, 0, 0, 0, time.UTC) }, NewDashboardID: func() (authoring.DashboardID, error) { return "forked", nil }, NewDraftID: func() (authoring.DraftID, error) { return "forked-draft", nil }, NewRevisionID: func() (authoring.RevisionID, error) { return "forked-revision", nil }})
@@ -103,7 +104,7 @@ func TestLoadDraftUsesCurrentDraftPointer(t *testing.T) {
 
 func TestLoadProjectUsesOneLeaseAndNoFabricatedRevision(t *testing.T) {
 	f := newSourceFixture(t)
-	source, err := f.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, "actor")
+	source, err := f.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "dashboard:project-sales"}, "actor")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestProjectMissingSourceIsUnavailableAndAuthorizationPrecedesLease(t *testi
 	}
 	f = newSourceFixture(t)
 	f.authorizer.err = access.ErrForbidden
-	if _, err := f.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "project-sales"}, "actor"); !errors.Is(err, access.ErrForbidden) || f.lease.releases != 0 {
+	if _, err := f.adapter.Load(t.Context(), sourceadapter.SourceRef{Kind: sourceadapter.SourceProject, ProjectID: "project", DashboardID: "dashboard:project-sales"}, "actor"); !errors.Is(err, access.ErrForbidden) || f.lease.releases != 0 {
 		t.Fatalf("denied project load err=%v releases=%d", err, f.lease.releases)
 	}
 }
@@ -192,7 +193,7 @@ type sourceRuntime struct {
 func (r *sourceRuntime) Close() error { return nil }
 func (r *sourceRuntime) AuthoredDashboardSource(id string) (authoring.AuthoredDashboardSource, bool) {
 	r.called = true
-	if r.source.Document.Metadata.ID != id && r.source.Metadata.Name != id {
+	if r.source.Document.Metadata.ID != id {
 		return authoring.AuthoredDashboardSource{}, false
 	}
 	return r.source, true

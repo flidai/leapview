@@ -61,7 +61,9 @@ func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	intent := module.runWorkflow(
-		agent.PromptInput{ConversationID: "conversation-1"},
+		agent.PromptInput{ConversationID: "conversation-1", Scope: agent.Scope{
+			ProjectID: "project:active", PrincipalID: "principal-1", GroupIDs: []string{"group-1"}, DevAuthBypass: true,
+		}},
 		"run-1",
 		agent.PromptDispatch{ChatClientID: "browser-1"},
 	)
@@ -71,6 +73,12 @@ func TestRunWorkflowPersistsBrowserDeliveryAtomically(t *testing.T) {
 	}
 	if payload.ChatClientID != "browser-1" || payload.Conversation != "conversation-1" || payload.Run != "run-1" {
 		t.Fatalf("workflow payload = %#v", payload)
+	}
+	if payload.Scope.ProjectID != "project:active" || payload.Scope.PrincipalID != "principal-1" || !payload.Scope.DevAuthBypass {
+		t.Fatalf("workflow scope = %#v", payload.Scope)
+	}
+	if len(intent.Job.GroupIDs) != 1 || intent.Job.GroupIDs[0] != "group-1" {
+		t.Fatalf("workflow admission groups = %#v", intent.Job.GroupIDs)
 	}
 	if intent.Job.Kind != module.runExecution.JobKind || intent.Job.ResourceKind != module.runExecution.ResourceKind || intent.Event.EventType != module.runExecution.InitialEvent {
 		t.Fatalf("workflow contract fields = job %#v event %#v", intent.Job, intent.Event)

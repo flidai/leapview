@@ -675,7 +675,7 @@ class LeapViewSidebar extends LitElement {
         var(--control-xsmall-paddingInline-normal)
         0
         calc(var(--base-size-12) + var(--lv-border-width));
-      color: var(--fgColor-disabled);
+      color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
@@ -704,10 +704,6 @@ class LeapViewSidebar extends LitElement {
       padding: var(--base-size-4) var(--base-size-12);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-    }
-
-    .pending-spinner {
-      --lv-spinner-size: var(--lv-spinner-size-sm);
     }
 
     a,
@@ -1650,7 +1646,7 @@ class LeapViewSidebar extends LitElement {
     return html`
       <a class="nav-item history-item" href=${item.href} aria-current=${item.active ? 'page' : 'false'} aria-label=${title} title=${title} @click=${(event: MouseEvent) => this.followInternalLink(event, item.href)}>
         <span class="history-title">${title}</span>
-        ${item.pending ? html`<lv-loading-spinner class="pending-spinner" aria-label="Title loading"></lv-loading-spinner>` : null}
+        ${item.pending ? html`<lv-loading-spinner size="small" aria-label="Title loading"></lv-loading-spinner>` : null}
       </a>
     `
   }

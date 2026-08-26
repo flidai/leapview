@@ -41,8 +41,8 @@ func (m *Module) Authenticate(next http.Handler) http.Handler {
 			principal, credential, ok = m.auth.Authenticate(r)
 		}
 		if !ok || strings.TrimSpace(principal.ID) == "" {
-			if m.auth != nil && hasSessionCookie(r) {
-				http.SetCookie(w, &http.Cookie{Name: "lv_session", Value: "", Path: "/", MaxAge: -1, HttpOnly: true, SameSite: http.SameSiteLaxMode, Secure: m.auth.cookieSecure})
+			if m.auth != nil && m.auth.hasSessionCookie(r) {
+				http.SetCookie(w, m.auth.expiredSessionCookie())
 				if uitransport.IsHTMLNavigation(r) && !wantsJSON(r) {
 					if target := authenticationReturnTarget(r); target != "" {
 						http.SetCookie(w, m.auth.authReturnCookie(target))

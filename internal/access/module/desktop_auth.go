@@ -54,7 +54,7 @@ func (m *Module) DesktopSessionStatus(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		return
 	}
-	cookie, err := r.Cookie("lv_session")
+	cookie, err := r.Cookie(m.auth.SessionCookieName())
 	if err != nil || cookie.Value == "" {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
@@ -210,9 +210,9 @@ func (m *Module) DesktopDisconnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
-	cookie, err := r.Cookie("lv_session")
+	cookie, err := r.Cookie(m.auth.SessionCookieName())
 	if err != nil || cookie.Value == "" {
-		clearDesktopSessionCookie(w, m.auth.cookieSecure)
+		clearDesktopSessionCookie(w, m.auth)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -224,7 +224,7 @@ func (m *Module) DesktopDisconnect(w http.ResponseWriter, r *http.Request) {
 	}
 	binding, err := desktopRepository.DesktopSessionForToken(r.Context(), cookie.Value)
 	if err != nil {
-		clearDesktopSessionCookie(w, m.auth.cookieSecure)
+		clearDesktopSessionCookie(w, m.auth)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -247,7 +247,7 @@ func (m *Module) DesktopDisconnect(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
 		return
 	}
-	clearDesktopSessionCookie(w, m.auth.cookieSecure)
+	clearDesktopSessionCookie(w, m.auth)
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -273,9 +273,6 @@ func hasExactForm(form map[string][]string, fields map[string]struct{}) bool {
 	return true
 }
 
-func clearDesktopSessionCookie(w http.ResponseWriter, secure bool) {
-	http.SetCookie(w, &http.Cookie{
-		Name: "lv_session", Value: "", Path: "/", MaxAge: -1,
-		HttpOnly: true, Secure: secure, SameSite: http.SameSiteLaxMode,
-	})
+func clearDesktopSessionCookie(w http.ResponseWriter, auth *Auth) {
+	http.SetCookie(w, auth.expiredSessionCookie())
 }
