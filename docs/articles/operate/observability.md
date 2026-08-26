@@ -82,8 +82,8 @@ schedules, scheduled runs that were never materialized, overdue work, expired
 execution or publication leases, running and failed work, and evidence
 publication state. This projection is passive: scheduler and worker failure is
 visible without requiring another worker to mutate the ledger. It also reports
-recovered leases, last-success age, recovery-point age, and the latest
-restore/readiness durations for the fixed operation set. The
+recovered leases, last-success age, recovery-point age, and the latest restore,
+readiness, and end-to-end qualification durations for the fixed operation set. The
 same aggregate values are exported on the protected Prometheus endpoint under
 `leapview_recovery_qualification_*`. Labels are limited to operation and
 publication state—occurrence, schedule, artifact, scenario, and target
@@ -95,6 +95,9 @@ and a redacted failure reason. Evidence upload has its own retryable lease, so
 an upload outage does not rerun a destructive recovery drill. Never store raw
 logs, archives, credentials, signed URLs, or secret-bearing query strings in a
 ledger evidence reference.
+Failed, canceled, or expired work that produced no owner evidence is terminal
+with `evidenceStatus: "none"`; only a failed publication of real evidence is
+retried, using persisted backoff.
 
 Schedule definitions are immutable revisions. Changing artifact identity,
 policy, target, scenario, cadence, or staleness closes the prior revision only
@@ -123,16 +126,41 @@ absolute private path outside `LEAPVIEW_HOME`; evidence is retained beneath the
 instance artifact directory and excluded from subsequent qualification
 backups. `LEAPVIEW_RECOVERY_QUALIFICATION_CRON` controls the reviewed schedule.
 Startup fails closed if the managed policy is not bound to the running image or
-does not contain the exact predecessor identity. The controller must execute the isolated
+does not contain the exact predecessor identity. Every schedule revision and
+occurrence stores the SHA-256 of that exact policy; a different policy with the
+same policy version is rejected. The controller must execute the isolated
 release qualification environment available to the service account; the
 ledger never substitutes synthetic reports when it is unavailable.
+
+For `LEAPVIEW_MANAGED_DATA_BACKEND=s3`, configure both canonical FAI-515 input
+files. `LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS` is an absolute
+path to a JSON array such as:
+
+```json
+[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]
+```
+
+`LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE` is an absolute path to the
+operator evidence map used by both restore preflight and restore:
+
+```json
+{"managed-data-version":"version-42"}
+```
+
+The resulting owner manifest retains the canonical provider, endpoint, region,
+bucket, prefix, recovery point, and evidence key. Both files must be regular,
+non-symlink JSON files; startup and each scheduled run fail closed if they are
+missing or invalid.
 
 Backup and restore adapters call the platform backup, preflight, and restore
 owners against an isolated restore target. Upgrade and rollback adapters call
 the installed-candidate transition owner with the immutable predecessor and
 candidate bundle. Recovery points are read from those validated owner reports;
 restore and readiness durations are derived only from ledger-owned persisted
-start and completion phases.
+start and completion phases. Time spent before or after those phases affects
+only the separately reported end-to-end qualification duration. A reclaimed
+occurrence uses a new fenced workspace generation and removes only its own
+superseded, no-longer-leased generations.
 
 Persisted failures use bounded machine codes and credential-scrubbed summaries.
 Full owner errors belong only in restricted transient logs. URL credentials,

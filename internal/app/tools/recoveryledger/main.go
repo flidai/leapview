@@ -205,6 +205,16 @@ func run(ctx context.Context, evidenceDir string) error {
 		if err := repository.Start(ctx, occurrence.ID, claimed.Fence, planned.Add(time.Second)); err != nil {
 			return err
 		}
+		phase := recovery.RecoveryPhaseReadiness
+		if operation == recovery.OperationRestore {
+			phase = recovery.RecoveryPhaseRestore
+		}
+		if err := repository.RecordPhase(ctx, occurrence.ID, claimed.Fence, phase, recovery.RecoveryPhaseStarted, planned.Add(10*time.Second)); err != nil {
+			return err
+		}
+		if err := repository.RecordPhase(ctx, occurrence.ID, claimed.Fence, phase, recovery.RecoveryPhaseCompleted, planned.Add(30*time.Second)); err != nil {
+			return err
+		}
 		completed := planned.Add(time.Minute)
 		switch operation {
 		case recovery.OperationUpgrade:
@@ -226,11 +236,11 @@ func run(ctx context.Context, evidenceDir string) error {
 	if err := repository.FailEvidence(ctx, publication.ID, publication.EvidenceFence, now.Add(20*time.Minute+10*time.Second), errors.New("upload api_key=must-not-appear failed")); err != nil {
 		return err
 	}
-	retry, ok, err := repository.ClaimEvidence(ctx, "publisher-retry", now.Add(21*time.Minute), time.Minute)
+	retry, ok, err := repository.ClaimEvidence(ctx, "publisher-retry", now.Add(21*time.Minute+11*time.Second), time.Minute)
 	if err != nil || !ok || retry.ID != publication.ID {
 		return fmt.Errorf("retry exact evidence publication: %v", err)
 	}
-	if err := repository.PublishEvidence(ctx, retry.ID, retry.EvidenceFence, now.Add(21*time.Minute+time.Second)); err != nil {
+	if err := repository.PublishEvidence(ctx, retry.ID, retry.EvidenceFence, now.Add(21*time.Minute+12*time.Second)); err != nil {
 		return err
 	}
 	matrix.EvidenceRetried = true
@@ -250,7 +260,7 @@ func run(ctx context.Context, evidenceDir string) error {
 	stalePlanned := now.Add(30 * time.Minute)
 	stale, _, err := repository.Enqueue(ctx, recovery.EnqueueInput{
 		ScheduleID: "overdue-restore", Scenario: "managed-instance", Operation: recovery.OperationRestore,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: immutableArtifact,
+		PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), TargetScope: "instance:prod", ArtifactIdentity: immutableArtifact,
 		PlannedAt: stalePlanned, StaleAfter: time.Minute,
 	}, stalePlanned)
 	if err != nil {
@@ -305,7 +315,7 @@ func run(ctx context.Context, evidenceDir string) error {
 	if err != nil {
 		return err
 	}
-	if status.Failed == 0 || status.EvidencePending == 0 || status.RecoveredExpiredLeases == 0 {
+	if status.Failed == 0 || status.RecoveredExpiredLeases == 0 {
 		return fmt.Errorf("stale, failed, or reclaimed recovery evidence is not detectable: %#v", status)
 	}
 
@@ -361,7 +371,7 @@ func finishLedgerOccurrence(ctx context.Context, repository recovery.RecoveryRep
 func ledgerInput(scheduleID, scenario, operation string, planned time.Time) recovery.EnqueueInput {
 	return recovery.EnqueueInput{
 		ScheduleID: scheduleID, Scenario: scenario, Operation: operation,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod",
+		PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), TargetScope: "instance:prod",
 		ArtifactIdentity: immutableArtifact, PlannedAt: planned, StaleAfter: 24 * time.Hour,
 	}
 }

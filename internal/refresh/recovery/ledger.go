@@ -33,11 +33,17 @@ const (
 	EvidenceClaimed   = "claimed"
 	EvidencePublished = "published"
 	EvidenceFailed    = "failed"
+	EvidenceNone      = "none"
 
 	OperationBackup   = "backup"
 	OperationRestore  = "restore"
 	OperationUpgrade  = "upgrade"
 	OperationRollback = "rollback"
+
+	PhaseRestore   = "restore"
+	PhaseReadiness = "readiness"
+	PhaseStarted   = "started"
+	PhaseCompleted = "completed"
 
 	maxEvidenceReferences = 16
 	maxFailureReasonBytes = 512
@@ -57,6 +63,7 @@ type Definition struct {
 	Scenario         string        `json:"scenario"`
 	Operation        string        `json:"operation"`
 	PolicyVersion    string        `json:"policyVersion"`
+	PolicySHA256     string        `json:"policySha256"`
 	TargetScope      string        `json:"targetScope"`
 	ArtifactIdentity string        `json:"artifactIdentity"`
 	Cron             string        `json:"cron"`
@@ -77,6 +84,9 @@ func (definition Definition) Validate() error {
 	if !validOperation(definition.Operation) {
 		return fmt.Errorf("recovery qualification operation must be backup, restore, upgrade, or rollback")
 	}
+	if !validSHA256(definition.PolicySHA256) {
+		return fmt.Errorf("recovery qualification policy SHA-256 must be 64 lowercase hexadecimal characters")
+	}
 	if err := ValidateArtifactIdentity(definition.ArtifactIdentity); err != nil {
 		return err
 	}
@@ -95,6 +105,7 @@ type EnqueueInput struct {
 	Scenario         string
 	Operation        string
 	PolicyVersion    string
+	PolicySHA256     string
 	TargetScope      string
 	ArtifactIdentity string
 	PlannedAt        time.Time
@@ -110,6 +121,7 @@ func ScheduleRevisionID(definition Definition) (string, error) {
 	value := strings.Join([]string{
 		definition.ScheduleID, definition.Scenario, definition.Operation,
 		definition.PolicyVersion, definition.TargetScope, definition.ArtifactIdentity,
+		definition.PolicySHA256,
 		definition.Cron, definition.Timezone, definition.StaleAfter.String(),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(value))
@@ -123,7 +135,7 @@ func ScheduleRevisionForInput(input EnqueueInput) (string, error) {
 		}
 		return input.ScheduleRevision, nil
 	}
-	value := strings.Join([]string{input.ScheduleID, input.Scenario, input.PolicyVersion, input.TargetScope}, "\x00")
+	value := strings.Join([]string{input.ScheduleID, input.Scenario, input.PolicyVersion, input.PolicySHA256, input.TargetScope}, "\x00")
 	sum := sha256.Sum256([]byte(value))
 	return "recovery-occurrence-schedule-" + hex.EncodeToString(sum[:]), nil
 }
@@ -131,7 +143,7 @@ func ScheduleRevisionForInput(input EnqueueInput) (string, error) {
 func (input EnqueueInput) Validate() error {
 	definition := Definition{
 		ScheduleID: input.ScheduleID, Scenario: input.Scenario, Operation: input.Operation,
-		PolicyVersion: input.PolicyVersion, TargetScope: input.TargetScope,
+		PolicyVersion: input.PolicyVersion, PolicySHA256: input.PolicySHA256, TargetScope: input.TargetScope,
 		ArtifactIdentity: input.ArtifactIdentity, Cron: "@daily", Timezone: "UTC",
 		StaleAfter: input.StaleAfter, Enabled: true,
 	}
@@ -157,7 +169,7 @@ func OccurrenceID(input EnqueueInput) (string, error) {
 	}
 	value := strings.Join([]string{
 		input.ScheduleID, input.PlannedAt.UTC().Format(time.RFC3339Nano), input.Scenario,
-		input.PolicyVersion, input.TargetScope, revision,
+		input.PolicyVersion, input.PolicySHA256, input.TargetScope, revision,
 	}, "\x00")
 	sum := sha256.Sum256([]byte(value))
 	return "recovery-occurrence-" + hex.EncodeToString(sum[:]), nil
@@ -168,7 +180,7 @@ func RequestDigest(input EnqueueInput) (string, error) {
 		return "", err
 	}
 	value := strings.Join([]string{
-		input.ScheduleID, input.Scenario, input.Operation, input.PolicyVersion,
+		input.ScheduleID, input.Scenario, input.Operation, input.PolicyVersion, input.PolicySHA256,
 		input.TargetScope, input.ArtifactIdentity, input.ScheduleRevision,
 		input.PlannedAt.UTC().Format(time.RFC3339Nano), input.StaleAfter.String(),
 	}, "\x00")
@@ -283,40 +295,47 @@ func (result Result) validate(completedAt time.Time, requireRecoveryPoint bool) 
 }
 
 type Occurrence struct {
-	ID                      string              `json:"occurrenceId"`
-	ScheduleID              string              `json:"scheduleId"`
-	ScheduleRevision        string              `json:"scheduleRevision"`
-	Scenario                string              `json:"scenario"`
-	Operation               string              `json:"operation"`
-	PolicyVersion           string              `json:"policyVersion"`
-	TargetScope             string              `json:"targetScope"`
-	ArtifactIdentity        string              `json:"artifactIdentity"`
-	PlannedAt               time.Time           `json:"plannedAt"`
-	ExpiresAt               time.Time           `json:"expiresAt"`
-	Status                  string              `json:"status"`
-	Result                  string              `json:"result"`
-	AttemptCount            int64               `json:"attemptCount"`
-	Fence                   Fence               `json:"fence,omitempty"`
-	LeaseExpiresAt          time.Time           `json:"leaseExpiresAt,omitempty"`
-	Actor                   string              `json:"actor,omitempty"`
-	CreatedAt               time.Time           `json:"createdAt"`
-	ClaimedAt               time.Time           `json:"claimedAt,omitempty"`
-	StartedAt               time.Time           `json:"startedAt,omitempty"`
-	FinishedAt              time.Time           `json:"finishedAt,omitempty"`
-	RecoveryPointAt         time.Time           `json:"recoveryPointAt,omitempty"`
-	RecoveryPointAgeSeconds int64               `json:"recoveryPointAgeSeconds,omitempty"`
-	RestoreDurationMillis   int64               `json:"restoreDurationMillis,omitempty"`
-	ReadinessDurationMillis int64               `json:"readinessDurationMillis,omitempty"`
-	FailureReasonRedacted   string              `json:"failureReasonRedacted,omitempty"`
-	FailureCode             string              `json:"failureCode,omitempty"`
-	Evidence                []EvidenceReference `json:"evidence"`
-	EvidenceStatus          string              `json:"evidenceStatus"`
-	EvidenceAttemptCount    int64               `json:"evidenceAttemptCount"`
-	EvidenceFence           Fence               `json:"evidenceFence,omitempty"`
-	EvidenceLeaseExpiresAt  time.Time           `json:"evidenceLeaseExpiresAt,omitempty"`
-	EvidencePublishedAt     time.Time           `json:"evidencePublishedAt,omitempty"`
-	EvidenceFailureRedacted string              `json:"evidenceFailureReasonRedacted,omitempty"`
-	EvidenceFailureCode     string              `json:"evidenceFailureCode,omitempty"`
+	ID                          string              `json:"occurrenceId"`
+	ScheduleID                  string              `json:"scheduleId"`
+	ScheduleRevision            string              `json:"scheduleRevision"`
+	Scenario                    string              `json:"scenario"`
+	Operation                   string              `json:"operation"`
+	PolicyVersion               string              `json:"policyVersion"`
+	PolicySHA256                string              `json:"policySha256"`
+	TargetScope                 string              `json:"targetScope"`
+	ArtifactIdentity            string              `json:"artifactIdentity"`
+	PlannedAt                   time.Time           `json:"plannedAt"`
+	ExpiresAt                   time.Time           `json:"expiresAt"`
+	Status                      string              `json:"status"`
+	Result                      string              `json:"result"`
+	AttemptCount                int64               `json:"attemptCount"`
+	Fence                       Fence               `json:"fence,omitempty"`
+	LeaseExpiresAt              time.Time           `json:"leaseExpiresAt,omitempty"`
+	Actor                       string              `json:"actor,omitempty"`
+	CreatedAt                   time.Time           `json:"createdAt"`
+	ClaimedAt                   time.Time           `json:"claimedAt,omitempty"`
+	StartedAt                   time.Time           `json:"startedAt,omitempty"`
+	RestoreStartedAt            time.Time           `json:"restoreStartedAt,omitempty"`
+	RestoreCompletedAt          time.Time           `json:"restoreCompletedAt,omitempty"`
+	ReadinessStartedAt          time.Time           `json:"readinessStartedAt,omitempty"`
+	ReadinessCompletedAt        time.Time           `json:"readinessCompletedAt,omitempty"`
+	FinishedAt                  time.Time           `json:"finishedAt,omitempty"`
+	RecoveryPointAt             time.Time           `json:"recoveryPointAt,omitempty"`
+	RecoveryPointAgeSeconds     int64               `json:"recoveryPointAgeSeconds,omitempty"`
+	RestoreDurationMillis       int64               `json:"restoreDurationMillis,omitempty"`
+	ReadinessDurationMillis     int64               `json:"readinessDurationMillis,omitempty"`
+	QualificationDurationMillis int64               `json:"qualificationDurationMillis,omitempty"`
+	FailureReasonRedacted       string              `json:"failureReasonRedacted,omitempty"`
+	FailureCode                 string              `json:"failureCode,omitempty"`
+	Evidence                    []EvidenceReference `json:"evidence"`
+	EvidenceStatus              string              `json:"evidenceStatus"`
+	EvidenceAttemptCount        int64               `json:"evidenceAttemptCount"`
+	EvidenceFence               Fence               `json:"evidenceFence,omitempty"`
+	EvidenceLeaseExpiresAt      time.Time           `json:"evidenceLeaseExpiresAt,omitempty"`
+	EvidenceNextAttemptAt       time.Time           `json:"evidenceNextAttemptAt,omitempty"`
+	EvidencePublishedAt         time.Time           `json:"evidencePublishedAt,omitempty"`
+	EvidenceFailureRedacted     string              `json:"evidenceFailureReasonRedacted,omitempty"`
+	EvidenceFailureCode         string              `json:"evidenceFailureCode,omitempty"`
 }
 
 type Attempt struct {
@@ -378,15 +397,16 @@ type RetentionResult struct {
 }
 
 type OperationStatus struct {
-	Operation                   string `json:"operation"`
-	Pending                     int64  `json:"pending"`
-	Running                     int64  `json:"running"`
-	Failed                      int64  `json:"failed"`
-	Expired                     int64  `json:"expired"`
-	LastSuccessAgeSeconds       *int64 `json:"lastSuccessAgeSeconds"`
-	LastRestoreDurationMillis   *int64 `json:"lastRestoreDurationMillis"`
-	LastReadinessDurationMillis *int64 `json:"lastReadinessDurationMillis"`
-	LastRecoveryPointAgeSeconds *int64 `json:"lastRecoveryPointAgeSeconds"`
+	Operation                       string `json:"operation"`
+	Pending                         int64  `json:"pending"`
+	Running                         int64  `json:"running"`
+	Failed                          int64  `json:"failed"`
+	Expired                         int64  `json:"expired"`
+	LastSuccessAgeSeconds           *int64 `json:"lastSuccessAgeSeconds"`
+	LastRestoreDurationMillis       *int64 `json:"lastRestoreDurationMillis"`
+	LastReadinessDurationMillis     *int64 `json:"lastReadinessDurationMillis"`
+	LastQualificationDurationMillis *int64 `json:"lastQualificationDurationMillis"`
+	LastRecoveryPointAgeSeconds     *int64 `json:"lastRecoveryPointAgeSeconds"`
 }
 
 type StatusSnapshot struct {
@@ -435,6 +455,21 @@ func (snapshot StatusSnapshot) Metrics() []Metric {
 		if operation.LastSuccessAgeSeconds != nil {
 			metrics = append(metrics, Metric{Name: "leapview_recovery_qualification_last_success_age_seconds", Labels: labels, Value: float64(*operation.LastSuccessAgeSeconds)})
 		}
+		for _, value := range []struct {
+			name  string
+			value *int64
+		}{
+			{"leapview_recovery_qualification_restore_duration_seconds", operation.LastRestoreDurationMillis},
+			{"leapview_recovery_qualification_readiness_duration_seconds", operation.LastReadinessDurationMillis},
+			{"leapview_recovery_qualification_duration_seconds", operation.LastQualificationDurationMillis},
+		} {
+			if value.value != nil {
+				metrics = append(metrics, Metric{Name: value.name, Labels: labels, Value: float64(*value.value) / 1000})
+			}
+		}
+		if operation.LastRecoveryPointAgeSeconds != nil {
+			metrics = append(metrics, Metric{Name: "leapview_recovery_qualification_recovery_point_age_seconds", Labels: labels, Value: float64(*operation.LastRecoveryPointAgeSeconds)})
+		}
 	}
 	return metrics
 }
@@ -446,6 +481,7 @@ type Repository interface {
 	EnqueueDue(context.Context, time.Time, int) ([]Occurrence, error)
 	ClaimNext(context.Context, ClaimInput) (Occurrence, bool, error)
 	Start(context.Context, string, Fence, time.Time) error
+	RecordPhase(context.Context, string, Fence, string, string, time.Time) error
 	Heartbeat(context.Context, string, Fence, time.Time, time.Duration) error
 	Complete(context.Context, string, Fence, time.Time, Result) error
 	Fail(context.Context, string, Fence, time.Time, Result, error) error

@@ -123,8 +123,9 @@ func TestLedgerRejectsForgedAdapterMeasurementsAndOwnerIdentityMismatch(t *testi
 		"artifact": func(value *Occurrence) {
 			value.ArtifactIdentity = "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("f", 64)
 		},
-		"policy": func(value *Occurrence) { value.PolicyVersion = "ubdr-v2" },
-		"target": func(value *Occurrence) { value.TargetScope = "release:v9.9.9" },
+		"policy":        func(value *Occurrence) { value.PolicyVersion = "ubdr-v2" },
+		"policy digest": func(value *Occurrence) { value.PolicySHA256 = strings.Repeat("e", 64) },
+		"target":        func(value *Occurrence) { value.TargetScope = "release:v9.9.9" },
 	} {
 		t.Run(name, func(t *testing.T) {
 			mismatched := occurrence
@@ -168,7 +169,7 @@ func writeTransitionEvidence(t *testing.T) (string, Occurrence) {
 	if err := os.WriteFile(path, document, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return path, Occurrence{Operation: OperationUpgrade, ArtifactIdentity: candidate, PolicyVersion: "ubdr-v1", TargetScope: "release:v0.3.0"}
+	return path, Occurrence{Operation: OperationUpgrade, ArtifactIdentity: candidate, PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), TargetScope: "release:v0.3.0"}
 }
 
 func TestScenarioEvidenceMustBindScheduledArtifactAndCompleteRestoreSet(t *testing.T) {

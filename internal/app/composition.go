@@ -1,10 +1,12 @@
 package app
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -21,6 +23,7 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
+	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
@@ -494,15 +497,18 @@ func productionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, en
 		return nil, fmt.Errorf("scheduled recovery qualification requires exact released build provenance")
 	}
 	policy, err := compatibility.EmbeddedPolicy()
+	policyDocument := compatibility.EmbeddedPolicyDocument()
 	const managedPolicyPath = "/run/leapview/release-transition-policy.json"
 	if _, statErr := os.Stat(managedPolicyPath); statErr == nil {
-		policy, _, err = compatibility.LoadPolicy(managedPolicyPath)
+		policy, policyDocument, err = compatibility.LoadPolicy(managedPolicyPath)
 	} else if !os.IsNotExist(statErr) {
 		return nil, statErr
 	}
 	if err != nil {
 		return nil, err
 	}
+	policyDigest := sha256.Sum256(policyDocument)
+	policySHA256 := hex.EncodeToString(policyDigest[:])
 	template, err := compatibility.EmbeddedCandidateTransitionTemplate()
 	if err != nil {
 		return nil, err
@@ -538,18 +544,98 @@ func productionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, en
 			return nil, err
 		}
 	}
+	storageEvidence := productionRecoveryStorageEvidence(cfg)
+	initialStorage, err := storageEvidence(context.Background())
+	if err != nil {
+		return nil, err
+	}
 	qualification := refreshmodule.ProductionRecoveryQualificationConfig{
 		HomeDir: cfg.HomeDir, DBPath: cfg.DBPath(), InstanceID: instanceID, Environment: environment,
-		ReleaseIdentity: releaseIdentity, StorageTopology: platform.InstanceBackupStorageTopology{
-			ControlPlane: "local", ManagedData: cfg.ManagedDataBackend, DuckLake: "local",
-			ExternalStores: []platform.InstanceBackupExternalStoreReference{},
-		},
-		TransitionPolicy: policy, WorkRoot: workRoot, EvidenceRoot: evidenceRoot,
+		ReleaseIdentity: releaseIdentity, StorageTopology: initialStorage.Topology, StorageEvidence: storageEvidence,
+		TransitionPolicy: policy, PolicySHA256: policySHA256, WorkRoot: workRoot, EvidenceRoot: evidenceRoot,
 		ControllerPath: cfg.RecoveryQualificationController, BundleRoot: cfg.RecoveryQualificationBundle,
 		PredecessorImage: predecessor.IdentityForPlatform(platformName).Image,
 		Cron:             cfg.RecoveryQualificationCron, Timezone: "UTC", StaleAfter: 36 * time.Hour,
 	}
 	return refreshmodule.NewProductionRecoveryLifecycle(qualification), nil
+}
+
+func productionRecoveryStorageEvidence(cfg config.Config) refreshmodule.RecoveryStorageEvidenceProvider {
+	return func(context.Context) (refreshmodule.RecoveryStorageQualificationEvidence, error) {
+		var points []adminoffline.ExternalRecoveryPoint
+		evidence := map[string]string{}
+		if strings.TrimSpace(cfg.ManagedDataBackend) == "s3" {
+			if err := readRecoveryQualificationJSON(cfg.RecoveryQualificationExternalRecoveryPoints, &points); err != nil {
+				return refreshmodule.RecoveryStorageQualificationEvidence{}, fmt.Errorf("read scheduled external recovery points: %w", err)
+			}
+			if err := readRecoveryQualificationJSON(cfg.RecoveryQualificationExternalEvidence, &evidence); err != nil {
+				return refreshmodule.RecoveryStorageQualificationEvidence{}, fmt.Errorf("read scheduled external recovery evidence: %w", err)
+			}
+		}
+		topology, err := adminoffline.BuildStorageTopology(adminoffline.Config{
+			ManagedDataBackend: cfg.ManagedDataBackend, ManagedDataS3Endpoint: cfg.ManagedDataS3Endpoint,
+			ManagedDataS3Region: cfg.ManagedDataS3Region, ManagedDataS3Bucket: cfg.ManagedDataS3Bucket,
+			ManagedDataS3Prefix: cfg.ManagedDataS3Prefix,
+		}, points, true)
+		if err != nil {
+			return refreshmodule.RecoveryStorageQualificationEvidence{}, err
+		}
+		return refreshmodule.RecoveryStorageQualificationEvidence{
+			Topology: recoveryPlatformStorageTopology(topology), ExternalEvidence: evidence,
+		}, nil
+	}
+}
+
+func recoveryPlatformStorageTopology(topology adminoffline.BackupStorageTopology) platform.InstanceBackupStorageTopology {
+	external := make([]platform.InstanceBackupExternalStoreReference, len(topology.ExternalStores))
+	for index, reference := range topology.ExternalStores {
+		external[index] = platform.InstanceBackupExternalStoreReference{
+			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
+			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
+			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
+		}
+	}
+	return platform.InstanceBackupStorageTopology{
+		ControlPlane: topology.ControlPlane, ManagedData: topology.ManagedData,
+		DuckLake: topology.DuckLake, ExternalStores: external,
+	}
+}
+
+func readRecoveryQualificationJSON(path string, destination any) error {
+	path = strings.TrimSpace(path)
+	if path == "" || !filepath.IsAbs(path) {
+		return fmt.Errorf("an absolute JSON evidence path is required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 1<<20 {
+		return fmt.Errorf("JSON evidence must be a regular non-symlink file no larger than 1 MiB")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	openedInfo, err := file.Stat()
+	if err != nil || !openedInfo.Mode().IsRegular() || openedInfo.Size() > 1<<20 || !os.SameFile(info, openedInfo) {
+		return fmt.Errorf("JSON evidence path changed before validation")
+	}
+	document, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
+	if err != nil {
+		return err
+	}
+	if len(document) > 1<<20 {
+		return fmt.Errorf("JSON evidence must be no larger than 1 MiB")
+	}
+	decoder := json.NewDecoder(bytes.NewReader(document))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		return fmt.Errorf("JSON evidence contains trailing data")
+	}
+	return nil
 }
 
 func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {

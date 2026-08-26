@@ -74,7 +74,7 @@ func (repository *Repository) ReconcileSchedule(ctx context.Context, definition 
 		return queries.InsertRecoveryQualificationSchedule(ctx, platformdb.InsertRecoveryQualificationScheduleParams{
 			ScheduleRevisionID: revisionID, ScheduleID: definition.ScheduleID,
 			Scenario: definition.Scenario, Operation: definition.Operation,
-			PolicyVersion: definition.PolicyVersion, TargetScope: definition.TargetScope,
+			PolicyVersion: definition.PolicyVersion, PolicySha256: definition.PolicySHA256, TargetScope: definition.TargetScope,
 			ArtifactIdentity: definition.ArtifactIdentity, Cron: definition.Cron, Timezone: definition.Timezone,
 			StaleAfterSeconds: int64(definition.StaleAfter / time.Second), NextRunAt: recoveryFormatTime(next),
 			Enabled: enabled, ValidFrom: recoveryFormatTime(now), UpdatedAt: recoveryFormatTime(now),
@@ -114,7 +114,7 @@ func (repository *Repository) ReconcileSchedules(ctx context.Context, definition
 		}
 		definition := recovery.Definition{
 			ScheduleID: schedule.ScheduleID, Scenario: schedule.Scenario, Operation: schedule.Operation,
-			PolicyVersion: schedule.PolicyVersion, TargetScope: schedule.TargetScope,
+			PolicyVersion: schedule.PolicyVersion, PolicySHA256: schedule.PolicySha256, TargetScope: schedule.TargetScope,
 			ArtifactIdentity: schedule.ArtifactIdentity, Cron: schedule.Cron, Timezone: schedule.Timezone,
 			StaleAfter: time.Duration(schedule.StaleAfterSeconds) * time.Second, Enabled: false,
 		}
@@ -140,7 +140,7 @@ func materializeClosedSchedule(ctx context.Context, queries *platformdb.Queries,
 		}
 		_, _, err := enqueueRecoveryOccurrence(ctx, queries, recovery.EnqueueInput{
 			ScheduleID: row.ScheduleID, ScheduleRevision: row.ScheduleRevisionID,
-			Scenario: row.Scenario, Operation: row.Operation, PolicyVersion: row.PolicyVersion,
+			Scenario: row.Scenario, Operation: row.Operation, PolicyVersion: row.PolicyVersion, PolicySHA256: row.PolicySha256,
 			TargetScope: row.TargetScope, ArtifactIdentity: row.ArtifactIdentity,
 			PlannedAt: plannedAt, StaleAfter: time.Duration(row.StaleAfterSeconds) * time.Second,
 		}, now)
@@ -182,7 +182,7 @@ func enqueueRecoveryOccurrence(ctx context.Context, queries *platformdb.Queries,
 	}
 	created, err := queries.InsertRecoveryQualificationOccurrence(ctx, platformdb.InsertRecoveryQualificationOccurrenceParams{
 		OccurrenceID: id, RequestDigest: digest, ScheduleID: input.ScheduleID, ScheduleRevisionID: input.ScheduleRevision,
-		Scenario: input.Scenario, Operation: input.Operation, PolicyVersion: input.PolicyVersion,
+		Scenario: input.Scenario, Operation: input.Operation, PolicyVersion: input.PolicyVersion, PolicySha256: input.PolicySHA256,
 		TargetScope: input.TargetScope, ArtifactIdentity: input.ArtifactIdentity,
 		PlannedAt: recoveryFormatTime(input.PlannedAt), ExpiresAt: recoveryFormatTime(input.PlannedAt.Add(input.StaleAfter)),
 		CreatedAt: recoveryFormatTime(now),
@@ -233,7 +233,7 @@ func (repository *Repository) EnqueueDue(ctx context.Context, now time.Time, lim
 			input := recovery.EnqueueInput{
 				ScheduleID: row.ScheduleID, ScheduleRevision: row.ScheduleRevisionID,
 				Scenario: row.Scenario, Operation: row.Operation,
-				PolicyVersion: row.PolicyVersion, TargetScope: row.TargetScope,
+				PolicyVersion: row.PolicyVersion, PolicySHA256: row.PolicySha256, TargetScope: row.TargetScope,
 				ArtifactIdentity: row.ArtifactIdentity, PlannedAt: plannedAt,
 				StaleAfter: time.Duration(row.StaleAfterSeconds) * time.Second,
 			}
@@ -425,6 +425,53 @@ func (repository *Repository) Heartbeat(ctx context.Context, id string, fence re
 	})
 }
 
+func (repository *Repository) RecordPhase(ctx context.Context, id string, fence recovery.Fence, phase, event string, now time.Time) error {
+	if err := validateRecoveryMutation(id, fence, now); err != nil {
+		return err
+	}
+	return repository.withRecoveryTx(ctx, func(queries *platformdb.Queries) error {
+		row, err := queries.GetRecoveryQualificationOccurrence(ctx, id)
+		if err != nil {
+			return err
+		}
+		if err := validateRecoveryFence(row, fence, now); err != nil {
+			return err
+		}
+		if err := validateRecoveryMutationChronology(row, now, nil, true); err != nil {
+			return err
+		}
+		common := func() (sql.NullString, string, string, int64, sql.NullString) {
+			return recoveryNullTime(now), id, fence.Owner, fence.Generation, recoveryNullTime(now)
+		}
+		var changed int64
+		switch {
+		case phase == recovery.PhaseRestore && event == recovery.PhaseStarted:
+			phaseAt, occurrenceID, owner, generation, validAt := common()
+			changed, err = queries.StartRecoveryRestorePhase(ctx, platformdb.StartRecoveryRestorePhaseParams{
+				PhaseAt: phaseAt, OccurrenceID: occurrenceID, LeaseOwner: owner, FenceGeneration: generation, LeaseValidAt: validAt,
+			})
+		case phase == recovery.PhaseRestore && event == recovery.PhaseCompleted:
+			phaseAt, occurrenceID, owner, generation, validAt := common()
+			changed, err = queries.CompleteRecoveryRestorePhase(ctx, platformdb.CompleteRecoveryRestorePhaseParams{
+				PhaseAt: phaseAt, OccurrenceID: occurrenceID, LeaseOwner: owner, FenceGeneration: generation, LeaseValidAt: validAt,
+			})
+		case phase == recovery.PhaseReadiness && event == recovery.PhaseStarted:
+			phaseAt, occurrenceID, owner, generation, validAt := common()
+			changed, err = queries.StartRecoveryReadinessPhase(ctx, platformdb.StartRecoveryReadinessPhaseParams{
+				PhaseAt: phaseAt, OccurrenceID: occurrenceID, LeaseOwner: owner, FenceGeneration: generation, LeaseValidAt: validAt,
+			})
+		case phase == recovery.PhaseReadiness && event == recovery.PhaseCompleted:
+			phaseAt, occurrenceID, owner, generation, validAt := common()
+			changed, err = queries.CompleteRecoveryReadinessPhase(ctx, platformdb.CompleteRecoveryReadinessPhaseParams{
+				PhaseAt: phaseAt, OccurrenceID: occurrenceID, LeaseOwner: owner, FenceGeneration: generation, LeaseValidAt: validAt,
+			})
+		default:
+			return fmt.Errorf("unsupported recovery qualification phase transition %s/%s", phase, event)
+		}
+		return recoveryChanged(changed, err)
+	})
+}
+
 func (repository *Repository) Complete(ctx context.Context, id string, fence recovery.Fence, now time.Time, result recovery.Result) error {
 	if err := validateRecoveryMutation(id, fence, now); err != nil {
 		return err
@@ -447,17 +494,19 @@ func (repository *Repository) Complete(ctx context.Context, id string, fence rec
 		if err := validateRecoveryMutationChronology(row, now, &result, true); err != nil {
 			return err
 		}
-		restoreDuration, readinessDuration, err := recoveryPhaseDurations(row, now)
+		restoreDuration, readinessDuration, qualificationDuration, err := recoveryPhaseDurations(row, now, true)
 		if err != nil {
 			return err
 		}
 		changed, err := queries.CompleteRecoveryQualificationOccurrence(ctx, platformdb.CompleteRecoveryQualificationOccurrenceParams{
 			FinishedAt: recoveryNullTime(now), RecoveryPointAt: recoveryNullTime(result.RecoveryPointAt),
-			RecoveryPointAgeSeconds: sql.NullInt64{Int64: max(0, int64(now.Sub(result.RecoveryPointAt)/time.Second)), Valid: true},
-			RestoreDurationMillis:   sql.NullInt64{Int64: restoreDuration.Milliseconds(), Valid: true},
-			ReadinessDurationMillis: sql.NullInt64{Int64: readinessDuration.Milliseconds(), Valid: true},
-			EvidenceRefsJson:        encoded, OccurrenceID: id, LeaseOwner: fence.Owner,
-			FenceGeneration: fence.Generation, LeaseValidAt: recoveryNullTime(now),
+			RecoveryPointAgeSeconds:     sql.NullInt64{Int64: max(0, int64(now.Sub(result.RecoveryPointAt)/time.Second)), Valid: true},
+			RestoreDurationMillis:       sql.NullInt64{Int64: restoreDuration.Milliseconds(), Valid: true},
+			ReadinessDurationMillis:     sql.NullInt64{Int64: readinessDuration.Milliseconds(), Valid: true},
+			QualificationDurationMillis: sql.NullInt64{Int64: qualificationDuration.Milliseconds(), Valid: true},
+			EvidenceRefsJson:            encoded, OccurrenceID: id, LeaseOwner: fence.Owner,
+			EvidenceNextAttemptAt: recoveryNullTime(now),
+			FenceGeneration:       fence.Generation, LeaseValidAt: recoveryNullTime(now),
 		})
 		if err != nil || changed != 1 {
 			return recoveryChanged(changed, err)
@@ -496,11 +545,23 @@ func (repository *Repository) Fail(ctx context.Context, id string, fence recover
 		if err := validateRecoveryMutationChronology(row, now, &result, false); err != nil {
 			return err
 		}
+		restoreDuration, readinessDuration, qualificationDuration, err := recoveryPhaseDurations(row, now, false)
+		if err != nil {
+			return err
+		}
+		evidenceStatus := recovery.EvidenceNone
+		nextAttemptAt := sql.NullString{}
+		if len(result.Evidence) > 0 {
+			evidenceStatus = recovery.EvidencePending
+			nextAttemptAt = recoveryNullTime(now)
+		}
 		changed, err := queries.FailRecoveryQualificationOccurrence(ctx, platformdb.FailRecoveryQualificationOccurrenceParams{
 			FinishedAt: recoveryNullTime(now), RecoveryPointAt: pointAt, RecoveryPointAgeSeconds: pointAge,
-			RestoreDurationMillis:   sql.NullInt64{Int64: result.RestoreDuration.Milliseconds(), Valid: true},
-			ReadinessDurationMillis: sql.NullInt64{Int64: result.ReadinessDuration.Milliseconds(), Valid: true},
-			EvidenceRefsJson:        encoded, FailureReasonRedacted: reason, FailureCode: code, OccurrenceID: id,
+			RestoreDurationMillis:       sql.NullInt64{Int64: restoreDuration.Milliseconds(), Valid: true},
+			ReadinessDurationMillis:     sql.NullInt64{Int64: readinessDuration.Milliseconds(), Valid: true},
+			QualificationDurationMillis: sql.NullInt64{Int64: qualificationDuration.Milliseconds(), Valid: true},
+			EvidenceRefsJson:            encoded, FailureReasonRedacted: reason, FailureCode: code, OccurrenceID: id,
+			EvidenceStatus: evidenceStatus, EvidenceNextAttemptAt: nextAttemptAt,
 			LeaseOwner: fence.Owner, FenceGeneration: fence.Generation, LeaseValidAt: recoveryNullTime(now),
 		})
 		if err != nil || changed != 1 {
@@ -533,9 +594,13 @@ func (repository *Repository) Cancel(ctx context.Context, id string, fence recov
 		if err := validateRecoveryMutationChronology(row, now, nil, false); err != nil {
 			return err
 		}
+		_, _, qualificationDuration, err := recoveryPhaseDurations(row, now, false)
+		if err != nil {
+			return err
+		}
 		changed, err := queries.CancelRecoveryQualificationOccurrence(ctx, platformdb.CancelRecoveryQualificationOccurrenceParams{
 			FinishedAt: recoveryNullTime(now), FailureReasonRedacted: reason,
-			FailureCode:  code,
+			FailureCode: code, QualificationDurationMillis: sql.NullInt64{Int64: qualificationDuration.Milliseconds(), Valid: true},
 			OccurrenceID: id, LeaseOwner: fence.Owner, FenceGeneration: fence.Generation,
 			LeaseValidAt: recoveryNullTime(now),
 		})
@@ -566,7 +631,7 @@ func (repository *Repository) ClaimEvidence(ctx context.Context, publisherID str
 	if err := reclaimRecoveryEvidence(ctx, queries, now); err != nil {
 		return recovery.Occurrence{}, false, err
 	}
-	id, err := queries.NextPendingRecoveryEvidence(ctx)
+	id, err := queries.NextPendingRecoveryEvidence(ctx, recoveryNullTime(now))
 	if errors.Is(err, sql.ErrNoRows) {
 		if err := tx.Commit(); err != nil {
 			return recovery.Occurrence{}, false, err
@@ -579,6 +644,7 @@ func (repository *Repository) ClaimEvidence(ctx context.Context, publisherID str
 	expires := now.Add(lease)
 	changed, err := queries.ClaimRecoveryEvidence(ctx, platformdb.ClaimRecoveryEvidenceParams{
 		EvidenceLeaseOwner: publisherID, EvidenceLeaseExpiresAt: recoveryNullTime(expires), OccurrenceID: id,
+		EligibleAt: recoveryNullTime(now),
 	})
 	if err != nil {
 		return recovery.Occurrence{}, false, err
@@ -618,7 +684,7 @@ func reclaimRecoveryEvidence(ctx context.Context, queries *platformdb.Queries, n
 			return recoveryChanged(changed, err)
 		}
 		changed, err = queries.RequeueRecoveryEvidence(ctx, platformdb.RequeueRecoveryEvidenceParams{
-			OccurrenceID: row.OccurrenceID, FenceGeneration: row.EvidenceFenceGeneration,
+			EvidenceNextAttemptAt: recoveryNullTime(now), OccurrenceID: row.OccurrenceID, FenceGeneration: row.EvidenceFenceGeneration,
 		})
 		if err != nil || changed != 1 {
 			return recoveryChanged(changed, err)
@@ -656,8 +722,13 @@ func (repository *Repository) FailEvidence(ctx context.Context, id string, fence
 	}
 	code, reason := recovery.FailureDetails(cause, "evidence_publication_failed")
 	return repository.withRecoveryTx(ctx, func(queries *platformdb.Queries) error {
+		row, err := queries.GetRecoveryQualificationOccurrence(ctx, id)
+		if err != nil {
+			return err
+		}
+		retryAt := now.Add(recoveryEvidenceRetryDelay(row.EvidenceAttemptCount))
 		changed, err := queries.FailRecoveryEvidence(ctx, platformdb.FailRecoveryEvidenceParams{
-			EvidenceFailureReasonRedacted: reason, OccurrenceID: id,
+			EvidenceNextAttemptAt: recoveryNullTime(retryAt), EvidenceFailureReasonRedacted: reason, OccurrenceID: id,
 			EvidenceFailureCode: code,
 			EvidenceLeaseOwner:  fence.Owner, EvidenceFenceGeneration: fence.Generation,
 			LeaseValidAt: recoveryNullTime(now),
@@ -883,10 +954,12 @@ func (repository *Repository) Status(ctx context.Context, now time.Time) (recove
 			age := max(0, int64(now.Sub(last.FinishedAt)/time.Second))
 			restoreDuration := last.RestoreDurationMillis
 			readinessDuration := last.ReadinessDurationMillis
+			qualificationDuration := last.QualificationDurationMillis
 			pointAge := last.RecoveryPointAgeSeconds
 			operation.LastSuccessAgeSeconds = &age
 			operation.LastRestoreDurationMillis = &restoreDuration
 			operation.LastReadinessDurationMillis = &readinessDuration
+			operation.LastQualificationDurationMillis = &qualificationDuration
 			operation.LastRecoveryPointAgeSeconds = &pointAge
 		}
 		snapshot.Operations = append(snapshot.Operations, *operation)
@@ -1015,21 +1088,45 @@ func recoveryOccurrenceFromRow(row platformdb.RecoveryQualificationOccurrence) (
 	if err != nil {
 		return recovery.Occurrence{}, err
 	}
+	restoreStarted, err := recoveryParseNullTime(row.RestoreStartedAt)
+	if err != nil {
+		return recovery.Occurrence{}, err
+	}
+	restoreCompleted, err := recoveryParseNullTime(row.RestoreCompletedAt)
+	if err != nil {
+		return recovery.Occurrence{}, err
+	}
+	readinessStarted, err := recoveryParseNullTime(row.ReadinessStartedAt)
+	if err != nil {
+		return recovery.Occurrence{}, err
+	}
+	readinessCompleted, err := recoveryParseNullTime(row.ReadinessCompletedAt)
+	if err != nil {
+		return recovery.Occurrence{}, err
+	}
+	evidenceNextAttempt, err := recoveryParseNullTime(row.EvidenceNextAttemptAt)
+	if err != nil {
+		return recovery.Occurrence{}, err
+	}
 	return recovery.Occurrence{
 		ID: row.OccurrenceID, ScheduleID: row.ScheduleID, ScheduleRevision: row.ScheduleRevisionID, Scenario: row.Scenario,
-		Operation: row.Operation, PolicyVersion: row.PolicyVersion, TargetScope: row.TargetScope,
+		Operation: row.Operation, PolicyVersion: row.PolicyVersion, PolicySHA256: row.PolicySha256, TargetScope: row.TargetScope,
 		ArtifactIdentity: row.ArtifactIdentity, PlannedAt: planned, ExpiresAt: expires,
 		Status: row.Status, Result: row.Result, AttemptCount: row.AttemptCount,
 		Fence:          recovery.Fence{Owner: row.LeaseOwner, Generation: row.FenceGeneration},
 		LeaseExpiresAt: leaseExpires, Actor: row.Actor,
-		CreatedAt: created, ClaimedAt: claimed, StartedAt: started, FinishedAt: finished,
+		CreatedAt: created, ClaimedAt: claimed, StartedAt: started,
+		RestoreStartedAt: restoreStarted, RestoreCompletedAt: restoreCompleted,
+		ReadinessStartedAt: readinessStarted, ReadinessCompletedAt: readinessCompleted, FinishedAt: finished,
 		RecoveryPointAt: point, RecoveryPointAgeSeconds: row.RecoveryPointAgeSeconds.Int64,
-		RestoreDurationMillis:   row.RestoreDurationMillis.Int64,
-		ReadinessDurationMillis: row.ReadinessDurationMillis.Int64,
-		FailureReasonRedacted:   row.FailureReasonRedacted, FailureCode: row.FailureCode, Evidence: evidence,
+		RestoreDurationMillis:       row.RestoreDurationMillis.Int64,
+		ReadinessDurationMillis:     row.ReadinessDurationMillis.Int64,
+		QualificationDurationMillis: row.QualificationDurationMillis.Int64,
+		FailureReasonRedacted:       row.FailureReasonRedacted, FailureCode: row.FailureCode, Evidence: evidence,
 		EvidenceStatus: row.EvidenceStatus, EvidenceAttemptCount: row.EvidenceAttemptCount,
 		EvidenceFence:          recovery.Fence{Owner: row.EvidenceLeaseOwner, Generation: row.EvidenceFenceGeneration},
 		EvidenceLeaseExpiresAt: evidenceLeaseExpires,
+		EvidenceNextAttemptAt:  evidenceNextAttempt,
 		EvidencePublishedAt:    published, EvidenceFailureRedacted: row.EvidenceFailureReasonRedacted,
 		EvidenceFailureCode: row.EvidenceFailureCode,
 	}, nil
@@ -1102,23 +1199,62 @@ func validateRecoveryMutationChronology(row platformdb.RecoveryQualificationOccu
 	return nil
 }
 
-func recoveryPhaseDurations(row platformdb.RecoveryQualificationOccurrence, completed time.Time) (time.Duration, time.Duration, error) {
+func recoveryPhaseDurations(row platformdb.RecoveryQualificationOccurrence, completed time.Time, requireComplete bool) (time.Duration, time.Duration, time.Duration, error) {
 	started, err := recoveryParseNullTime(row.StartedAt)
 	if err != nil {
-		return 0, 0, err
+		return 0, 0, 0, err
 	}
 	if started.IsZero() || completed.Before(started) {
-		return 0, 0, fmt.Errorf("recovery qualification persisted execution phase is incomplete")
+		if requireComplete {
+			return 0, 0, 0, fmt.Errorf("recovery qualification persisted execution phase is incomplete")
+		}
+		return 0, 0, 0, nil
 	}
-	elapsed := completed.Sub(started)
+	total := completed.Sub(started)
+	phaseDuration := func(startValue, completedValue sql.NullString, label string) (time.Duration, error) {
+		phaseStart, parseErr := recoveryParseNullTime(startValue)
+		if parseErr != nil {
+			return 0, parseErr
+		}
+		phaseCompleted, parseErr := recoveryParseNullTime(completedValue)
+		if parseErr != nil {
+			return 0, parseErr
+		}
+		if phaseStart.IsZero() || phaseCompleted.IsZero() {
+			if requireComplete {
+				return 0, fmt.Errorf("recovery qualification %s phase is incomplete", label)
+			}
+			return 0, nil
+		}
+		if phaseStart.Before(started) || phaseCompleted.Before(phaseStart) || phaseCompleted.After(completed) {
+			return 0, fmt.Errorf("recovery qualification %s phase chronology is invalid", label)
+		}
+		return phaseCompleted.Sub(phaseStart), nil
+	}
 	switch row.Operation {
 	case recovery.OperationRestore:
-		return elapsed, 0, nil
+		restore, err := phaseDuration(row.RestoreStartedAt, row.RestoreCompletedAt, recovery.PhaseRestore)
+		return restore, 0, total, err
 	case recovery.OperationUpgrade, recovery.OperationRollback:
-		return 0, elapsed, nil
+		readiness, err := phaseDuration(row.ReadinessStartedAt, row.ReadinessCompletedAt, recovery.PhaseReadiness)
+		return 0, readiness, total, err
 	default:
-		return 0, 0, nil
+		return 0, 0, total, nil
 	}
+}
+
+func recoveryEvidenceRetryDelay(attempt int64) time.Duration {
+	if attempt < 1 {
+		attempt = 1
+	}
+	delay := time.Minute
+	for count := int64(1); count < attempt && delay < time.Hour; count++ {
+		delay *= 2
+	}
+	if delay > time.Hour {
+		return time.Hour
+	}
+	return delay
 }
 
 func validateRecoveryMutation(id string, fence recovery.Fence, now time.Time) error {

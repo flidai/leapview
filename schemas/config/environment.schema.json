@@ -2604,6 +2604,18 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE": {
+      "description": "Absolute path to the canonical FAI-515 external-evidence JSON used by scheduled S3 restore qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS": {
+      "description": "Absolute path to the canonical FAI-515 external recovery-points JSON used by scheduled S3 qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_RECOVERY_QUALIFICATION_WORK_DIR": {
       "description": "Private staging root outside LEAPVIEW_HOME for scheduled backup and transition qualification.",
       "type": "string",

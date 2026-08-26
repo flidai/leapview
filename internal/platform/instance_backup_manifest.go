@@ -96,6 +96,7 @@ type InstanceBackupManifestV2 struct {
 	ArchiveMode                     string                        `json:"archiveMode"`
 	StorageTopology                 InstanceBackupStorageTopology `json:"storageTopology"`
 	RequiredTransitionPolicyVersion string                        `json:"requiredTransitionPolicyVersion"`
+	RequiredTransitionPolicySHA256  string                        `json:"requiredTransitionPolicySha256,omitempty"`
 	Members                         []InstanceBackupMember        `json:"members"`
 	InventorySHA256                 string                        `json:"inventorySha256"`
 }
@@ -121,6 +122,7 @@ type InstanceRestorePreflightOptions struct {
 	CurrentBackupOut       string
 	DiscardCurrentBackup   bool
 	TransitionPolicy       *compatibility.Policy
+	TransitionPolicySHA256 string
 }
 
 type InstanceRestorePreflightPlan struct {
@@ -132,6 +134,7 @@ type InstanceRestorePreflightPlan struct {
 	ManifestVersion          int                                    `json:"manifestVersion"`
 	ManifestSHA256           string                                 `json:"manifestSha256,omitempty"`
 	PolicyVersion            string                                 `json:"transitionPolicyVersion,omitempty"`
+	PolicySHA256             string                                 `json:"transitionPolicySha256,omitempty"`
 	ArchivePath              string                                 `json:"archivePath"`
 	ArchiveSHA256            string                                 `json:"archiveSha256,omitempty"`
 	ArchiveSize              int64                                  `json:"archiveSize,omitempty"`
@@ -430,6 +433,11 @@ func inventorySHA256(members []InstanceBackupMember) (string, error) {
 	return hex.EncodeToString(digest[:]), nil
 }
 
+func validInstanceBackupSHA256(value string) bool {
+	decoded, err := hex.DecodeString(value)
+	return err == nil && len(decoded) == sha256.Size && value == strings.ToLower(value)
+}
+
 func validateManifestV2Document(document []byte, manifest *InstanceBackupManifestV2) error {
 	if len(document) == 0 || len(document) > instanceBackupManifestMaxBytes {
 		return fmt.Errorf("manifest size must be between 1 and %d bytes", instanceBackupManifestMaxBytes)
@@ -465,6 +473,7 @@ func validateManifestV2Document(document []byte, manifest *InstanceBackupManifes
 type InstanceBackupEvidenceExpectation struct {
 	ArtifactIdentity string
 	PolicyVersion    string
+	PolicySHA256     string
 	TargetScope      string
 }
 
@@ -482,6 +491,9 @@ func ValidateInstanceBackupManifestDocument(document []byte, expected InstanceBa
 	}
 	if expected.PolicyVersion != "" && manifest.RequiredTransitionPolicyVersion != expected.PolicyVersion {
 		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest policy does not match scheduled policy")
+	}
+	if expected.PolicySHA256 != "" && manifest.RequiredTransitionPolicySHA256 != expected.PolicySHA256 {
+		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest policy digest does not match scheduled policy")
 	}
 	if expected.TargetScope != "" && expected.TargetScope != "instance:"+manifest.InstanceID {
 		return InstanceBackupManifestV2{}, fmt.Errorf("backup manifest instance does not match scheduled target")
@@ -561,7 +573,7 @@ func ValidateInstanceRestorePreflightDocument(document []byte, manifestDocument 
 	if plan.SchemaVersion != 1 || !plan.Allowed || plan.ReasonCode != RestorePreflightAllowed ||
 		plan.BackupID != manifest.BackupID || plan.ManifestVersion != manifest.SchemaVersion ||
 		plan.ManifestSHA256 != hex.EncodeToString(manifestDigest[:]) ||
-		plan.PolicyVersion != manifest.RequiredTransitionPolicyVersion || plan.Environment != manifest.Environment ||
+		plan.PolicyVersion != manifest.RequiredTransitionPolicyVersion || plan.PolicySHA256 != manifest.RequiredTransitionPolicySHA256 || plan.Environment != manifest.Environment ||
 		plan.ArchiveRelease != manifest.ReleaseIdentity ||
 		(expected.ArtifactIdentity != "" && plan.TargetRelease.Image != expected.ArtifactIdentity) ||
 		!plan.ExclusiveLockVerified || plan.ArchiveSHA256 == "" || plan.TargetTreeSHA256 == "" {
@@ -588,6 +600,9 @@ func validateManifestV2(manifest *InstanceBackupManifestV2) error {
 	}
 	if manifest.CompletedAt.Before(manifest.CreatedAt) {
 		return fmt.Errorf("backup completion precedes creation")
+	}
+	if manifest.RequiredTransitionPolicySHA256 != "" && !validInstanceBackupSHA256(manifest.RequiredTransitionPolicySHA256) {
+		return fmt.Errorf("backup manifest transition policy SHA-256 is invalid")
 	}
 	if manifest.ReleaseIdentity == (compatibility.ReleaseIdentity{}) {
 		return fmt.Errorf("backup release identity is required")
@@ -932,6 +947,7 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	plan.ManifestSHA256 = hex.EncodeToString(manifestDigest[:])
 	plan.BackupID = manifest.BackupID
 	plan.PolicyVersion = manifest.RequiredTransitionPolicyVersion
+	plan.PolicySHA256 = manifest.RequiredTransitionPolicySHA256
 	plan.Environment = manifest.Environment
 	plan.ArchiveRelease = manifest.ReleaseIdentity
 	plan.ExternalPrerequisites = append([]InstanceBackupExternalStoreReference{}, manifest.StorageTopology.ExternalStores...)
@@ -1133,6 +1149,9 @@ func PreflightInstanceRestore(ctx context.Context, options InstanceRestorePrefli
 	}
 	if manifest.RequiredTransitionPolicyVersion != policy.PolicyVersion {
 		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "use a binary carrying the required transition policy", fmt.Errorf("archive requires policy %q, current policy is %q", manifest.RequiredTransitionPolicyVersion, policy.PolicyVersion))
+	}
+	if manifest.RequiredTransitionPolicySHA256 != "" && strings.TrimSpace(options.TransitionPolicySHA256) != manifest.RequiredTransitionPolicySHA256 {
+		return preflightDenied(plan, RestorePreflightIncompatibleRelease, "use the exact transition policy bound to the backup", fmt.Errorf("archive transition policy digest does not match the current policy"))
 	}
 	targetRelease, err := normalizeBackupReleaseIdentity(options.TargetReleaseIdentity)
 	if err != nil {

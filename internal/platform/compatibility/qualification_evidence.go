@@ -47,6 +47,7 @@ type TransitionQualificationState struct {
 type TransitionQualificationExpectation struct {
 	CandidateImage string
 	PolicyVersion  string
+	PolicySHA256   string
 	TargetScope    string
 }
 
@@ -98,6 +99,9 @@ func ValidateTransitionQualificationEvidence(document []byte, expected Transitio
 	}
 	if expected.PolicyVersion != "" && evidence.PolicyVersion != expected.PolicyVersion {
 		return TransitionQualificationEvidence{}, fmt.Errorf("transition qualification policy does not match scheduled policy")
+	}
+	if expected.PolicySHA256 != "" && evidence.PolicySHA256 != expected.PolicySHA256 {
+		return TransitionQualificationEvidence{}, fmt.Errorf("transition qualification policy digest does not match scheduled policy")
 	}
 	if expected.TargetScope != "" {
 		validTarget := expected.TargetScope == "release:"+evidence.Candidate.ReleaseID ||

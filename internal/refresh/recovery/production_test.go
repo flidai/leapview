@@ -2,7 +2,9 @@ package recovery
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -57,16 +59,24 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 	if !ok {
 		t.Fatal("bound policy lost predecessor")
 	}
+	policyDocument, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policyDigest := fmt.Sprintf("%x", sha256.Sum256(policyDocument))
+	if err := os.WriteFile(filepath.Join(root, "bundle", "release-transition-policy.json"), policyDocument, 0o600); err != nil {
+		t.Fatal(err)
+	}
 	config := ProductionQualificationConfig{
 		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"), InstanceID: instanceID, Environment: "qualification",
 		ReleaseIdentity: candidate, StorageTopology: platform.InstanceBackupStorageTopology{
 			ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{},
 		},
-		TransitionPolicy: policy, WorkRoot: work, EvidenceRoot: evidenceRoot,
+		TransitionPolicy: policy, PolicySHA256: policyDigest, WorkRoot: work, EvidenceRoot: evidenceRoot,
 		ControllerPath: filepath.Join(root, "leapviewctl"), BundleRoot: filepath.Join(root, "bundle"),
 		PredecessorImage: predecessor.IdentityForPlatform("linux/amd64").Image,
 		Cron:             "@hourly", Timezone: "UTC", StaleAfter: 24 * time.Hour,
-		Command: productionTransitionCommand{candidate: candidate, predecessor: predecessor.IdentityForPlatform("linux/amd64"), policyVersion: policy.PolicyVersion},
+		Command: productionTransitionCommand{candidate: candidate, predecessor: predecessor.IdentityForPlatform("linux/amd64"), policyVersion: policy.PolicyVersion, policySHA256: policyDigest},
 	}
 	definitions, err := config.ProductionDefinitions(t.Context())
 	if err != nil {
@@ -76,17 +86,20 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 		t.Fatalf("production definitions = %d", len(definitions))
 	}
 	adapters := config.ProductionAdapters()
-	for _, definition := range definitions {
-		outcome, err := adapters[definition.Operation].Execute(t.Context(), Occurrence{
+	for index, definition := range definitions {
+		occurrence := Occurrence{
+			ID: fmt.Sprintf("qualification-%d", index), Fence: Fence{Owner: "test", Generation: 1},
 			Operation: definition.Operation, ArtifactIdentity: definition.ArtifactIdentity,
-			PolicyVersion: definition.PolicyVersion, TargetScope: definition.TargetScope,
-		})
+			PolicyVersion: definition.PolicyVersion, PolicySHA256: definition.PolicySHA256, TargetScope: definition.TargetScope,
+		}
+		ctx := context.WithValue(t.Context(), phaseRecorderContextKey{}, phaseRecorder(func(_, _ string) error { return nil }))
+		outcome, err := adapters[definition.Operation].Execute(ctx, occurrence)
 		if err != nil {
 			t.Fatalf("execute %s owner: %v", definition.Operation, err)
 		}
 		validated, err := validateScenarioArtifacts(Occurrence{
 			Operation: definition.Operation, ArtifactIdentity: definition.ArtifactIdentity,
-			PolicyVersion: definition.PolicyVersion, TargetScope: definition.TargetScope,
+			PolicyVersion: definition.PolicyVersion, PolicySHA256: definition.PolicySHA256, TargetScope: definition.TargetScope,
 		}, outcome.Artifacts)
 		if err != nil {
 			t.Fatalf("validate %s owner evidence: %v", definition.Operation, err)
@@ -114,7 +127,7 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 			}
 			if _, err := validateScenarioArtifacts(Occurrence{
 				Operation: definition.Operation, ArtifactIdentity: definition.ArtifactIdentity,
-				PolicyVersion: definition.PolicyVersion, TargetScope: definition.TargetScope,
+				PolicyVersion: definition.PolicyVersion, PolicySHA256: definition.PolicySHA256, TargetScope: definition.TargetScope,
 			}, []EvidenceArtifact{{Kind: EvidenceBackupManifestV2, Path: invalidPath}}); err == nil {
 				t.Fatal("ledger accepted owner evidence with invalid external topology")
 			}
@@ -124,7 +137,7 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 			}
 			if _, err := validateScenarioArtifacts(Occurrence{
 				Operation: definition.Operation, ArtifactIdentity: definition.ArtifactIdentity,
-				PolicyVersion: definition.PolicyVersion, TargetScope: definition.TargetScope,
+				PolicyVersion: definition.PolicyVersion, PolicySHA256: definition.PolicySHA256, TargetScope: definition.TargetScope,
 			}, []EvidenceArtifact{{Kind: EvidenceBackupManifestV2, Path: malformedPath}}); err == nil {
 				t.Fatal("ledger accepted malformed owner manifest")
 			}
@@ -140,9 +153,40 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 	}
 }
 
+func TestQualificationWorkspaceReclaimsOnlySupersededOccurrenceGeneration(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{
+		"occurrence-a-generation-1",
+		"occurrence-a-generation-3",
+		"occurrence-b-generation-1",
+	} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	workspace, err := prepareQualificationWorkspace(root, Occurrence{
+		ID: "occurrence-a", Fence: Fence{Owner: "worker", Generation: 2},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if workspace != filepath.Join(root, "occurrence-a-generation-2") {
+		t.Fatalf("workspace = %q", workspace)
+	}
+	if _, err := os.Stat(filepath.Join(root, "occurrence-a-generation-1")); !os.IsNotExist(err) {
+		t.Fatalf("superseded crash workspace remains: %v", err)
+	}
+	for _, name := range []string{"occurrence-a-generation-2", "occurrence-a-generation-3", "occurrence-b-generation-1"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("active or unrelated workspace %s was removed: %v", name, err)
+		}
+	}
+}
+
 type productionTransitionCommand struct {
 	candidate, predecessor compatibility.ReleaseIdentity
 	policyVersion          string
+	policySHA256           string
 }
 
 func (command productionTransitionCommand) Run(_ context.Context, _ string, arguments ...string) error {
@@ -158,7 +202,7 @@ func (command productionTransitionCommand) Run(_ context.Context, _ string, argu
 	}
 	report := compatibility.TransitionQualificationEvidence{
 		SchemaVersion: 1, PolicyVersion: command.policyVersion, RecoveryPointAt: time.Now().UTC().Add(-time.Minute),
-		Predecessor: command.predecessor, Candidate: command.candidate, PolicySHA256: strings.Repeat("c", 64),
+		Predecessor: command.predecessor, Candidate: command.candidate, PolicySHA256: command.policySHA256,
 		StateBeforeUpgrade: strings.Repeat("d", 64), StateAfterUpgrade: strings.Repeat("d", 64), StateAfterRollback: strings.Repeat("d", 64),
 		InventoryBefore: state, InventoryAfterUpgrade: state, InventoryAfterRollback: state,
 		UpgradeResult: "success", RollbackResult: "success", PreservationVerified: true,

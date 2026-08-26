@@ -48,6 +48,126 @@ func TestProductionCompositionConfiguresRecoveryOwnersWithoutLifecycleInjection(
 	}
 }
 
+func TestProductionCompositionRetainsValidS3BackupRestoreEvidence(t *testing.T) {
+	policy, err := compatibility.EmbeddedPolicy()
+	if err != nil {
+		t.Fatal(err)
+	}
+	release, ok := policy.ReleaseByID(policy.CandidateRelease)
+	if !ok {
+		t.Fatal("embedded candidate release is missing")
+	}
+	identity := release.IdentityForPlatform(runtime.GOOS + "/" + runtime.GOARCH)
+	root := t.TempDir()
+	home := filepath.Join(root, "instance")
+	if err := os.MkdirAll(home, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	store, err := platform.Open(t.Context(), filepath.Join(home, "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.BindInstanceEnvironment(t.Context(), "qualification"); err != nil {
+		t.Fatal(err)
+	}
+	instanceID, err := store.InstanceID(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	pointsPath := filepath.Join(root, "external-recovery-points.json")
+	evidencePath := filepath.Join(root, "external-evidence.json")
+	if err := os.WriteFile(pointsPath, []byte(`[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(evidencePath, []byte(`{"managed-data-version":"version-42"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg := config.Config{
+		Production: true, HomeDir: home, Environment: "qualification", Image: identity.Image,
+		ManagedDataBackend: "s3", ManagedDataS3Endpoint: "https://s3.example.com", ManagedDataS3Region: "eu-west-1",
+		ManagedDataS3Bucket: "production-data", ManagedDataS3Prefix: "tenant/managed-data",
+		RecoveryQualificationEnabled: true, RecoveryQualificationController: filepath.Join(root, "leapviewctl"),
+		RecoveryQualificationBundle: filepath.Join(root, "bundle"), RecoveryQualificationWorkDir: filepath.Join(root, "work"),
+		RecoveryQualificationCron: "@hourly", RecoveryQualificationExternalRecoveryPoints: pointsPath,
+		RecoveryQualificationExternalEvidence: evidencePath,
+	}
+	lifecycle, err := productionRecoveryLifecycle(cfg, buildinfo.Identity{
+		Version: identity.Version, Revision: identity.SourceRevision, BuildTime: "2026-08-26T00:00:00Z",
+	}, "qualification", instanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	allDefinitions := lifecycle.Definitions
+	lifecycle.Definitions = func(ctx context.Context) ([]refreshmodule.RecoveryDefinition, error) {
+		definitions, err := allDefinitions(ctx)
+		if err != nil {
+			return nil, err
+		}
+		return definitions[:2], nil
+	}
+	now := time.Now().UTC().Add(time.Minute)
+	lifecycle.Clock = recoveryLifecycleClock{now: now}
+	lifecycle = refreshmodule.NewRecoveryLifecycle(store.SQLDB(), *lifecycle)
+	definitions, err := lifecycle.Definitions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, definition := range definitions {
+		if err := lifecycle.Repository.ReconcileSchedule(t.Context(), definition, now.Add(-65*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := lifecycle.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	occurrences, err := lifecycle.Repository.Occurrences(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(occurrences) != 2 {
+		t.Fatalf("S3 qualification occurrences = %d, want backup and restore", len(occurrences))
+	}
+	for _, occurrence := range occurrences {
+		if occurrence.Status != refreshmodule.StatusSucceeded || occurrence.EvidenceStatus != "published" {
+			t.Fatalf("S3 qualification did not publish retained evidence: %#v", occurrence)
+		}
+		for _, reference := range occurrence.Evidence {
+			document, err := os.ReadFile(filepath.Join(lifecycle.EvidenceRoot, reference.SHA256+".json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			switch reference.Kind {
+			case refreshmodule.EvidenceBackupManifestV2:
+				manifest, err := platform.ValidateInstanceBackupManifestDocument(document, platform.InstanceBackupEvidenceExpectation{
+					ArtifactIdentity: identity.Image, PolicyVersion: policy.PolicyVersion,
+					PolicySHA256: occurrence.PolicySHA256, TargetScope: "instance:" + instanceID,
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(manifest.StorageTopology.ExternalStores) != 1 {
+					t.Fatalf("S3 manifest topology = %#v", manifest.StorageTopology)
+				}
+				external := manifest.StorageTopology.ExternalStores[0]
+				if external.Provider != "s3-compatible" || external.Endpoint != "https://s3.example.com" || external.Region != "eu-west-1" ||
+					external.Bucket != "production-data" || external.Prefix != "tenant/managed-data" ||
+					external.RecoveryPoint != "version-42" || external.EvidenceKey != "managed-data-version" {
+					t.Fatalf("S3 manifest external identity = %#v", external)
+				}
+			case refreshmodule.EvidenceRestorePreflight:
+				var plan platform.InstanceRestorePreflightPlan
+				if err := json.Unmarshal(document, &plan); err != nil {
+					t.Fatal(err)
+				}
+				if !plan.Allowed || len(plan.ExternalPrerequisites) != 1 || plan.ExternalPrerequisites[0].RecoveryPoint != "version-42" {
+					t.Fatalf("S3 restore preflight evidence = %#v", plan)
+				}
+			}
+		}
+	}
+}
+
 func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
@@ -106,8 +226,23 @@ func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testi
 			{Kind: refreshmodule.EvidenceTransitionQualification, Path: evidence.transition},
 		},
 	} {
+		operation := operation
 		outputs := artifactOutputs
-		adapters[operation] = refreshmodule.RecoveryScenarioAdapterFunc(func(context.Context, refreshmodule.Occurrence) (refreshmodule.RecoveryScenarioOutcome, error) {
+		adapters[operation] = refreshmodule.RecoveryScenarioAdapterFunc(func(ctx context.Context, _ refreshmodule.Occurrence) (refreshmodule.RecoveryScenarioOutcome, error) {
+			phase := ""
+			if operation == refreshmodule.OperationRestore {
+				phase = refreshmodule.RecoveryPhaseRestore
+			} else if operation == refreshmodule.OperationUpgrade || operation == refreshmodule.OperationRollback {
+				phase = refreshmodule.RecoveryPhaseReadiness
+			}
+			if phase != "" {
+				if err := refreshmodule.RecordRecoveryQualificationPhase(ctx, phase, refreshmodule.RecoveryPhaseStarted); err != nil {
+					return refreshmodule.RecoveryScenarioOutcome{}, err
+				}
+				if err := refreshmodule.RecordRecoveryQualificationPhase(ctx, phase, refreshmodule.RecoveryPhaseCompleted); err != nil {
+					return refreshmodule.RecoveryScenarioOutcome{}, err
+				}
+			}
 			return refreshmodule.RecoveryScenarioOutcome{Artifacts: outputs}, nil
 		})
 	}
@@ -212,7 +347,8 @@ func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now tim
 		CreatedAt: now.Add(-20 * time.Minute), CompletedAt: now.Add(-19 * time.Minute), ArchiveMode: "full-instance",
 		StorageTopology:                 platform.InstanceBackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{}},
 		RequiredTransitionPolicyVersion: "ubdr-v1", Members: members,
-		InventorySHA256: fmt.Sprintf("%x", inventoryDigest[:]),
+		RequiredTransitionPolicySHA256: strings.Repeat("c", 64),
+		InventorySHA256:                fmt.Sprintf("%x", inventoryDigest[:]),
 	}
 	backup := write("leapview-backup.json", manifest)
 	manifestDocument, err := os.ReadFile(backup)
@@ -223,7 +359,7 @@ func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now tim
 	restore := write("preflight-report.json", platform.InstanceRestorePreflightPlan{
 		SchemaVersion: 1, Allowed: true, ReasonCode: platform.RestorePreflightAllowed,
 		BackupID: manifest.BackupID, ManifestVersion: platform.InstanceBackupManifestVersion,
-		ManifestSHA256: fmt.Sprintf("%x", manifestDigest[:]), PolicyVersion: "ubdr-v1", ArchiveSHA256: strings.Repeat("2", 64),
+		ManifestSHA256: fmt.Sprintf("%x", manifestDigest[:]), PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), ArchiveSHA256: strings.Repeat("2", 64),
 		TargetTreeSHA256: strings.Repeat("3", 64), Environment: "qualification", ArchiveRelease: candidate, TargetRelease: candidate,
 		TargetStorageTopology: manifest.StorageTopology, CheckpointTopology: platform.InstanceBackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{}},
 		ExternalPrerequisites: []platform.InstanceBackupExternalStoreReference{}, ExclusiveLockVerified: true,
@@ -241,7 +377,7 @@ func recoveryLifecycleDefinitions(artifact string) []refreshmodule.RecoveryDefin
 		}
 		definitions = append(definitions, refreshmodule.RecoveryDefinition{
 			ScheduleID: "production-" + operation, Scenario: "ubdr-foundation", Operation: operation,
-			PolicyVersion: "ubdr-v1", TargetScope: targetScope, ArtifactIdentity: artifact,
+			PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("c", 64), TargetScope: targetScope, ArtifactIdentity: artifact,
 			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
 		})
 	}

@@ -43,10 +43,11 @@ func TestBackupManifestV2InventoriesMembersDeterministically(t *testing.T) {
 	archivePath := filepath.Join(t.TempDir(), "backup.tar.gz")
 	createdAt := time.Date(2026, time.August, 25, 5, 0, 0, 0, time.UTC)
 	identity := testBackupReleaseIdentity("1.2.3", "a")
+	policySHA256 := strings.Repeat("b", 64)
 	if err := BackupInstance(ctx, InstanceBackupOptions{
 		HomeDir: home, DBPath: dbPath, OutPath: archivePath,
 		BackupID: "backup_test", Now: func() time.Time { return createdAt },
-		ReleaseIdentity: identity,
+		ReleaseIdentity: identity, TransitionPolicySHA256: policySHA256,
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +59,8 @@ func TestBackupManifestV2InventoriesMembersDeterministically(t *testing.T) {
 	}
 	if manifest.SchemaVersion != InstanceBackupManifestVersion || manifest.BackupID != "backup_test" ||
 		manifest.CreatedAt != createdAt || manifest.CompletedAt != createdAt || manifest.Environment != "prod" ||
-		manifest.ReleaseIdentity != identity || manifest.RequiredTransitionPolicyVersion != "ubdr/v1" {
+		manifest.ReleaseIdentity != identity || manifest.RequiredTransitionPolicyVersion != "ubdr/v1" ||
+		manifest.RequiredTransitionPolicySHA256 != policySHA256 {
 		t.Fatalf("manifest = %#v", manifest)
 	}
 	paths := make([]string, 0, len(manifest.Members))
@@ -79,10 +81,16 @@ func TestBackupManifestV2InventoriesMembersDeterministically(t *testing.T) {
 	if manifest.InventorySHA256 == "" {
 		t.Fatal("manifest inventory checksum is empty")
 	}
+	if _, err := ValidateInstanceBackupManifestDocument(entries[instanceBackupManifestName], InstanceBackupEvidenceExpectation{
+		ArtifactIdentity: identity.Image, PolicyVersion: "ubdr/v1", PolicySHA256: strings.Repeat("c", 64),
+	}); err == nil {
+		t.Fatal("backup evidence from a different same-version policy was accepted")
+	}
 	secondArchive := filepath.Join(t.TempDir(), "backup.tar.gz")
 	if err := BackupInstance(ctx, InstanceBackupOptions{
 		HomeDir: home, DBPath: dbPath, OutPath: secondArchive,
 		BackupID: "backup_test", Now: func() time.Time { return createdAt }, ReleaseIdentity: identity,
+		TransitionPolicySHA256: policySHA256,
 	}); err != nil {
 		t.Fatal(err)
 	}

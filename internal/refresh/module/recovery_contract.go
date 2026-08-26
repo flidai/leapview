@@ -1,6 +1,7 @@
 package module
 
 import (
+	"context"
 	"database/sql"
 	"time"
 
@@ -47,12 +48,26 @@ type RecoveryLifecycle = refreshrecovery.Lifecycle
 type RecoveryDefinitionProvider = refreshrecovery.DefinitionProvider
 type RecoveryScenarioAdapter = refreshrecovery.ScenarioAdapter
 type RecoveryScenarioAdapterFunc = refreshrecovery.ScenarioAdapterFunc
+
+const (
+	RecoveryPhaseRestore   = refreshrecovery.PhaseRestore
+	RecoveryPhaseReadiness = refreshrecovery.PhaseReadiness
+	RecoveryPhaseStarted   = refreshrecovery.PhaseStarted
+	RecoveryPhaseCompleted = refreshrecovery.PhaseCompleted
+)
+
+func RecordRecoveryQualificationPhase(ctx context.Context, phase, event string) error {
+	return refreshrecovery.RecordQualificationPhase(ctx, phase, event)
+}
+
 type RecoveryScenarioOutcome = refreshrecovery.ScenarioOutcome
 type RecoveryEvidenceArtifact = refreshrecovery.EvidenceArtifact
 type RecoveryEvidencePublisher = refreshrecovery.EvidencePublisher
 type RecoveryFileEvidencePublisher = refreshrecovery.FileEvidencePublisher
 type ProductionRecoveryQualificationConfig = refreshrecovery.ProductionQualificationConfig
 type RecoveryQualificationCommand = refreshrecovery.QualificationCommand
+type RecoveryStorageQualificationEvidence = refreshrecovery.StorageQualificationEvidence
+type RecoveryStorageEvidenceProvider = refreshrecovery.StorageEvidenceProvider
 
 const (
 	EvidenceTransitionQualification = refreshrecovery.EvidenceTransitionQualification

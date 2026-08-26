@@ -24,6 +24,7 @@ type MetricsCollector struct {
 	lastSuccessAge   *prometheus.Desc
 	restoreDuration  *prometheus.Desc
 	readiness        *prometheus.Desc
+	qualification    *prometheus.Desc
 	recoveryPointAge *prometheus.Desc
 	scrapeError      *prometheus.Desc
 }
@@ -43,6 +44,7 @@ func NewMetricsCollector(repository Repository, clock refreshschedule.Clock) *Me
 		lastSuccessAge:   prometheus.NewDesc("leapview_recovery_qualification_last_success_age_seconds", "Age of the latest successful qualification by operation.", []string{"operation"}, nil),
 		restoreDuration:  prometheus.NewDesc("leapview_recovery_qualification_restore_duration_seconds", "Latest successful restore duration by operation.", []string{"operation"}, nil),
 		readiness:        prometheus.NewDesc("leapview_recovery_qualification_readiness_duration_seconds", "Latest successful readiness duration by operation.", []string{"operation"}, nil),
+		qualification:    prometheus.NewDesc("leapview_recovery_qualification_duration_seconds", "Latest successful end-to-end qualification duration by operation.", []string{"operation"}, nil),
 		recoveryPointAge: prometheus.NewDesc("leapview_recovery_qualification_recovery_point_age_seconds", "Latest successful recovery-point age by operation.", []string{"operation"}, nil),
 		scrapeError:      prometheus.NewDesc("leapview_recovery_qualification_scrape_error", "Whether the latest recovery qualification ledger scrape failed.", nil, nil),
 	}
@@ -53,7 +55,7 @@ func (collector *MetricsCollector) Describe(output chan<- *prometheus.Desc) {
 		collector.configured, collector.missing, collector.staleLeases,
 		collector.due, collector.overdue, collector.running, collector.failed,
 		collector.evidence, collector.leaseRecoveries, collector.lastSuccessAge,
-		collector.restoreDuration, collector.readiness, collector.recoveryPointAge,
+		collector.restoreDuration, collector.readiness, collector.qualification, collector.recoveryPointAge,
 		collector.scrapeError,
 	} {
 		output <- descriptor
@@ -93,6 +95,7 @@ func (collector *MetricsCollector) Collect(output chan<- prometheus.Metric) {
 		output <- prometheus.MustNewConstMetric(collector.lastSuccessAge, prometheus.GaugeValue, float64(*operation.LastSuccessAgeSeconds), operation.Operation)
 		output <- prometheus.MustNewConstMetric(collector.restoreDuration, prometheus.GaugeValue, float64(*operation.LastRestoreDurationMillis)/1000, operation.Operation)
 		output <- prometheus.MustNewConstMetric(collector.readiness, prometheus.GaugeValue, float64(*operation.LastReadinessDurationMillis)/1000, operation.Operation)
+		output <- prometheus.MustNewConstMetric(collector.qualification, prometheus.GaugeValue, float64(*operation.LastQualificationDurationMillis)/1000, operation.Operation)
 		output <- prometheus.MustNewConstMetric(collector.recoveryPointAge, prometheus.GaugeValue, float64(*operation.LastRecoveryPointAgeSeconds), operation.Operation)
 	}
 	output <- prometheus.MustNewConstMetric(collector.scrapeError, prometheus.GaugeValue, 0)

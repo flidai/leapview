@@ -46,6 +46,23 @@ type ScenarioAdapter interface {
 	Execute(context.Context, Occurrence) (ScenarioOutcome, error)
 }
 
+type phaseRecorder func(string, string) error
+type phaseRecorderContextKey struct{}
+
+func recordQualificationPhase(ctx context.Context, phase, event string) error {
+	recorder, _ := ctx.Value(phaseRecorderContextKey{}).(phaseRecorder)
+	if recorder == nil {
+		return fmt.Errorf("recovery qualification phase recorder is unavailable")
+	}
+	return recorder(phase, event)
+}
+
+// RecordQualificationPhase lets owner adapters delimit ledger-clocked phases
+// without supplying or controlling their timestamps.
+func RecordQualificationPhase(ctx context.Context, phase, event string) error {
+	return recordQualificationPhase(ctx, phase, event)
+}
+
 type ScenarioAdapterFunc func(context.Context, Occurrence) (ScenarioOutcome, error)
 
 func (adapter ScenarioAdapterFunc) Execute(ctx context.Context, occurrence Occurrence) (ScenarioOutcome, error) {
@@ -265,7 +282,10 @@ func (lifecycle Lifecycle) execute(ctx context.Context, occurrence Occurrence) e
 			}
 		}
 	}()
-	outcome, runErr := adapter.Execute(executeCtx, occurrence)
+	adapterContext := context.WithValue(executeCtx, phaseRecorderContextKey{}, phaseRecorder(func(phase, event string) error {
+		return lifecycle.Repository.RecordPhase(executeCtx, occurrence.ID, occurrence.Fence, phase, event, lifecycle.now())
+	}))
+	outcome, runErr := adapter.Execute(adapterContext, occurrence)
 	cancel()
 	if heartbeatErr := <-heartbeatDone; heartbeatErr != nil {
 		if outcome.cleanup != nil {
@@ -389,7 +409,8 @@ func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact)
 			}
 		}
 		_, manifest, err := platform.ValidateInstanceRestorePreflightDocument(planDocument, manifestDocument, platform.InstanceBackupEvidenceExpectation{
-			ArtifactIdentity: occurrence.ArtifactIdentity, PolicyVersion: occurrence.PolicyVersion, TargetScope: occurrence.TargetScope,
+			ArtifactIdentity: occurrence.ArtifactIdentity, PolicyVersion: occurrence.PolicyVersion,
+			PolicySHA256: occurrence.PolicySHA256, TargetScope: occurrence.TargetScope,
 		})
 		if err != nil {
 			return nil, err
@@ -457,7 +478,8 @@ func readUBDRArtifact(kind, path string, expected Occurrence) (validatedEvidence
 	switch kind {
 	case EvidenceTransitionQualification:
 		report, err := compatibility.ValidateTransitionQualificationEvidence(contents, compatibility.TransitionQualificationExpectation{
-			CandidateImage: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion, TargetScope: expected.TargetScope,
+			CandidateImage: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion,
+			PolicySHA256: expected.PolicySHA256, TargetScope: expected.TargetScope,
 		})
 		if err != nil {
 			return validatedEvidenceArtifact{}, err
@@ -468,7 +490,8 @@ func readUBDRArtifact(kind, path string, expected Occurrence) (validatedEvidence
 		return validatedEvidenceArtifact{reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents, recoveryPointAt: report.RecoveryPointAt}, nil
 	case EvidenceBackupManifestV2:
 		manifest, err := platform.ValidateInstanceBackupManifestDocument(contents, platform.InstanceBackupEvidenceExpectation{
-			ArtifactIdentity: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion, TargetScope: expected.TargetScope,
+			ArtifactIdentity: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion,
+			PolicySHA256: expected.PolicySHA256, TargetScope: expected.TargetScope,
 		})
 		if err != nil {
 			return validatedEvidenceArtifact{}, err

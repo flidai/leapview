@@ -10,7 +10,7 @@ import (
 func TestOccurrenceIdentityIsStableAndBindsImmutableIntent(t *testing.T) {
 	input := EnqueueInput{
 		ScheduleID: "weekly-prod", Scenario: "managed-instance", Operation: OperationRestore,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod",
+		PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("b", 64), TargetScope: "instance:prod",
 		ArtifactIdentity: "backup:sha256:" + strings.Repeat("a", 64),
 		PlannedAt:        time.Date(2026, 8, 25, 5, 0, 0, 0, time.UTC), StaleAfter: 24 * time.Hour,
 	}
@@ -32,6 +32,15 @@ func TestOccurrenceIdentityIsStableAndBindsImmutableIntent(t *testing.T) {
 	}
 	if changed == first {
 		t.Fatal("policy version did not participate in occurrence identity")
+	}
+	input.PolicyVersion = "ubdr-v1"
+	input.PolicySHA256 = strings.Repeat("c", 64)
+	changed, err = OccurrenceID(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed == first {
+		t.Fatal("exact policy digest did not participate in occurrence identity")
 	}
 }
 

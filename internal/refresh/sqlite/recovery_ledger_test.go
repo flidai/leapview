@@ -1,6 +1,7 @@
 package sqlite
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -15,6 +16,7 @@ import (
 )
 
 var recoveryArtifact = "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+var recoveryPolicySHA256 = strings.Repeat("b", 64)
 
 func TestRecoveryOccurrenceEnqueueIsIdempotentAndRejectsConflictingArtifact(t *testing.T) {
 	repository, closeStore := openRecoveryRepository(t)
@@ -113,6 +115,7 @@ func TestRecoveryConcurrentClaimFencesStaleWorkerAndPreservesAttemptHistory(t *t
 	if err := repository.Complete(t.Context(), occurrence.ID, stale.Fence, now.Add(2*time.Minute+30*time.Second), result); !errors.Is(err, recovery.ErrFenced) {
 		t.Fatalf("stale completion error = %v, want ErrFenced", err)
 	}
+	recordRecoveryTestPhase(t, repository, occurrence, reclaimed.Fence, now.Add(2*time.Minute+2*time.Second), now.Add(2*time.Minute+20*time.Second))
 	if err := repository.Complete(t.Context(), occurrence.ID, reclaimed.Fence, now.Add(2*time.Minute+30*time.Second), result); err != nil {
 		t.Fatal(err)
 	}
@@ -144,6 +147,7 @@ func TestRecoveryLedgerSurvivesRestartAndEvidencePublicationRetriesWithoutRerun(
 	if err := repository.Start(t.Context(), occurrence.ID, claimed.Fence, now.Add(time.Second)); err != nil {
 		t.Fatal(err)
 	}
+	recordRecoveryTestPhase(t, repository, occurrence, claimed.Fence, now.Add(2*time.Second), now.Add(50*time.Second))
 	if err := repository.Complete(t.Context(), occurrence.ID, claimed.Fence, now.Add(time.Minute), successfulRecoveryResult(now.Add(time.Minute), "restore")); err != nil {
 		t.Fatal(err)
 	}
@@ -165,7 +169,10 @@ func TestRecoveryLedgerSurvivesRestartAndEvidencePublicationRetriesWithoutRerun(
 	if err := repository.FailEvidence(t.Context(), occurrence.ID, firstFence, now.Add(2*time.Minute+10*time.Second), errors.New("upload token=super-secret failed")); err != nil {
 		t.Fatal(err)
 	}
-	retried, ok, err := repository.ClaimEvidence(t.Context(), "publisher-two", now.Add(3*time.Minute), time.Minute)
+	if _, ok, err := repository.ClaimEvidence(t.Context(), "publisher-too-early", now.Add(3*time.Minute), time.Minute); err != nil || ok {
+		t.Fatalf("evidence retry ignored persisted backoff: claimed=%t error=%v", ok, err)
+	}
+	retried, ok, err := repository.ClaimEvidence(t.Context(), "publisher-two", now.Add(3*time.Minute+11*time.Second), time.Minute)
 	if err != nil || !ok {
 		t.Fatalf("retry evidence = (%t, %v)", ok, err)
 	}
@@ -194,13 +201,115 @@ func TestRecoveryLedgerSurvivesRestartAndEvidencePublicationRetriesWithoutRerun(
 	}
 }
 
+func TestRecoveryPublicationSkipsTerminalNoEvidenceAndPublishesNewerSuccess(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	now := time.Date(2026, 8, 26, 8, 0, 0, 0, time.UTC)
+	failed, _, err := repository.Enqueue(t.Context(), recoveryInput("failed-empty", recovery.OperationBackup, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claim, ok, err := repository.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "failure-worker", Actor: "scheduler", Now: now, Lease: time.Hour})
+	if err != nil || !ok || claim.ID != failed.ID {
+		t.Fatalf("claim failed occurrence = (%#v, %t, %v)", claim, ok, err)
+	}
+	if err := repository.Start(t.Context(), failed.ID, claim.Fence, now.Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.Fail(t.Context(), failed.ID, claim.Fence, now.Add(time.Minute), recovery.Result{}, errors.New("qualification unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	succeeded := finishRecovery(t, repository, "newer-success", recovery.OperationBackup, now.Add(2*time.Minute), true)
+	publisher := &recordingRecoveryPublisher{}
+	lifecycle := recovery.Lifecycle{
+		Repository:  repository,
+		Definitions: func(context.Context) ([]recovery.Definition, error) { return nil, nil },
+		Adapters:    map[string]recovery.ScenarioAdapter{}, Publisher: publisher,
+		Clock: fixedRecoveryClock{now: now.Add(4 * time.Minute)}, WorkerID: "lifecycle-worker", Actor: "scheduler",
+		Lease: time.Minute, BatchSize: 10, ComplianceWindow: 30 * 24 * time.Hour, EvidenceRoot: t.TempDir(),
+	}
+	if err := lifecycle.RunOnce(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	storedFailed, err := repository.Occurrence(t.Context(), failed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	storedSuccess, err := repository.Occurrence(t.Context(), succeeded.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedFailed.EvidenceStatus != recovery.EvidenceNone || storedSuccess.EvidenceStatus != recovery.EvidencePublished {
+		t.Fatalf("publication states = failed:%s success:%s", storedFailed.EvidenceStatus, storedSuccess.EvidenceStatus)
+	}
+	if len(publisher.ids) != 1 || publisher.ids[0] != succeeded.ID {
+		t.Fatalf("published occurrence IDs = %v", publisher.ids)
+	}
+}
+
+type recordingRecoveryPublisher struct{ ids []string }
+
+func (publisher *recordingRecoveryPublisher) Publish(_ context.Context, occurrence recovery.Occurrence) error {
+	publisher.ids = append(publisher.ids, occurrence.ID)
+	return nil
+}
+
+func TestRecoveryPhaseDurationsExcludeTimeOutsideOwnedPhases(t *testing.T) {
+	for _, test := range []struct {
+		operation string
+		phase     string
+	}{
+		{recovery.OperationRestore, recovery.PhaseRestore},
+		{recovery.OperationUpgrade, recovery.PhaseReadiness},
+	} {
+		t.Run(test.operation, func(t *testing.T) {
+			repository, closeStore := openRecoveryRepository(t)
+			defer closeStore()
+			now := time.Date(2026, 8, 26, 9, 0, 0, 0, time.UTC)
+			occurrence, _, err := repository.Enqueue(t.Context(), recoveryInput("phase-"+test.operation, test.operation, now), now)
+			if err != nil {
+				t.Fatal(err)
+			}
+			claimed, ok, err := repository.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "phase-worker", Actor: "scheduler", Now: now, Lease: time.Hour})
+			if err != nil || !ok {
+				t.Fatalf("claim = (%t, %v)", ok, err)
+			}
+			if err := repository.Start(t.Context(), occurrence.ID, claimed.Fence, now.Add(time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.RecordPhase(t.Context(), occurrence.ID, claimed.Fence, test.phase, recovery.PhaseStarted, now.Add(10*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.RecordPhase(t.Context(), occurrence.ID, claimed.Fence, test.phase, recovery.PhaseCompleted, now.Add(12*time.Second)); err != nil {
+				t.Fatal(err)
+			}
+			if err := repository.Complete(t.Context(), occurrence.ID, claimed.Fence, now.Add(30*time.Second), successfulRecoveryResult(now.Add(30*time.Second), test.operation)); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := repository.Occurrence(t.Context(), occurrence.ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if stored.QualificationDurationMillis != 29_000 {
+				t.Fatalf("total duration = %dms, want 29000ms", stored.QualificationDurationMillis)
+			}
+			if test.phase == recovery.PhaseRestore && (stored.RestoreDurationMillis != 2_000 || stored.ReadinessDurationMillis != 0) {
+				t.Fatalf("restore/readiness durations = %d/%d", stored.RestoreDurationMillis, stored.ReadinessDurationMillis)
+			}
+			if test.phase == recovery.PhaseReadiness && (stored.ReadinessDurationMillis != 2_000 || stored.RestoreDurationMillis != 0) {
+				t.Fatalf("restore/readiness durations = %d/%d", stored.RestoreDurationMillis, stored.ReadinessDurationMillis)
+			}
+		})
+	}
+}
+
 func TestRecoveryScheduleCatchupStalenessStatusAndBoundedMetrics(t *testing.T) {
 	repository, closeStore := openRecoveryRepository(t)
 	defer closeStore()
 	base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
 	definition := recovery.Definition{
 		ScheduleID: "hourly-restore", Scenario: "managed-instance", Operation: recovery.OperationRestore,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256, TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
 		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: time.Minute, Enabled: true,
 	}
 	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
@@ -231,7 +340,7 @@ func TestRecoveryScheduleCatchupStalenessStatusAndBoundedMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snapshot.Failed != 3 || snapshot.EvidencePending != 3 {
+	if snapshot.Failed != 3 || snapshot.EvidencePending != 0 {
 		t.Fatalf("stale status = %#v", snapshot)
 	}
 	for _, metric := range snapshot.Metrics() {
@@ -325,7 +434,7 @@ func TestRecoveryStatusPassivelyDistinguishesMissingAndStaleWork(t *testing.T) {
 		base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
 		definition := recovery.Definition{
 			ScheduleID: "missing-hourly", Scenario: "managed-instance", Operation: recovery.OperationRestore,
-			PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+			PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256, TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
 			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 30 * time.Minute, Enabled: true,
 		}
 		if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
@@ -414,7 +523,7 @@ func TestRecoveryStatusSnapshotIsConsistentDuringConcurrentEnqueue(t *testing.T)
 	now := time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC)
 	definition := recovery.Definition{
 		ScheduleID: "concurrent-status", Scenario: "managed-instance", Operation: recovery.OperationBackup,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256, TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
 		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
 	}
 	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
@@ -457,7 +566,7 @@ func TestRecoveryScheduleRevisionPreservesOverdueArtifactIdentity(t *testing.T) 
 	base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
 	definition := recovery.Definition{
 		ScheduleID: "release-hourly", Scenario: "release-transition", Operation: recovery.OperationUpgrade,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256, TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
 		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
 	}
 	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
@@ -486,6 +595,38 @@ func TestRecoveryScheduleRevisionPreservesOverdueArtifactIdentity(t *testing.T) 
 	}
 }
 
+func TestRecoveryScheduleRevisionBindsExactPolicyDigestAtSameVersion(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
+	definition := recovery.Definition{
+		ScheduleID: "policy-hourly", Scenario: "release-transition", Operation: recovery.OperationUpgrade,
+		PolicyVersion: "ubdr-v1", PolicySHA256: strings.Repeat("b", 64), TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
+	}
+	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+		t.Fatal(err)
+	}
+	definition.PolicySHA256 = strings.Repeat("c", 64)
+	if err := repository.ReconcileSchedule(t.Context(), definition, time.Date(2026, 8, 25, 3, 30, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.EnqueueDue(t.Context(), time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC), 10); err != nil {
+		t.Fatal(err)
+	}
+	occurrences, err := repository.Occurrences(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(occurrences) != 3 || occurrences[0].PolicySHA256 != strings.Repeat("b", 64) ||
+		occurrences[1].PolicySHA256 != strings.Repeat("b", 64) || occurrences[2].PolicySHA256 != strings.Repeat("c", 64) {
+		t.Fatalf("policy revision history = %#v", occurrences)
+	}
+	if occurrences[0].PolicyVersion != occurrences[2].PolicyVersion || occurrences[0].ScheduleRevision == occurrences[2].ScheduleRevision {
+		t.Fatal("same-version policy digests were treated as interchangeable")
+	}
+}
+
 func openRecoveryRepository(t *testing.T) (*Repository, func()) {
 	t.Helper()
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
@@ -502,7 +643,7 @@ func openRecoveryRepository(t *testing.T) (*Repository, func()) {
 func recoveryInput(scheduleID, operation string, plannedAt time.Time) recovery.EnqueueInput {
 	return recovery.EnqueueInput{
 		ScheduleID: scheduleID, Scenario: "managed-instance", Operation: operation,
-		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256, TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
 		PlannedAt: plannedAt, StaleAfter: 24 * time.Hour,
 	}
 }
@@ -542,6 +683,7 @@ func finishRecovery(t *testing.T, repository *Repository, scheduleID, operation 
 		t.Fatal(err)
 	}
 	completedAt := plannedAt.Add(time.Minute)
+	recordRecoveryTestPhase(t, repository, occurrence, claimed.Fence, plannedAt.Add(2*time.Second), completedAt.Add(-time.Second))
 	result := successfulRecoveryResult(completedAt, operation)
 	if success {
 		err = repository.Complete(t.Context(), occurrence.ID, claimed.Fence, completedAt, result)
@@ -556,6 +698,25 @@ func finishRecovery(t *testing.T, repository *Repository, scheduleID, operation 
 		t.Fatal(err)
 	}
 	return stored
+}
+
+func recordRecoveryTestPhase(t *testing.T, repository *Repository, occurrence recovery.Occurrence, fence recovery.Fence, startedAt, completedAt time.Time) {
+	t.Helper()
+	phase := ""
+	switch occurrence.Operation {
+	case recovery.OperationRestore:
+		phase = recovery.PhaseRestore
+	case recovery.OperationUpgrade, recovery.OperationRollback:
+		phase = recovery.PhaseReadiness
+	default:
+		return
+	}
+	if err := repository.RecordPhase(t.Context(), occurrence.ID, fence, phase, recovery.PhaseStarted, startedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := repository.RecordPhase(t.Context(), occurrence.ID, fence, phase, recovery.PhaseCompleted, completedAt); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func containsString(values []string, target string) bool {
