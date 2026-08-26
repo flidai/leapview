@@ -51,6 +51,7 @@ type Options struct {
 	DockerPlatform          string
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
+	qualificationPhase      func(string, string) error
 }
 
 type Controller struct {
@@ -66,6 +67,7 @@ type Controller struct {
 	dockerPlatform          string
 	qualificationExecutor   qualificationCommandExecutor
 	qualificationContainers qualificationContainerRuntime
+	qualificationPhase      func(string, string) error
 	startOverride           func(context.Context) error
 	writePrivateOverride    func(string, []byte) error
 	setImageOverride        func(string) error
@@ -148,6 +150,10 @@ func New(options Options) (*Controller, error) {
 	if err := transitionPolicy.Validate(); err != nil {
 		return nil, fmt.Errorf("validate release-transition policy: %w", err)
 	}
+	qualificationPhase := options.qualificationPhase
+	if qualificationPhase == nil {
+		qualificationPhase = qualificationPhaseObserverFromEnvironment()
+	}
 	return &Controller{
 		root: root, dockerBin: dockerBin, stdin: stdin, stdout: stdout,
 		stderr: stderr, deploymentPayloads: options.DeploymentPayloads, now: now, sleep: sleep,
@@ -155,6 +161,7 @@ func New(options Options) (*Controller, error) {
 		dockerPlatform:          strings.TrimSpace(options.DockerPlatform),
 		qualificationExecutor:   executor,
 		qualificationContainers: containers,
+		qualificationPhase:      qualificationPhase,
 	}, nil
 }
 
@@ -564,7 +571,7 @@ func (c *Controller) upgrade(ctx context.Context, next string, policy *compatibi
 		if !wasRunning {
 			return nil
 		}
-		if err := c.startUnlocked(ctx); err != nil {
+		if err := c.runQualificationReadiness("upgrade", func() error { return c.startUnlocked(ctx) }); err != nil {
 			// A failed cutover must converge back to the exact pre-operation
 			// image, data, and running state. Preserve every failure encountered
 			// while attempting that convergence so operators can tell whether the
@@ -720,7 +727,7 @@ func (c *Controller) rollback(ctx context.Context, confirmed bool, policy *compa
 				return errors.Join(fmt.Errorf("rollback deployment payload failed: %w", err), payloadErr, restoreErr, stateErr)
 			}
 		}
-		if err := c.startUnlocked(ctx); err != nil {
+		if err := c.runQualificationReadiness("rollback", func() error { return c.startUnlocked(ctx) }); err != nil {
 			_ = c.stop(ctx, 30)
 			_ = c.setImage(current)
 			payloadErr := rollbackDeploymentPayload(payloadUpdate)

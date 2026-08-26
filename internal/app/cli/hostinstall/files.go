@@ -23,12 +23,28 @@ var requiredPayloadFiles = []payloadFile{
 	{Source: "compose.https.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.https.yaml") }, Mode: 0o600},
 	{Source: "Caddyfile", Target: func(paths Paths) string { return filepath.Join(paths.Root, "Caddyfile") }, Mode: 0o600},
 	{Source: "deployment.env.example", Target: func(paths Paths) string { return filepath.Join(paths.Root, "deployment.env.example") }, Mode: 0o600},
+	{Source: "leapview.env.example", Target: func(paths Paths) string { return filepath.Join(paths.Root, "leapview.env.example") }, Mode: 0o600},
+	{Source: "README.md", Target: func(paths Paths) string { return filepath.Join(paths.Root, "README.md") }, Mode: 0o600},
+	{Source: "QUALIFICATION.md", Target: func(paths Paths) string { return filepath.Join(paths.Root, "QUALIFICATION.md") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "Dockerfile.authoring-client"), Target: func(paths Paths) string {
+		return filepath.Join(paths.Root, "qualification", "Dockerfile.authoring-client")
+	}, Mode: 0o600},
+	{Source: filepath.Join("qualification", "authoring-worker.mjs"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "authoring-worker.mjs") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "browser.mjs"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "browser.mjs") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "bun.lock"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "bun.lock") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "package.json"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "package.json") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "performance-policy.json"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "performance-policy.json") }, Mode: 0o600},
+	{Source: filepath.Join("qualification", "performance.mjs"), Target: func(paths Paths) string { return filepath.Join(paths.Root, "qualification", "performance.mjs") }, Mode: 0o600},
 	{Source: "leapviewctl-wrapper", Target: func(paths Paths) string { return filepath.Join(paths.SystemBin, "leapviewctl") }, Mode: 0o700},
 	{Source: "leapview-backup-hook", Target: func(paths Paths) string { return filepath.Join(paths.SystemBin, "leapview-backup-hook") }, Mode: 0o700},
 	{Source: "leapview-backup.service", Target: func(paths Paths) string { return filepath.Join(paths.Systemd, "leapview-backup.service") }, Mode: 0o644},
 	{Source: "leapview-backup.timer", Target: func(paths Paths) string { return filepath.Join(paths.Systemd, "leapview-backup.timer") }, Mode: 0o644},
 	{Source: "leapview-backup-maintenance.service", Target: func(paths Paths) string { return filepath.Join(paths.Systemd, "leapview-backup-maintenance.service") }, Mode: 0o644},
 	{Source: "leapview-backup-maintenance.timer", Target: func(paths Paths) string { return filepath.Join(paths.Systemd, "leapview-backup-maintenance.timer") }, Mode: 0o644},
+	{Source: "leapview-recovery-qualification.service", Target: func(paths Paths) string {
+		return filepath.Join(paths.Systemd, "leapview-recovery-qualification.service")
+	}, Mode: 0o644},
+	{Source: "leapview-recovery-qualification.timer", Target: func(paths Paths) string { return filepath.Join(paths.Systemd, "leapview-recovery-qualification.timer") }, Mode: 0o644},
 }
 
 func stageGeneration(paths Paths, image string, payload map[string][]byte) (string, error) {

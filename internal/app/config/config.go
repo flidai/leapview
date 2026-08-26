@@ -64,11 +64,26 @@ func Load() (Config, error) {
 	if err := env.Parse(&cfg); err != nil {
 		return Config{}, configurationError(err)
 	}
+	return finishLoad(cfg), nil
+}
+
+// LoadEnvironment parses an explicit, already-decoded environment without
+// consulting process-global variables. Host lifecycle controllers use it to
+// consume the exact environment installed for the managed container.
+func LoadEnvironment(values map[string]string) (Config, error) {
+	var cfg Config
+	if err := env.ParseWithOptions(&cfg, env.Options{Environment: values}); err != nil {
+		return Config{}, configurationError(err)
+	}
+	return finishLoad(cfg), nil
+}
+
+func finishLoad(cfg Config) Config {
 	cfg.workloadLoaded = true
 	if strings.TrimSpace(cfg.ManagedDataDir) == "" {
 		cfg.ManagedDataDir = filepath.Join(cfg.HomeDir, "managed-data")
 	}
-	return cfg, nil
+	return cfg
 }
 
 func MustLoad() Config {

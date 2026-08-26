@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
@@ -67,16 +68,57 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 	if err := os.WriteFile(filepath.Join(root, "bundle", "release-transition-policy.json"), policyDocument, 0o600); err != nil {
 		t.Fatal(err)
 	}
+	for _, relative := range transitionQualificationBundleFiles {
+		path := filepath.Join(root, "bundle", relative)
+		if relative == "release-transition-policy.json" {
+			continue
+		}
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte(relative+"\n"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	transitionEvidencePath := filepath.Join(root, "transition-evidence.json")
+	if err := writeProductionTransitionEvidence(transitionEvidencePath, candidate, predecessor.IdentityForPlatform("linux/amd64"), policy.PolicyVersion, policyDigest); err != nil {
+		t.Fatal(err)
+	}
+	build := buildinfo.Identity{Version: candidate.Version, Revision: candidate.SourceRevision, BuildTime: "2026-08-26T00:00:00Z"}
+	buildDocument, err := json.Marshal(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	controllerPath := filepath.Join(root, "leapviewctl")
+	controllerScript := fmt.Sprintf(`#!/bin/sh
+if [ "$1" = "version" ]; then printf '%%s\n' '%s'; exit 0; fi
+evidence_dir=""
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "--evidence-dir" ]; then evidence_dir="$2"; shift 2; else shift; fi
+done
+printf '{"operation":"upgrade","event":"started"}\n' >&3
+printf '{"operation":"upgrade","event":"completed"}\n' >&3
+printf '{"operation":"rollback","event":"started"}\n' >&3
+printf '{"operation":"rollback","event":"completed"}\n' >&3
+cp '%s' "$evidence_dir/transition-qualification.json"
+`, string(buildDocument), transitionEvidencePath)
+	if err := os.WriteFile(controllerPath, []byte(controllerScript), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	dockerPath := filepath.Join(root, "docker")
+	if err := os.WriteFile(dockerPath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	config := ProductionQualificationConfig{
 		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"), InstanceID: instanceID, Environment: "qualification",
+		BuildIdentity:   build,
 		ReleaseIdentity: candidate, StorageTopology: platform.InstanceBackupStorageTopology{
 			ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{},
 		},
 		TransitionPolicy: policy, PolicySHA256: policyDigest, WorkRoot: work, EvidenceRoot: evidenceRoot,
-		ControllerPath: filepath.Join(root, "leapviewctl"), BundleRoot: filepath.Join(root, "bundle"),
+		ControllerPath: controllerPath, ContainerRuntime: dockerPath, BundleRoot: filepath.Join(root, "bundle"),
 		PredecessorImage: predecessor.IdentityForPlatform("linux/amd64").Image,
 		Cron:             "@hourly", Timezone: "UTC", StaleAfter: 24 * time.Hour,
-		Command: productionTransitionCommand{candidate: candidate, predecessor: predecessor.IdentityForPlatform("linux/amd64"), policyVersion: policy.PolicyVersion, policySHA256: policyDigest},
 	}
 	definitions, err := config.ProductionDefinitions(t.Context())
 	if err != nil {
@@ -84,6 +126,19 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 	}
 	if len(definitions) != 4 {
 		t.Fatalf("production definitions = %d", len(definitions))
+	}
+	unavailableRuntime := config
+	unavailableRuntime.ContainerRuntime = filepath.Join(root, "missing-docker")
+	if _, err := unavailableRuntime.ProductionDefinitions(t.Context()); err == nil || !strings.Contains(err.Error(), "accessible container runtime") {
+		t.Fatalf("missing container capability was not rejected clearly: %v", err)
+	}
+	mismatchedController := config
+	mismatchedController.ControllerPath = filepath.Join(root, "wrong-leapviewctl")
+	if err := os.WriteFile(mismatchedController.ControllerPath, []byte("#!/bin/sh\nprintf '{}\\n'\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mismatchedController.ProductionDefinitions(t.Context()); err == nil || !strings.Contains(err.Error(), "identity does not match") {
+		t.Fatalf("mismatched leapviewctl identity was not rejected clearly: %v", err)
 	}
 	adapters := config.ProductionAdapters()
 	for index, definition := range definitions {
@@ -183,26 +238,45 @@ func TestQualificationWorkspaceReclaimsOnlySupersededOccurrenceGeneration(t *tes
 	}
 }
 
-type productionTransitionCommand struct {
-	candidate, predecessor compatibility.ReleaseIdentity
-	policyVersion          string
-	policySHA256           string
-}
-
-func (command productionTransitionCommand) Run(_ context.Context, _ string, arguments ...string) error {
-	evidenceDir := ""
-	for index := range arguments {
-		if arguments[index] == "--evidence-dir" && index+1 < len(arguments) {
-			evidenceDir = arguments[index+1]
+func TestQualificationWorkspaceSweepReclaimsCrashedAndTerminalButPreservesLiveLease(t *testing.T) {
+	root := t.TempDir()
+	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
+	for _, name := range []string{
+		"active-generation-1", "crashed-generation-2", "terminal-generation-3", "operator-data",
+	} {
+		if err := os.Mkdir(filepath.Join(root, name), 0o700); err != nil {
+			t.Fatal(err)
 		}
 	}
+	occurrences := []Occurrence{
+		{ID: "active", Status: StatusRunning, Fence: Fence{Owner: "worker", Generation: 1}, LeaseExpiresAt: now.Add(time.Minute)},
+		{ID: "crashed", Status: StatusRunning, Fence: Fence{Owner: "worker", Generation: 2}, LeaseExpiresAt: now.Add(-time.Second)},
+		{ID: "terminal", Status: StatusSucceeded, Fence: Fence{Owner: "worker", Generation: 3}, LeaseExpiresAt: now.Add(time.Hour)},
+	}
+	// A restarted lifecycle performs this sweep before claiming new work.
+	if err := ReclaimQualificationWorkspaces(root, occurrences, now); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{"active-generation-1", "operator-data"} {
+		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
+			t.Fatalf("live or unowned workspace %s was removed: %v", name, err)
+		}
+	}
+	for _, name := range []string{"crashed-generation-2", "terminal-generation-3"} {
+		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+			t.Fatalf("abandoned workspace %s remains: %v", name, err)
+		}
+	}
+}
+
+func writeProductionTransitionEvidence(path string, candidate, predecessor compatibility.ReleaseIdentity, policyVersion, policySHA256 string) error {
 	state := compatibility.TransitionQualificationState{
 		InstanceID: "lvinst_isolated_transition", Environment: "qualification", CanonicalOrigin: "https://qualification.example",
 		PrincipalID: "principal_qualification", PrincipalKind: "user", PrincipalEmail: "qualification@example.com", PrincipalName: "Qualification",
 	}
 	report := compatibility.TransitionQualificationEvidence{
-		SchemaVersion: 1, PolicyVersion: command.policyVersion, RecoveryPointAt: time.Now().UTC().Add(-time.Minute),
-		Predecessor: command.predecessor, Candidate: command.candidate, PolicySHA256: command.policySHA256,
+		SchemaVersion: 1, PolicyVersion: policyVersion, RecoveryPointAt: time.Now().UTC().Add(-time.Minute),
+		Predecessor: predecessor, Candidate: candidate, PolicySHA256: policySHA256,
 		StateBeforeUpgrade: strings.Repeat("d", 64), StateAfterUpgrade: strings.Repeat("d", 64), StateAfterRollback: strings.Repeat("d", 64),
 		InventoryBefore: state, InventoryAfterUpgrade: state, InventoryAfterRollback: state,
 		UpgradeResult: "success", RollbackResult: "success", PreservationVerified: true,
@@ -211,5 +285,5 @@ func (command productionTransitionCommand) Run(_ context.Context, _ string, argu
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(filepath.Join(evidenceDir, "transition-qualification.json"), document, 0o600)
+	return os.WriteFile(path, document, 0o600)
 }

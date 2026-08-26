@@ -19,7 +19,7 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 )
 
-func TestProductionCompositionConfiguresRecoveryOwnersWithoutLifecycleInjection(t *testing.T) {
+func TestProductionCompositionDelegatesRecoveryOwnersToReleasedHostController(t *testing.T) {
 	policy, err := compatibility.EmbeddedPolicy()
 	if err != nil {
 		t.Fatal(err)
@@ -43,8 +43,8 @@ func TestProductionCompositionConfiguresRecoveryOwnersWithoutLifecycleInjection(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if lifecycle == nil || len(lifecycle.Adapters) != 4 || lifecycle.Definitions == nil {
-		t.Fatalf("normal production composition did not register owner lifecycle: %#v", lifecycle)
+	if lifecycle != nil {
+		t.Fatalf("web composition retained Docker-authorized recovery lifecycle: %#v", lifecycle)
 	}
 }
 
@@ -90,11 +90,14 @@ func TestProductionCompositionRetainsValidS3BackupRestoreEvidence(t *testing.T) 
 		RecoveryQualificationEnabled: true, RecoveryQualificationController: filepath.Join(root, "leapviewctl"),
 		RecoveryQualificationBundle: filepath.Join(root, "bundle"), RecoveryQualificationWorkDir: filepath.Join(root, "work"),
 		RecoveryQualificationCron: "@hourly", RecoveryQualificationExternalRecoveryPoints: pointsPath,
-		RecoveryQualificationExternalEvidence: evidencePath,
+		RecoveryQualificationExternalEvidence:     evidencePath,
+		RecoveryQualificationExecutionEnvironment: "host",
 	}
-	lifecycle, err := productionRecoveryLifecycle(cfg, buildinfo.Identity{
+	build := buildinfo.Identity{
 		Version: identity.Version, Revision: identity.SourceRevision, BuildTime: "2026-08-26T00:00:00Z",
-	}, "qualification", instanceID)
+	}
+	prepareRecoveryQualificationRuntime(t, root, &cfg, build)
+	lifecycle, err := BuildProductionRecoveryLifecycle(cfg, build, "qualification", instanceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,6 +169,50 @@ func TestProductionCompositionRetainsValidS3BackupRestoreEvidence(t *testing.T) 
 			}
 		}
 	}
+}
+
+func prepareRecoveryQualificationRuntime(t *testing.T, root string, cfg *config.Config, build buildinfo.Identity) {
+	t.Helper()
+	controller := filepath.Join(root, "leapviewctl")
+	runtimePath := filepath.Join(root, "docker")
+	identity, err := json.Marshal(build)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(controller, []byte(fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' '%s'\n", identity)), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(runtimePath, []byte("#!/bin/sh\nexit 0\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	bundle := filepath.Join(root, "bundle")
+	files := []string{
+		"Caddyfile", "README.md", "QUALIFICATION.md", "compose.https.yaml", "compose.yaml",
+		"deployment.env.example", "leapview.env.example", "leapviewctl", "release-transition-policy.json",
+		filepath.Join("qualification", "Dockerfile.authoring-client"), filepath.Join("qualification", "authoring-worker.mjs"),
+		filepath.Join("qualification", "browser.mjs"), filepath.Join("qualification", "bun.lock"),
+		filepath.Join("qualification", "package.json"), filepath.Join("qualification", "performance-policy.json"),
+		filepath.Join("qualification", "performance.mjs"),
+	}
+	for _, relative := range files {
+		path := filepath.Join(bundle, relative)
+		if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		contents := []byte(relative + "\n")
+		if relative == "release-transition-policy.json" {
+			contents = compatibility.EmbeddedPolicyDocument()
+		}
+		if err := os.WriteFile(path, contents, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	cfg.RecoveryQualificationController = controller
+	cfg.RecoveryQualificationBundle = bundle
+	// Tests select the fake runtime through PATH-independent application
+	// composition; released host composition passes its configured Docker path.
+	oldPath := os.Getenv("PATH")
+	t.Setenv("PATH", root+string(os.PathListSeparator)+oldPath)
 }
 
 func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testing.T) {

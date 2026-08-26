@@ -164,6 +164,14 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyInstalled.Flags().BoolVar(&installedQualification.RequireReleaseTransition, "require-release-transition", false, "fail unless a previous immutable release is qualified through upgrade and rollback")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.AllowLocal, "allow-local-image", false, "allow a local immutable registry reference during development")
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
+	qualifyScheduledRecovery := &cobra.Command{
+		Use:   "scheduled-recovery",
+		Short: "Run due owner-validated recovery qualifications on an installed host",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.RunScheduledRecoveryQualification(ctx)
+		},
+	}
 
 	qualify := &cobra.Command{
 		Use:   "qualify",
@@ -187,7 +195,7 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.Project, "project", "", "qualification project")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
-	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyClientWorker)
+	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyScheduledRecovery, qualifyClientWorker)
 
 	root.AddCommand(version, initialize, start, status, logs, firstLogin, backup, restore, upgrade, rollback, qualify)
 	return root

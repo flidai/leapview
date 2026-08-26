@@ -87,6 +87,7 @@ type Lifecycle struct {
 	BatchSize        int
 	ComplianceWindow time.Duration
 	EvidenceRoot     string
+	WorkspaceRoot    string
 }
 
 func (lifecycle Lifecycle) Validate() error {
@@ -108,6 +109,9 @@ func (lifecycle Lifecycle) Validate() error {
 	if strings.TrimSpace(lifecycle.EvidenceRoot) == "" || !filepath.IsAbs(lifecycle.EvidenceRoot) {
 		return fmt.Errorf("recovery qualification evidence root must be absolute")
 	}
+	if strings.TrimSpace(lifecycle.WorkspaceRoot) != "" && !filepath.IsAbs(lifecycle.WorkspaceRoot) {
+		return fmt.Errorf("recovery qualification workspace root must be absolute")
+	}
 	return nil
 }
 
@@ -122,6 +126,9 @@ func (lifecycle Lifecycle) now() time.Time {
 // executes owner adapters, publishes exact evidence, and applies retention.
 func (lifecycle Lifecycle) RunOnce(ctx context.Context) error {
 	if err := lifecycle.Validate(); err != nil {
+		return err
+	}
+	if err := lifecycle.reclaimAbandonedWorkspaces(ctx); err != nil {
 		return err
 	}
 	definitions, err := lifecycle.Definitions(ctx)
@@ -177,7 +184,21 @@ func (lifecycle Lifecycle) RunOnce(ctx context.Context) error {
 	if _, err = lifecycle.Repository.Retain(ctx, RetentionPolicy{Now: lifecycle.now(), ComplianceWindow: lifecycle.ComplianceWindow}); err != nil {
 		return err
 	}
+	if err := lifecycle.reclaimAbandonedWorkspaces(ctx); err != nil {
+		return err
+	}
 	return lifecycle.garbageCollectEvidence(ctx)
+}
+
+func (lifecycle Lifecycle) reclaimAbandonedWorkspaces(ctx context.Context) error {
+	if strings.TrimSpace(lifecycle.WorkspaceRoot) == "" {
+		return nil
+	}
+	occurrences, err := lifecycle.Repository.Occurrences(ctx)
+	if err != nil {
+		return err
+	}
+	return ReclaimQualificationWorkspaces(lifecycle.WorkspaceRoot, occurrences, lifecycle.now())
 }
 
 func (lifecycle Lifecycle) garbageCollectEvidence(ctx context.Context) error {

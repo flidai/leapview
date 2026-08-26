@@ -489,23 +489,43 @@ func requestLocalDevelopmentAuthorization(ctx context.Context, actorID string) b
 	return ok && principal.DevBypass && strings.TrimSpace(principal.ID) == strings.TrimSpace(actorID)
 }
 
-func productionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, environment, instanceID string) (*refreshmodule.RecoveryLifecycle, error) {
+func productionRecoveryLifecycle(cfg config.Config, _ buildinfo.Identity, _, _ string) (*refreshmodule.RecoveryLifecycle, error) {
 	if !cfg.Production || !cfg.RecoveryQualificationEnabled {
 		return nil, nil
 	}
+	executionEnvironment := strings.TrimSpace(cfg.RecoveryQualificationExecutionEnvironment)
+	if executionEnvironment == "" || executionEnvironment == "host" {
+		return nil, nil
+	}
+	return nil, fmt.Errorf("unsupported recovery qualification execution environment %q; released composition requires host", executionEnvironment)
+}
+
+// BuildProductionRecoveryLifecycle builds the owner-validated lifecycle for a
+// supported execution host. The web composition delegates to the installed
+// host controller by default so Docker authority is not exposed to the server.
+func BuildProductionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, environment, instanceID string) (*refreshmodule.RecoveryLifecycle, error) {
+	return BuildProductionRecoveryLifecycleWithContainerRuntime(cfg, build, environment, instanceID, "docker")
+}
+
+// BuildProductionRecoveryLifecycleWithContainerRuntime binds the lifecycle to
+// the exact host container runtime selected by the installed controller.
+func BuildProductionRecoveryLifecycleWithContainerRuntime(cfg config.Config, build buildinfo.Identity, environment, instanceID, containerRuntime string) (*refreshmodule.RecoveryLifecycle, error) {
 	if build.Development || build.Dirty || build.Version == buildinfo.DevelopmentVersion || build.Revision == buildinfo.UnknownValue {
 		return nil, fmt.Errorf("scheduled recovery qualification requires exact released build provenance")
 	}
-	policy, err := compatibility.EmbeddedPolicy()
-	policyDocument := compatibility.EmbeddedPolicyDocument()
 	const managedPolicyPath = "/run/leapview/release-transition-policy.json"
-	if _, statErr := os.Stat(managedPolicyPath); statErr == nil {
-		policy, policyDocument, err = compatibility.LoadPolicy(managedPolicyPath)
-	} else if !os.IsNotExist(statErr) {
+	policyPath := filepath.Join(strings.TrimSpace(cfg.RecoveryQualificationBundle), "release-transition-policy.json")
+	if strings.TrimSpace(cfg.RecoveryQualificationBundle) == "" {
+		policyPath = managedPolicyPath
+	}
+	if _, statErr := os.Stat(policyPath); os.IsNotExist(statErr) && policyPath != managedPolicyPath {
+		policyPath = managedPolicyPath
+	} else if statErr != nil {
 		return nil, statErr
 	}
+	policy, policyDocument, err := compatibility.LoadPolicy(policyPath)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("load managed recovery qualification policy: %w", err)
 	}
 	policyDigest := sha256.Sum256(policyDocument)
 	policySHA256 := hex.EncodeToString(policyDigest[:])
@@ -551,9 +571,11 @@ func productionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, en
 	}
 	qualification := refreshmodule.ProductionRecoveryQualificationConfig{
 		HomeDir: cfg.HomeDir, DBPath: cfg.DBPath(), InstanceID: instanceID, Environment: environment,
+		BuildIdentity:   build,
 		ReleaseIdentity: releaseIdentity, StorageTopology: initialStorage.Topology, StorageEvidence: storageEvidence,
 		TransitionPolicy: policy, PolicySHA256: policySHA256, WorkRoot: workRoot, EvidenceRoot: evidenceRoot,
 		ControllerPath: cfg.RecoveryQualificationController, BundleRoot: cfg.RecoveryQualificationBundle,
+		ContainerRuntime: containerRuntime,
 		PredecessorImage: predecessor.IdentityForPlatform(platformName).Image,
 		Cron:             cfg.RecoveryQualificationCron, Timezone: "UTC", StaleAfter: 36 * time.Hour,
 	}

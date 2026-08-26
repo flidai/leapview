@@ -616,7 +616,9 @@ func (c *Controller) QualifyInstalledCandidate(
 			return fmt.Errorf("rollback did not restore deterministic predecessor application state: %w", err)
 		}
 		transitionEvidence.PreservationVerified = true
-		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
+		if err := c.withoutQualificationPhases(func() error {
+			return c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json"))
+		}); err != nil {
 			return err
 		}
 		report.Assertions.ReleaseTransition = true

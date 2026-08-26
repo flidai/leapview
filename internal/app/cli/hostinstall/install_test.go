@@ -68,6 +68,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		{paths.Systemctl, "daemon-reload"},
 		{paths.Systemctl, "enable", "--now", "leapview-backup.timer"},
 		{paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"},
+		{paths.Systemctl, "enable", "--now", "leapview-recovery-qualification.timer"},
 	}, commands)
 
 	for _, target := range []string{
@@ -81,6 +82,8 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		filepath.Join(paths.SystemBin, "leapview-backup-hook"),
 		filepath.Join(paths.Systemd, "leapview-backup.service"),
 		filepath.Join(paths.Systemd, "leapview-backup.timer"),
+		filepath.Join(paths.Systemd, "leapview-recovery-qualification.service"),
+		filepath.Join(paths.Systemd, "leapview-recovery-qualification.timer"),
 		filepath.Join(paths.Root, installMarkerName),
 	} {
 		info, statErr := os.Stat(target)
@@ -370,7 +373,9 @@ func writeTestPayload(t *testing.T, directory string) {
 		if file.Source == "leapviewctl" || strings.HasSuffix(file.Source, "wrapper") || strings.HasSuffix(file.Source, "hook") {
 			mode = 0o700
 		}
-		require.NoError(t, os.WriteFile(filepath.Join(directory, file.Source), []byte(file.Source+"\n"), mode))
+		path := filepath.Join(directory, file.Source)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(file.Source+"\n"), mode))
 	}
 }
 

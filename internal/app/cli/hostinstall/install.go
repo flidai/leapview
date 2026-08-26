@@ -196,6 +196,9 @@ func (i *Installer) Install(ctx context.Context) error {
 	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"); err != nil {
 		return fmt.Errorf("enable LeapView backup maintenance timer: %w", err)
 	}
+	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-recovery-qualification.timer"); err != nil {
+		return fmt.Errorf("enable LeapView recovery qualification timer: %w", err)
+	}
 	return nil
 }
 

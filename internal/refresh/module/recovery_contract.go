@@ -65,7 +65,6 @@ type RecoveryEvidenceArtifact = refreshrecovery.EvidenceArtifact
 type RecoveryEvidencePublisher = refreshrecovery.EvidencePublisher
 type RecoveryFileEvidencePublisher = refreshrecovery.FileEvidencePublisher
 type ProductionRecoveryQualificationConfig = refreshrecovery.ProductionQualificationConfig
-type RecoveryQualificationCommand = refreshrecovery.QualificationCommand
 type RecoveryStorageQualificationEvidence = refreshrecovery.StorageQualificationEvidence
 type RecoveryStorageEvidenceProvider = refreshrecovery.StorageEvidenceProvider
 
@@ -94,7 +93,7 @@ func NewProductionRecoveryLifecycle(config ProductionRecoveryQualificationConfig
 		Publisher: RecoveryFileEvidencePublisher{Root: config.EvidenceRoot},
 		WorkerID:  "production-recovery-worker", Actor: "scheduled-qualification",
 		Lease: 15 * time.Minute, BatchSize: 4, ComplianceWindow: 90 * 24 * time.Hour,
-		EvidenceRoot: config.EvidenceRoot,
+		EvidenceRoot: config.EvidenceRoot, WorkspaceRoot: config.WorkRoot,
 	}
 }
 

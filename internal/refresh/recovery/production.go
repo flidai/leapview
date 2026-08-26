@@ -1,17 +1,22 @@
 package recovery
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
@@ -20,6 +25,7 @@ type ProductionQualificationConfig struct {
 	DBPath           string
 	InstanceID       string
 	Environment      string
+	BuildIdentity    buildinfo.Identity
 	ReleaseIdentity  compatibility.ReleaseIdentity
 	StorageTopology  platform.InstanceBackupStorageTopology
 	StorageEvidence  StorageEvidenceProvider
@@ -28,12 +34,12 @@ type ProductionQualificationConfig struct {
 	WorkRoot         string
 	EvidenceRoot     string
 	ControllerPath   string
+	ContainerRuntime string
 	BundleRoot       string
 	PredecessorImage string
 	Cron             string
 	Timezone         string
 	StaleAfter       time.Duration
-	Command          QualificationCommand
 }
 
 type StorageQualificationEvidence struct {
@@ -43,17 +49,67 @@ type StorageQualificationEvidence struct {
 
 type StorageEvidenceProvider func(context.Context) (StorageQualificationEvidence, error)
 
-type QualificationCommand interface {
-	Run(context.Context, string, ...string) error
+type qualificationPhaseEvent struct {
+	Operation string `json:"operation"`
+	Event     string `json:"event"`
 }
 
 type OSQualificationCommand struct{}
 
-func (OSQualificationCommand) Run(ctx context.Context, executable string, arguments ...string) error {
+func (OSQualificationCommand) RunWithPhases(
+	ctx context.Context,
+	executable string,
+	observe func(string, string) error,
+	arguments ...string,
+) error {
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	defer reader.Close()
 	command := exec.CommandContext(ctx, executable, arguments...)
 	command.Stdout = ioDiscard{}
 	command.Stderr = ioDiscard{}
-	return command.Run()
+	command.ExtraFiles = []*os.File{writer}
+	command.Env = append(os.Environ(), "LEAPVIEW_QUALIFICATION_PHASE_FD=3")
+	if err := command.Start(); err != nil {
+		writer.Close()
+		return err
+	}
+	if err := writer.Close(); err != nil {
+		_ = command.Process.Kill()
+		_ = command.Wait()
+		return err
+	}
+	readErr := make(chan error, 1)
+	go func() {
+		decoder := json.NewDecoder(bufio.NewReader(reader))
+		for {
+			var event qualificationPhaseEvent
+			if err := decoder.Decode(&event); err != nil {
+				if err == io.EOF {
+					readErr <- nil
+				} else {
+					readErr <- fmt.Errorf("decode qualification phase event: %w", err)
+				}
+				return
+			}
+			if observe == nil {
+				readErr <- fmt.Errorf("qualification phase observer is required")
+				return
+			}
+			if err := observe(event.Operation, event.Event); err != nil {
+				readErr <- err
+				return
+			}
+		}
+	}()
+	waitErr := command.Wait()
+	phaseErr := <-readErr
+	if waitErr != nil || phaseErr != nil {
+		return errorsJoin(waitErr, phaseErr)
+	}
+	return nil
 }
 
 // ioDiscard avoids retaining subprocess output that can contain topology or
@@ -74,6 +130,12 @@ func (config ProductionQualificationConfig) validate() error {
 	}
 	if err := ValidateArtifactIdentity(config.ReleaseIdentity.Image); err != nil {
 		return err
+	}
+	if config.BuildIdentity.Development || config.BuildIdentity.Dirty ||
+		strings.TrimSpace(config.BuildIdentity.Version) == "" || strings.TrimSpace(config.BuildIdentity.Revision) == "" ||
+		strings.TrimPrefix(config.BuildIdentity.Version, "v") != strings.TrimPrefix(config.ReleaseIdentity.Version, "v") ||
+		config.BuildIdentity.Revision != config.ReleaseIdentity.SourceRevision {
+		return fmt.Errorf("production recovery qualification requires exact released build identity")
 	}
 	if err := ValidateArtifactIdentity(config.PredecessorImage); err != nil {
 		return fmt.Errorf("production recovery predecessor: %w", err)
@@ -99,6 +161,62 @@ func (config ProductionQualificationConfig) validate() error {
 	return nil
 }
 
+func (config ProductionQualificationConfig) validateRuntime(ctx context.Context) error {
+	if err := config.validate(); err != nil {
+		return err
+	}
+	controller, err := os.Stat(config.ControllerPath)
+	if err != nil || !controller.Mode().IsRegular() || controller.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("production recovery qualification controller %s must be a readable executable", config.ControllerPath)
+	}
+	identityCommand := exec.CommandContext(ctx, config.ControllerPath, "version", "--json")
+	var identityOutput strings.Builder
+	identityCommand.Stdout = &identityOutput
+	identityCommand.Stderr = ioDiscard{}
+	if err := identityCommand.Run(); err != nil {
+		return fmt.Errorf("production recovery qualification controller identity is unavailable: %w", err)
+	}
+	var controllerIdentity buildinfo.Identity
+	decoder := json.NewDecoder(strings.NewReader(identityOutput.String()))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&controllerIdentity); err != nil || decoder.Decode(&struct{}{}) != io.EOF || controllerIdentity != config.BuildIdentity {
+		return fmt.Errorf("production recovery qualification controller identity does not match the admitted release")
+	}
+	bundle, err := os.Stat(config.BundleRoot)
+	if err != nil || !bundle.IsDir() {
+		return fmt.Errorf("production recovery qualification release bundle %s is unavailable", config.BundleRoot)
+	}
+	for _, relative := range transitionQualificationBundleFiles {
+		info, err := os.Stat(filepath.Join(config.BundleRoot, relative))
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("production recovery qualification release bundle is missing %s", filepath.ToSlash(relative))
+		}
+	}
+	for label, root := range map[string]string{"work root": config.WorkRoot, "evidence root": config.EvidenceRoot} {
+		probe, err := os.CreateTemp(root, ".qualification-permission-*")
+		if err != nil {
+			return fmt.Errorf("production recovery qualification %s is not writable: %w", label, err)
+		}
+		name := probe.Name()
+		closeErr := probe.Close()
+		removeErr := os.Remove(name)
+		if err := errorsJoin(closeErr, removeErr); err != nil {
+			return fmt.Errorf("production recovery qualification %s cannot create and remove files: %w", label, err)
+		}
+	}
+	runtimePath := strings.TrimSpace(config.ContainerRuntime)
+	if runtimePath == "" {
+		runtimePath = "docker"
+	}
+	command := exec.CommandContext(ctx, runtimePath, "version", "--format", "{{.Server.Version}}")
+	command.Stdout = ioDiscard{}
+	command.Stderr = ioDiscard{}
+	if err := command.Run(); err != nil {
+		return fmt.Errorf("production recovery qualification requires an accessible container runtime %s: %w", runtimePath, err)
+	}
+	return nil
+}
+
 func (config ProductionQualificationConfig) storageEvidence(ctx context.Context) (StorageQualificationEvidence, error) {
 	if config.StorageEvidence != nil {
 		evidence, err := config.StorageEvidence(ctx)
@@ -120,8 +238,8 @@ func pathWithinQualification(parent, child string) bool {
 
 // ProductionDefinitions registers the four owner workflows against the exact
 // running release, policy, and durable instance identity.
-func (config ProductionQualificationConfig) ProductionDefinitions(_ context.Context) ([]Definition, error) {
-	if err := config.validate(); err != nil {
+func (config ProductionQualificationConfig) ProductionDefinitions(ctx context.Context) ([]Definition, error) {
+	if err := config.validateRuntime(ctx); err != nil {
 		return nil, err
 	}
 	cron := config.Cron
@@ -169,7 +287,7 @@ type productionBackupRestoreAdapter struct {
 }
 
 func (adapter productionBackupRestoreAdapter) Execute(ctx context.Context, occurrence Occurrence) (ScenarioOutcome, error) {
-	if err := adapter.config.validate(); err != nil {
+	if err := adapter.config.validateRuntime(ctx); err != nil {
 		return ScenarioOutcome{}, NewFailure("qualification_configuration_invalid", err.Error())
 	}
 	work, err := prepareQualificationWorkspace(adapter.config.WorkRoot, occurrence)
@@ -272,7 +390,7 @@ func (adapter productionBackupRestoreAdapter) Execute(ctx context.Context, occur
 type productionTransitionAdapter struct{ config ProductionQualificationConfig }
 
 func (adapter productionTransitionAdapter) Execute(ctx context.Context, occurrence Occurrence) (ScenarioOutcome, error) {
-	if err := adapter.config.validate(); err != nil {
+	if err := adapter.config.validateRuntime(ctx); err != nil {
 		return ScenarioOutcome{}, NewFailure("qualification_configuration_invalid", err.Error())
 	}
 	policyDigest, err := digestFile(filepath.Join(adapter.config.BundleRoot, "release-transition-policy.json"))
@@ -292,28 +410,155 @@ func (adapter productionTransitionAdapter) Execute(ctx context.Context, occurren
 			_ = os.RemoveAll(work)
 		}
 	}()
-	runner := adapter.config.Command
-	if runner == nil {
-		runner = OSQualificationCommand{}
+	runner := OSQualificationCommand{}
+	phaseRunner := runner
+	bundle, err := prepareTransitionQualificationBundle(work, adapter.config)
+	if err != nil {
+		return ScenarioOutcome{}, NewFailure("qualification_bundle_invalid", err.Error())
 	}
-	if err := recordQualificationPhase(ctx, PhaseReadiness, PhaseStarted); err != nil {
-		return ScenarioOutcome{}, err
+	observed := map[string]map[string]bool{
+		OperationUpgrade:  {},
+		OperationRollback: {},
 	}
-	err = runner.Run(ctx, adapter.config.ControllerPath,
-		"qualify", "installed-candidate", "--bundle", adapter.config.BundleRoot,
+	err = phaseRunner.RunWithPhases(ctx, adapter.config.ControllerPath, func(operation, event string) error {
+		if operation != OperationUpgrade && operation != OperationRollback {
+			return fmt.Errorf("unexpected transition qualification operation %q", operation)
+		}
+		if event != PhaseStarted && event != PhaseCompleted {
+			return fmt.Errorf("unexpected transition qualification phase event %q", event)
+		}
+		if observed[operation][event] {
+			return fmt.Errorf("duplicate transition qualification phase %s/%s", operation, event)
+		}
+		if event == PhaseCompleted && !observed[operation][PhaseStarted] {
+			return fmt.Errorf("transition qualification phase %s completed before start", operation)
+		}
+		observed[operation][event] = true
+		if operation != occurrence.Operation {
+			return nil
+		}
+		return recordQualificationPhase(ctx, PhaseReadiness, event)
+	},
+		"qualify", "installed-candidate", "--bundle", bundle,
 		"--evidence-dir", work, "--previous-image", adapter.config.PredecessorImage,
 		"--require-release-transition",
 	)
 	if err != nil {
 		return ScenarioOutcome{}, err
 	}
-	if err := recordQualificationPhase(ctx, PhaseReadiness, PhaseCompleted); err != nil {
-		return ScenarioOutcome{}, err
+	for _, operation := range []string{OperationUpgrade, OperationRollback} {
+		if !observed[operation][PhaseStarted] || !observed[operation][PhaseCompleted] {
+			return ScenarioOutcome{}, NewFailure("qualification_phase_incomplete", "transition qualification omitted required owner phase boundaries")
+		}
 	}
 	keep = true
 	return ScenarioOutcome{Artifacts: []EvidenceArtifact{{
 		Kind: EvidenceTransitionQualification, Path: filepath.Join(work, "transition-qualification.json"),
 	}}, cleanup: func() error { return os.RemoveAll(work) }}, nil
+}
+
+var transitionQualificationBundleFiles = []string{
+	"Caddyfile",
+	"README.md",
+	"QUALIFICATION.md",
+	"compose.https.yaml",
+	"compose.yaml",
+	"deployment.env.example",
+	"leapview.env.example",
+	"leapviewctl",
+	"release-transition-policy.json",
+	filepath.Join("qualification", "Dockerfile.authoring-client"),
+	filepath.Join("qualification", "authoring-worker.mjs"),
+	filepath.Join("qualification", "browser.mjs"),
+	filepath.Join("qualification", "bun.lock"),
+	filepath.Join("qualification", "package.json"),
+	filepath.Join("qualification", "performance-policy.json"),
+	filepath.Join("qualification", "performance.mjs"),
+}
+
+func prepareTransitionQualificationBundle(work string, config ProductionQualificationConfig) (string, error) {
+	bundle := filepath.Join(work, "release-bundle")
+	if err := os.Mkdir(bundle, 0o700); err != nil {
+		return "", err
+	}
+	for _, relative := range transitionQualificationBundleFiles {
+		source := filepath.Join(config.BundleRoot, relative)
+		destination := filepath.Join(bundle, relative)
+		info, err := os.Stat(source)
+		if err != nil || !info.Mode().IsRegular() {
+			return "", fmt.Errorf("required qualification bundle file %s is unavailable", filepath.ToSlash(relative))
+		}
+		if err := copyQualificationBundleFile(source, destination, info.Mode().Perm()); err != nil {
+			return "", err
+		}
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "image-reference.txt"), []byte(config.ReleaseIdentity.Image+"\n"), 0o600); err != nil {
+		return "", err
+	}
+	identity, err := json.MarshalIndent(config.BuildIdentity, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(bundle, "release-identity.json"), append(identity, '\n'), 0o600); err != nil {
+		return "", err
+	}
+	if err := writeQualificationBundleChecksums(bundle); err != nil {
+		return "", err
+	}
+	return bundle, nil
+}
+
+func copyQualificationBundleFile(source, destination string, mode os.FileMode) error {
+	if err := os.MkdirAll(filepath.Dir(destination), 0o700); err != nil {
+		return err
+	}
+	input, err := os.Open(source)
+	if err != nil {
+		return err
+	}
+	defer input.Close()
+	output, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, copyErr := io.Copy(output, input)
+	syncErr := output.Sync()
+	closeErr := output.Close()
+	return errorsJoin(copyErr, syncErr, closeErr)
+}
+
+func writeQualificationBundleChecksums(root string) error {
+	var paths []string
+	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if entry.IsDir() || entry.Name() == "SHA256SUMS" {
+			return nil
+		}
+		info, err := entry.Info()
+		if err != nil || !info.Mode().IsRegular() {
+			return fmt.Errorf("qualification bundle contains an unsupported entry")
+		}
+		relative, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		paths = append(paths, filepath.ToSlash(relative))
+		return nil
+	}); err != nil {
+		return err
+	}
+	sort.Strings(paths)
+	var document strings.Builder
+	for _, relative := range paths {
+		digest, err := digestFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(&document, "%s  ./%s\n", digest, relative)
+	}
+	return os.WriteFile(filepath.Join(root, "SHA256SUMS"), []byte(document.String()), 0o600)
 }
 
 func prepareQualificationWorkspace(root string, occurrence Occurrence) (string, error) {
@@ -342,6 +587,60 @@ func prepareQualificationWorkspace(root string, occurrence Occurrence) (string, 
 		return "", err
 	}
 	return workspace, nil
+}
+
+// ReclaimQualificationWorkspaces removes only ledger-owned directories whose
+// occurrence has no live execution lease. Unknown entries are retained so the
+// sweep cannot delete operator or future-version data.
+func ReclaimQualificationWorkspaces(root string, occurrences []Occurrence, now time.Time) error {
+	entries, err := os.ReadDir(root)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	owned := make(map[string]bool)
+	for _, occurrence := range occurrences {
+		if occurrence.ID == "" || occurrence.Fence.Generation <= 0 {
+			continue
+		}
+		name := fmt.Sprintf("%s-generation-%d", occurrence.ID, occurrence.Fence.Generation)
+		active := (occurrence.Status == StatusClaimed || occurrence.Status == StatusRunning) &&
+			occurrence.LeaseExpiresAt.After(now)
+		owned[name] = active
+		prefix := occurrence.ID + "-generation-"
+		for _, entry := range entries {
+			if !entry.IsDir() || !strings.HasPrefix(entry.Name(), prefix) {
+				continue
+			}
+			if _, err := strconv.ParseInt(strings.TrimPrefix(entry.Name(), prefix), 10, 64); err == nil {
+				if entry.Name() != name {
+					owned[entry.Name()] = false
+				}
+			}
+		}
+	}
+	removed := false
+	for _, entry := range entries {
+		active, recognized := owned[entry.Name()]
+		if !recognized || active || !entry.IsDir() {
+			continue
+		}
+		if err := os.RemoveAll(filepath.Join(root, entry.Name())); err != nil {
+			return err
+		}
+		removed = true
+	}
+	if !removed {
+		return nil
+	}
+	directory, err := os.Open(root)
+	if err != nil {
+		return err
+	}
+	defer directory.Close()
+	return directory.Sync()
 }
 
 func errorsJoin(values ...error) error {
