@@ -52,6 +52,18 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 	}
 }
 
+func TestQualificationLoginReportsProcessFailureBeforeIncompleteEventStream(t *testing.T) {
+	command := exec.Command("sh", "-c", "printf '%s\\n' '{\"schemaVersion\":1,\"type\":\"deviceChallenge\",\"verificationUrl\":\"https://example.test/device\",\"userCode\":\"EXPIRED\"}'; printf '%s\\n' 'credential store unavailable' >&2; exit 1")
+	command.Env = os.Environ()
+	err := runQualificationLoginCommand(command, func(qualificationLoginChallenge) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "credential store unavailable") {
+		t.Fatalf("login error = %v", err)
+	}
+	if strings.Contains(err.Error(), "EXPIRED") || strings.Contains(err.Error(), "event stream is incomplete") {
+		t.Fatalf("login error exposed stdout or masked process failure: %v", err)
+	}
+}
+
 func TestQualificationPlanEvidenceUsesSharedCandidateIdentityDomains(t *testing.T) {
 	candidate := QualificationCandidate{
 		PlanDigest: "sha256:plan", ArtifactDigest: "sha256:artifact",
