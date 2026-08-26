@@ -176,10 +176,14 @@ func (config ProductionQualificationConfig) validateRuntime(ctx context.Context)
 	if err := identityCommand.Run(); err != nil {
 		return fmt.Errorf("production recovery qualification controller identity is unavailable: %w", err)
 	}
-	var controllerIdentity buildinfo.Identity
+	controllerVersion := struct {
+		Product string `json:"product"`
+		buildinfo.Identity
+	}{}
 	decoder := json.NewDecoder(strings.NewReader(identityOutput.String()))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&controllerIdentity); err != nil || decoder.Decode(&struct{}{}) != io.EOF || controllerIdentity != config.BuildIdentity {
+	if err := decoder.Decode(&controllerVersion); err != nil || decoder.Decode(&struct{}{}) != io.EOF ||
+		(controllerVersion.Product != "" && controllerVersion.Product != "leapviewctl") || controllerVersion.Identity != config.BuildIdentity {
 		return fmt.Errorf("production recovery qualification controller identity does not match the admitted release")
 	}
 	bundle, err := os.Stat(config.BundleRoot)

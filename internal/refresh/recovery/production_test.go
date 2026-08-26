@@ -85,7 +85,10 @@ func TestProductionRecoveryQualificationAdaptersExecuteOwnerWorkflows(t *testing
 		t.Fatal(err)
 	}
 	build := buildinfo.Identity{Version: candidate.Version, Revision: candidate.SourceRevision, BuildTime: "2026-08-26T00:00:00Z"}
-	buildDocument, err := json.Marshal(build)
+	buildDocument, err := json.Marshal(struct {
+		Product string `json:"product"`
+		buildinfo.Identity
+	}{Product: "leapviewctl", Identity: build})
 	if err != nil {
 		t.Fatal(err)
 	}
