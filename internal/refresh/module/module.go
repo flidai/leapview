@@ -176,7 +176,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		InitialEvent: refreshExecution.InitialEvent,
 		InitialState: refreshExecution.InitialState,
 	}, config.AuditIntentRecorder)
-	m.schedules = refreshsqlite.NewRepository(config.Database)
+	m.schedules = newSQLiteRepository(config.Database)
 	m.service = config.Service
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts

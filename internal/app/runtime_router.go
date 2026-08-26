@@ -622,6 +622,7 @@ func buildApplicationSurfaces(
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
 	if data.Database != nil {
+		telemetry.Register(refreshmodule.NewRecoveryMetricsCollector(data.Database, nil))
 		platform.jobModule = capabilities.JobModule
 		var err error
 		if platform.jobModule == nil {

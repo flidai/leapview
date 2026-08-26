@@ -61,4 +61,35 @@ After deployment or upgrade, run a small authenticated sequence:
 
 Keep the synthetic principal read-only and scoped to the test project. This verifies routing, auth, active project state, and analytical execution without granting deployment privilege.
 
+## Recovery qualification ledger
+
+Scheduled backup, restore, upgrade, and rollback qualifications use one durable
+occurrence identity derived from the schedule, planned UTC time, scenario,
+policy version, and target scope. Scheduler retries therefore attach to the
+same occurrence instead of creating a second drill. Each attempt is protected
+by a renewable generation fence; an expired worker cannot heartbeat, complete,
+or publish evidence after another worker reclaims the occurrence.
+
+Inspect the bounded operator projection with the service stopped or from the
+same controlled maintenance environment used for other offline Admin commands:
+
+```sh
+leapview admin recovery status
+```
+
+The JSON response reports due, overdue, running, failed, and evidence
+publication counts; recovered leases; last-success age; recovery-point age;
+and the latest restore/readiness durations for the fixed operation set. The
+same aggregate values are exported on the protected Prometheus endpoint under
+`leapview_recovery_qualification_*`. Labels are limited to operation and
+publication state—occurrence, schedule, artifact, scenario, and target
+identifiers are never metric labels.
+
+Terminal records retain the exact immutable artifact identity, measured
+timestamps and durations, result, bounded content-digested evidence references,
+and a redacted failure reason. Evidence upload has its own retryable lease, so
+an upload outage does not rerun a destructive recovery drill. Never store raw
+logs, archives, credentials, signed URLs, or secret-bearing query strings in a
+ledger evidence reference.
+
 See [Operational troubleshooting](/docs/guides/operate/troubleshooting), [Audit events](/docs/security/audit), and the [environment reference](/docs/configuration).

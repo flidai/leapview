@@ -24,6 +24,10 @@ func (operations *fakeOperations) AuditOutbox(_ context.Context, request adminof
 	operations.called, operations.requeueEvent, operations.options.Apply = "audit-outbox", request.RequeueEventID, request.Apply
 	return nil
 }
+func (operations *fakeOperations) RecoveryLedgerStatus(context.Context, io.Writer) error {
+	operations.called = "recovery-status"
+	return nil
+}
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
 	operations.called = "initialize"
@@ -90,6 +94,18 @@ func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	if !operations.options.Apply || operations.options.AuditDays != 10 || operations.options.QueryDays != 11 ||
 		operations.options.ArchivedAgentDays != 12 || operations.options.AuthStateDays != 13 {
 		t.Fatalf("options = %#v", operations.options)
+	}
+}
+
+func TestCommandRoutesRecoveryLedgerStatus(t *testing.T) {
+	operations := &fakeOperations{}
+	command := Command(context.Background(), operations)
+	command.SetArgs([]string{"recovery", "status"})
+	if err := command.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if operations.called != "recovery-status" {
+		t.Fatalf("called = %q", operations.called)
 	}
 }
 
