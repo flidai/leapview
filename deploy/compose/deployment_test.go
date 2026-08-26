@@ -455,14 +455,14 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	for _, required := range []string{
 		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
 		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
-		`stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })`,
 	} {
 		if !strings.Contains(browser, required) {
 			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
 		}
 	}
-	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
-		t.Error("browser qualification must assert the table cell accessibility label")
+	if !strings.Contains(browser, `table.getByRole('button', { name: 'State: SP'`) || !strings.Contains(performance, "table.getByRole('button', { name: `State: ${value}`") {
+		t.Error("browser qualification must assert the interactive table cell accessibility label")
 	}
 	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
 		t.Error("performance qualification must select only the sortable Order header")
