@@ -78,11 +78,69 @@ func TestHostOperationalScriptsAreSyntacticallyValid(t *testing.T) {
 		}
 	}
 	hook := read(t, filepath.Join("files", "leapview-backup-hook"))
-	for _, required := range []string{"--init", "--maintain", "restic check"} {
+	for _, required := range []string{
+		"--init", "--maintain", "restic check",
+		"/usr/local/sbin/leapviewctl", "host reconcile-recovery-qualification",
+	} {
 		requireContains(t, hook, required)
 	}
 	if strings.Contains(hook, "snapshots >/dev/null 2>&1 || restic init") {
 		t.Fatal("backup failures must not implicitly initialize a restic repository")
+	}
+}
+
+func TestBackupHookUsesInstalledWrapperAcrossReleaseSymlink(t *testing.T) {
+	base := t.TempDir()
+	root := filepath.Join(base, "opt", "leapview")
+	systemBin := filepath.Join(base, "usr", "local", "sbin")
+	generation := filepath.Join(root, "releases", "sha256-pr368")
+	for _, directory := range []string{generation, systemBin} {
+		if err := os.MkdirAll(directory, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	record := filepath.Join(base, "controller-invocation")
+	controller := `#!/usr/bin/env bash
+set -euo pipefail
+printf '%s\n%s\n' "${LEAPVIEWCTL_ROOT:-}" "$*" >"${LEAPVIEW_HOOK_RECORD:?}"
+`
+	if err := os.WriteFile(filepath.Join(generation, "leapviewctl"), []byte(controller), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("releases", "sha256-pr368"), filepath.Join(root, "current")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join("current", "leapviewctl"), filepath.Join(root, "leapviewctl")); err != nil {
+		t.Fatal(err)
+	}
+	for source, destination := range map[string]string{
+		filepath.Join("files", "leapviewctl-wrapper"):  filepath.Join(systemBin, "leapviewctl"),
+		filepath.Join("files", "leapview-backup-hook"): filepath.Join(systemBin, "leapview-backup-hook"),
+	} {
+		contents, err := os.ReadFile(source)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(destination, contents, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	command := exec.Command(filepath.Join(systemBin, "leapview-backup-hook"), "--maintain")
+	command.Env = append(os.Environ(),
+		"LEAPVIEWCTL_ROOT="+root,
+		"LEAPVIEWCTL_HOST_CONTROLLER="+filepath.Join(systemBin, "leapviewctl"),
+		"LEAPVIEW_HOOK_RECORD="+record,
+	)
+	if output, err := command.CombinedOutput(); err != nil {
+		t.Fatalf("execute installed backup hook: %v\n%s", err, output)
+	}
+	contents, err := os.ReadFile(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := root + "\nhost reconcile-recovery-qualification\n"
+	if string(contents) != want {
+		t.Fatalf("controller invocation = %q, want %q", contents, want)
 	}
 }
 

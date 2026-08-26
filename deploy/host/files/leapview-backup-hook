@@ -6,7 +6,8 @@ restic_env=/etc/leapview/restic.env
 # PR #368 installations already run this hook from an enabled host timer. The
 # FAI-516 payload keeps that stable hook as the forward-compatible activation
 # point for the new qualification assets and timer.
-/opt/leapview/leapviewctl host reconcile-recovery-qualification
+host_controller="${LEAPVIEWCTL_HOST_CONTROLLER:-/usr/local/sbin/leapviewctl}"
+"$host_controller" host reconcile-recovery-qualification
 
 load_restic() {
   if [[ ! -s "$restic_env" ]]; then

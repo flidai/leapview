@@ -471,6 +471,19 @@ func TestFAI515PayloadActivationMigratesQualificationAndRollbackRestoresLegacySt
 	}
 }
 
+func TestReconcileCurrentRejectsMissingInstallationMetadata(t *testing.T) {
+	paths := testPaths(t)
+	require.NoError(t, os.MkdirAll(paths.Root, 0o700))
+	manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
+		Paths: paths,
+		Run:   func(context.Context, string, ...string) error { return nil },
+	})
+	require.NoError(t, err)
+
+	err = manager.ReconcileCurrent(t.Context())
+	require.ErrorContains(t, err, "host installation metadata is missing")
+}
+
 func TestStagedGenerationDoesNotChangeActivePayload(t *testing.T) {
 	paths := testPaths(t)
 	require.NoError(t, os.MkdirAll(paths.Root, 0o700))

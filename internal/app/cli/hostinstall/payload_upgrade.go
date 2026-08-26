@@ -226,8 +226,11 @@ func (m *DeploymentPayloadManager) ReconcileCurrent(ctx context.Context) error {
 	}()
 	markerPath := filepath.Join(m.paths.Root, installMarkerName)
 	installed, err := readMarker(markerPath)
-	if err != nil || installed == nil {
+	if err != nil {
 		return err
+	}
+	if installed == nil {
+		return fmt.Errorf("host installation metadata is missing at %s; recovery qualification migration cannot verify the admitted installation", markerPath)
 	}
 	currentGeneration, err := activeGeneration(m.paths)
 	if err != nil {
