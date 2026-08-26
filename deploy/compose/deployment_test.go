@@ -558,7 +558,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
 		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
-	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
+	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
 		if !strings.Contains(clientImage, required) {
 			t.Errorf("authoring client image missing %q", required)
 		}

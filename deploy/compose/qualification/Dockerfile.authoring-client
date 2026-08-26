@@ -22,6 +22,7 @@ RUN groupadd --system author && \
     chown -R author:author /home/author /workspace
 
 COPY --from=leapview-payload --chown=author:author /app/evaluation /workspace/evaluation
+COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview
 COPY --from=leapview-payload /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl
 
 USER author

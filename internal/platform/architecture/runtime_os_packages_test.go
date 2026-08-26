@@ -106,6 +106,7 @@ func TestQualificationToolingKeepsFrozenDebianBoundary(t *testing.T) {
 		"FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df",
 		"COPY debian-bookworm.sources /etc/apt/sources.list.d/debian.sources",
 		"apt-get install -y --no-install-recommends dbus-daemon gnome-keyring",
+		"COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview",
 		"COPY --from=leapview-payload /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl",
 		"COPY --from=leapview-payload --chown=author:author /app/evaluation /workspace/evaluation",
 	} {
