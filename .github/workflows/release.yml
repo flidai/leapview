@@ -449,12 +449,23 @@ jobs:
           docker pull "$IMAGE_REFERENCE"
           inspection_container="leapview-extension-inspection-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${{ matrix.arch }}"
           supply_root="$RUNNER_TEMP/extension-supply-${{ matrix.arch }}"
+          supply_archive="$RUNNER_TEMP/extension-supply-${{ matrix.arch }}.tar"
           rm -rf "$supply_root"
+          rm -f "$supply_archive"
           mkdir -m 0700 "$supply_root"
           docker create --name "$inspection_container" "$IMAGE_REFERENCE" version >/dev/null
-          cleanup() { docker rm --force "$inspection_container" >/dev/null 2>&1 || true; }
+          cleanup() {
+            docker rm --force "$inspection_container" >/dev/null 2>&1 || true
+            rm -f "$supply_archive"
+          }
           trap cleanup EXIT
-          docker cp "$inspection_container:/usr/local/share/leapview/extensions/." "$supply_root"
+          docker cp "$inspection_container:/usr/local/share/leapview/extensions/." - > "$supply_archive"
+          tar \
+            --extract \
+            --file "$supply_archive" \
+            --directory "$supply_root" \
+            --no-same-owner \
+            --no-same-permissions
           cleanup
           trap - EXIT
           chmod -R u=rwX,go= "$supply_root"

@@ -187,7 +187,9 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
 	for _, required := range []string{
 		"Verify target-native offline extension supply",
-		`docker cp "$inspection_container:/usr/local/share/leapview/extensions/." "$supply_root"`,
+		`docker cp "$inspection_container:/usr/local/share/leapview/extensions/." - > "$supply_archive"`,
+		"--no-same-owner",
+		"--no-same-permissions",
 		"go run ./internal/app/tools/extensionsupply",
 		"--check",
 	} {
