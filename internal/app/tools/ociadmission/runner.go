@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -61,7 +62,15 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 		return errors.New("could not determine trivy version")
 	}
 	args := append([]string{trivyBin}, trivyArgs...)
-	args = append(args, "image", "--quiet", "--format", "json", "--exit-code", "0")
+	platform, err := nativeOCIPlatform()
+	if err != nil {
+		return err
+	}
+	args = append(
+		args,
+		"image", "--quiet", "--format", "json", "--exit-code", "0",
+		"--platform", platform,
+	)
 	for _, severity := range policy.Severity {
 		args = append(args, "--severity", severity)
 	}
@@ -92,6 +101,15 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 		"vulnerabilityPolicy": map[string]any{"sha256": policySHA256, "scanner": "trivy", "passed": true},
 	}
 	return writeResult(opts, r.env, result, stdout)
+}
+
+func nativeOCIPlatform() (string, error) {
+	switch runtime.GOARCH {
+	case "amd64", "arm64":
+		return "linux/" + runtime.GOARCH, nil
+	default:
+		return "", errors.New("OCI admission verifier architecture is unsupported")
+	}
 }
 
 func (r commandRunner) trivyCommand(policy vulnerabilityPolicy, docker string) (string, []string, error) {
