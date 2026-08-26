@@ -288,10 +288,15 @@ export class ReportTable extends LitElement {
       z-index: calc(var(--zIndex-default) + 2);
     }
 
+    .visual-actions .icon-action,
+    .visual-options summary {
+      width: var(--lv-button-height, var(--control-medium-size));
+      height: var(--lv-button-height, var(--control-medium-size));
+      min-height: var(--lv-button-height, var(--control-medium-size));
+    }
+
     .visual-options summary {
       display: grid;
-      width: var(--lv-button-height-xs, var(--control-xsmall-size));
-      height: var(--lv-button-height-xs, var(--control-xsmall-size));
       place-items: center;
       border: var(--borderWidth-default, var(--lv-border-width)) solid var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest, var(--lv-line-muted)));
       border-radius: var(--lv-radius-tight);
@@ -1437,6 +1442,8 @@ export class ReportTable extends LitElement {
                   tabindex="0"
                   aria-label=${`Resize ${column.label} column`}
                   aria-orientation="vertical"
+                  aria-valuemin=${this.minColumnSize(column)}
+                  aria-valuenow=${this.columnPixelWidth(column)}
                   @keydown=${(event: KeyboardEvent) => this.resizeColumnByKeyboard(column, event)}
                   @mousedown=${(event: MouseEvent) => this.beginColumnResize(event, header)}
                   @touchstart=${(event: TouchEvent) => this.beginColumnResize(event, header)}
@@ -1651,9 +1658,9 @@ export class ReportTable extends LitElement {
           </div>
         </div>
         ${this.table?.error ? html`<div class="error" role="status" aria-live="polite">${this.table.error}</div>` : nothing}
-        <div class="table-frame" role="table" aria-label=${this.table?.title ?? 'Orders'}>
+        <div class="table-frame">
           ${loading ? html`<div class="loading" aria-hidden="true"></div>` : nothing}
-          <div class="table-scrollport" role="region" aria-label=${`Scrollable ${this.table?.title ?? 'Orders'} table`} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
+          <div class="table-scrollport" role="table" aria-label=${this.table?.title ?? 'Orders'} tabindex="0" ${ref(this.bodyViewportRef)} @scroll=${this.handleScroll}>
             <div class="table-plane">
               ${this.resizeGuideX >= 0 ? html`<span class="resize-guide" style=${`--lv-resize-guide-x:${this.resizeGuideX}px`}></span>` : nothing}
               ${this.renderGroupHeaderRows(headers)}

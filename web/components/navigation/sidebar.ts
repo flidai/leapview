@@ -675,7 +675,7 @@ class LeapViewSidebar extends LitElement {
         var(--control-xsmall-paddingInline-normal)
         0
         calc(var(--base-size-12) + var(--lv-border-width));
-      color: var(--fgColor-disabled);
+      color: var(--lv-fg-muted);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
