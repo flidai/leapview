@@ -20,7 +20,7 @@ import (
 	"time"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
@@ -1210,7 +1210,7 @@ func (c *Controller) armQualificationActivationBarrier(
 	if err := c.clearQualificationActivationBarrier(ctx, containerID); err != nil {
 		return fmt.Errorf("clear qualification activation barrier markers: %w", err)
 	}
-	armedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierArmedMarker)
+	armedFile := filepath.Join(workDir, qualificationbarrier.ArmedMarker)
 	if err := os.WriteFile(armedFile, []byte("qualification-recovery\n"), 0o600); err != nil {
 		return fmt.Errorf("write qualification activation barrier marker: %w", err)
 	}
@@ -1218,7 +1218,7 @@ func (c *Controller) armQualificationActivationBarrier(
 		ctx,
 		nil,
 		"cp", armedFile,
-		containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		containerID+":"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
 	); err != nil {
 		return fmt.Errorf("arm qualification activation barrier: %w", err)
 	}
@@ -1227,8 +1227,8 @@ func (c *Controller) armQualificationActivationBarrier(
 
 func (c *Controller) clearQualificationActivationBarrier(ctx context.Context, containerID string) error {
 	return c.removeQualificationContainerPathsWithTooling(ctx, containerID,
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 	)
 }
 
@@ -1237,14 +1237,14 @@ func (c *Controller) waitForQualificationActivationBarrier(
 	containerID string,
 	workDir string,
 ) error {
-	reachedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierReachedMarker)
+	reachedFile := filepath.Join(workDir, qualificationbarrier.ReachedMarker)
 	return qualificationWait(ctx, 250*time.Millisecond, func(waitCtx context.Context) (bool, error) {
 		_ = os.Remove(reachedFile)
 		_, err := c.qualificationDocker(
 			waitCtx,
 			nil,
 			"cp",
-			containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+			containerID+":"+qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 			reachedFile,
 		)
 		if err != nil {

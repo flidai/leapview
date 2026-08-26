@@ -26,7 +26,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 	"github.com/stretchr/testify/require"
 )
 
@@ -851,13 +851,13 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 		"--entrypoint", "/bin/rm",
 		qualificationBrowserImage,
 		"-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 	}; !slices.Equal(got, want) {
 		t.Fatalf("clear arguments = %v, want %v", got, want)
 	}
 	cp := executor.requests[1].Arguments
-	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker) {
+	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker) {
 		t.Fatalf("arm copy arguments = %v", cp)
 	}
 	if contents, err := os.ReadFile(cp[1]); err != nil || string(contents) != "qualification-recovery\n" {

@@ -6,18 +6,20 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 )
 
 // QualificationActivationBarrierArmedMarker is a one-shot, explicit test
 // marker. It is intentionally inert unless a qualification harness copies it
 // into LEAPVIEW_HOME.
-const QualificationActivationBarrierArmedMarker = ".qualification-activation-barrier.armed"
+const QualificationActivationBarrierArmedMarker = qualificationbarrier.ArmedMarker
 
 // QualificationActivationBarrierReachedMarker is created by consuming the
 // armed marker. Its presence tells the qualification harness that publication
 // has passed durable pending/approval/seal checks and is waiting immediately
 // before the target activation CAS.
-const QualificationActivationBarrierReachedMarker = ".qualification-activation-barrier.reached"
+const QualificationActivationBarrierReachedMarker = qualificationbarrier.ReachedMarker
 
 // QualificationActivationBarrier consumes an explicitly armed marker and
 // pauses the caller before activation. It is enabled only for the exact
