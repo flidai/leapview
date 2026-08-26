@@ -323,7 +323,6 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	}
 	connector, err := duckdb.NewConnector(":memory:", func(execer driver.ExecerContext) error {
 		initializeOnce.Do(func() {
-			statements := []string{"SET allow_persistent_secrets = false", "SET ducklake_default_data_inlining_row_limit = 0"}
 			admitted, admissionErr := config.ExtensionAdmission.AdmitExtension(admissionCtx, "ducklake")
 			if admissionErr != nil {
 				initializeErr = fmt.Errorf("admit ducklake extension: %w", admissionErr)
@@ -332,6 +331,17 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 			if err := validateAdmittedExtension(admitted, "ducklake"); err != nil {
 				initializeErr = err
 				return
+			}
+			// DuckLake-owned settings trigger DuckDB's protocol autoload. Disable
+			// automatic acquisition and load the exact admitted artifact before
+			// touching those settings, so a writable home can never mask a missing
+			// production extension supply.
+			statements := []string{
+				"SET allow_persistent_secrets = false",
+				"SET autoinstall_known_extensions = false",
+				"SET autoload_known_extensions = false",
+				"LOAD '" + sqlLiteral(admitted.Path) + "'",
+				"SET ducklake_default_data_inlining_row_limit = 0",
 			}
 			if config.MemoryMaxBytes > 0 {
 				statements = append(statements, fmt.Sprintf("SET memory_limit = '%dB'", config.MemoryMaxBytes))
@@ -345,11 +355,6 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 			if strings.TrimSpace(config.TempDir) != "" {
 				statements = append(statements, "SET temp_directory = '"+sqlLiteral(config.TempDir)+"'")
 			}
-			statements = append(statements,
-				"SET autoinstall_known_extensions = false",
-				"SET autoload_known_extensions = false",
-			)
-			statements = append(statements, "LOAD '"+sqlLiteral(admitted.Path)+"'")
 			for _, statement := range statements {
 				if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
 					initializeErr = err
