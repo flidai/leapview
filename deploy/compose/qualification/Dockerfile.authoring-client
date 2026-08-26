@@ -21,7 +21,7 @@ RUN groupadd --system author && \
     mkdir -p /workspace /usr/local/libexec && \
     chown -R author:author /home/author /workspace
 
-COPY --from=leapview-payload --chown=author:author /app/evaluation /workspace/evaluation
+COPY --from=leapview-payload --chown=author:author /app/evaluation /app/evaluation
 COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview
 COPY --from=leapview-payload /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl
 

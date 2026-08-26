@@ -108,7 +108,7 @@ func TestQualificationToolingKeepsFrozenDebianBoundary(t *testing.T) {
 		"apt-get install -y --no-install-recommends dbus-daemon gnome-keyring",
 		"COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview",
 		"COPY --from=leapview-payload /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl",
-		"COPY --from=leapview-payload --chown=author:author /app/evaluation /workspace/evaluation",
+		"COPY --from=leapview-payload --chown=author:author /app/evaluation /app/evaluation",
 	} {
 		if !strings.Contains(qualificationDockerfile, required) {
 			t.Fatalf("qualification tooling Dockerfile missing %q", required)

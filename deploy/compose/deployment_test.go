@@ -535,7 +535,8 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 		t.Error("authoring must use browser-approved login")
 	}
 	if strings.Contains(client, "command.Stderr = io.MultiWriter(&output, writer)") ||
-		!strings.Contains(client, "command.Stderr = &output") {
+		!strings.Contains(client, "command.Stdout = writer") ||
+		!strings.Contains(client, "command.Stderr = &diagnostics") {
 		t.Error("qualification login must keep stderr diagnostics out of the JSON event stream")
 	}
 	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
@@ -562,7 +563,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
 		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
-	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
+	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview", "COPY --from=leapview-payload --chown=author:author /app/evaluation /app/evaluation", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
 		if !strings.Contains(clientImage, required) {
 			t.Errorf("authoring client image missing %q", required)
 		}
