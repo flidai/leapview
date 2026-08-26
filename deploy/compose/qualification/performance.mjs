@@ -114,13 +114,14 @@ async function runWorkload(path) {
       const startedAt = performance.now()
       await filter.selectOption({ label: value })
       await waitForDashboardGeneration(page, generation, 30_000)
-      await table.getByRole('button', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }
     metricSamples.push(await metricSnapshot())
 
-    const orderSort = table.getByRole('button', { name: /^Order(?: [↑↓])?$/ })
+    const orderSort = table.locator('button.header-button').filter({ hasText: /^order_id(?:\s*[↑↓])?$/ })
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()

@@ -454,18 +454,21 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	for _, required := range []string{
 		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
-		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`interactiveCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
 		`stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })`,
 	} {
 		if !strings.Contains(browser, required) {
 			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
 		}
 	}
-	if !strings.Contains(browser, `table.getByRole('button', { name: 'State: SP'`) || !strings.Contains(performance, "table.getByRole('button', { name: `State: ${value}`") {
-		t.Error("browser qualification must assert the interactive table cell accessibility label")
+	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
+		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
-	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
-		t.Error("performance qualification must select only the sortable Order header")
+	if !strings.Contains(performance, `hasText: /^order_id(?:\s*[↑↓])?$/`) {
+		t.Error("performance qualification must select only the sortable order_id result-frame header")
+	}
+	if !strings.Contains(browser, "table diagnostics=") || !strings.Contains(browser, ".slice(0, 24)") {
+		t.Error("browser qualification failures must include bounded table diagnostics")
 	}
 	if strings.Contains(browser, "encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID") ||
 		!strings.Contains(browser, "Authorization: `Bearer ${credentials.auditToken}`") {
