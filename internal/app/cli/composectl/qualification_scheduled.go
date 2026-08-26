@@ -40,7 +40,7 @@ func (c *Controller) runScheduledRecoveryQualification(ctx context.Context, buil
 			return err
 		}
 		if !cfg.RecoveryQualificationEnabled {
-			return nil
+			return fmt.Errorf("scheduled recovery qualification is disabled; run leapviewctl init or complete the managed-host qualification migration")
 		}
 		if owner := strings.TrimSpace(cfg.RecoveryQualificationExecutionEnvironment); owner != "" && owner != "host" {
 			return fmt.Errorf("scheduled recovery qualification requires execution environment host, got %q", owner)

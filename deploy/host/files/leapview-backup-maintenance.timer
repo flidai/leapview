@@ -2,6 +2,7 @@
 Description=Maintain and verify LeapView backups weekly
 
 [Timer]
+OnBootSec=5m
 OnCalendar=Sun *-*-* 04:30:00
 RandomizedDelaySec=2h
 Persistent=true

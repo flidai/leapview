@@ -290,7 +290,7 @@ func (adapter productionBackupRestoreAdapter) Execute(ctx context.Context, occur
 	if err := adapter.config.validateRuntime(ctx); err != nil {
 		return ScenarioOutcome{}, NewFailure("qualification_configuration_invalid", err.Error())
 	}
-	work, err := prepareQualificationWorkspace(adapter.config.WorkRoot, occurrence)
+	work, err := prepareQualificationRunDirectory(adapter.config.WorkRoot, occurrence)
 	if err != nil {
 		return ScenarioOutcome{}, err
 	}
@@ -400,7 +400,7 @@ func (adapter productionTransitionAdapter) Execute(ctx context.Context, occurren
 	if policyDigest != adapter.config.PolicySHA256 || occurrence.PolicySHA256 != adapter.config.PolicySHA256 {
 		return ScenarioOutcome{}, NewFailure("qualification_policy_mismatch", "candidate transition policy does not match the scheduled immutable policy")
 	}
-	work, err := prepareQualificationWorkspace(adapter.config.WorkRoot, occurrence)
+	work, err := prepareQualificationRunDirectory(adapter.config.WorkRoot, occurrence)
 	if err != nil {
 		return ScenarioOutcome{}, err
 	}
@@ -561,9 +561,9 @@ func writeQualificationBundleChecksums(root string) error {
 	return os.WriteFile(filepath.Join(root, "SHA256SUMS"), []byte(document.String()), 0o600)
 }
 
-func prepareQualificationWorkspace(root string, occurrence Occurrence) (string, error) {
+func prepareQualificationRunDirectory(root string, occurrence Occurrence) (string, error) {
 	if occurrence.ID == "" || occurrence.Fence.Generation <= 0 {
-		return "", fmt.Errorf("production recovery qualification requires an occurrence-owned fenced workspace")
+		return "", fmt.Errorf("production recovery qualification requires an occurrence-owned fenced run directory")
 	}
 	prefix := occurrence.ID + "-generation-"
 	entries, err := os.ReadDir(root)
@@ -582,17 +582,17 @@ func prepareQualificationWorkspace(root string, occurrence Occurrence) (string, 
 			return "", err
 		}
 	}
-	workspace := filepath.Join(root, fmt.Sprintf("%s%d", prefix, occurrence.Fence.Generation))
-	if err := os.Mkdir(workspace, 0o700); err != nil {
+	runDirectory := filepath.Join(root, fmt.Sprintf("%s%d", prefix, occurrence.Fence.Generation))
+	if err := os.Mkdir(runDirectory, 0o700); err != nil {
 		return "", err
 	}
-	return workspace, nil
+	return runDirectory, nil
 }
 
-// ReclaimQualificationWorkspaces removes only ledger-owned directories whose
+// ReclaimQualificationRunDirectories removes only ledger-owned directories whose
 // occurrence has no live execution lease. Unknown entries are retained so the
 // sweep cannot delete operator or future-version data.
-func ReclaimQualificationWorkspaces(root string, occurrences []Occurrence, now time.Time) error {
+func ReclaimQualificationRunDirectories(root string, occurrences []Occurrence, now time.Time) error {
 	entries, err := os.ReadDir(root)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil

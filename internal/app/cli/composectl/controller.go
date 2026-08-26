@@ -243,6 +243,7 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 	}
 	appEnvironment := fmt.Sprintf("LEAPVIEW_PRODUCTION=1\nLEAPVIEW_ENVIRONMENT=%s\nLEAPVIEW_ADDR=:8080\n", options.Environment) +
 		"LEAPVIEW_HOME=/var/lib/leapview/home\nLEAPVIEW_MANAGED_DATA_BACKEND=local\nLEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data\n" +
+		"LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true\nLEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT=host\n" +
 		"LEAPVIEW_LOCAL_AUTH=1\nLEAPVIEW_COOKIE_SECURE=true\nLEAPVIEW_TRUST_PROXY_HEADERS=true\n" +
 		fmt.Sprintf("LEAPVIEW_PUBLIC_URL=https://%s\nLEAPVIEW_ALLOWED_HOSTS=%s\nLEAPVIEW_BOOTSTRAP_ADMIN_EMAIL=%s\n", options.Domain, options.Domain, options.AdminEmail) +
 		fmt.Sprintf("LEAPVIEW_CSRF_KEY=%s\nLEAPVIEW_METRICS_BEARER_TOKEN=%s\n", csrfKey, metricsToken)

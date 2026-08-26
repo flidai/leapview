@@ -23,7 +23,6 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
-	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
@@ -584,7 +583,7 @@ func BuildProductionRecoveryLifecycleWithContainerRuntime(cfg config.Config, bui
 
 func productionRecoveryStorageEvidence(cfg config.Config) refreshmodule.RecoveryStorageEvidenceProvider {
 	return func(context.Context) (refreshmodule.RecoveryStorageQualificationEvidence, error) {
-		var points []adminoffline.ExternalRecoveryPoint
+		var points []adminmodule.ExternalRecoveryPoint
 		evidence := map[string]string{}
 		if strings.TrimSpace(cfg.ManagedDataBackend) == "s3" {
 			if err := readRecoveryQualificationJSON(cfg.RecoveryQualificationExternalRecoveryPoints, &points); err != nil {
@@ -594,7 +593,7 @@ func productionRecoveryStorageEvidence(cfg config.Config) refreshmodule.Recovery
 				return refreshmodule.RecoveryStorageQualificationEvidence{}, fmt.Errorf("read scheduled external recovery evidence: %w", err)
 			}
 		}
-		topology, err := adminoffline.BuildStorageTopology(adminoffline.Config{
+		topology, err := adminmodule.BuildRecoveryStorageTopology(adminmodule.RecoveryStorageConfig{
 			ManagedDataBackend: cfg.ManagedDataBackend, ManagedDataS3Endpoint: cfg.ManagedDataS3Endpoint,
 			ManagedDataS3Region: cfg.ManagedDataS3Region, ManagedDataS3Bucket: cfg.ManagedDataS3Bucket,
 			ManagedDataS3Prefix: cfg.ManagedDataS3Prefix,
@@ -603,23 +602,8 @@ func productionRecoveryStorageEvidence(cfg config.Config) refreshmodule.Recovery
 			return refreshmodule.RecoveryStorageQualificationEvidence{}, err
 		}
 		return refreshmodule.RecoveryStorageQualificationEvidence{
-			Topology: recoveryPlatformStorageTopology(topology), ExternalEvidence: evidence,
+			Topology: topology, ExternalEvidence: evidence,
 		}, nil
-	}
-}
-
-func recoveryPlatformStorageTopology(topology adminoffline.BackupStorageTopology) platform.InstanceBackupStorageTopology {
-	external := make([]platform.InstanceBackupExternalStoreReference, len(topology.ExternalStores))
-	for index, reference := range topology.ExternalStores {
-		external[index] = platform.InstanceBackupExternalStoreReference{
-			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
-			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
-			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
-		}
-	}
-	return platform.InstanceBackupStorageTopology{
-		ControlPlane: topology.ControlPlane, ManagedData: topology.ManagedData,
-		DuckLake: topology.DuckLake, ExternalStores: external,
 	}
 }
 

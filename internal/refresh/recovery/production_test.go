@@ -208,7 +208,7 @@ cp '%s' "$evidence_dir/transition-qualification.json"
 	}
 }
 
-func TestQualificationWorkspaceReclaimsOnlySupersededOccurrenceGeneration(t *testing.T) {
+func TestQualificationRunDirectoryReclaimsOnlySupersededOccurrenceGeneration(t *testing.T) {
 	root := t.TempDir()
 	for _, name := range []string{
 		"occurrence-a-generation-1",
@@ -219,26 +219,26 @@ func TestQualificationWorkspaceReclaimsOnlySupersededOccurrenceGeneration(t *tes
 			t.Fatal(err)
 		}
 	}
-	workspace, err := prepareQualificationWorkspace(root, Occurrence{
+	runDirectory, err := prepareQualificationRunDirectory(root, Occurrence{
 		ID: "occurrence-a", Fence: Fence{Owner: "worker", Generation: 2},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if workspace != filepath.Join(root, "occurrence-a-generation-2") {
-		t.Fatalf("workspace = %q", workspace)
+	if runDirectory != filepath.Join(root, "occurrence-a-generation-2") {
+		t.Fatalf("run directory = %q", runDirectory)
 	}
 	if _, err := os.Stat(filepath.Join(root, "occurrence-a-generation-1")); !os.IsNotExist(err) {
-		t.Fatalf("superseded crash workspace remains: %v", err)
+		t.Fatalf("superseded crash run directory remains: %v", err)
 	}
 	for _, name := range []string{"occurrence-a-generation-2", "occurrence-a-generation-3", "occurrence-b-generation-1"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
-			t.Fatalf("active or unrelated workspace %s was removed: %v", name, err)
+			t.Fatalf("active or unrelated run directory %s was removed: %v", name, err)
 		}
 	}
 }
 
-func TestQualificationWorkspaceSweepReclaimsCrashedAndTerminalButPreservesLiveLease(t *testing.T) {
+func TestQualificationRunDirectorySweepReclaimsCrashedAndTerminalButPreservesLiveLease(t *testing.T) {
 	root := t.TempDir()
 	now := time.Date(2026, 8, 26, 12, 0, 0, 0, time.UTC)
 	for _, name := range []string{
@@ -254,17 +254,17 @@ func TestQualificationWorkspaceSweepReclaimsCrashedAndTerminalButPreservesLiveLe
 		{ID: "terminal", Status: StatusSucceeded, Fence: Fence{Owner: "worker", Generation: 3}, LeaseExpiresAt: now.Add(time.Hour)},
 	}
 	// A restarted lifecycle performs this sweep before claiming new work.
-	if err := ReclaimQualificationWorkspaces(root, occurrences, now); err != nil {
+	if err := ReclaimQualificationRunDirectories(root, occurrences, now); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"active-generation-1", "operator-data"} {
 		if _, err := os.Stat(filepath.Join(root, name)); err != nil {
-			t.Fatalf("live or unowned workspace %s was removed: %v", name, err)
+			t.Fatalf("live or unowned run directory %s was removed: %v", name, err)
 		}
 	}
 	for _, name := range []string{"crashed-generation-2", "terminal-generation-3"} {
 		if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-			t.Fatalf("abandoned workspace %s remains: %v", name, err)
+			t.Fatalf("abandoned run directory %s remains: %v", name, err)
 		}
 	}
 }

@@ -159,7 +159,7 @@ candidate bundle. Recovery points are read from those validated owner reports;
 restore and readiness durations are derived only from ledger-owned persisted
 start and completion phases. Time spent before or after those phases affects
 only the separately reported end-to-end qualification duration. A reclaimed
-occurrence uses a new fenced workspace generation and removes only its own
+occurrence uses a new fenced run-directory generation and removes only its own
 superseded, no-longer-leased generations.
 
 Persisted failures use bounded machine codes and credential-scrubbed summaries.

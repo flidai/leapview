@@ -1,6 +1,7 @@
 package composectl
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,28 @@ import (
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 )
+
+func TestScheduledRecoveryQualificationRejectsDisabledBootstrap(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, appEnvName), []byte(
+		"LEAPVIEW_PRODUCTION=true\nLEAPVIEW_HOME=/var/lib/leapview/home\nLEAPVIEW_ENVIRONMENT=prod\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte(
+		"LEAPVIEW_IMAGE=ghcr.io/flidai/leapview@sha256:"+strings.Repeat("a", 64)+"\n",
+	), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	controller, err := New(Options{Root: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = controller.runScheduledRecoveryQualification(context.Background(), buildinfo.Identity{})
+	if err == nil || !strings.Contains(err.Error(), "scheduled recovery qualification is disabled") {
+		t.Fatalf("disabled timer entrypoint error = %v", err)
+	}
+}
 
 func TestReleasedHostRecoveryCompositionExecutesDueTransitionOwnersWithValidatedEvidence(t *testing.T) {
 	basePolicy, err := compatibility.EmbeddedPolicy()
@@ -96,28 +119,22 @@ cp '%s' "$evidence_dir/transition-qualification.json"
 	dockerPath := filepath.Join(root, "docker")
 	dockerScript := fmt.Sprintf(`#!/bin/sh
 case " $* " in
+  *" admin initialize "*) printf '{"adminEmail":"admin@example.com"}\n' ;;
   *" ps -q leapview "*) printf 'container-id\n' ;;
   *" inspect --format "*) printf '%%s\n' '%s' ;;
   *" version --format "*) printf '27.0.0\n' ;;
-  *) exit 1 ;;
+  *) exit 0 ;;
 esac
 `, stateRoot)
 	if err := os.WriteFile(dockerPath, []byte(dockerScript), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	appEnvironment := strings.Join([]string{
-		"LEAPVIEW_PRODUCTION=true",
-		"LEAPVIEW_HOME=/var/lib/leapview/home",
-		"LEAPVIEW_ENVIRONMENT=prod",
-		"LEAPVIEW_MANAGED_DATA_BACKEND=local",
-		"LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true",
-		"LEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT=host",
-		"LEAPVIEW_RECOVERY_QUALIFICATION_CRON=@hourly",
+	deploymentEnvironment := strings.Join([]string{
+		"COMPOSE_HTTPS=0",
+		"LEAPVIEW_IMAGE=" + identity.Image,
+		"CADDY_IMAGE=caddy@sha256:" + strings.Repeat("e", 64),
+		"CADDY_DOMAIN=dash.example.com",
 	}, "\n") + "\n"
-	if err := os.WriteFile(filepath.Join(root, appEnvName), []byte(appEnvironment), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	deploymentEnvironment := "COMPOSE_HTTPS=0\nLEAPVIEW_IMAGE=" + identity.Image + "\n"
 	if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte(deploymentEnvironment), 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -125,7 +142,27 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	// The first canonical host run installs immutable schedule revisions.
+	// The canonical bootstrap writes the production qualification owner and
+	// enabled state; the test does not inject recovery settings into leapview.env.
+	if err := controller.Initialize(t.Context(), InitOptions{
+		AdminEmail: "admin@example.com", Domain: "dash.example.com", Environment: "prod", Image: identity.Image, NoHTTPS: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	appEnvironment, err := os.ReadFile(filepath.Join(root, appEnvName))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, setting := range []string{
+		"LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true",
+		"LEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT=host",
+	} {
+		if !strings.Contains(string(appEnvironment), setting) {
+			t.Fatalf("canonical bootstrap omitted %s", setting)
+		}
+	}
+	// The first canonical host run validates every operation owner and installs
+	// immutable schedule revisions.
 	if err := controller.runScheduledRecoveryQualification(t.Context(), build); err != nil {
 		t.Fatal(err)
 	}
@@ -136,7 +173,7 @@ esac
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 		UPDATE recovery_qualification_schedules
 		SET next_run_at = ?
-		WHERE operation IN ('upgrade', 'rollback') AND closed_at IS NULL
+		WHERE closed_at IS NULL
 	`, time.Now().UTC().Add(-time.Hour).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
 		t.Fatal(err)
 	}
@@ -156,23 +193,31 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
-	transitionCount := 0
-	transitionOperations := map[string]bool{}
+	qualifiedOperations := map[string]bool{}
 	for _, occurrence := range occurrences {
-		if occurrence.Operation != refreshmodule.OperationUpgrade && occurrence.Operation != refreshmodule.OperationRollback {
-			continue
+		qualifiedOperations[occurrence.Operation] = true
+		if occurrence.Status != refreshmodule.StatusSucceeded || occurrence.EvidenceStatus != "published" {
+			t.Fatalf("owner-validated occurrence = %#v", occurrence)
 		}
-		transitionCount++
-		transitionOperations[occurrence.Operation] = true
-		if occurrence.Status != refreshmodule.StatusSucceeded || occurrence.EvidenceStatus != "published" || len(occurrence.Evidence) != 1 {
-			t.Fatalf("owner-validated transition occurrence = %#v", occurrence)
+		expectedEvidence := 1
+		if occurrence.Operation == refreshmodule.OperationRestore {
+			expectedEvidence = 2
 		}
-		if occurrence.ReadinessCompletedAt.Before(occurrence.ReadinessStartedAt) || occurrence.ReadinessStartedAt.IsZero() {
+		if len(occurrence.Evidence) != expectedEvidence {
+			t.Fatalf("owner evidence count = %d, want %d: %#v", len(occurrence.Evidence), expectedEvidence, occurrence)
+		}
+		if (occurrence.Operation == refreshmodule.OperationUpgrade || occurrence.Operation == refreshmodule.OperationRollback) &&
+			(occurrence.ReadinessCompletedAt.Before(occurrence.ReadinessStartedAt) || occurrence.ReadinessStartedAt.IsZero()) {
 			t.Fatalf("owner readiness phase was not persisted: %#v", occurrence)
 		}
 	}
-	if transitionCount < 2 || !transitionOperations[refreshmodule.OperationUpgrade] || !transitionOperations[refreshmodule.OperationRollback] {
-		t.Fatalf("transition occurrences = %d (%v), want due upgrade and rollback", transitionCount, transitionOperations)
+	for _, operation := range []string{
+		refreshmodule.OperationBackup, refreshmodule.OperationRestore,
+		refreshmodule.OperationUpgrade, refreshmodule.OperationRollback,
+	} {
+		if !qualifiedOperations[operation] {
+			t.Fatalf("canonical bootstrap did not produce owner-validated %s evidence: %v", operation, qualifiedOperations)
+		}
 	}
 }
 

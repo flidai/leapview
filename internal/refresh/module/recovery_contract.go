@@ -93,7 +93,7 @@ func NewProductionRecoveryLifecycle(config ProductionRecoveryQualificationConfig
 		Publisher: RecoveryFileEvidencePublisher{Root: config.EvidenceRoot},
 		WorkerID:  "production-recovery-worker", Actor: "scheduled-qualification",
 		Lease: 15 * time.Minute, BatchSize: 4, ComplianceWindow: 90 * 24 * time.Hour,
-		EvidenceRoot: config.EvidenceRoot, WorkspaceRoot: config.WorkRoot,
+		EvidenceRoot: config.EvidenceRoot, RunDirectoryRoot: config.WorkRoot,
 	}
 }
 
