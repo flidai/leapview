@@ -77,9 +77,13 @@ same controlled maintenance environment used for other offline Admin commands:
 leapview admin recovery status
 ```
 
-The JSON response reports due, overdue, running, failed, and evidence
-publication counts; recovered leases; last-success age; recovery-point age;
-and the latest restore/readiness durations for the fixed operation set. The
+The JSON response distinguishes an unconfigured system from configured
+schedules, scheduled runs that were never materialized, overdue work, expired
+execution or publication leases, running and failed work, and evidence
+publication state. This projection is passive: scheduler and worker failure is
+visible without requiring another worker to mutate the ledger. It also reports
+recovered leases, last-success age, recovery-point age, and the latest
+restore/readiness durations for the fixed operation set. The
 same aggregate values are exported on the protected Prometheus endpoint under
 `leapview_recovery_qualification_*`. Labels are limited to operation and
 publication state—occurrence, schedule, artifact, scenario, and target
@@ -91,5 +95,28 @@ and a redacted failure reason. Evidence upload has its own retryable lease, so
 an upload outage does not rerun a destructive recovery drill. Never store raw
 logs, archives, credentials, signed URLs, or secret-bearing query strings in a
 ledger evidence reference.
+
+Schedule definitions are immutable revisions. Changing artifact identity,
+policy, target, scenario, cadence, or staleness closes the prior revision only
+after its due occurrences are materialized, then creates a new revision
+boundary. A catch-up run therefore cannot be relabeled as qualification of a
+newer artifact.
+
+The application recovery lifecycle reconciles definitions, enqueues due work,
+claims one fenced logical occurrence, calls the operation owner's adapter, and
+publishes the exact existing transition qualification, backup-manifest-v2, or
+restore-preflight bytes after retaining and verifying them in the private
+content-addressed evidence store. Ledger references use bounded
+`artifact://qualification/...` identities rather than host filesystem paths, so
+node topology is not copied into durable records. Evidence
+publication and retention remain separate from scenario execution. If no
+reviewed definitions and adapters are configured, status reports
+`unconfigured: true`; an empty ledger must not be interpreted as successful
+qualification.
+
+Persisted failures use bounded machine codes and credential-scrubbed summaries.
+Full owner errors belong only in restricted transient logs. URL credentials,
+DSNs, JSON secrets, signed URL parameters, provider credentials, and multiline
+error bodies must never be copied into the ledger.
 
 See [Operational troubleshooting](/docs/guides/operate/troubleshooting), [Audit events](/docs/security/audit), and the [environment reference](/docs/configuration).

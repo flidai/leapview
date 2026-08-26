@@ -1,7 +1,8 @@
 -- +goose Up
 
 CREATE TABLE recovery_qualification_schedules (
-  schedule_id TEXT PRIMARY KEY,
+  schedule_revision_id TEXT PRIMARY KEY,
+  schedule_id TEXT NOT NULL,
   scenario TEXT NOT NULL,
   operation TEXT NOT NULL CHECK (operation IN ('backup', 'restore', 'upgrade', 'rollback')),
   policy_version TEXT NOT NULL,
@@ -12,16 +13,21 @@ CREATE TABLE recovery_qualification_schedules (
   stale_after_seconds INTEGER NOT NULL CHECK (stale_after_seconds > 0),
   next_run_at TEXT NOT NULL,
   enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
+  valid_from TEXT NOT NULL,
+  closed_at TEXT,
   updated_at TEXT NOT NULL
 );
 
 CREATE INDEX recovery_qualification_schedules_due_idx
-  ON recovery_qualification_schedules(enabled, next_run_at, schedule_id);
+  ON recovery_qualification_schedules(enabled, closed_at, next_run_at, schedule_id);
+CREATE UNIQUE INDEX recovery_qualification_schedules_active_idx
+  ON recovery_qualification_schedules(schedule_id) WHERE closed_at IS NULL;
 
 CREATE TABLE recovery_qualification_occurrences (
   occurrence_id TEXT PRIMARY KEY,
   request_digest TEXT NOT NULL,
   schedule_id TEXT NOT NULL,
+  schedule_revision_id TEXT NOT NULL,
   scenario TEXT NOT NULL,
   operation TEXT NOT NULL CHECK (operation IN ('backup', 'restore', 'upgrade', 'rollback')),
   policy_version TEXT NOT NULL,
@@ -47,6 +53,7 @@ CREATE TABLE recovery_qualification_occurrences (
   restore_duration_millis INTEGER CHECK (restore_duration_millis IS NULL OR restore_duration_millis >= 0),
   readiness_duration_millis INTEGER CHECK (readiness_duration_millis IS NULL OR readiness_duration_millis >= 0),
   failure_reason_redacted TEXT NOT NULL DEFAULT '',
+  failure_code TEXT NOT NULL DEFAULT '' CHECK (length(failure_code) <= 64),
   evidence_refs_json TEXT NOT NULL DEFAULT '[]'
     CHECK (json_valid(evidence_refs_json) AND json_type(evidence_refs_json) = 'array'),
   evidence_status TEXT NOT NULL DEFAULT 'pending'
@@ -56,7 +63,8 @@ CREATE TABLE recovery_qualification_occurrences (
   evidence_lease_owner TEXT NOT NULL DEFAULT '',
   evidence_lease_expires_at TEXT,
   evidence_published_at TEXT,
-  evidence_failure_reason_redacted TEXT NOT NULL DEFAULT ''
+  evidence_failure_reason_redacted TEXT NOT NULL DEFAULT '',
+  evidence_failure_code TEXT NOT NULL DEFAULT '' CHECK (length(evidence_failure_code) <= 64)
 );
 
 CREATE INDEX recovery_qualification_occurrences_claim_idx
@@ -78,6 +86,7 @@ CREATE TABLE recovery_qualification_attempts (
   lease_expires_at TEXT NOT NULL,
   finished_at TEXT,
   failure_reason_redacted TEXT NOT NULL DEFAULT '',
+  failure_code TEXT NOT NULL DEFAULT '' CHECK (length(failure_code) <= 64),
   PRIMARY KEY (occurrence_id, attempt_number),
   UNIQUE (occurrence_id, fence_generation)
 );
@@ -92,6 +101,7 @@ CREATE TABLE recovery_qualification_evidence_attempts (
   lease_expires_at TEXT NOT NULL,
   finished_at TEXT,
   failure_reason_redacted TEXT NOT NULL DEFAULT '',
+  failure_code TEXT NOT NULL DEFAULT '' CHECK (length(failure_code) <= 64),
   PRIMARY KEY (occurrence_id, attempt_number),
   UNIQUE (occurrence_id, fence_generation)
 );
@@ -103,5 +113,6 @@ DROP INDEX recovery_qualification_evidence_claim_idx;
 DROP INDEX recovery_qualification_occurrences_retention_idx;
 DROP INDEX recovery_qualification_occurrences_claim_idx;
 DROP TABLE recovery_qualification_occurrences;
+DROP INDEX recovery_qualification_schedules_active_idx;
 DROP INDEX recovery_qualification_schedules_due_idx;
 DROP TABLE recovery_qualification_schedules;

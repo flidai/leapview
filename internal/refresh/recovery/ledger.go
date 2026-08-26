@@ -16,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/safetext"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 )
 
@@ -46,10 +47,9 @@ var (
 	ErrConflict = errors.New("recovery qualification occurrence conflicts with durable identity")
 	ErrFenced   = errors.New("recovery qualification lease is stale or fenced")
 
-	canonicalValuePattern   = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$`)
-	immutableDigestPattern  = regexp.MustCompile(`sha256:[0-9a-f]{64}$`)
-	secretAssignmentPattern = regexp.MustCompile(`(?i)(authorization|access[_-]?token|refresh[_-]?token|password|client[_-]?secret|api[_-]?key|token)\s*[:=]\s*([^\s,;]+)`)
-	bearerPattern           = regexp.MustCompile(`(?i)bearer\s+[A-Za-z0-9._~+/-]+`)
+	canonicalValuePattern  = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._:/@+-]*$`)
+	immutableDigestPattern = regexp.MustCompile(`sha256:[0-9a-f]{64}$`)
+	failureCodePattern     = regexp.MustCompile(`^[a-z][a-z0-9_]{2,63}$`)
 )
 
 type Definition struct {
@@ -91,6 +91,7 @@ func (definition Definition) Validate() error {
 
 type EnqueueInput struct {
 	ScheduleID       string
+	ScheduleRevision string
 	Scenario         string
 	Operation        string
 	PolicyVersion    string
@@ -98,6 +99,33 @@ type EnqueueInput struct {
 	ArtifactIdentity string
 	PlannedAt        time.Time
 	StaleAfter       time.Duration
+}
+
+// ScheduleRevisionID binds immutable schedule intent without treating enable
+// and disable operations as a new qualification definition.
+func ScheduleRevisionID(definition Definition) (string, error) {
+	if err := definition.Validate(); err != nil {
+		return "", err
+	}
+	value := strings.Join([]string{
+		definition.ScheduleID, definition.Scenario, definition.Operation,
+		definition.PolicyVersion, definition.TargetScope, definition.ArtifactIdentity,
+		definition.Cron, definition.Timezone, definition.StaleAfter.String(),
+	}, "\x00")
+	sum := sha256.Sum256([]byte(value))
+	return "recovery-schedule-" + hex.EncodeToString(sum[:]), nil
+}
+
+func ScheduleRevisionForInput(input EnqueueInput) (string, error) {
+	if strings.TrimSpace(input.ScheduleRevision) != "" {
+		if err := validateCanonical("schedule revision", input.ScheduleRevision, 256); err != nil {
+			return "", err
+		}
+		return input.ScheduleRevision, nil
+	}
+	value := strings.Join([]string{input.ScheduleID, input.Scenario, input.PolicyVersion, input.TargetScope}, "\x00")
+	sum := sha256.Sum256([]byte(value))
+	return "recovery-occurrence-schedule-" + hex.EncodeToString(sum[:]), nil
 }
 
 func (input EnqueueInput) Validate() error {
@@ -123,9 +151,13 @@ func OccurrenceID(input EnqueueInput) (string, error) {
 	if err := input.Validate(); err != nil {
 		return "", err
 	}
+	revision, err := ScheduleRevisionForInput(input)
+	if err != nil {
+		return "", err
+	}
 	value := strings.Join([]string{
 		input.ScheduleID, input.PlannedAt.UTC().Format(time.RFC3339Nano), input.Scenario,
-		input.PolicyVersion, input.TargetScope,
+		input.PolicyVersion, input.TargetScope, revision,
 	}, "\x00")
 	sum := sha256.Sum256([]byte(value))
 	return "recovery-occurrence-" + hex.EncodeToString(sum[:]), nil
@@ -137,7 +169,7 @@ func RequestDigest(input EnqueueInput) (string, error) {
 	}
 	value := strings.Join([]string{
 		input.ScheduleID, input.Scenario, input.Operation, input.PolicyVersion,
-		input.TargetScope, input.ArtifactIdentity,
+		input.TargetScope, input.ArtifactIdentity, input.ScheduleRevision,
 		input.PlannedAt.UTC().Format(time.RFC3339Nano), input.StaleAfter.String(),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(value))
@@ -250,6 +282,7 @@ func (result Result) validate(completedAt time.Time, requireRecoveryPoint bool) 
 type Occurrence struct {
 	ID                      string              `json:"occurrenceId"`
 	ScheduleID              string              `json:"scheduleId"`
+	ScheduleRevision        string              `json:"scheduleRevision"`
 	Scenario                string              `json:"scenario"`
 	Operation               string              `json:"operation"`
 	PolicyVersion           string              `json:"policyVersion"`
@@ -272,6 +305,7 @@ type Occurrence struct {
 	RestoreDurationMillis   int64               `json:"restoreDurationMillis,omitempty"`
 	ReadinessDurationMillis int64               `json:"readinessDurationMillis,omitempty"`
 	FailureReasonRedacted   string              `json:"failureReasonRedacted,omitempty"`
+	FailureCode             string              `json:"failureCode,omitempty"`
 	Evidence                []EvidenceReference `json:"evidence"`
 	EvidenceStatus          string              `json:"evidenceStatus"`
 	EvidenceAttemptCount    int64               `json:"evidenceAttemptCount"`
@@ -279,6 +313,7 @@ type Occurrence struct {
 	EvidenceLeaseExpiresAt  time.Time           `json:"evidenceLeaseExpiresAt,omitempty"`
 	EvidencePublishedAt     time.Time           `json:"evidencePublishedAt,omitempty"`
 	EvidenceFailureRedacted string              `json:"evidenceFailureReasonRedacted,omitempty"`
+	EvidenceFailureCode     string              `json:"evidenceFailureCode,omitempty"`
 }
 
 type Attempt struct {
@@ -293,6 +328,7 @@ type Attempt struct {
 	LeaseExpiresAt        time.Time `json:"leaseExpiresAt"`
 	FinishedAt            time.Time `json:"finishedAt,omitempty"`
 	FailureReasonRedacted string    `json:"failureReasonRedacted,omitempty"`
+	FailureCode           string    `json:"failureCode,omitempty"`
 }
 
 type EvidenceAttempt struct {
@@ -305,6 +341,7 @@ type EvidenceAttempt struct {
 	LeaseExpiresAt        time.Time `json:"leaseExpiresAt"`
 	FinishedAt            time.Time `json:"finishedAt,omitempty"`
 	FailureReasonRedacted string    `json:"failureReasonRedacted,omitempty"`
+	FailureCode           string    `json:"failureCode,omitempty"`
 }
 
 type ClaimInput struct {
@@ -351,6 +388,11 @@ type OperationStatus struct {
 
 type StatusSnapshot struct {
 	GeneratedAt            time.Time         `json:"generatedAt"`
+	ConfiguredSchedules    int64             `json:"configuredSchedules"`
+	Unconfigured           bool              `json:"unconfigured"`
+	MissingRuns            int64             `json:"missingRuns"`
+	StaleExecutionLeases   int64             `json:"staleExecutionLeases"`
+	StaleEvidenceLeases    int64             `json:"staleEvidenceLeases"`
 	Due                    int64             `json:"due"`
 	Overdue                int64             `json:"overdue"`
 	Running                int64             `json:"running"`
@@ -369,6 +411,10 @@ type Metric struct {
 
 func (snapshot StatusSnapshot) Metrics() []Metric {
 	metrics := []Metric{
+		{Name: "leapview_recovery_qualification_configured", Labels: map[string]string{}, Value: float64(snapshot.ConfiguredSchedules)},
+		{Name: "leapview_recovery_qualification_missing", Labels: map[string]string{}, Value: float64(snapshot.MissingRuns)},
+		{Name: "leapview_recovery_qualification_stale_leases", Labels: map[string]string{"state": "execution"}, Value: float64(snapshot.StaleExecutionLeases)},
+		{Name: "leapview_recovery_qualification_stale_leases", Labels: map[string]string{"state": "evidence"}, Value: float64(snapshot.StaleEvidenceLeases)},
 		{Name: "leapview_recovery_qualification_due", Labels: map[string]string{}, Value: float64(snapshot.Due)},
 		{Name: "leapview_recovery_qualification_overdue", Labels: map[string]string{}, Value: float64(snapshot.Overdue)},
 		{Name: "leapview_recovery_qualification_running", Labels: map[string]string{}, Value: float64(snapshot.Running)},
@@ -392,6 +438,7 @@ func (snapshot StatusSnapshot) Metrics() []Metric {
 
 type Repository interface {
 	ReconcileSchedule(context.Context, Definition, time.Time) error
+	ReconcileSchedules(context.Context, []Definition, time.Time) error
 	Enqueue(context.Context, EnqueueInput, time.Time) (Occurrence, bool, error)
 	EnqueueDue(context.Context, time.Time, int) ([]Occurrence, error)
 	ClaimNext(context.Context, ClaimInput) (Occurrence, bool, error)
@@ -447,13 +494,43 @@ func RedactFailure(err error) string {
 	if err == nil {
 		return ""
 	}
-	value := strings.Join(strings.Fields(err.Error()), " ")
-	value = bearerPattern.ReplaceAllString(value, "Bearer [REDACTED]")
-	value = secretAssignmentPattern.ReplaceAllString(value, "$1=[REDACTED]")
-	if len(value) > maxFailureReasonBytes {
-		value = value[:maxFailureReasonBytes]
+	_, summary := FailureDetails(err, "qualification_failed")
+	return summary
+}
+
+type codedFailure struct {
+	code    string
+	summary string
+}
+
+func (failure codedFailure) Error() string       { return failure.summary }
+func (failure codedFailure) FailureCode() string { return failure.code }
+func (failure codedFailure) SafeSummary() string { return failure.summary }
+
+// NewFailure constructs an allowlisted machine code plus a credential-scrubbed
+// summary. The original error belongs in restricted transient logs, not the ledger.
+func NewFailure(code, summary string) error {
+	if !failureCodePattern.MatchString(code) {
+		code = "qualification_failed"
 	}
-	return value
+	return codedFailure{code: code, summary: safetext.BoundedSummary(summary, maxFailureReasonBytes)}
+}
+
+// FailureDetails converts arbitrary owner errors into a bounded safe record.
+func FailureDetails(err error, fallbackCode string) (string, string) {
+	if !failureCodePattern.MatchString(fallbackCode) {
+		fallbackCode = "qualification_failed"
+	}
+	if err == nil {
+		return "", ""
+	}
+	if failure, ok := err.(interface {
+		FailureCode() string
+		SafeSummary() string
+	}); ok && failureCodePattern.MatchString(failure.FailureCode()) {
+		return failure.FailureCode(), safetext.BoundedSummary(failure.SafeSummary(), maxFailureReasonBytes)
+	}
+	return fallbackCode, safetext.BoundedSummary(err.Error(), maxFailureReasonBytes)
 }
 
 func validOperation(value string) bool {

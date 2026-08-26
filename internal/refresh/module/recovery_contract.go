@@ -29,6 +29,7 @@ var (
 )
 
 type EnqueueInput = refreshrecovery.EnqueueInput
+type RecoveryDefinition = refreshrecovery.Definition
 type Fence = refreshrecovery.Fence
 type EvidenceReference = refreshrecovery.EvidenceReference
 type Result = refreshrecovery.Result
@@ -41,6 +42,20 @@ type RetentionResult = refreshrecovery.RetentionResult
 type StatusSnapshot = refreshrecovery.StatusSnapshot
 type Metric = refreshrecovery.Metric
 type RecoveryRepository = refreshrecovery.Repository
+type RecoveryLifecycle = refreshrecovery.Lifecycle
+type RecoveryDefinitionProvider = refreshrecovery.DefinitionProvider
+type RecoveryScenarioAdapter = refreshrecovery.ScenarioAdapter
+type RecoveryScenarioAdapterFunc = refreshrecovery.ScenarioAdapterFunc
+type RecoveryScenarioOutcome = refreshrecovery.ScenarioOutcome
+type RecoveryEvidenceArtifact = refreshrecovery.EvidenceArtifact
+type RecoveryEvidencePublisher = refreshrecovery.EvidencePublisher
+type RecoveryFileEvidencePublisher = refreshrecovery.FileEvidencePublisher
+
+const (
+	EvidenceTransitionQualification = refreshrecovery.EvidenceTransitionQualification
+	EvidenceBackupManifestV2        = refreshrecovery.EvidenceBackupManifestV2
+	EvidenceRestorePreflight        = refreshrecovery.EvidenceRestorePreflight
+)
 
 func NewRecoveryRepository(database *sql.DB) RecoveryRepository {
 	return newSQLiteRepository(database)
@@ -48,6 +63,11 @@ func NewRecoveryRepository(database *sql.DB) RecoveryRepository {
 
 func NewRecoveryMetricsCollector(database *sql.DB, clock Clock) prometheus.Collector {
 	return refreshrecovery.NewMetricsCollector(NewRecoveryRepository(database), clock)
+}
+
+func NewRecoveryLifecycle(database *sql.DB, lifecycle RecoveryLifecycle) *RecoveryLifecycle {
+	lifecycle.Repository = NewRecoveryRepository(database)
+	return &lifecycle
 }
 
 func RedactFailure(err error) string {

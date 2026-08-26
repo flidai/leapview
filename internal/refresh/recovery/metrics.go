@@ -13,6 +13,9 @@ type MetricsCollector struct {
 	clock      refreshschedule.Clock
 
 	due              *prometheus.Desc
+	configured       *prometheus.Desc
+	missing          *prometheus.Desc
+	staleLeases      *prometheus.Desc
 	overdue          *prometheus.Desc
 	running          *prometheus.Desc
 	failed           *prometheus.Desc
@@ -28,6 +31,9 @@ type MetricsCollector struct {
 func NewMetricsCollector(repository Repository, clock refreshschedule.Clock) *MetricsCollector {
 	return &MetricsCollector{
 		repository: repository, clock: clock,
+		configured:       prometheus.NewDesc("leapview_recovery_qualification_configured", "Enabled recovery qualification schedule revisions.", nil, nil),
+		missing:          prometheus.NewDesc("leapview_recovery_qualification_missing", "Scheduled recovery qualification runs not materialized by the scheduler.", nil, nil),
+		staleLeases:      prometheus.NewDesc("leapview_recovery_qualification_stale_leases", "Expired recovery qualification leases detected without mutation.", []string{"state"}, nil),
 		due:              prometheus.NewDesc("leapview_recovery_qualification_due", "Recovery qualification occurrences due for execution.", nil, nil),
 		overdue:          prometheus.NewDesc("leapview_recovery_qualification_overdue", "Recovery qualification occurrences whose evidence is stale.", nil, nil),
 		running:          prometheus.NewDesc("leapview_recovery_qualification_running", "Claimed or running recovery qualification occurrences.", nil, nil),
@@ -44,6 +50,7 @@ func NewMetricsCollector(repository Repository, clock refreshschedule.Clock) *Me
 
 func (collector *MetricsCollector) Describe(output chan<- *prometheus.Desc) {
 	for _, descriptor := range []*prometheus.Desc{
+		collector.configured, collector.missing, collector.staleLeases,
 		collector.due, collector.overdue, collector.running, collector.failed,
 		collector.evidence, collector.leaseRecoveries, collector.lastSuccessAge,
 		collector.restoreDuration, collector.readiness, collector.recoveryPointAge,
@@ -68,6 +75,10 @@ func (collector *MetricsCollector) Collect(output chan<- prometheus.Metric) {
 		output <- prometheus.MustNewConstMetric(collector.scrapeError, prometheus.GaugeValue, 1)
 		return
 	}
+	output <- prometheus.MustNewConstMetric(collector.configured, prometheus.GaugeValue, float64(snapshot.ConfiguredSchedules))
+	output <- prometheus.MustNewConstMetric(collector.missing, prometheus.GaugeValue, float64(snapshot.MissingRuns))
+	output <- prometheus.MustNewConstMetric(collector.staleLeases, prometheus.GaugeValue, float64(snapshot.StaleExecutionLeases), "execution")
+	output <- prometheus.MustNewConstMetric(collector.staleLeases, prometheus.GaugeValue, float64(snapshot.StaleEvidenceLeases), "evidence")
 	output <- prometheus.MustNewConstMetric(collector.due, prometheus.GaugeValue, float64(snapshot.Due))
 	output <- prometheus.MustNewConstMetric(collector.overdue, prometheus.GaugeValue, float64(snapshot.Overdue))
 	output <- prometheus.MustNewConstMetric(collector.running, prometheus.GaugeValue, float64(snapshot.Running))

@@ -110,6 +110,14 @@ func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	}
 }
 
+func TestBuildRejectsInvalidRecoveryLifecycleConfiguration(t *testing.T) {
+	if _, err := Build(t.Context(), Config{
+		Authorization: testAuthorization(), RecoveryLifecycle: &RecoveryLifecycle{},
+	}); err == nil {
+		t.Fatal("Build accepted an invalid recovery lifecycle")
+	}
+}
+
 func TestAssetRefreshStateReadsScopedRunsAndDataVersion(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {

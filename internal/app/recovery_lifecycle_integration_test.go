@@ -1,0 +1,219 @@
+package app
+
+import (
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/compatibility"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+)
+
+func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testing.T) {
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	root := t.TempDir()
+	databasePath := filepath.Join(root, "platform.db")
+	store, err := platform.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Date(2026, 8, 26, 4, 5, 0, 0, time.UTC)
+	artifact := "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	evidence := writeRecoveryLifecycleEvidence(t, t.TempDir(), artifact, now)
+	retainedEvidence := filepath.Join(t.TempDir(), "retained")
+	definitions := recoveryLifecycleDefinitions(artifact)
+	repository := refreshmodule.NewRecoveryRepository(store.SQLDB())
+	for _, definition := range definitions {
+		if err := repository.ReconcileSchedule(ctx, definition, now.Add(-35*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := repository.EnqueueDue(ctx, now.Add(-3*time.Minute), 10); err != nil {
+		t.Fatal(err)
+	}
+	interrupted, ok, err := repository.ClaimNext(ctx, refreshmodule.ClaimInput{
+		WorkerID: "interrupted-worker", Actor: "scheduled-qualification", Now: now.Add(-3 * time.Minute), Lease: time.Minute,
+	})
+	if err != nil || !ok {
+		t.Fatalf("claim interrupted occurrence = (%t, %v)", ok, err)
+	}
+	if err := repository.Start(ctx, interrupted.ID, interrupted.Fence, now.Add(-3*time.Minute+time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatal(err)
+	}
+	store, err = platform.Open(ctx, databasePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	repository = refreshmodule.NewRecoveryRepository(store.SQLDB())
+
+	adapters := map[string]refreshmodule.RecoveryScenarioAdapter{}
+	for operation, artifactOutputs := range map[string][]refreshmodule.RecoveryEvidenceArtifact{
+		refreshmodule.OperationBackup: {
+			{Kind: refreshmodule.EvidenceBackupManifestV2, Path: evidence.backup},
+		},
+		refreshmodule.OperationRestore: {
+			{Kind: refreshmodule.EvidenceBackupManifestV2, Path: evidence.backup},
+			{Kind: refreshmodule.EvidenceRestorePreflight, Path: evidence.restore},
+		},
+		refreshmodule.OperationUpgrade: {
+			{Kind: refreshmodule.EvidenceTransitionQualification, Path: evidence.transition},
+		},
+		refreshmodule.OperationRollback: {
+			{Kind: refreshmodule.EvidenceTransitionQualification, Path: evidence.transition},
+		},
+	} {
+		outputs := artifactOutputs
+		adapters[operation] = refreshmodule.RecoveryScenarioAdapterFunc(func(context.Context, refreshmodule.Occurrence) (refreshmodule.RecoveryScenarioOutcome, error) {
+			return refreshmodule.RecoveryScenarioOutcome{
+				RecoveryPointAt: now.Add(-15 * time.Minute), Artifacts: outputs,
+			}, nil
+		})
+	}
+	lifecycle := &refreshmodule.RecoveryLifecycle{
+		Definitions: func(context.Context) ([]refreshmodule.RecoveryDefinition, error) { return definitions, nil },
+		Adapters:    adapters, Publisher: refreshmodule.RecoveryFileEvidencePublisher{Root: retainedEvidence},
+		Clock: recoveryLifecycleClock{now: now}, WorkerID: "production-recovery-worker", Actor: "scheduled-qualification",
+		Lease: 5 * time.Minute, BatchSize: 10, ComplianceWindow: 90 * 24 * time.Hour, EvidenceRoot: retainedEvidence,
+	}
+	server, err := assembleRuntimeChecked(ctx, nil, testStoreOptions(store, assemblyConfig{
+		RecoveryLifecycle: lifecycle, RecoveryInterval: time.Hour, JobLeaseTimeout: time.Minute,
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := server.StartBackgroundJobs(ctx); err != nil {
+		t.Fatal(err)
+	}
+	defer server.StopBackgroundJobs(context.Background())
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		occurrences, readErr := repository.Occurrences(ctx)
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if len(occurrences) == 4 && allRecoveryEvidencePublished(occurrences) {
+			for _, occurrence := range occurrences {
+				expectedEvidence := 1
+				if occurrence.Operation == refreshmodule.OperationRestore {
+					expectedEvidence = 2
+				}
+				if occurrence.ArtifactIdentity != artifact || len(occurrence.Evidence) != expectedEvidence {
+					t.Fatalf("production occurrence evidence = %#v", occurrence)
+				}
+				for _, reference := range occurrence.Evidence {
+					if reference.SHA256 == "" || !strings.HasPrefix(reference.URI, "artifact://qualification/") || strings.Contains(reference.URI, filepath.Dir(evidence.backup)) {
+						t.Fatalf("production occurrence evidence = %#v", occurrence)
+					}
+				}
+			}
+			attempts, attemptErr := repository.Attempts(ctx, interrupted.ID)
+			if attemptErr != nil {
+				t.Fatal(attemptErr)
+			}
+			if len(attempts) != 2 || attempts[0].Status != "abandoned" || attempts[1].Status != "succeeded" {
+				t.Fatalf("restart attempt history = %#v", attempts)
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("production recovery lifecycle did not finish: %#v", occurrences)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+type recoveryLifecycleEvidence struct{ transition, backup, restore string }
+
+func writeRecoveryLifecycleEvidence(t *testing.T, root, artifact string, now time.Time) recoveryLifecycleEvidence {
+	t.Helper()
+	write := func(name string, value any) string {
+		t.Helper()
+		encoded, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(root, name)
+		if err := os.WriteFile(path, append(encoded, '\n'), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	candidate := compatibility.ReleaseIdentity{
+		ReleaseID: "v0.3.0", Version: "0.3.0", SourceRevision: strings.Repeat("b", 40),
+		Image: artifact, Distribution: "public", Platform: "linux/amd64",
+	}
+	predecessor := compatibility.ReleaseIdentity{
+		ReleaseID: "v0.2.0", Version: "0.2.0", SourceRevision: strings.Repeat("8", 40),
+		Image: "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("9", 64), Distribution: "public", Platform: "linux/amd64",
+	}
+	state := map[string]string{
+		"instanceId": "lvinst_recovery_lifecycle", "environment": "qualification", "canonicalOrigin": "https://qualification.example",
+		"principalId": "principal_qualification", "principalKind": "user", "principalEmail": "qualification@example.com", "principalDisplayName": "Qualification",
+	}
+	transition := write("transition-qualification.json", map[string]any{
+		"schemaVersion": 1, "predecessor": predecessor, "candidate": candidate,
+		"policySha256": strings.Repeat("c", 64), "stateBeforeUpgradeSha256": strings.Repeat("d", 64),
+		"stateAfterUpgradeSha256": strings.Repeat("d", 64), "stateAfterRollbackSha256": strings.Repeat("d", 64),
+		"inventoryBeforeUpgrade": state, "inventoryAfterUpgrade": state, "inventoryAfterRollback": state,
+		"upgradeResult": "success", "rollbackResult": "success", "preservationVerified": true,
+	})
+	manifest := platform.InstanceBackupManifestV2{
+		SchemaVersion: platform.InstanceBackupManifestVersion, Kind: "leapview-instance", BackupID: "lvbackup_recovery_lifecycle",
+		ReleaseIdentity: candidate, InstanceID: "lvinst_recovery_lifecycle", Environment: "qualification",
+		CreatedAt: now.Add(-20 * time.Minute), CompletedAt: now.Add(-19 * time.Minute), ArchiveMode: "instance",
+		StorageTopology:                 platform.InstanceBackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []platform.InstanceBackupExternalStoreReference{}},
+		RequiredTransitionPolicyVersion: "ubdr-v1", Members: []platform.InstanceBackupMember{{Path: "leapview.db", Role: "control-plane", Size: 1, Mode: 0o600, SHA256: strings.Repeat("e", 64)}},
+		InventorySHA256: strings.Repeat("f", 64),
+	}
+	backup := write("leapview-backup.json", manifest)
+	manifestDocument, err := os.ReadFile(backup)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestDigest := sha256.Sum256(manifestDocument)
+	restore := write("preflight-report.json", platform.InstanceRestorePreflightPlan{
+		SchemaVersion: 1, Allowed: true, ReasonCode: platform.RestorePreflightAllowed,
+		BackupID: manifest.BackupID, ManifestVersion: platform.InstanceBackupManifestVersion,
+		ManifestSHA256: fmt.Sprintf("%x", manifestDigest[:]), ArchiveSHA256: strings.Repeat("2", 64),
+		ExclusiveLockVerified: true, Replace: []string{"leapview.db"}, Preserve: []string{}, Reset: []string{},
+	})
+	return recoveryLifecycleEvidence{transition: transition, backup: backup, restore: restore}
+}
+
+func recoveryLifecycleDefinitions(artifact string) []refreshmodule.RecoveryDefinition {
+	definitions := make([]refreshmodule.RecoveryDefinition, 0, 4)
+	for _, operation := range []string{refreshmodule.OperationBackup, refreshmodule.OperationRestore, refreshmodule.OperationUpgrade, refreshmodule.OperationRollback} {
+		definitions = append(definitions, refreshmodule.RecoveryDefinition{
+			ScheduleID: "production-" + operation, Scenario: "ubdr-foundation", Operation: operation,
+			PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: artifact,
+			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
+		})
+	}
+	return definitions
+}
+
+func allRecoveryEvidencePublished(values []refreshmodule.Occurrence) bool {
+	for _, value := range values {
+		if value.Status != refreshmodule.StatusSucceeded || value.EvidenceStatus != "published" {
+			return false
+		}
+	}
+	return true
+}
+
+type recoveryLifecycleClock struct{ now time.Time }
+
+func (clock recoveryLifecycleClock) Now() time.Time { return clock.now }

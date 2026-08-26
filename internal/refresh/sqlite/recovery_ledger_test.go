@@ -306,6 +306,142 @@ func TestRecoveryRetentionPreservesComplianceWindowLatestResultsAndActiveLeases(
 	}
 }
 
+func TestRecoveryStatusPassivelyDistinguishesMissingAndStaleWork(t *testing.T) {
+	t.Run("unconfigured", func(t *testing.T) {
+		repository, closeStore := openRecoveryRepository(t)
+		defer closeStore()
+		snapshot, err := repository.Status(t.Context(), time.Date(2026, 8, 25, 4, 0, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !snapshot.Unconfigured || snapshot.ConfiguredSchedules != 0 || snapshot.MissingRuns != 0 {
+			t.Fatalf("unconfigured status = %#v", snapshot)
+		}
+	})
+
+	t.Run("overdue schedule without occurrence", func(t *testing.T) {
+		repository, closeStore := openRecoveryRepository(t)
+		defer closeStore()
+		base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
+		definition := recovery.Definition{
+			ScheduleID: "missing-hourly", Scenario: "managed-instance", Operation: recovery.OperationRestore,
+			PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 30 * time.Minute, Enabled: true,
+		}
+		if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+			t.Fatal(err)
+		}
+		snapshot, err := repository.Status(t.Context(), time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if snapshot.Unconfigured || snapshot.ConfiguredSchedules != 1 || snapshot.MissingRuns != 3 || snapshot.Overdue != 2 {
+			t.Fatalf("missing schedule status = %#v", snapshot)
+		}
+	})
+
+	t.Run("expired execution lease", func(t *testing.T) {
+		repository, closeStore := openRecoveryRepository(t)
+		defer closeStore()
+		now := time.Date(2026, 8, 25, 5, 0, 0, 0, time.UTC)
+		_, _, err := repository.Enqueue(t.Context(), recoveryInput("crashed-worker", recovery.OperationBackup, now), now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, ok, err := repository.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "crashed", Actor: "scheduler", Now: now, Lease: time.Minute}); err != nil || !ok {
+			t.Fatalf("claim crashed worker = (%t, %v)", ok, err)
+		}
+		snapshot, err := repository.Status(t.Context(), now.Add(2*time.Minute))
+		if err != nil || snapshot.StaleExecutionLeases != 1 || snapshot.Failed != 1 || snapshot.Running != 0 {
+			t.Fatalf("stale execution status = %#v, %v", snapshot, err)
+		}
+	})
+
+	t.Run("expired publisher lease", func(t *testing.T) {
+		repository, closeStore := openRecoveryRepository(t)
+		defer closeStore()
+		now := time.Date(2026, 8, 25, 6, 0, 0, 0, time.UTC)
+		completed := finishRecovery(t, repository, "crashed-publisher", recovery.OperationRestore, now, true)
+		claimed, ok, err := repository.ClaimEvidence(t.Context(), "publisher", completed.FinishedAt.Add(time.Second), time.Minute)
+		if err != nil || !ok {
+			t.Fatalf("claim publisher = (%t, %v)", ok, err)
+		}
+		snapshot, err := repository.Status(t.Context(), claimed.EvidenceLeaseExpiresAt.Add(time.Second))
+		if err != nil || snapshot.StaleEvidenceLeases != 1 || snapshot.EvidenceFailed != 1 {
+			t.Fatalf("stale evidence status = %#v, %v", snapshot, err)
+		}
+	})
+}
+
+func TestRecoveryLifecycleChronologyRejectsImpossibleEvidence(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	now := time.Date(2026, 8, 25, 7, 0, 0, 0, time.UTC)
+	occurrence, _, err := repository.Enqueue(t.Context(), recoveryInput("chronology", recovery.OperationRestore, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := repository.ClaimNext(t.Context(), recovery.ClaimInput{WorkerID: "chronology-worker", Actor: "scheduler", Now: now, Lease: time.Hour})
+	if err != nil || !ok {
+		t.Fatalf("claim chronology = (%t, %v)", ok, err)
+	}
+	if err := repository.Start(t.Context(), occurrence.ID, claimed.Fence, now.Add(-time.Second)); err == nil {
+		t.Fatal("start before claim was accepted")
+	}
+	if err := repository.Complete(t.Context(), occurrence.ID, claimed.Fence, now.Add(time.Minute), successfulRecoveryResult(now.Add(time.Minute), "restore")); err == nil {
+		t.Fatal("completion before start was accepted")
+	}
+	started := now.Add(time.Second)
+	if err := repository.Start(t.Context(), occurrence.ID, claimed.Fence, started); err != nil {
+		t.Fatal(err)
+	}
+	futurePoint := successfulRecoveryResult(now.Add(2*time.Second), "restore")
+	futurePoint.RecoveryPointAt = now.Add(3 * time.Second)
+	if err := repository.Complete(t.Context(), occurrence.ID, claimed.Fence, now.Add(2*time.Second), futurePoint); err == nil {
+		t.Fatal("future recovery point was accepted")
+	}
+	impossible := successfulRecoveryResult(now.Add(10*time.Second), "restore")
+	impossible.RestoreDuration = 20 * time.Second
+	if err := repository.Complete(t.Context(), occurrence.ID, claimed.Fence, now.Add(10*time.Second), impossible); err == nil {
+		t.Fatal("impossible restore duration was accepted")
+	}
+}
+
+func TestRecoveryScheduleRevisionPreservesOverdueArtifactIdentity(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	base := time.Date(2026, 8, 25, 1, 30, 0, 0, time.UTC)
+	definition := recovery.Definition{
+		ScheduleID: "release-hourly", Scenario: "release-transition", Operation: recovery.OperationUpgrade,
+		PolicyVersion: "ubdr-v1", TargetScope: "instance:prod", ArtifactIdentity: recoveryArtifact,
+		Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
+	}
+	if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+		t.Fatal(err)
+	}
+	artifactB := "oci://ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	definition.ArtifactIdentity = artifactB
+	if err := repository.ReconcileSchedule(t.Context(), definition, time.Date(2026, 8, 25, 3, 30, 0, 0, time.UTC)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.EnqueueDue(t.Context(), time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC), 10); err != nil {
+		t.Fatal(err)
+	}
+	occurrences, err := repository.Occurrences(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(occurrences) != 3 {
+		t.Fatalf("occurrences = %d, want two artifact-A misses and one artifact-B run", len(occurrences))
+	}
+	if occurrences[0].ArtifactIdentity != recoveryArtifact || occurrences[1].ArtifactIdentity != recoveryArtifact || occurrences[2].ArtifactIdentity != artifactB {
+		t.Fatalf("artifact revision history = %#v", occurrences)
+	}
+	if occurrences[0].ScheduleRevision == occurrences[2].ScheduleRevision {
+		t.Fatal("immutable schedule revision did not change with artifact identity")
+	}
+}
+
 func openRecoveryRepository(t *testing.T) (*Repository, func()) {
 	t.Helper()
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
@@ -333,8 +469,8 @@ func successfulRecoveryResult(completedAt time.Time, kind string) recovery.Resul
 		digestByte = "d"
 	}
 	return recovery.Result{
-		RecoveryPointAt: completedAt.Add(-15 * time.Minute), RestoreDuration: 45 * time.Second,
-		ReadinessDuration: 20 * time.Second,
+		RecoveryPointAt: completedAt.Add(-15 * time.Minute), RestoreDuration: 15 * time.Second,
+		ReadinessDuration: 10 * time.Second,
 		Evidence: []recovery.EvidenceReference{{
 			Kind: kind + "-report", URI: "artifact://qualification/" + kind + ".json",
 			SHA256: strings.Repeat(digestByte, 64),

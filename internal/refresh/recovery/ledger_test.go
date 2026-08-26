@@ -36,8 +36,8 @@ func TestOccurrenceIdentityIsStableAndBindsImmutableIntent(t *testing.T) {
 }
 
 func TestFailureRedactionAndEvidenceReferencesRejectCredentialBearingValues(t *testing.T) {
-	reason := RedactFailure(errors.New("restore failed Authorization: Bearer abc.def password=hunter2 token=secret"))
-	for _, secret := range []string{"abc.def", "hunter2", "secret"} {
+	reason := RedactFailure(errors.New(`restore failed Authorization: Bearer abc.def password=hunter2 token=secret postgres://user:dsn-pass@db {"clientSecret":"json-secret"} https://s3.example/object?X-Amz-Signature=signed AWS_SECRET_ACCESS_KEY=provider-secret`))
+	for _, secret := range []string{"abc.def", "hunter2", "secret", "dsn-pass", "json-secret", "signed", "provider-secret"} {
 		if strings.Contains(reason, secret) {
 			t.Fatalf("redacted failure contains %q: %s", secret, reason)
 		}
@@ -58,6 +58,17 @@ func TestFailureRedactionAndEvidenceReferencesRejectCredentialBearingValues(t *t
 	}
 	if encoded != "[]" {
 		t.Fatalf("empty evidence encoded as %s, want []", encoded)
+	}
+}
+
+func TestFailureDetailsPreferAllowlistedCodeAndSafeSummary(t *testing.T) {
+	code, summary := FailureDetails(NewFailure("restore_preflight_failed", "preflight denied password=secret"), "qualification_failed")
+	if code != "restore_preflight_failed" || strings.Contains(summary, "secret") {
+		t.Fatalf("failure details = (%q, %q)", code, summary)
+	}
+	code, _ = FailureDetails(errors.New("raw failure"), "qualification_failed")
+	if code != "qualification_failed" {
+		t.Fatalf("fallback code = %q", code)
 	}
 }
 
