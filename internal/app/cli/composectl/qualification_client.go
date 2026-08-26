@@ -307,7 +307,7 @@ func runQualificationLogin(
 	var output bytes.Buffer
 	reader, writer := io.Pipe()
 	command.Stdout = io.MultiWriter(&output, writer)
-	command.Stderr = io.MultiWriter(&output, writer)
+	command.Stderr = &output
 	if err := command.Start(); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("start leapview login: %w", err)
