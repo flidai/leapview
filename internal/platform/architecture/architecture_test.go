@@ -58,6 +58,12 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		"docs/public-release.json":            {},
 		"scripts/public_site_smoke.test.ts":   {},
 	}
+	historicalPredecessor := "ghcr.io/" + "yacobolo" + "/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9"
+	exactLegacyImageAllowlist := map[string][]string{
+		"internal/platform/compatibility/release-transition-policy.json": {
+			historicalPredecessor,
+		},
+	}
 	root := repoRoot(t)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -85,7 +91,17 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		}
 		text := string(body)
 		for _, forbidden := range []string{legacyRepository, legacyImages} {
-			if strings.Contains(text, forbidden) {
+			checkedText := text
+			if forbidden == legacyImages {
+				relative, relErr := filepath.Rel(root, path)
+				if relErr != nil {
+					return relErr
+				}
+				for _, exact := range exactLegacyImageAllowlist[filepath.ToSlash(relative)] {
+					checkedText = strings.ReplaceAll(checkedText, exact, "")
+				}
+			}
+			if strings.Contains(checkedText, forbidden) {
 				relative, relErr := filepath.Rel(root, path)
 				if relErr != nil {
 					return relErr

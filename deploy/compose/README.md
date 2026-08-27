@@ -43,6 +43,11 @@ The server and controller reject those paths before changing instance state.
 The historical package requires authentication and contains only a
 `linux/amd64` runtime.
 
+Release archives also contain `release-transition-policy.json`. It is generated
+after OCI admission, names the exact candidate digest, and must be supplied to
+both `leapviewctl upgrade --transition-policy release-transition-policy.json`
+and `leapviewctl rollback --transition-policy release-transition-policy.json`.
+
 Use the v0.1.0 image's `admin backup` command to preserve the old instance,
 then provision a fresh LeapView volume, redeploy project source, reload source
 data, and reprovision identities and grants. Keep the old image, archive,

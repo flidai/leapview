@@ -26,9 +26,11 @@ terraform init
 terraform apply
 ```
 
-Set three values in `terraform.tfvars`: `admin_email`, `leapview_image`, and
-`ssh_allowed_cidrs`. Use your public address with a `/32` suffix for SSH. The
-module deliberately rejects world-open SSH and mutable image tags.
+Set `admin_email`, `leapview_image`, `release_transition_policy_path`, and
+`ssh_allowed_cidrs` in `terraform.tfvars`. The policy must come from the same
+verified release archive as the image digest. Use your public address with a
+`/32` suffix for SSH. The module deliberately rejects world-open SSH and
+mutable image tags.
 
 Provisioning renders the provider-neutral Ubuntu host bootstrap with the
 domain, administrator email, environment, and immutable image digest. The

@@ -18,6 +18,7 @@ type payloadFile struct {
 
 var requiredPayloadFiles = []payloadFile{
 	{Source: "leapviewctl", Target: func(paths Paths) string { return filepath.Join(paths.Root, "leapviewctl") }, Mode: 0o700},
+	{Source: "release-transition-policy.json", Target: func(paths Paths) string { return filepath.Join(paths.Root, "release-transition-policy.json") }, Mode: 0o600},
 	{Source: "compose.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.yaml") }, Mode: 0o600},
 	{Source: "compose.https.yaml", Target: func(paths Paths) string { return filepath.Join(paths.Root, "compose.https.yaml") }, Mode: 0o600},
 	{Source: "Caddyfile", Target: func(paths Paths) string { return filepath.Join(paths.Root, "Caddyfile") }, Mode: 0o600},

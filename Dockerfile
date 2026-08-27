@@ -170,6 +170,7 @@ COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
 COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
 COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
 COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example /usr/local/share/leapview/deployment/
+COPY internal/platform/compatibility/release-transition-policy.json /usr/local/share/leapview/deployment/release-transition-policy.json
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
 COPY --from=build /src/schemas ./schemas

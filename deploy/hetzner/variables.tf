@@ -85,3 +85,13 @@ variable "leapview_image" {
     error_message = "leapview_image must be an immutable OCI reference ending in @sha256:<64 lowercase hex characters>."
   }
 }
+
+variable "release_transition_policy_path" {
+  description = "Path to the candidate archive's post-admission release-transition-policy.json bound to leapview_image."
+  type        = string
+
+  validation {
+    condition     = can(file(var.release_transition_policy_path))
+    error_message = "release_transition_policy_path must name a readable candidate-bound policy file."
+  }
+}

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/ociref"
 )
@@ -86,6 +87,8 @@ func (m *DeploymentPayloadManager) Prepare(
 	ctx context.Context,
 	current string,
 	next string,
+	platform string,
+	policyDocument []byte,
 ) (composectl.DeploymentPayloadUpdate, error) {
 	markerPath := filepath.Join(m.paths.Root, installMarkerName)
 	installed, err := readMarker(markerPath)
@@ -101,6 +104,14 @@ func (m *DeploymentPayloadManager) Prepare(
 	nextPayload, err := m.load(ctx, next)
 	if err != nil {
 		return nil, fmt.Errorf("load deployment payload from %s: %w", next, err)
+	}
+	policyDocument, err = m.policyForTargetGeneration(next, policyDocument)
+	if err != nil {
+		return nil, err
+	}
+	nextPayload["release-transition-policy.json"] = append([]byte(nil), policyDocument...)
+	if err := validatePolicyArtifact(policyDocument, next, platform); err != nil {
+		return nil, err
 	}
 	if err := validatePayloadContents(nextPayload); err != nil {
 		return nil, err
@@ -152,6 +163,37 @@ func (m *DeploymentPayloadManager) Prepare(
 		currentMarker: currentMarker, nextMarker: nextMarker,
 		currentEnvironment: currentEnvironment, nextEnvironment: nextEnvironment,
 	}, nil
+}
+
+func (m *DeploymentPayloadManager) policyForTargetGeneration(image string, supplied []byte) ([]byte, error) {
+	reference, err := ociref.ParseImmutable(image)
+	if err != nil {
+		return nil, err
+	}
+	path := filepath.Join(m.paths.Root, "releases", reference.Generation, "release-transition-policy.json")
+	contents, err := os.ReadFile(path)
+	if err == nil {
+		return contents, nil
+	}
+	if !os.IsNotExist(err) {
+		return nil, err
+	}
+	if len(supplied) == 0 {
+		return nil, fmt.Errorf("target release-transition policy is required")
+	}
+	return supplied, nil
+}
+
+func validatePolicyArtifact(document []byte, image, platform string) error {
+	policy, err := compatibility.ParsePolicy(document)
+	if err != nil {
+		return fmt.Errorf("validate target release-transition policy: %w", err)
+	}
+	decision := policy.EvaluateImages(compatibility.OperationFreshInstall, "", image, platform)
+	if err := decision.Err(); err != nil {
+		return fmt.Errorf("target release-transition policy does not bind image %s for %s: %w", image, platform, err)
+	}
+	return nil
 }
 
 type deploymentPayloadUpdate struct {

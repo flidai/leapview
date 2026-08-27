@@ -5,6 +5,9 @@ admin_email = "admin@example.com"
 # Release image from the LeapView release notes. Immutable digests are required.
 leapview_image = "ghcr.io/flidai/leapview@sha256:<digest-from-release>"
 
+# Extract this from the same release archive as leapview_image.
+release_transition_policy_path = "/absolute/path/to/release-transition-policy.json"
+
 # Optional. If omitted, the module uses <reserved-ip>.sslip.io.
 # domain = "leapview.example.com"
 

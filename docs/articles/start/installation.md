@@ -242,11 +242,11 @@ Common operations are:
 ./leapviewctl logs
 ./leapviewctl backup
 ./leapviewctl restore backups/leapview-<timestamp>.tar.gz
-./leapviewctl upgrade ghcr.io/flidai/leapview@sha256:<digest>
-./leapviewctl rollback --confirm
+./leapviewctl upgrade --transition-policy release-transition-policy.json ghcr.io/flidai/leapview@sha256:<digest>
+./leapviewctl rollback --transition-policy release-transition-policy.json --confirm
 ```
 
-Upgrades create a state checkpoint. A failed health check restores both the previous image and state; manual rollback requires confirmation because it discards state created after the checkpoint.
+The candidate archive's `release-transition-policy.json` is generated only after image admission and is bound to the exact digest in `image-reference.txt`; both upgrade and rollback require that same document. Upgrades create a state checkpoint. A failed health check restores both the previous image and state; manual rollback requires confirmation because it discards state created after the checkpoint.
 
 ## Contributor installation
 

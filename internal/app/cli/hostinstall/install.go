@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/flidai/leapview/internal/app/cli/composectl"
@@ -129,6 +130,9 @@ func (i *Installer) Install(ctx context.Context) error {
 	payload, err := readPayload(i.paths.Payload)
 	if err != nil {
 		return fmt.Errorf("validate host installation payload: %w", err)
+	}
+	if err := validatePolicyArtifact(payload["release-transition-policy.json"], normalized.Image, runtime.GOOS+"/"+runtime.GOARCH); err != nil {
+		return err
 	}
 	if err := i.prepareDirectories(); err != nil {
 		return err

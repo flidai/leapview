@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,6 +16,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/flidai/leapview/internal/platform/compatibility"
 )
 
 type qualificationInstalledReport struct {
@@ -25,6 +28,7 @@ type qualificationInstalledReport struct {
 	StartedAt      string                       `json:"startedAt"`
 	CompletedAt    string                       `json:"completedAt"`
 	ElapsedSeconds int64                        `json:"elapsedSeconds"`
+	PolicyVersion  string                       `json:"transitionPolicyVersion"`
 	Phases         []qualificationPhaseEvidence `json:"phases"`
 	Assertions     struct {
 		OneTimeCredentials     bool `json:"oneTimeCredentials"`
@@ -36,23 +40,64 @@ type qualificationInstalledReport struct {
 		V010FreshInstallPolicy bool `json:"v010FreshInstallPolicy"`
 		RestartPersistence     bool `json:"restartPersistence"`
 		BackupRestore          bool `json:"backupRestore"`
+		ReleaseTransition      bool `json:"releaseTransition"`
 	} `json:"assertions"`
 }
 
-type qualificationLegacyPolicy struct {
-	Release        string   `json:"release"`
-	SourceRevision string   `json:"sourceRevision"`
-	Image          string   `json:"image"`
-	Distribution   string   `json:"distribution"`
-	Platforms      []string `json:"platforms"`
-	StatePolicy    string   `json:"statePolicy"`
-	LegacyMarkers  []string `json:"legacyMarkers"`
+type qualificationTransitionEvidence struct {
+	SchemaVersion          int                           `json:"schemaVersion"`
+	Predecessor            compatibility.ReleaseIdentity `json:"predecessor"`
+	Candidate              compatibility.ReleaseIdentity `json:"candidate"`
+	PolicySHA256           string                        `json:"policySha256"`
+	StateBeforeUpgrade     string                        `json:"stateBeforeUpgradeSha256"`
+	StateAfterUpgrade      string                        `json:"stateAfterUpgradeSha256"`
+	StateAfterRollback     string                        `json:"stateAfterRollbackSha256"`
+	InventoryBefore        qualificationTransitionState  `json:"inventoryBeforeUpgrade"`
+	InventoryAfterUpgrade  qualificationTransitionState  `json:"inventoryAfterUpgrade"`
+	InventoryAfterRollback qualificationTransitionState  `json:"inventoryAfterRollback"`
+	UpgradeResult          string                        `json:"upgradeResult"`
+	RollbackResult         string                        `json:"rollbackResult"`
+	PreservationVerified   bool                          `json:"preservationVerified"`
+}
+
+type qualificationTransitionState struct {
+	InstanceID      string `json:"instanceId"`
+	Environment     string `json:"environment"`
+	CanonicalOrigin string `json:"canonicalOrigin"`
+	PrincipalID     string `json:"principalId"`
+	PrincipalKind   string `json:"principalKind"`
+	PrincipalEmail  string `json:"principalEmail"`
+	PrincipalName   string `json:"principalDisplayName"`
+}
+
+type qualificationReleaseIdentity struct {
+	Version     string `json:"version"`
+	Revision    string `json:"revision"`
+	Image       string `json:"image"`
+	Dirty       *bool  `json:"dirty"`
+	Development *bool  `json:"development"`
+}
+
+func (identity qualificationReleaseIdentity) transitionIdentity(image, platform string) (compatibility.ReleaseIdentity, error) {
+	if identity.Dirty == nil || identity.Development == nil || *identity.Dirty || *identity.Development {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity has unknown or non-release provenance")
+	}
+	if strings.TrimSpace(identity.Image) != image {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("release identity image does not match admitted candidate")
+	}
+	return compatibility.ReleaseIdentity{
+		Version: identity.Version, SourceRevision: identity.Revision,
+		Image: image, Distribution: "public", Platform: platform,
+	}, nil
 }
 
 func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
 ) (runErr error) {
+	if options.RequireReleaseTransition && strings.TrimSpace(options.PreviousImage) == "" {
+		return fmt.Errorf("release qualification requires a reviewed predecessor transition and --previous-image")
+	}
 	if bundle := strings.TrimSpace(options.Bundle); bundle != "" {
 		bundleRoot, err := filepath.Abs(bundle)
 		if err != nil {
@@ -100,7 +145,9 @@ func (c *Controller) QualifyInstalledCandidate(
 		"authoring-report.json",
 		"browser-failure.png",
 		"compose.log",
+		"decision.json",
 		"performance-report.json",
+		"policy-validation.json",
 		"qualification-report.json",
 		"recovery-events.json",
 		"recovery-report.json",
@@ -205,12 +252,45 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := verifyQualificationChecksums(c.root); err != nil {
 		return err
 	}
+	policy, _, err := compatibility.LoadPolicy(c.path("release-transition-policy.json"))
+	if err != nil {
+		return err
+	}
+	c.transitionPolicy = policy
+	var transitionEvidence *qualificationTransitionEvidence
 	imageReferenceBytes, err := os.ReadFile(c.path("image-reference.txt"))
 	if err != nil {
 		return err
 	}
 	imageReference := strings.TrimSpace(string(imageReferenceBytes))
 	report.Image = imageReference
+	initialImage := imageReference
+	if previous := strings.TrimSpace(options.PreviousImage); previous != "" {
+		if err := requireDigest(previous); err != nil {
+			return fmt.Errorf("previous release image: %w", err)
+		}
+		platform, err := c.targetDockerPlatform(ctx)
+		if err != nil {
+			return err
+		}
+		decision := policy.EvaluateImages(compatibility.OperationUpgrade, previous, imageReference, platform)
+		if err := enforceTransitionRequirements(decision); err != nil {
+			return fmt.Errorf("qualify previous release transition: %w", err)
+		}
+		policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
+		if err != nil {
+			return err
+		}
+		policyDigest := sha256.Sum256(policyDocument)
+		transitionEvidence = &qualificationTransitionEvidence{
+			SchemaVersion: 1, Predecessor: decision.Current, Candidate: decision.Next,
+			PolicySHA256: hex.EncodeToString(policyDigest[:]), UpgradeResult: "not-run", RollbackResult: "not-run",
+		}
+		defer func() {
+			_ = writeQualificationJSON(filepath.Join(evidenceDir, "transition-qualification.json"), transitionEvidence)
+		}()
+		initialImage = previous
+	}
 	if !options.AllowLocal &&
 		(!strings.HasPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:") ||
 			len(strings.TrimPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:")) != 64) {
@@ -232,11 +312,18 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.verifyQualificationRuntimeIdentity(ctx, imageReference, evidenceDir); err != nil {
 		return err
 	}
-	if err := c.verifyQualificationLegacyPolicy(
-		ctx, imageReference, &legacyVolume,
-	); err != nil {
+	if transitionEvidence != nil {
+		if err := c.verifyQualificationPredecessorRuntimeIdentity(ctx, transitionEvidence.Predecessor, evidenceDir); err != nil {
+			return err
+		}
+	}
+	policyDecision, err := c.verifyQualificationLegacyPolicy(
+		ctx, imageReference, evidenceDir, &legacyVolume,
+	)
+	if err != nil {
 		return err
 	}
+	report.PolicyVersion = policyDecision.PolicyVersion
 	report.Assertions.V010FreshInstallPolicy = true
 	if err := phases.Finish(nil); err != nil {
 		return err
@@ -261,7 +348,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
 		"COMPOSE_PROJECT_NAME": primaryProject,
-		"LEAPVIEW_IMAGE":       imageReference,
+		"LEAPVIEW_IMAGE":       initialImage,
 		"CADDY_DOMAIN":         "localhost",
 	}); err != nil {
 		return err
@@ -270,11 +357,36 @@ func (c *Controller) QualifyInstalledCandidate(
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
 		Environment: "evaluation",
-		Image:       imageReference,
+		Image:       initialImage,
 	}); err != nil {
 		return err
 	}
-	primaryStarted = true
+	if transitionEvidence != nil {
+		primaryStarted = true
+		if err := c.startQualificationBootstrap(ctx); err != nil {
+			return err
+		}
+		var transitionCredentials qualificationCredentials
+		if err := readQualificationJSON(c.path(credentialsName), &transitionCredentials); err != nil {
+			return err
+		}
+		transitionEvidence.InventoryBefore, transitionEvidence.StateBeforeUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
+		if err != nil {
+			return err
+		}
+		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
+			transitionEvidence.UpgradeResult = "failure"
+			return err
+		}
+		transitionEvidence.UpgradeResult = "success"
+		transitionEvidence.InventoryAfterUpgrade, transitionEvidence.StateAfterUpgrade, err = c.qualificationTransitionState(ctx, transitionCredentials.PublisherToken)
+		if err != nil {
+			return err
+		}
+		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterUpgrade); err != nil {
+			return fmt.Errorf("upgrade did not preserve deterministic application state: %w", err)
+		}
+	}
 	if options.MinFreeBytes > 0 {
 		if err := appendOrReplaceQualificationEnv(
 			c.path(appEnvName),
@@ -294,8 +406,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
 		return err
 	}
-	if err := c.startQualificationBootstrap(ctx); err != nil {
-		return err
+	if !primaryStarted {
+		primaryStarted = true
+		if err := c.startQualificationBootstrap(ctx); err != nil {
+			return err
+		}
 	}
 	var credentialsOutput bytes.Buffer
 	originalOutput := c.stdout
@@ -509,15 +624,23 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	if options.PreviousImage != "" {
-		if err := c.Upgrade(ctx, options.PreviousImage); err != nil {
+		if err := c.RollbackWithPolicy(ctx, true, c.path("release-transition-policy.json")); err != nil {
+			transitionEvidence.RollbackResult = "failure"
 			return err
 		}
-		if err := c.Upgrade(ctx, imageReference); err != nil {
+		transitionEvidence.RollbackResult = "success"
+		transitionEvidence.InventoryAfterRollback, transitionEvidence.StateAfterRollback, err = c.qualificationTransitionState(ctx, credentials.PublisherToken)
+		if err != nil {
 			return err
 		}
-		if err := c.Rollback(ctx, true); err != nil {
+		if err := verifyQualificationTransitionState(transitionEvidence.InventoryBefore, transitionEvidence.InventoryAfterRollback); err != nil {
+			return fmt.Errorf("rollback did not restore deterministic predecessor application state: %w", err)
+		}
+		transitionEvidence.PreservationVerified = true
+		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
 			return err
 		}
+		report.Assertions.ReleaseTransition = true
 	}
 	restoreRoot, err = c.restoreQualificationBackup(
 		ctx,
@@ -552,6 +675,77 @@ func (c *Controller) QualifyInstalledCandidate(
 		report.ElapsedSeconds,
 	)
 	return err
+}
+
+func (c *Controller) qualificationTransitionState(ctx context.Context, publisherToken string) (qualificationTransitionState, string, error) {
+	client := &http.Client{Timeout: 30 * time.Second}
+	var instance struct {
+		ID              string `json:"id"`
+		Environment     string `json:"environment"`
+		CanonicalOrigin string `json:"canonicalOrigin"`
+	}
+	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/instance", publisherToken, nil, "", &instance); err != nil {
+		return qualificationTransitionState{}, "", fmt.Errorf("read qualification instance state: %w", err)
+	}
+	var principal struct {
+		ID          string `json:"id"`
+		Kind        string `json:"kind"`
+		Email       string `json:"email"`
+		DisplayName string `json:"displayName"`
+	}
+	if err := qualificationAPI(ctx, client, http.MethodGet, "http://127.0.0.1:8080/api/v1/me", publisherToken, nil, "", &principal); err != nil {
+		return qualificationTransitionState{}, "", fmt.Errorf("read qualification principal state: %w", err)
+	}
+	state := qualificationTransitionState{
+		InstanceID: instance.ID, Environment: instance.Environment, CanonicalOrigin: instance.CanonicalOrigin,
+		PrincipalID: principal.ID, PrincipalKind: principal.Kind, PrincipalEmail: principal.Email, PrincipalName: principal.DisplayName,
+	}
+	for field, value := range map[string]string{
+		"instance id": state.InstanceID, "environment": state.Environment, "canonical origin": state.CanonicalOrigin,
+		"principal id": state.PrincipalID, "principal kind": state.PrincipalKind, "principal email": state.PrincipalEmail,
+	} {
+		if strings.TrimSpace(value) == "" {
+			return qualificationTransitionState{}, "", fmt.Errorf("qualification transition %s is empty", field)
+		}
+	}
+	checksum, err := qualificationTransitionStateChecksum(state)
+	if err != nil {
+		return qualificationTransitionState{}, "", err
+	}
+	return state, checksum, nil
+}
+
+func qualificationTransitionStateChecksum(state qualificationTransitionState) (string, error) {
+	document, err := json.Marshal(state)
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(document)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+func verifyQualificationTransitionState(expected, actual qualificationTransitionState) error {
+	expectedChecksum, err := qualificationTransitionStateChecksum(expected)
+	if err != nil {
+		return err
+	}
+	actualChecksum, err := qualificationTransitionStateChecksum(actual)
+	if err != nil {
+		return err
+	}
+	if actualChecksum != expectedChecksum {
+		return fmt.Errorf("application state checksum %s does not match predecessor checksum %s", actualChecksum, expectedChecksum)
+	}
+	return nil
+}
+
+func isQualificationLowerHex(value string) bool {
+	for _, character := range value {
+		if !((character >= '0' && character <= '9') || (character >= 'a' && character <= 'f')) {
+			return false
+		}
+	}
+	return true
 }
 
 func (c *Controller) bootstrapQualificationLocalPhysicalPool(ctx context.Context) error {
@@ -757,32 +951,90 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	return nil
 }
 
+func (c *Controller) verifyQualificationPredecessorRuntimeIdentity(
+	ctx context.Context,
+	expected compatibility.ReleaseIdentity,
+	evidenceDir string,
+) error {
+	runtimeOutput, err := c.qualificationDocker(
+		ctx, nil, "run", "--rm", expected.Image, "version", "--json",
+	)
+	if err != nil {
+		return fmt.Errorf("resolve predecessor runtime identity %s: %w", expected.Image, err)
+	}
+	var actual qualificationReleaseIdentity
+	if err := json.Unmarshal(runtimeOutput, &actual); err != nil {
+		return fmt.Errorf("decode predecessor runtime identity: %w", err)
+	}
+	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
+		return err
+	}
+	return os.WriteFile(filepath.Join(evidenceDir, "predecessor-runtime-identity.json"), runtimeOutput, 0o600)
+}
+
+func verifyQualificationPredecessorIdentity(expected compatibility.ReleaseIdentity, actual qualificationReleaseIdentity) error {
+	if actual.Dirty == nil || actual.Development == nil || *actual.Dirty || *actual.Development ||
+		strings.TrimPrefix(actual.Version, "v") != strings.TrimPrefix(expected.Version, "v") || actual.Revision != expected.SourceRevision {
+		return fmt.Errorf("predecessor runtime identity disagrees with reviewed release provenance")
+	}
+	return nil
+}
+
 func (c *Controller) verifyQualificationLegacyPolicy(
 	ctx context.Context,
 	imageReference string,
+	evidenceDir string,
 	legacyVolume *string,
-) error {
-	var policy qualificationLegacyPolicy
-	if err := readQualificationJSON(
-		c.path(filepath.Join("qualification", "v0.1.0-policy.json")),
-		&policy,
-	); err != nil {
-		return err
+) (compatibility.Decision, error) {
+	policy := c.transitionPolicy
+	legacyRelease, ok := policy.ReleaseByID("v0.1.0")
+	if !ok || !containsQualificationString(legacyRelease.LegacyMarkers, compatibility.LegacyV010Database) {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility policy is invalid")
 	}
-	if policy.Release != "v0.1.0" ||
-		policy.SourceRevision != "5bf4aded574df459e80d81b77d1989ecd4fa7de0" ||
-		policy.Image != "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" ||
-		policy.Distribution != "authentication-required" ||
-		len(policy.Platforms) != 1 || policy.Platforms[0] != "linux/amd64" ||
-		policy.StatePolicy != "fresh-install-only" ||
-		!containsQualificationString(policy.LegacyMarkers, "libredash.db") {
-		return fmt.Errorf("released v0.1.0 compatibility policy is invalid")
+	legacyIdentity := legacyRelease.IdentityForPlatform("linux/amd64")
+	if legacyIdentity.Image != compatibility.ReleasedV010Image {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 compatibility image is invalid")
+	}
+	var candidate qualificationReleaseIdentity
+	if err := readQualificationJSON(c.path("release-identity.json"), &candidate); err != nil {
+		return compatibility.Decision{}, err
+	}
+	candidateIdentity, err := candidate.transitionIdentity(imageReference, "linux/"+runtime.GOARCH)
+	if err != nil {
+		return compatibility.Decision{}, err
+	}
+	decision := policy.Evaluate(compatibility.Request{
+		Operation: compatibility.OperationUpgrade,
+		Current:   legacyIdentity,
+		Next:      candidateIdentity,
+	})
+	if !errors.Is(decision.Err(), compatibility.ErrV010FreshInstallOnly) ||
+		decision.ReasonCode != compatibility.ReasonDeniedFreshInstallOnly {
+		return compatibility.Decision{}, fmt.Errorf("released v0.1.0 transition policy did not fail closed")
+	}
+	policyDocument, err := os.ReadFile(c.path("release-transition-policy.json"))
+	if err != nil {
+		return compatibility.Decision{}, err
+	}
+	policyDigest := sha256.Sum256(policyDocument)
+	schemaDigest := sha256.Sum256(compatibility.EmbeddedPolicySchema())
+	if err := writeQualificationJSON(filepath.Join(evidenceDir, "policy-validation.json"), map[string]any{
+		"schemaVersion": policy.SchemaVersion,
+		"policyVersion": policy.PolicyVersion,
+		"valid":         true,
+		"policySha256":  hex.EncodeToString(policyDigest[:]),
+		"schemaSha256":  hex.EncodeToString(schemaDigest[:]),
+	}); err != nil {
+		return compatibility.Decision{}, err
+	}
+	if err := writeQualificationJSON(filepath.Join(evidenceDir, "decision.json"), decision); err != nil {
+		return compatibility.Decision{}, err
 	}
 	*legacyVolume = normalizedQualificationName(
 		fmt.Sprintf("leapview-v010-policy-%s-%d", runtime.GOARCH, os.Getpid()),
 	)
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "create", *legacyVolume); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	if _, err := c.qualificationDocker(
 		ctx,
@@ -791,9 +1043,9 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		"--entrypoint", "tee",
 		"--volume", *legacyVolume+":/var/lib/leapview",
 		imageReference,
-		"/var/lib/leapview/libredash.db",
+		"/var/lib/leapview/"+compatibility.LegacyV010Database,
 	); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	output, initializeErr := c.qualificationDocker(
 		ctx, nil,
@@ -807,11 +1059,11 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		"admin", "initialize", "--format", "json",
 	)
 	if initializeErr == nil ||
-		!strings.Contains(string(output), "v0.1.0 state is fresh-install-only") {
-		return fmt.Errorf("candidate did not reject released v0.1.0 state")
+		!strings.Contains(string(output), compatibility.ErrV010FreshInstallOnly.Error()) {
+		return compatibility.Decision{}, fmt.Errorf("candidate did not reject released v0.1.0 state")
 	}
 	for _, check := range [][]string{
-		{"test", "-f", "/var/lib/leapview/libredash.db"},
+		{"test", "-f", "/var/lib/leapview/" + compatibility.LegacyV010Database},
 		{"test", "!", "-e", "/var/lib/leapview/leapview.db"},
 	} {
 		arguments := []string{
@@ -824,14 +1076,14 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		if _, err := c.qualificationDocker(
 			ctx, nil, arguments...,
 		); err != nil {
-			return err
+			return compatibility.Decision{}, err
 		}
 	}
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "rm", *legacyVolume); err != nil {
-		return err
+		return compatibility.Decision{}, err
 	}
 	*legacyVolume = ""
-	return nil
+	return decision, nil
 }
 
 func (c *Controller) startQualificationPerformanceBrowser(
@@ -1128,6 +1380,7 @@ func (c *Controller) restoreQualificationBackup(
 		"leapview.env.example",
 		"leapviewctl",
 		"release-identity.json",
+		"release-transition-policy.json",
 		"SHA256SUMS",
 	}
 	for _, name := range required {
