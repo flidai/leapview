@@ -38,6 +38,21 @@ func TestDependencyCanonicalSerializationAndDigest(t *testing.T) {
 	}
 }
 
+func TestDependencyPreimageCapacityRejectsOverflow(t *testing.T) {
+	maximumInt := int(^uint(0) >> 1)
+	if _, err := dependencyPreimageCapacity(maximumInt); !errors.Is(err, ErrInvalidDependency) {
+		t.Fatalf("dependencyPreimageCapacity(maximumInt) error = %v, want ErrInvalidDependency", err)
+	}
+
+	capacity, err := dependencyPreimageCapacity(0)
+	if err != nil {
+		t.Fatalf("dependencyPreimageCapacity(0) error = %v", err)
+	}
+	if want := len(DependencyDigestDomain) + 1; capacity != want {
+		t.Fatalf("dependencyPreimageCapacity(0) = %d, want %d", capacity, want)
+	}
+}
+
 func TestDependencyCanonicalizesRelationsAndDefensivelyCopies(t *testing.T) {
 	input := validDependencyInput()
 	input.Relations[0], input.Relations[1] = input.Relations[1], input.Relations[0]

@@ -242,7 +242,11 @@ func NewDependency(input DependencyInput) (Dependency, error) {
 		return Dependency{}, fmt.Errorf("%w: serialize: %v", ErrInvalidDependency, err)
 	}
 
-	preimage := make([]byte, 0, len(DependencyDigestDomain)+1+len(canonical))
+	preimageCapacity, err := dependencyPreimageCapacity(len(canonical))
+	if err != nil {
+		return Dependency{}, err
+	}
+	preimage := make([]byte, 0, preimageCapacity)
 	preimage = append(preimage, DependencyDigestDomain...)
 	preimage = append(preimage, 0)
 	preimage = append(preimage, canonical...)
@@ -315,6 +319,19 @@ func validateExecution(identity ExecutionIdentity) error {
 		}
 	}
 	return nil
+}
+
+func dependencyPreimageCapacity(canonicalLength int) (int, error) {
+	maximumInt := int(^uint(0) >> 1)
+	domainLength := len(DependencyDigestDomain)
+	if canonicalLength < 0 || domainLength > maximumInt-1 {
+		return 0, fmt.Errorf("%w: dependency preimage size cannot be represented", ErrInvalidDependency)
+	}
+	overhead := domainLength + 1
+	if canonicalLength > maximumInt-overhead {
+		return 0, fmt.Errorf("%w: dependency preimage size cannot be represented", ErrInvalidDependency)
+	}
+	return overhead + canonicalLength, nil
 }
 
 func validateDigest(name, value string) error {
