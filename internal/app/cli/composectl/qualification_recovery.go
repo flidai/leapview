@@ -38,6 +38,9 @@ const (
 	qualificationRefreshPipelineID              = "pipeline:evaluation-refresh"
 	qualificationRecoveryReleaseProjectName     = "recovery-release-project"
 	qualificationRecoveryDeploymentProjectName  = "recovery-deployment-project"
+	qualificationRecoveryClientInput            = "/work/qualification-recovery/input"
+	qualificationRecoveryClientProjectA         = "/work/qualification-recovery/project-a/leapview.yaml"
+	qualificationRecoveryClientProjectB         = "/work/qualification-recovery/project-b/leapview.yaml"
 )
 
 type qualificationRecoveryOptions struct {
@@ -254,9 +257,9 @@ func (c *Controller) runQualificationRecovery(
 		options.PublisherToken,
 		filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"),
 		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--connection", "sample",
-		"--from", "/work/input",
+		"--from", qualificationRecoveryClientInput,
 		"--format", "json",
 	)
 	if err != nil {
@@ -334,9 +337,9 @@ func (c *Controller) runQualificationRecovery(
 		recoveryClient,
 		options.PublisherToken,
 		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--connection", "sample",
-		"--from", "/work/input",
+		"--from", qualificationRecoveryClientInput,
 		"--format", "json",
 	)
 	if err != nil {
@@ -387,7 +390,7 @@ func (c *Controller) runQualificationRecovery(
 	releaseCommand, err := c.startQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, releaseLog,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -410,7 +413,7 @@ func (c *Controller) runQualificationRecovery(
 	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -445,7 +448,7 @@ func (c *Controller) runQualificationRecovery(
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-b/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectB,
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
 		"--format", "json",
 	)

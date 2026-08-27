@@ -1007,6 +1007,24 @@ func TestQualificationRecoveryClientUsesSeparateToolingImage(t *testing.T) {
 		!slices.Equal(request.Command, []string{"infinity"}) {
 		t.Fatalf("recovery client lifecycle = entrypoint %v command %v", request.Entrypoint, request.Command)
 	}
+	var workVolume qualificationContainerVolume
+	for _, volume := range request.Volumes {
+		if volume.Target == "/work" {
+			workVolume = volume
+		}
+	}
+	if workVolume.Source != "/host/work" || !workVolume.ReadOnly {
+		t.Fatalf("recovery work volume = %+v", workVolume)
+	}
+	for _, clientPath := range []string{
+		qualificationRecoveryClientInput,
+		qualificationRecoveryClientProjectA,
+		qualificationRecoveryClientProjectB,
+	} {
+		if !strings.HasPrefix(clientPath, workVolume.Target+"/qualification-recovery/") {
+			t.Fatalf("recovery client path %q is outside its prepared fixture root", clientPath)
+		}
+	}
 }
 
 func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
