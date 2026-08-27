@@ -52,6 +52,7 @@ type qualificationRecoveryOptions struct {
 	ComposeProject       string
 	ProjectID            string
 	Image                string
+	ClientImage          string
 }
 
 type qualificationRecoveryReport struct {
@@ -147,6 +148,7 @@ func (c *Controller) runQualificationRecovery(
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
 		"image":                  options.Image,
+		"client image":           options.ClientImage,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
@@ -1056,9 +1058,28 @@ func (c *Controller) startQualificationRecoveryClient(
 	container := normalizedQualificationName(
 		options.ComposeProject + "-recovery-client",
 	)
-	if _, err := c.qualificationContainers.Start(ctx, qualificationContainerRequest{
+	if _, err := c.qualificationContainers.Start(ctx, qualificationRecoveryClientRequest(
+		options,
+		container,
+		workDir,
+		clientHome,
+		certificateFile,
+	)); err != nil {
+		return "", err
+	}
+	return container, nil
+}
+
+func qualificationRecoveryClientRequest(
+	options qualificationRecoveryOptions,
+	container string,
+	workDir string,
+	clientHome string,
+	certificateFile string,
+) qualificationContainerRequest {
+	return qualificationContainerRequest{
 		Name:        container,
-		Image:       options.Image,
+		Image:       options.ClientImage,
 		NetworkMode: "host",
 		NoHealth:    true,
 		Volumes: []qualificationContainerVolume{
@@ -1071,10 +1092,7 @@ func (c *Controller) startQualificationRecoveryClient(
 		},
 		Entrypoint: []string{"sleep"},
 		Command:    []string{"infinity"},
-	}); err != nil {
-		return "", err
 	}
-	return container, nil
 }
 
 func qualificationClientExecArguments(

@@ -30,6 +30,7 @@ type qualificationAuthoringOptions struct {
 	BundleRoot      string
 	Image           string
 	ClientBaseImage string
+	ClientImage     string
 	CredentialsFile string
 	ComposeProject  string
 	EvidenceDir     string
@@ -185,7 +186,11 @@ func (c *Controller) runQualificationAuthoring(
 	runSuffix := normalizedQualificationName(
 		options.ComposeProject + "-" + strconv.Itoa(os.Getpid()),
 	)
-	clientImage := "leapview-authoring-client:" + runSuffix
+	clientImage := strings.TrimSpace(options.ClientImage)
+	managedClientImage := clientImage == ""
+	if managedClientImage {
+		clientImage = "leapview-authoring-client:" + runSuffix
+	}
 	clientContainer := "leapview-authoring-client-" + runSuffix
 	browserContainer := "leapview-authoring-browser-" + runSuffix
 	certificateFile := filepath.Join(workDir, "caddy-root.crt")
@@ -233,10 +238,12 @@ func (c *Controller) runQualificationAuthoring(
 	); err != nil {
 		return report, fmt.Errorf("build qualification client: %w", err)
 	}
-	cleanup.Add(func(cleanupCtx context.Context) error {
-		_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", clientImage)
-		return err
-	})
+	if managedClientImage {
+		cleanup.Add(func(cleanupCtx context.Context) error {
+			_, err := c.qualificationDocker(cleanupCtx, nil, "image", "rm", "--force", clientImage)
+			return err
+		})
+	}
 	if _, err := c.qualificationDocker(ctx, nil, "pull", qualificationBrowserImage); err != nil {
 		return report, fmt.Errorf("pull qualification browser: %w", err)
 	}

@@ -898,6 +898,29 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	}
 }
 
+func TestQualificationRecoveryClientUsesSeparateToolingImage(t *testing.T) {
+	request := qualificationRecoveryClientRequest(
+		qualificationRecoveryOptions{
+			Image:       "production-image@sha256:runtime",
+			ClientImage: "qualification-client:exact",
+		},
+		"recovery-client",
+		"/host/work",
+		"/host/client-home",
+		"/host/caddy-root.crt",
+	)
+	if request.Image != "qualification-client:exact" {
+		t.Fatalf("recovery client image = %q, want qualification tooling image", request.Image)
+	}
+	if request.Image == "production-image@sha256:runtime" {
+		t.Fatal("recovery client must not assume the shellless production image is a tooling container")
+	}
+	if !slices.Equal(request.Entrypoint, []string{"sleep"}) ||
+		!slices.Equal(request.Command, []string{"infinity"}) {
+		t.Fatalf("recovery client lifecycle = entrypoint %v command %v", request.Entrypoint, request.Command)
+	}
+}
+
 func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	candidate, err := parseQualificationCandidate(fmt.Sprintf(
 		`{"schemaVersion":1,"candidateId":"cand_1","revision":7,"targetId":"target_1",`+

@@ -120,6 +120,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	var restoreRoot string
 	var browserContainer string
 	var legacyVolume string
+	var qualificationClientImage string
 	credentialsPath := filepath.Join(c.root, ".qualification-credentials.json")
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
@@ -165,6 +166,15 @@ func (c *Controller) QualifyInstalledCandidate(
 			return nil
 		}
 		_, err := c.qualificationDocker(cleanupCtx, nil, "volume", "rm", "--force", legacyVolume)
+		return ignoreQualificationNotFound(err)
+	})
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		if qualificationClientImage == "" {
+			return nil
+		}
+		_, err := c.qualificationDocker(
+			cleanupCtx, nil, "image", "rm", "--force", qualificationClientImage,
+		)
 		return ignoreQualificationNotFound(err)
 	})
 	cleanup.Add(func(cleanupCtx context.Context) error {
@@ -255,6 +265,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		),
 	)
 	primaryProject = "leapview-qualification-" + runSuffix
+	qualificationClientImage = "leapview-qualification-client:" + runSuffix
 	if err := copyQualificationFile(
 		c.path("deployment.env.example"),
 		c.path(deploymentEnvName),
@@ -360,6 +371,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	if _, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
 		Image:           imageReference,
+		ClientImage:     qualificationClientImage,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,
 		EvidenceDir:     evidenceDir,
@@ -466,6 +478,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		ComposeProject:       primaryProject,
 		ProjectID:            "project:leapview-evaluation",
 		Image:                imageReference,
+		ClientImage:          qualificationClientImage,
 	})
 	if err != nil {
 		return err
