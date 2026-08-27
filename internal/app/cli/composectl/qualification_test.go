@@ -914,7 +914,10 @@ func TestQualificationRecoveryProjectNamesSatisfyResourceSchema(t *testing.T) {
 
 func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) {
 	root := t.TempDir()
-	executor := &recordingQualificationExecutor{output: []byte("ok")}
+	executor := &recordingQualificationExecutor{output: []byte(`[
+		{"Type":"volume","Name":"qualification-state","Destination":"/var/lib/leapview"},
+		{"Type":"tmpfs","Name":"","Destination":"/tmp"}
+	]`)}
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker-probe", qualificationExecutor: executor,
 	})
@@ -923,13 +926,18 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 	if err := controller.armQualificationActivationBarrier(t.Context(), "app-container", workDir); err != nil {
 		t.Fatal(err)
 	}
-	if len(executor.requests) != 2 {
-		t.Fatalf("docker requests = %d, want clear + cp", len(executor.requests))
+	if len(executor.requests) != 3 {
+		t.Fatalf("docker requests = %d, want inspect + clear + cp", len(executor.requests))
 	}
 	if got, want := executor.requests[0].Arguments, []string{
+		"inspect", "--format", "{{json .Mounts}}", "app-container",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("inspect arguments = %v, want %v", got, want)
+	}
+	if got, want := executor.requests[1].Arguments, []string{
 		"run", "--rm",
 		"--user", "0:0",
-		"--volumes-from", "app-container",
+		"--mount", "type=volume,src=qualification-state,dst=/var/lib/leapview",
 		"--entrypoint", "/bin/rm",
 		qualificationBrowserImage,
 		"-f",
@@ -938,12 +946,53 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 	}; !slices.Equal(got, want) {
 		t.Fatalf("clear arguments = %v, want %v", got, want)
 	}
-	cp := executor.requests[1].Arguments
+	cp := executor.requests[2].Arguments
 	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker) {
 		t.Fatalf("arm copy arguments = %v", cp)
 	}
 	if contents, err := os.ReadFile(cp[1]); err != nil || string(contents) != "qualification-recovery\n" {
 		t.Fatalf("arm marker contents = %q, err = %v", contents, err)
+	}
+}
+
+func TestQualificationContainerNamedVolumeFailsClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "missing state mount",
+			output: `[{"Type":"tmpfs","Name":"","Destination":"/tmp"}]`,
+			want:   `no mount at "/var/lib/leapview"`,
+		},
+		{
+			name:   "bind mounted state",
+			output: `[{"Type":"bind","Name":"","Destination":"/var/lib/leapview"}]`,
+			want:   `is not backed by a named volume`,
+		},
+		{
+			name:   "invalid inspection",
+			output: `not-json`,
+			want:   `decode qualification container mounts`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &recordingQualificationExecutor{output: []byte(test.output)}
+			controller, err := New(Options{
+				Root: t.TempDir(), DockerBin: "docker-probe", qualificationExecutor: executor,
+			})
+			require.NoError(t, err)
+			_, err = controller.qualificationContainerNamedVolume(
+				t.Context(),
+				"app-container",
+				"/var/lib/leapview",
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("qualificationContainerNamedVolume() error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

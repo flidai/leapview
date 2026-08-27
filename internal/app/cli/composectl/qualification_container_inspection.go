@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bufio"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -402,15 +403,62 @@ func (c *Controller) removeQualificationContainerPathsWithTooling(
 	containerID string,
 	paths ...string,
 ) error {
+	stateVolume, err := c.qualificationContainerNamedVolume(
+		ctx,
+		containerID,
+		"/var/lib/leapview",
+	)
+	if err != nil {
+		return err
+	}
 	arguments := []string{
 		"run", "--rm",
 		"--user", "0:0",
-		"--volumes-from", containerID,
+		"--mount", "type=volume,src=" + stateVolume + ",dst=/var/lib/leapview",
 		"--entrypoint", "/bin/rm",
 		qualificationBrowserImage,
 		"-f",
 	}
 	arguments = append(arguments, paths...)
-	_, err := c.qualificationDocker(ctx, nil, arguments...)
+	_, err = c.qualificationDocker(ctx, nil, arguments...)
 	return err
+}
+
+func (c *Controller) qualificationContainerNamedVolume(
+	ctx context.Context,
+	containerID string,
+	destination string,
+) (string, error) {
+	type containerMount struct {
+		Type        string `json:"Type"`
+		Name        string `json:"Name"`
+		Destination string `json:"Destination"`
+	}
+	output, err := c.qualificationContainers.Existing(containerID).Inspect(
+		ctx,
+		"{{json .Mounts}}",
+	)
+	if err != nil {
+		return "", fmt.Errorf("inspect qualification container mounts: %w", err)
+	}
+	var mounts []containerMount
+	if err := json.Unmarshal(output, &mounts); err != nil {
+		return "", fmt.Errorf("decode qualification container mounts: %w", err)
+	}
+	for _, mount := range mounts {
+		if mount.Destination != destination {
+			continue
+		}
+		if mount.Type != "volume" || strings.TrimSpace(mount.Name) == "" {
+			return "", fmt.Errorf(
+				"qualification container path %q is not backed by a named volume",
+				destination,
+			)
+		}
+		return strings.TrimSpace(mount.Name), nil
+	}
+	return "", fmt.Errorf(
+		"qualification container has no mount at %q",
+		destination,
+	)
 }
