@@ -219,6 +219,20 @@ func TestPublicArrowResultPackageIsAnalyticsOwned(t *testing.T) {
 	}
 }
 
+func TestResultIdentityPackageIsAnAnalyticsContract(t *testing.T) {
+	const path = "internal/analytics/resultidentity"
+	rule, ok := ClassifyPackage(path)
+	if !ok {
+		t.Fatalf("%s is not classified", path)
+	}
+	if rule.Capability != "analytics" || rule.Layer != LayerContract {
+		t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+	}
+	if !IsPublicContractImport("analytics", path) {
+		t.Fatalf("%s is not published as an analytics contract", path)
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string
