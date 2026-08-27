@@ -1083,6 +1083,79 @@ func TestQualificationPublicationRetryLimitIsRespected(t *testing.T) {
 	}
 }
 
+func TestQualificationGCStabilityBlocksUntilActiveLeaseClears(t *testing.T) {
+	observations := []qualificationGCStabilityObservation{
+		{DegradedReasons: []string{qualificationGCLeaseActiveReason}, LatestCycleID: "gc-1", LatestCycleState: "running"},
+		{DegradedReasons: []string{"gc_cycle_aborted", qualificationGCLeaseActiveReason}, LatestCycleID: "gc-1", LatestCycleState: "deleting"},
+		{DegradedReasons: []string{"gc_cycle_aborted"}, LatestCycleID: "gc-1", LatestCycleState: "complete"},
+	}
+	probes := 0
+	sleeps := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			observation := observations[probes]
+			probes++
+			return observation, nil
+		},
+	)
+	require.NoError(t, err)
+	if probes != 3 || sleeps != 2 {
+		t.Fatalf("probes = %d, sleeps = %d, want 3/2", probes, sleeps)
+	}
+}
+
+func TestQualificationGCStabilityAllowsStableSnapshotImmediately(t *testing.T) {
+	probes := 0
+	sleeps := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			probes++
+			return qualificationGCStabilityObservation{
+				DegradedReasons:  []string{"gc_cycle_aborted"},
+				LatestCycleID:    "gc-2",
+				LatestCycleState: "aborted",
+			}, nil
+		},
+	)
+	require.NoError(t, err)
+	if probes != 1 || sleeps != 0 {
+		t.Fatalf("probes = %d, sleeps = %d, want 1/0", probes, sleeps)
+	}
+}
+
+func TestQualificationGCStabilityTimeoutReportsLastObservation(t *testing.T) {
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			return context.DeadlineExceeded
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{
+				DegradedReasons:  []string{qualificationGCLeaseActiveReason},
+				LatestCycleID:    "gc-timeout",
+				LatestCycleState: "running",
+			}, nil
+		},
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "physical-pool GC did not stabilize after 1 probes") ||
+		!strings.Contains(err.Error(), qualificationGCLeaseActiveReason) ||
+		!strings.Contains(err.Error(), "gc-timeout") ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
 func TestQualificationRunningCommandCanBeCheckedAndStoppedOnce(t *testing.T) {
 	output, err := os.CreateTemp(t.TempDir(), "running-command-*.log")
 	require.NoError(t, err)

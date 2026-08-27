@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -32,6 +33,9 @@ const qualificationPublicationRetryAttempts = 8
 const qualificationPublicationRetryInitialBackoff = 250 * time.Millisecond
 const qualificationPublicationRetryMaxBackoff = 4 * time.Second
 const qualificationDeliveryInputUnavailableMarker = "(DELIVERY_INPUT_UNAVAILABLE):"
+const qualificationGCStabilityTimeout = 3 * time.Minute
+const qualificationGCStabilityPollInterval = 500 * time.Millisecond
+const qualificationGCLeaseActiveReason = "gc_lease_active"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -55,6 +59,7 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
+	OperatorToken        string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
@@ -151,6 +156,7 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
+		"operator token":         options.OperatorToken,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
@@ -620,6 +626,12 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "query and SSE reconnect"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	if err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, "refresh recovery",
+	); err != nil {
+		return report, err
+	}
 	diskBefore, err := c.qualificationContainerDiskKiB(ctx, options.ContainerID)
 	if err != nil {
 		return report, err
@@ -643,6 +655,12 @@ func (c *Controller) runQualificationRecovery(
 	}
 	for cycle := 1; cycle <= 3; cycle++ {
 		if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
+			return report, err
+		}
+		if err := c.waitQualificationGCStable(
+			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
+		); err != nil {
 			return report, err
 		}
 		var queryResult struct {
@@ -1214,6 +1232,91 @@ func retryQualificationPublication(
 		backoff = min(backoff*2, qualificationPublicationRetryMaxBackoff)
 	}
 	panic("unreachable qualification publication retry")
+}
+
+type qualificationGCStabilityObservation struct {
+	DegradedReasons  []string
+	LatestCycleID    string
+	LatestCycleState string
+}
+
+func (c *Controller) waitQualificationGCStable(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+	containerID string,
+	stage string,
+) error {
+	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
+		target,
+		token,
+		httpClient,
+	))
+	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
+	defer cancel()
+	err := waitForQualificationGCStability(waitCtx, c.sleep, func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
+		response, err := client.GetDeliveryOperatorSnapshot(
+			probeCtx,
+			deploymentgen.GenGetDeliveryOperatorSnapshotClientRequest{Project: projectID},
+		)
+		if err != nil {
+			return qualificationGCStabilityObservation{}, err
+		}
+		observation := qualificationGCStabilityObservation{
+			DegradedReasons: append([]string(nil), response.Body.DegradedReasons...),
+		}
+		if len(response.Body.GcCycles) > 0 {
+			observation.LatestCycleID = response.Body.GcCycles[0].Id
+			observation.LatestCycleState = string(response.Body.GcCycles[0].Status)
+		}
+		return observation, nil
+	})
+	if err == nil {
+		return nil
+	}
+	return qualificationContainerOperationError(
+		ctx,
+		c.qualificationContainers.Existing(containerID),
+		"observe physical-pool GC stability after "+stage,
+		err,
+	)
+}
+
+func waitForQualificationGCStability(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	observe func(context.Context) (qualificationGCStabilityObservation, error),
+) error {
+	var last qualificationGCStabilityObservation
+	var lastErr error
+	observations := 0
+	for {
+		observations++
+		observation, err := observe(ctx)
+		if err == nil {
+			last = observation
+			lastErr = nil
+			if !slices.Contains(observation.DegradedReasons, qualificationGCLeaseActiveReason) {
+				return nil
+			}
+		} else {
+			lastErr = err
+		}
+		if err := sleep(ctx, qualificationGCStabilityPollInterval); err != nil {
+			if lastErr != nil {
+				return fmt.Errorf(
+					"physical-pool GC stability was not observable after %d probes (last probe: %v): %w",
+					observations, lastErr, err,
+				)
+			}
+			return fmt.Errorf(
+				"physical-pool GC did not stabilize after %d probes (degradedReasons=%v latestCycle=%q latestCycleStatus=%q): %w",
+				observations, last.DegradedReasons, last.LatestCycleID, last.LatestCycleState, err,
+			)
+		}
+	}
 }
 
 func (r *qualificationRunningCommand) Stop() error {
