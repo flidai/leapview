@@ -1098,6 +1098,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private pageSidebar(page: DashboardPageSignal) {
     return {
+      backHref: this.presentation === 'app' ? '/' : undefined,
+      backLabel: this.presentation === 'app' ? 'Back to dashboards' : undefined,
+      backText: this.presentation === 'app' ? 'Dashboards' : undefined,
       label: 'Pages',
       railLabel: 'Pages',
       ariaLabel: 'Report pages',

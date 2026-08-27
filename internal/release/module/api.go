@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -168,6 +169,29 @@ func searchResult(item projectcatalog.Result) searchResultResponse {
 		}{ID: item.Ref.ID.String(), Kind: string(item.Ref.Kind)},
 		Name: item.Name, DisplayName: searchOptionalString(item.DisplayName), Description: searchOptionalString(item.Description),
 		Domain: searchOptionalString(item.Domain), Owner: searchOptionalString(item.Owner), Tags: append([]string(nil), item.Tags...),
+		Href: searchOptionalString(searchResultHref(item)),
+	}
+}
+
+func searchResultHref(item projectcatalog.Result) string {
+	id := url.PathEscape(item.Ref.ID.String())
+	switch item.Ref.Kind {
+	case projectgraph.KindProject:
+		return "/"
+	case projectgraph.KindConnection:
+		return "/connections/" + id + "/details"
+	case projectgraph.KindSource:
+		return "/sources/" + id + "/details"
+	case projectgraph.KindModel:
+		return "/models/" + id + "/details"
+	case projectgraph.KindSemanticModel:
+		return "/semantic-models/" + id + "/details"
+	case projectgraph.KindPipeline:
+		return "/pipelines/" + id + "/details"
+	case projectgraph.KindDashboard:
+		return "/dashboards/" + id
+	default:
+		return ""
 	}
 }
 

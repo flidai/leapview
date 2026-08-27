@@ -395,7 +395,6 @@
     --lv-dashboard-filter-open-width: var(--overlay-width-small);
     --lv-dashboard-agent-width: calc(var(--base-size-128) * 3 + var(--base-size-36));
     --lv-sidebar-width-expanded: calc(var(--base-size-128) + var(--base-size-80) + var(--base-size-40));
-    --lv-admin-sidebar-width-expanded: calc(var(--base-size-128) + var(--base-size-64));
     --lv-sidebar-width-collapsed: var(--base-size-48);
     --lv-sidebar-resized-width: initial;
     --lv-page-rail-width-collapsed: calc(var(--base-size-40) - var(--base-size-2));
