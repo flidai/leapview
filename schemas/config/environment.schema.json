@@ -2177,10 +2177,10 @@
       "x-scope": "serve,admin,client"
     },
     "LEAPVIEW_IMAGE": {
-      "description": "Immutable LeapView OCI image reference consumed by deployment tooling.",
+      "description": "Exact immutable LeapView OCI image identity used by release, backup, and qualification workflows.",
       "type": "string",
-      "x-lifecycle": "tooling",
-      "x-scope": "Hetzner provisioner"
+      "x-lifecycle": "supported",
+      "x-scope": "serve,admin,Hetzner provisioner"
     },
     "LEAPVIEW_INFISICAL_ALLOWED_SCOPES": {
       "description": "JSON array of exact Infisical project/environment/path-prefix scopes the target runtime may read.",
@@ -2571,6 +2571,60 @@
       "default": "10000",
       "description": "Maximum rows retained by one logical analytical operation.",
       "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_BUNDLE": {
+      "default": "/app/release",
+      "description": "Absolute path to the admitted immutable release bundle consumed by transition qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_CONTROLLER": {
+      "default": "/app/leapviewctl",
+      "description": "Absolute path to the release controller used for isolated scheduled transition qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_CRON": {
+      "default": "0 3 * * *",
+      "description": "Cron schedule for each production recovery qualification owner.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED": {
+      "default": "false",
+      "description": "Run scheduled owner-qualified backup, restore, upgrade, and rollback journeys and retain their evidence.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT": {
+      "default": "host",
+      "description": "Supported execution owner for scheduled recovery qualification; released Compose deployments use the host controller.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE": {
+      "description": "Absolute path to the canonical FAI-515 external-evidence JSON used by scheduled S3 restore qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS": {
+      "description": "Absolute path to the canonical FAI-515 external recovery-points JSON used by scheduled S3 qualification.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_RECOVERY_QUALIFICATION_WORK_DIR": {
+      "description": "Private staging root outside LEAPVIEW_HOME for scheduled backup and transition qualification.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

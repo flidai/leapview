@@ -1016,6 +1016,28 @@ tasks:
         go run ./internal/app/tools/backupmanifestv2
         --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/backup-manifest-v2
 
+  test:ubdr:recovery-ledger:
+    desc: Validate the durable scheduled recovery ledger, fencing, restart, evidence publication, and retention contracts
+    deps:
+      - db:generate
+      - config:generate
+      - ui-signals:generate
+    cmds:
+      - >-
+        go test
+        ./internal/refresh/module
+        ./internal/refresh/recovery
+        ./internal/refresh/sqlite
+        ./internal/platform
+        ./internal/app
+        -run 'Recovery|Occurrence|Lease|Fence|Schedule|Retention|MigrationChain'
+        -count=1
+      - go test ./internal/platform/safetext -count=1
+      - go test ./internal/analytics/queryaudit/... -count=1
+      - >-
+        go run ./internal/app/tools/recoveryledger
+        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/recovery-ledger
+
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:

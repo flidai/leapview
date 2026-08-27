@@ -173,6 +173,8 @@ type workflowInputs struct {
 	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	enableRefreshDispatcher  bool
+	recoveryLifecycle        *refreshmodule.RecoveryLifecycle
+	recoveryInterval         time.Duration
 	agent                    *agentmodule.Service
 	agentConfig              agentmodule.ModelConfig
 	reloader                 runtimeReloader
@@ -251,6 +253,8 @@ type workflowAssemblyInputs struct {
 	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	EnableRefreshDispatcher  bool
+	RecoveryLifecycle        *refreshmodule.RecoveryLifecycle
+	RecoveryInterval         time.Duration
 	QueryAudit               *analyticsmodule.QueryAuditSurface
 }
 
@@ -571,6 +575,8 @@ func buildApplicationSurfaces(
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
+	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
+	moduleWorkflow.recoveryInterval = workflow.RecoveryInterval
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
 		if provider == nil || projectID == "" {
@@ -622,6 +628,7 @@ func buildApplicationSurfaces(
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
 	if data.Database != nil {
+		telemetry.Register(refreshmodule.NewRecoveryMetricsCollector(data.Database, nil))
 		platform.jobModule = capabilities.JobModule
 		var err error
 		if platform.jobModule == nil {

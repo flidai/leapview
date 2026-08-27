@@ -64,6 +64,8 @@ type Config struct {
 	ReconcileSchedules  func(context.Context) error
 	ScheduleInterval    time.Duration
 	Logger              *slog.Logger
+	RecoveryLifecycle   *RecoveryLifecycle
+	RecoveryInterval    time.Duration
 }
 
 type HTTPConfig struct {
@@ -103,6 +105,8 @@ type Module struct {
 	durableAudit       bool
 	refreshExecution   apigencommand.AsyncExecutionContract
 	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
+	recoveryLifecycle  *RecoveryLifecycle
+	recoveryInterval   time.Duration
 
 	mu          sync.Mutex
 	background  context.Context
@@ -115,6 +119,11 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.RecoveryLifecycle != nil {
+		if err := config.RecoveryLifecycle.Validate(); err != nil {
+			return nil, fmt.Errorf("configure scheduled recovery qualification: %w", err)
+		}
+	}
 	if config.Authorization.AuthorizeObject == nil {
 		return nil, errors.New("refresh object authorizer is required")
 	}
@@ -125,6 +134,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	interval := config.ScheduleInterval
 	if interval <= 0 {
 		interval = time.Minute
+	}
+	recoveryInterval := config.RecoveryInterval
+	if recoveryInterval <= 0 {
+		recoveryInterval = time.Minute
 	}
 	leaseTimeout := config.LeaseTimeout
 	if leaseTimeout <= 0 {
@@ -143,10 +156,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
-		events:           config.Events,
-		durableAudit:     config.AuditIntentRecorder != nil,
-		refreshExecution: refreshExecution,
-		resolveIdentity:  config.ResolveIdentity,
+		events:            config.Events,
+		durableAudit:      config.AuditIntentRecorder != nil,
+		refreshExecution:  refreshExecution,
+		resolveIdentity:   config.ResolveIdentity,
+		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
 		if config.HTTP.CurrentPrincipal == nil {
@@ -176,7 +190,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		InitialEvent: refreshExecution.InitialEvent,
 		InitialState: refreshExecution.InitialState,
 	}, config.AuditIntentRecorder)
-	m.schedules = refreshsqlite.NewRepository(config.Database)
+	m.schedules = newSQLiteRepository(config.Database)
 	m.service = config.Service
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
@@ -736,6 +750,10 @@ func (m *Module) Start(ctx context.Context) error {
 		m.wg.Add(1)
 		go m.runDispatcherRecovery(background)
 	}
+	if m.recoveryLifecycle != nil {
+		m.wg.Add(1)
+		go m.runRecoveryLifecycle(background)
+	}
 	m.mu.Unlock()
 	m.Dispatch(background)
 	return nil
@@ -805,6 +823,26 @@ func (m *Module) runDispatcherRecovery(ctx context.Context) {
 			return
 		case <-ticker.C:
 			m.Dispatch(ctx)
+		}
+	}
+}
+
+func (m *Module) runRecoveryLifecycle(ctx context.Context) {
+	defer m.wg.Done()
+	run := func() {
+		if err := m.recoveryLifecycle.RunOnce(ctx); err != nil && ctx.Err() == nil {
+			m.logger.WarnContext(ctx, "run scheduled recovery qualification lifecycle failed", "error", RedactFailure(err))
+		}
+	}
+	run()
+	ticker := time.NewTicker(m.recoveryInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			run()
 		}
 	}
 }

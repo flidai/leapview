@@ -41,16 +41,17 @@ var interruptedRestoreCheckpointPrefixes = []string{
 }
 
 type InstanceBackupOptions struct {
-	HomeDir              string
-	DBPath               string
-	OutPath              string
-	ExcludeRelativePaths []string
-	BackupID             string
-	Now                  func() time.Time
-	ReleaseIdentity      compatibility.ReleaseIdentity
-	StorageTopology      InstanceBackupStorageTopology
-	Environment          string
-	TransitionPolicy     *compatibility.Policy
+	HomeDir                string
+	DBPath                 string
+	OutPath                string
+	ExcludeRelativePaths   []string
+	BackupID               string
+	Now                    func() time.Time
+	ReleaseIdentity        compatibility.ReleaseIdentity
+	StorageTopology        InstanceBackupStorageTopology
+	Environment            string
+	TransitionPolicy       *compatibility.Policy
+	TransitionPolicySHA256 string
 }
 
 type InstanceRestoreOptions struct {
@@ -69,6 +70,7 @@ type InstanceRestoreOptions struct {
 	ExclusiveLockHeld      bool
 	RequireExclusiveLock   bool
 	TransitionPolicy       *compatibility.Policy
+	TransitionPolicySHA256 string
 	ValidatedPlan          *InstanceRestorePreflightPlan
 }
 
@@ -427,6 +429,10 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 	if err != nil {
 		return err
 	}
+	policySHA256 := strings.TrimSpace(options.TransitionPolicySHA256)
+	if policySHA256 != "" && !validInstanceBackupSHA256(policySHA256) {
+		return fmt.Errorf("instance backup transition policy SHA-256 is invalid")
+	}
 	releaseIdentity, err := normalizeBackupReleaseIdentity(options.ReleaseIdentity)
 	if err != nil {
 		return err
@@ -444,7 +450,8 @@ func writeInstanceBackup(ctx context.Context, options InstanceBackupOptions, out
 		ReleaseIdentity: releaseIdentity,
 		InstanceID:      instanceID, Environment: environment, CreatedAt: createdAt, CompletedAt: createdAt,
 		ArchiveMode: "full-instance", StorageTopology: normalizeBackupStorageTopology(options.StorageTopology),
-		RequiredTransitionPolicyVersion: policy.PolicyVersion, Members: inventory, InventorySHA256: inventoryDigest,
+		RequiredTransitionPolicyVersion: policy.PolicyVersion, RequiredTransitionPolicySHA256: policySHA256,
+		Members: inventory, InventorySHA256: inventoryDigest,
 	}
 	return writeManifestV2Archive(out, manifest, members)
 }
@@ -522,7 +529,8 @@ func RestoreInstance(ctx context.Context, options InstanceRestoreOptions) error 
 		PreserveRelativeFile: options.PreserveRelativeFile, ResetRelativePaths: options.ResetRelativePaths,
 		ExclusiveLockHeld: options.ExclusiveLockHeld, RequireExclusiveLock: options.RequireExclusiveLock,
 		CurrentBackupOut: options.CurrentBackupOut, DiscardCurrentBackup: options.DiscardCurrentBackup,
-		TransitionPolicy: options.TransitionPolicy,
+		TransitionPolicy:       options.TransitionPolicy,
+		TransitionPolicySHA256: options.TransitionPolicySHA256,
 	})
 	if err != nil {
 		return err
@@ -621,7 +629,7 @@ func rejectSymlinkPath(absolutePath, label string) error {
 func sameRestorePreflightIdentity(left, right InstanceRestorePreflightPlan) bool {
 	return left.Allowed == right.Allowed && left.BackupID == right.BackupID &&
 		left.ManifestVersion == right.ManifestVersion && left.ManifestSHA256 == right.ManifestSHA256 &&
-		left.PolicyVersion == right.PolicyVersion && left.ArchivePath == right.ArchivePath &&
+		left.PolicyVersion == right.PolicyVersion && left.PolicySHA256 == right.PolicySHA256 && left.ArchivePath == right.ArchivePath &&
 		left.ArchiveSHA256 == right.ArchiveSHA256 && left.TargetHome == right.TargetHome &&
 		left.CheckpointPath == right.CheckpointPath &&
 		left.TargetTreeSHA256 == right.TargetTreeSHA256 && left.Environment == right.Environment &&
@@ -747,14 +755,15 @@ func restoreInstanceFromReader(ctx context.Context, options InstanceRestoreOptio
 			return fmt.Errorf("current instance backup path is required when restoring over an existing home dir")
 		}
 		if err := BackupInstance(ctx, InstanceBackupOptions{
-			HomeDir:              targetAbs,
-			DBPath:               filepath.Join(targetAbs, instanceBackupDBName),
-			OutPath:              currentBackupAbs,
-			ExcludeRelativePaths: resetRelativePaths,
-			Environment:          options.ExpectedEnvironment,
-			ReleaseIdentity:      options.TargetReleaseIdentity,
-			TransitionPolicy:     options.TransitionPolicy,
-			StorageTopology:      options.CurrentStorageTopology,
+			HomeDir:                targetAbs,
+			DBPath:                 filepath.Join(targetAbs, instanceBackupDBName),
+			OutPath:                currentBackupAbs,
+			ExcludeRelativePaths:   resetRelativePaths,
+			Environment:            options.ExpectedEnvironment,
+			ReleaseIdentity:        options.TargetReleaseIdentity,
+			TransitionPolicy:       options.TransitionPolicy,
+			TransitionPolicySHA256: options.TransitionPolicySHA256,
+			StorageTopology:        options.CurrentStorageTopology,
 		}); err != nil {
 			return fmt.Errorf("backup current instance: %w", err)
 		}

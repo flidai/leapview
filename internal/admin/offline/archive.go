@@ -143,12 +143,19 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 }
 
 func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (BackupStorageTopology, error) {
-	return service.storageTopology(points, true)
+	return BuildStorageTopology(service.config, points, true)
 }
 
 func (service *Service) storageTopology(points []ExternalRecoveryPoint, requireRecoveryPoint bool) (BackupStorageTopology, error) {
+	return BuildStorageTopology(service.config, points, requireRecoveryPoint)
+}
+
+// BuildStorageTopology is the canonical FAI-515 projection from deployment
+// storage configuration plus native-store recovery evidence into manifest v2.
+// Scheduled qualification and offline operator workflows must share this path.
+func BuildStorageTopology(config Config, points []ExternalRecoveryPoint, requireRecoveryPoint bool) (BackupStorageTopology, error) {
 	topology := BackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []BackupExternalStoreReference{}}
-	backend := strings.TrimSpace(service.config.ManagedDataBackend)
+	backend := strings.TrimSpace(config.ManagedDataBackend)
 	switch backend {
 	case "", "local":
 		if len(points) != 0 {
@@ -156,16 +163,16 @@ func (service *Service) storageTopology(points []ExternalRecoveryPoint, requireR
 		}
 		return topology, nil
 	case "s3":
-		region := strings.TrimSpace(service.config.ManagedDataS3Region)
+		region := strings.TrimSpace(config.ManagedDataS3Region)
 		if region == "" {
 			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured region")
 		}
-		bucket := strings.TrimSpace(service.config.ManagedDataS3Bucket)
+		bucket := strings.TrimSpace(config.ManagedDataS3Bucket)
 		if bucket == "" {
 			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured bucket")
 		}
 		provider := "aws"
-		endpoint := strings.TrimSpace(service.config.ManagedDataS3Endpoint)
+		endpoint := strings.TrimSpace(config.ManagedDataS3Endpoint)
 		if endpoint == "" {
 			endpoint = "https://s3." + region + ".amazonaws.com"
 		} else {
@@ -194,7 +201,7 @@ func (service *Service) storageTopology(points []ExternalRecoveryPoint, requireR
 		if requireRecoveryPoint && (managed == nil || strings.TrimSpace(managed.RecoveryPoint) == "" || strings.TrimSpace(managed.EvidenceKey) == "") {
 			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires an exact external recovery point and evidence key")
 		}
-		prefix := strings.Trim(strings.TrimSpace(service.config.ManagedDataS3Prefix), "/")
+		prefix := strings.Trim(strings.TrimSpace(config.ManagedDataS3Prefix), "/")
 		topology.ManagedData = "external"
 		reference := BackupExternalStoreReference{
 			Role: "managed-data", Provider: provider, Endpoint: endpoint, Region: region, Bucket: bucket, Prefix: prefix,

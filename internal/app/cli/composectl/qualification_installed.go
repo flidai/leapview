@@ -44,31 +44,8 @@ type qualificationInstalledReport struct {
 	} `json:"assertions"`
 }
 
-type qualificationTransitionEvidence struct {
-	SchemaVersion          int                           `json:"schemaVersion"`
-	Predecessor            compatibility.ReleaseIdentity `json:"predecessor"`
-	Candidate              compatibility.ReleaseIdentity `json:"candidate"`
-	PolicySHA256           string                        `json:"policySha256"`
-	StateBeforeUpgrade     string                        `json:"stateBeforeUpgradeSha256"`
-	StateAfterUpgrade      string                        `json:"stateAfterUpgradeSha256"`
-	StateAfterRollback     string                        `json:"stateAfterRollbackSha256"`
-	InventoryBefore        qualificationTransitionState  `json:"inventoryBeforeUpgrade"`
-	InventoryAfterUpgrade  qualificationTransitionState  `json:"inventoryAfterUpgrade"`
-	InventoryAfterRollback qualificationTransitionState  `json:"inventoryAfterRollback"`
-	UpgradeResult          string                        `json:"upgradeResult"`
-	RollbackResult         string                        `json:"rollbackResult"`
-	PreservationVerified   bool                          `json:"preservationVerified"`
-}
-
-type qualificationTransitionState struct {
-	InstanceID      string `json:"instanceId"`
-	Environment     string `json:"environment"`
-	CanonicalOrigin string `json:"canonicalOrigin"`
-	PrincipalID     string `json:"principalId"`
-	PrincipalKind   string `json:"principalKind"`
-	PrincipalEmail  string `json:"principalEmail"`
-	PrincipalName   string `json:"principalDisplayName"`
-}
+type qualificationTransitionEvidence = compatibility.TransitionQualificationEvidence
+type qualificationTransitionState = compatibility.TransitionQualificationState
 
 type qualificationReleaseIdentity struct {
 	Version     string `json:"version"`
@@ -283,7 +260,8 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		policyDigest := sha256.Sum256(policyDocument)
 		transitionEvidence = &qualificationTransitionEvidence{
-			SchemaVersion: 1, Predecessor: decision.Current, Candidate: decision.Next,
+			SchemaVersion: 1, PolicyVersion: decision.PolicyVersion,
+			Predecessor: decision.Current, Candidate: decision.Next,
 			PolicySHA256: hex.EncodeToString(policyDigest[:]), UpgradeResult: "not-run", RollbackResult: "not-run",
 		}
 		defer func() {
@@ -374,6 +352,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		if err != nil {
 			return err
 		}
+		transitionEvidence.RecoveryPointAt = c.now().UTC()
 		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
 			transitionEvidence.UpgradeResult = "failure"
 			return err
@@ -637,7 +616,9 @@ func (c *Controller) QualifyInstalledCandidate(
 			return fmt.Errorf("rollback did not restore deterministic predecessor application state: %w", err)
 		}
 		transitionEvidence.PreservationVerified = true
-		if err := c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json")); err != nil {
+		if err := c.withoutQualificationPhases(func() error {
+			return c.UpgradeWithPolicy(ctx, imageReference, c.path("release-transition-policy.json"))
+		}); err != nil {
 			return err
 		}
 		report.Assertions.ReleaseTransition = true

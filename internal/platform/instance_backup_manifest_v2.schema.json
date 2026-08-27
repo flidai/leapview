@@ -31,6 +31,7 @@
     "archiveMode": { "type": "string", "enum": ["full-instance"] },
     "storageTopology": { "$ref": "#/$defs/storageTopology" },
     "requiredTransitionPolicyVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "requiredTransitionPolicySha256": { "$ref": "#/$defs/sha256" },
     "members": {
       "type": "array",
       "minItems": 1,

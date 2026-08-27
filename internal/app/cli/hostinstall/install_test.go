@@ -17,6 +17,7 @@ import (
 type recordingLifecycle struct {
 	initialize []composectl.InitOptions
 	starts     int
+	qualifies  int
 }
 
 func (l *recordingLifecycle) Initialize(_ context.Context, options composectl.InitOptions) error {
@@ -26,6 +27,11 @@ func (l *recordingLifecycle) Initialize(_ context.Context, options composectl.In
 
 func (l *recordingLifecycle) Start(context.Context) error {
 	l.starts++
+	return nil
+}
+
+func (l *recordingLifecycle) RunScheduledRecoveryQualification(context.Context) error {
+	l.qualifies++
 	return nil
 }
 
@@ -64,10 +70,12 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		Image:       config.Image,
 	}, lifecycle.initialize[0])
 	require.Equal(t, 1, lifecycle.starts)
+	require.Equal(t, 1, lifecycle.qualifies)
 	require.Equal(t, [][]string{
 		{paths.Systemctl, "daemon-reload"},
 		{paths.Systemctl, "enable", "--now", "leapview-backup.timer"},
 		{paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"},
+		{paths.Systemctl, "enable", "--now", "leapview-recovery-qualification.timer"},
 	}, commands)
 
 	for _, target := range []string{
@@ -81,6 +89,8 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 		filepath.Join(paths.SystemBin, "leapview-backup-hook"),
 		filepath.Join(paths.Systemd, "leapview-backup.service"),
 		filepath.Join(paths.Systemd, "leapview-backup.timer"),
+		filepath.Join(paths.Systemd, "leapview-recovery-qualification.service"),
+		filepath.Join(paths.Systemd, "leapview-recovery-qualification.timer"),
 		filepath.Join(paths.Root, installMarkerName),
 	} {
 		info, statErr := os.Stat(target)
@@ -102,6 +112,7 @@ func TestInstallWritesCanonicalHostPayloadAndIsIdempotent(t *testing.T) {
 	require.NoError(t, installer.Install(t.Context()))
 	require.Len(t, lifecycle.initialize, 1)
 	require.Equal(t, 2, lifecycle.starts)
+	require.Equal(t, 2, lifecycle.qualifies)
 }
 
 func TestInstallRejectsInvalidConfigurationBeforeMutation(t *testing.T) {
@@ -137,6 +148,30 @@ func TestInstallRejectsPayloadFromAnotherImageBeforeMutation(t *testing.T) {
 
 	err = installer.Install(t.Context())
 	require.ErrorContains(t, err, "does not match the extracted deployment payload image")
+	_, statErr := os.Stat(paths.Root)
+	require.True(t, os.IsNotExist(statErr))
+}
+
+func TestInstallRejectsLegacyPayloadWithoutQualificationBeforeMutation(t *testing.T) {
+	paths := testPaths(t)
+	writeTestPayload(t, paths.Payload)
+	for _, file := range qualificationPayloadFiles {
+		require.NoError(t, os.Remove(filepath.Join(paths.Payload, file.Source)))
+	}
+	config := Config{
+		SchemaVersion: 1,
+		Domain:        "dash.example.com",
+		AdminEmail:    "admin@example.com",
+		Environment:   "prod",
+		Image:         "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64),
+		HTTPS:         boolPointer(true),
+	}
+	writeConfig(t, paths.Config, config)
+	installer, err := New(Options{Paths: paths})
+	require.NoError(t, err)
+
+	err = installer.Install(t.Context())
+	require.ErrorContains(t, err, "complete recovery qualification bundle is required")
 	_, statErr := os.Stat(paths.Root)
 	require.True(t, os.IsNotExist(statErr))
 }
@@ -267,6 +302,7 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	nextCaddy := "caddy@sha256:" + strings.Repeat("d", 64)
 	currentEnvironment := "LEAPVIEW_IMAGE=" + current + "\nCADDY_IMAGE=" + currentCaddy + "\nCOMPOSE_HTTPS=1\n"
 	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "deployment.env"), []byte(currentEnvironment), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "leapview.env"), []byte("LEAPVIEW_PRODUCTION=1\n"), 0o600))
 	nextPayload := map[string][]byte{}
 	for _, file := range requiredPayloadFiles {
 		nextPayload[file.Source] = []byte("next-" + file.Source + "\n")
@@ -282,7 +318,8 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 		Load: func(context.Context, string) (map[string][]byte, error) {
 			return nextPayload, nil
 		},
-		Run: func(context.Context, string, ...string) error { return nil },
+		Run:         func(context.Context, string, ...string) error { return nil },
+		UnitEnabled: func(context.Context, string) (bool, error) { return true, nil },
 	})
 	require.NoError(t, err)
 	update, err := manager.Prepare(t.Context(), current, next, "linux/amd64", nextPolicy)
@@ -323,6 +360,128 @@ func TestDeploymentPayloadUpdateTracksImageAndRollsBack(t *testing.T) {
 	contents, err = os.ReadFile(filepath.Join(paths.Root, "release-transition-policy.json"))
 	require.NoError(t, err)
 	require.Equal(t, testPolicyDocument(t, current), contents)
+}
+
+func TestFAI515PayloadActivationMigratesQualificationAndRollbackRestoresLegacyState(t *testing.T) {
+	paths := testPaths(t)
+	current := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	next := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	currentPayload := legacyPayload(testPayload("current-"))
+	currentPayload["release-transition-policy.json"] = testPolicyDocument(t, current)
+	currentPayload["deployment.env.example"] = []byte(
+		"LEAPVIEW_IMAGE=" + current + "\nCADDY_IMAGE=caddy@sha256:" + strings.Repeat("c", 64) + "\nCOMPOSE_HTTPS=1\n",
+	)
+	nextPayload := testPayload("next-")
+	nextPayload["release-transition-policy.json"] = testPolicyDocument(t, next)
+	nextPayload["deployment.env.example"] = []byte(
+		"LEAPVIEW_IMAGE=" + next + "\nCADDY_IMAGE=caddy@sha256:" + strings.Repeat("d", 64) + "\nCOMPOSE_HTTPS=1\n",
+	)
+
+	// Provision the exact payload layout known by the PR #368 controller.
+	currentGeneration, err := stageGeneration(paths, current, currentPayload)
+	require.NoError(t, err)
+	require.NoError(t, ensurePayloadLinksFor(paths, legacyPayloadFiles))
+	require.NoError(t, activateGeneration(paths, currentGeneration))
+	currentDeploymentEnvironment := "LEAPVIEW_IMAGE=" + current + "\nCADDY_IMAGE=caddy@sha256:" + strings.Repeat("c", 64) + "\nCOMPOSE_HTTPS=1\n"
+	currentApplicationEnvironment := "LEAPVIEW_PRODUCTION=1\nLEAPVIEW_ENVIRONMENT=prod\n"
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "deployment.env"), []byte(currentDeploymentEnvironment), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, "leapview.env"), []byte(currentApplicationEnvironment), 0o600))
+	marker, err := json.Marshal(Config{
+		SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com",
+		Environment: "prod", Image: current, HTTPS: boolPointer(true),
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, installMarkerName), marker, 0o600))
+
+	// Reproduce the old controller's activation of only its compiled file list.
+	partialNextGeneration, err := stageGeneration(paths, next, legacyPayload(nextPayload))
+	require.NoError(t, err)
+	require.NoError(t, activateGeneration(paths, partialNextGeneration))
+	nextMarker := Config{
+		SchemaVersion: 1, Domain: "dash.example.com", AdminEmail: "admin@example.com",
+		Environment: "prod", Image: next, HTTPS: boolPointer(true),
+	}
+	marker, err = json.Marshal(nextMarker)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(paths.Root, installMarkerName), marker, 0o600))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(paths.Root, "deployment.env"),
+		[]byte("LEAPVIEW_IMAGE="+next+"\nCADDY_IMAGE=caddy@sha256:"+strings.Repeat("d", 64)+"\nCOMPOSE_HTTPS=1\n"),
+		0o600,
+	))
+
+	dockerPath := filepath.Join(t.TempDir(), "docker")
+	require.NoError(t, os.WriteFile(dockerPath, []byte("#!/bin/sh\nprintf 'linux/amd64\\n'\n"), 0o700))
+	unitEnabled := false
+	var commands [][]string
+	manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
+		Paths: paths, DockerBin: dockerPath,
+		Load: func(_ context.Context, image string) (map[string][]byte, error) {
+			if image == current {
+				return currentPayload, nil
+			}
+			return nextPayload, nil
+		},
+		Run: func(_ context.Context, name string, args ...string) error {
+			commands = append(commands, append([]string{name}, args...))
+			if len(args) >= 3 && args[0] == "enable" && args[2] == "leapview-recovery-qualification.timer" {
+				unitEnabled = true
+			}
+			if len(args) >= 3 && args[0] == "disable" && args[2] == "leapview-recovery-qualification.timer" {
+				unitEnabled = false
+			}
+			return nil
+		},
+		UnitEnabled: func(context.Context, string) (bool, error) { return unitEnabled, nil },
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, manager.ReconcileCurrent(t.Context()))
+	active, err := activeGeneration(paths)
+	require.NoError(t, err)
+	require.Equal(t, "sha256-"+strings.Repeat("b", 64)+"-qualification-v1", active)
+	for _, file := range qualificationPayloadFiles {
+		_, statErr := os.Stat(file.Target(paths))
+		require.NoError(t, statErr, file.Source)
+	}
+	applicationEnvironment, err := os.ReadFile(filepath.Join(paths.Root, "leapview.env"))
+	require.NoError(t, err)
+	require.Contains(t, string(applicationEnvironment), "LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true\n")
+	require.Contains(t, string(applicationEnvironment), "LEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT=host\n")
+	require.True(t, unitEnabled)
+	require.Contains(t, commands, []string{paths.Systemctl, "start", "leapview-recovery-qualification.service"})
+
+	// The new controller can load the historical image, disable/remove FAI-516
+	// host state, and restore the exact pre-migration application configuration.
+	update, err := manager.Prepare(t.Context(), next, current, "linux/amd64", currentPayload["release-transition-policy.json"])
+	require.NoError(t, err)
+	require.NotNil(t, update)
+	t.Cleanup(func() { require.NoError(t, update.Close()) })
+	require.NoError(t, update.Apply())
+	active, err = activeGeneration(paths)
+	require.NoError(t, err)
+	require.Equal(t, currentGeneration, active)
+	applicationEnvironment, err = os.ReadFile(filepath.Join(paths.Root, "leapview.env"))
+	require.NoError(t, err)
+	require.Equal(t, currentApplicationEnvironment, string(applicationEnvironment))
+	require.False(t, unitEnabled)
+	for _, file := range qualificationPayloadFiles {
+		_, statErr := os.Lstat(file.Target(paths))
+		require.True(t, os.IsNotExist(statErr), file.Source)
+	}
+}
+
+func TestReconcileCurrentRejectsMissingInstallationMetadata(t *testing.T) {
+	paths := testPaths(t)
+	require.NoError(t, os.MkdirAll(paths.Root, 0o700))
+	manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
+		Paths: paths,
+		Run:   func(context.Context, string, ...string) error { return nil },
+	})
+	require.NoError(t, err)
+
+	err = manager.ReconcileCurrent(t.Context())
+	require.ErrorContains(t, err, "host installation metadata is missing")
 }
 
 func TestStagedGenerationDoesNotChangeActivePayload(t *testing.T) {
@@ -370,7 +529,9 @@ func writeTestPayload(t *testing.T, directory string) {
 		if file.Source == "leapviewctl" || strings.HasSuffix(file.Source, "wrapper") || strings.HasSuffix(file.Source, "hook") {
 			mode = 0o700
 		}
-		require.NoError(t, os.WriteFile(filepath.Join(directory, file.Source), []byte(file.Source+"\n"), mode))
+		path := filepath.Join(directory, file.Source)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+		require.NoError(t, os.WriteFile(path, []byte(file.Source+"\n"), mode))
 	}
 }
 

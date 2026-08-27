@@ -69,6 +69,10 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		}
 		return identity, nil
 	}
+	recoveryLifecycle := workflow.recoveryLifecycle
+	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
+		recoveryLifecycle = refreshmodule.NewRecoveryLifecycle(database, *recoveryLifecycle)
+	}
 	config := refreshmodule.Config{
 		Database: database, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
@@ -109,9 +113,11 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		},
 		Admission: workloadController(&runtime.workloads), LeaseTimeout: storage.jobLeaseTimeout,
 		Clock: workflow.refreshPipelineClock, ResolveIdentity: resolveRefreshIdentity,
-		EnableDispatcher: workflow.enableRefreshDispatcher,
-		EnableScheduler:  false,
-		Logger:           platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
+		EnableDispatcher:  workflow.enableRefreshDispatcher,
+		EnableScheduler:   false,
+		RecoveryLifecycle: recoveryLifecycle,
+		RecoveryInterval:  workflow.recoveryInterval,
+		Logger:            platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},

@@ -4,11 +4,13 @@ package adminoffline
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -19,9 +21,38 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	recovery "github.com/flidai/leapview/internal/refresh/module"
 )
 
 type Operations struct{}
+
+func (Operations) RecoveryLedgerStatus(ctx context.Context, out io.Writer) error {
+	if out == nil {
+		return fmt.Errorf("recovery ledger status output is required")
+	}
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	store, err := platform.Open(ctx, cfg.DBPath())
+	if err != nil {
+		return err
+	}
+	defer store.Close()
+	repository := recovery.NewRecoveryRepository(store.SQLDB())
+	snapshot, err := repository.Status(ctx, time.Now().UTC())
+	if err != nil {
+		return err
+	}
+	response := struct {
+		SchemaVersion int                     `json:"schemaVersion"`
+		Status        recovery.StatusSnapshot `json:"status"`
+		Metrics       []recovery.Metric       `json:"metrics"`
+	}{SchemaVersion: 1, Status: snapshot, Metrics: snapshot.Metrics()}
+	encoder := json.NewEncoder(out)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(response)
+}
 
 func (Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	service, err := newService()

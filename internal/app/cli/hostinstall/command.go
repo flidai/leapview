@@ -11,6 +11,7 @@ import (
 )
 
 type CommandOptions struct {
+	Root      string
 	DockerBin string
 	Stdin     io.Reader
 	Stdout    io.Writer
@@ -59,5 +60,29 @@ func Command(ctx context.Context, options CommandOptions) *cobra.Command {
 	install.Flags().StringVar(&payloadPath, "payload", payloadPath, "immutable deployment payload (defaults to the leapviewctl directory)")
 	install.Flags().StringVar(&sourceImage, "source-image", sourceImage, "immutable image from which the deployment payload was extracted")
 	host.AddCommand(install)
+	reconcile := &cobra.Command{
+		Use:    "reconcile-recovery-qualification",
+		Short:  "Complete an admitted host's recovery qualification payload migration",
+		Args:   cobra.NoArgs,
+		Hidden: true,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if os.Geteuid() != 0 {
+				return fmt.Errorf("host recovery qualification migration must run as root")
+			}
+			root := options.Root
+			if root == "" {
+				root = "/opt/leapview"
+			}
+			manager, err := NewDeploymentPayloadManager(DeploymentPayloadManagerOptions{
+				Paths: InstalledPaths(root), DockerBin: options.DockerBin,
+				Stdout: options.Stdout, Stderr: options.Stderr,
+			})
+			if err != nil {
+				return err
+			}
+			return manager.ReconcileCurrent(ctx)
+		},
+	}
+	host.AddCommand(reconcile)
 	return host
 }

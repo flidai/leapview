@@ -50,6 +50,7 @@ type Operations interface {
 	StorageCleanup(context.Context, adminoffline.StorageCleanupRequest, io.Writer) error
 	Maintenance(context.Context, adminoffline.MaintenanceRequest, io.Writer) error
 	AuditOutbox(context.Context, adminoffline.AuditOutboxRequest, io.Writer) error
+	RecoveryLedgerStatus(context.Context, io.Writer) error
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
@@ -161,7 +162,18 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	restore.Flags().StringVar(&values.ExternalEvidence, "external-evidence", "", "JSON map of evidence keys to verified external recovery points")
 	restore.Flags().StringVar(&values.CurrentExternalRecovery, "current-external-recovery-points", "", "JSON file containing exact recovery points for the pre-restore safety checkpoint")
 
-	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore)
+	recoveryGroup := adminGroupCommand("recovery", "Inspect durable recovery qualification evidence")
+	recoveryStatus := operationCommand(operations, "status", "Show due, stale, failed, and publication state from the recovery ledger", func(command *cobra.Command) error {
+		return operations.RecoveryLedgerStatus(ctx, command.OutOrStdout())
+	})
+	recoveryStatus.Args = cobra.NoArgs
+	recoveryStatus.Annotations = map[string]string{
+		"leapview.dev/effect":       "read",
+		"leapview.dev/confirmation": "never",
+	}
+	recoveryGroup.AddCommand(recoveryStatus)
+
+	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore, recoveryGroup)
 	delivery := deliveryPoolCommand(ctx, operations)
 	delivery.AddCommand(deliveryAuditCommand(ctx, operations))
 	delivery.AddCommand(deliveryRepairCommand(ctx, operations))
