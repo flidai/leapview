@@ -121,7 +121,11 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
-    const orderSort = table.locator('button.header-button').filter({ hasText: /^order_id(?:\s*[↑↓])?$/ })
+    const orderColumnIndex = await table.evaluate((element) =>
+      element.columns.findIndex((column) => column.key === 'order_id')
+    )
+    if (orderColumnIndex < 0) throw new Error('performance table has no order_id column')
+    const orderSort = table.locator('button.header-button').nth(orderColumnIndex)
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()

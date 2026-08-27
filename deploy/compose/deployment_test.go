@@ -464,8 +464,9 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
 		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
-	if !strings.Contains(performance, `hasText: /^order_id(?:\s*[↑↓])?$/`) {
-		t.Error("performance qualification must select only the sortable order_id result-frame header")
+	if !strings.Contains(performance, `column.key === 'order_id'`) ||
+		!strings.Contains(performance, `table.locator('button.header-button').nth(orderColumnIndex)`) {
+		t.Error("performance qualification must select the sortable header by its stable order_id column key")
 	}
 	if !strings.Contains(browser, "table diagnostics=") || !strings.Contains(browser, ".slice(0, 24)") {
 		t.Error("browser qualification failures must include bounded table diagnostics")
