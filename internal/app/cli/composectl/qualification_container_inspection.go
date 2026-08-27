@@ -169,7 +169,20 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 				target: target, source: source,
 			})
 		case tar.TypeSymlink:
-			return "", fmt.Errorf("container inspection archive contains symlink %q", header.Name)
+			linkname, err := qualificationArchiveSymlinkTarget(relative, header.Linkname)
+			if err != nil {
+				return "", fmt.Errorf(
+					"unsafe container inspection symlink %q: %w",
+					header.Linkname,
+					err,
+				)
+			}
+			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+				return "", err
+			}
+			if err := os.Symlink(linkname, target); err != nil {
+				return "", err
+			}
 		default:
 			return "", fmt.Errorf(
 				"container inspection archive contains unsupported entry %q",
@@ -194,7 +207,7 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 	if rootName == "." {
 		return targetRoot, nil
 	}
-	return securejoin.SecureJoin(targetRoot, filepath.FromSlash(rootName))
+	return filepath.Join(targetRoot, filepath.FromSlash(rootName)), nil
 }
 
 func qualificationArchiveRelativePath(name string) (string, error) {
@@ -212,6 +225,18 @@ func qualificationArchiveRoot(relative string) string {
 	}
 	root, _, _ := strings.Cut(clean, "/")
 	return root
+}
+
+func qualificationArchiveSymlinkTarget(relative string, linkname string) (string, error) {
+	linkname = filepath.ToSlash(linkname)
+	if linkname == "" || path.IsAbs(linkname) {
+		return "", fmt.Errorf("target is empty or absolute")
+	}
+	resolved := path.Clean(path.Join(path.Dir(filepath.ToSlash(relative)), linkname))
+	if resolved == ".." || strings.HasPrefix(resolved, "../") {
+		return "", fmt.Errorf("target escapes archive root")
+	}
+	return filepath.FromSlash(linkname), nil
 }
 
 func createQualificationArchiveHardlinks(links []qualificationArchiveHardlink) error {

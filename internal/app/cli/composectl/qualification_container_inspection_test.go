@@ -62,10 +62,40 @@ func TestQualificationCopyFromContainerExtractsHardenedHardlinks(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
+func TestQualificationCopyFromContainerPreservesContainedSymlink(t *testing.T) {
+	controller, err := New(Options{
+		Root: t.TempDir(), DockerBin: "docker-probe",
+		qualificationExecutor: qualificationInspectionArchiveExecutor(
+			t,
+			[]qualificationInspectionTarEntry{{
+				name:     "libstdc++.so.6",
+				mode:     0o777,
+				typeflag: tar.TypeSymlink,
+				linkname: "libstdc++.so.6.0.33",
+			}},
+		),
+	})
+	require.NoError(t, err)
+
+	localPath, cleanup, err := controller.qualificationCopyFromContainer(
+		t.Context(), "leapview-app", "/var/lib/leapview",
+	)
+	require.NoError(t, err)
+	defer cleanup()
+
+	info, err := os.Lstat(localPath)
+	require.NoError(t, err)
+	require.NotZero(t, info.Mode()&os.ModeSymlink)
+	linkname, err := os.Readlink(localPath)
+	require.NoError(t, err)
+	require.Equal(t, "libstdc++.so.6.0.33", linkname)
+}
+
 func TestQualificationCopyFromContainerRejectsUnsafeArchiveEntries(t *testing.T) {
 	for _, entry := range []qualificationInspectionTarEntry{
 		{name: "../escape", mode: 0o600, typeflag: tar.TypeReg, contents: "unsafe"},
 		{name: "leapview/link", mode: 0o777, typeflag: tar.TypeSymlink, linkname: "/etc/passwd"},
+		{name: "leapview/link", mode: 0o777, typeflag: tar.TypeSymlink, linkname: "../../escape"},
 		{name: "leapview/link", mode: 0o600, typeflag: tar.TypeLink, linkname: "../escape"},
 	} {
 		t.Run(entry.name+string(entry.typeflag), func(t *testing.T) {
