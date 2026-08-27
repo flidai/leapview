@@ -101,7 +101,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
       const visualBuilder = root.querySelector('.visual-builder')?.getBoundingClientRect()
       const dataPane = root.querySelector('.data-pane')?.getBoundingClientRect()
       const pickerButtons = Array.from(root.querySelectorAll('.visual-picker-button')).map((button) => ({
-        type: button.getAttribute('data-visual-picker-type'),
+        type: button.getAttribute('data-visual-type'),
         label: button.getAttribute('aria-label'),
         title: button.getAttribute('title'),
         hasIcon: Boolean(button.querySelector('svg')),
@@ -151,6 +151,228 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.panel).toBe('Build visual')
     expect(state.horizontalOverflow).toBe(false)
     expect(state.verticalOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder changes the selected visual type without creating a visual', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const beforeCount = root.querySelectorAll('.visual').length
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      const line = root.querySelector('button[data-visual-type="line"]') as HTMLButtonElement | null
+      line?.click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        typeButton: Boolean(line),
+        beforeCount,
+        afterCount: root.querySelectorAll('.visual').length,
+        command,
+      }
+    })
+    expect(state.typeButton).toBe(true)
+    expect(state.beforeCount).toBe(state.afterCount)
+    expect(state.command).toMatchObject({ action: 'set_visual_type', pageId: 'overview', visualId: 'sales-chart', type: 'line' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder keeps adding a visual as a distinct, enabled control', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const add = root.querySelector('button[data-builder-action="add-visual"]') as HTMLButtonElement | null
+      const disabledBeforeClick = add?.disabled ?? null
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      add?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        addControl: Boolean(add),
+        label: add?.getAttribute('aria-label') || add?.textContent?.trim(),
+        disabledBeforeClick,
+        command,
+      }
+    })
+    expect(state.addControl).toBe(true)
+    expect(state.label).toContain('Add')
+    expect(state.disabledBeforeClick).toBe(false)
+    expect(state.command).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'bar' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder exposes rename, duplicate, and delete actions for the selected visual', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const actions = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-visual-action]')).map((button) => ({
+        action: button.getAttribute('data-visual-action'),
+        label: button.getAttribute('aria-label'),
+        disabled: button.disabled,
+      }))
+      const rename = root.querySelector<HTMLButtonElement>('[data-visual-action="rename"]')
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      rename?.click()
+      await element.updateComplete
+      const titleInput = root.querySelector<HTMLInputElement>('input[aria-label="Visual title"]')
+      if (titleInput) {
+        titleInput.value = 'Bookings by status'
+        titleInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+        const form = root.querySelector<HTMLFormElement>('form.visual-rename-form')
+        form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true, composed: true }))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      root.querySelector<HTMLButtonElement>('[data-visual-action="duplicate"]')?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      root.querySelector<HTMLButtonElement>('[data-visual-action="delete"]')?.click()
+      await element.updateComplete
+      root.querySelector<HTMLButtonElement>('[data-visual-action="delete"]')?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { actions, titleInput: Boolean(titleInput), commands }
+    })
+    expect(state.actions).toEqual([
+      { action: 'rename', label: 'Rename Sales by status', disabled: false },
+      { action: 'duplicate', label: 'Duplicate Sales by status', disabled: false },
+      { action: 'delete', label: 'Delete Sales by status', disabled: false },
+    ])
+    expect(state.titleInput).toBe(true)
+    expect(state.commands).toHaveLength(3)
+    expect(state.commands[0]).toMatchObject({ action: 'rename_visual', pageId: 'overview', visualId: 'sales-chart', title: 'Bookings by status' })
+    expect(state.commands[1]).toMatchObject({ action: 'duplicate_visual', pageId: 'overview', visualId: 'sales-chart' })
+    expect(state.commands[2]).toMatchObject({ action: 'remove_visual', pageId: 'overview', visualId: 'sales-chart' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder exposes field-token remove, role movement, and reorder affordances', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const tokens = Array.from(root.querySelectorAll<HTMLElement>('.field-token')).map((token) => ({
+        text: token.textContent?.trim(),
+        actions: Array.from(token.querySelectorAll<HTMLElement>('[data-field-action]')).map((action) => ({
+          action: action.getAttribute('data-field-action'),
+          label: action.getAttribute('aria-label'),
+          disabled: (action as HTMLButtonElement).disabled,
+        })),
+      }))
+      const moveRole = root.querySelector<HTMLElement>('.field-token [data-field-action="move-role"]')
+      return { tokens, moveRoleLabel: moveRole?.getAttribute('aria-label') }
+    })
+    expect(state.tokens).toHaveLength(1)
+    expect(state.tokens[0].actions.map((item) => item.action)).toEqual(['remove', 'move-up', 'move-down', 'move-role'])
+    expect(state.tokens[0].actions.map((item) => item.disabled)).toEqual([false, true, true, true])
+    expect(state.tokens[0].actions.map((item) => item.label)).toEqual([
+      'Remove Status field',
+      'Move Status field up',
+      'Move Status field down',
+      'Move Status field to another role',
+    ])
+    expect(state.moveRoleLabel).toBe('Move Status field to another role')
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder keeps format controls visible and persistent across inspector tabs', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const formatTab = root.querySelector<HTMLButtonElement>('[data-inspector-tab="format"]')
+      formatTab?.click()
+      await element.updateComplete
+      const controlSelectors = [
+        'input[data-format-control="title-text"]',
+        'input[data-format-control="title-visible"]',
+        'input[data-format-control="legend-visible"]',
+        'input[data-format-control="axis-visible"]',
+        'input[data-format-control="data-labels-visible"]',
+      ]
+      const controls = controlSelectors.map((selector) => {
+        const control = root.querySelector<HTMLInputElement>(selector)
+        return { selector, present: Boolean(control), label: control?.getAttribute('aria-label'), disabled: control?.disabled ?? null, value: control?.value ?? null, checked: control?.checked ?? null }
+      })
+      const title = root.querySelector<HTMLInputElement>('input[data-format-control="title-text"]')
+      const legend = root.querySelector<HTMLInputElement>('input[data-format-control="legend-visible"]')
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      if (title) {
+        title.value = 'Bookings'
+        title.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+        title.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      }
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const changed = { title: title?.value, legend: legend?.checked }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = element.builder.pages.map((page: any) => ({
+        ...page,
+        visuals: page.visuals.map((visual: any) => visual.id === 'sales-chart' ? {
+          ...visual,
+          title: 'Bookings',
+          titleVisible: true,
+          legendVisible: false,
+          axisVisible: true,
+          dataLabelsVisible: false,
+        } : visual),
+      }))
+      mergePatch({ builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
+      await element.updateComplete
+      root.querySelector<HTMLButtonElement>('[data-inspector-tab="build"]')?.click()
+      await element.updateComplete
+      root.querySelector<HTMLButtonElement>('[data-inspector-tab="format"]')?.click()
+      await element.updateComplete
+      return {
+        controls,
+        changed,
+        persisted: {
+          title: root.querySelector<HTMLInputElement>('input[data-format-control="title-text"]')?.value,
+          titleVisible: root.querySelector<HTMLInputElement>('input[data-format-control="title-visible"]')?.checked,
+          legend: root.querySelector<HTMLInputElement>('input[data-format-control="legend-visible"]')?.checked,
+          axis: root.querySelector<HTMLInputElement>('input[data-format-control="axis-visible"]')?.checked,
+          dataLabels: root.querySelector<HTMLInputElement>('input[data-format-control="data-labels-visible"]')?.checked,
+        },
+        command,
+      }
+    })
+    expect(state.controls.map((control) => control.present)).toEqual([true, true, true, true, true])
+    expect(state.controls.map((control) => control.disabled)).toEqual([false, false, false, false, false])
+    expect(state.controls.map((control) => control.label)).toEqual(['Title text', 'Show title', 'Show legend', 'Show axes', 'Show data labels'])
+    expect(state.controls.map((control) => control.checked)).toEqual([false, true, true, true, false])
+    expect(state.command).toMatchObject({ action: 'update_visual_format', pageId: 'overview', visualId: 'sales-chart' })
+    expect(state.persisted).toEqual({ title: 'Bookings', titleVisible: true, legend: false, axis: true, dataLabels: false })
   } finally {
     await page.close()
   }
@@ -396,7 +618,7 @@ test('dashboard builder switches Build and Format inspector tabs', async () => {
       const formatted = {
         selected: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
         panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
-        formatPlaceholder: root.querySelector('.format-placeholder')?.textContent?.trim(),
+        formatControls: root.querySelectorAll('[data-format-control]').length,
         dataPaneVisible: Boolean(root.querySelector('.data-pane')),
         dataSearchCount: root.querySelectorAll('.data-pane input[aria-label="Search fields"]').length,
       }
@@ -414,7 +636,7 @@ test('dashboard builder switches Build and Format inspector tabs', async () => {
     expect(state.initial).toEqual({ selected: 'build', panel: 'Build visual', dataPaneVisible: true, dataSearchCount: 1 })
     expect(state.formatted.selected).toBe('format')
     expect(state.formatted.panel).toBe('Format visual')
-    expect(state.formatted.formatPlaceholder).toContain('Formatting is next.')
+    expect(state.formatted.formatControls).toBe(5)
     expect(state.formatted.dataPaneVisible).toBe(true)
     expect(state.formatted.dataSearchCount).toBe(1)
     expect(state.rebuilt).toEqual({ selected: 'build', panel: 'Build visual', hasFieldBrowser: true, dataPaneVisible: true, dataSearchCount: 1 })
@@ -891,6 +1113,8 @@ test('dashboard builder selects a newly added page after the authoritative comma
       })
       await element.updateComplete
       await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
       let visualCommand: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { visualCommand = event.detail }, { once: true })
       ;(root.querySelector('.add-selected-visual') as HTMLButtonElement).click()
@@ -990,7 +1214,7 @@ function testDocument(): string {
       sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
       semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'decimal' }] }] },
       pages: [
-        { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', title: 'Sales by status', type: 'bar', placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
+        { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', title: 'Sales by status', titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
         { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] },
       ],
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',

@@ -25,8 +25,8 @@ type IntentRequest struct {
 
 // ExecuteIntent is the single application mutation entrypoint for bounded
 // dashboard-builder intents. It delegates persistence to the transactional
-// authoring service and performs active semantic-model validation only for an
-// AssignField intent. No authored document is accepted from a transport.
+// authoring service and performs active semantic-model validation for every
+// field-binding mutation. No authored document is accepted from a transport.
 func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) (authoringservice.Result, error) {
 	if err := a.validate(); err != nil {
 		return authoringservice.Result{}, err
@@ -52,7 +52,31 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 			return a.validateAssignedField(ctx, project, request.Command, lifecycle, field)
 		}
 	}
+	if request.Command.RemoveField != nil {
+		field := request.Command.RemoveField
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.validateFieldMutation(ctx, project, request.Command, lifecycle, field.PageID, field.VisualID, field.FieldID, field.Role)
+		}
+	}
+	if request.Command.MoveField != nil {
+		field := request.Command.MoveField
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			if field.TargetRole != "" && field.TargetRole != field.Role {
+				return fmt.Errorf("%w: cross-role field moves are not supported", authoring.ErrInvalidPayload)
+			}
+			return a.validateFieldMutation(ctx, project, request.Command, lifecycle, field.PageID, field.VisualID, field.FieldID, field.Role)
+		}
+	}
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
+}
+
+// validateFieldMutation reuses the governed assignment validator to ensure
+// remove/move intents resolve the active semantic model and selected component
+// before the reducer mutates the draft. A remove/move never carries the
+// assignment-only resolved table back into the command.
+func (a *Application) validateFieldMutation(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, pageID, visualID, fieldID string, role authoring.FieldRole) error {
+	assignment := &authoring.AssignFieldPayload{PageID: pageID, VisualID: visualID, FieldID: fieldID, Role: role}
+	return a.validateAssignedField(ctx, project, command, lifecycle, assignment)
 }
 
 // validateAssignedField resolves the exact current draft/component and then

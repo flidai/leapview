@@ -3012,6 +3012,7 @@ func (value *DashboardPresentation) Base() (*DashboardPresentationBase, error) {
 type DashboardPresentationBase struct {
 	Type                  string                        `json:"type" yaml:"type"`
 	ConditionalFormatting *[]DashboardConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
+	AxisVisible           *bool                         `json:"axisVisible,omitempty" yaml:"axisVisible,omitempty"`
 }
 
 type DashboardProportionalAlignment string
@@ -3514,6 +3515,7 @@ const (
 type DashboardVisual struct {
 	Type          DashboardVisualType        `json:"type" yaml:"type"`
 	Title         *string                    `json:"title,omitempty" yaml:"title,omitempty"`
+	TitleVisible  *bool                      `json:"titleVisible,omitempty" yaml:"titleVisible,omitempty"`
 	Subtitle      *string                    `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
 	Description   *string                    `json:"description,omitempty" yaml:"description,omitempty"`
 	Query         DashboardQuery             `json:"query" yaml:"query"`

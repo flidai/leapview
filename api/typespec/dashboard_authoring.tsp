@@ -181,7 +181,7 @@ model DashboardAuthoringUpsertVisualIntent {
 }
 
 model DashboardAuthoringRemovePageIntent { pageId: string; }
-model DashboardAuthoringRemoveVisualIntent { visualId: string; }
+model DashboardAuthoringRemoveVisualIntent { pageId?: string; visualId: string; }
 model DashboardAuthoringSetLayoutIntent {
   pageId: string;
   layout?: LeapViewDashboard.DashboardLayoutOverride;
@@ -202,6 +202,53 @@ model DashboardAuthoringAssignFieldIntent {
   visualId: string;
   fieldId: string;
   role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringSetVisualTypeIntent {
+  pageId: string;
+  visualId: string;
+  type: LeapViewDashboard.DashboardVisualType;
+}
+
+model DashboardAuthoringRenameVisualIntent {
+  pageId: string;
+  visualId: string;
+  title: string;
+}
+
+model DashboardAuthoringDuplicateVisualIntent {
+  pageId: string;
+  visualId: string;
+  newVisualId?: string;
+  newComponentId?: string;
+  title?: string;
+}
+
+model DashboardAuthoringUpdateVisualFormatIntent {
+  pageId: string;
+  visualId: string;
+  title?: string;
+  titleVisible?: boolean;
+  legendVisible?: boolean;
+  axisVisible?: boolean;
+  dataLabelsVisible?: boolean;
+}
+
+model DashboardAuthoringRemoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringMoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+  targetRole?: "metric" | "dimension" | "detail";
+  direction?: string;
+  index?: int32;
 }
 
 @discriminator("kind")
@@ -237,6 +284,36 @@ model DashboardAuthoringAddVisualCommand extends DashboardAuthoringCommandReques
 model DashboardAuthoringAssignFieldCommand extends DashboardAuthoringCommandRequest {
   kind: "assignField";
   assignField: DashboardAuthoringAssignFieldIntent;
+}
+
+model DashboardAuthoringSetVisualTypeCommand extends DashboardAuthoringCommandRequest {
+  kind: "setVisualType";
+  setVisualType: DashboardAuthoringSetVisualTypeIntent;
+}
+
+model DashboardAuthoringRenameVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "renameVisual";
+  renameVisual: DashboardAuthoringRenameVisualIntent;
+}
+
+model DashboardAuthoringDuplicateVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "duplicateVisual";
+  duplicateVisual: DashboardAuthoringDuplicateVisualIntent;
+}
+
+model DashboardAuthoringUpdateVisualFormatCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateVisualFormat";
+  updateVisualFormat: DashboardAuthoringUpdateVisualFormatIntent;
+}
+
+model DashboardAuthoringRemoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "removeField";
+  removeField: DashboardAuthoringRemoveFieldIntent;
+}
+
+model DashboardAuthoringMoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "moveField";
+  moveField: DashboardAuthoringMoveFieldIntent;
 }
 
 model DashboardAuthoringUpsertPageCommand extends DashboardAuthoringCommandRequest {

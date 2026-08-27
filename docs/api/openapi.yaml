@@ -21728,6 +21728,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 draftId: example
                 lifecycle:
@@ -22671,6 +22672,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 projectId: example
                 provenance:
@@ -23091,6 +23093,7 @@ paths:
                             suffix: example
                         subtitle: example
                         title: example
+                        titleVisible: true
                         type: line
                 projectId: example
                 provenance:
@@ -65867,6 +65870,12 @@ components:
         - $ref: '#/components/schemas/DashboardAuthoringAddPageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAddVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringAssignFieldCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRemoveFieldCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringMoveFieldCommand'
         - $ref: '#/components/schemas/DashboardAuthoringUpsertPageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRemovePageCommand'
         - $ref: '#/components/schemas/DashboardAuthoringUpsertVisualCommand'
@@ -65883,14 +65892,20 @@ components:
           addVisual: '#/components/schemas/DashboardAuthoringAddVisualCommand'
           archive: '#/components/schemas/DashboardAuthoringArchiveCommand'
           assignField: '#/components/schemas/DashboardAuthoringAssignFieldCommand'
+          duplicateVisual: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
           metadata: '#/components/schemas/DashboardAuthoringMetadataCommand'
+          moveField: '#/components/schemas/DashboardAuthoringMoveFieldCommand'
           publish: '#/components/schemas/DashboardAuthoringPublishCommand'
+          removeField: '#/components/schemas/DashboardAuthoringRemoveFieldCommand'
           removePage: '#/components/schemas/DashboardAuthoringRemovePageCommand'
           removeVisual: '#/components/schemas/DashboardAuthoringRemoveVisualCommand'
+          renameVisual: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
           setFilters: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
           setInteraction: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
           setLayout: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
           setVisibility: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
+          setVisualType: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
+          updateVisualFormat: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
           upsertPage: '#/components/schemas/DashboardAuthoringUpsertPageCommand'
           upsertVisual: '#/components/schemas/DashboardAuthoringUpsertVisualCommand'
     DashboardAuthoringCommandRequestBase:
@@ -66192,6 +66207,7 @@ components:
                     suffix: example
                 subtitle: example
                 title: example
+                titleVisible: true
                 type: line
         draftId: example
         lifecycle:
@@ -66274,6 +66290,56 @@ components:
           contentHash: example
           number: 1
           revisionId: example
+    DashboardAuthoringDuplicateVisualCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - duplicateVisual
+      properties:
+        kind:
+          type: string
+          enum:
+            - duplicateVisual
+          example: example
+        duplicateVisual:
+          $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualIntent'
+      example:
+        duplicateVisual:
+          newComponentId: example
+          newVisualId: example
+          pageId: example
+          title: example
+          visualId: example
+        kind: example
+    DashboardAuthoringDuplicateVisualIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        newVisualId:
+          type: string
+          example: example
+        newComponentId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+      example:
+        newComponentId: example
+        newVisualId: example
+        pageId: example
+        title: example
+        visualId: example
     DashboardAuthoringEmptyPayload:
       type: object
       example: {}
@@ -66574,6 +66640,77 @@ components:
         slug: example
         title: example
         visibility: example
+    DashboardAuthoringMoveFieldCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - moveField
+      properties:
+        kind:
+          type: string
+          enum:
+            - moveField
+          example: example
+        moveField:
+          $ref: '#/components/schemas/DashboardAuthoringMoveFieldIntent'
+      example:
+        kind: example
+        moveField:
+          direction: example
+          fieldId: example
+          index: 1
+          pageId: example
+          role: example
+          targetRole: example
+          visualId: example
+    DashboardAuthoringMoveFieldIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - fieldId
+        - role
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        role:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        targetRole:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+        direction:
+          type: string
+          example: example
+        index:
+          type: integer
+          format: int32
+          example: 1
+      example:
+        direction: example
+        fieldId: example
+        index: 1
+        pageId: example
+        role: example
+        targetRole: example
+        visualId: example
     DashboardAuthoringMutationResponse:
       type: object
       required:
@@ -68558,6 +68695,57 @@ components:
           contentHash: example
           number: 1
           revisionId: example
+    DashboardAuthoringRemoveFieldCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - removeField
+      properties:
+        kind:
+          type: string
+          enum:
+            - removeField
+          example: example
+        removeField:
+          $ref: '#/components/schemas/DashboardAuthoringRemoveFieldIntent'
+      example:
+        kind: example
+        removeField:
+          fieldId: example
+          pageId: example
+          role: example
+          visualId: example
+    DashboardAuthoringRemoveFieldIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - fieldId
+        - role
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        fieldId:
+          type: string
+          example: example
+        role:
+          type: string
+          enum:
+            - metric
+            - dimension
+            - detail
+          example: example
+      example:
+        fieldId: example
+        pageId: example
+        role: example
+        visualId: example
     DashboardAuthoringRemovePageCommand:
       type: object
       allOf:
@@ -68605,16 +68793,62 @@ components:
       example:
         kind: example
         removeVisual:
+          pageId: example
           visualId: example
     DashboardAuthoringRemoveVisualIntent:
       type: object
       required:
         - visualId
       properties:
+        pageId:
+          type: string
+          example: example
         visualId:
           type: string
           example: example
       example:
+        pageId: example
+        visualId: example
+    DashboardAuthoringRenameVisualCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - renameVisual
+      properties:
+        kind:
+          type: string
+          enum:
+            - renameVisual
+          example: example
+        renameVisual:
+          $ref: '#/components/schemas/DashboardAuthoringRenameVisualIntent'
+      example:
+        kind: example
+        renameVisual:
+          pageId: example
+          title: example
+          visualId: example
+    DashboardAuthoringRenameVisualIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - title
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+      example:
+        pageId: example
+        title: example
         visualId: example
     DashboardAuthoringRevalidationFailure:
       type: object
@@ -68835,6 +69069,7 @@ components:
                     suffix: example
                 subtitle: example
                 title: example
+                titleVisible: true
                 type: line
         projectId: example
         provenance:
@@ -69083,6 +69318,46 @@ components:
           example: example
       example:
         visibility: example
+    DashboardAuthoringSetVisualTypeCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setVisualType
+      properties:
+        kind:
+          type: string
+          enum:
+            - setVisualType
+          example: example
+        setVisualType:
+          $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeIntent'
+      example:
+        kind: example
+        setVisualType:
+          pageId: example
+          type: line
+          visualId: example
+    DashboardAuthoringSetVisualTypeIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - type
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        type:
+          $ref: '#/components/schemas/DashboardVisualType'
+      example:
+        pageId: example
+        type: line
+        visualId: example
     DashboardAuthoringSourceMetadata:
       type: object
       properties:
@@ -69253,6 +69528,66 @@ components:
           - example
         title: example
         visibility: example
+    DashboardAuthoringUpdateVisualFormatCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - updateVisualFormat
+      properties:
+        kind:
+          type: string
+          enum:
+            - updateVisualFormat
+          example: example
+        updateVisualFormat:
+          $ref: '#/components/schemas/DashboardAuthoringUpdateVisualFormatIntent'
+      example:
+        kind: example
+        updateVisualFormat:
+          axisVisible: true
+          dataLabelsVisible: true
+          legendVisible: true
+          pageId: example
+          title: example
+          titleVisible: true
+          visualId: example
+    DashboardAuthoringUpdateVisualFormatIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        title:
+          type: string
+          example: example
+        titleVisible:
+          type: boolean
+          example: true
+        legendVisible:
+          type: boolean
+          example: true
+        axisVisible:
+          type: boolean
+          example: true
+        dataLabelsVisible:
+          type: boolean
+          example: true
+      example:
+        axisVisible: true
+        dataLabelsVisible: true
+        legendVisible: true
+        pageId: example
+        title: example
+        titleVisible: true
+        visualId: example
     DashboardAuthoringUpsertPageCommand:
       type: object
       allOf:
@@ -69361,6 +69696,7 @@ components:
                 suffix: example
             subtitle: example
             title: example
+            titleVisible: true
             type: line
           visualId: example
     DashboardAuthoringUpsertVisualIntent:
@@ -69438,6 +69774,7 @@ components:
               suffix: example
           subtitle: example
           title: example
+          titleVisible: true
           type: line
         visualId: example
     DashboardCalculation:
@@ -70239,6 +70576,7 @@ components:
                   suffix: example
               subtitle: example
               title: example
+              titleVisible: true
               type: line
     DashboardFieldConditionalRule:
       type: object
@@ -72241,8 +72579,13 @@ components:
             - field: example
               id: example
               target: mark_fill
+        axisVisible:
+          type: boolean
+          description: Whether cartesian/value axes are rendered for this visual.
+          example: true
       description: Renderer-neutral presentation policies; renderer options are intentionally absent.
       example:
+        axisVisible: true
         conditionalFormatting:
           - field: example
             id: example
@@ -72872,6 +73215,7 @@ components:
                   suffix: example
               subtitle: example
               title: example
+              titleVisible: true
               type: line
         pages:
           type: array
@@ -72994,6 +73338,7 @@ components:
                 suffix: example
             subtitle: example
             title: example
+            titleVisible: true
             type: line
     DashboardStackingMode:
       type: string
@@ -73107,6 +73452,10 @@ components:
         title:
           type: string
           example: example
+        titleVisible:
+          type: boolean
+          description: Controls whether the authored title is shown in the visual frame.
+          example: true
         subtitle:
           type: string
           example: example
@@ -73225,6 +73574,7 @@ components:
             suffix: example
         subtitle: example
         title: example
+        titleVisible: true
         type: line
     DashboardVisualComponentResponse:
       type: object
@@ -87135,9 +87485,14 @@ components:
           $ref: '#/components/schemas/VisualizationLegendPosition'
         labelPolicy:
           $ref: '#/components/schemas/VisualizationLabelPolicy'
+        axisVisible:
+          type: boolean
+          description: False hides cartesian axes while retaining governed field encodings.
+          example: true
         displayUnits:
           $ref: '#/components/schemas/VisualizationDisplayUnits'
       example:
+        axisVisible: true
         displayUnits: auto
         labelPolicy:
           density: hidden
@@ -87686,6 +88041,10 @@ components:
         title:
           type: string
           example: example
+        titleVisible:
+          type: boolean
+          description: False hides the visual-frame title without removing its accessible name.
+          example: true
         subtitle:
           type: string
           example: example
@@ -87922,6 +88281,7 @@ components:
             suffix: example
         subtitle: example
         title: example
+        titleVisible: true
     VisualizationSpecKind:
       type: string
       enum:

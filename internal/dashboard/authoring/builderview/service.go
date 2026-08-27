@@ -346,7 +346,51 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 		return uisignals.DashboardBuilderVisualSignal{}, err
 	}
 	placement := dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)}
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), Type: string(authored.Type), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+	titleVisible := true
+	if authored.TitleVisible != nil {
+		titleVisible = *authored.TitleVisible
+	}
+	legendVisible, labelsVisible, axisVisible := canonicalVisualFormatVisibility(authored)
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: string(authored.Type), LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+}
+
+func canonicalVisualFormatVisibility(visual dashboarddocument.DashboardVisual) (legendVisible, labelsVisible, axisVisible bool) {
+	// Unsupported controls remain false so the browser cannot present a toggle
+	// that the selected presentation cannot persist.
+	legendVisible, labelsVisible, axisVisible = false, false, true
+	if base, err := visual.Presentation.Base(); err == nil {
+		if base.AxisVisible != nil {
+			axisVisible = *base.AxisVisible
+		}
+	}
+	switch presentation := visual.Presentation.Value.(type) {
+	case *dashboarddocument.CartesianDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.PointDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.ProportionalDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.HierarchyDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.PolarDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.GeographicDashboardPresentation:
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	}
+	return legendVisible, labelsVisible, axisVisible
+}
+
+func dashboardLegendVisible(position *dashboarddocument.DashboardLegendPosition) bool {
+	return position == nil || *position != dashboarddocument.DashboardLegendPositionNone
+}
+
+func dashboardLabelsVisible(policy *dashboarddocument.DashboardLabelPolicy) bool {
+	return policy == nil || policy.Density != dashboarddocument.DashboardLabelDensityHidden
 }
 
 func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {

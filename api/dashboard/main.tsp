@@ -617,6 +617,8 @@ model DashboardConditionalFormat {
 model DashboardPresentation {
   type: string;
   conditionalFormatting?: DashboardConditionalFormat[];
+  /** Whether cartesian/value axes are rendered for this visual. */
+  axisVisible?: boolean;
 }
 
 model CartesianDashboardPresentation extends DashboardPresentation {
@@ -1012,6 +1014,8 @@ model DashboardCalculationLookup {
 model DashboardVisual {
   type: DashboardVisualType;
   title?: string;
+  /** Controls whether the authored title is shown in the visual frame. */
+  titleVisible?: boolean;
   subtitle?: string;
   description?: string;
   query: DashboardQuery;

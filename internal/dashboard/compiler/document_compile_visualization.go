@@ -13,7 +13,7 @@ func canonicalVisualizationSpec(id string, visual document.DashboardVisual, quer
 	title := valueOrString(visual.Title, id)
 	description := valueOrString(visual.Description, title)
 	datasets := append([]visualizationir.VisualizationDatasetSchema{{ID: "primary", Fields: canonicalResultFields(query, model)}}, secondarySchemas...)
-	base := visualizationir.VisualizationSpecBase{Title: title, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
+	base := visualizationir.VisualizationSpecBase{Title: title, TitleVisible: visual.TitleVisible, Datasets: datasets, DataBudget: visualizationir.VisualizationDataBudget{MaxRows: 1000, RequiredCompleteness: visualizationir.VisualizationCompletenessComplete}, Accessibility: visualizationir.VisualizationAccessibility{Title: title, Description: description}, Interactions: []visualizationir.VisualizationInteraction{}}
 	if query.Binding.Spatial != nil && query.Binding.Spatial.Tiles != nil {
 		base.DataBudget.MaxRows = 0
 	}

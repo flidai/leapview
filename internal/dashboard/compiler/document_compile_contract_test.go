@@ -81,19 +81,27 @@ func TestCanonicalResultFieldsKeepAuthoredGraphAndStatisticalNames(t *testing.T)
 
 func TestCanonicalVisualizationSpecsUseAuthoredResultAliases(t *testing.T) {
 	model := dashboardQueryTestModel()
+	titleVisible := false
 	base := func(shape visualizationdefinition.ResultShape, dimensions []visualizationdefinition.FieldBinding, metrics []visualizationdefinition.FieldBinding, frame []DashboardQueryResultField) LoweredDashboardQuery {
 		return LoweredDashboardQuery{Type: "aggregate", Binding: visualizationdefinition.QueryBinding{ResultShape: shape, Aggregate: &visualizationdefinition.AggregateQueryBinding{Dimensions: dimensions, Metrics: metrics}}, ResultFrame: frame}
 	}
 	dimensions := []visualizationdefinition.FieldBinding{{FieldID: "state", Alias: "status"}, {FieldID: "delivery", Alias: "delivery_bucket"}}
 	metric := []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "order_count"}}
 	frame := []DashboardQueryResultField{{Name: "status"}, {Name: "delivery_bucket"}, {Name: "order_count"}}
-	graphSpec, err := canonicalVisualizationSpec("graph", document.DashboardVisual{Type: document.DashboardVisualTypeGraph}, base(visualizationdefinition.ResultGraphEdges, dimensions, metric, frame), visualizationir.HierarchyVisualizationPresentation{}, nil, model)
+	graphSpec, err := canonicalVisualizationSpec("graph", document.DashboardVisual{Type: document.DashboardVisualTypeGraph, TitleVisible: &titleVisible}, base(visualizationdefinition.ResultGraphEdges, dimensions, metric, frame), visualizationir.HierarchyVisualizationPresentation{}, nil, model)
 	if err != nil {
 		t.Fatal(err)
 	}
 	graph := graphSpec.Value.(*visualizationir.HierarchyVisualizationSpec)
 	if graph.Source == nil || graph.Target == nil || graph.Value == nil || graph.Source.Field != "status" || graph.Target.Field != "delivery_bucket" || graph.Value.Field != "order_count" {
 		t.Fatalf("graph refs = %#v, want authored aliases", graph)
+	}
+	graphBase, err := visualizationir.SpecificationBase(graphSpec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if graphBase.TitleVisible == nil || *graphBase.TitleVisible {
+		t.Fatalf("title visibility = %#v, want explicit false", graphBase.TitleVisible)
 	}
 	hierarchySpec, err := canonicalVisualizationSpec("tree", document.DashboardVisual{Type: document.DashboardVisualTypeTree}, base(visualizationdefinition.ResultHierarchyNodes, dimensions, metric, frame), visualizationir.HierarchyVisualizationPresentation{}, nil, model)
 	if err != nil {

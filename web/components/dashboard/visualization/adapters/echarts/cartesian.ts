@@ -10,7 +10,16 @@ type CartesianSpec = Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' 
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
 
 export function cartesianOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
-  return applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
+  const option = applyDecisionContext(envelope, context, cartesianBaseOption(envelope, context, categoryColors))
+  const spec = envelope.spec as CartesianSpec
+  return spec.presentation.axisVisible === false ? hideCartesianAxes(option) : option
+}
+
+function hideCartesianAxes(option: EChartsTranslation): EChartsTranslation {
+  const hidden = (axis: unknown): unknown => Array.isArray(axis)
+    ? axis.map((value) => ({ ...(value as EChartsTranslation), show: false }))
+    : axis && typeof axis === 'object' ? { ...(axis as EChartsTranslation), show: false } : axis
+  return { ...option, xAxis: hidden(option.xAxis), yAxis: hidden(option.yAxis) }
 }
 
 function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): EChartsTranslation {
