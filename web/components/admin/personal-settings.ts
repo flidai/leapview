@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { query, state } from 'lit/decorators.js'
-import { Camera, Plus, Search, Trash2, X } from 'lucide'
+import { Camera, Check, ChevronDown, Plus, Search, Trash2, X } from 'lucide'
 import type {
   PersonalAuthoringSessionSignal,
   PersonalCapabilityOptionSignal,
@@ -21,6 +21,28 @@ const emptySettings: PersonalSettingsSignal = {
   tokens: { items: [], capabilities: [] },
 }
 
+type ThemeOption = {
+  value: string
+  label: string
+  group: 'Automatic' | 'Standard' | 'Accessibility'
+  tone: 'system' | 'light' | 'dark'
+}
+
+const systemThemeOption: ThemeOption = { value: 'system', label: 'System', group: 'Automatic', tone: 'system' }
+
+const themeOptions: readonly ThemeOption[] = [
+  systemThemeOption,
+  { value: 'light', label: 'Light default', group: 'Standard', tone: 'light' },
+  { value: 'dark', label: 'Dark default', group: 'Standard', tone: 'dark' },
+  { value: 'dark_dimmed', label: 'Soft dark', group: 'Standard', tone: 'dark' },
+  { value: 'light_colorblind', label: 'Light protanopia and deuteranopia', group: 'Accessibility', tone: 'light' },
+  { value: 'dark_colorblind', label: 'Dark protanopia and deuteranopia', group: 'Accessibility', tone: 'dark' },
+  { value: 'light_tritanopia', label: 'Light tritanopia', group: 'Accessibility', tone: 'light' },
+  { value: 'dark_tritanopia', label: 'Dark tritanopia', group: 'Accessibility', tone: 'dark' },
+]
+
+const themeGroups: readonly ThemeOption['group'][] = ['Automatic', 'Standard', 'Accessibility']
+
 class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private profileName = ''
   @state() private currentPassword = ''
@@ -34,11 +56,16 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private message = ''
   @state() private error = ''
   @state() private avatarMenuOpen = false
+  @state() private themeMenuOpen = false
+  @state() private selectedTheme = ''
   @state() private avatarBusy = false
   @query('.avatar-trigger') private avatarTrigger?: HTMLButtonElement
   @query('.avatar-input') private avatarInput?: HTMLInputElement
   @query('.permission-trigger') private permissionTrigger?: HTMLButtonElement
+  @query('.theme-trigger') private themeTrigger?: HTMLButtonElement
   private handledNewToken = ''
+  private observedDisplayName = ''
+  private observedTheme = ''
 
   static styles = [settingsFieldStyles, css`
     :host { display: block; color: var(--lv-fg-default); font: var(--lv-type-body); }
@@ -51,6 +78,11 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .row { display: grid; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-16); padding: var(--base-size-8) var(--base-size-16); border-bottom: var(--lv-border-muted); }
     .row:first-child { border-radius: var(--lv-radius-large) var(--lv-radius-large) 0 0; }
     .row:last-child { border-bottom: 0; }
+    .profile-row { min-height: var(--base-size-64); padding: var(--base-size-12) var(--base-size-20); }
+    .profile-email { max-width: 22rem; justify-self: end; text-align: right; }
+    .profile-name-form { min-width: 0; justify-self: end; }
+    .profile-name-control { display: flex; min-width: 0; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
+    .profile-name-control input { width: min(16rem, 40vw); min-height: var(--control-medium-size, var(--base-size-32)); text-align: center; font: var(--lv-type-body); }
     .muted { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     input, select { min-width: 0; min-height: var(--control-small-size); box-sizing: border-box; border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-bg-input); font: var(--lv-type-body-compact); }
     button { min-height: var(--control-small-size); border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--control-small-paddingInline-normal); color: var(--lv-fg-default); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
@@ -90,11 +122,29 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .selected-permission:last-child { border-bottom: 0; }
     .permission-remove { display: grid; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
     .permission-empty { display: grid; min-height: var(--base-size-48); place-items: center start; padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .theme-picker { position: relative; display: inline-block; max-width: 100%; justify-self: end; }
+    .theme-trigger { display: inline-grid; width: auto; max-width: 100%; min-height: var(--control-medium-size); grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-8); padding-inline: var(--base-size-8); text-align: left; }
+    .theme-trigger:hover, .theme-trigger:focus-visible, .theme-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
+    .theme-trigger-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .theme-trigger > svg { width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); }
+    .theme-preview { display: inline-grid; width: var(--base-size-40); height: var(--base-size-24); box-sizing: border-box; grid-template-columns: auto auto; place-content: center; align-items: center; gap: var(--base-size-2); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-small); padding: 0 var(--base-size-4); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); line-height: 1; }
+    .theme-preview[data-tone="light"] { color: var(--fgColor-black); background: var(--bgColor-white); }
+    .theme-preview[data-tone="dark"] { color: var(--fgColor-white); background: var(--bgColor-black); }
+    .theme-preview[data-tone="system"] { color: var(--fgColor-white); background: linear-gradient(135deg, var(--bgColor-white) 0 48%, var(--bgColor-black) 52% 100%); }
+    .theme-preview-dot { width: var(--base-size-6); height: var(--base-size-6); border-radius: var(--lv-radius-full); background: var(--lv-bg-accent); }
+    .theme-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(22rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, calc(100svh - var(--base-size-64))); overflow-y: auto; overscroll-behavior: contain; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-6); scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
+    .theme-group { display: grid; gap: var(--base-size-2); padding: var(--base-size-4) 0; border-bottom: var(--lv-border-muted); }
+    .theme-group:last-child { border-bottom: 0; }
+    .theme-group-label { padding: var(--base-size-4) var(--base-size-8); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
+    button.theme-option { display: grid; width: 100%; min-height: var(--control-medium-size); grid-template-columns: auto minmax(0, 1fr) var(--base-size-16); align-items: center; gap: var(--base-size-8); border-color: transparent; background: transparent; padding-inline: var(--base-size-8); text-align: left; }
+    button.theme-option:hover, button.theme-option:focus-visible, button.theme-option[aria-selected="true"] { background: var(--lv-bg-control-hover); outline: 0; }
+    .theme-option-label { overflow-wrap: anywhere; }
+    .theme-check { display: inline-grid; width: var(--base-size-16); height: var(--base-size-16); place-items: center; color: var(--lv-fg-accent); }
     .avatar-control { position: relative; display: inline-grid; justify-items: end; }
-    .avatar-trigger { display: grid; width: var(--control-large-size); height: var(--control-large-size); min-height: var(--control-large-size); place-items: center; border: 0; border-radius: var(--lv-radius-full); padding: 0; background: transparent; }
+    .avatar-trigger { display: grid; width: var(--base-size-32); height: var(--base-size-32); min-height: var(--base-size-32); place-items: center; border: 0; border-radius: var(--lv-radius-full); padding: 0; background: transparent; }
     .avatar-trigger:hover { box-shadow: var(--lv-shadow-resting-sm); }
     .avatar-trigger:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-    .avatar-trigger lv-user-avatar { pointer-events: none; }
+    .avatar-trigger lv-user-avatar { --lv-user-avatar-size: var(--base-size-32); pointer-events: none; }
     .avatar-input { display: none; }
     .avatar-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: var(--overlay-width-xsmall); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-4); }
     .avatar-menu-item { display: grid; min-height: var(--control-medium-size); grid-template-columns: var(--base-size-16) minmax(0, 1fr); align-items: center; gap: var(--base-size-8); border: var(--lv-border-transparent); border-radius: var(--lv-radius-small); background: transparent; padding: 0 var(--base-size-8); text-align: left; }
@@ -105,6 +155,13 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .error { color: var(--lv-fg-danger); }
     @media (max-width: 40rem) {
       .row { grid-template-columns: 1fr; gap: var(--base-size-12); padding: var(--base-size-16); }
+      .profile-email { max-width: none; justify-self: stretch; text-align: left; }
+      .profile-name-form { width: 100%; justify-self: stretch; }
+      .profile-name-control { justify-content: stretch; }
+      .profile-name-control input { width: auto; flex: 1 1 auto; }
+      .theme-picker { width: 100%; min-width: 0; justify-self: stretch; }
+      .theme-trigger { width: 100%; }
+      .theme-menu { right: auto; left: 0; }
       .avatar-control { justify-self: start; }
       .token-form-grid { grid-template-columns: 1fr; }
       .permissions-header { align-items: start; }
@@ -139,7 +196,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   override updated(): void {
     const settings = this.settings
     const displayName = settings.profile.displayName
-    if (!this.profileName && displayName) this.profileName = displayName
+    if (displayName !== this.observedDisplayName) {
+      this.observedDisplayName = displayName
+      this.profileName = displayName
+    }
+    const theme = settings.profile.theme || 'system'
+    if (theme !== this.observedTheme) {
+      this.observedTheme = theme
+      this.selectedTheme = theme
+    }
     const newToken = settings.tokens.newToken ?? ''
     if (newToken && newToken !== this.handledNewToken) {
       this.handledNewToken = newToken
@@ -154,12 +219,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   render() {
     const settings = this.settings
     if (!settings.profile.id) return html`<slot></slot>`
+    const profileNameDraft = this.observedDisplayName === settings.profile.displayName ? this.profileName : settings.profile.displayName
+    const profileNameDirty = profileNameDraft.trim() !== settings.profile.displayName
+    const profileNameValid = profileNameDraft.trim().length > 0
     return html`
       <div class="settings" aria-label="Personal settings">
         ${this.renderNotice(settings)}
         ${settings.active === 'profile' ? html`<section aria-label="Profile">
-          <div class="card">
-            <div class="row">
+          <div class="card profile-card">
+            <div class="row profile-row">
               <div class="settings-field"><span class="settings-label">Profile picture</span><span class="settings-description">Shown across LeapView.</span></div>
               <div class="avatar-control">
                 <button
@@ -173,7 +241,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   @keydown=${this.handleAvatarTriggerKeydown}
                 >
                   <lv-user-avatar
-                    size="medium"
+                    size="small"
                     .name=${settings.profile.displayName || settings.profile.email}
                     .imageUrl=${settings.profile.avatarUrl ?? ''}
                     aria-hidden="true"
@@ -196,35 +264,80 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                 ` : nothing}
               </div>
             </div>
-            <div class="row"><div class="settings-field"><span class="settings-label">Email</span><span class="settings-description">Managed by your identity provider.</span></div><span class="settings-value">${settings.profile.email || 'Not set'}</span></div>
-            <div class="row">
+            <div class="row profile-row"><div class="settings-field"><span class="settings-label">Email</span><span class="settings-description">Managed by your identity provider.</span></div><span class="settings-value profile-email">${settings.profile.email || 'Not set'}</span></div>
+            <div class="row profile-row">
               <div class="settings-field"><label class="settings-label" for="personal-display-name">Display name</label><span class="settings-description">How your name appears to collaborators.</span></div>
-              <form @submit=${this.saveProfile}><div class="actions"><input id="personal-display-name" .value=${this.profileName || settings.profile.displayName} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}><button class="primary" type="submit" ?disabled=${!settings.profile.canEditDisplayName}>Save</button></div></form>
+              <form class="profile-name-form" @submit=${this.saveProfile}>
+                <div class="profile-name-control">
+                  <input id="personal-display-name" .value=${profileNameDraft} ?disabled=${!settings.profile.canEditDisplayName} @input=${this.onProfileNameInput}>
+                  ${profileNameDirty ? html`<button class="primary" data-profile-save type="submit" ?disabled=${!settings.profile.canEditDisplayName || !profileNameValid}>Save</button>` : nothing}
+                </div>
+              </form>
             </div>
-            <div class="row">
-              <div class="settings-field"><label class="settings-label" for="personal-theme">Theme</label><span class="settings-description">Choose how LeapView appears on your devices.</span></div>
-              <select id="personal-theme" name="theme" .value=${settings.profile.theme || 'system'} @change=${this.changeTheme}>
-                <optgroup label="Automatic">
-                  <option value="system">System</option>
-                </optgroup>
-                <optgroup label="Standard">
-                  <option value="light">Light default</option>
-                  <option value="dark">Dark default</option>
-                  <option value="dark_dimmed">Soft dark</option>
-                </optgroup>
-                <optgroup label="Accessibility">
-                  <option value="light_colorblind">Light protanopia and deuteranopia</option>
-                  <option value="dark_colorblind">Dark protanopia and deuteranopia</option>
-                  <option value="light_tritanopia">Light tritanopia</option>
-                  <option value="dark_tritanopia">Dark tritanopia</option>
-                </optgroup>
-              </select>
+            <div class="row profile-row">
+              <div class="settings-field"><span class="settings-label" id="personal-theme-label">Theme</span><span class="settings-description">Choose how LeapView appears on your devices.</span></div>
+              ${this.renderThemePicker(this.selectedTheme || settings.profile.theme || 'system')}
             </div>
           </div>
         </section>` : nothing}
         ${settings.active === 'security' ? this.renderSecurity(settings) : nothing}
         ${settings.active === 'api-tokens' ? this.renderTokens(settings.tokens) : nothing}
       </div>
+    `
+  }
+
+  private renderThemePicker(theme: string) {
+    const selected = themeOption(theme)
+    return html`
+      <div class="theme-picker">
+        <button
+          class="theme-trigger"
+          type="button"
+          aria-haspopup="listbox"
+          aria-expanded=${String(this.themeMenuOpen)}
+          aria-labelledby="personal-theme-label personal-theme-value"
+          aria-controls="personal-theme-listbox"
+          @click=${this.toggleThemeMenu}
+          @keydown=${this.handleThemeTriggerKeydown}
+        >
+          ${this.renderThemePreview(selected)}
+          <span class="theme-trigger-label" id="personal-theme-value">${selected.label}</span>
+          ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
+        </button>
+        ${this.themeMenuOpen ? html`
+          <div id="personal-theme-listbox" class="theme-menu" role="listbox" aria-labelledby="personal-theme-label" @keydown=${this.handleThemeOptionKeydown}>
+            ${themeGroups.map((group) => html`
+              <div class="theme-group" role="group" aria-label=${group}>
+                <div class="theme-group-label" aria-hidden="true">${group}</div>
+                ${themeOptions.filter((option) => option.group === group).map((option) => html`
+                  <button
+                    class="theme-option"
+                    type="button"
+                    role="option"
+                    aria-selected=${String(option.value === selected.value)}
+                    data-theme=${option.value}
+                    tabindex="-1"
+                    @click=${() => this.chooseTheme(option.value)}
+                  >
+                    ${this.renderThemePreview(option)}
+                    <span class="theme-option-label">${option.label}</span>
+                    <span class="theme-check" aria-hidden="true">${option.value === selected.value ? lucideIcon(Check, { size: 16, strokeWidth: 2 }) : nothing}</span>
+                  </button>
+                `)}
+              </div>
+            `)}
+          </div>
+        ` : nothing}
+      </div>
+    `
+  }
+
+  private renderThemePreview(option: ThemeOption) {
+    return html`
+      <span class="theme-preview" data-tone=${option.tone} aria-hidden="true">
+        <span class="theme-preview-dot"></span>
+        <span>Aa</span>
+      </span>
     `
   }
 
@@ -337,10 +450,51 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private saveProfile = (event: Event): void => { event.preventDefault(); this.send('lv-personal-profile-command', { action: 'save', displayName: this.profileName.trim() }) }
-  private changeTheme = (event: Event): void => {
-    const theme = (event.currentTarget as HTMLSelectElement).value
+  private chooseTheme(theme: string): void {
+    this.selectedTheme = theme
     document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode: theme } }))
     this.send('lv-personal-theme-command', { action: 'save', theme })
+    this.closeThemeMenu(true)
+  }
+  private toggleThemeMenu = (): void => {
+    this.themeMenuOpen = !this.themeMenuOpen
+    if (!this.themeMenuOpen) return
+    this.closeAvatarMenu()
+    this.closePermissionMenu()
+    void this.focusSelectedThemeOption()
+  }
+  private handleThemeTriggerKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    this.themeMenuOpen = true
+    this.closeAvatarMenu()
+    this.closePermissionMenu()
+    void this.focusSelectedThemeOption()
+  }
+  private focusSelectedThemeOption = async (): Promise<void> => {
+    await this.updateComplete
+    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.theme-option'))
+    const selected = options.find((option) => option.getAttribute('aria-selected') === 'true')
+    const focusTarget = selected ?? options[0]
+    focusTarget?.focus()
+  }
+  private handleThemeOptionKeydown = (event: KeyboardEvent): void => {
+    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.theme-option'))
+    const index = options.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement)
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const offset = event.key === 'ArrowDown' ? 1 : -1
+      options[(index + offset + options.length) % options.length]?.focus()
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      options[event.key === 'Home' ? 0 : options.length - 1]?.focus()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      this.closeThemeMenu(true)
+    } else if (event.key === 'Tab') {
+      this.closeThemeMenu()
+    }
   }
   private changePassword = (event: Event): void => { event.preventDefault(); this.send('lv-personal-password-command', { currentPassword: this.currentPassword, newPassword: this.newPassword }); this.currentPassword = ''; this.newPassword = '' }
   private createToken = (event: Event): void => {
@@ -356,7 +510,11 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private revokeAuthoringSession = (sessionId: string): void => { this.send('lv-personal-authoring-session-command', { action: 'revoke', sessionId }) }
   private toggleAvatarMenu = (): void => {
     this.avatarMenuOpen = !this.avatarMenuOpen
-    if (this.avatarMenuOpen) void this.focusFirstAvatarMenuItem()
+    if (this.avatarMenuOpen) {
+      this.closeThemeMenu()
+      this.closePermissionMenu()
+      void this.focusFirstAvatarMenuItem()
+    }
   }
   private handleAvatarTriggerKeydown = (event: KeyboardEvent): void => {
     if (event.key !== 'ArrowDown') return
@@ -395,6 +553,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (avatarControl && !path.includes(avatarControl)) this.closeAvatarMenu()
     const permissionPicker = this.renderRoot.querySelector('.permission-picker')
     if (permissionPicker && !path.includes(permissionPicker)) this.closePermissionMenu()
+    const themePicker = this.renderRoot.querySelector('.theme-picker')
+    if (themePicker && !path.includes(themePicker)) this.closeThemeMenu()
   }
   private handleWindowKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.avatarMenuOpen) {
@@ -404,6 +564,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (event.key === 'Escape' && this.tokenPermissionMenuOpen) {
       event.preventDefault()
       this.closePermissionMenu(true)
+    }
+    if (event.key === 'Escape' && this.themeMenuOpen) {
+      event.preventDefault()
+      this.closeThemeMenu(true)
     }
   }
   private handleDatastarFetch = (event: Event): void => {
@@ -455,6 +619,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private togglePermissionMenu = (): void => {
     this.tokenPermissionMenuOpen = !this.tokenPermissionMenuOpen
     if (this.tokenPermissionMenuOpen) {
+      this.closeAvatarMenu()
+      this.closeThemeMenu()
       void this.updateComplete.then(() => {
         this.fitPermissionMenu()
         this.renderRoot.querySelector<HTMLInputElement>('.permission-search input')?.focus()
@@ -475,6 +641,11 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.tokenPermissionSearch = ''
     if (returnFocus) void this.updateComplete.then(() => this.permissionTrigger?.focus())
   }
+  private closeThemeMenu(returnFocus = false): void {
+    if (!this.themeMenuOpen) return
+    this.themeMenuOpen = false
+    if (returnFocus) void this.updateComplete.then(() => this.themeTrigger?.focus())
+  }
   private onTokenPermissionSearch = (event: Event): void => { this.tokenPermissionSearch = (event.currentTarget as HTMLInputElement).value }
   private toggleTokenCapability(value: string): void {
     this.tokenCapabilities = this.tokenCapabilities.includes(value)
@@ -492,6 +663,10 @@ function groupTokenCapabilities(capabilities: PersonalCapabilityOptionSignal[]):
     groups.set(capability.category, values)
   }
   return [...groups.entries()]
+}
+
+function themeOption(value: string): ThemeOption {
+  return themeOptions.find((option) => option.value === value) ?? systemThemeOption
 }
 
 function humanizeCapability(value: string): string {

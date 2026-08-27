@@ -108,6 +108,26 @@ test('profile settings renders the signed-in identity and editable local fields'
       const header = root.querySelector('.page-header') as HTMLElement
       const avatarTrigger = profileRoot.querySelector('.avatar-trigger') as HTMLButtonElement
       const fieldLabel = profileRoot.querySelector('.settings-label') as HTMLElement
+      const profileRows = Array.from(profileRoot.querySelectorAll('.profile-row')) as HTMLElement[]
+      const profileRowsLargeEnough = profileRows.every((row) => row.getBoundingClientRect().height >= 64)
+      const avatarSize = Math.round(avatarTrigger.getBoundingClientRect().width)
+      const displayNameInput = profileRoot.querySelector('#personal-display-name') as HTMLInputElement
+      const displayNameInputStyle = getComputedStyle(displayNameInput)
+      const displayNameInputWidth = Math.round(displayNameInput.getBoundingClientRect().width)
+      const displayNameInputHeight = Math.round(displayNameInput.getBoundingClientRect().height)
+      const displayNameSaveInitiallyHidden = !profileRoot.querySelector('[data-profile-save]')
+      let profileCommand: unknown = null
+      profile.addEventListener('lv-personal-profile-command', (event: CustomEvent) => { profileCommand = event.detail }, { once: true })
+      displayNameInput.value = 'Jacob N.'
+      displayNameInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      await profile.updateComplete
+      const displayNameSave = profileRoot.querySelector('[data-profile-save]') as HTMLButtonElement | null
+      const displayNameSaveVisibleWhenDirty = Boolean(displayNameSave)
+      displayNameSave?.click()
+      await profile.updateComplete
+      const profileControlSelectors = ['.avatar-control', '.profile-email', '.profile-name-form', '.theme-picker']
+      const profileControlRightEdges = profileControlSelectors.map((selector) => Math.round((profileRoot.querySelector(selector) as HTMLElement | null)?.getBoundingClientRect().right ?? 0))
+      const profileControlsRightAligned = profileControlRightEdges.every((edge) => edge > 0 && Math.abs(edge - profileControlRightEdges[0]) <= 1)
       avatarTrigger.click()
       await profile.updateComplete
       const avatarMenuItems = Array.from(profileRoot.querySelectorAll('[role="menuitem"]')).map((item) => item.textContent?.trim())
@@ -121,14 +141,30 @@ test('profile settings renders the signed-in identity and editable local fields'
       let appliedTheme: unknown = null
       profile.addEventListener('lv-personal-theme-command', (event: CustomEvent) => { themeCommand = event.detail }, { once: true })
       document.addEventListener('leapview-theme-change', (event: CustomEvent) => { appliedTheme = event.detail?.mode }, { once: true })
-      const theme = profileRoot.querySelector('select[name="theme"]') as HTMLSelectElement
+      const theme = profileRoot.querySelector('.theme-trigger') as HTMLButtonElement
       avatarTrigger.click()
       await profile.updateComplete
       theme.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }))
       await profile.updateComplete
       const avatarMenuClosedOnOutsidePointer = !profileRoot.querySelector('[role="menu"]')
-      theme.value = 'dark_colorblind'
-      theme.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      theme.click()
+      await profile.updateComplete
+      const themeListbox = profileRoot.querySelector('[role="listbox"]') as HTMLElement
+      const selectedTheme = themeListbox.querySelector('[role="option"][aria-selected="true"]') as HTMLElement
+      const selectedThemePreview = selectedTheme.querySelector('.theme-preview') as HTMLElement
+      const themeOptions = Array.from(themeListbox.querySelectorAll('[role="option"]')) as HTMLButtonElement[]
+      selectedTheme.focus()
+      selectedTheme.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
+      const keyboardNextTheme = (profileRoot.activeElement as HTMLElement | null)?.dataset.theme
+      profileRoot.activeElement?.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, composed: true }))
+      await profile.updateComplete
+      const themeClosedWithEscape = !profileRoot.querySelector('[role="listbox"]')
+      const themeTriggerFocusedAfterEscape = profileRoot.activeElement === theme
+      theme.click()
+      await profile.updateComplete
+      const reopenedOptions = Array.from(profileRoot.querySelectorAll<HTMLButtonElement>('[role="option"]'))
+      reopenedOptions.find((option) => option.dataset.theme === 'dark_colorblind')?.click()
+      await profile.updateComplete
       return {
         title: root.querySelector('h1')?.textContent?.trim(),
         text: profileRoot.textContent?.replace(/\s+/g, ' ').trim(),
@@ -137,13 +173,33 @@ test('profile settings renders the signed-in identity and editable local fields'
         mainWidth: Math.round(main.getBoundingClientRect().width),
         headerGap: Math.round(profile.getBoundingClientRect().top - header.getBoundingClientRect().bottom),
         fieldLabelFontSize: getComputedStyle(fieldLabel).fontSize,
+        profileRowCount: profileRows.length,
+        profileRowsLargeEnough,
+        avatarSize,
+        displayNameTextAlign: displayNameInputStyle.textAlign,
+        displayNameInputWidth,
+        displayNameInputHeight,
+        displayNameSaveInitiallyHidden,
+        displayNameSaveVisibleWhenDirty,
+        profileCommand,
+        profileControlsRightAligned,
+        emailIsReadOnlyText: profileRoot.querySelector('.profile-email')?.tagName === 'SPAN',
         avatarMenuItems,
         avatarMenuOpen,
         avatarMenuClosed,
         avatarTriggerFocused,
         avatarMenuClosedOnOutsidePointer,
         hiddenFileInputLabel: profileRoot.querySelector('input[type="file"].avatar-input')?.getAttribute('aria-label'),
-        themeOptions: Array.from(profileRoot.querySelectorAll('select[name="theme"] option')).map((option) => option.textContent?.trim()),
+        themeOptions: themeOptions.map((option) => option.querySelector('.theme-option-label')?.textContent?.trim()),
+        themeGroups: Array.from(themeListbox.querySelectorAll('[role="group"]')).map((group) => group.getAttribute('aria-label')),
+        selectedTheme: selectedTheme.dataset.theme,
+        selectedThemeHasPreview: Boolean(selectedTheme.querySelector('.theme-preview')),
+        selectedThemePreviewClipped: selectedThemePreview.scrollWidth > selectedThemePreview.clientWidth || selectedThemePreview.scrollHeight > selectedThemePreview.clientHeight,
+        themeListboxClosed: !profileRoot.querySelector('[role="listbox"]'),
+        themeTriggerValue: profileRoot.querySelector('.theme-trigger-label')?.textContent?.trim(),
+        keyboardNextTheme,
+        themeClosedWithEscape,
+        themeTriggerFocusedAfterEscape,
         themeCommand,
         appliedTheme,
       }
@@ -163,13 +219,33 @@ test('profile settings renders the signed-in identity and editable local fields'
       'Light tritanopia',
       'Dark tritanopia',
     ])
+    expect(state.themeGroups).toEqual(['Automatic', 'Standard', 'Accessibility'])
+    expect(state.selectedTheme).toBe('system')
+    expect(state.selectedThemeHasPreview).toBe(true)
+    expect(state.selectedThemePreviewClipped).toBe(false)
+    expect(state.themeListboxClosed).toBe(true)
+    expect(state.themeTriggerValue).toBe('Dark protanopia and deuteranopia')
+    expect(state.keyboardNextTheme).toBe('light')
+    expect(state.themeClosedWithEscape).toBe(true)
+    expect(state.themeTriggerFocusedAfterEscape).toBe(true)
     expect(state.themeCommand).toEqual({ action: 'save', theme: 'dark_colorblind' })
     expect(state.appliedTheme).toBe('dark_colorblind')
     expect(state.nestedHeadings).toBe(0)
     expect(state.mainCentered).toBe(true)
-    expect(state.mainWidth).toBe(640)
+    expect(state.mainWidth).toBe(736)
     expect(state.headerGap).toBeGreaterThanOrEqual(16)
     expect(state.fieldLabelFontSize).toBe('14px')
+    expect(state.profileRowCount).toBe(4)
+    expect(state.profileRowsLargeEnough).toBe(true)
+    expect(state.avatarSize).toBeGreaterThanOrEqual(32)
+    expect(state.displayNameTextAlign).toBe('center')
+    expect(state.displayNameInputWidth).toBeGreaterThanOrEqual(256)
+    expect(state.displayNameInputHeight).toBeGreaterThanOrEqual(32)
+    expect(state.displayNameSaveInitiallyHidden).toBe(true)
+    expect(state.displayNameSaveVisibleWhenDirty).toBe(true)
+    expect(state.profileCommand).toEqual({ action: 'save', displayName: 'Jacob N.' })
+    expect(state.profileControlsRightAligned).toBe(true)
+    expect(state.emailIsReadOnlyText).toBe(true)
     expect(state.avatarMenuItems).toEqual(['Change avatar', 'Remove avatar'])
     expect(state.avatarMenuOpen).toBe('true')
     expect(state.avatarMenuClosed).toBe(true)
