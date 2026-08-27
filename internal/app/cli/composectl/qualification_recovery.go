@@ -28,6 +28,10 @@ import (
 const qualificationRecoveryDiskLimitKiB = int64(51200)
 const qualificationRecoveryReleaseInterruptionDelay = 15 * time.Second
 const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
+const qualificationPublicationRetryAttempts = 8
+const qualificationPublicationRetryInitialBackoff = 250 * time.Millisecond
+const qualificationPublicationRetryMaxBackoff = 4 * time.Second
+const qualificationDeliveryInputUnavailableMarker = "(DELIVERY_INPUT_UNAVAILABLE):"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -526,10 +530,11 @@ func (c *Controller) runQualificationRecovery(
 			recoveredEvidence.Status,
 		)
 	}
-	committedOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
+	committedOutput, err := c.runQualificationPublicationRetry(
+		ctx,
+		recoveryClient,
+		options.PublisherToken,
+		deploymentCandidate.ID,
 	)
 	if err != nil {
 		return report, err
@@ -1167,6 +1172,48 @@ func (c *Controller) runQualificationClientCommand(
 		},
 		arguments...,
 	)
+}
+
+// runQualificationPublicationRetry retries only the idempotent publication
+// replay used after the qualification harness intentionally interrupts target
+// activation. A restarted target may briefly hold its physical-pool GC fence;
+// every other failure remains immediate and unchanged.
+func (c *Controller) runQualificationPublicationRetry(
+	ctx context.Context,
+	clientContainer string,
+	token string,
+	candidateID string,
+) ([]byte, error) {
+	return retryQualificationPublication(ctx, c.sleep, func(attemptCtx context.Context) ([]byte, error) {
+		return c.runQualificationClientCommand(
+			attemptCtx,
+			clientContainer,
+			token,
+			"leapview", "publish", candidateID,
+			"--format", "json",
+		)
+	})
+}
+
+func retryQualificationPublication(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	publish func(context.Context) ([]byte, error),
+) ([]byte, error) {
+	backoff := qualificationPublicationRetryInitialBackoff
+	for attempt := 1; attempt <= qualificationPublicationRetryAttempts; attempt++ {
+		output, err := publish(ctx)
+		if err == nil ||
+			!strings.Contains(err.Error(), qualificationDeliveryInputUnavailableMarker) ||
+			attempt == qualificationPublicationRetryAttempts {
+			return output, err
+		}
+		if err := sleep(ctx, backoff); err != nil {
+			return nil, err
+		}
+		backoff = min(backoff*2, qualificationPublicationRetryMaxBackoff)
+	}
+	panic("unreachable qualification publication retry")
 }
 
 func (r *qualificationRunningCommand) Stop() error {

@@ -996,6 +996,93 @@ func TestQualificationContainerNamedVolumeFailsClosed(t *testing.T) {
 	}
 }
 
+func TestQualificationPublicationRetryEventuallySucceeds(t *testing.T) {
+	attempts := 0
+	var backoffs []time.Duration
+	output, err := retryQualificationPublication(
+		t.Context(),
+		func(_ context.Context, delay time.Duration) error {
+			backoffs = append(backoffs, delay)
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			if attempts < 3 {
+				return nil, errors.New("publish failed (DELIVERY_INPUT_UNAVAILABLE): target input unavailable")
+			}
+			return []byte(`{"status":"committed"}`), nil
+		},
+	)
+	require.NoError(t, err)
+	if got, want := string(output), `{"status":"committed"}`; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if got, want := backoffs, []time.Duration{250 * time.Millisecond, 500 * time.Millisecond}; !slices.Equal(got, want) {
+		t.Fatalf("backoffs = %v, want %v", got, want)
+	}
+}
+
+func TestQualificationPublicationRetryRejectsNonMatchingErrorImmediately(t *testing.T) {
+	wantErr := errors.New("publish failed (DELIVERY_CONFLICT): target changed")
+	attempts := 0
+	sleeps := 0
+	_, err := retryQualificationPublication(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			return nil, wantErr
+		},
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want original error %v", err, wantErr)
+	}
+	if attempts != 1 || sleeps != 0 {
+		t.Fatalf("attempts = %d, sleeps = %d, want 1/0", attempts, sleeps)
+	}
+}
+
+func TestQualificationPublicationRetryLimitIsRespected(t *testing.T) {
+	attempts := 0
+	var backoffs []time.Duration
+	var lastErr error
+	_, err := retryQualificationPublication(
+		t.Context(),
+		func(_ context.Context, delay time.Duration) error {
+			backoffs = append(backoffs, delay)
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			lastErr = fmt.Errorf(
+				"attempt %d failed (DELIVERY_INPUT_UNAVAILABLE): target input unavailable",
+				attempts,
+			)
+			return nil, lastErr
+		},
+	)
+	if err != lastErr {
+		t.Fatalf("error = %v, want final attempt error %v", err, lastErr)
+	}
+	if attempts != qualificationPublicationRetryAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, qualificationPublicationRetryAttempts)
+	}
+	if len(backoffs) != qualificationPublicationRetryAttempts-1 {
+		t.Fatalf("backoff count = %d, want %d", len(backoffs), qualificationPublicationRetryAttempts-1)
+	}
+	for _, delay := range backoffs {
+		if delay > qualificationPublicationRetryMaxBackoff {
+			t.Fatalf("unbounded backoff %s exceeds %s", delay, qualificationPublicationRetryMaxBackoff)
+		}
+	}
+}
+
 func TestQualificationRunningCommandCanBeCheckedAndStoppedOnce(t *testing.T) {
 	output, err := os.CreateTemp(t.TempDir(), "running-command-*.log")
 	require.NoError(t, err)
