@@ -474,7 +474,6 @@ func (c *Controller) QualifyInstalledCandidate(
 		ProjectDataToken:     projectDataToken,
 		RecoveryControlToken: recoveryControlToken,
 		MetricsToken:         metricsToken,
-		OperatorToken:        credentials.AuditToken,
 		ContainerID:          containerID,
 		ComposeProject:       primaryProject,
 		ProjectID:            "project:leapview-evaluation",

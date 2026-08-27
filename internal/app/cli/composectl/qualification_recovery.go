@@ -14,7 +14,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,7 +34,7 @@ const qualificationPublicationRetryMaxBackoff = 4 * time.Second
 const qualificationDeliveryInputUnavailableMarker = "(DELIVERY_INPUT_UNAVAILABLE):"
 const qualificationGCStabilityTimeout = 3 * time.Minute
 const qualificationGCStabilityPollInterval = 500 * time.Millisecond
-const qualificationGCLeaseActiveReason = "gc_lease_active"
+const qualificationGCQueryFenceMarker = "sealed catalog query lease acquisition failed: delivery transition conflict: GC lease excludes query root"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -59,7 +58,6 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
-	OperatorToken        string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
@@ -156,7 +154,6 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
-		"operator token":         options.OperatorToken,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
@@ -626,8 +623,16 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "query and SSE reconnect"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	if err := c.waitQualificationGCStable(
-		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+	queryBody := map[string]any{
+		"dimensions": []map[string]string{{"field": "state"}},
+		"metrics": []map[string]string{
+			{"field": "order_count"},
+			{"field": "revenue"},
+		},
+		"limit": 10,
+	}
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.WorkloadToken, queryBody,
 		options.ContainerID, "refresh recovery",
 	); err != nil {
 		return report, err
@@ -645,32 +650,15 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
-	queryBody := map[string]any{
-		"dimensions": []map[string]string{{"field": "state"}},
-		"metrics": []map[string]string{
-			{"field": "order_count"},
-			{"field": "revenue"},
-		},
-		"limit": 10,
-	}
 	for cycle := 1; cycle <= 3; cycle++ {
 		if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
 			return report, err
 		}
-		if err := c.waitQualificationGCStable(
-			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		queryResult, err := c.waitQualificationGCStable(
+			ctx, client, apiRoot, options.WorkloadToken, queryBody,
 			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
-		); err != nil {
-			return report, err
-		}
-		var queryResult struct {
-			Rows []json.RawMessage `json:"rows"`
-		}
-		if err := qualificationAPI(
-			ctx, client, http.MethodPost,
-			apiRoot+"/api/v1/semantic-models/semantic-model:sales/query",
-			options.WorkloadToken, queryBody, "", &queryResult,
-		); err != nil {
+		)
+		if err != nil {
 			return report, err
 		}
 		if len(queryResult.Rows) != 4 {
@@ -1234,49 +1222,34 @@ func retryQualificationPublication(
 	panic("unreachable qualification publication retry")
 }
 
-type qualificationGCStabilityObservation struct {
-	DegradedReasons  []string
-	LatestCycleID    string
-	LatestCycleState string
-}
-
 func (c *Controller) waitQualificationGCStable(
 	ctx context.Context,
 	httpClient *http.Client,
 	target string,
-	projectID string,
 	token string,
+	queryBody map[string]any,
 	containerID string,
 	stage string,
-) error {
-	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		target,
-		token,
-		httpClient,
-	))
+) (struct {
+	Rows []json.RawMessage `json:"rows"`
+}, error) {
+	var queryResult struct {
+		Rows []json.RawMessage `json:"rows"`
+	}
 	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
 	defer cancel()
-	err := waitForQualificationGCStability(waitCtx, c.sleep, func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
-		response, err := client.GetDeliveryOperatorSnapshot(
-			probeCtx,
-			deploymentgen.GenGetDeliveryOperatorSnapshotClientRequest{Project: projectID},
+	err := waitForQualificationGCStability(waitCtx, c.sleep, func(probeCtx context.Context) error {
+		queryResult.Rows = nil
+		return qualificationAPI(
+			probeCtx, httpClient, http.MethodPost,
+			target+"/api/v1/semantic-models/semantic-model:sales/query",
+			token, queryBody, "", &queryResult,
 		)
-		if err != nil {
-			return qualificationGCStabilityObservation{}, err
-		}
-		observation := qualificationGCStabilityObservation{
-			DegradedReasons: append([]string(nil), response.Body.DegradedReasons...),
-		}
-		if len(response.Body.GcCycles) > 0 {
-			observation.LatestCycleID = response.Body.GcCycles[0].Id
-			observation.LatestCycleState = string(response.Body.GcCycles[0].Status)
-		}
-		return observation, nil
 	})
 	if err == nil {
-		return nil
+		return queryResult, nil
 	}
-	return qualificationContainerOperationError(
+	return queryResult, qualificationContainerOperationError(
 		ctx,
 		c.qualificationContainers.Existing(containerID),
 		"observe physical-pool GC stability after "+stage,
@@ -1287,33 +1260,22 @@ func (c *Controller) waitQualificationGCStable(
 func waitForQualificationGCStability(
 	ctx context.Context,
 	sleep func(context.Context, time.Duration) error,
-	observe func(context.Context) (qualificationGCStabilityObservation, error),
+	probe func(context.Context) error,
 ) error {
-	var last qualificationGCStabilityObservation
-	var lastErr error
-	observations := 0
+	probes := 0
 	for {
-		observations++
-		observation, err := observe(ctx)
+		probes++
+		err := probe(ctx)
 		if err == nil {
-			last = observation
-			lastErr = nil
-			if !slices.Contains(observation.DegradedReasons, qualificationGCLeaseActiveReason) {
-				return nil
-			}
-		} else {
-			lastErr = err
+			return nil
 		}
-		if err := sleep(ctx, qualificationGCStabilityPollInterval); err != nil {
-			if lastErr != nil {
-				return fmt.Errorf(
-					"physical-pool GC stability was not observable after %d probes (last probe: %v): %w",
-					observations, lastErr, err,
-				)
-			}
+		if !strings.Contains(err.Error(), qualificationGCQueryFenceMarker) {
+			return fmt.Errorf("physical-pool GC stability probe failed: %w", err)
+		}
+		if sleepErr := sleep(ctx, qualificationGCStabilityPollInterval); sleepErr != nil {
 			return fmt.Errorf(
-				"physical-pool GC did not stabilize after %d probes (degradedReasons=%v latestCycle=%q latestCycleStatus=%q): %w",
-				observations, last.DegradedReasons, last.LatestCycleID, last.LatestCycleState, err,
+				"physical-pool GC did not stabilize after %d governed-query probes (last probe: %v): %w",
+				probes, err, sleepErr,
 			)
 		}
 	}
