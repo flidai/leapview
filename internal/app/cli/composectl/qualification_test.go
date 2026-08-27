@@ -1164,6 +1164,23 @@ func TestQualificationGCStabilityFailsUnrelatedQueryErrorImmediately(t *testing.
 	}
 }
 
+func TestQualificationGCProbeQueryUsesUniqueCacheIdentity(t *testing.T) {
+	first := qualificationGCProbeQuery(1)
+	second := qualificationGCProbeQuery(2)
+	firstMetrics := first["metrics"].([]map[string]string)
+	secondMetrics := second["metrics"].([]map[string]string)
+
+	if firstMetrics[0]["field"] != "order_count" || secondMetrics[0]["field"] != "order_count" {
+		t.Fatalf("probe changed governed metric: first=%v second=%v", firstMetrics, secondMetrics)
+	}
+	if firstMetrics[0]["alias"] == secondMetrics[0]["alias"] {
+		t.Fatalf("probe aliases must differ to bypass the result cache: first=%v second=%v", firstMetrics, secondMetrics)
+	}
+	if first["limit"] != 10 || second["limit"] != 10 {
+		t.Fatalf("probe changed query bounds: first=%v second=%v", first, second)
+	}
+}
+
 func TestQualificationRunningCommandCanBeCheckedAndStoppedOnce(t *testing.T) {
 	output, err := os.CreateTemp(t.TempDir(), "running-command-*.log")
 	require.NoError(t, err)

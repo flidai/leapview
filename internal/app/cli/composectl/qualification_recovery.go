@@ -631,8 +631,9 @@ func (c *Controller) runQualificationRecovery(
 		},
 		"limit": 10,
 	}
+	gcProbeSequence := uint64(0)
 	if _, err := c.waitQualificationGCStable(
-		ctx, client, apiRoot, options.WorkloadToken, queryBody,
+		ctx, client, apiRoot, options.WorkloadToken, &gcProbeSequence,
 		options.ContainerID, "refresh recovery",
 	); err != nil {
 		return report, err
@@ -655,7 +656,7 @@ func (c *Controller) runQualificationRecovery(
 			return report, err
 		}
 		queryResult, err := c.waitQualificationGCStable(
-			ctx, client, apiRoot, options.WorkloadToken, queryBody,
+			ctx, client, apiRoot, options.WorkloadToken, &gcProbeSequence,
 			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
 		)
 		if err != nil {
@@ -1227,7 +1228,7 @@ func (c *Controller) waitQualificationGCStable(
 	httpClient *http.Client,
 	target string,
 	token string,
-	queryBody map[string]any,
+	probeSequence *uint64,
 	containerID string,
 	stage string,
 ) (struct {
@@ -1240,10 +1241,11 @@ func (c *Controller) waitQualificationGCStable(
 	defer cancel()
 	err := waitForQualificationGCStability(waitCtx, c.sleep, func(probeCtx context.Context) error {
 		queryResult.Rows = nil
+		*probeSequence = *probeSequence + 1
 		return qualificationAPI(
 			probeCtx, httpClient, http.MethodPost,
 			target+"/api/v1/semantic-models/semantic-model:sales/query",
-			token, queryBody, "", &queryResult,
+			token, qualificationGCProbeQuery(*probeSequence), "", &queryResult,
 		)
 	})
 	if err == nil {
@@ -1255,6 +1257,20 @@ func (c *Controller) waitQualificationGCStable(
 		"observe physical-pool GC stability after "+stage,
 		err,
 	)
+}
+
+// qualificationGCProbeQuery gives every probe a distinct result-cache identity.
+// A cached 200 response does not acquire a sealed-catalog query lease and cannot
+// establish that the startup GC fence has been released.
+func qualificationGCProbeQuery(sequence uint64) map[string]any {
+	return map[string]any{
+		"dimensions": []map[string]string{{"field": "state"}},
+		"metrics": []map[string]string{
+			{"field": "order_count", "alias": fmt.Sprintf("gc_probe_%d", sequence)},
+			{"field": "revenue"},
+		},
+		"limit": 10,
+	}
 }
 
 func waitForQualificationGCStability(
