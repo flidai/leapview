@@ -248,6 +248,94 @@ func TestCanonicalReducerAtomicallyUpdatesComponentPlacements(t *testing.T) {
 	}
 }
 
+func TestCanonicalReducerSelectedVisualEditingCommands(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		command := Command{ID: CommandID("selected-edit-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("selected-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 15, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	if err := apply(&AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "revenue", Role: FieldRoleMetric}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeColumn}); err != nil {
+		t.Fatal(err)
+	}
+	if cartesian, ok := current.Document.Spec.Visuals["base"].Presentation.Value.(*document.CartesianDashboardPresentation); !ok || cartesian.Orientation == nil || *cartesian.Orientation != document.DashboardOrientationVertical {
+		t.Fatalf("column orientation = %#v", current.Document.Spec.Visuals["base"].Presentation)
+	}
+	if err := apply(&SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeLine}); err != nil {
+		t.Fatal(err)
+	}
+	if got := current.Document.Spec.Visuals["base"].Type; got != document.DashboardVisualTypeLine {
+		t.Fatalf("visual type = %q", got)
+	}
+	if query, ok := current.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery); !ok || len(query.Metrics) != 1 {
+		t.Fatalf("compatible metric was not preserved: %#v", current.Document.Spec.Visuals["base"].Query)
+	}
+	if err := apply(&RenameVisualPayload{PageID: "overview", VisualID: "base-component", Title: "Revenue trend"}); err != nil {
+		t.Fatal(err)
+	}
+	showTitle, showLegend, showAxes, showLabels := false, false, false, false
+	if err := apply(&UpdateVisualFormatPayload{PageID: "overview", VisualID: "base-component", TitleVisible: &showTitle, LegendVisible: &showLegend, AxisVisible: &showAxes, DataLabelsVisible: &showLabels}); err != nil {
+		t.Fatal(err)
+	}
+	base := current.Document.Spec.Visuals["base"]
+	if base.Title == nil || *base.Title != "Revenue trend" || base.TitleVisible == nil || *base.TitleVisible {
+		t.Fatalf("title format = %#v", base)
+	}
+	presentation, ok := base.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok || presentation.Legend == nil || *presentation.Legend != document.DashboardLegendPositionNone || presentation.Labels == nil || presentation.Labels.Density != document.DashboardLabelDensityHidden {
+		t.Fatalf("visual format = %#v", base.Presentation)
+	}
+	if basePresentation, _ := base.Presentation.Base(); basePresentation == nil || basePresentation.AxisVisible == nil || *basePresentation.AxisVisible {
+		t.Fatalf("axis format = %#v", base.Presentation)
+	}
+	if err := apply(&DuplicateVisualPayload{PageID: "overview", VisualID: "base-component"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Visuals) != 2 || len(current.Document.Spec.Pages[0].Components) != 2 {
+		t.Fatalf("duplicate counts = %d/%d", len(current.Document.Spec.Visuals), len(current.Document.Spec.Pages[0].Components))
+	}
+	if err := apply(&RemoveVisualPayload{PageID: "overview", VisualID: "base-component"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Pages[0].Components) != 1 || len(current.Document.Spec.Visuals) != 1 {
+		t.Fatalf("remove counts = %d/%d", len(current.Document.Spec.Visuals), len(current.Document.Spec.Pages[0].Components))
+	}
+}
+
+func TestCanonicalReducerRemovesAndMovesSelectedFields(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		command := Command{ID: CommandID("field-edit-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("field-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 16, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	for _, field := range []string{"revenue", "orders"} {
+		if err := apply(&AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: field, Role: FieldRoleMetric}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := apply(&MoveFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "revenue", Role: FieldRoleMetric, Direction: "down"}); err != nil {
+		t.Fatal(err)
+	}
+	query := current.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery)
+	first, _ := canonicalMetricSelection(query.Metrics[0])
+	if first != "orders" {
+		t.Fatalf("moved metric order = %#v", query.Metrics)
+	}
+	if err := apply(&RemoveFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "orders", Role: FieldRoleMetric}); err != nil {
+		t.Fatal(err)
+	}
+	query = current.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery)
+	if len(query.Metrics) != 1 {
+		t.Fatalf("removed metric count = %d", len(query.Metrics))
+	}
+}
+
 func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
 	switch value := payload.(type) {
 	case *MetadataPatch:
@@ -260,6 +348,20 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.SetPlacements = value
 	case *AssignFieldPayload:
 		command.AssignField = value
+	case *SetVisualTypePayload:
+		command.SetVisualType = value
+	case *RenameVisualPayload:
+		command.RenameVisual = value
+	case *DuplicateVisualPayload:
+		command.DuplicateVisual = value
+	case *UpdateVisualFormatPayload:
+		command.UpdateVisualFormat = value
+	case *RemoveFieldPayload:
+		command.RemoveField = value
+	case *MoveFieldPayload:
+		command.MoveField = value
+	case *RemoveVisualPayload:
+		command.RemoveVisual = value
 	case *SetLayoutPayload:
 		command.SetLayout = value
 	case *SetFiltersPayload:

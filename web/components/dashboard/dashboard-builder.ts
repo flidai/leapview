@@ -66,6 +66,16 @@ type GridPlacement = {
   }
 }
 
+type BuilderVisualFormatPatch = {
+  title?: string
+  titleVisible?: boolean
+  legendVisible?: boolean
+  axisVisible?: boolean
+  dataLabelsVisible?: boolean
+}
+
+type DashboardBuilderVisualWithFormat = DashboardBuilderVisualSignal & Required<Omit<BuilderVisualFormatPatch, 'title'>>
+
 /** Draft dashboard authoring surface. Runtime dashboard rendering remains a
  * separate component and envelope; this component only edits the bounded
  * builder projection delivered by the stream. */
@@ -83,6 +93,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private inspectorTab: BuilderInspectorTab = 'build'
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private gridInteractionMessage = ''
+  @state() private visualActionMessage = ''
+  @state() private renamingVisualID = ''
+  @state() private confirmingVisualDeleteID = ''
+  @state() private visualTitleDraft = ''
+  @state() private visualTypeOverrides: Record<string, BuilderVisualType> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
   private commandPending = false
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
@@ -396,6 +411,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .inspector-heading {
       display: flex;
       align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: var(--base-size-8);
+    }
+
+    .inspector-title {
+      display: flex;
+      min-width: 0;
+      align-items: center;
       gap: var(--base-size-8);
     }
 
@@ -412,6 +436,57 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-2) var(--base-size-6);
       color: var(--lv-fg-muted);
       background: var(--lv-bg-panel-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .visual-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: var(--base-size-4);
+    }
+
+    .visual-action {
+      min-height: var(--control-small-size);
+      padding: 0 var(--base-size-6);
+      border-color: transparent;
+      color: var(--lv-fg-muted);
+      background: transparent;
+      font: var(--lv-type-caption);
+    }
+
+    .visual-action:hover {
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .visual-action.danger:hover {
+      color: var(--lv-fg-danger, var(--lv-fg-default));
+    }
+
+    .visual-rename-form {
+      display: flex;
+      min-width: min(100%, 18rem);
+      flex: 1 1 100%;
+      align-items: center;
+      gap: var(--base-size-4);
+    }
+
+    .visual-rename-form input {
+      min-width: 0;
+      flex: 1 1 auto;
+      min-height: var(--control-small-size);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      padding: 0 var(--base-size-6);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-input, var(--lv-bg-control));
+      font: var(--lv-type-body-compact);
+    }
+
+    .visual-rename-form button {
+      min-height: var(--control-small-size);
+      padding: 0 var(--base-size-6);
       font: var(--lv-type-caption);
     }
 
@@ -965,7 +1040,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       background: var(--lv-data-2-muted);
     }
 
-    .field-pill {
+    .field-pill,
+    .field-token {
       display: flex;
       min-height: var(--control-small-size);
       align-items: center;
@@ -975,6 +1051,47 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: 0 var(--base-size-8);
       background: var(--lv-bg-panel);
       font: var(--lv-type-body-compact);
+    }
+
+    .field-token-label {
+      min-width: 0;
+      flex: 1 1 auto;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field-token-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: var(--base-size-2);
+    }
+
+    .field-token-action {
+      display: grid;
+      width: 1.5rem;
+      min-width: 1.5rem;
+      min-height: 1.5rem;
+      place-items: center;
+      border-color: transparent;
+      padding: 0;
+      color: var(--lv-fg-muted);
+      background: transparent;
+      font: var(--lv-type-caption);
+    }
+
+    .field-token-action:hover:not(:disabled) {
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-control-hover);
+    }
+
+    .field-token-action[data-field-action='remove']:hover:not(:disabled) {
+      color: var(--lv-fg-danger, var(--lv-fg-default));
+    }
+
+    .field-token-action:disabled {
+      opacity: 0.35;
     }
 
     .field-pill-kind {
@@ -997,6 +1114,71 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       background: var(--lv-bg-panel-muted);
       font: var(--lv-type-caption);
       line-height: 1.45;
+    }
+
+    .format-controls {
+      display: grid;
+      gap: var(--base-size-12);
+    }
+
+    .format-section {
+      display: grid;
+      gap: var(--base-size-8);
+      border-bottom: var(--lv-border-muted);
+      padding-bottom: var(--base-size-12);
+    }
+
+    .format-section:last-child {
+      border-bottom: 0;
+      padding-bottom: 0;
+    }
+
+    .format-section h3 {
+      margin: 0;
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
+    }
+
+    .format-text-field {
+      display: grid;
+      gap: var(--base-size-4);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .format-text-field input[type='text'] {
+      width: 100%;
+      min-width: 0;
+      min-height: var(--control-medium-size);
+      box-sizing: border-box;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      padding: 0 var(--base-size-8);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-control);
+      font: var(--lv-type-body-compact);
+    }
+
+    .format-toggle {
+      display: flex;
+      min-height: var(--control-small-size);
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--base-size-8);
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+    }
+
+    .format-toggle input {
+      width: 1rem;
+      height: 1rem;
+      margin: 0;
+      accent-color: var(--lv-data-3);
+    }
+
+    .format-toggle:has(input:disabled) {
+      color: var(--lv-fg-muted);
     }
 
     .preview-error {
@@ -1334,6 +1516,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       preview: 'required',
       save: 'required',
     })
+    this.reconcileVisualTypeOverrides(builder)
     this.selectPendingAddedPage(builder)
     this.selectPendingAddedVisual(builder)
     this.syncGridStack(builder, builder ? this.selectedPage(builder) : undefined)
@@ -1533,13 +1716,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (detail?.type === 'finished') {
       this.commandPending = false
       this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
+      this.requestUpdate()
       return
     }
     const failure = browserCommandFailure(event, 'Dashboard builder action')
     if (!failure) return
     this.commandPending = false
+    this.visualTypeOverrides = {}
     this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
     this.terminalFailure = failure
+    this.requestUpdate()
   }
 
   private readonly reloadAfterFailure = (): void => {
@@ -1634,6 +1820,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderCatalogField(item: BuilderCatalogField, visual: DashboardBuilderVisualSignal | undefined, compatible: boolean) {
     const field = item.field
+    const visualType = visual ? this.visualTypeForRender(visual) : ''
     const datasetContext = item.datasets[0]?.title ?? ''
     const usedIn = visual ? this.fieldUsedIn(field, visual) : ''
     const editable = Boolean(this.builder?.capabilities.canEdit && visual && compatible)
@@ -1642,12 +1829,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const action = !visual
       ? 'Select a visual first to add this field.'
       : !compatible
-        ? `Not compatible with the selected ${visual.type} visual.`
+        ? `Not compatible with the selected ${visualType} visual.`
         : usedIn
           ? `Used in ${usedIn}. Drag to a compatible field well.`
           : `Click to add to ${this.fieldWellLabel(visual, this.roleForField(field, visual))}, or drag to a field well.`
     const accessibleName = [field.label, roleLabel, dataType, datasetContext, action].filter(Boolean).join('. ')
-    const context = compatible ? datasetContext : `${datasetContext} · Not compatible with ${visual?.type ?? 'this visual'}`
+    const context = compatible ? datasetContext : `${datasetContext} · Not compatible with ${visualType || 'this visual'}`
 
     if (!compatible) {
       return html`
@@ -1691,6 +1878,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
+    const visualType = this.visualTypeForRender(visual)
     const preview = this.builderVisuals[this.visualSignalID(visual)]
     const mobileOrder = this.mobileVisualOrder(visual, page)
     const left = `${Math.max(0, visual.placement.col - 1) * (100 / Math.max(1, page.grid.columns))}%`
@@ -1698,11 +1886,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const width = `${Math.max(1, visual.placement.colSpan) * (100 / Math.max(1, page.grid.columns))}%`
     const height = `${Math.max(1, visual.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     return html`
-      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visual.type.toLowerCase()} data-selected=${selected} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${() => this.selectVisualFromPointer(visual.id)} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
+      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${() => this.selectVisualFromPointer(visual.id)} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? html`<span class="visual-preview"><lv-visualization-host authoring .envelope=${preview}><span slot="authoring-drag-handle" class="visual-drag-header" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span></lv-visualization-host></span>`
-            : html`<span class="visual-drag-header" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty">${this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview'}</span><span class="visual-type">${visual.type} · ${visual.slots.length} field slots</span>`}
+            : html`<span class="visual-drag-header" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty">${this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview'}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
     `
@@ -1713,10 +1901,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <aside class="pane properties visual-builder" aria-label="Visual builder">
         <div class="pane-header">
           <div class="inspector-heading">
-            <h2 class="pane-title">${visual ? visual.title : 'Visual builder'}</h2>
-            ${visual ? html`<span class="visual-type-badge">${this.titleCase(visual.type)}</span>` : nothing}
+            ${visual && this.renamingVisualID === visual.id
+              ? this.renderVisualRenameForm(visual)
+              : html`<div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>`}
+            ${visual && builder.capabilities.canEdit && this.renamingVisualID !== visual.id ? html`
+              <div class="visual-actions" aria-label="Visual actions">
+                <button type="button" class="visual-action" data-visual-action="rename" aria-label=${`Rename ${visual.title}`} title=${`Rename ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.beginVisualRename(visual)}>Rename</button>
+                <button type="button" class="visual-action" data-visual-action="duplicate" aria-label=${`Duplicate ${visual.title}`} title=${`Duplicate ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.duplicateVisual(visual)}>Duplicate</button>
+                <button type="button" class="visual-action danger" data-visual-action="delete" aria-label=${this.confirmingVisualDeleteID === visual.id ? `Confirm delete ${visual.title}` : `Delete ${visual.title}`} title=${this.confirmingVisualDeleteID === visual.id ? `Confirm delete ${visual.title}` : `Delete ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.deleteVisual(visual)}>${this.confirmingVisualDeleteID === visual.id ? 'Confirm delete' : 'Delete'}</button>
+                ${this.confirmingVisualDeleteID === visual.id ? html`<button type="button" class="visual-action" aria-label="Cancel delete" @click=${this.cancelVisualDelete}>Cancel</button>` : nothing}
+              </div>` : nothing}
           </div>
           <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Select a visual on the canvas to configure it.' : 'Add a page to start building.'}</p>
+          <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
         <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
           <button class="inspector-tab" role="tab" data-inspector-tab="build" aria-selected=${this.inspectorTab === 'build'} @click=${() => { this.inspectorTab = 'build' }}>Build</button>
@@ -1724,12 +1921,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         </div>
         ${this.inspectorTab === 'build'
           ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
-              ${this.renderVisualPicker(builder, page)}
+              ${this.renderVisualPicker(builder, page, visual)}
               ${visual ? this.renderFieldWells(visual) : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
             </div>`
           : html`<div class="inspector-panel" role="tabpanel" aria-label="Format visual">
-              ${visual ? this.renderVisualProperties(visual) : this.renderPageProperties(page)}
-              <div class="format-placeholder"><strong>Formatting is next.</strong><br />This preview shows where titles, axes, legends, colors, and labels will live. The current governed authoring contract does not persist those settings yet.</div>
+              ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
             </div>`}
         <div class="properties-body">
           <details class="secondary-details">
@@ -1741,19 +1937,34 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
-  private renderVisualPicker(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined) {
+  private renderVisualRenameForm(visual: DashboardBuilderVisualSignal) {
+    const inputID = `visual-title-${visual.id}`
     return html`
-      <section class="property-group" aria-label="Add visual">
-        <span class="property-label">Add a visual</span>
-        <div class="visual-picker" role="group" aria-label="Visual types">
+      <form class="visual-rename-form" aria-label=${`Rename ${visual.title}`} @submit=${this.commitVisualRename} @keydown=${this.onVisualRenameKeydown}>
+        <label class="sr-only" for=${inputID}>Visual title</label>
+        <input id=${inputID} type="text" maxlength="128" required .value=${this.visualTitleDraft} aria-label="Visual title" @input=${this.onVisualTitleInput} />
+        <button type="submit" aria-label=${`Save name for ${visual.title}`}>Save</button>
+        <button type="button" aria-label="Cancel rename" @click=${this.cancelVisualRename}>Cancel</button>
+      </form>
+    `
+  }
+
+  private renderVisualPicker(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
+    const currentType = visual ? this.visualTypeForRender(visual) : undefined
+    const pickerHelpID = 'builder-visual-type-help'
+    return html`
+      <section class="property-group" aria-label=${visual ? 'Edit visual type' : 'Add visual'}>
+        <span class="property-label">${visual ? 'Edit visual type' : 'Add a visual'}</span>
+        <p id=${pickerHelpID} class="pane-hint">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type for the new visual.'}</p>
+        <div class="visual-picker" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
           ${builderVisualTypes.map((type) => html`
-            <button class="visual-picker-button" data-visual-picker-type=${type} aria-label=${`${builderVisualLabels[type]} chart`} title=${builderVisualLabels[type]} aria-pressed=${this.visualType === type} @click=${() => { this.visualType = type }}>
+            <button type="button" class="visual-picker-button" data-visual-picker-type=${type} data-visual-type=${type} aria-label=${`${builderVisualLabels[type]} chart`} aria-describedby=${pickerHelpID} title=${builderVisualLabels[type]} aria-pressed=${visual ? currentType === type : this.visualType === type} ?disabled=${this.commandPending || (Boolean(visual) && !builder.capabilities.canEdit)} @click=${() => this.selectVisualType(type, visual)}>
               ${this.renderVisualTypeIcon(type)}
               <span>${builderVisualLabels[type]}</span>
             </button>
           `)}
         </div>
-        <button class="primary add-selected-visual" ?disabled=${!page || !builder.capabilities.canAddVisual} @click=${this.addVisual}>Add ${builderVisualLabels[this.visualType]} visual</button>
+        <button type="button" class="primary add-selected-visual" data-builder-action="add-visual" ?disabled=${!page || !builder.capabilities.canAddVisual || this.commandPending} @click=${this.addVisual}>${visual ? 'Add another ' : 'Add '}${builderVisualLabels[this.visualType]} visual</button>
       </section>
     `
   }
@@ -1772,7 +1983,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFieldWells(visual: DashboardBuilderVisualSignal) {
-    const roles: BuilderFieldRole[] = visual.type.toLowerCase() === 'table' ? ['detail'] : ['dimension', 'metric']
+    const roles: BuilderFieldRole[] = this.visualTypeForRender(visual) === 'table' ? ['detail'] : ['dimension', 'metric']
     return html`
       <section class="property-group" aria-label="Field wells">
         <span class="property-label">Fields</span>
@@ -1791,23 +2002,123 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="field-well-target" data-drop-well=${role} tabindex="0" aria-label=${`Drop ${role} field in ${label}`} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnRole(event, role)}>
           ${slots.length === 0
             ? html`<span class="empty-well">Drop a ${role} field here</span>`
-            : slots.map((slot) => html`<span class="field-pill"><span>${slot.label}</span><span class="field-pill-kind">${slot.fieldId || slot.kind}</span></span>`)}
+            : slots.map((slot, index) => this.renderFieldToken(visual, role, slot, index, slots.length))}
         </div>
       </section>
     `
   }
 
-  private renderVisualProperties(visual: DashboardBuilderVisualSignal) {
+  private renderFieldToken(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole, slot: DashboardBuilderVisualSlotSignal, index: number, count: number) {
+    const fieldID = slot.fieldId ?? ''
+    const label = this.fieldLabel(fieldID, slot.label)
+    const editable = Boolean(this.builder?.capabilities.canEdit && fieldID && !this.commandPending)
+    const alternateRole = this.alternateFieldRole(visual, role)
     return html`
-      <section class="property-group" aria-label="Selected visual">
-        <span class="property-label">Visual</span>
-        <span class="property-value">${visual.title} · ${visual.type}</span>
-      </section>
-      <section class="property-group" aria-label="Visual filters">
-        <span class="property-label">Filters</span>
-        <span class="pane-hint">${visual.filters.length === 0 ? 'No visual filters' : visual.filters.join(' · ')}</span>
+      <span class="field-token field-pill" data-field-id=${fieldID} data-field-role=${role}>
+        <span class="field-token-label" title=${label}>${label}</span>
+        <span class="field-token-actions" aria-label=${`${label} field actions`}>
+          <button type="button" class="field-token-action" data-field-action="remove" aria-label=${`Remove ${label} field`} title="Remove field" ?disabled=${!editable} @click=${() => this.removeField(visual, role, fieldID, label)}>×</button>
+          <button type="button" class="field-token-action" data-field-action="move-up" aria-label=${`Move ${label} field up`} title="Move field up" ?disabled=${!editable || index === 0} @click=${() => this.moveField(visual, role, fieldID, 'up', label)}>↑</button>
+          <button type="button" class="field-token-action" data-field-action="move-down" aria-label=${`Move ${label} field down`} title="Move field down" ?disabled=${!editable || index === count - 1} @click=${() => this.moveField(visual, role, fieldID, 'down', label)}>↓</button>
+          <button type="button" class="field-token-action" data-field-action="move-role" aria-label=${alternateRole ? `Move ${label} field to ${this.fieldWellLabel(visual, alternateRole)}` : `Move ${label} field to another role`} title=${alternateRole ? `Move to ${this.fieldWellLabel(visual, alternateRole)}` : 'No compatible role for this field'} ?disabled=${!editable || !alternateRole} @click=${() => alternateRole && this.moveFieldRole(visual, role, alternateRole, fieldID, label)}>⇄</button>
+        </span>
+      </span>
+    `
+  }
+
+  private renderVisualFormatControls(visual: DashboardBuilderVisualSignal) {
+    const format = visual as DashboardBuilderVisualWithFormat
+    const editable = Boolean(this.builder?.capabilities.canEdit && !this.commandPending)
+    const hasAxes = this.visualTypeForRender(visual) !== 'table'
+    return html`
+      <section class="format-controls" aria-label="Visual formatting">
+        <div class="format-section">
+          <h3>Title</h3>
+          <label class="format-text-field">
+            <span>Title text</span>
+            <input type="text" maxlength="128" data-format-control="title-text" aria-label="Title text" .value=${visual.title} ?disabled=${!editable} @change=${(event: Event) => this.updateVisualTitle(visual, event)} />
+          </label>
+          ${this.renderFormatToggle(visual, 'title-visible', 'Show title', format.titleVisible !== false, editable, 'titleVisible')}
+        </div>
+        <div class="format-section">
+          <h3>Chart</h3>
+          ${this.renderFormatToggle(visual, 'legend-visible', 'Show legend', format.legendVisible !== false, editable && hasAxes, 'legendVisible')}
+          ${this.renderFormatToggle(visual, 'axis-visible', 'Show axes', format.axisVisible !== false, editable && hasAxes, 'axisVisible')}
+          ${this.renderFormatToggle(visual, 'data-labels-visible', 'Show data labels', format.dataLabelsVisible !== false, editable && hasAxes, 'dataLabelsVisible')}
+          ${hasAxes ? nothing : html`<p class="pane-hint">Chart display controls are unavailable for table visuals.</p>`}
+        </div>
       </section>
     `
+  }
+
+  private renderFormatToggle(visual: DashboardBuilderVisualSignal, control: string, label: string, checked: boolean, enabled: boolean, field: keyof Omit<BuilderVisualFormatPatch, 'title'>) {
+    return html`
+      <label class="format-toggle">
+        <span>${label}</span>
+        <input type="checkbox" data-format-control=${control} aria-label=${label} .checked=${checked} ?disabled=${!enabled} @change=${(event: Event) => this.updateVisualFormat(visual, { [field]: (event.currentTarget as HTMLInputElement).checked })} />
+      </label>
+    `
+  }
+
+  private fieldLabel(fieldID: string, fallback: string): string {
+    const builder = this.builder
+    const field = builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === fieldID)
+    if (field?.label.trim()) return field.label.trim()
+    const source = fallback.trim() || fieldID.split('.').at(-1) || 'Field'
+    const label = source.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim()
+    return label ? label.charAt(0).toLocaleUpperCase() + label.slice(1) : 'Field'
+  }
+
+  private alternateFieldRole(_visual: DashboardBuilderVisualSignal, _role: BuilderFieldRole): BuilderFieldRole | undefined {
+    // The V1 chart wells are semantic: dimensions cannot be reclassified as
+    // measures, and record details cannot be moved into aggregate axes. Keep
+    // the affordance discoverable but disabled until a visual exposes two
+    // compatible roles (for example category and series dimensions).
+    return undefined
+  }
+
+  private removeField(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole, fieldID: string, label: string): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !fieldID || this.commandPending) return
+    this.gridInteractionMessage = `Removing ${label} from ${this.fieldWellLabel(visual, role)}.`
+    this.emitCommand('remove_field', { pageId: page.id, visualId: visual.id, fieldId: fieldID, role })
+  }
+
+  private moveField(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole, fieldID: string, direction: 'up' | 'down', label: string): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !fieldID || this.commandPending) return
+    this.gridInteractionMessage = `Moving ${label} ${direction} in ${this.fieldWellLabel(visual, role)}.`
+    this.emitCommand('move_field', { pageId: page.id, visualId: visual.id, fieldId: fieldID, role, direction })
+  }
+
+  private moveFieldRole(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole, targetRole: BuilderFieldRole, fieldID: string, label: string): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !fieldID || role === targetRole || this.commandPending) return
+    this.gridInteractionMessage = `Moving ${label} to ${this.fieldWellLabel(visual, targetRole)}.`
+    this.emitCommand('move_field', { pageId: page.id, visualId: visual.id, fieldId: fieldID, role, targetRole })
+  }
+
+  private updateVisualTitle(visual: DashboardBuilderVisualSignal, event: Event): void {
+    const input = event.currentTarget as HTMLInputElement
+    const title = input.value.trim()
+    if (!title) {
+      input.value = visual.title
+      this.visualActionMessage = 'Visual title cannot be empty.'
+      return
+    }
+    if (title === visual.title) return
+    this.updateVisualFormat(visual, { title })
+  }
+
+  private updateVisualFormat(visual: DashboardBuilderVisualSignal, patch: BuilderVisualFormatPatch): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
+    this.visualActionMessage = `Saving formatting for ${visual.title}.`
+    this.emitCommand('update_visual_format', { pageId: page.id, visualId: visual.id, ...patch })
   }
 
   private renderPageProperties(page: DashboardBuilderPageSignal | undefined) {
@@ -1931,7 +2242,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldCompatibleWithVisual(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): boolean {
     if (!this.fieldDataTypeSupported(field)) return false
-    return visual.type.toLowerCase() === 'table' ? field.kind === 'dimension' : field.kind === 'dimension' || field.kind === 'metric'
+    return this.visualTypeForRender(visual) === 'table' ? field.kind === 'dimension' : field.kind === 'dimension' || field.kind === 'metric'
   }
 
   private fieldDataTypeSupported(field: DashboardBuilderFieldSignal): boolean {
@@ -1946,7 +2257,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private roleForField(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): BuilderFieldRole {
-    return visual.type.toLowerCase() === 'table' ? 'detail' : field.kind
+    return this.visualTypeForRender(visual) === 'table' ? 'detail' : field.kind
   }
 
   private slotRole(slot: DashboardBuilderVisualSlotSignal): BuilderFieldRole {
@@ -1957,7 +2268,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldWellLabel(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole): string {
     if (role === 'detail') return 'Columns'
-    const horizontal = visual.type.toLowerCase() === 'bar'
+    const horizontal = this.visualTypeForRender(visual) === 'bar'
     if (role === 'dimension') return horizontal ? 'Y-axis' : 'X-axis'
     return horizontal ? 'X-axis' : 'Y-axis'
   }
@@ -2004,6 +2315,114 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       pageID: page.id,
     }
     this.emitCommand('add_visual', { pageId: page.id, visualId: '', componentId: '', type: this.visualType, title: '' })
+  }
+
+  private beginVisualRename(visual: DashboardBuilderVisualSignal): void {
+    if (!this.builder?.capabilities.canEdit || this.commandPending) return
+    this.renamingVisualID = visual.id
+    this.visualTitleDraft = visual.title
+    void this.updateComplete.then(() => {
+      const input = this.shadowRoot?.querySelector<HTMLInputElement>(`#visual-title-${CSS.escape(visual.id)}`)
+      input?.focus()
+      input?.select()
+    })
+  }
+
+  private cancelVisualRename = (): void => {
+    const visualID = this.renamingVisualID
+    this.renamingVisualID = ''
+    this.visualTitleDraft = ''
+    void this.updateComplete.then(() => {
+      const action = this.shadowRoot?.querySelector<HTMLElement>('[data-visual-action="rename"]:not([disabled])')
+      const tile = this.shadowRoot?.querySelector<HTMLElement>(`[gs-id="${CSS.escape(visualID)}"]`)
+      ;(action ?? tile)?.focus()
+    })
+  }
+
+  private onVisualRenameKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    event.preventDefault()
+    this.cancelVisualRename()
+  }
+
+  private onVisualTitleInput = (event: Event): void => {
+    this.visualTitleDraft = (event.currentTarget as HTMLInputElement).value
+  }
+
+  private commitVisualRename = (event: Event): void => {
+    event.preventDefault()
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    const visual = page?.visuals.find((item) => item.id === this.renamingVisualID)
+    if (!builder?.capabilities.canEdit || !page || !visual || this.commandPending) return
+    const title = this.visualTitleDraft.trim()
+    if (!title) {
+      this.visualActionMessage = 'Visual title cannot be empty.'
+      return
+    }
+    if (title === visual.title) {
+      this.cancelVisualRename()
+      return
+    }
+    this.visualActionMessage = `Saving the name ${title}.`
+    this.cancelVisualRename()
+    this.emitCommand('rename_visual', { pageId: page.id, visualId: visual.id, title })
+  }
+
+  private duplicateVisual(visual: DashboardBuilderVisualSignal): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
+    this.visualActionMessage = `Duplicating ${visual.title}.`
+    this.emitCommand('duplicate_visual', { pageId: page.id, visualId: visual.id })
+  }
+
+  private deleteVisual(visual: DashboardBuilderVisualSignal): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
+    if (this.confirmingVisualDeleteID !== visual.id) {
+      this.confirmingVisualDeleteID = visual.id
+      this.visualActionMessage = `Confirm deletion of ${visual.title}.`
+      return
+    }
+    this.confirmingVisualDeleteID = ''
+    this.visualActionMessage = `Deleting ${visual.title}.`
+    this.emitCommand('remove_visual', { pageId: page.id, visualId: visual.id })
+  }
+
+  private cancelVisualDelete = (): void => {
+    this.confirmingVisualDeleteID = ''
+    this.visualActionMessage = 'Visual deletion canceled.'
+  }
+
+  private selectVisualType(type: BuilderVisualType, visual: DashboardBuilderVisualSignal | undefined): void {
+    this.visualType = type
+    if (!visual) return
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
+    if (this.visualTypeForRender(visual) === type) {
+      this.visualActionMessage = `${visual.title} is already a ${builderVisualLabels[type]} chart.`
+      return
+    }
+    this.visualActionMessage = `Changing ${visual.title} to a ${builderVisualLabels[type]} chart.`
+    this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
+    this.emitCommand('set_visual_type', { pageId: page.id, visualId: visual.id, type })
+  }
+
+  private visualTypeForRender(visual: DashboardBuilderVisualSignal): string {
+    return this.visualTypeOverrides[visual.id] ?? visual.type.toLowerCase()
+  }
+
+  private reconcileVisualTypeOverrides(builder: DashboardBuilderSignal | null): void {
+    if (!builder || Object.keys(this.visualTypeOverrides).length === 0) return
+    const visuals = new Map(builder.pages.flatMap((page) => page.visuals).map((visual) => [visual.id, visual]))
+    const next = Object.fromEntries(Object.entries(this.visualTypeOverrides).filter(([visualID, type]) => {
+      const visual = visuals.get(visualID)
+      return visual !== undefined && visual.type.toLowerCase() !== type
+    })) as Record<string, BuilderVisualType>
+    if (Object.keys(next).length !== Object.keys(this.visualTypeOverrides).length) this.visualTypeOverrides = next
   }
 
   private addField(field: DashboardBuilderFieldSignal): void {
@@ -2091,7 +2510,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     const visual = page?.visuals.find((item) => item.id === visualID)
-    if (visual && builderVisualTypes.includes(visual.type as BuilderVisualType)) this.visualType = visual.type as BuilderVisualType
+    const type = visual ? this.visualTypeForRender(visual) : ''
+    if (builderVisualTypes.includes(type as BuilderVisualType)) this.visualType = type as BuilderVisualType
     this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: visualID })
   }
 
@@ -2188,6 +2608,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.commandPending = true
     this.setGridEditingEnabled(false)
     this.terminalFailure = null
+    this.requestUpdate()
     this.emit('lv-builder-command', { ...this.commandDetail(), action, ...detail })
   }
 

@@ -698,6 +698,8 @@ model VisualizationLabelPolicy {
 model VisualizationPresentation {
   `legend`: VisualizationLegendPosition;
   `labelPolicy`: VisualizationLabelPolicy;
+  /** False hides cartesian axes while retaining governed field encodings. */
+  `axisVisible`?: boolean;
   `displayUnits`?: VisualizationDisplayUnits;
 }
 
@@ -839,6 +841,8 @@ model GeographicVisualizationPresentation extends VisualizationPresentation {
 model VisualizationSpec {
   `kind`: string;
   `title`: string;
+  /** False hides the visual-frame title without removing its accessible name. */
+  `titleVisible`?: boolean;
   `subtitle`?: string;
   `datasets`: VisualizationDatasetSchema[];
   `dataBudget`: VisualizationDataBudget;

@@ -123,7 +123,11 @@ model DashboardBuilderVisualSignal {
   `id`: string;
   `visualId`: string;
   `title`: string;
+  `titleVisible`: boolean;
   `type`: string;
+  `legendVisible`: boolean;
+  `axisVisible`: boolean;
+  `dataLabelsVisible`: boolean;
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
   `filters`: string[];

@@ -387,8 +387,17 @@ type dashboardBuilderCommandSignal struct {
 	ComponentID         string                            `json:"componentId"`
 	FieldID             string                            `json:"fieldId"`
 	Role                string                            `json:"role"`
+	TargetRole          string                            `json:"targetRole"`
+	Direction           string                            `json:"direction"`
+	Index               *int                              `json:"index,omitempty"`
 	Type                string                            `json:"type"`
 	Title               string                            `json:"title"`
+	NewVisualID         string                            `json:"newVisualId"`
+	NewComponentID      string                            `json:"newComponentId"`
+	TitleVisible        *bool                             `json:"titleVisible,omitempty"`
+	LegendVisible       *bool                             `json:"legendVisible,omitempty"`
+	AxisVisible         *bool                             `json:"axisVisible,omitempty"`
+	DataLabelsVisible   *bool                             `json:"dataLabelsVisible,omitempty"`
 	Visibility          string                            `json:"visibility"`
 	Placement           *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements          []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
@@ -480,10 +489,32 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
 	case "assign_field":
 		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
+	case "set_visual_type":
+		command.SetVisualType = &authoring.SetVisualTypePayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Type: document.DashboardVisualType(strings.TrimSpace(s.Type))}
+	case "rename_visual":
+		command.RenameVisual = &authoring.RenameVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: strings.TrimSpace(s.Title)}
+	case "duplicate_visual":
+		command.DuplicateVisual = &authoring.DuplicateVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), NewVisualID: strings.TrimSpace(s.NewVisualID), NewComponentID: strings.TrimSpace(s.NewComponentID), Title: strings.TrimSpace(s.Title)}
+	case "remove_visual":
+		command.RemoveVisual = &authoring.RemoveVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID)}
+	case "update_visual_format":
+		command.UpdateVisualFormat = &authoring.UpdateVisualFormatPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: optionalTrimmedString(s.Title), TitleVisible: s.TitleVisible, LegendVisible: s.LegendVisible, AxisVisible: s.AxisVisible, DataLabelsVisible: s.DataLabelsVisible}
+	case "remove_field":
+		command.RemoveField = &authoring.RemoveFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
+	case "move_field":
+		command.MoveField = &authoring.MoveFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role)), TargetRole: authoring.FieldRole(strings.TrimSpace(s.TargetRole)), Direction: strings.TrimSpace(s.Direction), Index: s.Index}
 	default:
 		return authoring.Command{}, fmt.Errorf("unsupported dashboard builder action %q", s.Action)
 	}
 	return command, nil
+}
+
+func optionalTrimmedString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func parseRevisionNumber(raw json.RawMessage) (uint64, error) {

@@ -180,6 +180,98 @@ type AssignFieldPayload struct {
 	ResolvedTable string `json:"-"`
 }
 
+// SetVisualTypePayload changes the renderer type of one placed visual. VisualID
+// is the page component identity (rather than the shared definition key), so
+// duplicated definitions remain independently editable.
+type SetVisualTypePayload struct {
+	PageID   string                       `json:"pageId"`
+	VisualID string                       `json:"visualId"`
+	Type     document.DashboardVisualType `json:"type"`
+}
+
+func (SetVisualTypePayload) authoringPayload() {}
+func (SetVisualTypePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RenameVisualPayload updates the authored title of one placed visual.
+type RenameVisualPayload struct {
+	PageID   string `json:"pageId"`
+	VisualID string `json:"visualId"`
+	Title    string `json:"title"`
+}
+
+func (RenameVisualPayload) authoringPayload() {}
+func (RenameVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// DuplicateVisualPayload clones a placed visual definition and component. IDs
+// are optional; the reducer allocates deterministic collision-free IDs.
+type DuplicateVisualPayload struct {
+	PageID         string `json:"pageId"`
+	VisualID       string `json:"visualId"`
+	NewVisualID    string `json:"newVisualId,omitempty"`
+	NewComponentID string `json:"newComponentId,omitempty"`
+	Title          string `json:"title,omitempty"`
+}
+
+func (DuplicateVisualPayload) authoringPayload() {}
+func (DuplicateVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateVisualFormatPayload changes only explicit, renderer-neutral visual
+// formatting controls. Omitted pointers preserve existing values.
+type UpdateVisualFormatPayload struct {
+	PageID            string  `json:"pageId"`
+	VisualID          string  `json:"visualId"`
+	Title             *string `json:"title,omitempty"`
+	TitleVisible      *bool   `json:"titleVisible,omitempty"`
+	LegendVisible     *bool   `json:"legendVisible,omitempty"`
+	AxisVisible       *bool   `json:"axisVisible,omitempty"`
+	DataLabelsVisible *bool   `json:"dataLabelsVisible,omitempty"`
+}
+
+func (UpdateVisualFormatPayload) authoringPayload() {}
+func (UpdateVisualFormatPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RemoveFieldPayload removes one governed query selection from a placed
+// visual. Scalar histogram/distribution bindings cannot be removed without
+// making an invalid canonical query and are rejected by the reducer.
+type RemoveFieldPayload struct {
+	PageID   string    `json:"pageId"`
+	VisualID string    `json:"visualId"`
+	FieldID  string    `json:"fieldId"`
+	Role     FieldRole `json:"role"`
+}
+
+func (RemoveFieldPayload) authoringPayload() {}
+func (RemoveFieldPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// MoveFieldPayload reorders a selection within its governed semantic role.
+// Cross-role moves are rejected unless a future governed conversion contract
+// proves the source field's kind. Index is zero-based; when omitted, direction
+// is one of up/down and moves within the current role.
+type MoveFieldPayload struct {
+	PageID     string    `json:"pageId"`
+	VisualID   string    `json:"visualId"`
+	FieldID    string    `json:"fieldId"`
+	Role       FieldRole `json:"role"`
+	TargetRole FieldRole `json:"targetRole,omitempty"`
+	Direction  string    `json:"direction,omitempty"`
+	Index      *int      `json:"index,omitempty"`
+}
+
+func (MoveFieldPayload) authoringPayload() {}
+func (MoveFieldPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 func (AssignFieldPayload) authoringPayload() {}
 func (AssignFieldPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
@@ -219,6 +311,7 @@ func (UpsertVisualPayload) RequiredAction() (AuthorizationAction, error) {
 }
 
 type RemoveVisualPayload struct {
+	PageID   string `json:"pageId,omitempty"`
 	VisualID string `json:"visualId"`
 }
 
@@ -285,21 +378,27 @@ type Command struct {
 	ContentHash      string        `json:"contentHash,omitempty"`
 	Provenance       Provenance    `json:"provenance"`
 
-	Metadata       *MetadataPatch         `json:"metadata,omitempty"`
-	SetVisibility  *SetVisibilityPayload  `json:"setVisibility,omitempty"`
-	AddPage        *AddPagePayload        `json:"addPage,omitempty"`
-	AddVisual      *AddVisualPayload      `json:"addVisual,omitempty"`
-	SetPlacements  *SetPlacementsPayload  `json:"setPlacements,omitempty"`
-	AssignField    *AssignFieldPayload    `json:"assignField,omitempty"`
-	UpsertPage     *UpsertPagePayload     `json:"upsertPage,omitempty"`
-	RemovePage     *RemovePagePayload     `json:"removePage,omitempty"`
-	UpsertVisual   *UpsertVisualPayload   `json:"upsertVisual,omitempty"`
-	RemoveVisual   *RemoveVisualPayload   `json:"removeVisual,omitempty"`
-	SetLayout      *SetLayoutPayload      `json:"setLayout,omitempty"`
-	SetFilters     *SetFiltersPayload     `json:"setFilters,omitempty"`
-	SetInteraction *SetInteractionPayload `json:"setInteraction,omitempty"`
-	Publish        *PublishPayload        `json:"publish,omitempty"`
-	Archive        *ArchivePayload        `json:"archive,omitempty"`
+	Metadata           *MetadataPatch             `json:"metadata,omitempty"`
+	SetVisibility      *SetVisibilityPayload      `json:"setVisibility,omitempty"`
+	AddPage            *AddPagePayload            `json:"addPage,omitempty"`
+	AddVisual          *AddVisualPayload          `json:"addVisual,omitempty"`
+	SetPlacements      *SetPlacementsPayload      `json:"setPlacements,omitempty"`
+	AssignField        *AssignFieldPayload        `json:"assignField,omitempty"`
+	SetVisualType      *SetVisualTypePayload      `json:"setVisualType,omitempty"`
+	RenameVisual       *RenameVisualPayload       `json:"renameVisual,omitempty"`
+	DuplicateVisual    *DuplicateVisualPayload    `json:"duplicateVisual,omitempty"`
+	UpdateVisualFormat *UpdateVisualFormatPayload `json:"updateVisualFormat,omitempty"`
+	RemoveField        *RemoveFieldPayload        `json:"removeField,omitempty"`
+	MoveField          *MoveFieldPayload          `json:"moveField,omitempty"`
+	UpsertPage         *UpsertPagePayload         `json:"upsertPage,omitempty"`
+	RemovePage         *RemovePagePayload         `json:"removePage,omitempty"`
+	UpsertVisual       *UpsertVisualPayload       `json:"upsertVisual,omitempty"`
+	RemoveVisual       *RemoveVisualPayload       `json:"removeVisual,omitempty"`
+	SetLayout          *SetLayoutPayload          `json:"setLayout,omitempty"`
+	SetFilters         *SetFiltersPayload         `json:"setFilters,omitempty"`
+	SetInteraction     *SetInteractionPayload     `json:"setInteraction,omitempty"`
+	Publish            *PublishPayload            `json:"publish,omitempty"`
+	Archive            *ArchivePayload            `json:"archive,omitempty"`
 }
 
 func (c Command) payloads() []authoringPayload {
@@ -321,6 +420,24 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.AssignField != nil {
 		payloads = append(payloads, c.AssignField)
+	}
+	if c.SetVisualType != nil {
+		payloads = append(payloads, c.SetVisualType)
+	}
+	if c.RenameVisual != nil {
+		payloads = append(payloads, c.RenameVisual)
+	}
+	if c.DuplicateVisual != nil {
+		payloads = append(payloads, c.DuplicateVisual)
+	}
+	if c.UpdateVisualFormat != nil {
+		payloads = append(payloads, c.UpdateVisualFormat)
+	}
+	if c.RemoveField != nil {
+		payloads = append(payloads, c.RemoveField)
+	}
+	if c.MoveField != nil {
+		payloads = append(payloads, c.MoveField)
 	}
 	if c.UpsertPage != nil {
 		payloads = append(payloads, c.UpsertPage)
@@ -387,7 +504,9 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload:
+	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
+		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
+		*RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload:
 		return true
 	default:
 		return false
@@ -533,6 +652,77 @@ func validatePayload(payload authoringPayload) error {
 		if !value.Role.Valid() {
 			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
 		}
+	case *SetVisualTypePayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "set visual type"); err != nil {
+			return err
+		}
+		if !canonicalVisualTypeSupported(value.Type) {
+			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *RenameVisualPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "rename visual"); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *DuplicateVisualPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "duplicate visual"); err != nil {
+			return err
+		}
+		for kind, id := range map[string]string{"new visual id": value.NewVisualID, "new component id": value.NewComponentID} {
+			if strings.TrimSpace(id) != "" {
+				if err := validateCanonicalObjectID(kind, id); err != nil {
+					return err
+				}
+			}
+		}
+		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: duplicate visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *UpdateVisualFormatPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "update visual format"); err != nil {
+			return err
+		}
+		if value.Title == nil && value.TitleVisible == nil && value.LegendVisible == nil && value.AxisVisible == nil && value.DataLabelsVisible == nil {
+			return fmt.Errorf("%w: visual format has no edits", ErrInvalidPayload)
+		}
+		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
+			return fmt.Errorf("%w: visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *RemoveFieldPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "remove field"); err != nil {
+			return err
+		}
+		if !ValidGovernedFieldID(value.FieldID) {
+			return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+		}
+		if !value.Role.Valid() {
+			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
+	case *MoveFieldPayload:
+		if err := validateVisualTargetFields(value.PageID, value.VisualID, "move field"); err != nil {
+			return err
+		}
+		if !ValidGovernedFieldID(value.FieldID) {
+			return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+		}
+		if !value.Role.Valid() {
+			return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+		}
+		if value.TargetRole != "" && !value.TargetRole.Valid() {
+			return fmt.Errorf("%w: unsupported target field role %q", ErrInvalidPayload, value.TargetRole)
+		}
+		if value.Index != nil && *value.Index < 0 {
+			return fmt.Errorf("%w: field index must be non-negative", ErrInvalidPayload)
+		}
+		direction := strings.TrimSpace(value.Direction)
+		if value.Index == nil && direction != "up" && direction != "down" {
+			return fmt.Errorf("%w: move field requires index or up/down direction", ErrInvalidPayload)
+		}
+		if value.Index != nil && direction != "" && direction != "before" && direction != "after" {
+			return fmt.Errorf("%w: unsupported field move direction %q", ErrInvalidPayload, value.Direction)
+		}
 	case *UpsertPagePayload:
 		if value.Page.ID == "" {
 			return fmt.Errorf("%w: upsert page requires page id", ErrInvalidPayload)
@@ -563,6 +753,11 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
 			return err
+		}
+		if value.PageID != "" {
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
 		}
 	case *SetLayoutPayload:
 		if strings.TrimSpace(value.PageID) == "" {
@@ -614,6 +809,16 @@ func validateCanonicalObjectID(kind, value string) error {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
+}
+
+func validateVisualTargetFields(pageID, visualID, operation string) error {
+	if strings.TrimSpace(pageID) == "" || strings.TrimSpace(visualID) == "" {
+		return fmt.Errorf("%w: %s requires page id and visual id", ErrInvalidPayload, operation)
+	}
+	if err := validateCanonicalObjectID("page id", pageID); err != nil {
+		return err
+	}
+	return validateCanonicalObjectID("visual id", visualID)
 }
 
 func validatePlacementCoordinates(value document.DashboardPlacement) error {
