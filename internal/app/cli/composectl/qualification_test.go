@@ -1083,8 +1083,143 @@ func TestQualificationPublicationRetryLimitIsRespected(t *testing.T) {
 	}
 }
 
-func TestQualificationGCStabilityBlocksUntilQueryLeaseSucceeds(t *testing.T) {
-	probes := 0
+func TestQualificationGCStabilityOldCompletedCycleDoesNotSatisfyGate(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", PoolID: "pool-1", Epoch: 1, Status: "complete"},
+	}}
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return baseline, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	if err == nil || queryProbes != 0 ||
+		!strings.Contains(err.Error(), "gc-old(pool=pool-1 epoch=1 status=complete)") ||
+		!strings.Contains(err.Error(), "0 governed-query probes") ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, query probes = %d", err, queryProbes)
+	}
+}
+
+func TestQualificationGCStabilityActiveLeaseBlocksProgression(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", Status: "complete"},
+	}}
+	observations := []qualificationGCStabilityObservation{
+		{
+			DegradedReasons: []string{qualificationGCLeaseActiveReason},
+			Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-new", Status: "complete"},
+				{ID: "gc-old", Status: "complete"},
+			},
+		},
+		{
+			Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-new", Status: "complete"},
+				{ID: "gc-old", Status: "complete"},
+			},
+		},
+	}
+	observationIndex := 0
+	sleeps := 0
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			observation := observations[observationIndex]
+			observationIndex++
+			return observation, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	if observationIndex != 2 || sleeps != 1 || queryProbes != 1 {
+		t.Fatalf(
+			"observations = %d, sleeps = %d, query probes = %d, want 2/1/1",
+			observationIndex, sleeps, queryProbes,
+		)
+	}
+}
+
+func TestQualificationGCStabilityNewCompletedCycleAllowsProgression(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", Status: "complete"},
+	}}
+	observations := []qualificationGCStabilityObservation{
+		{Cycles: []qualificationGCCycleObservation{{ID: "gc-new", Status: "running"}}},
+		{Cycles: []qualificationGCCycleObservation{{ID: "gc-new", Status: "complete"}}},
+	}
+	observationIndex := 0
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return nil },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			observation := observations[observationIndex]
+			observationIndex++
+			return observation, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	if observationIndex != 2 || queryProbes != 1 {
+		t.Fatalf("observations = %d, query probes = %d, want 2/1", observationIndex, queryProbes)
+	}
+}
+
+func TestQualificationGCStabilityTimeoutReportsCycleAndLeaseDiagnostics(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", PoolID: "pool-1", Epoch: 7, Status: "complete"},
+	}}
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{
+				DegradedReasons: []string{qualificationGCLeaseActiveReason},
+				Cycles: []qualificationGCCycleObservation{
+					{ID: "gc-new", PoolID: "pool-1", Epoch: 8, Status: "deleting"},
+				},
+			}, nil
+		},
+		func(context.Context) error { return nil },
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "baselineCycles=[gc-old(pool=pool-1 epoch=7 status=complete)]") ||
+		!strings.Contains(err.Error(), "observedCycles=[gc-new(pool=pool-1 epoch=8 status=deleting)]") ||
+		!strings.Contains(err.Error(), "observedLeaseActive=true") ||
+		!strings.Contains(err.Error(), qualificationGCLeaseActiveReason) ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
+func TestQualificationGCStabilityRetriesExactQueryFence(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{}
+	stable := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-new", Status: "complete"},
+	}}
+	queryProbes := 0
 	sleeps := 0
 	err := waitForQualificationGCStability(
 		t.Context(),
@@ -1092,60 +1227,28 @@ func TestQualificationGCStabilityBlocksUntilQueryLeaseSucceeds(t *testing.T) {
 			sleeps++
 			return nil
 		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) { return stable, nil },
 		func(context.Context) error {
-			probes++
-			if probes < 3 {
+			queryProbes++
+			if queryProbes < 3 {
 				return fmt.Errorf("query failed: %s", qualificationGCQueryFenceMarker)
 			}
 			return nil
 		},
 	)
 	require.NoError(t, err)
-	if probes != 3 || sleeps != 2 {
-		t.Fatalf("probes = %d, sleeps = %d, want 3/2", probes, sleeps)
-	}
-}
-
-func TestQualificationGCStabilityAllowsSuccessfulQueryImmediately(t *testing.T) {
-	probes := 0
-	sleeps := 0
-	err := waitForQualificationGCStability(
-		t.Context(),
-		func(context.Context, time.Duration) error {
-			sleeps++
-			return nil
-		},
-		func(context.Context) error {
-			probes++
-			return nil
-		},
-	)
-	require.NoError(t, err)
-	if probes != 1 || sleeps != 0 {
-		t.Fatalf("probes = %d, sleeps = %d, want 1/0", probes, sleeps)
-	}
-}
-
-func TestQualificationGCStabilityTimeoutReportsLastObservation(t *testing.T) {
-	err := waitForQualificationGCStability(
-		t.Context(),
-		func(context.Context, time.Duration) error {
-			return context.DeadlineExceeded
-		},
-		func(context.Context) error {
-			return fmt.Errorf("query failed: %s", qualificationGCQueryFenceMarker)
-		},
-	)
-	if err == nil ||
-		!strings.Contains(err.Error(), "physical-pool GC did not stabilize after 1 governed-query probes") ||
-		!strings.Contains(err.Error(), qualificationGCQueryFenceMarker) ||
-		!errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("timeout error = %v", err)
+	if queryProbes != 3 || sleeps != 2 {
+		t.Fatalf("query probes = %d, sleeps = %d, want 3/2", queryProbes, sleeps)
 	}
 }
 
 func TestQualificationGCStabilityFailsUnrelatedQueryErrorImmediately(t *testing.T) {
-	probes := 0
+	baseline := qualificationGCStabilityObservation{}
+	stable := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-new", Status: "complete"},
+	}}
+	queryProbes := 0
 	sleeps := 0
 	want := errors.New("authorization failed")
 	err := waitForQualificationGCStability(
@@ -1154,13 +1257,18 @@ func TestQualificationGCStabilityFailsUnrelatedQueryErrorImmediately(t *testing.
 			sleeps++
 			return nil
 		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) { return stable, nil },
 		func(context.Context) error {
-			probes++
+			queryProbes++
 			return want
 		},
 	)
-	if !errors.Is(err, want) || probes != 1 || sleeps != 0 {
-		t.Fatalf("error = %v, probes = %d, sleeps = %d, want unrelated error after 1/0", err, probes, sleeps)
+	if !errors.Is(err, want) || queryProbes != 1 || sleeps != 0 {
+		t.Fatalf(
+			"error = %v, query probes = %d, sleeps = %d, want unrelated error after 1/0",
+			err, queryProbes, sleeps,
+		)
 	}
 }
 

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -35,6 +36,7 @@ const qualificationDeliveryInputUnavailableMarker = "(DELIVERY_INPUT_UNAVAILABLE
 const qualificationGCStabilityTimeout = 3 * time.Minute
 const qualificationGCStabilityPollInterval = 500 * time.Millisecond
 const qualificationGCQueryFenceMarker = "sealed catalog query lease acquisition failed: delivery transition conflict: GC lease excludes query root"
+const qualificationGCLeaseActiveReason = "gc_lease_active"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -58,6 +60,7 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
+	OperatorToken        string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
@@ -154,6 +157,7 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
+		"operator token":         options.OperatorToken,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
@@ -601,6 +605,13 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
+	refreshGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
 		return report, err
 	}
@@ -633,7 +644,8 @@ func (c *Controller) runQualificationRecovery(
 	}
 	gcProbeSequence := uint64(0)
 	if _, err := c.waitQualificationGCStable(
-		ctx, client, apiRoot, options.WorkloadToken, &gcProbeSequence,
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, refreshGCBaseline, &gcProbeSequence,
 		options.ContainerID, "refresh recovery",
 	); err != nil {
 		return report, err
@@ -652,11 +664,19 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	for cycle := 1; cycle <= 3; cycle++ {
+		gcBaseline, err := c.captureQualificationGCBaseline(
+			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
+		)
+		if err != nil {
+			return report, err
+		}
 		if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
 			return report, err
 		}
 		queryResult, err := c.waitQualificationGCStable(
-			ctx, client, apiRoot, options.WorkloadToken, &gcProbeSequence,
+			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+			options.WorkloadToken, gcBaseline, &gcProbeSequence,
 			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
 		)
 		if err != nil {
@@ -1223,11 +1243,108 @@ func retryQualificationPublication(
 	panic("unreachable qualification publication retry")
 }
 
+type qualificationGCCycleObservation struct {
+	ID     string
+	PoolID string
+	Epoch  int64
+	Status string
+}
+
+type qualificationGCStabilityObservation struct {
+	DegradedReasons []string
+	Cycles          []qualificationGCCycleObservation
+}
+
+func (observation qualificationGCStabilityObservation) gcLeaseActive() bool {
+	return slices.Contains(observation.DegradedReasons, qualificationGCLeaseActiveReason)
+}
+
+func (observation qualificationGCStabilityObservation) containsCycle(id string) bool {
+	for _, cycle := range observation.Cycles {
+		if cycle.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (observation qualificationGCStabilityObservation) cycleSummary() []string {
+	summary := make([]string, 0, len(observation.Cycles))
+	for _, cycle := range observation.Cycles {
+		summary = append(summary, fmt.Sprintf(
+			"%s(pool=%s epoch=%d status=%s)",
+			cycle.ID, cycle.PoolID, cycle.Epoch, cycle.Status,
+		))
+	}
+	return summary
+}
+
+func qualificationGCObservation(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+) (qualificationGCStabilityObservation, error) {
+	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
+		target,
+		token,
+		httpClient,
+	))
+	response, err := client.GetDeliveryOperatorSnapshot(
+		ctx,
+		deploymentgen.GenGetDeliveryOperatorSnapshotClientRequest{Project: projectID},
+	)
+	if err != nil {
+		return qualificationGCStabilityObservation{}, err
+	}
+	observation := qualificationGCStabilityObservation{
+		DegradedReasons: append([]string(nil), response.Body.DegradedReasons...),
+		Cycles:          make([]qualificationGCCycleObservation, 0, len(response.Body.GcCycles)),
+	}
+	for _, cycle := range response.Body.GcCycles {
+		observation.Cycles = append(observation.Cycles, qualificationGCCycleObservation{
+			ID: cycle.Id, PoolID: cycle.PoolId, Epoch: cycle.Epoch, Status: string(cycle.Status),
+		})
+	}
+	return observation, nil
+}
+
+func (c *Controller) captureQualificationGCBaseline(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+	containerID string,
+	stage string,
+) (qualificationGCStabilityObservation, error) {
+	observation, err := qualificationGCObservation(ctx, httpClient, target, projectID, token)
+	if err == nil && observation.gcLeaseActive() {
+		err = fmt.Errorf(
+			"pre-restart physical-pool GC lease is active (degradedReasons=%v cycles=%v)",
+			observation.DegradedReasons, observation.cycleSummary(),
+		)
+	}
+	if err == nil {
+		return observation, nil
+	}
+	return qualificationGCStabilityObservation{}, qualificationContainerOperationError(
+		ctx,
+		c.qualificationContainers.Existing(containerID),
+		"capture physical-pool GC baseline before "+stage,
+		err,
+	)
+}
+
 func (c *Controller) waitQualificationGCStable(
 	ctx context.Context,
 	httpClient *http.Client,
 	target string,
-	token string,
+	projectID string,
+	operatorToken string,
+	workloadToken string,
+	baseline qualificationGCStabilityObservation,
 	probeSequence *uint64,
 	containerID string,
 	stage string,
@@ -1239,15 +1356,25 @@ func (c *Controller) waitQualificationGCStable(
 	}
 	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
 	defer cancel()
-	err := waitForQualificationGCStability(waitCtx, c.sleep, func(probeCtx context.Context) error {
-		queryResult.Rows = nil
-		*probeSequence = *probeSequence + 1
-		return qualificationAPI(
-			probeCtx, httpClient, http.MethodPost,
-			target+"/api/v1/semantic-models/semantic-model:sales/query",
-			token, qualificationGCProbeQuery(*probeSequence), "", &queryResult,
-		)
-	})
+	err := waitForQualificationGCStability(
+		waitCtx,
+		c.sleep,
+		baseline,
+		func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCObservation(
+				probeCtx, httpClient, target, projectID, operatorToken,
+			)
+		},
+		func(probeCtx context.Context) error {
+			queryResult.Rows = nil
+			*probeSequence = *probeSequence + 1
+			return qualificationAPI(
+				probeCtx, httpClient, http.MethodPost,
+				target+"/api/v1/semantic-models/semantic-model:sales/query",
+				workloadToken, qualificationGCProbeQuery(*probeSequence), "", &queryResult,
+			)
+		},
+	)
 	if err == nil {
 		return queryResult, nil
 	}
@@ -1276,25 +1403,61 @@ func qualificationGCProbeQuery(sequence uint64) map[string]any {
 func waitForQualificationGCStability(
 	ctx context.Context,
 	sleep func(context.Context, time.Duration) error,
-	probe func(context.Context) error,
+	baseline qualificationGCStabilityObservation,
+	observe func(context.Context) (qualificationGCStabilityObservation, error),
+	acquireQueryLease func(context.Context) error,
 ) error {
-	probes := 0
+	observations := 0
+	queryProbes := 0
+	var last qualificationGCStabilityObservation
+	var lastObservationErr error
+	var lastQueryErr error
 	for {
-		probes++
-		err := probe(ctx)
+		observations++
+		observation, err := observe(ctx)
 		if err == nil {
-			return nil
-		}
-		if !strings.Contains(err.Error(), qualificationGCQueryFenceMarker) {
-			return fmt.Errorf("physical-pool GC stability probe failed: %w", err)
+			last = observation
+			lastObservationErr = nil
+			if !observation.gcLeaseActive() && qualificationHasNewCompletedGCCycle(baseline, observation) {
+				queryProbes++
+				queryErr := acquireQueryLease(ctx)
+				if queryErr == nil {
+					return nil
+				}
+				lastQueryErr = queryErr
+				if !strings.Contains(queryErr.Error(), qualificationGCQueryFenceMarker) {
+					return fmt.Errorf("physical-pool GC governed-query lease probe failed: %w", queryErr)
+				}
+			}
+		} else {
+			lastObservationErr = err
 		}
 		if sleepErr := sleep(ctx, qualificationGCStabilityPollInterval); sleepErr != nil {
+			if lastObservationErr != nil {
+				return fmt.Errorf(
+					"physical-pool GC stability was not observable after %d snapshots (baselineCycles=%v lastSnapshotError=%v): %w",
+					observations, baseline.cycleSummary(), lastObservationErr, sleepErr,
+				)
+			}
 			return fmt.Errorf(
-				"physical-pool GC did not stabilize after %d governed-query probes (last probe: %v): %w",
-				probes, err, sleepErr,
+				"physical-pool GC did not stabilize after %d snapshots and %d governed-query probes (baselineCycles=%v baselineLeaseActive=%t observedCycles=%v observedLeaseActive=%t degradedReasons=%v lastQueryError=%v): %w",
+				observations, queryProbes, baseline.cycleSummary(), baseline.gcLeaseActive(),
+				last.cycleSummary(), last.gcLeaseActive(), last.DegradedReasons, lastQueryErr, sleepErr,
 			)
 		}
 	}
+}
+
+func qualificationHasNewCompletedGCCycle(
+	baseline qualificationGCStabilityObservation,
+	observation qualificationGCStabilityObservation,
+) bool {
+	for _, cycle := range observation.Cycles {
+		if !baseline.containsCycle(cycle.ID) && cycle.Status == string(deploymentgen.DeliveryGCStatusComplete) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *qualificationRunningCommand) Stop() error {
