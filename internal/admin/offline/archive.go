@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"path/filepath"
 	"strings"
 )
@@ -18,7 +19,7 @@ func (service *Service) Backup(ctx context.Context, request BackupRequest, out i
 		return err
 	}
 	defer lock.Release()
-	options := BackupOptions{Path: request.Out}
+	options := BackupOptions{Path: request.Out, Environment: service.configuredEnvironment()}
 	if request.Out == "-" {
 		options.Path = ""
 		options.Writer = out
@@ -39,6 +40,10 @@ func (service *Service) Backup(ctx context.Context, request BackupRequest, out i
 	if err != nil {
 		return err
 	}
+	options.StorageTopology, err = service.backupStorageTopology(request.ExternalRecoveryPoints)
+	if err != nil {
+		return err
+	}
 	if err := service.deps.Archive.BackupInstance(ctx, options); err != nil {
 		return err
 	}
@@ -52,8 +57,11 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 	if request.From == "" {
 		return fmt.Errorf("admin restore requires --from")
 	}
-	if !request.Confirm {
+	if !request.Confirm && !request.PreflightOnly {
 		return fmt.Errorf("admin restore requires --confirm")
+	}
+	if request.DatabaseOnly && request.PreflightOnly {
+		return fmt.Errorf("restore preflight is available only for full-instance archives")
 	}
 	if request.From == "-" && in == nil {
 		return fmt.Errorf("admin restore --from - requires standard input")
@@ -71,6 +79,15 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 		Path:                request.From,
 		CurrentBackup:       request.CurrentBackup,
 		ExpectedEnvironment: environment,
+		ExternalEvidence:    request.ExternalEvidence,
+	}
+	options.TargetStorageTopology, err = service.storageTopology(nil, false)
+	if err != nil {
+		return err
+	}
+	options.CurrentStorageTopology, err = service.storageTopology(request.CurrentExternalRecoveryPoints, false)
+	if err != nil {
+		return err
 	}
 	if request.From == "-" {
 		options.Path = ""
@@ -101,6 +118,20 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 	if err != nil {
 		return err
 	}
+	if request.PreflightOnly {
+		result, preflightErr := service.deps.Archive.PreflightInstance(ctx, options)
+		if len(result.Document) > 0 {
+			if _, err := out.Write(result.Document); err != nil {
+				return err
+			}
+			if result.Document[len(result.Document)-1] != '\n' {
+				if _, err := io.WriteString(out, "\n"); err != nil {
+					return err
+				}
+			}
+		}
+		return preflightErr
+	}
 	if err := service.deps.Archive.RestoreInstance(ctx, options); err != nil {
 		return err
 	}
@@ -111,14 +142,81 @@ func (service *Service) Restore(ctx context.Context, request RestoreRequest, in 
 	return nil
 }
 
+func (service *Service) backupStorageTopology(points []ExternalRecoveryPoint) (BackupStorageTopology, error) {
+	return service.storageTopology(points, true)
+}
+
+func (service *Service) storageTopology(points []ExternalRecoveryPoint, requireRecoveryPoint bool) (BackupStorageTopology, error) {
+	topology := BackupStorageTopology{ControlPlane: "local", ManagedData: "local", DuckLake: "local", ExternalStores: []BackupExternalStoreReference{}}
+	backend := strings.TrimSpace(service.config.ManagedDataBackend)
+	switch backend {
+	case "", "local":
+		if len(points) != 0 {
+			return BackupStorageTopology{}, fmt.Errorf("external recovery points were supplied for local managed-data storage")
+		}
+		return topology, nil
+	case "s3":
+		region := strings.TrimSpace(service.config.ManagedDataS3Region)
+		if region == "" {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured region")
+		}
+		bucket := strings.TrimSpace(service.config.ManagedDataS3Bucket)
+		if bucket == "" {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data storage requires a configured bucket")
+		}
+		provider := "aws"
+		endpoint := strings.TrimSpace(service.config.ManagedDataS3Endpoint)
+		if endpoint == "" {
+			endpoint = "https://s3." + region + ".amazonaws.com"
+		} else {
+			provider = "s3-compatible"
+		}
+		parsedEndpoint, err := url.Parse(endpoint)
+		if err != nil || (parsedEndpoint.Scheme != "http" && parsedEndpoint.Scheme != "https") || parsedEndpoint.Host == "" ||
+			parsedEndpoint.User != nil || parsedEndpoint.RawQuery != "" || parsedEndpoint.Fragment != "" ||
+			(parsedEndpoint.Path != "" && parsedEndpoint.Path != "/") {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data endpoint must be a credential-free HTTP(S) origin")
+		}
+		parsedEndpoint.Scheme = strings.ToLower(parsedEndpoint.Scheme)
+		parsedEndpoint.Host = strings.ToLower(parsedEndpoint.Host)
+		parsedEndpoint.Path = ""
+		endpoint = parsedEndpoint.String()
+		var managed *ExternalRecoveryPoint
+		for index := range points {
+			if points[index].Role != "managed-data" {
+				return BackupStorageTopology{}, fmt.Errorf("unsupported external recovery role %q", points[index].Role)
+			}
+			if managed != nil {
+				return BackupStorageTopology{}, fmt.Errorf("managed-data external recovery point is duplicated")
+			}
+			managed = &points[index]
+		}
+		if requireRecoveryPoint && (managed == nil || strings.TrimSpace(managed.RecoveryPoint) == "" || strings.TrimSpace(managed.EvidenceKey) == "") {
+			return BackupStorageTopology{}, fmt.Errorf("S3 managed-data backup requires an exact external recovery point and evidence key")
+		}
+		prefix := strings.Trim(strings.TrimSpace(service.config.ManagedDataS3Prefix), "/")
+		topology.ManagedData = "external"
+		reference := BackupExternalStoreReference{
+			Role: "managed-data", Provider: provider, Endpoint: endpoint, Region: region, Bucket: bucket, Prefix: prefix,
+		}
+		if managed != nil {
+			reference.RecoveryPoint = strings.TrimSpace(managed.RecoveryPoint)
+			reference.EvidenceKey = strings.TrimSpace(managed.EvidenceKey)
+		}
+		topology.ExternalStores = []BackupExternalStoreReference{reference}
+		return topology, nil
+	default:
+		return BackupStorageTopology{}, fmt.Errorf("unsupported managed-data backend %q", backend)
+	}
+}
+
 func (service *Service) restoreTargetEnvironment(ctx context.Context) (string, error) {
 	environment, exists, err := service.deps.State.ExistingEnvironment(ctx)
 	if exists && errors.Is(err, ErrStateNotFound) {
-		environment = service.configuredEnvironment()
-		if bindErr := service.deps.State.BindEnvironment(ctx, environment); bindErr != nil {
-			return "", bindErr
-		}
-		return environment, nil
+		// Restore preflight is read-only. An unbound target is validated against
+		// the configured environment and is replaced only after the archive plan
+		// has passed; the restored database carries its own durable binding.
+		return service.configuredEnvironment(), nil
 	}
 	if err != nil {
 		return "", err

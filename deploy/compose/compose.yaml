@@ -12,10 +12,13 @@ services:
     mem_limit: ${APP_MEMORY_LIMIT:-3g}
     stop_grace_period: 2m
     env_file: [leapview.env]
+    environment:
+      LEAPVIEW_IMAGE: ${LEAPVIEW_IMAGE:?set LEAPVIEW_IMAGE in deployment.env}
     ports:
       - "${COMPOSE_APP_BIND:-127.0.0.1:8080}:8080"
     volumes:
       - leapview-state:/var/lib/leapview
+      - ./release-transition-policy.json:/run/leapview/release-transition-policy.json:ro
       - type: tmpfs
         target: /tmp
         tmpfs:

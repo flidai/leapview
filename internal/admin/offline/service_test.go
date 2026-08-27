@@ -149,6 +149,9 @@ type fakeArchive struct {
 	backupInstance  BackupOptions
 	restoreDatabase RestoreOptions
 	restoreInstance RestoreOptions
+	preflight       RestoreOptions
+	preflightResult RestorePreflightResult
+	preflightErr    error
 }
 
 type fakeDeliveryRepair struct {
@@ -185,6 +188,10 @@ func (archive *fakeArchive) RestoreDatabase(_ context.Context, options RestoreOp
 func (archive *fakeArchive) RestoreInstance(_ context.Context, options RestoreOptions) error {
 	archive.restoreInstance = options
 	return nil
+}
+func (archive *fakeArchive) PreflightInstance(_ context.Context, options RestoreOptions) (RestorePreflightResult, error) {
+	archive.preflight = options
+	return archive.preflightResult, archive.preflightErr
 }
 
 func TestInitializeOwnsValidationRecoveryAndAccessSequencing(t *testing.T) {
@@ -381,15 +388,87 @@ func TestArchiveUseCasesOwnLayoutAndOutputMapping(t *testing.T) {
 		t.Fatalf("backup options=%#v output=%q", archive.backupInstance, out.String())
 	}
 	out.Reset()
+	evidence := map[string]string{"managed-data-version": "version-42"}
 	if err := service.Restore(context.Background(), RestoreRequest{
-		From: backupPath, CurrentBackup: "-", Confirm: true,
+		From: backupPath, CurrentBackup: "-", Confirm: true, ExternalEvidence: evidence,
 	}, nil, &out); err != nil {
 		t.Fatal(err)
 	}
 	if !archive.restoreInstance.DiscardCurrentBackup ||
 		archive.restoreInstance.ExpectedEnvironment != "prod" ||
+		archive.restoreInstance.ExternalEvidence["managed-data-version"] != "version-42" ||
 		!strings.Contains(out.String(), "instance restored from: "+backupPath) {
 		t.Fatalf("restore options=%#v output=%q", archive.restoreInstance, out.String())
+	}
+}
+
+func TestS3BackupRequiresAndRecordsExactExternalRecoveryPoint(t *testing.T) {
+	home := t.TempDir()
+	archive := &fakeArchive{}
+	service := New(Config{
+		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"),
+		DuckLakeCatalog: filepath.Join(home, "ducklake", "catalog.duckdb"),
+		DuckLakeData:    filepath.Join(home, "ducklake", "data"),
+		ArtifactDir:     filepath.Join(home, "artifacts"), RuntimeDir: filepath.Join(home, "runtime"),
+		ManagedDataDir: filepath.Join(home, "managed-data"), ManagedDataBackend: "s3",
+		ManagedDataS3Endpoint: "https://objects.example.test/", ManagedDataS3Region: "eu-west-1",
+		ManagedDataS3Bucket: "recovery-bucket", ManagedDataS3Prefix: "/tenant-a/managed-data/",
+	}, Dependencies{Locker: &fakeLocker{}, State: &fakeState{environment: "prod", existing: true}, Archive: archive})
+	if err := service.Backup(context.Background(), BackupRequest{Out: filepath.Join(t.TempDir(), "missing.tar.gz")}, io.Discard); err == nil || !strings.Contains(err.Error(), "exact external recovery point") {
+		t.Fatalf("backup without recovery point error = %v", err)
+	}
+	request := BackupRequest{
+		Out: filepath.Join(t.TempDir(), "backup.tar.gz"),
+		ExternalRecoveryPoints: []ExternalRecoveryPoint{{
+			Role: "managed-data", RecoveryPoint: "version-42", EvidenceKey: "managed-data-version",
+		}},
+	}
+	if err := service.Backup(context.Background(), request, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	topology := archive.backupInstance.StorageTopology
+	if topology.ControlPlane != "local" || topology.ManagedData != "external" || topology.DuckLake != "local" || len(topology.ExternalStores) != 1 {
+		t.Fatalf("storage topology = %#v", topology)
+	}
+	reference := topology.ExternalStores[0]
+	if reference.Role != "managed-data" || reference.Provider != "s3-compatible" || reference.Endpoint != "https://objects.example.test" ||
+		reference.Region != "eu-west-1" || reference.Bucket != "recovery-bucket" || reference.Prefix != "tenant-a/managed-data" ||
+		reference.RecoveryPoint != "version-42" || reference.EvidenceKey != "managed-data-version" {
+		t.Fatalf("external recovery reference = %#v", reference)
+	}
+	if err := service.Restore(context.Background(), RestoreRequest{
+		From: request.Out, CurrentBackup: filepath.Join(t.TempDir(), "current.tar.gz"), Confirm: true,
+		ExternalEvidence:              map[string]string{"managed-data-version": "version-42"},
+		CurrentExternalRecoveryPoints: request.ExternalRecoveryPoints,
+	}, nil, io.Discard); err != nil {
+		t.Fatal(err)
+	}
+	if got := archive.restoreInstance.TargetStorageTopology.ExternalStores[0]; got.Provider != reference.Provider || got.Endpoint != reference.Endpoint || got.Region != reference.Region ||
+		got.Bucket != reference.Bucket || got.Prefix != reference.Prefix || got.RecoveryPoint != "" || got.EvidenceKey != "" {
+		t.Fatalf("restore target storage identity = %#v", got)
+	}
+	if got := archive.restoreInstance.CurrentStorageTopology.ExternalStores[0]; got != reference {
+		t.Fatalf("restore checkpoint topology = %#v, want %#v", got, reference)
+	}
+}
+
+func TestRestorePreflightWritesMachinePlanWithoutRestore(t *testing.T) {
+	home := t.TempDir()
+	locker := &fakeLocker{}
+	archive := &fakeArchive{preflightResult: RestorePreflightResult{Document: []byte(`{"schemaVersion":1,"allowed":true}`)}}
+	service := New(Config{
+		HomeDir: home, DBPath: filepath.Join(home, "leapview.db"), Environment: "prod",
+		DuckLakeCatalog: filepath.Join(home, "ducklake", "catalog.duckdb"), DuckLakeData: filepath.Join(home, "ducklake", "data"),
+		ArtifactDir: filepath.Join(home, "artifacts"), RuntimeDir: filepath.Join(home, "runtime"),
+		ManagedDataDir: filepath.Join(home, "managed-data"), ManagedDataBackend: "local",
+	}, Dependencies{Locker: locker, State: &fakeState{environment: "prod", existing: true}, Archive: archive})
+	var out bytes.Buffer
+	if err := service.Restore(context.Background(), RestoreRequest{From: "backup.tar.gz", PreflightOnly: true}, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if archive.restoreInstance.Path != "" || archive.preflight.Path != "backup.tar.gz" ||
+		!strings.Contains(out.String(), `"allowed":true`) || locker.acquired != 1 || locker.lock.released != 1 {
+		t.Fatalf("preflight=%#v restore=%#v output=%q locks=%d/%d", archive.preflight, archive.restoreInstance, out.String(), locker.acquired, locker.lock.released)
 	}
 }
 

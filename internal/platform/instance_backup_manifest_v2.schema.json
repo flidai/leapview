@@ -1,0 +1,127 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.dev/schemas/instance-backup-manifest-v2.schema.json",
+  "title": "LeapView instance backup manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "backupId",
+    "releaseIdentity",
+    "instanceId",
+    "environment",
+    "createdAt",
+    "completedAt",
+    "archiveMode",
+    "storageTopology",
+    "requiredTransitionPolicyVersion",
+    "members",
+    "inventorySha256"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "kind": { "const": "leapview-instance" },
+    "backupId": { "type": "string", "pattern": "^[A-Za-z0-9._-]{3,128}$" },
+    "releaseIdentity": { "$ref": "#/$defs/releaseIdentity" },
+    "instanceId": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "environment": { "type": "string", "minLength": 1, "maxLength": 128 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "completedAt": { "type": "string", "format": "date-time" },
+    "archiveMode": { "type": "string", "enum": ["full-instance"] },
+    "storageTopology": { "$ref": "#/$defs/storageTopology" },
+    "requiredTransitionPolicyVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "members": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/member" }
+    },
+    "inventorySha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "version", "sourceRevision", "image", "distribution", "platform"],
+      "properties": {
+        "releaseId": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "sourceRevision": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "image": { "type": "string", "minLength": 1, "maxLength": 1024 },
+        "distribution": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "platform": { "type": "string", "enum": ["linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64"] }
+      }
+    },
+    "externalStore": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["role", "provider", "endpoint", "region", "bucket", "prefix", "recoveryPoint", "evidenceKey"],
+      "properties": {
+        "role": { "type": "string", "enum": ["managed-data", "ducklake-catalog", "ducklake-data"] },
+        "provider": { "type": "string", "enum": ["aws", "s3-compatible"] },
+        "endpoint": { "type": "string", "pattern": "^https?://[^/?#]+$", "maxLength": 512 },
+        "region": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bucket": { "type": "string", "minLength": 1, "maxLength": 255 },
+        "prefix": { "type": "string", "maxLength": 1024 },
+        "recoveryPoint": { "type": "string", "minLength": 1, "maxLength": 512 },
+        "evidenceKey": { "type": "string", "pattern": "^[a-z0-9][a-z0-9._-]{1,63}$" }
+      }
+    },
+    "storageTopology": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["controlPlane", "managedData", "duckLake", "externalStores"],
+      "properties": {
+        "controlPlane": { "type": "string", "enum": ["local"] },
+        "managedData": { "type": "string", "enum": ["local", "external"] },
+        "duckLake": { "type": "string", "enum": ["local", "external"] },
+        "externalStores": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/externalStore" }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "managedData": { "const": "external" } } },
+          "then": { "properties": { "externalStores": { "contains": { "properties": { "role": { "const": "managed-data" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 } } },
+          "else": { "properties": { "externalStores": { "not": { "contains": { "properties": { "role": { "const": "managed-data" } }, "required": ["role"] } } } } }
+        },
+        {
+          "if": { "properties": { "duckLake": { "const": "external" } } },
+          "then": {
+            "properties": {
+              "externalStores": {
+                "allOf": [
+                  { "contains": { "properties": { "role": { "const": "ducklake-catalog" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 },
+                  { "contains": { "properties": { "role": { "const": "ducklake-data" } }, "required": ["role"] }, "minContains": 1, "maxContains": 1 }
+                ]
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "externalStores": {
+                "not": {
+                  "contains": { "properties": { "role": { "enum": ["ducklake-catalog", "ducklake-data"] } }, "required": ["role"] }
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    "member": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "role", "size", "mode", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1, "maxLength": 4096 },
+        "role": { "type": "string", "pattern": "^[a-z][a-z0-9-]{1,63}$" },
+        "size": { "type": "integer", "minimum": 0 },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  }
+}

@@ -722,7 +722,8 @@ func testTransitionPolicy(current, next string, operation compatibility.Operatio
 		Releases: []compatibility.Release{
 			{
 				ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "test",
-				Artifacts: []compatibility.Artifact{{Platform: platform, Image: current}},
+				LegacyBackupVersions: []int{},
+				Artifacts:            []compatibility.Artifact{{Platform: platform, Image: current}},
 				Defaults: compatibility.ReleaseDefaults{
 					FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall},
 					Upgrade:      denied, Rollback: denied,
@@ -730,7 +731,8 @@ func testTransitionPolicy(current, next string, operation compatibility.Operatio
 			},
 			{
 				ID: "v1.1.0", Version: "1.1.0", SourceRevision: strings.Repeat("b", 40), Distribution: "test",
-				Artifacts: []compatibility.Artifact{{Platform: platform, Image: next}},
+				LegacyBackupVersions: []int{},
+				Artifacts:            []compatibility.Artifact{{Platform: platform, Image: next}},
 				Defaults: compatibility.ReleaseDefaults{
 					FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall},
 					Upgrade:      denied, Rollback: denied,

@@ -41,7 +41,7 @@ func runAdminBackup(ctx context.Context, options admincli.Options, out io.Writer
 func runAdminRestore(ctx context.Context, options admincli.Options, in io.Reader, out io.Writer) error {
 	return (Operations{}).Restore(ctx, offline.RestoreRequest{
 		From: options.RestoreFrom, CurrentBackup: options.RestoreBefore,
-		Confirm: options.ConfirmRestore, DatabaseOnly: options.DatabaseOnly,
+		Confirm: options.ConfirmRestore, DatabaseOnly: options.DatabaseOnly, PreflightOnly: options.PreflightOnly,
 	}, in, out)
 }
 

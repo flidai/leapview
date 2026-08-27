@@ -998,6 +998,24 @@ tasks:
         go run ./internal/app/tools/transitionpolicy
         --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/transition-policy
 
+  test:ubdr:backup-manifest-v2:
+    desc: Validate backup manifest v2, bounded restore preflight, and non-mutation evidence
+    deps:
+      - db:generate
+      - api:generate
+    cmds:
+      - >-
+        go test
+        ./internal/platform
+        ./internal/admin/offline
+        ./internal/admin/cli
+        ./internal/app/adminoffline
+        -run 'Backup|Restore|Manifest|Preflight'
+        -count=1
+      - >-
+        go run ./internal/app/tools/backupmanifestv2
+        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/backup-manifest-v2
+
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:

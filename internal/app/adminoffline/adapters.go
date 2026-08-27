@@ -3,11 +3,13 @@ package adminoffline
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -25,8 +27,11 @@ import (
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	"github.com/flidai/leapview/internal/platform/locking"
+	"github.com/flidai/leapview/internal/platform/ociref"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 	_ "modernc.org/sqlite"
@@ -519,6 +524,11 @@ type instanceArchive struct {
 	dbPath string
 }
 
+var (
+	loadArchiveReleaseIdentity  = runtimeArchiveReleaseIdentity
+	loadArchiveTransitionPolicy = runtimeArchiveTransitionPolicy
+)
+
 func (archive instanceArchive) BackupDatabase(ctx context.Context, options adminoffline.BackupOptions) error {
 	path := options.Path
 	if options.Writer != nil {
@@ -544,9 +554,30 @@ func (archive instanceArchive) BackupDatabase(ctx context.Context, options admin
 }
 
 func (archive instanceArchive) BackupInstance(ctx context.Context, options adminoffline.BackupOptions) error {
+	releaseIdentity, err := loadArchiveReleaseIdentity()
+	if err != nil {
+		return err
+	}
+	policy, err := loadArchiveTransitionPolicy()
+	if err != nil {
+		return err
+	}
+	external := make([]platform.InstanceBackupExternalStoreReference, len(options.StorageTopology.ExternalStores))
+	for index, reference := range options.StorageTopology.ExternalStores {
+		external[index] = platform.InstanceBackupExternalStoreReference{
+			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
+			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
+			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
+		}
+	}
 	platformOptions := platform.InstanceBackupOptions{
 		HomeDir: archive.home, DBPath: archive.dbPath, OutPath: options.Path,
-		ExcludeRelativePaths: options.ExcludeRelativePaths,
+		ExcludeRelativePaths: options.ExcludeRelativePaths, Environment: options.Environment,
+		ReleaseIdentity: releaseIdentity, TransitionPolicy: policy,
+		StorageTopology: platform.InstanceBackupStorageTopology{
+			ControlPlane: options.StorageTopology.ControlPlane, ManagedData: options.StorageTopology.ManagedData,
+			DuckLake: options.StorageTopology.DuckLake, ExternalStores: external,
+		},
 	}
 	if options.Writer != nil {
 		return platform.BackupInstanceToWriter(ctx, platformOptions, options.Writer)
@@ -580,6 +611,14 @@ func (archive instanceArchive) RestoreDatabase(ctx context.Context, options admi
 }
 
 func (archive instanceArchive) RestoreInstance(ctx context.Context, options adminoffline.RestoreOptions) error {
+	releaseIdentity, err := loadArchiveReleaseIdentity()
+	if err != nil {
+		return err
+	}
+	policy, err := loadArchiveTransitionPolicy()
+	if err != nil {
+		return err
+	}
 	current := options.CurrentBackup
 	if options.DiscardCurrentBackup {
 		var err error
@@ -590,17 +629,108 @@ func (archive instanceArchive) RestoreInstance(ctx context.Context, options admi
 		defer os.Remove(current)
 	}
 	platformOptions := platform.InstanceRestoreOptions{
-		TargetHomeDir:        archive.home,
-		BackupPath:           options.Path,
-		CurrentBackupOut:     current,
-		DiscardCurrentBackup: options.DiscardCurrentBackup,
-		ExpectedEnvironment:  options.ExpectedEnvironment,
-		PreserveRelativeFile: instancelock.FileName,
-		ResetRelativePaths:   options.ResetRelativePaths,
+		TargetHomeDir:          archive.home,
+		BackupPath:             options.Path,
+		CurrentBackupOut:       current,
+		DiscardCurrentBackup:   options.DiscardCurrentBackup,
+		ExpectedEnvironment:    options.ExpectedEnvironment,
+		PreserveRelativeFile:   instancelock.FileName,
+		ResetRelativePaths:     options.ResetRelativePaths,
+		ExclusiveLockHeld:      true,
+		RequireExclusiveLock:   true,
+		TargetReleaseIdentity:  releaseIdentity,
+		ExternalEvidence:       options.ExternalEvidence,
+		TargetStorageTopology:  platformStorageTopology(options.TargetStorageTopology),
+		CurrentStorageTopology: platformStorageTopology(options.CurrentStorageTopology),
+		TransitionPolicy:       policy,
 	}
 	if options.Reader != nil {
 		platformOptions.BackupPath = ""
 		return platform.RestoreInstanceFromReader(ctx, platformOptions, options.Reader)
 	}
 	return platform.RestoreInstance(ctx, platformOptions)
+}
+
+func (archive instanceArchive) PreflightInstance(ctx context.Context, options adminoffline.RestoreOptions) (adminoffline.RestorePreflightResult, error) {
+	releaseIdentity, err := loadArchiveReleaseIdentity()
+	if err != nil {
+		return adminoffline.RestorePreflightResult{}, err
+	}
+	policy, err := loadArchiveTransitionPolicy()
+	if err != nil {
+		return adminoffline.RestorePreflightResult{}, err
+	}
+	path := options.Path
+	if options.Reader != nil {
+		temporary, err := securefs.CopyPrivateTemporaryFile(options.Reader, os.TempDir(), "leapview-preflight-*.tar.gz")
+		if err != nil {
+			return adminoffline.RestorePreflightResult{}, err
+		}
+		defer os.Remove(temporary)
+		path = temporary
+	}
+	current := options.CurrentBackup
+	if options.DiscardCurrentBackup {
+		current, err = securefs.UnusedTemporaryPath(filepath.Dir(archive.home), platform.InstanceRestoreCheckpointPattern)
+		if err != nil {
+			return adminoffline.RestorePreflightResult{}, err
+		}
+	}
+	plan, preflightErr := platform.PreflightInstanceRestore(ctx, platform.InstanceRestorePreflightOptions{
+		ArchivePath: path, TargetHomeDir: archive.home, ExpectedEnvironment: options.ExpectedEnvironment,
+		PreserveRelativeFile: instancelock.FileName, ResetRelativePaths: options.ResetRelativePaths,
+		ExclusiveLockHeld: true, RequireExclusiveLock: true,
+		CurrentBackupOut: current, DiscardCurrentBackup: options.DiscardCurrentBackup,
+		TargetReleaseIdentity: releaseIdentity, ExternalEvidence: options.ExternalEvidence,
+		TargetStorageTopology:  platformStorageTopology(options.TargetStorageTopology),
+		CurrentStorageTopology: platformStorageTopology(options.CurrentStorageTopology),
+		TransitionPolicy:       policy,
+	})
+	document, err := json.MarshalIndent(plan, "", "  ")
+	if err != nil {
+		return adminoffline.RestorePreflightResult{}, err
+	}
+	document = append(document, '\n')
+	return adminoffline.RestorePreflightResult{Document: document}, preflightErr
+}
+
+func platformStorageTopology(topology adminoffline.BackupStorageTopology) platform.InstanceBackupStorageTopology {
+	external := make([]platform.InstanceBackupExternalStoreReference, len(topology.ExternalStores))
+	for index, reference := range topology.ExternalStores {
+		external[index] = platform.InstanceBackupExternalStoreReference{
+			Role: reference.Role, Provider: reference.Provider, Endpoint: reference.Endpoint,
+			Region: reference.Region, Bucket: reference.Bucket, Prefix: reference.Prefix,
+			RecoveryPoint: reference.RecoveryPoint, EvidenceKey: reference.EvidenceKey,
+		}
+	}
+	return platform.InstanceBackupStorageTopology{
+		ControlPlane: topology.ControlPlane, ManagedData: topology.ManagedData,
+		DuckLake: topology.DuckLake, ExternalStores: external,
+	}
+}
+
+func runtimeArchiveReleaseIdentity() (compatibility.ReleaseIdentity, error) {
+	build := buildinfo.Current()
+	if build.Development || build.Dirty || build.Version == buildinfo.DevelopmentVersion || build.Revision == buildinfo.UnknownValue {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("backup/restore requires exact released build provenance")
+	}
+	image := strings.TrimSpace(os.Getenv("LEAPVIEW_IMAGE"))
+	if err := ociref.ValidateImmutable(image); err != nil {
+		return compatibility.ReleaseIdentity{}, fmt.Errorf("backup/restore release image identity: %w", err)
+	}
+	return compatibility.ReleaseIdentity{
+		ReleaseID: "v" + strings.TrimPrefix(build.Version, "v"), Version: strings.TrimPrefix(build.Version, "v"),
+		SourceRevision: build.Revision, Image: image, Distribution: "public", Platform: runtime.GOOS + "/" + runtime.GOARCH,
+	}, nil
+}
+
+func runtimeArchiveTransitionPolicy() (*compatibility.Policy, error) {
+	const policyPath = "/run/leapview/release-transition-policy.json"
+	if _, err := os.Stat(policyPath); err == nil {
+		policy, _, err := compatibility.LoadPolicy(policyPath)
+		return policy, err
+	} else if !os.IsNotExist(err) {
+		return nil, err
+	}
+	return compatibility.EmbeddedPolicy()
 }

@@ -53,6 +53,8 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"target: /tmp",
 		"size: 536870912",
 		"mode: 01777",
+		"LEAPVIEW_IMAGE: ${LEAPVIEW_IMAGE:?set LEAPVIEW_IMAGE in deployment.env}",
+		"./release-transition-policy.json:/run/leapview/release-transition-policy.json:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose.yaml missing %q", required)
@@ -943,8 +945,8 @@ func writeReleaseTransitionPolicy(t *testing.T, path, previousImage, candidateIm
 	policy := &compatibility.Policy{
 		SchemaVersion: compatibility.CurrentSchemaVersion, PolicyVersion: "test/release-v2", CandidateRelease: "v2.0.0",
 		Releases: []compatibility.Release{
-			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
-			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
 		},
 		Transitions: []compatibility.Transition{
 			{Operation: compatibility.OperationUpgrade, From: "v1.0.0", To: "v2.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},
