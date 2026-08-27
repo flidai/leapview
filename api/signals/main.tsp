@@ -52,7 +52,7 @@ model DashboardBuilderSignal {
   `revision`: DashboardBuilderRevisionSignal;
   `title`: string;
   `lifecycle`: "draft" | "published" | "archived";
-  `visibility`: "private" | "shared";
+  `visibility`: "private" | "restricted" | "organization";
   `hasUnpublishedChanges`: boolean;
   `origin`: DashboardBuilderOriginSignal;
   `sourceEvidence`?: DashboardBuilderSourceEvidenceSignal;

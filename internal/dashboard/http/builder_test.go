@@ -222,6 +222,33 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
+			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
+			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
+		},
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "placement-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.SetPlacements == nil {
+		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
+	}
+	placements := fake.executed.SetPlacements.Placements
+	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
+		t.Fatalf("translated placements = %#v", placements)
+	}
+}
+
 func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
 	f.previewCtx = ctx
 	f.previewReq = request
@@ -447,6 +474,25 @@ func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	statusEnvelope := (Handler{Authoring: statusFailure}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", statusFailure.builder)
 	if statusEnvelope.Builder.Preview.Active || statusEnvelope.Builder.Preview.Error == nil || *statusEnvelope.Builder.Preview.Error != "runtime unavailable" {
 		t.Fatalf("status preview failure state = %#v", statusEnvelope.Builder.Preview)
+	}
+}
+
+func TestDashboardBuilderPreviewSuccessExplicitlyClearsStreamedError(t *testing.T) {
+	stale := "aggregate visual requires a metric"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "project", DashboardID: "sales", DraftID: "draft-1",
+		Preview: uisignals.DashboardBuilderPreviewStateSignal{Error: &stale},
+	}}
+	envelope := (Handler{Authoring: fake}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
+	if !envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "" {
+		t.Fatalf("successful preview did not explicitly clear prior error: %#v", envelope.Builder.Preview)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"error":""`)) {
+		t.Fatalf("successful preview patch omits explicit error clear: %s", encoded)
 	}
 }
 

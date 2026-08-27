@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -140,6 +141,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
 	case *AddVisualPayload:
 		return addCanonicalVisual(value, *patch)
+	case *SetPlacementsPayload:
+		return setCanonicalPlacements(value, *patch)
 	case *AssignFieldPayload:
 		return assignCanonicalField(value, *patch)
 	case *UpsertPagePayload:
@@ -318,6 +321,94 @@ func addCanonicalVisual(value *document.DashboardDocument, patch AddVisualPayloa
 	return nil
 }
 
+func setCanonicalPlacements(value *document.DashboardDocument, patch SetPlacementsPayload) error {
+	pageIndex := -1
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID == patch.PageID {
+			pageIndex = index
+			break
+		}
+	}
+	if pageIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	}
+	page := &value.Spec.Pages[pageIndex]
+	columns, err := canonicalPlacementColumns(*value, *page)
+	if err != nil {
+		return err
+	}
+
+	placements := make(map[string]document.DashboardPlacement, len(page.Components))
+	componentIndexes := make(map[string]int, len(page.Components))
+	for index := range page.Components {
+		base, err := page.Components[index].Base()
+		if err != nil {
+			return fmt.Errorf("%w: component %d: %v", ErrInvalidPayload, index, err)
+		}
+		if _, exists := placements[base.ID]; exists {
+			return fmt.Errorf("%w: page %q contains duplicate component %q", ErrInvalidPayload, patch.PageID, base.ID)
+		}
+		placements[base.ID] = base.Placement
+		componentIndexes[base.ID] = index
+	}
+	for _, update := range patch.Placements {
+		if _, exists := placements[update.ComponentID]; !exists {
+			return fmt.Errorf("%w: component %q on page %q", ErrNotFound, update.ComponentID, patch.PageID)
+		}
+		placements[update.ComponentID] = update.Placement
+	}
+
+	ids := make([]string, 0, len(placements))
+	for id := range placements {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		placement := placements[id]
+		if err := validatePlacementCoordinates(placement); err != nil {
+			return fmt.Errorf("%w: component %q: %v", ErrInvalidPayload, id, err)
+		}
+		columnEnd := int64(placement.Column) + int64(placement.ColumnSpan) - 1
+		if int64(placement.Column) > columns || columnEnd > columns {
+			return fmt.Errorf("%w: component %q columns %d..%d exceed grid of %d columns", ErrInvalidPayload, id, placement.Column, columnEnd, columns)
+		}
+	}
+	for leftIndex, leftID := range ids {
+		for _, rightID := range ids[leftIndex+1:] {
+			if placementsOverlapCanonical(placements[leftID], placements[rightID]) {
+				return fmt.Errorf("%w: components %q and %q overlap", ErrConflict, leftID, rightID)
+			}
+		}
+	}
+	for id, placement := range placements {
+		index := componentIndexes[id]
+		base, err := page.Components[index].Base()
+		if err != nil {
+			return fmt.Errorf("%w: component %q: %v", ErrInvalidPayload, id, err)
+		}
+		base.Placement = placement
+	}
+	return nil
+}
+
+func canonicalPlacementColumns(value document.DashboardDocument, page document.DashboardPage) (int64, error) {
+	const defaultColumns int64 = 12
+	columns := defaultColumns
+	if value.Spec.Layout != nil {
+		if value.Spec.Layout.Columns <= 0 {
+			return 0, fmt.Errorf("%w: dashboard layout columns must be greater than zero", ErrInvalidPayload)
+		}
+		columns = int64(value.Spec.Layout.Columns)
+	}
+	if page.Layout != nil && page.Layout.Columns != nil {
+		if *page.Layout.Columns <= 0 {
+			return 0, fmt.Errorf("%w: page layout columns must be greater than zero", ErrInvalidPayload)
+		}
+		columns = int64(*page.Layout.Columns)
+	}
+	return columns, nil
+}
+
 func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex int) document.DashboardPlacement {
 	const (
 		defaultColumnSpan int32 = 12
@@ -362,6 +453,14 @@ func placementsOverlap(left, right document.DashboardPlacement) bool {
 	rightColumnEnd := right.Column + maxPositive(right.ColumnSpan, 1)
 	rightRowEnd := right.Row + maxPositive(right.RowSpan, 1)
 	return left.Column < rightColumnEnd && right.Column < leftColumnEnd && left.Row < rightRowEnd && right.Row < leftRowEnd
+}
+
+func placementsOverlapCanonical(left, right document.DashboardPlacement) bool {
+	leftColumnEnd := int64(left.Column) + int64(left.ColumnSpan) - 1
+	leftRowEnd := int64(left.Row) + int64(left.RowSpan) - 1
+	rightColumnEnd := int64(right.Column) + int64(right.ColumnSpan) - 1
+	rightRowEnd := int64(right.Row) + int64(right.RowSpan) - 1
+	return int64(left.Column) <= rightColumnEnd && int64(right.Column) <= leftColumnEnd && int64(left.Row) <= rightRowEnd && int64(right.Row) <= leftRowEnd
 }
 
 func maxPositive(value, fallback int32) int32 {
@@ -509,10 +608,16 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 			}
 			query.Dataset = strings.TrimSpace(patch.ResolvedTable)
 		}
-		if qualified := strings.SplitN(strings.TrimSpace(patch.FieldID), ".", 2); len(qualified) == 2 && qualified[0] != query.Dataset {
-			return fmt.Errorf("%w: records field table %q does not match dataset %q", ErrInvalidPayload, qualified[0], query.Dataset)
-		}
 		ref := patch.FieldID
+		if qualified := strings.SplitN(strings.TrimSpace(patch.FieldID), ".", 2); len(qualified) == 2 {
+			if qualified[0] != query.Dataset {
+				return fmt.Errorf("%w: records field table %q does not match dataset %q", ErrInvalidPayload, qualified[0], query.Dataset)
+			}
+			// The governed intent uses a qualified field to resolve and verify
+			// its dataset. The canonical records query stores that dataset once
+			// and its field selections as schema-valid unqualified members.
+			ref = qualified[1]
+		}
 		for _, existing := range query.Fields {
 			id, _ := canonicalRecordSelection(existing)
 			if id == ref {

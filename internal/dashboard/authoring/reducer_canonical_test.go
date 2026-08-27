@@ -1,7 +1,9 @@
 package authoring
 
 import (
+	"errors"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -175,6 +177,75 @@ func TestCanonicalReducerAppliesMetadataPageVisualLayoutFiltersInteractionAndFie
 			t.Fatalf("lifecycle draft pointer = %#v, revision = %#v", lifecycle.Draft.Revision, current.Token())
 		}
 	})
+	t.Run("qualified detail field resolves dataset and stores canonical member", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		var err error
+		lifecycle, current, err = apply(t, lifecycle, current, &AddVisualPayload{PageID: "overview", VisualID: "records", ComponentID: "records-component", Type: "table", Title: "Records"})
+		if err != nil {
+			t.Fatalf("add records visual: %v", err)
+		}
+		lifecycle, current, err = apply(t, lifecycle, current, &AssignFieldPayload{PageID: "overview", VisualID: "records-component", FieldID: "sales_orders.order_id", Role: FieldRoleDetail, ResolvedTable: "sales_orders"})
+		if err != nil {
+			t.Fatalf("assign qualified detail field: %v", err)
+		}
+		query, ok := current.Document.Spec.Visuals["records"].Query.Value.(*document.RecordsDashboardQuery)
+		if !ok || query.Dataset != "sales_orders" || len(query.Fields) != 1 || query.Fields[0].String == nil || *query.Fields[0].String != "order_id" {
+			t.Fatalf("assigned records query = %#v", current.Document.Spec.Visuals["records"].Query)
+		}
+	})
+}
+
+func TestCanonicalReducerAtomicallyUpdatesComponentPlacements(t *testing.T) {
+	apply := func(t *testing.T, lifecycle DashboardLifecycle, current Revision, payload authoringPayload) (DashboardLifecycle, Revision, error) {
+		t.Helper()
+		command := Command{ID: CommandID("placement-command-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		return ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("placement-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 14, int(current.Number), 0, 0, time.UTC))
+	}
+	lifecycle, current := canonicalReducerFixture(t)
+	var err error
+	lifecycle, current, err = apply(t, lifecycle, current, &AddVisualPayload{PageID: "overview", VisualID: "secondary", ComponentID: "secondary-component", Type: "bar", Title: "Secondary"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	placements := &SetPlacementsPayload{PageID: "overview", Placements: []PlacementUpdate{
+		{ComponentID: "base-component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}},
+		{ComponentID: "secondary-component", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}},
+	}}
+	lifecycle, current, err = apply(t, lifecycle, current, placements)
+	if err != nil {
+		t.Fatalf("atomic placement update: %v", err)
+	}
+	for _, component := range current.Document.Spec.Pages[0].Components {
+		base, baseErr := component.Base()
+		if baseErr != nil {
+			t.Fatal(baseErr)
+		}
+		switch base.ID {
+		case "base-component":
+			if base.Placement.Column != 1 || base.Placement.ColumnSpan != 6 {
+				t.Fatalf("base placement = %#v", base.Placement)
+			}
+		case "secondary-component":
+			if base.Placement.Column != 7 || base.Placement.ColumnSpan != 6 {
+				t.Fatalf("secondary placement = %#v", base.Placement)
+			}
+		}
+	}
+	before := current
+	_, _, err = apply(t, lifecycle, current, &SetPlacementsPayload{PageID: "overview", Placements: []PlacementUpdate{
+		{ComponentID: "base-component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 7, RowSpan: 4}},
+		{ComponentID: "secondary-component", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}},
+	}})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("overlapping placement error = %v, want conflict", err)
+	}
+	if got, _ := before.Document.Spec.Pages[0].Components[0].Base(); got.Placement.ColumnSpan != 6 {
+		t.Fatalf("failed atomic update mutated base placement = %#v", got.Placement)
+	}
+	_, _, err = apply(t, lifecycle, current, &SetPlacementsPayload{PageID: "overview", Placements: []PlacementUpdate{{ComponentID: "base-component", Placement: document.DashboardPlacement{Column: 13, Row: 1, ColumnSpan: 1, RowSpan: 1}}}})
+	if err == nil || !strings.Contains(err.Error(), "exceed grid") {
+		t.Fatalf("out-of-grid placement error = %v", err)
+	}
 }
 
 func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
@@ -185,6 +256,8 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.AddPage = value
 	case *AddVisualPayload:
 		command.AddVisual = value
+	case *SetPlacementsPayload:
+		command.SetPlacements = value
 	case *AssignFieldPayload:
 		command.AssignField = value
 	case *SetLayoutPayload:

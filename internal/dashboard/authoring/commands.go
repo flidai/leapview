@@ -19,6 +19,10 @@ const (
 	AuthorizationActionEdit    AuthorizationAction = "edit"
 	AuthorizationActionPublish AuthorizationAction = "publish"
 	AuthorizationActionArchive AuthorizationAction = "archive"
+
+	// maxPlacementUpdates bounds one atomic browser reflow command and keeps
+	// validation and revision hashing work proportional to the page size.
+	maxPlacementUpdates = 1024
 )
 
 func (a AuthorizationAction) Valid() bool {
@@ -125,6 +129,27 @@ type AddVisualPayload struct {
 
 func (AddVisualPayload) authoringPayload() {}
 func (AddVisualPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// PlacementUpdate identifies one page component and its final canonical grid
+// placement. A placement command carries every component touched by a drag or
+// resize transaction so GridStack-style reflow is persisted atomically.
+type PlacementUpdate struct {
+	ComponentID string                      `json:"componentId"`
+	Placement   document.DashboardPlacement `json:"placement"`
+}
+
+// SetPlacementsPayload atomically replaces the placements of one page's
+// components. Components not listed retain their existing placement.
+// Placement coordinates are canonical 1-based column/row values.
+type SetPlacementsPayload struct {
+	PageID     string            `json:"pageId"`
+	Placements []PlacementUpdate `json:"placements"`
+}
+
+func (SetPlacementsPayload) authoringPayload() {}
+func (SetPlacementsPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -264,6 +289,7 @@ type Command struct {
 	SetVisibility  *SetVisibilityPayload  `json:"setVisibility,omitempty"`
 	AddPage        *AddPagePayload        `json:"addPage,omitempty"`
 	AddVisual      *AddVisualPayload      `json:"addVisual,omitempty"`
+	SetPlacements  *SetPlacementsPayload  `json:"setPlacements,omitempty"`
 	AssignField    *AssignFieldPayload    `json:"assignField,omitempty"`
 	UpsertPage     *UpsertPagePayload     `json:"upsertPage,omitempty"`
 	RemovePage     *RemovePagePayload     `json:"removePage,omitempty"`
@@ -289,6 +315,9 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.AddVisual != nil {
 		payloads = append(payloads, c.AddVisual)
+	}
+	if c.SetPlacements != nil {
+		payloads = append(payloads, c.SetPlacements)
 	}
 	if c.AssignField != nil {
 		payloads = append(payloads, c.AssignField)
@@ -358,7 +387,7 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *AssignFieldPayload:
+	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload:
 		return true
 	default:
 		return false
@@ -455,6 +484,36 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !canonicalVisualTypeSupported(document.DashboardVisualType(strings.TrimSpace(value.Type))) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+	case *SetPlacementsPayload:
+		if strings.TrimSpace(value.PageID) == "" {
+			return fmt.Errorf("%w: set placement requires page id", ErrInvalidPayload)
+		}
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if len(value.Placements) == 0 {
+			return fmt.Errorf("%w: set placement requires at least one component placement", ErrInvalidPayload)
+		}
+		if len(value.Placements) > maxPlacementUpdates {
+			return fmt.Errorf("%w: set placement exceeds bounded component limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Placements))
+		for index, update := range value.Placements {
+			componentID := strings.TrimSpace(update.ComponentID)
+			if componentID == "" {
+				return fmt.Errorf("%w: set placement component %d requires component id", ErrInvalidPayload, index)
+			}
+			if err := validateCanonicalObjectID("component id", componentID); err != nil {
+				return err
+			}
+			if _, exists := seen[componentID]; exists {
+				return fmt.Errorf("%w: set placement contains duplicate component %q", ErrInvalidPayload, componentID)
+			}
+			seen[componentID] = struct{}{}
+			if err := validatePlacementCoordinates(update.Placement); err != nil {
+				return fmt.Errorf("%w: set placement component %q: %v", ErrInvalidPayload, componentID, err)
+			}
 		}
 	case *AssignFieldPayload:
 		for kind, id := range map[string]string{"page id": value.PageID, "visual id": value.VisualID, "field id": value.FieldID} {
@@ -553,6 +612,16 @@ func validateCanonicalObjectID(kind, value string) error {
 	trimmed := strings.TrimSpace(value)
 	if trimmed == "" || value != trimmed || !canonicalObjectIDPattern.MatchString(trimmed) {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
+	}
+	return nil
+}
+
+func validatePlacementCoordinates(value document.DashboardPlacement) error {
+	if value.Column <= 0 || value.Row <= 0 {
+		return fmt.Errorf("placement column and row must be greater than zero")
+	}
+	if value.ColumnSpan <= 0 || value.RowSpan <= 0 {
+		return fmt.Errorf("placement spans must be greater than zero")
 	}
 	return nil
 }
