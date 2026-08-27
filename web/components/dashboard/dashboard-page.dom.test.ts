@@ -379,27 +379,37 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
   }
 })
 
-test('app page navigation provides a separate back to dashboards link', async () => {
+test('app report header owns dashboard identity and parent navigation above contextual rails', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
+    await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
     await page.goto(baseURL)
     await page.waitForFunction(() => (
       customElements.get('lv-dashboard-page')
         && customElements.get('lv-sub-sidebar')
         && (document.querySelector('lv-dashboard-page') as any)?.page
     ))
+    await page.waitForTimeout(250)
 
     const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
       await sidebar.updateComplete
       const root = sidebar.shadowRoot!
-      const back = root.querySelector('.back-link') as HTMLAnchorElement
+      const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
+      const back = reportHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
+      const header = root.querySelector('header') as HTMLElement
+      const sectionTitle = root.querySelector('.section-title') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
+      const main = element.shadowRoot.querySelector('.main') as HTMLElement
+      const expandedWidth = Math.round(sidebar.getBoundingClientRect().width)
       const expandedPageTop = Math.round(firstPage.getBoundingClientRect().top)
       const backIconMarkup = back.querySelector('svg')?.innerHTML
       const expandedToggleIconMarkup = collapse.querySelector('svg')?.innerHTML
+      const reportHeaderRect = reportHeader.getBoundingClientRect()
+      const sidebarRect = sidebar.getBoundingClientRect()
+      const mainRect = main.getBoundingClientRect()
       collapse.click()
       await sidebar.updateComplete
       const collapsedPageTop = Math.round(
@@ -411,11 +421,21 @@ test('app page navigation provides a separate back to dashboards link', async ()
         label: back.getAttribute('aria-label'),
         text: back.textContent?.trim(),
         backTag: back.tagName,
+        title: back.getAttribute('title'),
+        reportTitle: reportHeader.querySelector('h1')?.textContent?.trim(),
+        reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
+        sidebarTitleCount: root.querySelectorAll('.sidebar-title').length,
+        sidebarBackCount: root.querySelectorAll('.back-link').length,
+        headerSpansSidebar: Math.round(reportHeaderRect.left) === Math.round(sidebarRect.left),
+        sidebarBelowHeader: Math.abs(sidebarRect.top - reportHeaderRect.bottom) < 2,
+        mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
+        collapseInHeader: header.contains(collapse),
+        sectionTitle: sectionTitle.textContent?.trim(),
+        sectionTitleTransform: getComputedStyle(sectionTitle).textTransform,
+        expandedWidth,
         collapseTag: collapse.tagName,
         collapseLabel: collapse.getAttribute('aria-label'),
         collapsed: sidebar.hasAttribute('data-collapsed'),
-        collapsedTextDisplay: getComputedStyle(root.querySelector('.back-label')).display,
-        collapsedLinkVisible: back.getBoundingClientRect().width > 0 && back.getBoundingClientRect().height > 0,
         railLabelDisplay: getComputedStyle(root.querySelector('.rail-label')).display,
         pageTopShift: collapsedPageTop - expandedPageTop,
         toggleIconDistinctFromBack: expandedToggleIconMarkup !== backIconMarkup,
@@ -426,17 +446,27 @@ test('app page navigation provides a separate back to dashboards link', async ()
     expect(state).toEqual({
       href: '/',
       label: 'Back to dashboards',
-      text: 'Dashboards',
+      text: '',
       backTag: 'A',
+      title: 'All dashboards',
+      reportTitle: 'Executive Sales Dashboard',
+      reportTitleCount: 1,
+      sidebarTitleCount: 0,
+      sidebarBackCount: 0,
+      headerSpansSidebar: true,
+      sidebarBelowHeader: true,
+      mainBelowHeader: true,
+      collapseInHeader: true,
+      sectionTitle: 'Pages',
+      sectionTitleTransform: 'none',
+      expandedWidth: 144,
       collapseTag: 'BUTTON',
-      collapseLabel: 'Expand Pages',
+      collapseLabel: 'Expand Report pages',
       collapsed: true,
-      collapsedTextDisplay: 'none',
-      collapsedLinkVisible: true,
       railLabelDisplay: 'none',
       pageTopShift: 0,
       toggleIconDistinctFromBack: true,
-      toggleIconChanges: true,
+      toggleIconChanges: false,
     })
   } finally {
     await page.close()
@@ -3328,7 +3358,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #eaeef2; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-scrollbar-thumb: #8c959f; --lv-scrollbar-thumb-hover: #6e7781; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --borderWidth-default: 1px; --control-small-size: 28px; --control-medium-size: 32px; --control-xlarge-size: 40px; --focus-outline: 2px solid #0969da; --focus-outline-offset: -2px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --spinner-size-small: 16px; --spinner-size-medium: 32px; --spinner-size-large: 64px; --base-duration-1000: 1000ms; --base-easing-linear: linear; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #eaeef2; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-scrollbar-thumb: #8c959f; --lv-scrollbar-thumb-hover: #6e7781; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-sidebar-width-expanded: 248px; --lv-sub-sidebar-width-expanded: 144px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --borderWidth-default: 1px; --control-small-size: 28px; --control-medium-size: 32px; --control-xlarge-size: 40px; --focus-outline: 2px solid #0969da; --focus-outline-offset: -2px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --spinner-size-small: 16px; --spinner-size-medium: 32px; --spinner-size-large: 64px; --base-duration-1000: 1000ms; --base-easing-linear: linear; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
           body { --lv-loading-delay-short: 250ms; --lv-loading-delay-long: 500ms; }
           lv-dashboard-page { min-height: 720px; }
         </style>

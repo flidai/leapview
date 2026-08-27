@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, PanelLeftClose, PanelLeftOpen, type IconNode } from 'lucide'
+import { PanelLeft, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -21,9 +21,6 @@ type SubSidebarConfig = {
   storageKey?: string
   activeId?: string
   emptyText?: string
-  backHref?: string
-  backLabel?: string
-  backText?: string
   disabled?: boolean
   collapsible?: boolean
   numbered?: boolean
@@ -32,9 +29,6 @@ type SubSidebarConfig = {
 
 type ResolvedConfig = Required<Pick<SubSidebarConfig, 'label' | 'railLabel' | 'ariaLabel' | 'storageKey' | 'emptyText'>> & {
   activeId: string
-  backHref: string
-  backLabel: string
-  backText: string
   disabled: boolean
   collapsible: boolean
   numbered: boolean
@@ -54,9 +48,6 @@ const defaultConfig: ResolvedConfig = {
   ariaLabel: 'Sub navigation',
   storageKey: 'leapview-sub-sidebar-collapsed',
   activeId: '',
-  backHref: '',
-  backLabel: '',
-  backText: '',
   emptyText: 'No items.',
   disabled: false,
   collapsible: true,
@@ -129,57 +120,8 @@ class SubSidebar extends LitElement {
       box-sizing: border-box;
       display: grid;
       min-width: 0;
-      height: calc(
-        var(--base-size-16) + var(--control-small-size) + var(--base-size-4) + var(--control-small-size)
-      );
-      gap: var(--base-size-4);
+      height: calc(var(--base-size-16) + var(--control-small-size));
       padding: var(--base-size-8);
-    }
-
-    .back-link {
-      box-sizing: border-box;
-      display: grid;
-      min-width: 0;
-      height: var(--control-small-size);
-      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
-      align-items: center;
-      gap: var(--base-size-4);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      padding: 0 var(--base-size-4);
-      font: var(--lv-type-caption);
-    }
-
-    .back-link:hover,
-    .back-link:focus-visible {
-      background: var(--control-bgColor-hover);
-      color: var(--lv-fg-default);
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .back-icon {
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-    }
-
-    .back-icon svg {
-      width: 14px;
-      height: 14px;
-      fill: none;
-      stroke: currentColor;
-      stroke-linecap: round;
-      stroke-linejoin: round;
-      stroke-width: 2;
-    }
-
-    .back-label {
-      overflow: hidden;
-      min-width: 0;
-      text-overflow: ellipsis;
-      white-space: nowrap;
     }
 
     .top-row {
@@ -192,13 +134,17 @@ class SubSidebar extends LitElement {
     }
 
     .section-title {
+      display: flex;
       overflow: hidden;
-      color: var(--lv-fg-default);
+      height: var(--control-small-size);
+      align-items: center;
+      color: var(--lv-fg-muted);
+      padding-inline: var(--base-size-4);
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-caption);
       letter-spacing: 0;
-      text-transform: uppercase;
+      text-transform: none;
     }
 
     .collapse {
@@ -393,7 +339,6 @@ class SubSidebar extends LitElement {
     }
 
     :host([data-collapsed]) .section-title,
-    :host([data-collapsed]) .back-label,
     :host([data-collapsed]) .item-text,
     :host([data-collapsed]) .empty {
       display: none;
@@ -402,14 +347,6 @@ class SubSidebar extends LitElement {
     :host([data-collapsed]) .top-row {
       display: grid;
       justify-items: center;
-    }
-
-    :host([data-collapsed]) .back-link {
-      width: var(--control-small-size);
-      grid-template-columns: var(--control-xsmall-size);
-      justify-self: center;
-      justify-items: center;
-      padding: 0;
     }
 
     :host([data-collapsed]) .collapse {
@@ -587,29 +524,18 @@ class SubSidebar extends LitElement {
     return html`
       <aside aria-label=${config.ariaLabel}>
         <header>
-          ${config.backHref ? html`
-            <a
-              class="back-link"
-              href=${config.backHref}
-              aria-label=${config.backLabel}
-              title=${config.backLabel}
-            >
-              <span class="back-icon" aria-hidden="true">${icon('arrow-left')}</span>
-              <span class="back-label">${config.backText}</span>
-            </a>
-          ` : null}
           <div class="top-row">
             <strong class="section-title">${config.label}</strong>
             <button
               class="collapse"
               type="button"
               ?hidden=${!config.collapsible}
-              aria-label=${collapsed ? `Expand ${config.label}` : `Collapse ${config.label}`}
+              aria-label=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
               aria-pressed=${String(collapsed)}
-              title=${collapsed ? `Expand ${config.label}` : `Collapse ${config.label}`}
+              title=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
               @click=${() => this.toggleCollapsed(config.storageKey)}
             >
-              ${icon(collapsed ? 'panel-left-open' : 'panel-left-close')}
+              ${icon('panel-left')}
             </button>
           </div>
         </header>
@@ -641,9 +567,6 @@ class SubSidebar extends LitElement {
       ariaLabel: cleanText(this.config.ariaLabel) || label,
       storageKey: cleanText(this.config.storageKey) || defaultConfig.storageKey,
       activeId: cleanText(this.config.activeId),
-      backHref: cleanText(this.config.backHref),
-      backLabel: cleanText(this.config.backLabel),
-      backText: cleanText(this.config.backText) || cleanText(this.config.backLabel),
       emptyText: cleanText(this.config.emptyText) || defaultConfig.emptyText,
       disabled: Boolean(this.config.disabled),
       collapsible: this.config.collapsible !== false,
@@ -783,11 +706,9 @@ function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function icon(name: 'arrow-left' | 'panel-left-close' | 'panel-left-open') {
-  const icons: Record<'arrow-left' | 'panel-left-close' | 'panel-left-open', IconNode> = {
-    'arrow-left': ArrowLeft,
-    'panel-left-close': PanelLeftClose,
-    'panel-left-open': PanelLeftOpen,
+function icon(name: 'panel-left') {
+  const icons: Record<'panel-left', IconNode> = {
+    'panel-left': PanelLeft,
   }
 
   return lucideIcon(icons[name])

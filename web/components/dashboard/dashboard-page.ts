@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronDown, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -129,10 +129,33 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .route {
       position: relative;
       display: grid;
+      height: 100svh;
       min-height: 100svh;
       grid-template-columns: auto minmax(0, 1fr) 0px;
+      grid-template-rows: auto minmax(0, 1fr);
+      overflow: hidden;
       background: var(--lv-bg-app);
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
+    }
+
+    .route > .header {
+      grid-column: 1 / -1;
+      grid-row: 1;
+    }
+
+    .route > lv-sub-sidebar {
+      grid-column: 1;
+      grid-row: 2;
+    }
+
+    .route > .main {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .route > lv-chat-drawer {
+      grid-column: 3;
+      grid-row: 2;
     }
 
     .publication-attribution {
@@ -172,15 +195,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .main {
       display: grid;
       min-width: 0;
-      height: 100svh;
+      height: 100%;
       min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) auto;
       overflow: hidden;
       background: var(--lv-bg-app);
     }
 
     .main[data-report-layout='mobile'] {
-      height: 100svh;
+      height: 100%;
       min-height: 0;
       overflow: hidden;
     }
@@ -211,6 +234,37 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       gap: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
       padding: var(--lv-space-control) var(--base-size-16);
+    }
+
+    .header-leading {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: var(--base-size-8);
+    }
+
+    .dashboard-back-link {
+      display: grid;
+      width: var(--control-medium-size);
+      height: var(--control-medium-size);
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      text-decoration: none;
+    }
+
+    .dashboard-back-link:hover,
+    .dashboard-back-link:focus-visible {
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .dashboard-back-link svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
     }
 
     .title-block {
@@ -641,6 +695,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
+      :host(:not([presentation='embed'])) .dashboard-back-link {
+        width: var(--control-medium-size);
+        height: var(--control-medium-size);
+      }
+
       :host(:not([presentation='embed'])) .detail {
         display: none;
       }
@@ -977,17 +1036,20 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-        <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
-        <section
-          class="main"
-          data-report-layout=${this.reportLayout}
-          aria-label="LeapView report canvas"
-          @lv-report-zoom-state=${this.handleReportZoomState}
-        >
           <header class="header">
-            <div class="title-block">
-              <h1>${page.title}</h1>
-              <p class="detail">${page.headerDetail}</p>
+            <div class="header-leading">
+              ${this.presentation === 'app' ? html`
+                <a
+                  class="dashboard-back-link"
+                  href="/"
+                  aria-label="Back to dashboards"
+                  title="All dashboards"
+                >${lucideIcon(ArrowLeft)}</a>
+              ` : nothing}
+              <div class="title-block">
+                <h1>${page.title}</h1>
+                <p class="detail">${page.headerDetail}</p>
+              </div>
             </div>
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
@@ -1016,6 +1078,13 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 							` : nothing}
 						</div>
           </header>
+        <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
+        <section
+          class="main"
+          data-report-layout=${this.reportLayout}
+          aria-label="LeapView report canvas"
+          @lv-report-zoom-state=${this.handleReportZoomState}
+        >
           <div
             class="body"
             role=${this.reportLayout === 'mobile' ? 'region' : nothing}
@@ -1098,9 +1167,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private pageSidebar(page: DashboardPageSignal) {
     return {
-      backHref: this.presentation === 'app' ? '/' : undefined,
-      backLabel: this.presentation === 'app' ? 'Back to dashboards' : undefined,
-      backText: this.presentation === 'app' ? 'Dashboards' : undefined,
       label: 'Pages',
       railLabel: 'Pages',
       ariaLabel: 'Report pages',
