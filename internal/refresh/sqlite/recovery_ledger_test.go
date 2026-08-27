@@ -2,6 +2,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"path/filepath"
@@ -49,6 +50,32 @@ func TestRecoveryOccurrenceEnqueueIsIdempotentAndRejectsConflictingArtifact(t *t
 	}
 	if len(occurrences) != 1 {
 		t.Fatalf("durable occurrence count = %d, want 1", len(occurrences))
+	}
+}
+
+func TestRecoveryLedgerFailsClosedForMissingAndCorruptOccurrences(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	ctx := t.Context()
+	if _, err := repository.Occurrence(ctx, "missing-occurrence"); !errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("missing occurrence error = %v, want sql.ErrNoRows", err)
+	}
+	now := time.Date(2026, 8, 25, 5, 30, 0, 0, time.UTC)
+	occurrence, _, err := repository.Enqueue(ctx, recoveryInput("corrupt-ledger", recovery.OperationBackup, now), now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.db.ExecContext(ctx,
+		"UPDATE recovery_qualification_occurrences SET planned_at = ? WHERE occurrence_id = ?",
+		"not-a-timestamp", occurrence.ID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.Occurrence(ctx, occurrence.ID); err == nil || !strings.Contains(err.Error(), "parse recovery qualification time") {
+		t.Fatalf("corrupt occurrence error = %v, want timestamp parse failure", err)
+	}
+	if _, err := repository.Status(ctx, now); err == nil || !strings.Contains(err.Error(), "parse recovery qualification time") {
+		t.Fatalf("corrupt status error = %v, want timestamp parse failure", err)
 	}
 }
 

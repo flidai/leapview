@@ -1020,6 +1020,8 @@ tasks:
     desc: Validate the durable scheduled recovery ledger, fencing, restart, evidence publication, and retention contracts
     deps:
       - db:generate
+      - config:generate
+      - ui-signals:generate
     cmds:
       - >-
         go test

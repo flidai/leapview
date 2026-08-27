@@ -109,7 +109,10 @@ func TestProductionCompositionRetainsValidS3BackupRestoreEvidence(t *testing.T) 
 		}
 		return definitions[:2], nil
 	}
-	now := time.Now().UTC().Add(time.Minute)
+	// Keep the hourly boundary deterministic while remaining after the real
+	// backup recovery point: reconciling on the hour and running five minutes
+	// into the following hour materializes exactly one occurrence per owner.
+	now := time.Now().UTC().Truncate(time.Hour).Add(2*time.Hour + 5*time.Minute)
 	lifecycle.Clock = recoveryLifecycleClock{now: now}
 	lifecycle = refreshmodule.NewRecoveryLifecycle(store.SQLDB(), *lifecycle)
 	definitions, err := lifecycle.Definitions(t.Context())
