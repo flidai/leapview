@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
@@ -376,20 +377,59 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 }
 
 type dashboardBuilderCommandSignal struct {
-	DashboardID         string          `json:"dashboardId"`
-	DraftID             string          `json:"draftId"`
-	RevisionID          string          `json:"revisionId"`
-	RevisionNumber      json.RawMessage `json:"revisionNumber"`
-	RevisionContentHash string          `json:"revisionContentHash"`
-	PageID              string          `json:"pageId"`
-	VisualID            string          `json:"visualId"`
-	ComponentID         string          `json:"componentId"`
-	FieldID             string          `json:"fieldId"`
-	Role                string          `json:"role"`
-	Type                string          `json:"type"`
-	Title               string          `json:"title"`
-	Visibility          string          `json:"visibility"`
-	Action              string          `json:"action"`
+	DashboardID         string                            `json:"dashboardId"`
+	DraftID             string                            `json:"draftId"`
+	RevisionID          string                            `json:"revisionId"`
+	RevisionNumber      json.RawMessage                   `json:"revisionNumber"`
+	RevisionContentHash string                            `json:"revisionContentHash"`
+	PageID              string                            `json:"pageId"`
+	VisualID            string                            `json:"visualId"`
+	ComponentID         string                            `json:"componentId"`
+	FieldID             string                            `json:"fieldId"`
+	Role                string                            `json:"role"`
+	Type                string                            `json:"type"`
+	Title               string                            `json:"title"`
+	Visibility          string                            `json:"visibility"`
+	Placement           *document.DashboardPlacement      `json:"placement,omitempty"`
+	Placements          []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
+	Column              int32                             `json:"column,omitempty"`
+	Row                 int32                             `json:"row,omitempty"`
+	ColumnSpan          int32                             `json:"columnSpan,omitempty"`
+	RowSpan             int32                             `json:"rowSpan,omitempty"`
+	Col                 int32                             `json:"col,omitempty"`
+	ColSpan             int32                             `json:"colSpan,omitempty"`
+	Action              string                            `json:"action"`
+}
+
+type dashboardBuilderPlacementSignal struct {
+	ComponentID string                       `json:"componentId,omitempty"`
+	VisualID    string                       `json:"visualId,omitempty"`
+	Placement   *document.DashboardPlacement `json:"placement,omitempty"`
+	Column      int32                        `json:"column,omitempty"`
+	Row         int32                        `json:"row,omitempty"`
+	ColumnSpan  int32                        `json:"columnSpan,omitempty"`
+	RowSpan     int32                        `json:"rowSpan,omitempty"`
+	Col         int32                        `json:"col,omitempty"`
+	ColSpan     int32                        `json:"colSpan,omitempty"`
+}
+
+func (s dashboardBuilderPlacementSignal) placementUpdate() authoring.PlacementUpdate {
+	componentID := strings.TrimSpace(s.ComponentID)
+	if componentID == "" {
+		componentID = strings.TrimSpace(s.VisualID)
+	}
+	column, columnSpan := s.Column, s.ColumnSpan
+	if column == 0 {
+		column = s.Col
+	}
+	if columnSpan == 0 {
+		columnSpan = s.ColSpan
+	}
+	placement := document.DashboardPlacement{Column: column, Row: s.Row, ColumnSpan: columnSpan, RowSpan: s.RowSpan}
+	if s.Placement != nil {
+		placement = *s.Placement
+	}
+	return authoring.PlacementUpdate{ComponentID: componentID, Placement: placement}
 }
 
 func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, actorID, dashboardID string) (authoring.Command, error) {
@@ -426,6 +466,18 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.AddPage = &authoring.AddPagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
 	case "add_visual":
 		command.AddVisual = &authoring.AddVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), ComponentID: strings.TrimSpace(s.ComponentID), Type: strings.TrimSpace(s.Type), Title: strings.TrimSpace(s.Title)}
+	case "set_placements":
+		placements := make([]authoring.PlacementUpdate, 0, len(s.Placements))
+		for _, placement := range s.Placements {
+			placements = append(placements, placement.placementUpdate())
+		}
+		if len(placements) == 0 {
+			placements = append(placements, dashboardBuilderPlacementSignal{
+				ComponentID: s.ComponentID, VisualID: s.VisualID, Placement: s.Placement,
+				Column: s.Column, Row: s.Row, ColumnSpan: s.ColumnSpan, RowSpan: s.RowSpan, Col: s.Col, ColSpan: s.ColSpan,
+			}.placementUpdate())
+		}
+		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
 	case "assign_field":
 		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	default:
@@ -524,7 +576,11 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		return envelope
 	}
 	envelope.Builder.Preview.Active = true
-	envelope.Builder.Preview.Error = nil
+	// Command responses are merged into the existing Datastar signal tree.
+	// Omitting an optional field leaves the previous value in place, so a
+	// successful preview must explicitly clear an error from an earlier,
+	// incomplete draft revision.
+	envelope.Builder.Preview.Error = uisignals.Pointer("")
 	return envelope
 }
 

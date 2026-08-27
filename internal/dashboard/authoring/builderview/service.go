@@ -500,14 +500,16 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 	for _, tableID := range tables {
 		fields := make([]uisignals.DashboardBuilderFieldSignal, 0)
 		for id, dimension := range model.Dimensions {
-			binding, ok := dimension.Bindings[tableID]
+			_, ok := dimension.Bindings[tableID]
 			if !ok {
 				continue
 			}
 			fieldID := id
-			if strings.TrimSpace(binding.Field) != "" {
-				fieldID = binding.Field
-			} else if strings.TrimSpace(dimension.Name) != "" {
+			// Semantic dimensions are referenced by their model member IDs in
+			// aggregate and pivot query selections. Their physical binding is
+			// execution metadata and must not leak into the assign_field payload
+			// (e.g. `orders.status` is not accepted where `status` is required).
+			if strings.TrimSpace(dimension.Name) != "" {
 				fieldID = dimension.Name
 			}
 			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", dimension.Type, dimension.Description); ok {

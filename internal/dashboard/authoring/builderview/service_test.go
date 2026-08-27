@@ -114,6 +114,69 @@ func TestBuildReleasesLeaseOnRuntimeFailuresAndProjectsDetachedModel(t *testing.
 	}
 }
 
+func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
+	semantic, err := projectSemanticModel("sales_model", builderModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fieldID string
+	var physicalField bool
+	for _, dataset := range semantic.Datasets {
+		if dataset.ID != "orders" {
+			continue
+		}
+		for _, field := range dataset.Fields {
+			if field.ID == "status" && field.Kind == "dimension" {
+				fieldID = field.ID
+			}
+			if field.ID == "orders.status" && field.Kind == "dimension" {
+				physicalField = true
+			}
+		}
+	}
+	if fieldID != "status" {
+		t.Fatalf("projected semantic dimension id = %q, want unqualified member id", fieldID)
+	}
+	if !physicalField {
+		t.Fatal("projected dataset lost its physical table field for detail/table use")
+	}
+
+	// Start with an aggregate visual that has no dimensions, then feed the
+	// projected field through the existing canonical assign_field reducer path.
+	doc := builderDocument()
+	aggregate, ok := doc.Spec.Visuals["orders"].Query.Value.(*document.AggregateDashboardQuery)
+	if !ok {
+		t.Fatal("builder fixture visual is not aggregate")
+	}
+	aggregate.Dimensions = []document.DashboardDimensionSelection{}
+	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}
+	current, err := authoring.NewRevision("revision-assign", "sales", 1, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC), doc, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales",
+		SemanticModel: "sales_model", Visibility: authoring.VisibilityPrivate,
+		Draft: &authoring.Draft{ID: "draft-assign", DashboardID: "sales", Revision: current.Token(), Provenance: provenance},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := authoring.Command{
+		ID: "assign-status", DashboardID: "sales", DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: provenance,
+		AssignField: &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders-placement", FieldID: fieldID, Role: authoring.FieldRoleDimension},
+	}
+	_, next, err := authoring.ApplyEdit(lifecycle, current, command, "revision-assign-2", 2, time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("assign projected semantic dimension: %v", err)
+	}
+	updated, ok := next.Document.Spec.Visuals["orders"].Query.Value.(*document.AggregateDashboardQuery)
+	if !ok || len(updated.Dimensions) != 1 || updated.Dimensions[0].String == nil || *updated.Dimensions[0].String != "status" {
+		t.Fatalf("assigned aggregate dimensions = %#v", updated)
+	}
+}
+
 func TestProjectPagesCanonicalOrderingAndGlobalBounds(t *testing.T) {
 	doc := builderDocument()
 	doc.Spec.Pages = []document.DashboardPage{{ID: "z-page", Title: "Z"}, {ID: "a-page", Title: "A"}}
