@@ -874,22 +874,24 @@ func (c *Controller) prepareQualificationRecoveryData(
 	options qualificationRecoveryOptions,
 	workDir string,
 ) error {
-	sourceCSV := filepath.Join(workDir, "orders.csv")
-	if _, err := c.qualificationDocker(
-		ctx, nil, "cp",
-		options.ContainerID+":/app/evaluation/data/orders.csv",
-		sourceCSV,
-	); err != nil {
+	sourceCSV, cleanupCSV, err := c.qualificationCopyFromContainer(
+		ctx,
+		options.ContainerID,
+		"/app/evaluation/data/orders.csv",
+	)
+	if err != nil {
 		return err
 	}
-	sourceProject := filepath.Join(workDir, "source-project")
-	if _, err := c.qualificationDocker(
-		ctx, nil, "cp",
-		options.ContainerID+":/app/evaluation/project",
-		sourceProject,
-	); err != nil {
+	defer cleanupCSV()
+	sourceProject, cleanupProject, err := c.qualificationCopyFromContainer(
+		ctx,
+		options.ContainerID,
+		"/app/evaluation/project",
+	)
+	if err != nil {
 		return err
 	}
+	defer cleanupProject()
 	recoveryRoot := filepath.Join(workDir, "qualification-recovery")
 	inputDir := filepath.Join(recoveryRoot, "input")
 	if err := os.MkdirAll(inputDir, 0o700); err != nil {
@@ -920,6 +922,12 @@ func (c *Controller) prepareQualificationRecoveryData(
 			[]byte("name: leapview-evaluation"),
 			[]byte("name: "+title),
 		)
+		// Container archives preserve the hardened read-only project file mode.
+		// This is a private host-side recovery fixture, so make only the copied
+		// fixture owner-writable before changing its qualification-only name.
+		if err := os.Chmod(projectPath, 0o600); err != nil {
+			return err
+		}
 		if err := os.WriteFile(projectPath, contents, 0o600); err != nil {
 			return err
 		}

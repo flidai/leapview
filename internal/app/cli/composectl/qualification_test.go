@@ -781,6 +781,94 @@ func TestQualificationRecoveryDataIsReadableByHardenedRuntimeUser(t *testing.T) 
 	}
 }
 
+func TestPrepareQualificationRecoveryDataStreamsHardenedInputs(t *testing.T) {
+	writeArchive := func(
+		output io.Writer,
+		entries []qualificationInspectionTarEntry,
+	) error {
+		writer := tar.NewWriter(output)
+		for _, entry := range entries {
+			header := &tar.Header{
+				Name: entry.name, Mode: entry.mode,
+				Typeflag: entry.typeflag, Linkname: entry.linkname,
+				Size: int64(len(entry.contents)),
+			}
+			if err := writer.WriteHeader(header); err != nil {
+				return err
+			}
+			if entry.typeflag == tar.TypeReg {
+				if _, err := io.WriteString(writer, entry.contents); err != nil {
+					return err
+				}
+			}
+		}
+		return writer.Close()
+	}
+	var requests []qualificationCommandRequest
+	executor := qualificationExecutorFunc(func(
+		_ context.Context,
+		request qualificationCommandRequest,
+	) ([]byte, error) {
+		requests = append(requests, request)
+		switch {
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/app/evaluation/data/orders.csv", "-",
+		}):
+			return nil, writeArchive(request.Stdout, []qualificationInspectionTarEntry{{
+				name: "orders.csv", mode: 0o440, typeflag: tar.TypeReg,
+				contents: "order_id,amount\norder-1,10\n",
+			}})
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/app/evaluation/project", "-",
+		}):
+			return nil, writeArchive(request.Stdout, []qualificationInspectionTarEntry{
+				{name: "project", mode: 0o550, typeflag: tar.TypeDir},
+				{
+					name: "project/leapview.yaml", mode: 0o440,
+					typeflag: tar.TypeReg, contents: "name: leapview-evaluation\n",
+				},
+			})
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/var/lib/leapview/qualification-recovery", "-",
+		}):
+			return nil, errors.New("could not find the file in the container")
+		case len(request.Arguments) == 3 &&
+			request.Arguments[0] == "cp" &&
+			request.Arguments[2] == "leapview-app:/var/lib/leapview/qualification-recovery":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected Docker arguments: %v", request.Arguments)
+		}
+	})
+	controller, err := New(Options{
+		Root: t.TempDir(), DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+	workDir := t.TempDir()
+	require.NoError(t, controller.prepareQualificationRecoveryData(
+		t.Context(),
+		qualificationRecoveryOptions{ContainerID: "leapview-app"},
+		workDir,
+	))
+
+	require.Len(t, requests, 4)
+	for _, index := range []int{0, 1, 2} {
+		require.NotNil(t, requests[index].Stdout)
+		require.Equal(t, "-", requests[index].Arguments[2])
+	}
+	for directory, projectName := range map[string]string{
+		"project-a": qualificationRecoveryReleaseProjectName,
+		"project-b": qualificationRecoveryDeploymentProjectName,
+	} {
+		contents, readErr := os.ReadFile(filepath.Join(
+			workDir, "qualification-recovery", directory, "leapview.yaml",
+		))
+		require.NoError(t, readErr)
+		require.Contains(t, string(contents), "name: "+projectName)
+	}
+}
+
 func TestQualificationRecoveryProjectDirCanBeTraversedByHardenedClient(t *testing.T) {
 	projectDir, err := os.MkdirTemp(t.TempDir(), ".qualification-recovery-*")
 	require.NoError(t, err)
