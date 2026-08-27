@@ -1,6 +1,7 @@
 package composectl
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -730,29 +731,17 @@ func TestParseQualificationPoolBootstrapResult(t *testing.T) {
 
 func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 	root := t.TempDir()
-	var requests []qualificationCommandRequest
-	executor := qualificationExecutorFunc(func(_ context.Context, request qualificationCommandRequest) ([]byte, error) {
-		requests = append(requests, request)
-		if len(request.Arguments) == 3 && request.Arguments[0] == "cp" {
-			target := request.Arguments[2]
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return nil, err
-			}
-			for name, contents := range map[string]string{
-				"leapview.db":     "persistent",
-				"leapview.db-wal": "transient-wal",
-				"leapview.db-shm": "transient-shm",
-			} {
-				if err := os.WriteFile(filepath.Join(target, name), []byte(contents), 0o600); err != nil {
-					return nil, err
-				}
-			}
-		}
-		return nil, nil
-	})
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker",
-		qualificationExecutor: executor,
+		qualificationExecutor: qualificationInspectionArchiveExecutor(
+			t,
+			[]qualificationInspectionTarEntry{
+				{name: "leapview", mode: 0o700, typeflag: tar.TypeDir},
+				{name: "leapview/leapview.db", mode: 0o600, typeflag: tar.TypeReg, contents: "persistent"},
+				{name: "leapview/leapview.db-wal", mode: 0o600, typeflag: tar.TypeReg, contents: "transient-wal"},
+				{name: "leapview/leapview.db-shm", mode: 0o600, typeflag: tar.TypeReg, contents: "transient-shm"},
+			},
+		),
 	})
 	require.NoError(t, err)
 
@@ -762,15 +751,8 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 		"performance disk",
 	)
 	require.NoError(t, err)
-	if got != int64(len("persistent")) || len(requests) != 1 ||
-		len(requests[0].Arguments) != 3 ||
-		requests[0].Arguments[0] != "cp" ||
-		requests[0].Arguments[1] != "leapview-app:/var/lib/leapview" {
-		t.Fatalf(
-			"disk usage = %d, request = %#v",
-			got,
-			requests,
-		)
+	if got != int64(len("persistent")) {
+		t.Fatalf("disk usage = %d, want %d", got, len("persistent"))
 	}
 }
 

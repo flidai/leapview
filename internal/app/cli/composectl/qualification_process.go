@@ -35,6 +35,7 @@ type qualificationCommandRequest struct {
 	Executable  string
 	Environment []string
 	Stdin       io.Reader
+	Stdout      io.Writer
 	Arguments   []string
 }
 
@@ -55,6 +56,13 @@ func (osQualificationCommandExecutor) Execute(
 		command.Env = os.Environ()
 	}
 	command.Stdin = request.Stdin
+	if request.Stdout != nil {
+		stderr := &boundedQualificationBuffer{maxBytes: 256 << 10}
+		command.Stdout = request.Stdout
+		command.Stderr = stderr
+		err := command.Run()
+		return append([]byte(nil), stderr.Bytes()...), err
+	}
 	return command.CombinedOutput()
 }
 
@@ -86,6 +94,39 @@ func (p qualificationProcess) Run(
 	return output, nil
 }
 
+func (p qualificationProcess) RunTo(
+	ctx context.Context,
+	stdin io.Reader,
+	stdout io.Writer,
+	executor qualificationCommandExecutor,
+	args ...string,
+) error {
+	if stdout == nil {
+		return fmt.Errorf("qualification command stdout is required")
+	}
+	if executor == nil {
+		executor = osQualificationCommandExecutor{}
+	}
+	output, err := executor.Execute(ctx, qualificationCommandRequest{
+		Directory: p.dir, Executable: p.executable,
+		Environment: append([]string(nil), p.environment...),
+		Stdin:       stdin, Stdout: stdout,
+		Arguments: append([]string(nil), args...),
+	})
+	if err != nil {
+		commandText := string(redactQualificationBytes(
+			[]byte(p.executable + " " + strings.Join(args, " ")),
+		))
+		return fmt.Errorf(
+			"%s: %w: %s",
+			commandText,
+			err,
+			redactQualificationLog(output, 100),
+		)
+	}
+	return nil
+}
+
 func (c *Controller) qualificationDocker(
 	ctx context.Context,
 	stdin io.Reader,
@@ -96,6 +137,18 @@ func (c *Controller) qualificationDocker(
 		executable:  c.dockerBin,
 		environment: os.Environ(),
 	}.Run(ctx, stdin, c.qualificationExecutor, args...)
+}
+
+func (c *Controller) qualificationDockerTo(
+	ctx context.Context,
+	stdout io.Writer,
+	args ...string,
+) error {
+	return qualificationProcess{
+		dir:         c.root,
+		executable:  c.dockerBin,
+		environment: os.Environ(),
+	}.RunTo(ctx, nil, stdout, c.qualificationExecutor, args...)
 }
 
 func qualificationComposeArguments(root string, args ...string) ([]string, error) {
