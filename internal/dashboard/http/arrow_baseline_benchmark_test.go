@@ -3,6 +3,7 @@ package http
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	stdhttp "net/http"
@@ -24,6 +25,7 @@ import (
 	materializeruntime "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
@@ -372,12 +374,16 @@ type dashboardBaselineFixture struct {
 func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixture {
 	tb.Helper()
 	model := dashboardBaselineModel()
+	dependencyEvidence, err := dashboardBaselineDependencyEvidence(model)
+	if err != nil {
+		tb.Fatal(err)
+	}
 	definition, err := dashboardBaselineDefinition(model)
 	if err != nil {
 		tb.Fatal(err)
 	}
 	database := &dashboardBaselineDatabase{rows: rows}
-	factory := &dashboardBaselineFactory{database: database}
+	factory := &dashboardBaselineFactory{database: database, dependencyEvidence: dependencyEvidence}
 	identity, err := projectgraph.NewServingIdentity(dashboardBaselineProjectID, "test", dashboardBaselineSnapshot)
 	if err != nil {
 		tb.Fatal(err)
@@ -392,6 +398,32 @@ func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixt
 		}
 	})
 	return &dashboardBaselineFixture{service: service, core: factory.core, database: database, handler: Handler{Metrics: service, ProjectID: dashboardBaselineProjectID}}
+}
+
+func dashboardBaselineDependencyEvidence(model *semanticmodel.Model) (resultidentity.Evidence, error) {
+	semanticDigest, err := semanticquery.SemanticModelDigest(model)
+	if err != nil {
+		return resultidentity.Evidence{}, err
+	}
+	return resultidentity.NewEvidence(resultidentity.EvidenceInput{
+		SemanticModelID:     dashboardBaselineModelID,
+		SemanticModelDigest: semanticDigest,
+		DatasetRelations: []resultidentity.DatasetRelation{{
+			Dataset: dashboardBaselineDatasetID,
+			Relation: resultidentity.RelationRevision{
+				RelationID:     "model:orders",
+				RevisionDigest: dashboardBaselineDigest("orders-revision"),
+			},
+		}},
+		BindingFingerprint: dashboardBaselineDigest("binding"),
+		RuntimeDigest:      dashboardBaselineDigest("runtime"),
+		CapabilityDigest:   dashboardBaselineDigest("capability"),
+	})
+}
+
+func dashboardBaselineDigest(value string) string {
+	digest := sha256.Sum256([]byte("fai-540-dashboard-baseline:" + value))
+	return fmt.Sprintf("sha256:%x", digest)
 }
 
 func (f *dashboardBaselineFixture) clearCache() {
@@ -525,8 +557,9 @@ func (o dashboardBaselineObservation) cacheMisses() int {
 }
 
 type dashboardBaselineFactory struct {
-	database *dashboardBaselineDatabase
-	core     *materializeruntime.Runtime
+	database           *dashboardBaselineDatabase
+	dependencyEvidence resultidentity.Evidence
+	core               *materializeruntime.Runtime
 }
 
 func (f *dashboardBaselineFactory) OpenDashboardProjectDataRuntimes(ctx context.Context, config dashboardruntime.ProjectDataRuntimeConfig) (map[projectgraph.ResourceID]dashboardruntime.DataRuntime, error) {
@@ -535,6 +568,7 @@ func (f *dashboardBaselineFactory) OpenDashboardProjectDataRuntimes(ctx context.
 	core, err := materializeruntime.NewRuntimeView(ctx, materializeruntime.RuntimeConfig{
 		ModelID: dashboardBaselineModelID.String(), Model: model, Database: f.database,
 		Sources: dashboardBaselineSources{}, SnapshotOnly: true, QueryCacheNamespace: dashboardBaselineSnapshot,
+		DependencyEvidence: f.dependencyEvidence,
 	})
 	if err != nil {
 		return nil, err
