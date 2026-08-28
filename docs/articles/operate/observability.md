@@ -22,6 +22,27 @@ LeapView exposes Prometheus metrics behind `LEAPVIEW_METRICS_BEARER_TOKEN`. Prod
 
 Monitor at least process resource use, request rate and latency, error status, read/write executor saturation, queue depth and timeouts, refresh activity, storage capacity, and managed upload failures. Alert on sustained conditions and user-visible symptoms rather than every transient supersession.
 
+### Baseline health alerts
+
+The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, and fatal process-owned DuckDB health. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Request routes, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
+
+Validate the syntax, PromQL behavior, firing delay, labels, and annotations with the pinned Prometheus toolchain:
+
+```sh
+task observability:alerts:check
+```
+
+The task downloads the official Prometheus archive for the supported Linux or macOS architecture, verifies its pinned SHA-256 digest, caches `promtool` under `.tmp/tools`, then runs `promtool check rules` and the healthy and firing rule fixtures.
+
+Copy or mount the rule file into the Prometheus deployment and reference it from the Prometheus configuration:
+
+```yaml
+rule_files:
+  - /etc/prometheus/rules/leapview-alerts.yaml
+```
+
+Reload Prometheus only after validation succeeds. The target-unavailable rule relies on Prometheus's standard `up` metric and therefore requires the target to remain present in Prometheus service discovery; a target omitted from the scrape configuration cannot alert. The 5xx rule uses `leapview_http_requests_total`, aggregates method, route, and status dimensions down to `job` and `instance`, and requires a positive five-minute error rate continuously for ten minutes. `leapview_duckdb_fatal_health` is present only when LeapView owns a process-local DuckDB environment. Every alert links to [Operational troubleshooting](/docs/guides/operate/troubleshooting); configure routing and receivers in the operator-owned Alertmanager deployment.
+
 ## Structured logs
 
 Collect structured application logs from the service output. Preserve timestamp, severity, operation, route, status, duration, principal where safe, project, environment, request/correlation ID, deployment ID, revision digest, and refresh generation when available.

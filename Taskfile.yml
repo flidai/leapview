@@ -867,6 +867,12 @@ tasks:
     cmds:
       - task: ci:pr
 
+  observability:alerts:check:
+    desc: Validate repository-owned Prometheus alert rules and fixtures
+    cmds:
+      - ./scripts/promtool.sh check rules deploy/observability/prometheus/leapview-alerts.yaml
+      - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-alerts.test.yaml
+
   image:qualify:production:
     desc: Qualify an immutable LeapView production image
     requires:

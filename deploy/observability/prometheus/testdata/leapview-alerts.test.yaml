@@ -1,0 +1,94 @@
+rule_files:
+  - ../leapview-alerts.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: healthy target does not alert
+    interval: 1m
+    input_series:
+      - series: 'up{job="leapview",instance="app:8080",pod="leapview-healthy"}'
+        values: '1x20'
+      - series: 'leapview_http_requests_total{job="leapview",instance="app:8080",method="GET",route="/healthz",status="200"}'
+        values: '0+5x20'
+      - series: 'leapview_duckdb_fatal_health{job="leapview",instance="app:8080",pod="leapview-healthy"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LeapViewTargetUnavailable
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewSustainedHTTP5xx
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewDuckDBFatalHealth
+        exp_alerts: []
+
+  - name: unavailable target fires after two minutes
+    interval: 1m
+    input_series:
+      - series: 'up{job="leapview",instance="app:8080",pod="leapview-unavailable",route="/forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0x5'
+    alert_rule_test:
+      - eval_time: 3m
+        alertname: LeapViewTargetUnavailable
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView target app:8080 is unavailable"
+              description: "Prometheus has been unable to scrape the LeapView target for more than 2 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+
+  - name: transient 5xx activity does not fire
+    interval: 1m
+    input_series:
+      - series: 'leapview_http_requests_total{job="leapview",instance="app:8080",method="POST",route="/api/v1/projects/{project}",status="500",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0x4 1 1x15'
+    alert_rule_test:
+      - eval_time: 8m
+        alertname: LeapViewSustainedHTTP5xx
+        exp_alerts: []
+
+  - name: sustained 5xx activity aggregates request dimensions
+    interval: 1m
+    input_series:
+      - series: 'leapview_http_requests_total{job="leapview",instance="app:8080",method="POST",route="/api/v1/projects/{project}",status="500",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+1x20'
+      - series: 'leapview_http_requests_total{job="leapview",instance="app:8080",method="GET",route="/updates",status="503"}'
+        values: '0+1x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LeapViewSustainedHTTP5xx
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView target app:8080 is returning sustained 5xx responses"
+              description: "LeapView has continuously observed 5xx responses on app:8080 for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+
+  - name: fatal DuckDB runtime health fires
+    interval: 1m
+    input_series:
+      - series: 'leapview_duckdb_fatal_health{job="leapview",instance="app:8080",pod="leapview-fatal",resource_id="resource-forbidden",trace_id="trace-forbidden"}'
+        values: '1x5'
+    alert_rule_test:
+      - eval_time: 2m
+        alertname: LeapViewDuckDBFatalHealth
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView DuckDB runtime on app:8080 is fatally unhealthy"
+              description: "The process-owned DuckDB runtime on app:8080 reports a fatal cleanup-safety failure."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
