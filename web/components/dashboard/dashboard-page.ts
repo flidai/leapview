@@ -251,14 +251,16 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .rail-header,
     .rail-footer {
+      box-sizing: border-box;
       min-width: 0;
+      contain: inline-size;
+      overflow: hidden;
       border-right: var(--lv-border-muted);
       background: var(--lv-sidebar-bg);
     }
 
     .rail-header {
       display: grid;
-      box-sizing: border-box;
       align-items: center;
       justify-items: start;
       border-bottom: var(--lv-border-muted);
@@ -319,6 +321,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .rail-back-link {
       display: inline-flex;
       width: auto;
+      min-width: 0;
       max-width: 100%;
       align-items: center;
       gap: var(--base-size-8);
@@ -327,6 +330,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .rail-back-label {
       display: block;
+      min-width: 0;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -1278,6 +1282,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       railLabel: 'Pages',
       ariaLabel: 'Report pages',
       storageKey: 'leapview-report-sidebar-collapsed',
+      widthStorageKey: 'leapview-report-sidebar-width',
       activeId: page.pageId,
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,

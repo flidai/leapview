@@ -524,6 +524,108 @@ test('app report frame aligns identity and footer with the canvas around context
   }
 })
 
+test('report pages rail resizes accessibly and persists its expanded width', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('leapview-report-sidebar-resize-test-ready')) return
+      sessionStorage.setItem('leapview-report-sidebar-resize-test-ready', 'true')
+      localStorage.setItem('leapview-report-sidebar-collapsed', 'false')
+      localStorage.removeItem('leapview-report-sidebar-width')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (
+      customElements.get('lv-dashboard-page')
+        && customElements.get('lv-sub-sidebar')
+        && (document.querySelector('lv-dashboard-page') as any)?.page
+    ))
+
+    const keyboardState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      await sidebar.updateComplete
+      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      handle.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'ArrowRight', bubbles: true, cancelable: true,
+      }))
+      await sidebar.updateComplete
+      return {
+        label: handle.getAttribute('aria-label'),
+        orientation: handle.getAttribute('aria-orientation'),
+        role: handle.getAttribute('role'),
+        tabIndex: handle.tabIndex,
+        value: handle.getAttribute('aria-valuenow'),
+      }
+    })
+    expect(keyboardState).toEqual({
+      label: 'Resize report pages',
+      orientation: 'vertical',
+      role: 'separator',
+      tabIndex: 0,
+      value: '152',
+    })
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 152
+    })
+    expect(await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
+      const main = element.shadowRoot.querySelector('.main') as HTMLElement
+      const header = element.shadowRoot.querySelector('.header') as HTMLElement
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      return [main, header, footer].every(node => (
+        Math.round(node.getBoundingClientRect().left) === Math.round(sidebar.getBoundingClientRect().right)
+      ))
+    })).toBe(true)
+
+    const handleBox = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
+      const handle = sidebar.shadowRoot!.querySelector('.resize-handle') as HTMLElement
+      const box = handle.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    })
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 100)
+    await page.mouse.down()
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 32, handleBox.y + 100)
+    await page.mouse.up()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 184
+    })
+
+    expect(await page.evaluate(() => localStorage.getItem('leapview-report-sidebar-width'))).toBe('184')
+    await page.reload()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 184
+    })
+
+    const collapsedState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      await sidebar.updateComplete
+      const collapse = sidebar.shadowRoot.querySelector('.collapse') as HTMLButtonElement
+      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      collapse.click()
+      await sidebar.updateComplete
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return {
+        width: Math.round(sidebar.getBoundingClientRect().width),
+        handleDisplay: getComputedStyle(handle).display,
+      }
+    })
+    expect(collapsedState).toEqual({ width: 38, handleDisplay: 'none' })
+  } finally {
+    await page.evaluate(() => {
+      localStorage.removeItem('leapview-report-sidebar-width')
+      localStorage.removeItem('leapview-report-sidebar-collapsed')
+    }).catch(() => undefined)
+    await page.close()
+  }
+}, 15_000)
+
 test('narrow dashboards let viewers preserve the desktop canvas with internal scrollbars', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
   try {
