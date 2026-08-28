@@ -65873,6 +65873,7 @@ components:
         - $ref: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
         - $ref: '#/components/schemas/DashboardAuthoringDuplicateVisualCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
         - $ref: '#/components/schemas/DashboardAuthoringUpdateVisualFormatCommand'
         - $ref: '#/components/schemas/DashboardAuthoringRemoveFieldCommand'
         - $ref: '#/components/schemas/DashboardAuthoringMoveFieldCommand'
@@ -65900,6 +65901,7 @@ components:
           removePage: '#/components/schemas/DashboardAuthoringRemovePageCommand'
           removeVisual: '#/components/schemas/DashboardAuthoringRemoveVisualCommand'
           renameVisual: '#/components/schemas/DashboardAuthoringRenameVisualCommand'
+          restoreRevision: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
           setFilters: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
           setInteraction: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
           setLayout: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
@@ -68850,6 +68852,40 @@ components:
         pageId: example
         title: example
         visualId: example
+    DashboardAuthoringRestoreRevisionCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - restoreRevision
+      properties:
+        kind:
+          type: string
+          enum:
+            - restoreRevision
+          example: example
+        restoreRevision:
+          $ref: '#/components/schemas/DashboardAuthoringRestoreRevisionIntent'
+      example:
+        kind: example
+        restoreRevision:
+          targetRevision:
+            contentHash: example
+            number: 1
+            revisionId: example
+    DashboardAuthoringRestoreRevisionIntent:
+      type: object
+      required:
+        - targetRevision
+      properties:
+        targetRevision:
+          $ref: '#/components/schemas/DashboardAuthoringRevisionToken'
+      example:
+        targetRevision:
+          contentHash: example
+          number: 1
+          revisionId: example
     DashboardAuthoringRevalidationFailure:
       type: object
       required:

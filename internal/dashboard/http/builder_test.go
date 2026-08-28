@@ -222,6 +222,28 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesExactRevisionRestore(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	currentHash := "sha256:" + strings.Repeat("b", 64)
+	targetHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-8", "revisionNumber": "8", "revisionContentHash": currentHash,
+		"targetRevisionId": "revision-7", "targetRevisionNumber": "7", "targetRevisionContentHash": targetHash, "action": "restore_revision",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "restore-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	want := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: targetHash}
+	if fake.intentCalls != 1 || fake.executed.RestoreRevision == nil || fake.executed.RestoreRevision.TargetRevision != want {
+		t.Fatalf("restore command = %#v", fake.executed)
+	}
+}
+
 func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}

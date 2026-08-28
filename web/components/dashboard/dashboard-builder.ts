@@ -76,6 +76,22 @@ type BuilderVisualFormatPatch = {
 
 type DashboardBuilderVisualWithFormat = DashboardBuilderVisualSignal & Required<Omit<BuilderVisualFormatPatch, 'title'>>
 
+type BuilderRevisionReference = {
+  id: string
+  number: number
+  contentHash: string
+}
+
+type BuilderHistorySnapshot = {
+  undo: BuilderRevisionReference[]
+  redo: BuilderRevisionReference[]
+}
+
+type BuilderClipboard = {
+  pageId: string
+  visualId: string
+}
+
 /** Draft dashboard authoring surface. Runtime dashboard rendering remains a
  * separate component and envelope; this component only edits the bounded
  * builder projection delivered by the stream. */
@@ -94,12 +110,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private gridInteractionMessage = ''
   @state() private visualActionMessage = ''
-  @state() private renamingVisualID = ''
-  @state() private confirmingVisualDeleteID = ''
-  @state() private visualTitleDraft = ''
+  @state() private undoStack: BuilderRevisionReference[] = []
+  @state() private redoStack: BuilderRevisionReference[] = []
   @state() private visualTypeOverrides: Record<string, BuilderVisualType> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
   private commandPending = false
+  private pendingHistorySnapshot: BuilderHistorySnapshot | null = null
+  private copiedVisual: BuilderClipboard | null = null
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
   private gridStack: GridStack | null = null
   private gridElement: HTMLElement | null = null
@@ -119,6 +136,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     super.connectedCallback()
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     if (typeof window !== 'undefined') {
+      window.addEventListener('keydown', this.handleBuilderKeydown)
       this.viewportMediaQuery = window.matchMedia('(max-width: 640px)')
       this.viewportMediaQuery.addEventListener('change', this.handleViewportChange)
     }
@@ -126,6 +144,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   override disconnectedCallback(): void {
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    if (typeof window !== 'undefined') window.removeEventListener('keydown', this.handleBuilderKeydown)
     this.viewportMediaQuery?.removeEventListener('change', this.handleViewportChange)
     this.viewportMediaQuery = null
     this.destroyGridStack()
@@ -436,57 +455,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-2) var(--base-size-6);
       color: var(--lv-fg-muted);
       background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-caption);
-    }
-
-    .visual-actions {
-      display: flex;
-      flex: 0 0 auto;
-      align-items: center;
-      gap: var(--base-size-4);
-    }
-
-    .visual-action {
-      min-height: var(--control-small-size);
-      padding: 0 var(--base-size-6);
-      border-color: transparent;
-      color: var(--lv-fg-muted);
-      background: transparent;
-      font: var(--lv-type-caption);
-    }
-
-    .visual-action:hover {
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-panel-muted);
-    }
-
-    .visual-action.danger:hover {
-      color: var(--lv-fg-danger, var(--lv-fg-default));
-    }
-
-    .visual-rename-form {
-      display: flex;
-      min-width: min(100%, 18rem);
-      flex: 1 1 100%;
-      align-items: center;
-      gap: var(--base-size-4);
-    }
-
-    .visual-rename-form input {
-      min-width: 0;
-      flex: 1 1 auto;
-      min-height: var(--control-small-size);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-small, var(--lv-radius-default));
-      padding: 0 var(--base-size-6);
-      color: var(--lv-fg-default);
-      background: var(--lv-bg-input, var(--lv-bg-control));
-      font: var(--lv-type-body-compact);
-    }
-
-    .visual-rename-form button {
-      min-height: var(--control-small-size);
-      padding: 0 var(--base-size-6);
       font: var(--lv-type-caption);
     }
 
@@ -1680,6 +1648,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
+          <button type="button" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>Undo</button>
+          <button type="button" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>Redo</button>
           ${(builder.preview.href || this.previewHref) && builder.capabilities.canPreview
             ? html`<a class="button" href=${builder.preview.href || this.previewHref}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
@@ -1715,6 +1685,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const detail = (event as CustomEvent<{ type?: string }>).detail
     if (detail?.type === 'finished') {
       this.commandPending = false
+      this.pendingHistorySnapshot = null
       this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
       this.requestUpdate()
       return
@@ -1722,6 +1693,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const failure = browserCommandFailure(event, 'Dashboard builder action')
     if (!failure) return
     this.commandPending = false
+    if (this.pendingHistorySnapshot) {
+      this.undoStack = this.pendingHistorySnapshot.undo
+      this.redoStack = this.pendingHistorySnapshot.redo
+      this.pendingHistorySnapshot = null
+    }
     this.visualTypeOverrides = {}
     this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
     this.terminalFailure = failure
@@ -1901,16 +1877,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <aside class="pane properties visual-builder" aria-label="Visual builder">
         <div class="pane-header">
           <div class="inspector-heading">
-            ${visual && this.renamingVisualID === visual.id
-              ? this.renderVisualRenameForm(visual)
-              : html`<div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>`}
-            ${visual && builder.capabilities.canEdit && this.renamingVisualID !== visual.id ? html`
-              <div class="visual-actions" aria-label="Visual actions">
-                <button type="button" class="visual-action" data-visual-action="rename" aria-label=${`Rename ${visual.title}`} title=${`Rename ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.beginVisualRename(visual)}>Rename</button>
-                <button type="button" class="visual-action" data-visual-action="duplicate" aria-label=${`Duplicate ${visual.title}`} title=${`Duplicate ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.duplicateVisual(visual)}>Duplicate</button>
-                <button type="button" class="visual-action danger" data-visual-action="delete" aria-label=${this.confirmingVisualDeleteID === visual.id ? `Confirm delete ${visual.title}` : `Delete ${visual.title}`} title=${this.confirmingVisualDeleteID === visual.id ? `Confirm delete ${visual.title}` : `Delete ${visual.title}`} ?disabled=${this.commandPending} @click=${() => this.deleteVisual(visual)}>${this.confirmingVisualDeleteID === visual.id ? 'Confirm delete' : 'Delete'}</button>
-                ${this.confirmingVisualDeleteID === visual.id ? html`<button type="button" class="visual-action" aria-label="Cancel delete" @click=${this.cancelVisualDelete}>Cancel</button>` : nothing}
-              </div>` : nothing}
+            <div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>
           </div>
           <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Select a visual on the canvas to configure it.' : 'Add a page to start building.'}</p>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
@@ -1934,18 +1901,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </details>
         </div>
       </aside>
-    `
-  }
-
-  private renderVisualRenameForm(visual: DashboardBuilderVisualSignal) {
-    const inputID = `visual-title-${visual.id}`
-    return html`
-      <form class="visual-rename-form" aria-label=${`Rename ${visual.title}`} @submit=${this.commitVisualRename} @keydown=${this.onVisualRenameKeydown}>
-        <label class="sr-only" for=${inputID}>Visual title</label>
-        <input id=${inputID} type="text" maxlength="128" required .value=${this.visualTitleDraft} aria-label="Visual title" @input=${this.onVisualTitleInput} />
-        <button type="submit" aria-label=${`Save name for ${visual.title}`}>Save</button>
-        <button type="button" aria-label="Cancel rename" @click=${this.cancelVisualRename}>Cancel</button>
-      </form>
     `
   }
 
@@ -2317,83 +2272,36 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.emitCommand('add_visual', { pageId: page.id, visualId: '', componentId: '', type: this.visualType, title: '' })
   }
 
-  private beginVisualRename(visual: DashboardBuilderVisualSignal): void {
-    if (!this.builder?.capabilities.canEdit || this.commandPending) return
-    this.renamingVisualID = visual.id
-    this.visualTitleDraft = visual.title
-    void this.updateComplete.then(() => {
-      const input = this.shadowRoot?.querySelector<HTMLInputElement>(`#visual-title-${CSS.escape(visual.id)}`)
-      input?.focus()
-      input?.select()
-    })
-  }
-
-  private cancelVisualRename = (): void => {
-    const visualID = this.renamingVisualID
-    this.renamingVisualID = ''
-    this.visualTitleDraft = ''
-    void this.updateComplete.then(() => {
-      const action = this.shadowRoot?.querySelector<HTMLElement>('[data-visual-action="rename"]:not([disabled])')
-      const tile = this.shadowRoot?.querySelector<HTMLElement>(`[gs-id="${CSS.escape(visualID)}"]`)
-      ;(action ?? tile)?.focus()
-    })
-  }
-
-  private onVisualRenameKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Escape') return
-    event.preventDefault()
-    this.cancelVisualRename()
-  }
-
-  private onVisualTitleInput = (event: Event): void => {
-    this.visualTitleDraft = (event.currentTarget as HTMLInputElement).value
-  }
-
-  private commitVisualRename = (event: Event): void => {
-    event.preventDefault()
+  private copySelectedVisual(): boolean {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    const visual = page?.visuals.find((item) => item.id === this.renamingVisualID)
-    if (!builder?.capabilities.canEdit || !page || !visual || this.commandPending) return
-    const title = this.visualTitleDraft.trim()
-    if (!title) {
-      this.visualActionMessage = 'Visual title cannot be empty.'
-      return
-    }
-    if (title === visual.title) {
-      this.cancelVisualRename()
-      return
-    }
-    this.visualActionMessage = `Saving the name ${title}.`
-    this.cancelVisualRename()
-    this.emitCommand('rename_visual', { pageId: page.id, visualId: visual.id, title })
+    const visual = builder && page ? this.selectedVisual(page, builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !visual || this.commandPending) return false
+    this.copiedVisual = { pageId: page.id, visualId: visual.id }
+    this.visualActionMessage = `Copied ${visual.title}.`
+    return true
   }
 
-  private duplicateVisual(visual: DashboardBuilderVisualSignal): void {
+  private pasteCopiedVisual(): boolean {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
-    this.visualActionMessage = `Duplicating ${visual.title}.`
+    const copied = this.copiedVisual
+    const visual = copied && page?.id === copied.pageId ? page.visuals.find((item) => item.id === copied.visualId) : undefined
+    if (!builder?.capabilities.canEdit || !page || !visual || !copied || this.commandPending) return false
+    this.pendingAddVisual = { revision: this.revisionKey(builder), visualIDs: new Set(page.visuals.map((item) => item.id)), pageID: page.id }
+    this.visualActionMessage = `Pasting ${visual.title}.`
     this.emitCommand('duplicate_visual', { pageId: page.id, visualId: visual.id })
+    return true
   }
 
-  private deleteVisual(visual: DashboardBuilderVisualSignal): void {
+  private deleteSelectedVisual(): boolean {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
-    if (this.confirmingVisualDeleteID !== visual.id) {
-      this.confirmingVisualDeleteID = visual.id
-      this.visualActionMessage = `Confirm deletion of ${visual.title}.`
-      return
-    }
-    this.confirmingVisualDeleteID = ''
+    const visual = builder && page ? this.selectedVisual(page, builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || !visual || this.commandPending) return false
     this.visualActionMessage = `Deleting ${visual.title}.`
     this.emitCommand('remove_visual', { pageId: page.id, visualId: visual.id })
-  }
-
-  private cancelVisualDelete = (): void => {
-    this.confirmingVisualDeleteID = ''
-    this.visualActionMessage = 'Visual deletion canceled.'
+    return true
   }
 
   private selectVisualType(type: BuilderVisualType, visual: DashboardBuilderVisualSignal | undefined): void {
@@ -2604,12 +2512,82 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.dispatchEvent(new CustomEvent(name, { bubbles: true, composed: true, detail }))
   }
 
-  private emitCommand(action: string, detail: Record<string, unknown> = {}): void {
+  private emitCommand(action: string, detail: Record<string, unknown> = {}, recordHistory = true): void {
+    if (this.commandPending) return
+    if (recordHistory && action !== 'publish' && action !== 'set_visibility') {
+      const current = this.currentRevisionReference()
+      if (current) {
+        this.pendingHistorySnapshot = { undo: [...this.undoStack], redo: [...this.redoStack] }
+        this.undoStack = [...this.undoStack.slice(-99), current]
+        this.redoStack = []
+      }
+    }
     this.commandPending = true
     this.setGridEditingEnabled(false)
     this.terminalFailure = null
     this.requestUpdate()
     this.emit('lv-builder-command', { ...this.commandDetail(), action, ...detail })
+  }
+
+  private currentRevisionReference(): BuilderRevisionReference | null {
+    const revision = this.builder?.revision
+    if (!revision?.id || !revision.number || !revision.contentHash) return null
+    return { id: revision.id, number: revision.number, contentHash: revision.contentHash }
+  }
+
+  private undo = (): void => {
+    const current = this.currentRevisionReference()
+    const target = this.undoStack.at(-1)
+    if (!current || !target || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.pendingHistorySnapshot = { undo: [...this.undoStack], redo: [...this.redoStack] }
+    this.undoStack = this.undoStack.slice(0, -1)
+    this.redoStack = [...this.redoStack.slice(-99), current]
+    this.visualActionMessage = 'Undoing the last change.'
+    this.emitCommand('restore_revision', {
+      targetRevisionId: target.id,
+      targetRevisionNumber: String(target.number),
+      targetRevisionContentHash: target.contentHash,
+    }, false)
+  }
+
+  private redo = (): void => {
+    const current = this.currentRevisionReference()
+    const target = this.redoStack.at(-1)
+    if (!current || !target || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.pendingHistorySnapshot = { undo: [...this.undoStack], redo: [...this.redoStack] }
+    this.redoStack = this.redoStack.slice(0, -1)
+    this.undoStack = [...this.undoStack.slice(-99), current]
+    this.visualActionMessage = 'Redoing the last change.'
+    this.emitCommand('restore_revision', {
+      targetRevisionId: target.id,
+      targetRevisionNumber: String(target.number),
+      targetRevisionContentHash: target.contentHash,
+    }, false)
+  }
+
+  private readonly handleBuilderKeydown = (event: KeyboardEvent): void => {
+    if (event.defaultPrevented || event.altKey || this.keyboardEventUsesEditableTarget(event)) return
+    const modifier = event.metaKey || event.ctrlKey
+    const key = event.key.toLowerCase()
+    let handled = false
+    if (modifier && key === 'z' && event.shiftKey) {
+      if (this.redoStack.length > 0) { this.redo(); handled = true }
+    } else if (modifier && key === 'z') {
+      if (this.undoStack.length > 0) { this.undo(); handled = true }
+    } else if (modifier && key === 'y') {
+      if (this.redoStack.length > 0) { this.redo(); handled = true }
+    } else if (modifier && key === 'c') {
+      handled = this.copySelectedVisual()
+    } else if (modifier && key === 'v') {
+      handled = this.pasteCopiedVisual()
+    } else if (!modifier && !event.shiftKey && (event.key === 'Delete' || event.key === 'Backspace')) {
+      handled = this.deleteSelectedVisual()
+    }
+    if (handled) event.preventDefault()
+  }
+
+  private keyboardEventUsesEditableTarget(event: KeyboardEvent): boolean {
+    return event.composedPath().some((target) => target instanceof HTMLElement && (target.matches('input, textarea, select, button, a[href]') || target.isContentEditable))
   }
 
   private selectPendingAddedPage(builder: DashboardBuilderSignal | null): void {

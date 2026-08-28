@@ -747,6 +747,17 @@ func duplicateVisualPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringDupl
 	return payload
 }
 
+func restoreRevisionPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRestoreRevisionIntent) (*authoring.RestoreRevisionPayload, error) {
+	if value == nil {
+		return nil, nil
+	}
+	target, err := revisionTokenFromAPIGen(value.TargetRevision)
+	if err != nil {
+		return nil, err
+	}
+	return &authoring.RestoreRevisionPayload{TargetRevision: target}, nil
+}
+
 func updateVisualFormatPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringUpdateVisualFormatIntent) *authoring.UpdateVisualFormatPayload {
 	if value == nil {
 		return nil
@@ -873,6 +884,9 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringDuplicateVisualCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.DuplicateVisual = duplicateVisualPayloadFromAPIGen(&value.DuplicateVisual)
+	case *dashboardgen.DashboardAuthoringRestoreRevisionCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.RestoreRevision, payloadErr = restoreRevisionPayloadFromAPIGen(&value.RestoreRevision)
 	case *dashboardgen.DashboardAuthoringUpdateVisualFormatCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.UpdateVisualFormat = updateVisualFormatPayloadFromAPIGen(&value.UpdateVisualFormat)
