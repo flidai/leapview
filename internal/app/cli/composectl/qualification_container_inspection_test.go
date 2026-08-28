@@ -2,11 +2,13 @@ package composectl
 
 import (
 	"archive/tar"
+	"bytes"
 	"context"
 	"io"
 	"os"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -91,6 +93,82 @@ func TestQualificationCopyFromContainerPreservesContainedSymlink(t *testing.T) {
 	require.Equal(t, "libstdc++.so.6.0.33", linkname)
 }
 
+func TestQualificationContainerArchiveRejectsAbsoluteSymlinkTarget(t *testing.T) {
+	targetRoot := filepath.Join(t.TempDir(), "payload")
+	_, err := extractQualificationContainerArchive(
+		qualificationInspectionArchive(t, []qualificationInspectionTarEntry{{
+			name: "leapview/link", mode: 0o777,
+			typeflag: tar.TypeSymlink, linkname: "/etc/passwd",
+		}}),
+		targetRoot,
+	)
+	require.ErrorContains(t, err, "target is empty or absolute")
+}
+
+func TestQualificationContainerArchiveRejectsTraversalSymlinkTarget(t *testing.T) {
+	targetRoot := filepath.Join(t.TempDir(), "payload")
+	_, err := extractQualificationContainerArchive(
+		qualificationInspectionArchive(t, []qualificationInspectionTarEntry{{
+			name: "leapview/link", mode: 0o777,
+			typeflag: tar.TypeSymlink, linkname: "../../escape",
+		}}),
+		targetRoot,
+	)
+	require.ErrorContains(t, err, "target escapes extraction root")
+}
+
+func TestQualificationContainerArchiveDoesNotWriteThroughEscapingSymlink(t *testing.T) {
+	root := t.TempDir()
+	targetRoot := filepath.Join(root, "payload")
+	escaped := filepath.Join(root, "outside", "written.txt")
+	_, err := extractQualificationContainerArchive(
+		qualificationInspectionArchive(t, []qualificationInspectionTarEntry{
+			{
+				name: "leapview/link", mode: 0o777,
+				typeflag: tar.TypeSymlink, linkname: "../../outside",
+			},
+			{
+				name: "leapview/link/written.txt", mode: 0o600,
+				typeflag: tar.TypeReg, contents: "must stay contained",
+			},
+		}),
+		targetRoot,
+	)
+	require.Error(t, err)
+	_, statErr := os.Lstat(escaped)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestQualificationContainerArchiveExtractionRemainsWithinTargetRoot(t *testing.T) {
+	targetRoot := filepath.Join(t.TempDir(), "payload")
+	extracted, err := extractQualificationContainerArchive(
+		qualificationInspectionArchive(t, []qualificationInspectionTarEntry{
+			{name: "leapview", mode: 0o700, typeflag: tar.TypeDir},
+			{name: "leapview/bin", mode: 0o700, typeflag: tar.TypeDir},
+			{
+				name: "leapview/bin/libstdc++.so.6", mode: 0o777,
+				typeflag: tar.TypeSymlink, linkname: "../lib/libstdc++.so.6.0.33",
+			},
+			{name: "leapview/lib", mode: 0o700, typeflag: tar.TypeDir},
+			{
+				name: "leapview/lib/libstdc++.so.6.0.33", mode: 0o500,
+				typeflag: tar.TypeReg, contents: "qualified library",
+			},
+		}),
+		targetRoot,
+	)
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(targetRoot, "leapview"), extracted)
+
+	resolved, err := filepath.EvalSymlinks(filepath.Join(extracted, "bin", "libstdc++.so.6"))
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(extracted, "lib", "libstdc++.so.6.0.33"), resolved)
+	relative, err := filepath.Rel(targetRoot, resolved)
+	require.NoError(t, err)
+	require.NotEqual(t, "..", relative)
+	require.False(t, strings.HasPrefix(relative, ".."+string(filepath.Separator)))
+}
+
 func TestQualificationCopyFromContainerRejectsUnsafeArchiveEntries(t *testing.T) {
 	for _, entry := range []qualificationInspectionTarEntry{
 		{name: "../escape", mode: 0o600, typeflag: tar.TypeReg, contents: "unsafe"},
@@ -130,22 +208,30 @@ func qualificationInspectionArchiveExecutor(
 		if request.Stdout == nil {
 			t.Fatal("container archive command did not stream stdout")
 		}
-		writer := tar.NewWriter(request.Stdout)
-		for _, entry := range entries {
-			header := &tar.Header{
-				Name: entry.name, Mode: entry.mode,
-				Typeflag: entry.typeflag, Linkname: entry.linkname,
-				Size: int64(len(entry.contents)),
-			}
-			if err := writer.WriteHeader(header); err != nil {
-				return nil, err
-			}
-			if entry.typeflag == tar.TypeReg {
-				if _, err := io.WriteString(writer, entry.contents); err != nil {
-					return nil, err
-				}
-			}
-		}
-		return nil, writer.Close()
+		_, err := io.Copy(request.Stdout, qualificationInspectionArchive(t, entries))
+		return nil, err
 	}
+}
+
+func qualificationInspectionArchive(
+	t *testing.T,
+	entries []qualificationInspectionTarEntry,
+) io.Reader {
+	t.Helper()
+	var archive bytes.Buffer
+	writer := tar.NewWriter(&archive)
+	for _, entry := range entries {
+		header := &tar.Header{
+			Name: entry.name, Mode: entry.mode,
+			Typeflag: entry.typeflag, Linkname: entry.linkname,
+			Size: int64(len(entry.contents)),
+		}
+		require.NoError(t, writer.WriteHeader(header))
+		if entry.typeflag == tar.TypeReg {
+			_, err := io.WriteString(writer, entry.contents)
+			require.NoError(t, err)
+		}
+	}
+	require.NoError(t, writer.Close())
+	return bytes.NewReader(archive.Bytes())
 }

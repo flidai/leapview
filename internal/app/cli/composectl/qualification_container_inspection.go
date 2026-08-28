@@ -96,6 +96,11 @@ type qualificationArchiveDirectory struct {
 	mode os.FileMode
 }
 
+type qualificationArchiveSymlink struct {
+	target   string
+	linkname string
+}
+
 func extractQualificationContainerArchive(archive io.Reader, targetRoot string) (string, error) {
 	if err := os.Mkdir(targetRoot, 0o700); err != nil {
 		return "", err
@@ -104,6 +109,7 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 	rootName := ""
 	hardlinks := make([]qualificationArchiveHardlink, 0)
 	directories := make([]qualificationArchiveDirectory, 0)
+	symlinks := make([]qualificationArchiveSymlink, 0)
 	for {
 		header, err := reader.Next()
 		if err == io.EOF {
@@ -170,7 +176,12 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 				target: target, source: source,
 			})
 		case tar.TypeSymlink:
-			linkname, err := qualificationArchiveSymlinkTarget(relative, header.Linkname)
+			linkname, err := qualificationArchiveSymlinkTarget(
+				targetRoot,
+				target,
+				relative,
+				header.Linkname,
+			)
 			if err != nil {
 				return "", fmt.Errorf(
 					"unsafe container inspection symlink %q: %w",
@@ -178,12 +189,12 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 					err,
 				)
 			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return "", err
-			}
-			if err := os.Symlink(linkname, target); err != nil {
-				return "", err
-			}
+			// Materialize symlinks only after every regular file and hardlink has
+			// been extracted. No archive-controlled write can therefore traverse
+			// a symlink that was created by this archive.
+			symlinks = append(symlinks, qualificationArchiveSymlink{
+				target: target, linkname: linkname,
+			})
 		default:
 			return "", fmt.Errorf(
 				"container inspection archive contains unsupported entry %q",
@@ -195,6 +206,9 @@ func extractQualificationContainerArchive(archive io.Reader, targetRoot string) 
 		return "", fmt.Errorf("container inspection archive is empty")
 	}
 	if err := createQualificationArchiveHardlinks(hardlinks); err != nil {
+		return "", err
+	}
+	if err := createQualificationArchiveSymlinks(symlinks); err != nil {
 		return "", err
 	}
 	sort.Slice(directories, func(left, right int) bool {
@@ -228,16 +242,63 @@ func qualificationArchiveRoot(relative string) string {
 	return root
 }
 
-func qualificationArchiveSymlinkTarget(relative string, linkname string) (string, error) {
-	linkname = filepath.ToSlash(linkname)
-	if linkname == "" || path.IsAbs(linkname) {
+func qualificationArchiveSymlinkTarget(
+	targetRoot string,
+	target string,
+	relative string,
+	linkname string,
+) (string, error) {
+	portableLinkname := strings.ReplaceAll(linkname, `\`, "/")
+	portableVolume := len(portableLinkname) >= 2 && portableLinkname[1] == ':' &&
+		((portableLinkname[0] >= 'a' && portableLinkname[0] <= 'z') ||
+			(portableLinkname[0] >= 'A' && portableLinkname[0] <= 'Z'))
+	if linkname == "" || path.IsAbs(portableLinkname) || filepath.IsAbs(linkname) || filepath.VolumeName(linkname) != "" || portableVolume {
 		return "", fmt.Errorf("target is empty or absolute")
 	}
-	resolved := path.Clean(path.Join(path.Dir(filepath.ToSlash(relative)), linkname))
-	if resolved == ".." || strings.HasPrefix(resolved, "../") {
-		return "", fmt.Errorf("target escapes archive root")
+	resolvedRelative := path.Clean(path.Join(
+		path.Dir(filepath.ToSlash(relative)),
+		filepath.ToSlash(linkname),
+	))
+	if resolvedRelative == ".." || strings.HasPrefix(resolvedRelative, "../") {
+		return "", fmt.Errorf("target escapes extraction root")
 	}
-	return filepath.FromSlash(linkname), nil
+	resolvedTarget, err := securejoin.SecureJoin(
+		targetRoot,
+		filepath.FromSlash(resolvedRelative),
+	)
+	if err != nil {
+		return "", fmt.Errorf("resolve target: %w", err)
+	}
+	if err := qualificationArchivePathWithinRoot(targetRoot, resolvedTarget); err != nil {
+		return "", err
+	}
+	safeLinkname, err := filepath.Rel(filepath.Dir(target), resolvedTarget)
+	if err != nil || safeLinkname == "" || filepath.IsAbs(safeLinkname) {
+		return "", fmt.Errorf("resolve relative target")
+	}
+	if err := qualificationArchivePathWithinRoot(
+		targetRoot,
+		filepath.Join(filepath.Dir(target), safeLinkname),
+	); err != nil {
+		return "", err
+	}
+	return safeLinkname, nil
+}
+
+func qualificationArchivePathWithinRoot(targetRoot string, candidate string) error {
+	root, err := filepath.Abs(targetRoot)
+	if err != nil {
+		return fmt.Errorf("resolve extraction root: %w", err)
+	}
+	resolved, err := filepath.Abs(candidate)
+	if err != nil {
+		return fmt.Errorf("resolve symlink target: %w", err)
+	}
+	relative, err := filepath.Rel(root, resolved)
+	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("target escapes extraction root")
+	}
+	return nil
 }
 
 func createQualificationArchiveHardlinks(links []qualificationArchiveHardlink) error {
@@ -269,6 +330,18 @@ func createQualificationArchiveHardlinks(links []qualificationArchiveHardlink) e
 			return fmt.Errorf("container inspection archive contains unresolved hardlink")
 		}
 		pending = remaining
+	}
+	return nil
+}
+
+func createQualificationArchiveSymlinks(links []qualificationArchiveSymlink) error {
+	for _, link := range links {
+		if err := os.MkdirAll(filepath.Dir(link.target), 0o700); err != nil {
+			return err
+		}
+		if err := os.Symlink(link.linkname, link.target); err != nil {
+			return err
+		}
 	}
 	return nil
 }
