@@ -1,0 +1,22 @@
+apiVersion: libredash.dev/v1
+kind: Workspace
+metadata:
+  name: compatibility
+  title: FAI-517 Compatibility
+spec:
+  uses:
+    sources:
+      - qualification.orders
+  models:
+    include:
+      - models/*.yaml
+  semanticModels:
+    include:
+      - semantic-models/*.yaml
+  dashboards:
+    include:
+      - dashboards/*.yaml
+  access:
+    include: []
+  agentPolicy:
+    include: []
