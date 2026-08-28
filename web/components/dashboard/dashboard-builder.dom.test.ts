@@ -100,11 +100,15 @@ test('dashboard builder places the page tab bar below the canvas without consumi
       const pageBar = root.querySelector('.page-bar')?.getBoundingClientRect()
       const visualBuilder = root.querySelector('.visual-builder')?.getBoundingClientRect()
       const dataPane = root.querySelector('.data-pane')?.getBoundingClientRect()
+      const pickerCatalog = root.querySelector('.visual-picker-catalog') as HTMLElement
+      const pickerGrid = root.querySelector('.visual-picker') as HTMLElement
       const pickerButtons = Array.from(root.querySelectorAll('.visual-picker-button')).map((button) => ({
         type: button.getAttribute('data-visual-type'),
+        group: button.getAttribute('data-visual-group'),
         label: button.getAttribute('aria-label'),
         title: button.getAttribute('title'),
         hasIcon: Boolean(button.querySelector('svg')),
+        hasVisibleLabel: Boolean(button.querySelector(':scope > span:not(.sr-only)')),
         iconType: button.querySelector('svg')?.getAttribute('data-icon-type'),
         filledMarks: button.querySelectorAll('svg .visual-icon-primary, svg .visual-icon-secondary, svg .visual-icon-tertiary').length,
         color: getComputedStyle(button).color,
@@ -118,7 +122,9 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         regions,
         boxes,
         pickerButtons,
-        pickerGroups: Array.from(root.querySelectorAll('.visual-picker-group-title')).map((heading) => heading.textContent?.trim()),
+        pickerGroups: [...new Set(pickerButtons.map((button) => button.group))],
+        pickerColumns: getComputedStyle(pickerGrid).gridTemplateColumns.split(' ').length,
+        pickerHasScroll: pickerCatalog.scrollHeight > pickerCatalog.clientHeight || pickerCatalog.scrollWidth > pickerCatalog.clientWidth,
         referenceHref: root.querySelector<HTMLAnchorElement>('.visual-reference-link')?.getAttribute('href'),
         tabs,
         panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
@@ -144,8 +150,11 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pickerButtons).toHaveLength(26)
     expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot'])
     expect(state.pickerButtons.every((button) => button.hasIcon && button.label?.endsWith(' visual') && button.title)).toBe(true)
+    expect(state.pickerButtons.every((button) => !button.hasVisibleLabel)).toBe(true)
     expect(state.pickerButtons.every((button) => button.iconType === button.type && button.filledMarks > 0)).toBe(true)
     expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables'])
+    expect(state.pickerColumns).toBe(7)
+    expect(state.pickerHasScroll).toBe(false)
     expect(state.referenceHref).toBe('/docs/visuals/bar')
     expect(state.tabs).toEqual([
       { id: 'build', label: 'Build', selected: 'true' },

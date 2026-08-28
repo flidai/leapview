@@ -891,29 +891,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-picker-catalog {
-      display: grid;
-      max-height: 19rem;
-      gap: var(--base-size-12);
-      overflow: auto;
-      padding-right: var(--base-size-2);
-    }
-
-    .visual-picker-group {
-      display: grid;
-      gap: var(--base-size-6);
-    }
-
-    .visual-picker-group-title {
-      margin: 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
+      display: block;
+      max-height: none;
+      overflow: visible;
     }
 
     .visual-picker {
       display: grid;
-      grid-template-columns: repeat(3, minmax(0, 1fr));
-      gap: var(--base-size-6);
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      gap: var(--base-size-4);
     }
 
     .visual-picker-button {
@@ -921,14 +907,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       --visual-picker-muted: var(--lv-bg-panel-muted);
       display: grid;
       min-width: 0;
-      min-height: 3.25rem;
-      gap: var(--base-size-2);
+      min-height: 2.25rem;
       place-items: center;
       border-color: transparent;
-      padding: var(--base-size-4);
+      padding: var(--base-size-2);
       color: var(--visual-picker-color);
       background: var(--lv-bg-panel-muted);
-      font: var(--lv-type-caption);
     }
 
     .visual-picker-button[data-visual-picker-type='bar'] {
@@ -998,8 +982,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-picker-button svg {
-      width: 1.5rem;
-      height: 1.5rem;
+      width: 1.25rem;
+      height: 1.25rem;
       overflow: visible;
     }
 
@@ -2065,26 +2049,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderVisualPicker(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
     const currentType = visual ? this.visualTypeForRender(visual) : undefined
     const pickerHelpID = 'builder-visual-type-help'
-    const groups = this.visualCatalogGroups(builder.visualCatalog ?? [])
+    const catalog = this.visualCatalogGroups(builder.visualCatalog ?? []).flatMap(([, entries]) => entries)
     const selectedEntry = visual ? this.visualCatalogEntry(currentType ?? '', builder) : undefined
     return html`
       <section class="property-group" aria-label=${visual ? 'Edit visual type' : 'Add visual'}>
         <span class="property-label">${visual ? 'Visual type' : 'Add a visual'}</span>
         <p id=${pickerHelpID} class="pane-hint">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
         <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
-          ${groups.map(([group, entries]) => html`
-            <section class="visual-picker-group" aria-label=${group}>
-              <h3 class="visual-picker-group-title">${group}</h3>
-              <div class="visual-picker">
-                ${entries.map((entry) => html`
-                  <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${visual ? `Change to ${entry.label} visual` : `Add ${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${Boolean(visual && currentType === entry.type)} ?disabled=${this.commandPending || (visual ? !builder.capabilities.canEdit : !page || !builder.capabilities.canAddVisual)} @click=${() => this.selectVisualType(entry.type, visual)}>
-                    ${renderVisualTypeIcon(entry.type)}
-                    <span>${entry.label}</span>
-                  </button>
-                `)}
-              </div>
-            </section>
-          `)}
+          <div class="visual-picker">
+            ${catalog.map((entry) => html`
+              <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${visual ? `Change to ${entry.label} visual` : `Add ${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${Boolean(visual && currentType === entry.type)} ?disabled=${this.commandPending || (visual ? !builder.capabilities.canEdit : !page || !builder.capabilities.canAddVisual)} @click=${() => this.selectVisualType(entry.type, visual)}>
+                ${renderVisualTypeIcon(entry.type)}
+                <span class="sr-only">${entry.label}</span>
+              </button>
+            `)}
+          </div>
         </div>
         ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Open ${selectedEntry.label} visual reference</a>` : nothing}
       </section>
