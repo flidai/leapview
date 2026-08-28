@@ -668,6 +668,77 @@ func TestV010FreshCandidateDeniesLegacyStateWithoutMutation(t *testing.T) {
 	require.NotContains(t, candidateServerRunCommand(fixture.requests, fixture.candidateImage), evidence.Execution.StateVolumeName)
 }
 
+func TestV010FreshCandidateEveryRunUsesExplicitIsolationAndHardening(t *testing.T) {
+	fixture := newV010DockerFixture(t)
+	t.Setenv("DOCKER_CONFIG", filepath.Dir(writeV010DockerCredentials(t)))
+	controller, err := New(Options{
+		Root: t.TempDir(), DockerBin: "docker-probe", qualificationExecutor: qualificationExecutorFunc(fixture.execute),
+	})
+	require.NoError(t, err)
+	evidence, err := controller.qualifyV010ArtifactExecution(t.Context(), v010CandidateBoundTestPolicy(t))
+	require.NoError(t, err)
+	require.NotNil(t, evidence.Execution)
+	require.NotNil(t, evidence.Execution.FreshCandidate)
+
+	fresh := evidence.Execution.FreshCandidate
+	var persistentRuns, initializationRuns, denialRuns, checksumRuns int
+	for _, arguments := range fixture.requests {
+		if len(arguments) == 0 || arguments[0] != "run" || !slices.Contains(arguments, fixture.candidateImage) {
+			continue
+		}
+		requireV010CandidateRunHardening(t, arguments, fixture.candidateImage)
+		network := v010CommandFlagValue(arguments, "--network")
+		switch {
+		case slices.Contains(arguments, "--detach"):
+			persistentRuns++
+			require.Equal(t, fresh.NetworkName, network)
+		case slices.Contains(arguments, "tar"):
+			checksumRuns++
+			require.Equal(t, "none", network)
+		case strings.Contains(strings.Join(arguments, " "), " admin initialize --format json"):
+			mount := v010CommandFlagValue(arguments, "--mount")
+			if strings.Contains(mount, "source="+fresh.StateVolumeName+",") {
+				initializationRuns++
+				require.Equal(t, fresh.NetworkName, network)
+			} else {
+				denialRuns++
+				require.Equal(t, "none", network)
+				require.Contains(t, mount, "source="+evidence.Execution.StateVolumeName+",")
+			}
+		default:
+			t.Fatalf("unclassified candidate-image helper run: %v", arguments)
+		}
+	}
+	require.Equal(t, 1, persistentRuns)
+	require.Equal(t, 1, initializationRuns)
+	require.Equal(t, 2, denialRuns)
+	require.NotZero(t, checksumRuns)
+}
+
+func requireV010CandidateRunHardening(t *testing.T, arguments []string, image string) {
+	t.Helper()
+	require.NotEmpty(t, v010CommandFlagValue(arguments, "--network"), "candidate run used Docker's default network: %v", arguments)
+	require.Equal(t, compatibility.ReleasedV010Platform, v010CommandFlagValue(arguments, "--platform"))
+	require.Equal(t, "never", v010CommandFlagValue(arguments, "--pull"))
+	require.Contains(t, arguments, "--read-only")
+	require.Equal(t, "no-new-privileges", v010CommandFlagValue(arguments, "--security-opt"))
+	require.Equal(t, "ALL", v010CommandFlagValue(arguments, "--cap-drop"))
+	require.NotEmpty(t, v010CommandFlagValue(arguments, "--pids-limit"))
+	require.NotContains(t, arguments, "--publish")
+	require.NotContains(t, arguments, "-p")
+	require.NotContains(t, arguments, "-P")
+	require.Contains(t, image, "@sha256:")
+}
+
+func v010CommandFlagValue(arguments []string, flag string) string {
+	for index, argument := range arguments {
+		if argument == flag && index+1 < len(arguments) {
+			return arguments[index+1]
+		}
+	}
+	return ""
+}
+
 func TestV010FreshCandidateFailsClosedOnLegacyVisibilityOrMutation(t *testing.T) {
 	for _, test := range []struct {
 		name   string

@@ -135,7 +135,7 @@ func (c *Controller) qualifyV010FreshCandidate(
 	if freshBeforeEntries != 0 {
 		return result, fmt.Errorf("candidate state volume was not empty before fresh installation")
 	}
-	credentials, err := c.initializeV010FreshCandidate(ctx, candidate.Image, volume)
+	credentials, err := c.initializeV010FreshCandidate(ctx, candidate.Image, network, volume)
 	if err != nil {
 		return result, err
 	}
@@ -291,13 +291,16 @@ func (c *Controller) resolveV010CandidateImage(ctx context.Context, candidate co
 	return image.ID, nil
 }
 
-func (c *Controller) initializeV010FreshCandidate(ctx context.Context, image, volume string) (v010CandidateCredentials, error) {
+func (c *Controller) initializeV010FreshCandidate(ctx context.Context, image, network, volume string) (v010CandidateCredentials, error) {
 	output, err := c.qualificationDocker(ctx, nil,
-		"run", "--rm", "--platform", compatibility.ReleasedV010Platform,
+		"run", "--rm", "--network", network, "--platform", compatibility.ReleasedV010Platform,
+		"--pull", "never", "--read-only", "--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL", "--pids-limit", "512",
 		"--env", "LEAPVIEW_PRODUCTION=1", "--env", "LEAPVIEW_ENVIRONMENT=fai-517-candidate",
 		"--env", "LEAPVIEW_HOME=/var/lib/leapview/home",
 		"--env", "LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL="+v010CandidateAdminEmail,
 		"--mount", "type=volume,source="+volume+",target="+v010CandidateStateMount,
+		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
 		image, "admin", "initialize", "--format", "json",
 	)
 	if err != nil {
@@ -390,10 +393,13 @@ func (c *Controller) collectV010FreshCandidateInventory(
 
 func (c *Controller) attemptV010LegacyStateAdoption(ctx context.Context, image, volume, target, home string) error {
 	_, err := c.qualificationDocker(ctx, nil,
-		"run", "--rm", "--platform", compatibility.ReleasedV010Platform,
+		"run", "--rm", "--network", "none", "--platform", compatibility.ReleasedV010Platform,
+		"--pull", "never", "--read-only", "--security-opt", "no-new-privileges",
+		"--cap-drop", "ALL", "--pids-limit", "512",
 		"--env", "LEAPVIEW_PRODUCTION=1", "--env", "LEAPVIEW_ENVIRONMENT=fai-517-candidate",
 		"--env", "LEAPVIEW_HOME="+home, "--env", "LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL="+v010CandidateAdminEmail,
 		"--mount", "type=volume,source="+volume+",target="+target,
+		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
 		image, "admin", "initialize", "--format", "json",
 	)
 	if err == nil || !strings.Contains(err.Error(), compatibility.ErrV010FreshInstallOnly.Error()) {
@@ -404,7 +410,10 @@ func (c *Controller) attemptV010LegacyStateAdoption(ctx context.Context, image, 
 
 func (c *Controller) v010QualificationVolumeChecksum(ctx context.Context, image, volume string) (string, int, error) {
 	document, err := c.qualificationDocker(ctx, nil,
-		"run", "--rm", "--read-only", "--user", "0:0", "--entrypoint", "tar",
+		"run", "--rm", "--network", "none", "--platform", compatibility.ReleasedV010Platform,
+		"--pull", "never", "--read-only", "--user", "0:0",
+		"--security-opt", "no-new-privileges", "--cap-drop", "ALL", "--cap-add", "DAC_READ_SEARCH",
+		"--pids-limit", "128", "--entrypoint", "tar",
 		"--mount", "type=volume,source="+volume+",target=/state,readonly",
 		image, "--sort=name", "--mtime=UTC 1970-01-01", "--owner=0", "--group=0", "--numeric-owner", "-C", "/state", "-cf", "-", ".",
 	)
