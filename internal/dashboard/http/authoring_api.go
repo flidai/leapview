@@ -762,7 +762,11 @@ func updateVisualFormatPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringU
 	if value == nil {
 		return nil
 	}
-	return &authoring.UpdateVisualFormatPayload{PageID: value.PageId, VisualID: value.VisualId, Title: value.Title, TitleVisible: value.TitleVisible, LegendVisible: value.LegendVisible, AxisVisible: value.AxisVisible, DataLabelsVisible: value.DataLabelsVisible}
+	formatKey := ""
+	if value.FormatKey != nil {
+		formatKey = *value.FormatKey
+	}
+	return &authoring.UpdateVisualFormatPayload{PageID: value.PageId, VisualID: value.VisualId, Title: value.Title, TitleVisible: value.TitleVisible, LegendVisible: value.LegendVisible, AxisVisible: value.AxisVisible, DataLabelsVisible: value.DataLabelsVisible, FormatKey: formatKey, FormatValue: value.FormatValue}
 }
 
 func removeFieldPayloadFromAPIGen(value *dashboardgen.DashboardAuthoringRemoveFieldIntent) *authoring.RemoveFieldPayload {

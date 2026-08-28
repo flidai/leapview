@@ -401,6 +401,8 @@ type dashboardBuilderCommandSignal struct {
 	LegendVisible             *bool                             `json:"legendVisible,omitempty"`
 	AxisVisible               *bool                             `json:"axisVisible,omitempty"`
 	DataLabelsVisible         *bool                             `json:"dataLabelsVisible,omitempty"`
+	FormatKey                 string                            `json:"formatKey"`
+	FormatValue               *string                           `json:"formatValue,omitempty"`
 	Visibility                string                            `json:"visibility"`
 	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
@@ -507,7 +509,7 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 	case "remove_visual":
 		command.RemoveVisual = &authoring.RemoveVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID)}
 	case "update_visual_format":
-		command.UpdateVisualFormat = &authoring.UpdateVisualFormatPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: optionalTrimmedString(s.Title), TitleVisible: s.TitleVisible, LegendVisible: s.LegendVisible, AxisVisible: s.AxisVisible, DataLabelsVisible: s.DataLabelsVisible}
+		command.UpdateVisualFormat = &authoring.UpdateVisualFormatPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: optionalTrimmedString(s.Title), TitleVisible: s.TitleVisible, LegendVisible: s.LegendVisible, AxisVisible: s.AxisVisible, DataLabelsVisible: s.DataLabelsVisible, FormatKey: strings.TrimSpace(s.FormatKey), FormatValue: s.FormatValue}
 	case "remove_field":
 		command.RemoveField = &authoring.RemoveFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "move_field":

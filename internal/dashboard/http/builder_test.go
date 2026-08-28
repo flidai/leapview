@@ -241,6 +241,25 @@ func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesContractFormatOption(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "sales-chart", "formatKey": "stacking", "formatValue": "percent", "action": "update_visual_format",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "format-option-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if fake.executed.UpdateVisualFormat == nil || fake.executed.UpdateVisualFormat.FormatKey != "stacking" || fake.executed.UpdateVisualFormat.FormatValue == nil || *fake.executed.UpdateVisualFormat.FormatValue != "percent" {
+		t.Fatalf("format command = %#v", fake.executed.UpdateVisualFormat)
+	}
+}
+
 func TestDashboardBuilderCommandTranslatesExactRevisionRestore(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}

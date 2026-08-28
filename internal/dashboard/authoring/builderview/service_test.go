@@ -93,6 +93,12 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if signal.SemanticModel.ID != "sales_model" {
 		t.Fatalf("semantic model signal id = %q, want canonical resource id", signal.SemanticModel.ID)
 	}
+	if len(signal.VisualCatalog) != 26 || signal.VisualCatalog[0].Type != "line" || signal.VisualCatalog[0].ReferenceHref != "/docs/visuals/line" {
+		t.Fatalf("visual catalog = %#v", signal.VisualCatalog)
+	}
+	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {
+		t.Fatalf("projected format options = %#v", signal.Pages)
+	}
 }
 
 func TestBuildReleasesLeaseOnRuntimeFailuresAndProjectsDetachedModel(t *testing.T) {

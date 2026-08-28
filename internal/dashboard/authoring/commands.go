@@ -250,6 +250,8 @@ type UpdateVisualFormatPayload struct {
 	LegendVisible     *bool   `json:"legendVisible,omitempty"`
 	AxisVisible       *bool   `json:"axisVisible,omitempty"`
 	DataLabelsVisible *bool   `json:"dataLabelsVisible,omitempty"`
+	FormatKey         string  `json:"formatKey,omitempty"`
+	FormatValue       *string `json:"formatValue,omitempty"`
 }
 
 func (UpdateVisualFormatPayload) authoringPayload() {}
@@ -722,8 +724,17 @@ func validatePayload(payload authoringPayload) error {
 		if err := validateVisualTargetFields(value.PageID, value.VisualID, "update visual format"); err != nil {
 			return err
 		}
-		if value.Title == nil && value.TitleVisible == nil && value.LegendVisible == nil && value.AxisVisible == nil && value.DataLabelsVisible == nil {
+		if value.Title == nil && value.TitleVisible == nil && value.LegendVisible == nil && value.AxisVisible == nil && value.DataLabelsVisible == nil && value.FormatKey == "" {
 			return fmt.Errorf("%w: visual format has no edits", ErrInvalidPayload)
+		}
+		if value.FormatKey != "" && value.FormatValue == nil {
+			return fmt.Errorf("%w: visual format option requires a value", ErrInvalidPayload)
+		}
+		if value.FormatKey == "" && value.FormatValue != nil {
+			return fmt.Errorf("%w: visual format value requires an option key", ErrInvalidPayload)
+		}
+		if value.FormatKey != "" && (value.Title != nil || value.TitleVisible != nil || value.LegendVisible != nil || value.AxisVisible != nil || value.DataLabelsVisible != nil) {
+			return fmt.Errorf("%w: update one visual format option at a time", ErrInvalidPayload)
 		}
 		if value.Title != nil && strings.TrimSpace(*value.Title) == "" {
 			return fmt.Errorf("%w: visual title cannot be blank", ErrInvalidPayload)

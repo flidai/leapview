@@ -911,6 +911,14 @@ func updateCanonicalVisualFormat(value *document.DashboardDocument, patch Update
 			return err
 		}
 	}
+	if patch.FormatKey != "" {
+		if patch.FormatValue == nil {
+			return fmt.Errorf("%w: visual format option requires a value", ErrInvalidPayload)
+		}
+		if err := applyCanonicalVisualFormatOption(&visual, strings.TrimSpace(patch.FormatKey), *patch.FormatValue); err != nil {
+			return err
+		}
+	}
 	value.Spec.Visuals[visualID] = visual
 	return nil
 }

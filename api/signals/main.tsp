@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../dashboard/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
 import "./product_settings.tsp";
@@ -57,6 +58,7 @@ model DashboardBuilderSignal {
   `origin`: DashboardBuilderOriginSignal;
   `sourceEvidence`?: DashboardBuilderSourceEvidenceSignal;
   `semanticModel`: DashboardBuilderSemanticModelSignal;
+  `visualCatalog`: DashboardBuilderVisualTypeSignal[];
   `pages`: DashboardBuilderPageSignal[];
   `selectedPageId`?: string;
   `selectedVisualId`?: string;
@@ -119,15 +121,45 @@ model DashboardBuilderPageSignal {
   `visuals`: DashboardBuilderVisualSignal[];
 }
 
+model DashboardBuilderVisualTypeSignal {
+  `type`: LeapViewDashboard.DashboardVisualType;
+  `label`: string;
+  `group`: string;
+  `referenceHref`: string;
+  `roles`: DashboardBuilderFieldRoleSignal[];
+}
+
+enum DashboardBuilderFieldRoleSignal {
+  dimension: "dimension",
+  metric: "metric",
+  detail: "detail",
+}
+
+model DashboardBuilderFormatChoiceSignal {
+  `value`: string;
+  `label`: string;
+}
+
+model DashboardBuilderFormatOptionSignal {
+  `key`: string;
+  `label`: string;
+  `section`: string;
+  `control`: "toggle" | "select" | "number" | "text";
+  `value`: string;
+  `placeholder`?: string;
+  `choices`: DashboardBuilderFormatChoiceSignal[];
+}
+
 model DashboardBuilderVisualSignal {
   `id`: string;
   `visualId`: string;
   `title`: string;
   `titleVisible`: boolean;
-  `type`: string;
+  `type`: LeapViewDashboard.DashboardVisualType;
   `legendVisible`: boolean;
   `axisVisible`: boolean;
   `dataLabelsVisible`: boolean;
+  `formatOptions`: DashboardBuilderFormatOptionSignal[];
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
   `filters`: string[];

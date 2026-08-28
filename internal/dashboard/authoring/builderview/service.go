@@ -246,7 +246,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
-		SemanticModel: semantic, Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
+		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
 		Save:    uisignals.DashboardBuilderSaveStateSignal{State: saveState(dirty), LastSavedAt: optionalTime(revision.CreatedAt)},
 	}
@@ -351,7 +351,40 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 		titleVisible = *authored.TitleVisible
 	}
 	legendVisible, labelsVisible, axisVisible := canonicalVisualFormatVisibility(authored)
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: string(authored.Type), LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+	formatOptions, err := authoring.CanonicalVisualFormatOptions(authored)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual format options: %w", err)
+	}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+}
+
+func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
+	catalog := authoring.CanonicalVisualCatalog()
+	result := make([]uisignals.DashboardBuilderVisualTypeSignal, 0, len(catalog))
+	for _, entry := range catalog {
+		roles := make([]uisignals.DashboardBuilderFieldRoleSignal, 0, len(authoring.CanonicalVisualRoles(entry.Type)))
+		for _, role := range authoring.CanonicalVisualRoles(entry.Type) {
+			roles = append(roles, uisignals.DashboardBuilderFieldRoleSignal(role))
+		}
+		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles})
+	}
+	return result
+}
+
+func projectVisualFormatOptions(options []authoring.VisualFormatOption) []uisignals.DashboardBuilderFormatOptionSignal {
+	result := make([]uisignals.DashboardBuilderFormatOptionSignal, 0, len(options))
+	for _, option := range options {
+		choices := make([]uisignals.DashboardBuilderFormatChoiceSignal, 0, len(option.Choices))
+		for _, choice := range option.Choices {
+			choices = append(choices, uisignals.DashboardBuilderFormatChoiceSignal{Value: choice.Value, Label: choice.Label})
+		}
+		projected := uisignals.DashboardBuilderFormatOptionSignal{Key: option.Key, Label: option.Label, Section: option.Section, Control: option.Control, Value: option.Value, Choices: choices}
+		if option.Placeholder != "" {
+			projected.Placeholder = &option.Placeholder
+		}
+		result = append(result, projected)
+	}
+	return result
 }
 
 func canonicalVisualFormatVisibility(visual dashboarddocument.DashboardVisual) (legendVisible, labelsVisible, axisVisible bool) {
@@ -419,6 +452,12 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 			id, label := canonicalMetric(field)
 			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
 		}
+	case *dashboarddocument.HistogramDashboardQuery:
+		id, label := canonicalMetric(value.Field)
+		slots = append(slots, slot("metric-0", label, "metric", id, true))
+	case *dashboarddocument.DistributionDashboardQuery:
+		id, label := canonicalMetric(value.Field)
+		slots = append(slots, slot("metric-0", label, "metric", id, true))
 	}
 	return boundSlots(slots)
 }
