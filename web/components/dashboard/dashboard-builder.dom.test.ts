@@ -189,7 +189,7 @@ test('dashboard builder changes the selected visual type without creating a visu
   }
 })
 
-test('dashboard builder keeps adding a visual as a distinct, enabled control', async () => {
+test('dashboard builder deselects on the empty canvas and adds a visual directly from the picker', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -197,23 +197,38 @@ test('dashboard builder keeps adding a visual as a distinct, enabled control', a
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const add = root.querySelector('button[data-builder-action="add-visual"]') as HTMLButtonElement | null
-      const disabledBeforeClick = add?.disabled ?? null
+      const selectedBefore = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id')
+      const addButtonBefore = root.querySelector('button[data-builder-action="add-visual"]')
+      ;(root.querySelector('.canvas') as HTMLElement).click()
+      await element.updateComplete
+      const selectedAfter = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id') ?? ''
+      const headingAfter = root.querySelector('.visual-builder .pane-title')?.textContent?.trim()
+      const fieldWellsAfter = root.querySelectorAll('.field-wells').length
+      const addButtonAfter = root.querySelector('button[data-builder-action="add-visual"]')
+      const column = root.querySelector('button[data-visual-type="column"]') as HTMLButtonElement | null
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      add?.click()
+      column?.click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
-        addControl: Boolean(add),
-        label: add?.getAttribute('aria-label') || add?.textContent?.trim(),
-        disabledBeforeClick,
+        selectedBefore,
+        selectedAfter,
+        headingAfter,
+        fieldWellsAfter,
+        addButtonBefore: Boolean(addButtonBefore),
+        addButtonAfter: Boolean(addButtonAfter),
+        columnLabel: column?.getAttribute('aria-label'),
         command,
       }
     })
-    expect(state.addControl).toBe(true)
-    expect(state.label).toContain('Add')
-    expect(state.disabledBeforeClick).toBe(false)
-    expect(state.command).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'bar' })
+    expect(state.selectedBefore).toBe('sales-chart')
+    expect(state.selectedAfter).toBe('')
+    expect(state.headingAfter).toBe('Add a visual')
+    expect(state.fieldWellsAfter).toBe(0)
+    expect(state.addButtonBefore).toBe(false)
+    expect(state.addButtonAfter).toBe(false)
+    expect(state.columnLabel).toBe('Add Column chart visual')
+    expect(state.command).toMatchObject({ action: 'add_visual', pageId: 'overview', visualId: '', type: 'column' })
   } finally {
     await page.close()
   }
@@ -1229,7 +1244,7 @@ test('dashboard builder selects a newly added page after the authoritative comma
       await element.updateComplete
       let visualCommand: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { visualCommand = event.detail }, { once: true })
-      ;(root.querySelector('.add-selected-visual') as HTMLButtonElement).click()
+      ;(root.querySelector('button[data-visual-type="bar"]') as HTMLButtonElement).click()
       return {
         commandPageID: command?.pageId,
         visualCommandPageID: visualCommand?.pageId,
@@ -1241,7 +1256,7 @@ test('dashboard builder selects a newly added page after the authoritative comma
     expect(state.commandPageID).toBe('')
     expect(state.visualCommandPageID).toBe('page-2')
     expect(state.selectedTab).toBe('Page 2')
-    expect(state.selectedBuilderTitle).toBe('Visual builder')
+    expect(state.selectedBuilderTitle).toBe('Add a visual')
     expect(state.emptyCanvas).toBe(true)
   } finally {
     await page.close()
