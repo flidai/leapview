@@ -101,7 +101,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
     }
 
     .main-profile {
-      width: min(calc(100% - var(--base-size-48)), 46rem);
+      width: min(calc(100% - var(--base-size-48)), 40rem);
     }
 
     .main-settings .page-title-block {
