@@ -21,6 +21,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
+import { renderVisualTypeIcon } from './visual-type-icon'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -995,13 +996,68 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-picker-button svg {
-      width: 1.25rem;
-      height: 1.25rem;
+      width: 1.5rem;
+      height: 1.5rem;
+      overflow: visible;
+    }
+
+    .visual-picker-button .visual-icon-primary,
+    .visual-picker-button .visual-icon-secondary,
+    .visual-picker-button .visual-icon-tertiary,
+    .visual-picker-button .visual-icon-axis {
+      fill: currentColor;
+    }
+
+    .visual-picker-button .visual-icon-primary {
+      opacity: 1;
+    }
+
+    .visual-picker-button .visual-icon-secondary {
+      opacity: 0.58;
+    }
+
+    .visual-picker-button .visual-icon-tertiary {
+      opacity: 0.24;
+    }
+
+    .visual-picker-button .visual-icon-axis {
+      opacity: 0.36;
+    }
+
+    .visual-picker-button .visual-icon-stroke,
+    .visual-picker-button .visual-icon-band,
+    .visual-picker-button .visual-icon-ring,
+    .visual-picker-button .visual-icon-sunburst-outer,
+    .visual-picker-button .visual-icon-gauge {
       fill: none;
       stroke: currentColor;
       stroke-linecap: round;
       stroke-linejoin: round;
-      stroke-width: 1.6;
+    }
+
+    .visual-picker-button .visual-icon-stroke {
+      stroke-width: 2.25;
+    }
+
+    .visual-picker-button .visual-icon-stroke-thin {
+      stroke-width: 1.5;
+    }
+
+    .visual-picker-button .visual-icon-band {
+      stroke-width: 4;
+    }
+
+    .visual-picker-button .visual-icon-ring,
+    .visual-picker-button .visual-icon-sunburst-outer {
+      stroke-width: 4.5;
+    }
+
+    .visual-picker-button .visual-icon-gauge {
+      stroke-width: 3.5;
+    }
+
+    .visual-picker-button .visual-icon-cutout {
+      fill: var(--lv-bg-panel-muted);
     }
 
     .add-selected-visual {
@@ -2025,7 +2081,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               <div class="visual-picker">
                 ${entries.map((entry) => html`
                   <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${`${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${visual ? currentType === entry.type : this.visualType === entry.type} ?disabled=${this.commandPending || (Boolean(visual) && !builder.capabilities.canEdit)} @click=${() => this.selectVisualType(entry.type, visual)}>
-                    ${this.renderVisualTypeIcon(entry.type)}
+                    ${renderVisualTypeIcon(entry.type)}
                     <span>${entry.label}</span>
                   </button>
                 `)}
@@ -2051,73 +2107,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private visualLabel(type: string, builder = this.builder): string {
     return this.visualCatalogEntry(type, builder)?.label ?? this.titleCase(type)
-  }
-
-  private renderVisualTypeIcon(type: BuilderVisualType) {
-    if (type === 'line' || type === 'area') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d=${type === 'area' ? 'M3 19V14l5-5 4 3 8-8v15H3Z' : 'M3 18 8 10l4 3 8-9'}></path></svg>`
-    }
-    if (type === 'pie' || type === 'donut') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3a9 9 0 1 0 9 9h-9V3Z"></path><path d="M15 3.6A9 9 0 0 1 20.4 9H15V3.6Z"></path>${type === 'donut' ? html`<circle cx="12" cy="12" r="3.2"></circle>` : nothing}</svg>`
-    }
-    if (type === 'scatter') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 3v17h17"></path><circle cx="8" cy="15" r="1.5"></circle><circle cx="12" cy="10" r="1.5"></circle><circle cx="17" cy="7" r="1.5"></circle><circle cx="18" cy="14" r="1.5"></circle></svg>`
-    }
-    if (type === 'funnel') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 4h18l-7 8v6l-4 2v-8L3 4Z"></path></svg>`
-    }
-    if (type === 'treemap') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><path d="M12 4v16M12 12h9M3 14h9"></path></svg>`
-    }
-    if (type === 'gauge') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 17a8 8 0 0 1 16 0"></path><path d="m12 17 5-6"></path><circle cx="12" cy="17" r="1"></circle></svg>`
-    }
-    if (type === 'heatmap') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h4v4H4zM10 4h4v4h-4zM16 4h4v4h-4zM4 10h4v4H4zM10 10h4v4h-4zM16 10h4v4h-4zM4 16h4v4H4zM10 16h4v4h-4zM16 16h4v4h-4z"></path></svg>`
-    }
-    if (type === 'sankey') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4v16M20 6v12M4 7c7 0 9 7 16 7M4 16c7 0 9-6 16-6"></path></svg>`
-    }
-    if (type === 'graph') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m7 7 10 3M8 17l9-7M7 7l1 10"></path><circle cx="7" cy="7" r="2"></circle><circle cx="17" cy="10" r="2"></circle><circle cx="8" cy="17" r="2"></circle></svg>`
-    }
-    if (type === 'map') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m3 6 6-3 6 3 6-3v15l-6 3-6-3-6 3V6Z"></path><path d="M9 3v15M15 6v15"></path><circle cx="12" cy="10" r="1.5"></circle></svg>`
-    }
-    if (type === 'candlestick') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 3v18M17 3v18"></path><rect x="4" y="7" width="6" height="7"></rect><rect x="14" y="10" width="6" height="6"></rect></svg>`
-    }
-    if (type === 'boxplot') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12h4M16 12h4M6 8v8M18 8v8"></path><rect x="8" y="6" width="8" height="12"></rect><path d="M12 6v12"></path></svg>`
-    }
-    if (type === 'combo') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20v-7h4v7M10 20V8h4v12M16 20v-4h4v4"></path><path d="m4 10 5-5 5 3 6-5"></path></svg>`
-    }
-    if (type === 'waterfall') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 5h4v5H3zM9 8h4v6H9zM15 12h4v7h-4zM7 10h2M13 14h2"></path></svg>`
-    }
-    if (type === 'histogram') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 20V15h3v5M6 20V9h3v11M9 20V5h3v15M12 20V8h3v12M15 20v-7h3v7M18 20v-3h3v3"></path></svg>`
-    }
-    if (type === 'radar') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 8 6-3 10H7L4 9l8-6Z"></path><path d="m12 7 4 3-2 5H9l-1-5 4-3ZM12 3v4M20 9l-4 1M17 19l-3-4M7 19l2-4M4 9l4 1"></path></svg>`
-    }
-    if (type === 'tree') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="3" width="6" height="4"></rect><rect x="3" y="17" width="6" height="4"></rect><rect x="15" y="17" width="6" height="4"></rect><path d="M12 7v5M6 17v-5h12v5"></path></svg>`
-    }
-    if (type === 'sunburst') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"></circle><circle cx="12" cy="12" r="8"></circle><path d="M12 4v5M12 15v5M4 12h5M15 12h5"></path></svg>`
-    }
-    if (type === 'table' || type === 'matrix' || type === 'pivot') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="1"></rect><path d="M3 9h18M9 4v16M15 4v16"></path></svg>`
-    }
-    if (type === 'kpi') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 19V5M5 19h14"></path><path d="m8 15 3-4 3 2 4-6"></path><circle cx="18" cy="7" r="1"></circle></svg>`
-    }
-    if (type === 'column') {
-      return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10h4v10M10 20V4h4v16M16 20v-7h4v7"></path></svg>`
-    }
-    return html`<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h11v4H4M4 11h16v4H4M4 17h8v4H4"></path></svg>`
   }
 
   private renderFieldWells(visual: DashboardBuilderVisualSignal) {
