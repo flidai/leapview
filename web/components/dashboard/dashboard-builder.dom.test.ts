@@ -105,6 +105,8 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         label: button.getAttribute('aria-label'),
         title: button.getAttribute('title'),
         hasIcon: Boolean(button.querySelector('svg')),
+        iconType: button.querySelector('svg')?.getAttribute('data-icon-type'),
+        filledMarks: button.querySelectorAll('svg .visual-icon-primary, svg .visual-icon-secondary, svg .visual-icon-tertiary').length,
         color: getComputedStyle(button).color,
       }))
       const tabs = Array.from(root.querySelectorAll('.inspector-tab')).map((tab) => ({
@@ -142,6 +144,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pickerButtons).toHaveLength(26)
     expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot'])
     expect(state.pickerButtons.every((button) => button.hasIcon && button.label?.endsWith(' visual') && button.title)).toBe(true)
+    expect(state.pickerButtons.every((button) => button.iconType === button.type && button.filledMarks > 0)).toBe(true)
     expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables'])
     expect(state.referenceHref).toBe('/docs/visuals/bar')
     expect(state.tabs).toEqual([
