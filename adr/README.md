@@ -26,14 +26,15 @@ customer site.
 | [ADR-0005](0005-use-project-wide-resource-graph.md) | Use a project-wide resource graph | Accepted | 2026-08-15 | Complete | — |
 | [ADR-0006](0006-adopt-ossie-aligned-semantic-contract.md) | Adopt an OSSIE-aligned typed semantic contract | Accepted | 2026-08-17 | Complete | — |
 | [ADR-0007](0007-adopt-plan-driven-project-delivery.md) | Adopt plan-driven project delivery | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
-| [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
-| [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | — |
+| [ADR-0008](0008-isolate-ducklake-candidate-physical-state.md) | Use one immutable DuckLake catalog per candidate | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0016](0016-adopt-a-postgresql-centered-target-data-architecture.md), private file-backed catalog mechanics only |
+| [ADR-0009](0009-separate-control-and-physical-transactions.md) | Separate control state from immutable physical catalogs | Accepted | 2026-08-17 | In progress (controlled rollout) | [ADR-0016](0016-adopt-a-postgresql-centered-target-data-architecture.md), control-store selection only |
 | [ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) | Adopt strict typed data-resource contracts | Accepted | 2026-08-18 | Complete | — |
 | [ADR-0011](0011-adopt-a-canonical-dashboard-document.md) | Adopt a canonical dashboard document | Accepted | 2026-08-18 | Complete | — |
 | [ADR-0012](0012-separate-duckdb-sql-analysis-from-application-policy.md) | Separate DuckDB SQL analysis from application policy | Accepted | 2026-08-19 | Complete | — |
 | [ADR-0013](0013-separate-workload-admission-from-application-policy.md) | Separate workload admission from application policy | Accepted | 2026-08-19 | Complete | — |
 | [ADR-0014](0014-adopt-an-asset-selected-refresh-pipeline-contract.md) | Adopt an asset-selected refresh pipeline contract | Accepted | 2026-08-20 | Pending | — |
 | [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md) | Adopt durable audit and compliance controls | Accepted | 2026-08-23 | Durable foundation and prioritized producer adoption | — |
+| [ADR-0016](0016-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | Pending (target architecture) | — |
 
 ## Companion specifications
 
