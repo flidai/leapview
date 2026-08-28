@@ -306,6 +306,28 @@ func SecurityHeadersMiddleware(config SecurityHeadersConfig) func(http.Handler) 
 	}
 }
 
+// RequestCorrelation establishes one request and correlation identity before
+// any other process-wide middleware runs. Existing request identities are
+// preserved because browser commands also use them for idempotency.
+func RequestCorrelation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		if requestID == "" {
+			requestID = apitransport.NewRequestID()
+		}
+		correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+		if correlationID == "" {
+			correlationID = requestID
+		}
+
+		r.Header.Set("X-Request-ID", requestID)
+		r.Header.Set("X-Correlation-ID", correlationID)
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Correlation-ID", correlationID)
+		next.ServeHTTP(w, r)
+	})
+}
+
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()

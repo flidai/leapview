@@ -28,7 +28,7 @@ Collect structured application logs from the service output. Preserve timestamp,
 
 Secrets, bearer tokens, passwords, raw OAuth payloads, and sensitive query data must not appear in logs. Restrict log access according to the most sensitive metadata retained.
 
-Carry a request identifier through the trusted reverse proxy and application. Proxy access logs and application logs should agree on public request time, status, and correlation identity.
+LeapView establishes `X-Request-ID` and `X-Correlation-ID` before process-wide middleware and route handling. A non-empty client request ID is preserved for idempotency compatibility; otherwise LeapView generates one. A missing correlation ID defaults to the request ID. Both canonical values are returned in response headers, including responses rejected by early security middleware, so proxy and application logs can agree on public request time, status, and correlation identity.
 
 ## Delivery signals
 
