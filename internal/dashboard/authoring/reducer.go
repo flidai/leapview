@@ -370,8 +370,14 @@ func addCanonicalVisual(value *document.DashboardDocument, patch AddVisualPayloa
 			return false
 		})
 	}
-	placement := nextCanonicalVisualPlacement(*value, pageIndex)
+	placement := nextCanonicalVisualPlacement(*value, pageIndex, document.DashboardVisualType(strings.TrimSpace(patch.Type)))
 	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "visual", Placement: placement}, Type: "visual", Visual: visualID}})
+	if patch.FieldID != "" {
+		if !patch.FieldValidated {
+			return fmt.Errorf("%w: initial visual field requires governed validation", ErrInvalidPayload)
+		}
+		return assignCanonicalField(value, AssignFieldPayload{PageID: patch.PageID, VisualID: componentID, FieldID: patch.FieldID, Role: patch.Role, ResolvedTable: patch.ResolvedTable})
+	}
 	return nil
 }
 
@@ -463,12 +469,9 @@ func canonicalPlacementColumns(value document.DashboardDocument, page document.D
 	return columns, nil
 }
 
-func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex int) document.DashboardPlacement {
-	const (
-		defaultColumnSpan int32 = 12
-		rowSpan           int32 = 4
-	)
-	columns := defaultColumnSpan
+func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex int, visualType document.DashboardVisualType) document.DashboardPlacement {
+	const defaultColumns int32 = 12
+	columns := defaultColumns
 	if value.Spec.Layout != nil && value.Spec.Layout.Columns > 0 {
 		columns = value.Spec.Layout.Columns
 	}
@@ -476,28 +479,34 @@ func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex in
 	if page.Layout != nil && page.Layout.Columns != nil && *page.Layout.Columns > 0 {
 		columns = *page.Layout.Columns
 	}
-	columnSpan := minPositive(columns, defaultColumnSpan)
-	row := int32(1)
-	for {
-		candidate := document.DashboardPlacement{Column: 1, Row: row, ColumnSpan: columnSpan, RowSpan: rowSpan}
-		moved := false
-		for _, component := range page.Components {
-			base, err := component.Base()
-			if err != nil || base == nil {
-				continue
-			}
-			if placementsOverlap(candidate, base.Placement) {
-				bottom := base.Placement.Row + maxPositive(base.Placement.RowSpan, 1)
-				if bottom > row {
-					row = bottom
+	columnSpan, rowSpan := canonicalVisualPlacementSize(visualType)
+	columnSpan = minPositive(columns, columnSpan)
+	for row := int32(1); ; row++ {
+		for column := int32(1); column <= columns-columnSpan+1; column++ {
+			candidate := document.DashboardPlacement{Column: column, Row: row, ColumnSpan: columnSpan, RowSpan: rowSpan}
+			available := true
+			for _, component := range page.Components {
+				base, err := component.Base()
+				if err == nil && base != nil && placementsOverlap(candidate, base.Placement) {
+					available = false
+					break
 				}
-				moved = true
-				break
+			}
+			if available {
+				return candidate
 			}
 		}
-		if !moved {
-			return candidate
-		}
+	}
+}
+
+func canonicalVisualPlacementSize(visualType document.DashboardVisualType) (columnSpan, rowSpan int32) {
+	switch visualType {
+	case document.DashboardVisualTypeKpi, document.DashboardVisualTypeGauge:
+		return 4, 3
+	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
+		return 6, 5
+	default:
+		return 6, 4
 	}
 }
 
@@ -812,7 +821,7 @@ func duplicateCanonicalVisual(value *document.DashboardDocument, patch Duplicate
 		clone.Title = &title
 	}
 	value.Spec.Visuals[newVisualID] = clone
-	placement := nextCanonicalVisualPlacement(*value, pageIndex)
+	placement := nextCanonicalVisualPlacement(*value, pageIndex, clone.Type)
 	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{
 		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: newComponentID, Type: "visual", Placement: placement}, Type: "visual", Visual: newVisualID,
 	}})

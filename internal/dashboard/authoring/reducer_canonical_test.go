@@ -89,6 +89,63 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 	}
 }
 
+func TestCanonicalAddVisualBindsGovernedInitialFieldAtomically(t *testing.T) {
+	t.Run("metric KPI", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		command := Command{
+			ID: "add-metric-kpi", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+			ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+			AddVisual: &AddVisualPayload{PageID: "overview", Type: "kpi", Title: "Revenue", FieldID: "revenue", Role: FieldRoleMetric, FieldValidated: true},
+		}
+		_, next, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		visual := next.Document.Spec.Visuals["visual_2"]
+		query, ok := visual.Query.Value.(*document.AggregateDashboardQuery)
+		if !ok || visual.Type != document.DashboardVisualTypeKpi || len(query.Metrics) != 1 || query.Metrics[0].String == nil || *query.Metrics[0].String != "revenue" {
+			t.Fatalf("initial KPI = %#v query=%#v", visual, query)
+		}
+		component, err := next.Document.Spec.Pages[0].Components[1].Base()
+		if err != nil || component.Placement.ColumnSpan != 4 || component.Placement.RowSpan != 3 {
+			t.Fatalf("initial KPI placement = %#v err=%v", component, err)
+		}
+	})
+
+	t.Run("dimension table", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		command := Command{
+			ID: "add-dimension-table", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+			ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+			AddVisual: &AddVisualPayload{PageID: "overview", Type: "table", Title: "Status", FieldID: "status", Role: FieldRoleDetail, ResolvedTable: "orders", FieldValidated: true},
+		}
+		_, next, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC))
+		if err != nil {
+			t.Fatal(err)
+		}
+		query, ok := next.Document.Spec.Visuals["visual_2"].Query.Value.(*document.RecordsDashboardQuery)
+		if !ok || query.Dataset != "orders" || len(query.Fields) != 1 || query.Fields[0].String == nil || *query.Fields[0].String != "status" {
+			t.Fatalf("initial table query = %#v", query)
+		}
+		component, err := next.Document.Spec.Pages[0].Components[1].Base()
+		if err != nil || component.Placement.ColumnSpan != 6 || component.Placement.RowSpan != 5 {
+			t.Fatalf("initial table placement = %#v err=%v", component, err)
+		}
+	})
+
+	t.Run("rejects unvalidated wire field", func(t *testing.T) {
+		lifecycle, current := canonicalReducerFixture(t)
+		command := Command{
+			ID: "add-unvalidated", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+			ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+			AddVisual: &AddVisualPayload{PageID: "overview", Type: "kpi", FieldID: "revenue", Role: FieldRoleMetric},
+		}
+		if _, _, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC)); err == nil || !strings.Contains(err.Error(), "governed validation") {
+			t.Fatalf("unvalidated initial field error = %v", err)
+		}
+	})
+}
+
 func canonicalReducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	t.Helper()
 	baseComponent := document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{

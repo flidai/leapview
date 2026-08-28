@@ -222,6 +222,25 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "type": "kpi", "title": "Revenue", "fieldId": "revenue", "role": "metric", "action": "add_visual",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "smart-visual-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.executed.AddVisual == nil || fake.executed.AddVisual.Type != "kpi" || fake.executed.AddVisual.FieldID != "revenue" || fake.executed.AddVisual.Role != authoring.FieldRoleMetric {
+		t.Fatalf("smart visual command = %#v", fake.executed)
+	}
+}
+
 func TestDashboardBuilderCommandTranslatesExactRevisionRestore(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
