@@ -137,8 +137,11 @@ async function verifySidebarCollapseToggle(): Promise<void> {
     await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Collapse navigation')
     await sidebar.locator('button.collapse-button').click()
     await expect(sidebar).toHaveAttribute('data-collapsed', '')
-    await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Expand navigation')
-    await sidebar.locator('button.collapse-button').click()
+    // Collapsed desktop navigation replaces the footer control with the
+    // top-left hover trigger so the rail does not reserve footer space.
+    const collapsedTrigger = sidebar.locator('button.collapsed-trigger')
+    await expect(collapsedTrigger).toHaveAttribute('aria-label', 'Open navigation')
+    await collapsedTrigger.click()
     await expect(sidebar).not.toHaveAttribute('data-collapsed', '')
     await expect(sidebar.locator('button.collapse-button')).toHaveAttribute('aria-label', 'Collapse navigation')
     assertNoBlockingConsoleMessages('sidebar collapse toggle', messages)
