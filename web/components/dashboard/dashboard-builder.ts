@@ -5,6 +5,7 @@ import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
   DashboardBuilderFieldSignal,
+  DashboardBuilderFilterSignal,
   DashboardBuilderFormatOptionSignal,
   DashboardBuilderPageSignal,
   DashboardBuilderSignal,
@@ -37,6 +38,7 @@ type BuilderVisualType = string
 type BuilderInspectorTab = 'build' | 'format'
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
 type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
+type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
 
 type BuilderCatalogField = {
   field: DashboardBuilderFieldSignal
@@ -98,6 +100,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private visualType: BuilderVisualType = 'bar'
   @state() private inspectorTab: BuilderInspectorTab = 'build'
   @state() private fieldFilter: BuilderFieldFilter = 'all'
+  @state() private selectedFilterID = ''
   @state() private gridInteractionMessage = ''
   @state() private visualActionMessage = ''
   @state() private draggedFieldID = ''
@@ -122,6 +125,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   // still reflects the page that was active before the mutation.
   private pendingAddPage: { revision: string; pageIDs: Set<string> } | null = null
   private pendingAddVisual: { revision: string; visualIDs: Set<string>; pageID: string } | null = null
+  private pendingAddFilter: { revision: string; filterIDs: Set<string> } | null = null
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -369,7 +373,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       grid-row: 1 / span 2;
       min-width: 0;
       min-height: 0;
-      grid-template-columns: minmax(18rem, 20rem) minmax(16rem, 18rem);
+      grid-template-columns: minmax(10rem, 12rem) minmax(12rem, 14rem) minmax(12rem, 1fr);
       background: var(--lv-bg-panel);
     }
 
@@ -384,8 +388,121 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       border-left: var(--lv-border-muted);
     }
 
+    .filters-pane {
+      border-left: var(--lv-border-muted);
+    }
+
     .data-pane {
       border-left: var(--lv-border-muted);
+    }
+
+    .filter-pane-body {
+      display: grid;
+      gap: var(--base-size-12);
+      padding: var(--base-size-12);
+    }
+
+    .filter-scope-heading {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      letter-spacing: 0.04em;
+      text-transform: uppercase;
+    }
+
+    .filter-drop-zone {
+      display: grid;
+      min-height: 3.75rem;
+      place-items: center;
+      padding: var(--base-size-8);
+      border: 1px dashed var(--lv-fg-muted);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel-muted);
+      font: var(--lv-type-caption);
+      text-align: center;
+    }
+
+    .filter-drop-zone[data-field-dragging='true'] {
+      border-color: var(--lv-fg-accent);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-accent-muted, var(--lv-bg-panel-muted));
+    }
+
+    .filter-add-select,
+    .filter-editor select,
+    .filter-editor input[type='text'] {
+      width: 100%;
+      min-height: var(--control-medium-size);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      padding: 0 var(--base-size-8);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-input, var(--lv-bg-panel));
+      font: var(--lv-type-body-compact);
+    }
+
+    .filter-list {
+      display: grid;
+      gap: var(--base-size-6);
+    }
+
+    .filter-card {
+      display: grid;
+      width: 100%;
+      gap: var(--base-size-2);
+      padding: var(--base-size-8);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel);
+      text-align: left;
+    }
+
+    .filter-card[aria-pressed='true'] {
+      border-color: var(--lv-fg-accent);
+      box-shadow: inset 3px 0 0 var(--lv-fg-accent);
+    }
+
+    .filter-card-title {
+      overflow: hidden;
+      font: var(--lv-type-body-compact);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .filter-card-meta {
+      overflow: hidden;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .filter-editor {
+      display: grid;
+      gap: var(--base-size-8);
+      padding-top: var(--base-size-8);
+      border-top: var(--lv-border-muted);
+    }
+
+    .filter-editor label {
+      display: grid;
+      gap: var(--base-size-4);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .filter-editor .filter-toggle {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .filter-remove {
+      color: var(--lv-fg-danger, var(--lv-fg-default));
     }
 
     .page-bar {
@@ -1488,18 +1605,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         grid-column: 1;
         grid-row: 3;
         max-height: 19rem;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(3, minmax(0, 1fr));
         grid-template-rows: minmax(0, 1fr);
         border-top: var(--lv-border-muted);
       }
 
+      .filters-pane,
       .properties,
       .data-pane {
         max-height: none;
         border-top: 0;
       }
 
-      .properties {
+      .filters-pane {
         border-left: 0;
       }
 
@@ -1510,14 +1628,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     @media (min-width: 961px) and (max-width: 1200px) {
       .body {
-        grid-template-columns: minmax(0, 1fr) minmax(19rem, 22rem);
+        grid-template-columns: minmax(0, 1fr) minmax(20rem, 23rem);
       }
 
       .right-dock {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(2, minmax(0, 1fr));
+        grid-template-rows: repeat(3, minmax(0, 1fr));
       }
 
+      .properties,
       .data-pane {
         border-top: var(--lv-border-muted);
       }
@@ -1626,6 +1745,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.reconcileVisualTypeOverrides(builder)
     this.selectPendingAddedPage(builder)
     this.selectPendingAddedVisual(builder)
+    this.selectPendingAddedFilter(builder)
     this.syncGridStack(builder, builder ? this.selectedPage(builder) : undefined)
   }
 
@@ -1766,6 +1886,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${this.renderCanvas(builder, page)}
           ${this.renderPageBar(builder, page)}
           <div class="right-dock">
+            ${this.renderFiltersPane(builder)}
             ${this.renderInspector(builder, page, visual)}
             ${this.renderDataPane(builder, visual)}
           </div>
@@ -1914,6 +2035,66 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <aside class="pane data-pane" aria-labelledby="builder-data-heading">
         ${this.renderFieldBrowser(builder, visual)}
       </aside>
+    `
+  }
+
+  private renderFiltersPane(builder: DashboardBuilderSignal) {
+    const filter = this.selectedBuilderFilter(builder)
+    const filters = builder.filters ?? []
+    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => item.field.kind === 'dimension')
+    return html`
+      <aside class="pane filters-pane" aria-labelledby="builder-filters-heading">
+        <div class="pane-header">
+          <h2 id="builder-filters-heading" class="pane-title">Filters</h2>
+          <p class="pane-hint">Report filters in dashboard code. Applied to every page unless targets narrow them.</p>
+        </div>
+        <div class="filter-pane-body">
+          <div class="filter-scope-heading"><span>Filters on all pages</span><span>${filters.length}</span></div>
+          <div class="filter-drop-zone" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>
+            Drop a governed dimension here
+          </div>
+          <label>
+            <span class="sr-only">Add report filter</span>
+            <select class="filter-add-select" aria-label="Add report filter" ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.addFilterFromSelect}>
+              <option value="">+ Add a data field</option>
+              ${dimensions.map((item) => html`<option value=${item.field.id} ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id)}>${item.field.label}</option>`)}
+            </select>
+          </label>
+          <div class="filter-list" aria-label="Report filters">
+            ${filters.length === 0
+              ? html`<p class="pane-hint">No report filters yet. Add one from the semantic model.</p>`
+              : repeat(filters, (item) => item.id, (item) => html`
+                  <button type="button" class="filter-card" aria-pressed=${filter?.id === item.id} @click=${() => { this.selectedFilterID = item.id }}>
+                    <span class="filter-card-title">${item.label}</span>
+                    <span class="filter-card-meta">${this.filterControlLabel(item.controlType)} · ${this.fieldLabel(item.dimension, item.dimension)}</span>
+                  </button>
+                `)}
+          </div>
+          ${filter ? this.renderFilterEditor(builder, filter) : nothing}
+        </div>
+      </aside>
+    `
+  }
+
+  private renderFilterEditor(builder: DashboardBuilderSignal, filter: DashboardBuilderFilterSignal) {
+    const editable = builder.capabilities.canEdit && !this.commandPending
+    return html`
+      <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
+        <label>Label
+          <input type="text" maxlength="128" .value=${filter.label} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { label: (event.currentTarget as HTMLInputElement).value.trim() || filter.label })} />
+        </label>
+        <label>Control
+          <select .value=${filter.controlType} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { controlType: (event.currentTarget as HTMLSelectElement).value as BuilderFilterControl })}>
+            ${this.filterControlChoices(filter).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+          </select>
+        </label>
+        <label>URL parameter
+          <input type="text" maxlength="64" placeholder="Optional" .value=${filter.urlParameter ?? ''} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { urlParameter: (event.currentTarget as HTMLInputElement).value.trim() })} />
+        </label>
+        <label class="filter-toggle"><span>Readers can edit</span><input type="checkbox" .checked=${filter.readerEditable} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { readerEditable: (event.currentTarget as HTMLInputElement).checked })} /></label>
+        <label class="filter-toggle"><span>Required</span><input type="checkbox" .checked=${filter.required} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { required: (event.currentTarget as HTMLInputElement).checked })} /></label>
+        <button type="button" class="filter-remove" ?disabled=${!editable} @click=${() => this.removeFilter(filter)}>Remove filter</button>
+      </section>
     `
   }
 
@@ -2617,6 +2798,98 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.draggedFieldID = ''
   }
 
+  private selectedBuilderFilter(builder: DashboardBuilderSignal): DashboardBuilderFilterSignal | undefined {
+    return (builder.filters ?? []).find((filter) => filter.id === this.selectedFilterID)
+  }
+
+  private readonly addFilterFromSelect = (event: Event): void => {
+    const select = event.currentTarget as HTMLSelectElement
+    const fieldID = select.value
+    select.value = ''
+    if (!fieldID || !this.builder) return
+    const field = this.builder.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === fieldID)
+    if (field) this.addFilterForField(field)
+  }
+
+  private readonly dropFieldOnFilters = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit) return
+    const field = this.draggedField(event, builder)
+    this.clearDraggedField()
+    if (field) this.addFilterForField(field)
+  }
+
+  private addFilterForField(field: DashboardBuilderFieldSignal): boolean {
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit || this.commandPending || field.kind !== 'dimension') return false
+    const existing = (builder.filters ?? []).find((filter) => filter.dimension === field.id)
+    if (existing) {
+      this.selectedFilterID = existing.id
+      this.visualActionMessage = `${field.label} is already a report filter.`
+      return false
+    }
+    const controlType = this.recommendedFilterControl(field)
+    this.pendingAddFilter = { revision: this.revisionKey(builder), filterIDs: new Set((builder.filters ?? []).map((filter) => filter.id)) }
+    this.visualActionMessage = `Adding ${field.label} as a report filter.`
+    this.emitCommand('add_filter', { fieldId: field.id, title: field.label, dataset: this.datasetForField(builder, field.id), controlType })
+    return true
+  }
+
+  private updateFilter(filter: DashboardBuilderFilterSignal, patch: Partial<Pick<DashboardBuilderFilterSignal, 'label' | 'controlType' | 'required' | 'readerEditable' | 'urlParameter'>>): void {
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit || this.commandPending) return
+    const next = { ...filter, ...patch }
+    this.visualActionMessage = `Saving ${next.label} filter settings.`
+    this.emitCommand('update_filter', {
+      filterId: next.id,
+      title: next.label,
+      description: next.description ?? '',
+      dataset: this.datasetForField(builder, next.dimension),
+      controlType: next.controlType,
+      required: next.required,
+      readerEditable: next.readerEditable,
+      urlParameter: next.urlParameter ?? '',
+    })
+  }
+
+  private removeFilter(filter: DashboardBuilderFilterSignal): void {
+    if (!this.builder?.capabilities.canEdit || this.commandPending) return
+    this.selectedFilterID = ''
+    this.visualActionMessage = `Removing ${filter.label} filter.`
+    this.emitCommand('remove_filter', { filterId: filter.id })
+  }
+
+  private datasetForField(builder: DashboardBuilderSignal, fieldID: string): string {
+    return builder.semanticModel.datasets.find((dataset) => dataset.fields.some((field) => field.id === fieldID))?.id ?? builder.semanticModel.datasets[0]?.id ?? ''
+  }
+
+  private recommendedFilterControl(field: DashboardBuilderFieldSignal): BuilderFilterControl {
+    const dataType = field.dataType.toLowerCase()
+    if (dataType.includes('date') || dataType.includes('time')) return 'relativePeriod'
+    if (dataType.includes('number') || dataType.includes('integer') || dataType.includes('decimal') || dataType.includes('float')) return 'numericRange'
+    return 'multiSelect'
+  }
+
+  private filterControlChoices(filter: DashboardBuilderFilterSignal): Array<[BuilderFilterControl, string]> {
+    const field = this.builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((candidate) => candidate.id === filter.dimension)
+    const dataType = field?.dataType.toLowerCase() ?? ''
+    let choices: Array<[BuilderFilterControl, string]>
+    if (dataType.includes('date') || dataType.includes('time')) choices = [['relativePeriod', 'Relative period'], ['dateRange', 'Date range'], ['singleSelect', 'Single select']]
+    else if (dataType.includes('number') || dataType.includes('integer') || dataType.includes('decimal') || dataType.includes('float')) choices = [['numericRange', 'Numeric range'], ['singleSelect', 'Single select'], ['multiSelect', 'Multi select']]
+    else choices = [['multiSelect', 'Multi select'], ['singleSelect', 'Single select'], ['text', 'Text search']]
+    if (!choices.some(([value]) => value === filter.controlType)) choices.push([filter.controlType, this.filterControlLabel(filter.controlType)])
+    return choices
+  }
+
+  private filterControlLabel(control: BuilderFilterControl): string {
+    const labels: Record<BuilderFilterControl, string> = {
+      singleSelect: 'Single select', multiSelect: 'Multi select', text: 'Text search', numericRange: 'Numeric range', dateRange: 'Date range', relativePeriod: 'Relative period',
+    }
+    return labels[control]
+  }
+
   private draggedFieldFromBuilder(builder: DashboardBuilderSignal | null): DashboardBuilderFieldSignal | undefined {
     if (!builder || !this.draggedFieldID) return undefined
     return (builder.semanticModel.datasets ?? []).flatMap((dataset) => dataset.fields).find((field) => field.id === this.draggedFieldID)
@@ -2875,6 +3148,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.localPageID = page.id
     this.localVisualID = addedVisual.id
     if (this.visualCatalogEntry(addedVisual.type, builder)) this.visualType = addedVisual.type
+  }
+
+  private selectPendingAddedFilter(builder: DashboardBuilderSignal | null): void {
+    const pending = this.pendingAddFilter
+    if (!pending || !builder) return
+    if (this.status.error) {
+      this.pendingAddFilter = null
+      return
+    }
+    if (pending.revision === this.revisionKey(builder)) return
+    const addedFilter = (builder.filters ?? []).find((filter) => !pending.filterIDs.has(filter.id))
+    this.pendingAddFilter = null
+    if (addedFilter) this.selectedFilterID = addedFilter.id
   }
 
   private revisionKey(builder: DashboardBuilderSignal): string {

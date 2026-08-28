@@ -433,6 +433,47 @@ func TestCanonicalReducerRemovesAndMovesSelectedFields(t *testing.T) {
 	}
 }
 
+func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		command := Command{ID: CommandID("filter-edit-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("filter-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 17, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	if err := apply(&AddFilterPayload{Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Filters) != 1 {
+		t.Fatalf("filter count = %d", len(current.Document.Spec.Filters))
+	}
+	filter := current.Document.Spec.Filters[0]
+	filterID := filter.ID
+	defaultExpression := document.DashboardFilterExpression{Value: &document.NullCheckDashboardFilterExpression{Type: "nullCheck", Operator: document.DashboardFilterOperatorIsNotNull}}
+	operators := []document.DashboardFilterOperator{document.DashboardFilterOperatorIn}
+	targets := []string{"base"}
+	filter.Default, filter.Operators, filter.Targets = &defaultExpression, &operators, &targets
+	if err := apply(&SetFiltersPayload{Filters: []document.DashboardFilter{filter}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&UpdateFilterPayload{FilterID: filterID, Label: "Order status", Dataset: "orders", ControlType: "singleSelect", Required: true, ReaderEditable: false, URLParameter: "status"}); err != nil {
+		t.Fatal(err)
+	}
+	updated := &current.Document.Spec.Filters[0]
+	if updated.Label != "Order status" || updated.Default == nil || updated.Operators == nil || updated.Targets == nil || updated.URLParameter == nil || !*updated.Required || *updated.ReaderEditable {
+		t.Fatalf("updated filter lost canonical properties: %#v", updated)
+	}
+	if controlType, _ := updated.Control.Type(); controlType != "singleSelect" {
+		t.Fatalf("control type = %q", controlType)
+	}
+	if err := apply(&RemoveFilterPayload{FilterID: filterID}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Filters) != 0 {
+		t.Fatalf("filter count after remove = %d", len(current.Document.Spec.Filters))
+	}
+}
+
 func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
 	switch value := payload.(type) {
 	case *MetadataPatch:
@@ -463,6 +504,12 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.SetLayout = value
 	case *SetFiltersPayload:
 		command.SetFilters = value
+	case *AddFilterPayload:
+		command.AddFilter = value
+	case *UpdateFilterPayload:
+		command.UpdateFilter = value
+	case *RemoveFilterPayload:
+		command.RemoveFilter = value
 	case *SetInteractionPayload:
 		command.SetInteraction = value
 	default:

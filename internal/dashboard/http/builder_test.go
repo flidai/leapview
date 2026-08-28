@@ -309,6 +309,49 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
+	tests := []struct {
+		name   string
+		action map[string]any
+		assert func(*testing.T, authoring.Command)
+	}{
+		{name: "add", action: map[string]any{"action": "add_filter", "fieldId": "status", "title": "Status", "dataset": "orders", "controlType": "multiSelect"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.AddFilter == nil || command.AddFilter.Dimension != "status" || command.AddFilter.Dataset != "orders" || command.AddFilter.ControlType != "multiSelect" {
+				t.Fatalf("add filter = %#v", command.AddFilter)
+			}
+		}},
+		{name: "update", action: map[string]any{"action": "update_filter", "filterId": "status", "title": "Order status", "dataset": "orders", "controlType": "singleSelect", "required": true, "readerEditable": false, "urlParameter": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdateFilter == nil || command.UpdateFilter.FilterID != "status" || !command.UpdateFilter.Required || command.UpdateFilter.ReaderEditable || command.UpdateFilter.URLParameter != "status" {
+				t.Fatalf("update filter = %#v", command.UpdateFilter)
+			}
+		}},
+		{name: "remove", action: map[string]any{"action": "remove_filter", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemoveFilter == nil || command.RemoveFilter.FilterID != "status" {
+				t.Fatalf("remove filter = %#v", command.RemoveFilter)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			signal := map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64)}
+			for key, value := range test.action {
+				signal[key] = value
+			}
+			req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": signal})
+			req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+			req.Header.Set("X-Request-ID", "filter-"+test.name)
+			recorder := httptest.NewRecorder()
+			handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+			if recorder.Code != nethttp.StatusOK {
+				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+			}
+			test.assert(t, fake.executed)
+		})
+	}
+}
+
 func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
 	f.previewCtx = ctx
 	f.previewReq = request

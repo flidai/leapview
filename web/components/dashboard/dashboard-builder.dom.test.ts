@@ -131,7 +131,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         pageBarBelowCanvas: Boolean(canvas && pageBar && pageBar.top >= canvas.top + canvas.height - 1),
         pageBarSharesCanvasWidth: Boolean(canvas && pageBar && pageBar.left >= canvas.left - 1 && pageBar.right <= canvas.right + 1),
         pageBarBeforeVisualBuilder: Boolean(pageBar && visualBuilder && pageBar.bottom <= visualBuilder.bottom + 1),
-        rightDockContainsBothPanes: root.querySelectorAll('.right-dock > .visual-builder, .right-dock > .data-pane').length === 2,
+        rightDockContainsAuthoringPanes: root.querySelectorAll('.right-dock > .filters-pane, .right-dock > .visual-builder, .right-dock > .data-pane').length === 3,
         dataPaneRightOfVisual: Boolean(visualBuilder && dataPane && dataPane.left >= visualBuilder.right - 1),
         pageBarVisible: Boolean(pageBar && pageBar.bottom <= innerHeight + 1),
         horizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
@@ -144,7 +144,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pageBarBelowCanvas).toBe(true)
     expect(state.pageBarSharesCanvasWidth).toBe(true)
     expect(state.pageBarBeforeVisualBuilder).toBe(true)
-    expect(state.rightDockContainsBothPanes).toBe(true)
+    expect(state.rightDockContainsAuthoringPanes).toBe(true)
     expect(state.dataPaneRightOfVisual).toBe(true)
     expect(state.pageBarVisible).toBe(true)
     expect(state.pickerButtons).toHaveLength(26)
@@ -1340,6 +1340,50 @@ test('dashboard builder follows the streamed exact-revision preview href', async
   }
 })
 
+test('dashboard builder authors report filters from governed fields through focused code mutations', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const select = root.querySelector('.filter-add-select') as HTMLSelectElement
+      select.value = 'orders.status'
+      select.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [] }] } })
+      await element.updateComplete
+      ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
+      await element.updateComplete
+      const control = root.querySelector('.filter-editor select') as HTMLSelectElement
+      control.value = 'singleSelect'
+      control.dispatchEvent(new Event('change', { bubbles: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('.filter-remove') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.classList.contains('filters-pane') ? 'filters' : pane.classList.contains('visual-builder') ? 'visual' : 'data'),
+        scope: root.querySelector('.filter-scope-heading')?.textContent?.replace(/\s+/g, ' ').trim(),
+        commands,
+      }
+    })
+    expect(state.panes).toEqual(['filters', 'visual', 'data'])
+    expect(state.scope).toBe('Filters on all pages1')
+    expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
+    expect(state.commands[1]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
+    expect(state.commands[2]).toMatchObject({ action: 'remove_filter', filterId: 'filter_1' })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const visualCatalog = [
     ['line', 'Line chart', 'Cartesian'], ['area', 'Area chart', 'Cartesian'], ['bar', 'Bar chart', 'Cartesian'], ['column', 'Column chart', 'Cartesian'], ['pie', 'Pie chart', 'Part to whole'], ['donut', 'Donut chart', 'Part to whole'], ['scatter', 'Scatter chart', 'Distribution'], ['funnel', 'Funnel chart', 'Part to whole'],
@@ -1356,6 +1400,7 @@ function testDocument(): string {
       sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
       semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'decimal' }] }] },
       visualCatalog,
+      filters: [],
       pages: [
         { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', visualId: 'sales-chart', title: 'Sales by status', titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, formatOptions: [
           { key: 'axisVisible', label: 'Show axes', section: 'Display', control: 'toggle', value: 'true', choices: [] },

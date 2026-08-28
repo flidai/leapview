@@ -66,7 +66,7 @@ func builderDocument() document.DashboardDocument {
 		Kind:       document.DashboardResourceKindDashboard,
 		Metadata:   document.DashboardMetadata{ID: "sales", Name: "sales", DisplayName: builderStringPtr("Sales")},
 		Spec: document.DashboardSpec{
-			SemanticModel: "sales_model", Filters: []document.DashboardFilter{}, Visuals: map[string]document.DashboardVisual{"orders": visual},
+			SemanticModel: "sales_model", Filters: []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: "multiSelect"}}}}, Visuals: map[string]document.DashboardVisual{"orders": visual},
 			Pages: []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: base, Type: "visual", Visual: "orders"}}}}},
 		},
 	}
@@ -98,6 +98,9 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	}
 	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {
 		t.Fatalf("projected format options = %#v", signal.Pages)
+	}
+	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable {
+		t.Fatalf("projected filters = %#v", signal.Filters)
 	}
 }
 

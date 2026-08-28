@@ -245,6 +245,12 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 			value.Spec.Filters = append([]document.DashboardFilter(nil), patch.Filters...)
 		}
 		return nil
+	case *AddFilterPayload:
+		return addCanonicalFilter(value, *patch)
+	case *UpdateFilterPayload:
+		return updateCanonicalFilter(value, *patch)
+	case *RemoveFilterPayload:
+		return removeCanonicalFilter(value, *patch)
 	case *SetInteractionPayload:
 		visualID, err := resolveCanonicalInteractionVisual(*value, patch.PageID, patch.VisualID)
 		if err != nil {
@@ -261,6 +267,107 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return nil
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
+	}
+}
+
+func addCanonicalFilter(value *document.DashboardDocument, patch AddFilterPayload) error {
+	id := strings.TrimSpace(patch.FilterID)
+	if id == "" {
+		id = nextCanonicalBuilderID("filter", len(value.Spec.Filters)+1, func(candidate string) bool {
+			for _, filter := range value.Spec.Filters {
+				if filter.ID == candidate {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	for _, filter := range value.Spec.Filters {
+		if filter.ID == id {
+			return fmt.Errorf("%w: filter %q already exists", ErrConflict, id)
+		}
+	}
+	control, err := canonicalBuilderFilterControl(patch.ControlType, patch.Dataset, nil)
+	if err != nil {
+		return err
+	}
+	readerEditable := true
+	value.Spec.Filters = append(value.Spec.Filters, document.DashboardFilter{ID: id, Label: strings.TrimSpace(patch.Label), Dimension: strings.TrimSpace(patch.Dimension), Control: control, ReaderEditable: &readerEditable})
+	return nil
+}
+
+func updateCanonicalFilter(value *document.DashboardDocument, patch UpdateFilterPayload) error {
+	for index := range value.Spec.Filters {
+		filter := &value.Spec.Filters[index]
+		if filter.ID != patch.FilterID {
+			continue
+		}
+		control, err := canonicalBuilderFilterControl(patch.ControlType, patch.Dataset, &filter.Control)
+		if err != nil {
+			return err
+		}
+		filter.Label = strings.TrimSpace(patch.Label)
+		filter.Description = optionalCanonicalString(patch.Description)
+		filter.Control = control
+		filter.Required = &patch.Required
+		filter.ReaderEditable = &patch.ReaderEditable
+		filter.URLParameter = optionalCanonicalString(patch.URLParameter)
+		return nil
+	}
+	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+}
+
+func removeCanonicalFilter(value *document.DashboardDocument, patch RemoveFilterPayload) error {
+	for _, page := range value.Spec.Pages {
+		for _, component := range page.Components {
+			filter, ok := component.Value.(*document.FilterDashboardPageComponent)
+			if ok && filter.Filter == patch.FilterID {
+				return fmt.Errorf("%w: filter %q is placed on page %q", ErrConflict, patch.FilterID, page.ID)
+			}
+		}
+	}
+	for index := range value.Spec.Filters {
+		if value.Spec.Filters[index].ID == patch.FilterID {
+			value.Spec.Filters = append(value.Spec.Filters[:index], value.Spec.Filters[index+1:]...)
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+}
+
+func optionalCanonicalString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+func canonicalBuilderFilterControl(controlType, dataset string, existing *document.DashboardFilterControl) (document.DashboardFilterControl, error) {
+	controlType, dataset = strings.TrimSpace(controlType), strings.TrimSpace(dataset)
+	if existing != nil {
+		if existingType, err := existing.Type(); err == nil && existingType == controlType {
+			return *existing, nil
+		}
+	}
+	distinct := func() *document.DashboardFilterOptions {
+		return &document.DashboardFilterOptions{Value: &document.DistinctDashboardFilterOptions{Type: "distinct", Dataset: dataset}}
+	}
+	switch controlType {
+	case "singleSelect":
+		return document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: controlType, Options: distinct()}}, nil
+	case "multiSelect":
+		return document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: controlType, Options: distinct()}}, nil
+	case "text":
+		return document.DashboardFilterControl{Value: &document.TextDashboardFilterControl{Type: controlType}}, nil
+	case "numericRange":
+		return document.DashboardFilterControl{Value: &document.NumericRangeDashboardFilterControl{Type: controlType}}, nil
+	case "dateRange":
+		return document.DashboardFilterControl{Value: &document.DateRangeDashboardFilterControl{Type: controlType}}, nil
+	case "relativePeriod":
+		return document.DashboardFilterControl{Value: &document.RelativePeriodDashboardFilterControl{Type: controlType}}, nil
+	default:
+		return document.DashboardFilterControl{}, fmt.Errorf("%w: unsupported filter control %q", ErrInvalidPayload, controlType)
 	}
 }
 
