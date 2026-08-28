@@ -2,6 +2,7 @@ package httpmiddleware
 
 import (
 	"bufio"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
@@ -14,6 +15,8 @@ import (
 )
 
 const DefaultMaxRequestBodyBytes int64 = 128 << 20
+
+type generatedRequestIDContextKey struct{}
 
 type RateLimitConfig struct {
 	Enabled             bool
@@ -304,6 +307,42 @@ func SecurityHeadersMiddleware(config SecurityHeadersConfig) func(http.Handler) 
 			withContentSecurityPolicy.ServeHTTP(w, r)
 		})
 	}
+}
+
+// RequestCorrelation establishes one request and correlation identity before
+// any other process-wide middleware runs. Existing request identities are
+// preserved because browser commands also use them for idempotency.
+func RequestCorrelation(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+		generatedRequestID := requestID == ""
+		if requestID == "" {
+			requestID = apitransport.NewRequestID()
+		}
+		correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+		if correlationID == "" {
+			correlationID = requestID
+		}
+
+		r.Header.Set("X-Request-ID", requestID)
+		r.Header.Set("X-Correlation-ID", correlationID)
+		w.Header().Set("X-Request-ID", requestID)
+		w.Header().Set("X-Correlation-ID", correlationID)
+		if generatedRequestID {
+			r = r.WithContext(context.WithValue(r.Context(), generatedRequestIDContextKey{}, true))
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+// RequestIDWasGenerated reports whether RequestCorrelation supplied the
+// request ID instead of preserving a client-provided identity.
+func RequestIDWasGenerated(r *http.Request) bool {
+	if r == nil {
+		return false
+	}
+	generated, _ := r.Context().Value(generatedRequestIDContextKey{}).(bool)
+	return generated
 }
 
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
