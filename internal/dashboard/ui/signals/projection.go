@@ -68,7 +68,7 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 			DashboardTitle: report.Title,
 			PageID:         activePage.ID,
 			PageTitle:      activePage.Title,
-			HeaderDetail:   ReportPageHeaderDetail(pages, activePage),
+			HeaderDetail:   ReportPageHeaderDetail(activePage),
 			ModelID:        modelID,
 			ModelTitle:     modelTitle,
 			Canvas:         DashboardPageCanvasFromDashboard(activePage.Canvas),
@@ -160,14 +160,8 @@ func InitialVisualizationEnvelopes(definitions map[string]visualizationdefinitio
 	return out
 }
 
-func ReportPageHeaderDetail(pages []dashboard.Page, activePage dashboard.Page) string {
-	title := displayLabel(activePage.Title, activePage.ID)
-	for index, page := range pages {
-		if page.ID == activePage.ID {
-			return formatReportPageNumber(index, len(pages)) + ". " + title
-		}
-	}
-	return title
+func ReportPageHeaderDetail(activePage dashboard.Page) string {
+	return displayLabel(activePage.Title, activePage.ID)
 }
 
 func ValidateDashboardEnvelope(envelope DashboardEnvelope) error {
@@ -287,15 +281,4 @@ func displayLabel(label, fallback string) string {
 		return label
 	}
 	return fallback
-}
-
-func formatReportPageNumber(index, pageCount int) string {
-	pageNumber := fmt.Sprintf("%d", index+1)
-	if pageCount >= 10 {
-		width := len(fmt.Sprintf("%d", pageCount))
-		if len(pageNumber) < width {
-			return strings.Repeat("0", width-len(pageNumber)) + pageNumber
-		}
-	}
-	return pageNumber
 }

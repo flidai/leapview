@@ -3307,7 +3307,7 @@ test('dashboard agent restores its open state and active conversation after relo
 function testDocument(): string {
   const page = {
     kind: 'dashboard', title: 'Executive Sales Dashboard', dashboardId: 'executive-sales', dashboardTitle: 'Executive Sales Dashboard',
-    pageId: 'overview', pageTitle: 'Overview', headerDetail: '1. Overview', modelId: 'olist', modelTitle: 'Olist',
+    pageId: 'overview', pageTitle: 'Overview', headerDetail: 'Overview', modelId: 'olist', modelTitle: 'Olist',
     canvas: { width: 1024, height: 720 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 },
     pages: [
       { id: 'overview', title: 'Overview', href: '/dashboards/executive-sales/pages/overview', active: true },
