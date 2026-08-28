@@ -361,6 +361,50 @@ func (SetFiltersPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// AddFilterPayload creates one report-scoped governed filter definition in the
+// canonical dashboard document. Dataset is only used by select controls to
+// author their distinct option source.
+type AddFilterPayload struct {
+	FilterID    string `json:"filterId,omitempty"`
+	Label       string `json:"label"`
+	Dimension   string `json:"dimension"`
+	Dataset     string `json:"dataset,omitempty"`
+	ControlType string `json:"controlType"`
+}
+
+func (AddFilterPayload) authoringPayload() {}
+func (AddFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdateFilterPayload changes only builder-owned presentation properties and
+// deliberately preserves authored defaults, operators, targets, and advanced
+// option settings that may have been added in YAML or by an agent.
+type UpdateFilterPayload struct {
+	FilterID       string `json:"filterId"`
+	Label          string `json:"label"`
+	Description    string `json:"description,omitempty"`
+	Dataset        string `json:"dataset,omitempty"`
+	ControlType    string `json:"controlType"`
+	Required       bool   `json:"required"`
+	ReaderEditable bool   `json:"readerEditable"`
+	URLParameter   string `json:"urlParameter,omitempty"`
+}
+
+func (UpdateFilterPayload) authoringPayload() {}
+func (UpdateFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+type RemoveFilterPayload struct {
+	FilterID string `json:"filterId"`
+}
+
+func (RemoveFilterPayload) authoringPayload() {}
+func (RemoveFilterPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 type SetInteractionPayload struct {
 	PageID      string                         `json:"pageId,omitempty"`
 	VisualID    string                         `json:"visualId,omitempty"`
@@ -418,6 +462,9 @@ type Command struct {
 	RemoveVisual       *RemoveVisualPayload       `json:"removeVisual,omitempty"`
 	SetLayout          *SetLayoutPayload          `json:"setLayout,omitempty"`
 	SetFilters         *SetFiltersPayload         `json:"setFilters,omitempty"`
+	AddFilter          *AddFilterPayload          `json:"addFilter,omitempty"`
+	UpdateFilter       *UpdateFilterPayload       `json:"updateFilter,omitempty"`
+	RemoveFilter       *RemoveFilterPayload       `json:"removeFilter,omitempty"`
 	SetInteraction     *SetInteractionPayload     `json:"setInteraction,omitempty"`
 	Publish            *PublishPayload            `json:"publish,omitempty"`
 	Archive            *ArchivePayload            `json:"archive,omitempty"`
@@ -482,6 +529,15 @@ func (c Command) payloads() []authoringPayload {
 	if c.SetFilters != nil {
 		payloads = append(payloads, c.SetFilters)
 	}
+	if c.AddFilter != nil {
+		payloads = append(payloads, c.AddFilter)
+	}
+	if c.UpdateFilter != nil {
+		payloads = append(payloads, c.UpdateFilter)
+	}
+	if c.RemoveFilter != nil {
+		payloads = append(payloads, c.RemoveFilter)
+	}
 	if c.SetInteraction != nil {
 		payloads = append(payloads, c.SetInteraction)
 	}
@@ -531,7 +587,8 @@ func (c Command) IsBuilderIntent() bool {
 	switch payload.(type) {
 	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
-		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload:
+		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
+		*AddFilterPayload, *UpdateFilterPayload, *RemoveFilterPayload:
 		return true
 	default:
 		return false
@@ -825,6 +882,32 @@ func validatePayload(payload authoringPayload) error {
 		if !value.Clear && value.Filters == nil {
 			return fmt.Errorf("%w: set filters has no edits", ErrInvalidPayload)
 		}
+	case *AddFilterPayload:
+		if strings.TrimSpace(value.Label) == "" || strings.TrimSpace(value.Dimension) == "" {
+			return fmt.Errorf("%w: add filter requires label and dimension", ErrInvalidPayload)
+		}
+		if value.FilterID != "" {
+			if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+				return err
+			}
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *UpdateFilterPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Label) == "" {
+			return fmt.Errorf("%w: update filter requires label", ErrInvalidPayload)
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *RemoveFilterPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
 	case *SetInteractionPayload:
 		if strings.TrimSpace(value.PageID) == "" && strings.TrimSpace(value.VisualID) == "" {
 			return fmt.Errorf("%w: set interaction requires a page or visual id", ErrInvalidPayload)
@@ -848,6 +931,19 @@ func validatePayload(payload authoringPayload) error {
 	case *PublishPayload, *ArchivePayload:
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
+	}
+	return nil
+}
+
+func validateBuilderFilterControl(controlType, dataset string) error {
+	switch strings.TrimSpace(controlType) {
+	case "singleSelect", "multiSelect":
+		if strings.TrimSpace(dataset) == "" {
+			return fmt.Errorf("%w: select filter requires dataset", ErrInvalidPayload)
+		}
+	case "text", "numericRange", "dateRange", "relativePeriod":
+	default:
+		return fmt.Errorf("%w: unsupported filter control %q", ErrInvalidPayload, controlType)
 	}
 	return nil
 }

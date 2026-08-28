@@ -389,6 +389,13 @@ type dashboardBuilderCommandSignal struct {
 	VisualID                  string                            `json:"visualId"`
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
+	FilterID                  string                            `json:"filterId"`
+	Dataset                   string                            `json:"dataset"`
+	ControlType               string                            `json:"controlType"`
+	Description               string                            `json:"description"`
+	Required                  bool                              `json:"required"`
+	ReaderEditable            bool                              `json:"readerEditable"`
+	URLParameter              string                            `json:"urlParameter"`
 	Role                      string                            `json:"role"`
 	TargetRole                string                            `json:"targetRole"`
 	Direction                 string                            `json:"direction"`
@@ -492,6 +499,12 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 			}.placementUpdate())
 		}
 		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
+	case "add_filter":
+		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
+	case "update_filter":
+		command.UpdateFilter = &authoring.UpdateFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Description: strings.TrimSpace(s.Description), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType), Required: s.Required, ReaderEditable: s.ReaderEditable, URLParameter: strings.TrimSpace(s.URLParameter)}
+	case "remove_filter":
+		command.RemoveFilter = &authoring.RemoveFilterPayload{FilterID: strings.TrimSpace(s.FilterID)}
 	case "assign_field":
 		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "set_visual_type":

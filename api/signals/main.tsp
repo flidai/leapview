@@ -59,6 +59,7 @@ model DashboardBuilderSignal {
   `sourceEvidence`?: DashboardBuilderSourceEvidenceSignal;
   `semanticModel`: DashboardBuilderSemanticModelSignal;
   `visualCatalog`: DashboardBuilderVisualTypeSignal[];
+  `filters`: DashboardBuilderFilterSignal[];
   `pages`: DashboardBuilderPageSignal[];
   `selectedPageId`?: string;
   `selectedVisualId`?: string;
@@ -111,6 +112,18 @@ model DashboardBuilderFieldSignal {
   `kind`: "dimension" | "metric";
   `dataType`: string;
   `description`?: string;
+}
+
+model DashboardBuilderFilterSignal {
+  `id`: string;
+  `label`: string;
+  `description`?: string;
+  `dimension`: string;
+  `controlType`: "singleSelect" | "multiSelect" | "text" | "numericRange" | "dateRange" | "relativePeriod";
+  `required`: boolean;
+  `readerEditable`: boolean;
+  `targets`: string[];
+  `urlParameter`?: string;
 }
 
 model DashboardBuilderPageSignal {

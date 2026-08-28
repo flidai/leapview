@@ -246,7 +246,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
-		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
+		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document.Spec.Filters), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
 		Save:    uisignals.DashboardBuilderSaveStateSignal{State: saveState(dirty), LastSavedAt: optionalTime(revision.CreatedAt)},
 	}
@@ -257,6 +257,34 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		signal.SelectedVisualID = &selectedVisualID
 	}
 	return signal, nil
+}
+
+func projectFilters(filters []dashboarddocument.DashboardFilter) []uisignals.DashboardBuilderFilterSignal {
+	result := make([]uisignals.DashboardBuilderFilterSignal, 0, len(filters))
+	for _, filter := range filters {
+		controlType := ""
+		if projectedType, err := filter.Control.Type(); err == nil {
+			controlType = projectedType
+		}
+		projected := uisignals.DashboardBuilderFilterSignal{
+			ID: filter.ID, Label: filter.Label, Dimension: filter.Dimension, ControlType: controlType,
+			Required:       filter.Required != nil && *filter.Required,
+			ReaderEditable: filter.ReaderEditable == nil || *filter.ReaderEditable,
+			Targets:        []string{},
+		}
+		if filter.Description != nil {
+			projected.Description = filter.Description
+		}
+		if filter.Targets != nil {
+			projected.Targets = append(projected.Targets, (*filter.Targets)...)
+		}
+		if filter.URLParameter != nil {
+			projected.URLParameter = filter.URLParameter
+		}
+		result = append(result, projected)
+	}
+	sort.SliceStable(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
 }
 
 func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID, requestedVisualID string) ([]uisignals.DashboardBuilderPageSignal, []uisignals.DashboardBuilderDiagnosticSignal, string, string, error) {
