@@ -405,7 +405,6 @@ test('app report frame aligns identity and footer with the canvas around context
       const sectionTitle = root.querySelector('.section-title') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
       const main = element.shadowRoot.querySelector('.main') as HTMLElement
-      const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
       const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
       const title = reportHeader.querySelector('h1') as HTMLElement
       const expandedWidth = Math.round(sidebar.getBoundingClientRect().width)
@@ -419,7 +418,6 @@ test('app report frame aligns identity and footer with the canvas around context
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
       const titleRect = title.getBoundingClientRect()
-      const railFooterRect = railFooter.getBoundingClientRect()
       const reportFooterRect = reportFooter.getBoundingClientRect()
       collapse.click()
       await sidebar.updateComplete
@@ -433,6 +431,7 @@ test('app report frame aligns identity and footer with the canvas around context
       const collapsedBackRect = back.getBoundingClientRect()
       const collapsedBackLabelDisplay = getComputedStyle(backLabel).display
       const collapsedTitleRect = title.getBoundingClientRect()
+      const collapsedSidebarRect = sidebar.getBoundingClientRect()
       const collapsedReportFooterRect = reportFooter.getBoundingClientRect()
       return {
         href: back.getAttribute('href'),
@@ -453,10 +452,11 @@ test('app report frame aligns identity and footer with the canvas around context
         titleInset: Math.round(titleRect.left - mainRect.left),
         sidebarBelowHeader: Math.abs(sidebarRect.top - railHeaderRect.bottom) < 2,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
-        sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
+        railFooterCount: element.shadowRoot.querySelectorAll('.rail-footer').length,
+        sidebarSpansFooter: Math.abs(sidebarRect.bottom - reportFooterRect.bottom) < 2,
+        sidebarContinuesPastCanvas: sidebarRect.bottom > mainRect.bottom,
         footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
-        footerCellsShareBounds: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
-          && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
+        collapsedSidebarSpansFooter: Math.abs(collapsedSidebarRect.bottom - collapsedReportFooterRect.bottom) < 2,
         collapsedTitleInset: Math.round(collapsedTitleRect.left - collapsedMainRect.left),
         collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
         collapsedBackCentered: Math.abs(
@@ -499,9 +499,11 @@ test('app report frame aligns identity and footer with the canvas around context
       titleInset: 16,
       sidebarBelowHeader: true,
       mainBelowHeader: true,
-      sidebarEndsAtFooter: true,
+      railFooterCount: 0,
+      sidebarSpansFooter: true,
+      sidebarContinuesPastCanvas: true,
       footerAligned: true,
-      footerCellsShareBounds: true,
+      collapsedSidebarSpansFooter: true,
       collapsedTitleInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,

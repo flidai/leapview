@@ -150,7 +150,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route > lv-sub-sidebar {
       grid-column: 1;
-      grid-row: 2;
+      grid-row: 2 / 4;
     }
 
     .route > .main {
@@ -161,11 +161,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .route > lv-chat-drawer {
       grid-column: 3;
       grid-row: 2 / 4;
-    }
-
-    .route > .rail-footer {
-      grid-column: 1;
-      grid-row: 3;
     }
 
     .route > lv-report-footer {
@@ -196,7 +191,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     :host([presentation='embed']) .rail-header,
     :host([presentation='embed']) .header,
-    :host([presentation='embed']) .rail-footer,
     :host([presentation='embed']) lv-report-footer {
       display: none;
     }
@@ -249,8 +243,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
     }
 
-    .rail-header,
-    .rail-footer {
+    .rail-header {
       box-sizing: border-box;
       min-width: 0;
       contain: inline-size;
@@ -281,10 +274,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-label {
       display: none;
-    }
-
-    .rail-footer {
-      border-top: var(--lv-border-muted);
     }
 
     .header-leading {
@@ -759,8 +748,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
-      .route > .rail-header,
-      .route > .rail-footer {
+      .route > .rail-header {
         display: none;
       }
 
@@ -1218,7 +1206,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
             </div>
           </div>
         </section>
-				<div class="rail-footer" aria-hidden="true"></div>
         <lv-report-footer .status=${snapshot.status}></lv-report-footer>
 				${agentEnabled ? html`<lv-chat-drawer
 					?open=${this.agentDrawerOpen}
