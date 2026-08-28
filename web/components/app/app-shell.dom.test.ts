@@ -1260,6 +1260,41 @@ test('admin sidebar keeps chrome fixed while only navigation items scroll', asyn
   }
 })
 
+test('desktop page content scrolls without moving the sidebar', async () => {
+  const page = await browser.newPage({ viewport: { width: 1320, height: 520 } })
+  try {
+    await page.goto(`${baseURL}/admin-sidebar`)
+    await page.waitForFunction(() => customElements.get('lv-app-shell') && customElements.get('lv-sidebar'))
+    const state = await page.locator('lv-app-shell').evaluate(async (element: any) => {
+      await element.updateComplete
+      const main = element.shadowRoot.querySelector('main') as HTMLElement
+      const sidebar = element.shadowRoot.querySelector('lv-sidebar') as HTMLElement
+      const pageContent = element.querySelector('[slot="page"]') as HTMLElement
+      pageContent.style.minHeight = '1200px'
+      const sidebarTopBefore = Math.round(sidebar.getBoundingClientRect().top)
+      main.scrollTop = 320
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      return {
+        documentHeight: document.documentElement.scrollHeight,
+        mainOverflowY: getComputedStyle(main).overflowY,
+        mainScrollTop: main.scrollTop,
+        sidebarTopBefore,
+        sidebarTopAfter: Math.round(sidebar.getBoundingClientRect().top),
+      }
+    })
+
+    expect(state).toEqual({
+      documentHeight: 520,
+      mainOverflowY: 'auto',
+      mainScrollTop: 320,
+      sidebarTopBefore: 0,
+      sidebarTopAfter: 0,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('app shell ignores synthetic file input clicks from page content', async () => {
   const page = await browser.newPage({ viewport: { width: 1320, height: 900 } })
   try {

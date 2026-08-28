@@ -27,8 +27,10 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
   static styles = css`
     :host {
       display: grid;
-      min-height: 100svh;
+      height: 100svh;
+      min-height: 0;
       grid-template-columns: auto minmax(0, 1fr);
+      overflow: hidden;
       background: var(--lv-bg-app);
       color: var(--lv-fg-default);
       font-family: var(--fontStack-system);
@@ -49,13 +51,15 @@ class LeapViewAppShell extends DatastarLit(LitElement) {
 
     main {
       min-width: 0;
-      min-height: 100svh;
+      min-height: 0;
+      overflow-y: auto;
+      overscroll-behavior: contain;
     }
 
     ::slotted([slot='page']) {
       display: block;
       min-width: 0;
-      min-height: 100svh;
+      min-height: 100%;
     }
 
     @media (max-width: 640px) {
