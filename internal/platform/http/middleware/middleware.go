@@ -12,6 +12,8 @@ import (
 
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	"github.com/go-chi/httprate"
+	"go.opentelemetry.io/otel/propagation"
+	"go.opentelemetry.io/otel/trace"
 )
 
 const DefaultMaxRequestBodyBytes int64 = 128 << 20
@@ -249,12 +251,14 @@ func PanicRecovery(logger *slog.Logger) func(http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			defer func() {
 				if recovered := recover(); recovered != nil {
-					logger.ErrorContext(r.Context(), "http handler panic",
+					attributes := []any{
 						"method", r.Method,
 						"path", r.URL.Path,
 						"panic", recovered,
 						"stack", string(debug.Stack()),
-					)
+					}
+					attributes = append(attributes, inboundTraceLogAttributes(r.Context())...)
+					logger.ErrorContext(r.Context(), "http handler panic", attributes...)
 					writeMiddlewareError(w, r, http.StatusInternalServerError, "INTERNAL_SERVER_ERROR", "The server could not complete the request")
 				}
 			}()
@@ -345,6 +349,27 @@ func RequestIDWasGenerated(r *http.Request) bool {
 	return generated
 }
 
+// TraceContext validates and carries inbound W3C traceparent and tracestate
+// without generating a trace or changing the request's local correlation ID.
+func TraceContext(next http.Handler) http.Handler {
+	propagator := propagation.TraceContext{}
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ctx := propagator.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+func inboundTraceLogAttributes(ctx context.Context) []any {
+	spanContext := trace.SpanContextFromContext(ctx)
+	if !spanContext.IsValid() || !spanContext.IsRemote() {
+		return nil
+	}
+	return []any{
+		"trace_id", spanContext.TraceID().String(),
+		"upstream_span_id", spanContext.SpanID().String(),
+	}
+}
+
 func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 	if logger == nil {
 		logger = slog.Default()
@@ -354,7 +379,7 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 			start := time.Now()
 			rec := &Recorder{ResponseWriter: w, StatusCode: http.StatusOK}
 			next.ServeHTTP(rec, r)
-			logger.InfoContext(r.Context(), "http request",
+			attributes := []any{
 				"method", r.Method,
 				"path", r.URL.Path,
 				"status", rec.StatusCode,
@@ -363,7 +388,9 @@ func RequestLogger(logger *slog.Logger) func(http.Handler) http.Handler {
 				"remote", r.RemoteAddr,
 				"request_id", firstNonEmpty(r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")),
 				"correlation_id", firstNonEmpty(r.Header.Get("X-Correlation-Id"), r.Header.Get("X-Correlation-ID"), r.Header.Get("X-Request-Id"), r.Header.Get("X-Request-ID")),
-			)
+			}
+			attributes = append(attributes, inboundTraceLogAttributes(r.Context())...)
+			logger.InfoContext(r.Context(), "http request", attributes...)
 		})
 	}
 }
