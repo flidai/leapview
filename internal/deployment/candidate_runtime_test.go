@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -15,7 +16,15 @@ import (
 func candidateRuntimeGeneration(identity projectgraph.ServingIdentity, mode CandidateDataMode, revision string) CandidateGenerationRuntime {
 	binding, _ := BindingFingerprint(nil)
 	evidence, _ := (release.GateEvidence{Version: 1, CandidateID: "cand_1", SourceDigest: "sha256:" + strings.Repeat("a", 64), BindingGeneration: binding, RuntimeVersion: "leapview:test", DuckDBVersion: "duckdb:1", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 7, 29, 18, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}).Canonical()
-	return CandidateGenerationRuntime{Identity: identity, ArtifactDigest: "sha256:" + strings.Repeat("b", 64), DataRevision: revision, DataMode: mode, GateEvidence: &evidence, BindingFingerprint: binding}
+	return CandidateGenerationRuntime{
+		Identity: identity, ArtifactDigest: "sha256:" + strings.Repeat("b", 64),
+		DataRevision: revision, DataMode: mode, GateEvidence: &evidence, BindingFingerprint: binding,
+		Extensions: []extension.Evidence{{
+			Name: "ducklake", Identity: "sha256:" + strings.Repeat("c", 64), Digest: "sha256:" + strings.Repeat("d", 64),
+			DuckDBVersion: "duckdb:1", ExtensionVersion: "extension:1", GOOS: "linux", GOARCH: "amd64",
+			Platform: "linux-amd64", SupportProfile: "stable",
+		}},
+	}
 }
 
 func candidateRuntimeSetGateBinding(t *testing.T, generation *CandidateGenerationRuntime, bindings []CandidateConnectionEvidence) {
@@ -51,6 +60,7 @@ func TestCandidateRuntimeServicePreparesProjectGenerationWithConnectionEvidence(
 	require.Equal(t, candidate.ID, connections.requests[0].CandidateID)
 	require.Len(t, host.inputs, 1)
 	require.Equal(t, "policy:v1", host.inputs[0].Registration.Compatibility.AuthorizationFingerprint)
+	require.Equal(t, "sha256:"+strings.Repeat("d", 64), host.inputs[0].Registration.Compatibility.Capabilities[0].Digest)
 }
 
 func TestCandidateRuntimeServiceBindsGateEvidenceIntoReceiptAndCompatibility(t *testing.T) {

@@ -99,6 +99,7 @@ type ProductionSealedFactoryConfig struct {
 	DashboardMaxRows      int
 	DashboardMaxBytes     int64
 	PoolS3                gcadapter.S3Config
+	ActivationEvidence    ActivationEvidenceSource
 }
 
 // NewSQLiteSealedFactory builds the fail-closed production serving factory
@@ -112,7 +113,7 @@ func NewSQLiteSealedFactory(config ProductionSealedFactoryConfig) (runtimehost.R
 	pools := physicalpoolsqlite.NewRepository(config.Database)
 	resolve := NewSQLiteSealedRootResolver(config.Database, config.TargetID, delivery, pools)
 	leases := deploymentsqlite.SealedCatalogLeaseAdapter{Repository: delivery}
-	base := FactoryConfig{DuckDBDir: config.DuckDBDir, RuntimeDir: config.RuntimeDir, SealedLeaseHolder: config.LeaseHolder}
+	base := FactoryConfig{DuckDBDir: config.DuckDBDir, RuntimeDir: config.RuntimeDir, SealedLeaseHolder: config.LeaseHolder, ActivationEvidence: config.ActivationEvidence}
 	authorize := func(ctx context.Context, artifact sealedcatalog.Artifact, lease catalogartifact.LeaseInput) error {
 		return validateSealedAuthorizationEvidence(artifact, lease)
 	}
@@ -180,7 +181,7 @@ func NewSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects se
 }
 
 func newSealedFactory(base FactoryConfig, resolve SealedRootResolver, objects sealedcatalog.ObjectStore, objectsForRoot func(context.Context, SealedServingRoot) (sealedcatalog.ObjectStore, error), credentialBootstrap func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error), extensionAdmission extension.Admission, leases catalogartifact.LeaseRepository, authorize sealedcatalog.Authorization, authorizeServing func(context.Context, runtimehost.RuntimeInput, sealedcatalog.Artifact, catalogartifact.LeaseInput) error, buildRuntime SealedDashboardRuntimeBuilder) runtimehost.RuntimeFactory {
-	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, credentialBootstrap: credentialBootstrap, extensionAdmission: extensionAdmission, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
+	return sealedServingFactory{base: servingStateRuntimeFactory{duckDBDir: base.DuckDBDir, runtimeDir: base.RuntimeDir, dashboardRuntime: base.DashboardRuntime, activationEvidence: base.ActivationEvidence}, resolve: resolve, objects: objects, objectsForRoot: objectsForRoot, credentialBootstrap: credentialBootstrap, extensionAdmission: extensionAdmission, leases: leases, authorize: authorize, authorizeServing: authorizeServing, buildRuntime: buildRuntime, holder: firstNonEmpty(base.SealedLeaseHolder, "runtimehost"), now: time.Now}
 }
 
 func (f sealedServingFactory) Prepare(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {

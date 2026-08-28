@@ -139,6 +139,186 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 	}
 }
 
+func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders_model"},
+	}
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := project.RelationExecutionDigestsForInputs(
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revisionChanged, err := project.RelationExecutionDigestsForInputs(
+		map[string]string{"connection:warehouse": "revision-b"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base["model:orders"] == revisionChanged["model:orders"] {
+		t.Fatal("managed-data revision did not rotate relation execution identity")
+	}
+	bindingChanged, err := project.RelationExecutionDigestsForInputs(
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "sqlite"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base["model:orders"] == bindingChanged["model:orders"] {
+		t.Fatal("binding kind did not rotate relation execution identity")
+	}
+
+	dashboardOnly := project.Manifest()
+	dashboard := dashboardOnly.DashboardDefinitions["dashboard:sales"]
+	dashboard.Title = "Presentation-only change"
+	dashboardOnly.DashboardDefinitions["dashboard:sales"] = dashboard
+	changedProject, err := NewProject(project.Graph(), dashboardOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unchanged, err := changedProject.RelationExecutionDigestsForInputs(
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if base["model:orders"] != unchanged["model:orders"] {
+		t.Fatal("dashboard-only change rotated relation execution identity")
+	}
+
+	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
+	projection, err := project.SemanticModelRelationEvidence(
+		semanticID,
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(projection) != 1 || projection[0].Dataset != "orders" || projection[0].RelationID != "model:orders" || projection[0].ExecutionDigest == "" {
+		t.Fatalf("semantic relation projection = %#v", projection)
+	}
+	if _, err := project.SemanticModelRelationEvidence(semanticID, nil, map[string]string{"connection:warehouse": "managed"}); err == nil {
+		t.Fatal("SemanticModelRelationEvidence() accepted missing managed revision")
+	}
+}
+
+func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders_model"},
+	}
+	table := projectManifest.Models["model:orders"]
+	table.Columns = map[string]semanticmodel.ModelColumn{"order_id": {Name: "order_id", Datatype: semanticmodel.DataTypeString}}
+	table.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}
+	projectManifest.Models["model:orders"] = table
+	source := projectManifest.Sources["source:orders"]
+	source.Fields = map[string]semanticmodel.SourceField{"order_id": {Name: "order_id", Datatype: semanticmodel.DataTypeString}}
+	source.Schema.Columns = []semanticmodel.ColumnSchema{{Name: "order_id", PhysicalType: "VARCHAR"}}
+	projectManifest.Sources["source:orders"] = source
+
+	digestFor := func(value manifest.Project) string {
+		t.Helper()
+		project, err := NewProject(graphValue, value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		semanticID, err := projectgraph.NewResourceID("semantic:sales")
+		if err != nil {
+			t.Fatal(err)
+		}
+		evidence, err := project.SemanticModelRelationEvidence(
+			semanticID,
+			map[string]string{"connection:warehouse": "revision-a"},
+			map[string]string{"connection:warehouse": "managed"},
+		)
+		if err != nil || len(evidence) != 1 {
+			t.Fatalf("SemanticModelRelationEvidence() = %#v, %v", evidence, err)
+		}
+		return evidence[0].ExecutionDigest
+	}
+
+	base := digestFor(projectManifest)
+	presentation := cloneRelationIdentityManifest(projectManifest)
+	connection := presentation.Connections["connection:warehouse"]
+	connection.Description = "Warehouse shown to authors"
+	presentation.Connections["connection:warehouse"] = connection
+	source = presentation.Sources["source:orders"]
+	source.Description = "Order source help"
+	field := source.Fields["order_id"]
+	field.Description = "Order identifier help"
+	source.Fields["order_id"] = field
+	source.Schema.Columns[0].Comment = "Displayed warehouse comment"
+	presentation.Sources["source:orders"] = source
+	table = presentation.Models["model:orders"]
+	table.Description = "Order model help"
+	dimension := table.Dimensions["order_id"]
+	dimension.Label = "Order ID"
+	dimension.Description = "Displayed dimension help"
+	table.Dimensions["order_id"] = dimension
+	column := table.Columns["order_id"]
+	column.Description = "Displayed column help"
+	table.Columns["order_id"] = column
+	table.Schema.Columns[0].Comment = "Displayed model comment"
+	presentation.Models["model:orders"] = table
+	if got := digestFor(presentation); got != base {
+		t.Fatalf("presentation-only relation metadata rotated result identity: %q != %q", got, base)
+	}
+
+	execution := cloneRelationIdentityManifest(projectManifest)
+	table = execution.Models["model:orders"]
+	column = table.Columns["order_id"]
+	column.Datatype = semanticmodel.DataTypeInteger
+	table.Columns["order_id"] = column
+	execution.Models["model:orders"] = table
+	if got := digestFor(execution); got == base {
+		t.Fatal("execution-affecting relation change did not rotate result identity")
+	}
+}
+
+func cloneRelationIdentityManifest(value manifest.Project) manifest.Project {
+	clone := value
+	clone.Connections = make(map[string]semanticmodel.Connection, len(value.Connections))
+	for id, connection := range value.Connections {
+		clone.Connections[id] = connection
+	}
+	clone.Sources = make(map[string]semanticmodel.Source, len(value.Sources))
+	for id, source := range value.Sources {
+		fields := make(map[string]semanticmodel.SourceField, len(source.Fields))
+		for name, field := range source.Fields {
+			fields[name] = field
+		}
+		source.Fields = fields
+		source.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), source.Schema.Columns...)
+		clone.Sources[id] = source
+	}
+	clone.Models = make(map[string]semanticmodel.Table, len(value.Models))
+	for id, table := range value.Models {
+		columns := make(map[string]semanticmodel.ModelColumn, len(table.Columns))
+		for name, column := range table.Columns {
+			columns[name] = column
+		}
+		dimensions := make(map[string]semanticmodel.MetricDimension, len(table.Dimensions))
+		for name, dimension := range table.Dimensions {
+			dimensions[name] = dimension
+		}
+		table.Columns = columns
+		table.Dimensions = dimensions
+		table.Schema.Columns = append([]semanticmodel.ColumnSchema(nil), table.Schema.Columns...)
+		clone.Models[id] = table
+	}
+	return clone
+}
+
 func TestProjectRejectsRawConnectionSourceFromCompiledManifest(t *testing.T) {
 	graphValue, projectManifest := projectFixture(t)
 	projectManifest.AuthoredResourceSources = map[string]string{

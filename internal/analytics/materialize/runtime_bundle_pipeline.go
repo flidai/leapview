@@ -17,8 +17,8 @@ type bundleStage string
 
 const (
 	bundleStageGovern           bundleStage = "govern_validate"
-	bundleStageCache            bundleStage = "cache_resolve"
 	bundleStagePlan             bundleStage = "plan"
+	bundleStageCache            bundleStage = "cache_resolve"
 	bundleStageExecute          bundleStage = "admit_execute"
 	bundleStageSplitStoreDecode bundleStage = "arrow_split_store_decode"
 	bundleStageTransformObserve bundleStage = "transform_observe"
@@ -46,6 +46,7 @@ type governedBundle struct {
 type bundleCacheSlot struct {
 	key        string
 	generation uint64
+	reusable   bool
 }
 
 type bundleFlightSlot struct {
@@ -93,16 +94,28 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	if err != nil {
 		return dataquery.BundleResult{}, err
 	}
-	resolved, err := r.resolveBundleCache(ctx, governed)
+	preplanned, err := r.planGovernedBundle(ctx, governed)
+	if err != nil {
+		return dataquery.BundleResult{}, err
+	}
+	resolved, err := r.resolveBundleCache(ctx, governed, preplanned.plan)
 	if err != nil {
 		return dataquery.BundleResult{}, err
 	}
 	if len(resolved.misses) <= 1 {
 		return r.executeDegenerateBundle(ctx, resolved)
 	}
-	planned, err := r.planBundle(ctx, resolved)
-	if err != nil {
-		return dataquery.BundleResult{}, err
+	planned := preplanned
+	if len(resolved.misses) != len(governed.branches) {
+		planned, err = r.planBundle(ctx, resolved)
+		if err != nil {
+			return dataquery.BundleResult{}, err
+		}
+	} else {
+		planned, err = bindResolvedBundle(preplanned, resolved)
+		if err != nil {
+			return dataquery.BundleResult{}, err
+		}
 	}
 	execution, shared, err := r.executePlannedBundle(ctx, planned)
 	if err != nil {
@@ -145,12 +158,22 @@ func (r *Runtime) governAndValidateBundle(ctx context.Context, requests []dataqu
 	return out, nil
 }
 
-func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundle) (resolvedBundle, error) {
+func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundle, plan semanticquery.BundlePlan) (resolvedBundle, error) {
 	if err := enterBundleStage(ctx, bundleStageCache); err != nil {
 		return resolvedBundle{}, err
 	}
 	out := resolvedBundle{governedBundle: governed, result: dataquery.BundleResult{Results: make(map[string]dataquery.Result, len(governed.requests))}, slots: make(map[string]bundleCacheSlot, len(governed.branches))}
+	projections := make(map[string]semanticquery.DependencyProjection, len(plan.Branches))
+	for _, branch := range plan.Branches {
+		projections[branch.ID] = branch.DependencyProjection
+	}
 	for _, branch := range governed.branches {
+		projection, ok := projections[branch.ID]
+		if !ok || !r.dependencyProjectionReusable(projection) {
+			out.slots[branch.ID] = bundleCacheSlot{}
+			out.misses = append(out.misses, branch)
+			continue
+		}
 		cached, key, generation, hit, err := r.queryCache.lookupArrow(ctx, branch.Query)
 		if err != nil {
 			return resolvedBundle{}, &dataquery.BundleBranchError{ID: branch.ID, Err: err}
@@ -160,10 +183,18 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			out.result.Results[branch.ID] = cached
 			continue
 		}
-		out.slots[branch.ID] = bundleCacheSlot{key: key, generation: generation}
+		out.slots[branch.ID] = bundleCacheSlot{key: key, generation: generation, reusable: true}
 		out.misses = append(out.misses, branch)
 	}
 	return out, nil
+}
+
+func (r *Runtime) dependencyProjectionReusable(projection semanticquery.DependencyProjection) bool {
+	if r == nil || !r.dependencyEvidence.Available() {
+		return false
+	}
+	_, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
+	return err == nil
 }
 
 func (r *Runtime) executeDegenerateBundle(ctx context.Context, resolved resolvedBundle) (dataquery.BundleResult, error) {
@@ -186,11 +217,23 @@ func (r *Runtime) executeDegenerateBundle(ctx context.Context, resolved resolved
 }
 
 func (r *Runtime) planBundle(ctx context.Context, resolved resolvedBundle) (plannedBundle, error) {
+	planned, err := r.compileBundle(resolved.misses)
+	if err != nil {
+		return plannedBundle{}, err
+	}
+	return bindResolvedBundle(planned, resolved)
+}
+
+func (r *Runtime) planGovernedBundle(ctx context.Context, governed governedBundle) (plannedBundle, error) {
 	if err := enterBundleStage(ctx, bundleStagePlan); err != nil {
 		return plannedBundle{}, err
 	}
-	semanticRequests := make([]semanticquery.BundleRequest, len(resolved.misses))
-	for index, branch := range resolved.misses {
+	return r.compileBundle(governed.branches)
+}
+
+func (r *Runtime) compileBundle(branches []dataquery.BundleRequest) (plannedBundle, error) {
+	semanticRequests := make([]semanticquery.BundleRequest, len(branches))
+	for index, branch := range branches {
 		request := branch.Query
 		semanticRequests[index] = semanticquery.BundleRequest{ID: branch.ID, Request: semanticquery.Request{Dataset: request.Target, Dimensions: dataQueryFields(request.Fields), Metrics: dataQueryFields(request.Metrics), Time: semanticquery.Time{Field: request.Time.Field, Grain: request.Time.Grain, Alias: request.Time.Alias}, Filters: dataQueryFilters(request.Filters), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset}}
 	}
@@ -204,23 +247,34 @@ func (r *Runtime) planBundle(ctx context.Context, resolved resolvedBundle) (plan
 	if err != nil {
 		return plannedBundle{}, &dataquery.BundleIncompatibleError{Err: err}
 	}
+	return plannedBundle{plan: plan, planningMS: planningMS}, nil
+}
+
+func bindResolvedBundle(planned plannedBundle, resolved resolvedBundle) (plannedBundle, error) {
 	identity := make([]bundleFlightSlot, 0, len(resolved.misses))
 	for _, branch := range resolved.misses {
 		slot := resolved.slots[branch.ID]
+		if !slot.reusable {
+			planned.resolved = resolved
+			planned.flightKey = ""
+			return planned, nil
+		}
 		identity = append(identity, bundleFlightSlot{ID: branch.ID, Key: slot.key, Generation: slot.generation})
 	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
 		return plannedBundle{}, fmt.Errorf("encode aggregate bundle flight identity: %w", err)
 	}
-	return plannedBundle{resolved: resolved, plan: plan, planningMS: planningMS, flightKey: string(encoded)}, nil
+	planned.resolved = resolved
+	planned.flightKey = string(encoded)
+	return planned, nil
 }
 
 func (r *Runtime) executePlannedBundle(ctx context.Context, planned plannedBundle) (bundleExecution, bool, error) {
 	if err := enterBundleStage(ctx, bundleStageExecute); err != nil {
 		return bundleExecution{}, false, err
 	}
-	value, shared, err := r.queryCache.coalesce(ctx, planned.flightKey, func() (any, error) {
+	execute := func() (bundleExecution, error) {
 		execCtx, statements := withPhysicalStatementCounter(dataquery.WithIndependentResultBudget(ctx, r.queryResultLimits()))
 		var execution bundleExecution
 		summary, executeErr := admitPhysicalQuery(execCtx, planned.resolved.misses[0].Query, func(queryCtx context.Context) (dataquery.Result, error) {
@@ -233,7 +287,12 @@ func (r *Runtime) executePlannedBundle(ctx context.Context, planned plannedBundl
 			dataquery.ObservePhysicalQuery(ctx, dataquery.PhysicalQueryObservation{Count: count, Result: summary})
 		}
 		return execution, executeErr
-	})
+	}
+	if planned.flightKey == "" {
+		execution, err := execute()
+		return execution, false, err
+	}
+	value, shared, err := r.queryCache.coalesce(ctx, planned.flightKey, func() (any, error) { return execute() })
 	if err != nil {
 		return bundleExecution{}, shared, err
 	}
@@ -336,6 +395,9 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 	}
 	for _, request := range planned.resolved.misses {
 		slot := planned.resolved.slots[request.ID]
+		if !slot.reusable {
+			continue
+		}
 		r.queryCache.scope.StoreArrow(slot.key, resultcache.Token(slot.generation), branches[request.ID], resultcache.Metadata{SQL: planned.plan.Plan.SQL})
 	}
 	r.queryCache.syncStats()

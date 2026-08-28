@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -102,6 +103,7 @@ type CandidateGenerationRuntime struct {
 	Connections            []CandidateConnectionRequirement
 	AuthoredConnections    []CandidateAuthoredConnection
 	ManagedDataConnections []string
+	Extensions             []extension.Evidence
 	Restrictions           []CandidateRestriction
 	BindingFingerprint     string
 	GateEvidence           *release.GateEvidence
@@ -258,6 +260,7 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 				GateEvidenceDigest:     gateEvidenceDigest(generation.GateEvidence),
 				ManagedDataConnections: append([]string(nil), generation.ManagedDataConnections...),
 				AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
+				Capabilities:           RuntimeCapabilityEvidence(generation.Extensions),
 				Restrictions:           candidateRestrictions(generation.Restrictions),
 			},
 		},
@@ -268,6 +271,22 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 		return CandidateRuntimeReceipt{}, fmt.Errorf("%w: candidate runtime preparation failed: %v", ErrCandidateUnavailable, err)
 	}
 	return CandidateRuntimeReceipt{RuntimeVersion: service.runtimeVersion, Bindings: candidateConnectionEvidence(bindings), BindingFingerprint: bindingFingerprint, GateEvidence: generation.GateEvidence}, nil
+}
+
+// RuntimeCapabilityEvidence projects verified extension provenance onto the
+// non-secret runtime identity tuple consumed by result dependency derivation.
+// Production and candidate activation use this single projection.
+func RuntimeCapabilityEvidence(values []extension.Evidence) []runtimehost.RuntimeCapabilityEvidence {
+	result := make([]runtimehost.RuntimeCapabilityEvidence, len(values))
+	for index, value := range values {
+		result[index] = runtimehost.RuntimeCapabilityEvidence{
+			Name: value.Name, Identity: value.Identity, Digest: value.Digest,
+			DuckDBVersion: value.DuckDBVersion, ExtensionVersion: value.ExtensionVersion,
+			GOOS: value.GOOS, GOARCH: value.GOARCH, Platform: value.Platform,
+			SupportProfile: value.SupportProfile,
+		}
+	}
+	return result
 }
 
 func gateEvidenceDigest(value *release.GateEvidence) string {

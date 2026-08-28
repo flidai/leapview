@@ -50,6 +50,7 @@ type Lifetime interface {
 type Resolution struct {
 	RevisionID string
 	Roots      map[projectgraph.ResourceID]string
+	Revisions  map[projectgraph.ResourceID]string
 	Lifetime   Lifetime
 }
 
@@ -170,6 +171,7 @@ func (r *Resolver) resolveBindings(ctx context.Context, identity projectgraph.Se
 	})
 
 	roots := make(map[projectgraph.ResourceID]string, len(resolved))
+	revisions := make(map[projectgraph.ResourceID]string, len(resolved))
 	leases := make([]manageddata.RevisionLease, 0, len(resolved))
 	for _, binding := range resolved {
 		lease, materializeErr := r.materializer.MaterializeRevision(ctx, binding.manifestDigest, binding.manifest)
@@ -183,9 +185,11 @@ func (r *Resolver) resolveBindings(ctx context.Context, identity projectgraph.Se
 		}
 		leases = append(leases, lease)
 		roots[binding.connection] = lease.Root()
+		revisions[binding.connection] = binding.manifestDigest
 	}
 	return Resolution{
-		RevisionID: aggregateRevisionID(resolved), Roots: roots, Lifetime: &managedDataLifetime{leases: leases},
+		RevisionID: aggregateRevisionID(resolved), Roots: roots, Revisions: revisions,
+		Lifetime: &managedDataLifetime{leases: leases},
 	}, nil
 }
 

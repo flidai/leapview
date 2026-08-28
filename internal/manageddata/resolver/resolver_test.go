@@ -64,6 +64,9 @@ func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically
 	if len(got.Roots) != 2 {
 		t.Fatalf("Roots = %#v", got.Roots)
 	}
+	if got.Revisions["orders"] != ordersManifest.RevisionID() || got.Revisions["customers"] != customersManifest.RevisionID() {
+		t.Fatalf("Revisions = %#v, want exact manifest digests", got.Revisions)
+	}
 	assertFileContent(t, got.Roots["orders"], "orders/part-1.csv", "order_id\n1\n")
 	assertFileContent(t, got.Roots["customers"], "customers.csv", "customer_id\n1\n")
 

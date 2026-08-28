@@ -3,6 +3,7 @@ package analyticsruntime
 import (
 	"context"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -31,12 +33,21 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	var request analyticscontract.ProjectRequest
+	evidence, err := resultidentity.NewEvidence(resultidentity.EvidenceInput{
+		SemanticModelID: "semantic:sales", SemanticModelDigest: analyticsRuntimeTestDigest('a'),
+		DatasetRelations:   []resultidentity.DatasetRelation{{Dataset: "orders", Relation: resultidentity.RelationRevision{RelationID: "model:orders", RevisionDigest: analyticsRuntimeTestDigest('b')}}},
+		BindingFingerprint: analyticsRuntimeTestDigest('c'), RuntimeDigest: analyticsRuntimeTestDigest('d'), CapabilityDigest: analyticsRuntimeTestDigest('e'),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	factory := NewFactory(Options{
 		Projects: analyticscontract.ProjectFactoryFunc(func(_ context.Context, got analyticscontract.ProjectRequest) (analyticscontract.Project, error) {
 			request = got
 			return nil, nil
 		}),
 		ProjectID: projectID, CandidateID: "candidate-1", AuthorizationFingerprint: "auth-1", BindingFingerprint: "binding-1", SkipInitialRefresh: true,
+		DependencyEvidence: map[string]resultidentity.Evidence{"semantic:sales": evidence},
 	})
 	if _, err := factory.OpenDashboardProjectDataRuntimes(context.Background(), dashboardruntime.ProjectDataRuntimeConfig{Definition: definition}); err != nil {
 		t.Fatal(err)
@@ -47,6 +58,13 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 	if request.CandidateID != "candidate-1" || request.AuthorizationFingerprint != "auth-1" || request.BindingFingerprint != "binding-1" {
 		t.Fatalf("project request lost candidate cache/auth identity: %#v", request)
 	}
+	if !request.DependencyEvidence["semantic:sales"].Available() {
+		t.Fatal("project request lost dependency evidence")
+	}
+}
+
+func analyticsRuntimeTestDigest(value byte) string {
+	return "sha256:" + strings.Repeat(string(value), 64)
 }
 
 func TestProjectRuntimeAdaptsActivatedConcretePlanner(t *testing.T) {

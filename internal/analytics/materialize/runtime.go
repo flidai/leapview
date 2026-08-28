@@ -17,6 +17,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -29,8 +30,13 @@ type RuntimeConfig struct {
 	QueryCacheNamespace string
 	QueryCache          *resultcache.Scope
 	ResultLimits        dataquery.ResultLimits
-	RequiredExtensions  []string
-	TableRelation       semanticquery.TableRelation
+	// DependencyEvidence is immutable activation evidence used to derive an
+	// exact dependency identity from each validated query plan. When it is
+	// absent or incomplete, result reuse fails closed while execution remains
+	// available.
+	DependencyEvidence resultidentity.Evidence
+	RequiredExtensions []string
+	TableRelation      semanticquery.TableRelation
 
 	Database Database
 	Sources  SourcePreparer
@@ -63,6 +69,7 @@ type Runtime struct {
 	sources            SourcePreparer
 	queryCache         *queryResultCache
 	resultLimits       dataquery.ResultLimits
+	dependencyEvidence resultidentity.Evidence
 	requiredExtensions []string
 	lastRefresh        time.Time
 	sourceObservations []SourceObservation
@@ -182,7 +189,8 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	runtime = &Runtime{
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
-		queryCache: cache, resultLimits: limits, dbOwned: config.OwnDatabase, snapshotOnly: config.SnapshotOnly,
+		queryCache: cache, resultLimits: limits, dependencyEvidence: config.DependencyEvidence,
+		dbOwned: config.OwnDatabase, snapshotOnly: config.SnapshotOnly,
 	}
 	return runtime, nil
 }

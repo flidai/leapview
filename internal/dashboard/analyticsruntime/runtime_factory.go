@@ -28,6 +28,7 @@ func NewRuntimeBuilder(config RuntimeFactoryConfig) dashboardruntimefactory.Buil
 			ArtifactDigest: input.ArtifactDigest, SourceDataDigest: input.SourceDataDigest,
 			CandidateID: input.CandidateID, AuthorizationFingerprint: input.AuthorizationFingerprint,
 			BindingFingerprint: input.BindingFingerprint,
+			DependencyEvidence: input.DependencyEvidence,
 			SkipInitialRefresh: input.SkipInitialRefresh,
 		}), input.Identity, input.Definition)
 	}

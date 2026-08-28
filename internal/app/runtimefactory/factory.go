@@ -14,6 +14,7 @@ import (
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -22,21 +23,24 @@ import (
 )
 
 type FactoryConfig struct {
-	DuckDBDir         string
-	RuntimeDir        string
-	DashboardRuntime  dashboardruntimefactory.Builder
-	SealedLeaseHolder string
+	DuckDBDir          string
+	RuntimeDir         string
+	DashboardRuntime   dashboardruntimefactory.Builder
+	SealedLeaseHolder  string
+	ActivationEvidence ActivationEvidenceSource
 }
 
 type servingStateRuntimeFactory struct {
-	duckDBDir        string
-	runtimeDir       string
-	dashboardRuntime dashboardruntimefactory.Builder
+	duckDBDir          string
+	runtimeDir         string
+	dashboardRuntime   dashboardruntimefactory.Builder
+	activationEvidence ActivationEvidenceSource
 }
 
 func NewFactory(config FactoryConfig) runtimehost.RuntimeFactory {
 	return servingStateRuntimeFactory{
 		duckDBDir: config.DuckDBDir, runtimeDir: config.RuntimeDir, dashboardRuntime: config.DashboardRuntime,
+		activationEvidence: config.ActivationEvidence,
 	}
 }
 
@@ -64,6 +68,10 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 	if compiled.ProjectID != input.State.ProjectID {
 		return nil, fmt.Errorf("compiled artifact project = %q, want %q", compiled.ProjectID, input.State.ProjectID)
 	}
+	compiledProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("compiled project dependency evidence: %w", err)
+	}
 	if err := bindManagedDataRoots(&compiled.Manifest, input.ManagedData.Roots); err != nil {
 		return nil, err
 	}
@@ -71,6 +79,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 	if err != nil {
 		return nil, err
 	}
+	dependencyEvidence, _ := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
 	policy := projectmanifest.AccessPolicy{}
 	if value := input.State.AccessPolicyJSON; value != "" {
 		if err := json.Unmarshal([]byte(value), &policy); err != nil {
@@ -108,7 +117,7 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 		Directory: duckDir, SnapshotID: input.State.DuckLakeSnapshotID,
 		Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
-		Definition: projectDefinition,
+		Definition: projectDefinition, DependencyEvidence: dependencyEvidence,
 	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID
@@ -171,6 +180,10 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if compiled.ProjectID != input.State.ProjectID {
 		return nil, fmt.Errorf("compiled artifact project = %q, want %q", compiled.ProjectID, input.State.ProjectID)
 	}
+	compiledProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("compiled project dependency evidence: %w", err)
+	}
 	if err := bindManagedDataRoots(&compiled.Manifest, input.ManagedData.Roots); err != nil {
 		return nil, err
 	}
@@ -178,6 +191,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
+	dependencyEvidence, _ := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
 	policy := projectmanifest.AccessPolicy{}
 	if value := input.State.AccessPolicyJSON; value != "" {
 		if err := json.Unmarshal([]byte(value), &policy); err != nil {
@@ -216,7 +230,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		Directory: targetDir, Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
 		SkipInitialRefresh: true,
-		Definition:         projectDefinition,
+		Definition:         projectDefinition, DependencyEvidence: dependencyEvidence,
 	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID

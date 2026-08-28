@@ -250,6 +250,38 @@ type Plan struct {
 	IR *planir.Graph
 }
 
+// DependencyProjection is the complete query-planning evidence needed by an
+// analytics-owned result identity resolver. Dataset names remain semantic
+// aliases; mapping them to stable physical resource IDs is an activation
+// concern outside the query package.
+type DependencyProjection struct {
+	Datasets      []string
+	PlannerDigest string
+}
+
+// ResultDependencies derives result identity inputs from the validated PlanIR
+// that will actually execute. It never reparses the authored query.
+func (p Plan) ResultDependencies() (DependencyProjection, error) {
+	if p.IR == nil {
+		return DependencyProjection{}, fmt.Errorf("plan has no PlanIR dependency evidence")
+	}
+	dependencies, err := p.IR.Dependencies()
+	if err != nil {
+		return DependencyProjection{}, err
+	}
+	if len(dependencies.Datasets) == 0 {
+		return DependencyProjection{}, fmt.Errorf("plan has no participating dataset")
+	}
+	fingerprint, err := p.IR.DependencyFingerprint()
+	if err != nil {
+		return DependencyProjection{}, err
+	}
+	return DependencyProjection{
+		Datasets:      append([]string(nil), dependencies.Datasets...),
+		PlannerDigest: "sha256:" + fingerprint,
+	}, nil
+}
+
 // Explain returns the deterministic typed plan explanation. SQL is included
 // only as the renderer result; callers should use this for audit/debug output
 // instead of depending on CTE naming or formatting details.
@@ -276,10 +308,11 @@ type BundlePlan struct {
 }
 
 type BundleBranch struct {
-	ID          string
-	Ordinal     int
-	Columns     []BundleColumn
-	Fingerprint string
+	ID                   string
+	Ordinal              int
+	Columns              []BundleColumn
+	Fingerprint          string
+	DependencyProjection DependencyProjection
 }
 
 type BundleColumn struct {

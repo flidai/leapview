@@ -14,7 +14,11 @@ type identityManagedDataSource struct {
 
 func (s *identityManagedDataSource) ResolveManagedData(_ context.Context, identity projectgraph.ServingIdentity) (manageddataresolver.Resolution, error) {
 	s.identity = identity
-	return manageddataresolver.Resolution{RevisionID: "revision", Roots: map[projectgraph.ResourceID]string{"connection:orders": "/managed/orders"}}, nil
+	return manageddataresolver.Resolution{
+		RevisionID: "revision",
+		Roots:      map[projectgraph.ResourceID]string{"connection:orders": "/managed/orders"},
+		Revisions:  map[projectgraph.ResourceID]string{"connection:orders": "sha256:revision"},
+	}, nil
 }
 
 func TestManagedDataResolverUsesGenerationIdentityProject(t *testing.T) {
@@ -30,5 +34,8 @@ func TestManagedDataResolverUsesGenerationIdentityProject(t *testing.T) {
 	}
 	if resolution.Roots["connection:orders"] != "/managed/orders" {
 		t.Fatalf("managed-data roots = %#v", resolution.Roots)
+	}
+	if resolution.Revisions["connection:orders"] != "sha256:revision" {
+		t.Fatalf("managed-data revisions = %#v", resolution.Revisions)
 	}
 }
