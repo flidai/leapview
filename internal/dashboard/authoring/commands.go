@@ -120,11 +120,18 @@ func (AddPagePayload) RequiredAction() (AuthorizationAction, error) {
 // transaction. The payload contains only closed visual-builder fields; it does
 // not accept a caller-supplied authored document or raw query expression.
 type AddVisualPayload struct {
-	PageID      string `json:"pageId"`
-	VisualID    string `json:"visualId,omitempty"`
-	ComponentID string `json:"componentId,omitempty"`
-	Type        string `json:"type"`
-	Title       string `json:"title,omitempty"`
+	PageID      string    `json:"pageId"`
+	VisualID    string    `json:"visualId,omitempty"`
+	ComponentID string    `json:"componentId,omitempty"`
+	Type        string    `json:"type"`
+	Title       string    `json:"title,omitempty"`
+	FieldID     string    `json:"fieldId,omitempty"`
+	Role        FieldRole `json:"role,omitempty"`
+
+	// ResolvedTable and FieldValidated are application-derived execution
+	// evidence. They never enter the wire contract or command fingerprint.
+	ResolvedTable  string `json:"-"`
+	FieldValidated bool   `json:"-"`
 }
 
 func (AddVisualPayload) authoringPayload() {}
@@ -619,6 +626,17 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !canonicalVisualTypeSupported(document.DashboardVisualType(strings.TrimSpace(value.Type))) {
 			return fmt.Errorf("%w: unsupported visual type %q", ErrInvalidPayload, value.Type)
+		}
+		if value.FieldID == "" && value.Role != "" {
+			return fmt.Errorf("%w: add visual field role requires a field", ErrInvalidPayload)
+		}
+		if value.FieldID != "" {
+			if !ValidGovernedFieldID(value.FieldID) {
+				return fmt.Errorf("%w: invalid governed field id %q", ErrInvalidPayload, value.FieldID)
+			}
+			if !value.Role.Valid() {
+				return fmt.Errorf("%w: unsupported field role %q", ErrInvalidPayload, value.Role)
+			}
 		}
 	case *SetPlacementsPayload:
 		if strings.TrimSpace(value.PageID) == "" {

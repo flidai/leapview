@@ -46,6 +46,12 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 		return authoringservice.Result{}, fmt.Errorf("%w: command is not a dashboard builder intent", authoring.ErrInvalidPayload)
 	}
 	var validator func(context.Context, authoring.DashboardLifecycle) error
+	if request.Command.AddVisual != nil && request.Command.AddVisual.FieldID != "" {
+		visual := request.Command.AddVisual
+		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
+			return a.validateInitialVisualField(ctx, project, request.Command, lifecycle, visual)
+		}
+	}
 	if request.Command.AssignField != nil {
 		field := request.Command.AssignField
 		validator = func(ctx context.Context, lifecycle authoring.DashboardLifecycle) error {
@@ -70,6 +76,31 @@ func (a *Application) ExecuteIntent(ctx context.Context, request IntentRequest) 
 	return a.authoring.ExecuteValidated(ctx, project, request.Command, validator)
 }
 
+func (a *Application) validateInitialVisualField(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, visual *authoring.AddVisualPayload) error {
+	revision, err := a.validateIntentRevision(ctx, project, command, lifecycle)
+	if err != nil {
+		return err
+	}
+	pageFound := false
+	for _, page := range revision.Document.Spec.Pages {
+		if page.ID == visual.PageID {
+			pageFound = true
+			break
+		}
+	}
+	if !pageFound {
+		return fmt.Errorf("%w: page %q", authoring.ErrNotFound, visual.PageID)
+	}
+	field := authoring.AssignFieldPayload{PageID: visual.PageID, FieldID: visual.FieldID, Role: visual.Role}
+	resolvedTable, err := a.validateFieldAgainstRuntime(ctx, project, revision, field)
+	if err != nil {
+		return err
+	}
+	visual.ResolvedTable = resolvedTable
+	visual.FieldValidated = true
+	return nil
+}
+
 // validateFieldMutation reuses the governed assignment validator to ensure
 // remove/move intents resolve the active semantic model and selected component
 // before the reducer mutates the draft. A remove/move never carries the
@@ -85,33 +116,9 @@ func (a *Application) validateFieldMutation(ctx context.Context, project project
 // the reducer remains the final authority for optimistic revision and exact
 // placement checks.
 func (a *Application) validateAssignedField(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle, field *authoring.AssignFieldPayload) error {
-	if err := command.Validate(); err != nil {
-		return err
-	}
-	if lifecycle.ProjectID != project || lifecycle.ID != command.DashboardID {
-		return fmt.Errorf("dashboard intent lifecycle identity does not match request")
-	}
-	if err := lifecycle.Validate(); err != nil {
-		return fmt.Errorf("validate dashboard intent lifecycle: %w", err)
-	}
-	if lifecycle.Draft == nil || lifecycle.Draft.ID != command.DraftID {
-		return fmt.Errorf("%w: intent draft does not match current draft", authoring.ErrStaleRevision)
-	}
-	if !sameRevision(lifecycle.Draft.Revision, command.ExpectedRevision) {
-		return fmt.Errorf("%w: intent expected revision does not match current draft", authoring.ErrStaleRevision)
-	}
-	revision, err := a.repository.GetRevision(ctx, project, command.DashboardID, command.ExpectedRevision.RevisionID)
+	revision, err := a.validateIntentRevision(ctx, project, command, lifecycle)
 	if err != nil {
 		return err
-	}
-	if err := revision.Validate(); err != nil {
-		return fmt.Errorf("validate dashboard intent revision: %w", err)
-	}
-	if revision.DashboardID != command.DashboardID || !sameRevision(revision.Token(), command.ExpectedRevision) {
-		return fmt.Errorf("%w: intent revision identity does not match request", authoring.ErrStaleRevision)
-	}
-	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
-		return fmt.Errorf("dashboard intent semantic model does not match lifecycle")
 	}
 	var componentVisual string
 	for _, page := range revision.Document.Spec.Pages {
@@ -135,46 +142,77 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if componentVisual == "" {
 		return fmt.Errorf("%w: visual component %q on page %q", authoring.ErrNotFound, field.VisualID, field.PageID)
 	}
-	authored, ok := revision.Document.Spec.Visuals[componentVisual]
-	if !ok {
+	if _, ok := revision.Document.Spec.Visuals[componentVisual]; !ok {
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
+	field.ResolvedTable, err = a.validateFieldAgainstRuntime(ctx, project, revision, *field)
+	return err
+}
 
+func (a *Application) validateIntentRevision(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle) (authoring.Revision, error) {
+	if err := command.Validate(); err != nil {
+		return authoring.Revision{}, err
+	}
+	if lifecycle.ProjectID != project || lifecycle.ID != command.DashboardID {
+		return authoring.Revision{}, fmt.Errorf("dashboard intent lifecycle identity does not match request")
+	}
+	if err := lifecycle.Validate(); err != nil {
+		return authoring.Revision{}, fmt.Errorf("validate dashboard intent lifecycle: %w", err)
+	}
+	if lifecycle.Draft == nil || lifecycle.Draft.ID != command.DraftID {
+		return authoring.Revision{}, fmt.Errorf("%w: intent draft does not match current draft", authoring.ErrStaleRevision)
+	}
+	if !sameRevision(lifecycle.Draft.Revision, command.ExpectedRevision) {
+		return authoring.Revision{}, fmt.Errorf("%w: intent expected revision does not match current draft", authoring.ErrStaleRevision)
+	}
+	revision, err := a.repository.GetRevision(ctx, project, command.DashboardID, command.ExpectedRevision.RevisionID)
+	if err != nil {
+		return authoring.Revision{}, err
+	}
+	if err := revision.Validate(); err != nil {
+		return authoring.Revision{}, fmt.Errorf("validate dashboard intent revision: %w", err)
+	}
+	if revision.DashboardID != command.DashboardID || !sameRevision(revision.Token(), command.ExpectedRevision) {
+		return authoring.Revision{}, fmt.Errorf("%w: intent revision identity does not match request", authoring.ErrStaleRevision)
+	}
+	if revision.Document.Spec.SemanticModel != lifecycle.SemanticModel.String() {
+		return authoring.Revision{}, fmt.Errorf("dashboard intent semantic model does not match lifecycle")
+	}
+	return revision, nil
+}
+
+func (a *Application) validateFieldAgainstRuntime(ctx context.Context, project projectgraph.ResourceID, revision authoring.Revision, field authoring.AssignFieldPayload) (string, error) {
 	lease, err := a.acquireRuntime(ctx)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if lease == nil {
-		return fmt.Errorf("dashboard intent runtime lease is empty")
+		return "", fmt.Errorf("dashboard intent runtime lease is empty")
 	}
 	defer lease.Release()
 	identity := lease.Identity()
 	if err := identity.Validate(); err != nil || identity.GenerationID == "" {
-		return fmt.Errorf("dashboard intent serving-state identity is empty")
+		return "", fmt.Errorf("dashboard intent serving-state identity is empty")
 	}
 	if lease.Runtime() == nil {
-		return fmt.Errorf("dashboard intent runtime is empty")
+		return "", fmt.Errorf("dashboard intent runtime is empty")
 	}
 	active, ok := lease.Runtime().(interface {
 		runtimehost.Runtime
 		SemanticModelProjection(projectgraph.ResourceID) (*semanticmodel.Model, bool)
 	})
 	if !ok || active == nil {
-		return fmt.Errorf("active runtime does not provide semantic model projection")
+		return "", fmt.Errorf("active runtime does not provide semantic model projection")
 	}
 	semanticModelID := projectgraph.ResourceID(revision.Document.Spec.SemanticModel)
 	model, ok := active.SemanticModelProjection(semanticModelID)
 	if !ok || model == nil {
-		return fmt.Errorf("semantic model %q is unavailable in active runtime", semanticModelID)
+		return "", fmt.Errorf("semantic model %q is unavailable in active runtime", semanticModelID)
 	}
 	if err := validateGovernedField(model, field.FieldID, field.Role); err != nil {
-		return err
+		return "", err
 	}
-	// Keep this derived identity out of the wire payload and command
-	// fingerprint. It is only used by the reducer after the authoritative
-	// semantic-model validation above succeeds.
-	field.ResolvedTable = resolvedTableForField(model, authored, *field)
-	return nil
+	return resolvedTableForField(model, field), nil
 }
 
 // resolvedTableForField returns a dataset/table identity only when the governed
@@ -182,7 +220,7 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 // bind to multiple datasets, so they deliberately leave the table unset and let
 // the existing compiler relationship validation decide whether the authored
 // query is valid.
-func resolvedTableForField(model *semanticmodel.Model, _ document.DashboardVisual, field authoring.AssignFieldPayload) string {
+func resolvedTableForField(model *semanticmodel.Model, field authoring.AssignFieldPayload) string {
 	switch field.Role {
 	case authoring.FieldRoleMetric:
 		if metric, ok := model.Metrics[strings.TrimSpace(field.FieldID)]; ok {

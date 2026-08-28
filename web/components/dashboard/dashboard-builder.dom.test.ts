@@ -142,6 +142,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
       { type: 'column', label: 'Column chart', title: 'Column', hasIcon: true, color: 'rgb(26, 127, 55)' },
       { type: 'line', label: 'Line chart', title: 'Line', hasIcon: true, color: 'rgb(130, 80, 223)' },
       { type: 'area', label: 'Area chart', title: 'Area', hasIcon: true, color: 'rgb(207, 34, 46)' },
+      { type: 'kpi', label: 'KPI chart', title: 'KPI', hasIcon: true, color: 'rgb(191, 57, 137)' },
       { type: 'table', label: 'Table chart', title: 'Table', hasIcon: true, color: 'rgb(27, 124, 131)' },
     ])
     expect(state.tabs).toEqual([
@@ -721,6 +722,83 @@ test('dashboard builder filters fields and drops a metric into its well', async 
   }
 })
 
+test('dashboard builder creates smart governed visuals from fields on an empty canvas', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builder: {
+          pages: [{ id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] }],
+          selectedPageId: 'overview', selectedVisualId: '',
+        },
+      })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const fields = Array.from(root.querySelectorAll<HTMLButtonElement>('.data-pane .field'))
+      const metric = fields.find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Total')!
+      const dimension = fields.find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Status')!
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const dataTransfer = new DataTransfer()
+      metric.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
+      await element.updateComplete
+      const canvas = root.querySelector<HTMLElement>('.canvas')!
+      const dragState = {
+        metricEnabled: !metric.disabled,
+        metricDragging: metric.getAttribute('data-dragging'),
+        canvasDragging: canvas.getAttribute('data-field-dragging'),
+        hint: root.querySelector('.canvas-field-drop-hint')?.textContent?.trim(),
+      }
+      canvas.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      dimension.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { dragState, canvasDraggingAfterDrop: canvas.getAttribute('data-field-dragging'), dimensionEnabled: !dimension.disabled, commands }
+    })
+    expect(state.dragState).toEqual({ metricEnabled: true, metricDragging: 'true', canvasDragging: 'true', hint: 'Drop on the canvas to create a KPI visual' })
+    expect(state.canvasDraggingAfterDrop).toBe('false')
+    expect(state.dimensionEnabled).toBe(true)
+    expect(state.commands).toHaveLength(2)
+    expect(state.commands[0]).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'kpi', title: 'Total', fieldId: 'orders.total', role: 'metric' })
+    expect(state.commands[1]).toMatchObject({ action: 'add_visual', pageId: 'overview', type: 'table', title: 'Status', fieldId: 'orders.status', role: 'detail' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder highlights compatible visual and field-well drop targets', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const metric = Array.from(root.querySelectorAll<HTMLButtonElement>('.data-pane .field')).find((field) => field.querySelector('.field-label')?.textContent?.trim() === 'Total')!
+      const dataTransfer = new DataTransfer()
+      metric.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
+      await element.updateComplete
+      const during = {
+        visual: root.querySelector('.visual')?.getAttribute('data-field-drop'),
+        metricWell: root.querySelector('[data-drop-well="metric"]')?.getAttribute('data-field-drop'),
+        dimensionWell: root.querySelector('[data-drop-well="dimension"]')?.getAttribute('data-field-drop'),
+      }
+      metric.dispatchEvent(new DragEvent('dragend', { bubbles: true, cancelable: true, dataTransfer }))
+      await element.updateComplete
+      return { during, canvasDraggingAfter: root.querySelector('.canvas')?.getAttribute('data-field-dragging') }
+    })
+    expect(state.during).toEqual({ visual: 'compatible', metricWell: 'compatible', dimensionWell: 'incompatible' })
+    expect(state.canvasDraggingAfter).toBe('false')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder presents a role-first field catalog with business context and used state', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1259,7 +1337,7 @@ function testDocument(): string {
     status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
     runtime: { kind: 'dashboard_builder', projectId: 'sales', servingStateId: 'generation-7', dashboardId: 'revenue' },
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function escapeHTML(value: string): string {
