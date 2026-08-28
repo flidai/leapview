@@ -379,7 +379,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
   }
 })
 
-test('app report header owns dashboard identity and parent navigation above contextual rails', async () => {
+test('app report frame aligns identity and footer with the canvas around contextual rails', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
@@ -397,25 +397,40 @@ test('app report header owns dashboard identity and parent navigation above cont
       await sidebar.updateComplete
       const root = sidebar.shadowRoot!
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
-      const back = reportHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
+      const railHeader = element.shadowRoot.querySelector('.rail-header') as HTMLElement
+      const back = railHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
       const sectionTitle = root.querySelector('.section-title') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
       const main = element.shadowRoot.querySelector('.main') as HTMLElement
+      const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
+      const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const title = reportHeader.querySelector('h1') as HTMLElement
       const expandedWidth = Math.round(sidebar.getBoundingClientRect().width)
       const expandedPageTop = Math.round(firstPage.getBoundingClientRect().top)
       const backIconMarkup = back.querySelector('svg')?.innerHTML
       const expandedToggleIconMarkup = collapse.querySelector('svg')?.innerHTML
       const reportHeaderRect = reportHeader.getBoundingClientRect()
+      const railHeaderRect = railHeader.getBoundingClientRect()
+      const backRect = back.getBoundingClientRect()
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
+      const titleRect = title.getBoundingClientRect()
+      const railFooterRect = railFooter.getBoundingClientRect()
+      const reportFooterRect = reportFooter.getBoundingClientRect()
       collapse.click()
       await sidebar.updateComplete
+      await new Promise(resolve => setTimeout(resolve, 200))
       const collapsedPageTop = Math.round(
         (root.querySelector('.item-link') as HTMLElement).getBoundingClientRect().top,
       )
       const collapsedToggleIconMarkup = root.querySelector('.collapse svg')?.innerHTML
+      const collapsedMainRect = main.getBoundingClientRect()
+      const collapsedRailHeaderRect = railHeader.getBoundingClientRect()
+      const collapsedBackRect = back.getBoundingClientRect()
+      const collapsedTitleRect = title.getBoundingClientRect()
+      const collapsedReportFooterRect = reportFooter.getBoundingClientRect()
       return {
         href: back.getAttribute('href'),
         label: back.getAttribute('aria-label'),
@@ -426,9 +441,25 @@ test('app report header owns dashboard identity and parent navigation above cont
         reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
         sidebarTitleCount: root.querySelectorAll('.sidebar-title').length,
         sidebarBackCount: root.querySelectorAll('.back-link').length,
-        headerSpansSidebar: Math.round(reportHeaderRect.left) === Math.round(sidebarRect.left),
-        sidebarBelowHeader: Math.abs(sidebarRect.top - reportHeaderRect.bottom) < 2,
+        backInRailHeader: railHeader.contains(back),
+        railHeaderAligned: Math.round(railHeaderRect.left) === Math.round(sidebarRect.left),
+        backInset: Math.round(backRect.left - railHeaderRect.left),
+        reportHeaderAligned: Math.round(reportHeaderRect.left) === Math.round(mainRect.left),
+        titleInset: Math.round(titleRect.left - mainRect.left),
+        sidebarBelowHeader: Math.abs(sidebarRect.top - railHeaderRect.bottom) < 2,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
+        sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
+        footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
+        footerCellsShareBounds: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
+          && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
+        collapsedTitleInset: Math.round(collapsedTitleRect.left - collapsedMainRect.left),
+        collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
+        collapsedBackCentered: Math.abs(
+          (collapsedBackRect.left + collapsedBackRect.width / 2)
+            - (collapsedRailHeaderRect.left + collapsedRailHeaderRect.width / 2),
+        ) < 2,
+        titleMovesWithCanvas: Math.round(collapsedTitleRect.left - titleRect.left)
+          === Math.round(collapsedMainRect.left - mainRect.left),
         collapseInHeader: header.contains(collapse),
         sectionTitle: sectionTitle.textContent?.trim(),
         sectionTitleTransform: getComputedStyle(sectionTitle).textTransform,
@@ -453,9 +484,20 @@ test('app report header owns dashboard identity and parent navigation above cont
       reportTitleCount: 1,
       sidebarTitleCount: 0,
       sidebarBackCount: 0,
-      headerSpansSidebar: true,
+      backInRailHeader: true,
+      railHeaderAligned: true,
+      backInset: 16,
+      reportHeaderAligned: true,
+      titleInset: 16,
       sidebarBelowHeader: true,
       mainBelowHeader: true,
+      sidebarEndsAtFooter: true,
+      footerAligned: true,
+      footerCellsShareBounds: true,
+      collapsedTitleInset: 16,
+      collapsedFooterAligned: true,
+      collapsedBackCentered: true,
+      titleMovesWithCanvas: true,
       collapseInHeader: true,
       sectionTitle: 'Pages',
       sectionTitleTransform: 'none',

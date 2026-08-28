@@ -132,14 +132,19 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       height: 100svh;
       min-height: 100svh;
       grid-template-columns: auto minmax(0, 1fr) 0px;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       overflow: hidden;
       background: var(--lv-bg-app);
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
     }
 
+    .route > .rail-header {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
     .route > .header {
-      grid-column: 1 / -1;
+      grid-column: 2 / -1;
       grid-row: 1;
     }
 
@@ -155,7 +160,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route > lv-chat-drawer {
       grid-column: 3;
-      grid-row: 2;
+      grid-row: 2 / 4;
+    }
+
+    .route > .rail-footer {
+      grid-column: 1;
+      grid-row: 3;
+    }
+
+    .route > lv-report-footer {
+      grid-column: 2;
+      grid-row: 3;
     }
 
     .publication-attribution {
@@ -179,13 +194,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
+    :host([presentation='embed']) .rail-header,
     :host([presentation='embed']) .header,
+    :host([presentation='embed']) .rail-footer,
     :host([presentation='embed']) lv-report-footer {
       display: none;
-    }
-
-    :host([presentation='embed']) .main {
-      grid-template-rows: minmax(0, 1fr);
     }
 
     .route.agent-open {
@@ -197,7 +210,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       min-width: 0;
       height: 100%;
       min-height: 0;
-      grid-template-rows: minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr);
       overflow: hidden;
       background: var(--lv-bg-app);
     }
@@ -233,7 +246,32 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       align-items: center;
       gap: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
-      padding: var(--lv-space-control) var(--base-size-16);
+      padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
+    }
+
+    .rail-header,
+    .rail-footer {
+      min-width: 0;
+      border-right: var(--lv-border-muted);
+      background: var(--lv-sidebar-bg);
+    }
+
+    .rail-header {
+      display: grid;
+      box-sizing: border-box;
+      align-items: center;
+      justify-items: start;
+      border-bottom: var(--lv-border-muted);
+      padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
+    }
+
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-header {
+      justify-items: center;
+      padding-inline: 0;
+    }
+
+    .rail-footer {
+      border-top: var(--lv-border-muted);
     }
 
     .header-leading {
@@ -265,6 +303,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .dashboard-back-link svg {
       width: var(--base-size-16);
       height: var(--base-size-16);
+    }
+
+    .mobile-dashboard-back-link {
+      display: none;
     }
 
     .title-block {
@@ -680,8 +722,23 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       .route.agent-open {
         height: 100svh;
         min-height: 0;
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr) auto;
         overflow: hidden;
+      }
+
+      .route > .rail-header,
+      .route > .rail-footer {
+        display: none;
+      }
+
+      .route > .header {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      .route > lv-report-footer {
+        grid-column: 1;
+        grid-row: 3;
       }
 
       :host(:not([presentation='embed'])) .route > lv-sub-sidebar {
@@ -698,6 +755,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       :host(:not([presentation='embed'])) .dashboard-back-link {
         width: var(--control-medium-size);
         height: var(--control-medium-size);
+      }
+
+      :host(:not([presentation='embed'])) .mobile-dashboard-back-link {
+        display: grid;
       }
 
       :host(:not([presentation='embed'])) .detail {
@@ -758,7 +819,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         transform: none;
       }
 
-      .main {
+      .route > .main {
+        grid-column: 1;
         height: 100%;
         min-height: 0;
         grid-row: 2;
@@ -791,6 +853,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
       lv-chat-drawer:not([open]) {
         display: none;
+      }
+
+      .route > lv-chat-drawer {
+        grid-column: 1;
+        grid-row: 2 / 4;
       }
 
     }
@@ -1036,11 +1103,21 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
+          <div class="rail-header">
+            ${this.presentation === 'app' ? html`
+              <a
+                class="dashboard-back-link"
+                href="/"
+                aria-label="Back to dashboards"
+                title="All dashboards"
+              >${lucideIcon(ArrowLeft)}</a>
+            ` : nothing}
+          </div>
           <header class="header">
             <div class="header-leading">
               ${this.presentation === 'app' ? html`
                 <a
-                  class="dashboard-back-link"
+                  class="dashboard-back-link mobile-dashboard-back-link"
                   href="/"
                   aria-label="Back to dashboards"
                   title="All dashboards"
@@ -1107,8 +1184,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
               </lv-report-canvas>
             </div>
           </div>
-          <lv-report-footer .status=${snapshot.status}></lv-report-footer>
         </section>
+				<div class="rail-footer" aria-hidden="true"></div>
+        <lv-report-footer .status=${snapshot.status}></lv-report-footer>
 				${agentEnabled ? html`<lv-chat-drawer
 					?open=${this.agentDrawerOpen}
 					.suggestions=${this.agentSuggestions(page)}
