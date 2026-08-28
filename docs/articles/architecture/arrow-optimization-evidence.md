@@ -148,28 +148,28 @@ dashboard request limit; the FAI-539 stage benchmarks retain the 10,000-row
 export-like case.
 
 The following representative results are medians of ten 500 ms samples from
-the FAI-540 working tree rebased on `7dbf7bfa`, using Go 1.25.14, Linux amd64,
-an AMD EPYC-Rome virtual CPU, and `-cpu=1`. They use the wide detail workload
-with 32 input columns and 1,000 rows. Allocated MiB is derived from Go's
-`B/op`; it is not process RSS.
+FAI-540 benchmark commit `a59f6804`, using Go 1.25.14, Linux amd64, an AMD
+EPYC-Rome virtual CPU, and `-cpu=1`. They use the wide detail workload with 32
+input columns and 1,000 rows. Allocated MiB is derived from Go's `B/op`; it is
+not process RSS.
 
 | Lane | Response | Latency | Allocated MiB/op | Allocs/op | Response bytes | Physical queries/op |
 | --- | --- | ---: | ---: | ---: | ---: | ---: |
-| API direct | JSON | 52.85 ms | 20.41 | 175,600 | 324,281 | 2 |
-| API direct | Arrow | 39.27 ms | 18.50 | 123,620 | 368,160 | 2 |
-| Dashboard cold | JSON | 52.92 ms | 20.44 | 175,584 | 324,281 | 2 |
-| Dashboard cold | Arrow | 39.31 ms | 18.54 | 123,613 | 368,160 | 2 |
-| Dashboard warm | JSON | 47.12 ms | 17.54 | 163,468 | 324,281 | 0 |
-| Dashboard warm | Arrow | 35.98 ms | 16.12 | 111,503 | 368,160 | 0 |
+| API direct | JSON | 53.18 ms | 20.33 | 175,600 | 324,281 | 2 |
+| API direct | Arrow | 38.84 ms | 18.51 | 123,619 | 368,160 | 2 |
+| Dashboard cold | JSON | 52.65 ms | 20.40 | 175,583 | 324,281 | 2 |
+| Dashboard cold | Arrow | 38.17 ms | 18.54 | 123,612 | 368,160 | 2 |
+| Dashboard warm | JSON | 47.00 ms | 17.57 | 163,469 | 324,281 | 0 |
+| Dashboard warm | Arrow | 33.66 ms | 16.12 | 111,502 | 368,160 | 0 |
 
 The matching stage medians make the current-path costs more legible:
 
 | Current stage | Latency | Allocated MiB/op | Allocs/op |
 | --- | ---: | ---: | ---: |
-| Warm query and dashboard-frame construction | 32.99 ms | 12.91 | 101,806 |
-| JSON serialization | 18.44 ms | 4.07 | 61,626 |
-| Dashboard string projection | 1.63 ms | 0.57 | 8,382 |
-| Arrow IPC generation and response buffering | 2.74 ms | 2.27 | 1,254 |
+| Warm query and dashboard-frame construction | 31.03 ms | 12.91 | 101,806 |
+| JSON serialization | 17.71 ms | 4.06 | 61,626 |
+| Dashboard string projection | 1.54 ms | 0.57 | 8,382 |
+| Arrow IPC generation and response buffering | 2.46 ms | 2.27 | 1,254 |
 
 These numbers establish a comparison point; they do not establish an adoption
 result. On this fixture, the current Arrow response is about 13.5% larger than
