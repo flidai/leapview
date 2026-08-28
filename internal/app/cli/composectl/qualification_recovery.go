@@ -578,6 +578,16 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "refresh materialization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	// Capture the durable GC cycle set before throttling and starting refresh.
+	// Once the refresh writer is running, the operator snapshot may be
+	// intentionally unavailable while its delivery transaction is in flight.
+	refreshGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	// Make the execution interval observable before killing the process. On a
 	// fast or warm target the refresh can otherwise move from queued directly
 	// to succeeded between one-second status polls, leaving the recovery gate
@@ -603,13 +613,6 @@ func (c *Controller) runQualificationRecovery(
 	if err := waitForQualificationStatus(
 		ctx, client, refreshURL, options.WorkloadToken, "running",
 	); err != nil {
-		return report, err
-	}
-	refreshGCBaseline, err := c.captureQualificationGCBaseline(
-		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
-		options.ContainerID, report.Stage,
-	)
-	if err != nil {
 		return report, err
 	}
 	if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
