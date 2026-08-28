@@ -1,5 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
+import { ChevronDown, Search } from 'lucide'
 import type {
   DashboardCompiledFilterBinding,
   DashboardCompiledFilterDefinition,
@@ -14,6 +15,8 @@ import {
   type WidgetContractID,
   type WidgetLayoutResolution,
 } from '../visualization/layout'
+import { lucideIcon } from '../../shared/lucide-icons'
+import { toggleAnchoredPopover } from '../../shared/anchored-popover'
 
 export type FilterMutationDetail = {
   bindingKey: string
@@ -59,6 +62,9 @@ export class DashboardFilterLeaf extends LitElement {
   @state() private optionLoading = false
   @state() private rangeDraft?: RangeDraft
   @state() private rangeError = ''
+  @state() private dropdownOpen = false
+  @state() private dropdownSearch = ''
+  private dropdownSearchTimer = 0
 
   static styles = css`
     :host { display: block; min-width: 0; font: inherit; }
@@ -116,6 +122,66 @@ export class DashboardFilterLeaf extends LitElement {
       border-radius: var(--lv-radius-default); background: var(--lv-bg-panel);
       color: inherit; padding-inline: var(--base-size-8); box-sizing: border-box;
     }
+    .dropdown-trigger {
+      display: flex;
+      width: 100%;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--base-size-8);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      color: inherit;
+      cursor: pointer;
+      padding: 0 var(--base-size-8);
+      text-align: left;
+    }
+    .dropdown-trigger:hover { background: var(--lv-bg-control-hover); }
+    .dropdown-trigger svg { width: var(--base-size-16); height: var(--base-size-16); flex: 0 0 auto; transition: transform var(--lv-duration-fast); }
+    .dropdown-trigger[aria-expanded='true'] svg { transform: rotate(180deg); }
+    .dropdown-value { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dropdown-popover {
+      position: fixed;
+      inset: auto;
+      top: 0;
+      left: 0;
+      display: none;
+      width: 240px;
+      max-width: calc(100vw - var(--base-size-16));
+      max-height: 320px;
+      box-sizing: border-box;
+      grid-template-rows: auto minmax(0, 1fr);
+      gap: var(--base-size-6);
+      overflow: hidden;
+      margin: 0;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-overlay, var(--lv-bg-panel));
+      color: var(--lv-fg-default);
+      box-shadow: var(--shadow-floating-small);
+      padding: var(--base-size-8);
+    }
+    .dropdown-popover:popover-open { display: grid; }
+    .dropdown-search { position: relative; display: flex; align-items: center; }
+    .dropdown-search svg { position: absolute; left: var(--base-size-8); width: var(--base-size-16); height: var(--base-size-16); color: var(--lv-fg-muted); pointer-events: none; }
+    .dropdown-search input { padding-left: calc(var(--base-size-16) + var(--base-size-12)); }
+    .dropdown-options { min-height: 0; overflow: auto; }
+    .dropdown-option {
+      display: grid;
+      min-height: var(--control-medium-size);
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--base-size-8);
+      border-radius: var(--lv-radius-tight, var(--lv-radius-default));
+      cursor: pointer;
+      padding: 0 var(--base-size-8);
+    }
+    .dropdown-option:hover { background: var(--lv-bg-control-hover); }
+    .dropdown-option input { width: auto; min-height: 0; margin: 0; }
+    .dropdown-option-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .dropdown-option-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+    .dropdown-empty { margin: 0; color: var(--lv-fg-muted); padding: var(--base-size-8); font: var(--lv-type-caption); }
     .options { display: grid; max-height: 220px; gap: 2px; overflow: auto; }
     fieldset.list.bounded .options { min-height: 0; max-height: 100%; }
     .option { display: flex; align-items: center; gap: 8px; border-radius: 4px; padding: 4px; }
@@ -167,6 +233,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   disconnectedCallback(): void {
+    if (this.dropdownSearchTimer) window.clearTimeout(this.dropdownSearchTimer)
     this.resizeObserver?.disconnect()
     this.resizeObserver = undefined
     super.disconnectedCallback()
@@ -271,6 +338,8 @@ export class DashboardFilterLeaf extends LitElement {
 
   private renderDropdown() {
     const selected = selectedOptionKeys(this.expression)
+    const advanced = Boolean(this.presentation?.search || this.presentation?.selectAll || this.binding?.selectionMode !== 'single')
+    if (advanced) return this.renderSearchableDropdown(selected)
     const selectedKey = selected.values().next().value ?? ''
     return html`
       <select
@@ -289,6 +358,124 @@ export class DashboardFilterLeaf extends LitElement {
         `)}
       </select>
     `
+  }
+
+  private renderSearchableDropdown(selected: Set<string>) {
+    const items = this.dropdownItems()
+    const label = this.presentation?.ariaLabel || this.definition?.label || 'Filter'
+    const multiple = this.binding?.selectionMode !== 'single'
+    const summary = this.dropdownSummary(selected)
+    return html`
+      <button
+        class="dropdown-trigger"
+        type="button"
+        aria-label=${`${label}: ${summary}`}
+        aria-haspopup="dialog"
+        aria-expanded=${String(this.dropdownOpen)}
+        @click=${this.toggleDropdown}
+      >
+        <span class="dropdown-value">${summary}</span>
+        ${lucideIcon(ChevronDown)}
+      </button>
+      <div
+        class="dropdown-popover"
+        popover="auto"
+        role="dialog"
+        aria-label=${`${label} filter options`}
+        @toggle=${this.onDropdownToggle}
+      >
+        ${this.presentation?.search ? html`
+          <label class="dropdown-search">
+            ${lucideIcon(Search)}
+            <input
+              type="search"
+              placeholder="Search"
+              aria-label=${`Search ${label}`}
+              .value=${this.dropdownSearch}
+              @input=${this.onDropdownSearch}
+            >
+          </label>
+        ` : nothing}
+        <div class="dropdown-options" role="group" aria-label=${`${label} options`}>
+          <label class="dropdown-option">
+            <input
+              type=${multiple ? 'checkbox' : 'radio'}
+              name=${this.binding?.key ?? 'filter'}
+              aria-label=${`All ${label}`}
+              .checked=${selected.size === 0}
+              @change=${this.clearDropdownSelection}
+            >
+            <span class="dropdown-option-label">All</span>
+          </label>
+          ${items.map((option) => html`
+            <label class="dropdown-option" data-unavailable=${String(!option.available)}>
+              <input
+                type=${multiple ? 'checkbox' : 'radio'}
+                name=${this.binding?.key ?? 'filter'}
+                aria-label=${option.count === undefined ? option.label : `${option.label} (${option.count})`}
+                .checked=${selected.has(filterOptionKey(option))}
+                ?disabled=${!option.available && !option.selected}
+                @change=${() => this.selectDropdownOption(option, multiple)}
+              >
+              <span class="dropdown-option-label">${option.label}</span>
+              ${option.count === undefined ? nothing : html`<span class="dropdown-option-count">${option.count}</span>`}
+            </label>
+          `)}
+          ${items.length === 0 ? html`<p class="dropdown-empty">${this.optionLoading ? 'Loading values...' : 'No values found'}</p>` : nothing}
+        </div>
+      </div>
+    `
+  }
+
+  private dropdownItems(): DashboardFilterOptionItem[] {
+    const items = this.optionItems()
+    const search = this.dropdownSearch.trim().toLocaleLowerCase()
+    return search ? items.filter(option => option.label.toLocaleLowerCase().includes(search)) : items
+  }
+
+  private dropdownSummary(selected: Set<string>): string {
+    if (selected.size === 0) return 'All'
+    const selectedLabels = this.optionItems().filter(option => selected.has(filterOptionKey(option))).map(option => option.label)
+    if (selected.size === 1) return selectedLabels[0] ?? '1 selected'
+    return `${selected.size} selected`
+  }
+
+  private toggleDropdown = () => {
+    const popover = this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')
+    const trigger = this.renderRoot.querySelector<HTMLElement>('.dropdown-trigger')
+    if (!popover || !trigger) return
+    this.dropdownOpen = toggleAnchoredPopover(trigger, popover)
+    if (!this.dropdownOpen) return
+    this.requestOptions()
+    queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.dropdown-search input')?.focus())
+  }
+
+  private onDropdownToggle = (event: Event) => {
+    this.dropdownOpen = (event as Event & { newState?: string }).newState === 'open'
+    if (this.dropdownOpen || !this.dropdownSearch) return
+    this.dropdownSearch = ''
+    if (this.definition?.options.kind === 'distinct') this.optionDirty = true
+  }
+
+  private onDropdownSearch = (event: Event) => {
+    this.dropdownSearch = (event.currentTarget as HTMLInputElement).value
+    if (this.definition?.options.kind !== 'distinct') return
+    this.optionDirty = true
+    if (this.dropdownSearchTimer) window.clearTimeout(this.dropdownSearchTimer)
+    this.dropdownSearchTimer = window.setTimeout(() => {
+      this.dropdownSearchTimer = 0
+      this.loadOptions(this.dropdownSearch)
+    }, 180)
+  }
+
+  private clearDropdownSelection = () => {
+    this.commit(unfiltered)
+    if (this.binding?.selectionMode === 'single') this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')?.hidePopover()
+  }
+
+  private selectDropdownOption(option: DashboardFilterOptionItem, multiple: boolean) {
+    this.toggleOption(option, multiple)
+    if (!multiple) this.renderRoot.querySelector<HTMLElement>('.dropdown-popover')?.hidePopover()
   }
 
   private renderCategorical(buttons: boolean) {
@@ -561,7 +748,7 @@ export class DashboardFilterLeaf extends LitElement {
     this.loadOptions()
   }
 
-  private loadOptions() {
+  private loadOptions(search = '') {
     if (
       this.stale
       || !this.optionRequestReady
@@ -570,15 +757,16 @@ export class DashboardFilterLeaf extends LitElement {
       || this.definition.options.kind === 'none'
       || this.definition.options.kind === 'static'
     ) return
-    if (this.optionLoading && this.requestedOptionContext === this.optionContext) return
+    const requestContext = `${this.optionContext}\u0000${search}`
+    if (this.optionLoading && this.requestedOptionContext === requestContext) return
     this.hasRequestedOptions = true
     this.optionLoading = true
-    this.requestedOptionContext = this.optionContext
+    this.requestedOptionContext = requestContext
     this.dispatchEvent(new CustomEvent<FilterOptionsNeededDetail>('lv-filter-options-needed', {
       bubbles: true, composed: true,
       detail: {
         bindingKey: this.binding.key,
-        search: '',
+        search,
         limit: this.definition.options.limit || 50,
       },
     }))
@@ -590,7 +778,7 @@ export class DashboardFilterLeaf extends LitElement {
   }
 
   private dropdownFocused(): boolean {
-    return this.shadowRoot?.activeElement?.tagName === 'SELECT'
+    return this.dropdownOpen || this.shadowRoot?.activeElement?.tagName === 'SELECT'
   }
 
   private applyResponsiveLayout(width: number, height: number): void {

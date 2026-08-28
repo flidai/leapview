@@ -21,8 +21,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   const yAxis = axis(envelope, horizontal ? spec.x : spec.y[0]!, horizontal ? 'category' : 'value', context, horizontal ? 'x' : 'primary_y', horizontal ? [spec.x] : spec.y)
   const stack = stackingMode(spec)
   if (stack === 'percent') applyPercentAxis(horizontal ? xAxis : yAxis, context)
-  const axes = { grid: { left: 12, right: 16, top: 16, bottom: spec.presentation.dataZoom ? 54 : 16, containLabel: true }, xAxis, yAxis }
-  const dataZoom = spec.presentation.dataZoom ? [{ type: 'inside' }, { type: 'slider' }] : undefined
+  const axes = { grid: cartesianGrid(spec), xAxis, yAxis }
+  const dataZoom = spec.presentation.dataZoom ? [{ type: 'inside' }, { type: 'slider', ...(spec.presentation.legend === 'bottom' ? { bottom: 28 } : {}) }] : undefined
   if (spec.mark === 'histogram') {
     const value = spec.y.find((item) => item.field === 'value') ?? spec.y.at(-1)
     return { ...axes, dataZoom, series: [{ id: seriesID(value?.dataset, value?.field), type: 'bar', encode: { x: spec.x.field, y: value?.field }, ...chartLabel(envelope, value, spec, context) }] }
@@ -76,12 +76,29 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
   }
   if (spec.mark === 'boxplot') {
+    const dataset = inlineDataset(envelope, spec.x.dataset)
+    const categoryIndex = dataset?.columns.indexOf(spec.x.field) ?? -1
+    const valueIndices = spec.y.map((item) => dataset?.columns.indexOf(item.field) ?? -1)
+    const data = (dataset?.rows ?? []).flatMap((row, rowIndex) => {
+      const rawValues = valueIndices.map((index) => row[index])
+      const values = rawValues.map(Number)
+      if (categoryIndex < 0 || valueIndices.some((index) => index < 0) || rawValues.some((value) => value === null || value === undefined || value === '') || values.some((value) => !Number.isFinite(value))) return []
+      return [{ name: String(row[categoryIndex]), value: values, __lv_dataset: dataset?.id ?? spec.x.dataset, __lv_row_index: rowIndex }]
+    })
+    data.sort((left, right) => left.value[Math.floor(left.value.length / 2)]! - right.value[Math.floor(right.value.length / 2)]!)
+    const primary = context.colors.data[0] ?? context.colors.accent
+    const rotateLabels = data.length > 4
     return {
-      ...axes, dataZoom, legend: legend(spec.presentation.legend, context),
+      ...axes,
+      grid: { ...axes.grid, bottom: dataZoom ? 76 : rotateLabels ? 44 : 20 },
+      xAxis: { ...axes.xAxis, data: data.map((item) => item.name), axisLabel: { ...axes.xAxis.axisLabel, interval: 0, rotate: rotateLabels ? 24 : 0 } },
+      dataZoom,
+      graphic: data.length === 0 ? [{ type: 'text', left: 'center', top: 'middle', silent: true, style: { text: 'No complete distribution data', fill: context.colors.muted, fontFamily: context.fontFamily, textAlign: 'center' } }] : undefined,
       series: [{
         id: `series:primary:${spec.mark}`, type: spec.mark, name: spec.title,
-        encode: { x: spec.x.field, y: spec.y.map((item) => item.field) },
-        itemStyle: { color: 'transparent', borderColor: context.colors.data[0] ?? context.colors.accent, borderWidth: 2 },
+        data,
+        itemStyle: { color: colorWithAlpha(primary, 0.24), borderColor: primary, borderWidth: 2 },
+        emphasis: { itemStyle: { color: colorWithAlpha(primary, 0.4) } },
         ...chartLabel(envelope, spec.y[0], spec, context),
       }],
     }
@@ -137,13 +154,16 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     ? new Map((spec.presentation.comboSeries ?? []).map((item) => [String(item.seriesValue), item]))
     : new Map<string, NonNullable<CartesianSpec['presentation']['comboSeries']>[number]>()
   const hasSecondaryComboAxis = spec.mark === 'combo' && values.some((value) => comboByField.get(value.field)?.axis === 'secondary')
-  const series = values.map((value) => {
+  const series = values.map((value, seriesIndex) => {
     const normalizedField = normalized?.dimensions.get(value.field)
     const combo = comboByField.get(value.field)
     const mark = combo?.mark ?? (spec.mark === 'combo' ? 'line' : spec.mark)
     const fill = conditionalItemColor(envelope, value, 'mark_fill', context) ?? conditionalItemColor(envelope, value, 'series_color', context)
     const stroke = conditionalItemColor(envelope, value, 'mark_stroke', context)
     const intent = spec.presentation.seriesIntent?.find((candidate) => candidate.value === value.field)?.color
+    const markColor = fill ?? (intent === undefined
+      ? context.colors.data[seriesIndex % context.colors.data.length] ?? context.colors.accent
+      : seriesColor(value.field, intent, context))
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
       yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
@@ -151,16 +171,14 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
-        color: fill ?? (intent === undefined && values.length === 1
-          ? context.colors.data[0] ?? context.colors.accent
-          : seriesColor(value.field, intent, context)),
+        color: markColor,
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
       step: spec.presentation.step ? 'middle' : false,
       ...(normalizedField
         ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
-        : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y')),
+        : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)),
     }
   })
   return {
@@ -362,10 +380,11 @@ function interactionHitSeries(envelope: VisualizationEnvelope, spec: CartesianSp
   })
 }
 
-function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][number] | undefined, spec: CartesianSpec, context: RendererContext, axisID: 'primary_y' | 'secondary_y' = 'primary_y') {
+function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][number] | undefined, spec: CartesianSpec, context: RendererContext, axisID: 'primary_y' | 'secondary_y' = 'primary_y', _insideFill?: unknown) {
   const authored = spec.presentation.labelPosition
   const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
-  const position = authored === 'automatic' ? undefined : authored === 'outside' ? horizontal ? 'right' : 'top' : authored
+  const automatic = authored === undefined || authored === 'automatic'
+  const position = automatic ? horizontal ? 'insideRight' : undefined : authored === 'outside' ? horizontal ? 'right' : 'top' : authored
   const baseFormatter = labelFormatter(envelope, value, context, axisID, spec.y)
   const cue = value ? conditionalCueFormat(envelope, value) : undefined
   const color = value ? conditionalItemColor(envelope, value, 'label_foreground', context) : undefined
@@ -380,7 +399,23 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
   const translated = echartsLabelPolicy(envelope, value?.dataset ?? spec.x.dataset, spec.presentation.labelPolicy, formatter, context)
   translated.label.position = position
   if (color) translated.label.color = color
+  else if (authored !== 'outside' && ['bar', 'column', 'waterfall', 'histogram'].includes(spec.mark)) {
+    translated.label.color = '#fff'
+    translated.label.textBorderColor = 'rgba(0, 0, 0, 0.55)'
+    translated.label.textBorderWidth = 2
+  }
   return translated
+}
+
+function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
+  const bottomLegend = spec.presentation.legend === 'bottom'
+  return {
+    left: 12,
+    right: 16,
+    top: spec.presentation.legend === 'top' ? 44 : 16,
+    bottom: 16 + (bottomLegend ? 28 : 0) + (spec.presentation.dataZoom ? 42 : 0),
+    containLabel: true,
+  }
 }
 
 function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[] } | undefined {
@@ -421,19 +456,20 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const valueRef = spec.y[0]!
     const fill = conditionalItemColor(envelope, valueRef, 'mark_fill', context) ?? conditionalItemColor(envelope, valueRef, 'series_color', context)
     const stroke = conditionalItemColor(envelope, valueRef, 'mark_stroke', context)
+    const markColor = fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark), yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
       encode: { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
-        color: fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context)),
+        color: markColor,
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
       step: spec.presentation.step ? 'middle' : false,
       ...(normalized
         ? percentLabel(envelope, spec, context, normalized.columnIndex)
-        : chartLabel(envelope, spec.y[0], spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y')),
+        : chartLabel(envelope, spec.y[0], spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)),
     }
   })
   return { datasets, series }

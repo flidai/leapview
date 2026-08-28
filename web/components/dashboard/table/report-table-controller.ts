@@ -94,17 +94,17 @@ export class ReportTableColumnController {
     const configuredWidth = Number(column.width)
     if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
     const widths: Record<string, number> = {
-      order_id: 240,
+      order_id: 160,
       purchase_date: 126,
-      status: 128,
+      status: 106,
       state: 78,
       category: 210,
-      revenue: 130,
+      revenue: 114,
       review_score: 104,
       delivery_days: 108,
     }
     if (widths[column.key]) return widths[column.key]
-    if (column.align === 'right') return 120
+    if (column.align === 'right') return 114
     return 140
   }
 

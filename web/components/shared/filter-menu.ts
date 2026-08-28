@@ -3,6 +3,7 @@ import { property, state } from 'lit/decorators.js'
 import { Check, ChevronDown, Search, User, X } from 'lucide'
 import type { FilterMenuSignal } from '../../generated/signals'
 import { lucideIcon } from './lucide-icons'
+import { toggleAnchoredPopover } from './anchored-popover'
 
 type FilterMenuCommandAction = 'search' | 'toggle' | 'clear'
 
@@ -25,7 +26,6 @@ class FilterMenu extends LitElement {
   @state() private open = false
   @state() private draftSearch = ''
   private searchTimer: ReturnType<typeof setTimeout> | null = null
-  private suppressNextClick = false
 
   static styles = css`
     :host {
@@ -67,11 +67,12 @@ class FilterMenu extends LitElement {
     }
 
     .menu {
-      position: absolute;
+      position: fixed;
+      inset: auto;
       z-index: 40;
-      top: calc(100% + var(--base-size-6));
+      top: 0;
       left: 0;
-      display: grid;
+      display: none;
       width: min(22rem, calc(100vw - var(--base-size-24)));
       max-height: min(28rem, calc(100svh - var(--base-size-32)));
       grid-template-rows: auto minmax(0, 1fr) auto;
@@ -80,7 +81,10 @@ class FilterMenu extends LitElement {
       border-radius: var(--lv-radius-default);
       background: var(--lv-bg-panel);
       box-shadow: var(--lv-shadow-floating-lg);
+      margin: 0;
     }
+
+    .menu:popover-open { display: grid; }
 
     .search {
       display: grid;
@@ -197,14 +201,8 @@ class FilterMenu extends LitElement {
     }
   `
 
-  connectedCallback(): void {
-    super.connectedCallback()
-    window.addEventListener('keydown', this.handleWindowKeydown)
-  }
-
   disconnectedCallback(): void {
     if (this.searchTimer) clearTimeout(this.searchTimer)
-    window.removeEventListener('keydown', this.handleWindowKeydown)
     super.disconnectedCallback()
   }
 
@@ -223,15 +221,12 @@ class FilterMenu extends LitElement {
         class="trigger"
         aria-haspopup="menu"
         aria-expanded=${this.open ? 'true' : 'false'}
-        @pointerdown=${this.handleTriggerPointerDown}
         @click=${this.handleTriggerClick}
-        @keydown=${this.handleTriggerKeydown}
       >
         <span class="summary">${summary}</span>
         ${lucideIcon(ChevronDown, { size: 14, strokeWidth: 2 })}
       </button>
-      ${this.open ? html`
-        <div class="menu" role="menu" aria-label=${menu.label}>
+        <div class="menu" popover="auto" role="menu" aria-label=${menu.label} @toggle=${this.handlePopoverToggle}>
           <label class="search">
             ${lucideIcon(Search, { size: 15, strokeWidth: 2 })}
             <input
@@ -271,7 +266,6 @@ class FilterMenu extends LitElement {
             </button>
           </div>
         </div>
-      ` : nothing}
     `
   }
 
@@ -279,26 +273,22 @@ class FilterMenu extends LitElement {
     return this.menu ?? emptyMenu
   }
 
-  private handleTriggerPointerDown = (event: PointerEvent): void => {
-    event.preventDefault()
-    event.stopPropagation()
-    this.suppressNextClick = true
-    this.open = !this.open
-  }
-
   private handleTriggerClick = (event: MouseEvent): void => {
     event.stopPropagation()
-    if (this.suppressNextClick) {
-      this.suppressNextClick = false
-      return
-    }
-    this.open = !this.open
+    const trigger = event.currentTarget as HTMLElement
+    const menu = this.renderRoot.querySelector<HTMLElement>('.menu')
+    if (!menu) return
+    this.open = toggleAnchoredPopover(trigger, menu, {
+      minWidth: 288,
+      maxWidth: 352,
+      maxHeight: 448,
+      gap: 6,
+    })
+    if (this.open) queueMicrotask(() => this.renderRoot.querySelector<HTMLInputElement>('.search input')?.focus())
   }
 
-  private handleTriggerKeydown = (event: KeyboardEvent): void => {
-    if (event.key !== 'Enter' && event.key !== ' ') return
-    event.preventDefault()
-    this.open = !this.open
+  private handlePopoverToggle = (event: Event): void => {
+    this.open = (event as Event & { newState?: string }).newState === 'open'
   }
 
   private handleSearchInput = (event: Event): void => {
@@ -333,10 +323,6 @@ class FilterMenu extends LitElement {
       default:
         return nothing
     }
-  }
-
-  private handleWindowKeydown = (event: KeyboardEvent): void => {
-    if (event.key === 'Escape') this.open = false
   }
 }
 
