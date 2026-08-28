@@ -6337,6 +6337,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -7713,6 +7717,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -9139,6 +9147,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -9805,6 +9817,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -10453,6 +10469,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -11120,6 +11140,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -12677,6 +12701,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -13253,6 +13281,10 @@
                       {
                         "description": "Renderer-neutral presentation policies; renderer options are intentionally absent.",
                         "properties": {
+                          "axisVisible": {
+                            "description": "Whether cartesian/value axes are rendered for this visual.",
+                            "type": "boolean"
+                          },
                           "conditionalFormatting": {
                             "items": {
                               "additionalProperties": false,
@@ -14710,6 +14742,10 @@
               },
               "title": {
                 "type": "string"
+              },
+              "titleVisible": {
+                "description": "Controls whether the authored title is shown in the visual frame.",
+                "type": "boolean"
               },
               "type": {
                 "enum": [
