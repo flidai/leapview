@@ -132,7 +132,63 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     go run ./internal/app/tools/extensionsupply --out /out/extension-supply
 
-FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df AS runtime
+FROM build AS runtime-layout
+
+RUN install -d -m 0555 \
+      /runtime-root/app \
+      /runtime-root/etc/ssl/certs \
+      /runtime-root/usr/local/bin \
+      /runtime-root/usr/local/libexec \
+      /runtime-root/usr/local/share/leapview/deployment \
+      /runtime-root/usr/local/share/leapview/extensions \
+      /runtime-root/usr/local/share/leapview && \
+    install -d -m 0700 -o 65532 -g 65532 /runtime-root/var/lib/leapview
+
+COPY --from=build /out/leapview /runtime-root/usr/local/bin/leapview
+COPY --from=build /out/leapviewctl /runtime-root/usr/local/libexec/leapviewctl
+COPY --from=build /out/leapviewctl /runtime-root/usr/local/share/leapview/deployment/leapviewctl
+COPY --from=extension-supply /out/extension-supply /runtime-root/usr/local/share/leapview/extensions
+COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example /runtime-root/usr/local/share/leapview/deployment/
+COPY deploy/host/files/ /runtime-root/usr/local/share/leapview/deployment/
+COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /runtime-root/etc/ssl/certs/ca-certificates.crt
+COPY --from=go-deps /usr/local/go/lib/time/zoneinfo.zip /runtime-root/usr/local/share/leapview/zoneinfo.zip
+COPY --from=web /src/static /runtime-root/app/static
+COPY --from=build /src/schemas /runtime-root/app/schemas
+COPY --from=sourcegen /src/.data/map-assets /runtime-root/app/.data/map-assets
+COPY dashboards /runtime-root/app/dashboards
+COPY evaluation /runtime-root/app/evaluation
+
+RUN chmod 0555 \
+      /runtime-root/usr/local/bin/leapview \
+      /runtime-root/usr/local/libexec/leapviewctl && \
+    chmod 0500 \
+      /runtime-root/usr/local/share/leapview/deployment/leapviewctl \
+      /runtime-root/usr/local/share/leapview/deployment/leapviewctl-wrapper \
+      /runtime-root/usr/local/share/leapview/deployment/leapview-backup-hook && \
+    find /runtime-root/usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
+    find /runtime-root/usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
+    chmod 0400 \
+      /runtime-root/usr/local/share/leapview/deployment/compose.yaml \
+      /runtime-root/usr/local/share/leapview/deployment/compose.https.yaml \
+      /runtime-root/usr/local/share/leapview/deployment/Caddyfile \
+      /runtime-root/usr/local/share/leapview/deployment/deployment.env.example \
+      /runtime-root/usr/local/share/leapview/deployment/leapview-backup.service \
+      /runtime-root/usr/local/share/leapview/deployment/leapview-backup.timer \
+      /runtime-root/usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
+      /runtime-root/usr/local/share/leapview/deployment/leapview-backup-maintenance.timer && \
+    chmod 0444 \
+      /runtime-root/etc/ssl/certs/ca-certificates.crt \
+      /runtime-root/usr/local/share/leapview/zoneinfo.zip && \
+    find /runtime-root/app -type d -exec chmod 0555 {} + && \
+    find /runtime-root/app -type f -exec chmod 0444 {} + && \
+    chown -R 0:0 \
+      /runtime-root/app \
+      /runtime-root/etc/ssl/certs \
+      /runtime-root/usr/local/bin \
+      /runtime-root/usr/local/libexec \
+      /runtime-root/usr/local/share/leapview
+
+FROM cgr.dev/chainguard/glibc-dynamic@sha256:205572d5e48117e14b44b42627890fa8d3e8e65bb37a80abb3317e5151e7f35b AS runtime
 
 ARG BUILD_VERSION=development
 ARG BUILD_REVISION=unknown
@@ -150,52 +206,16 @@ LABEL org.opencontainers.image.title="LeapView" \
       dev.leapview.build.dirty="$BUILD_DIRTY" \
       dev.leapview.build.release="$BUILD_RELEASE"
 
-# The pinned Go builder supplies the bootstrap CA bundle. APT then resolves
-# every direct and transitive runtime package from one immutable Debian
-# snapshot and verifies the signed repository metadata and package hashes.
-COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY deploy/container/debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system leapview && \
-    useradd --system --gid leapview --home-dir /var/lib/leapview --shell /usr/sbin/nologin leapview
-
 WORKDIR /app
 
-COPY --from=build /out/leapview /usr/local/bin/leapview
-COPY --from=build /out/leapviewctl /usr/local/libexec/leapviewctl
-COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapviewctl
-COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
-COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example /usr/local/share/leapview/deployment/
-COPY deploy/host/files/ /usr/local/share/leapview/deployment/
-COPY --from=web /src/static ./static
-COPY --from=build /src/schemas ./schemas
-COPY --from=sourcegen /src/.data/map-assets ./.data/map-assets
-COPY dashboards ./dashboards
-COPY evaluation ./evaluation
+COPY --from=runtime-layout /runtime-root/ /
 
-RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
-      /usr/local/share/leapview/deployment/leapviewctl-wrapper \
-      /usr/local/share/leapview/deployment/leapview-backup-hook && \
-    find /usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
-    find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
-    chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
-      /usr/local/share/leapview/deployment/compose.https.yaml \
-      /usr/local/share/leapview/deployment/Caddyfile \
-      /usr/local/share/leapview/deployment/deployment.env.example \
-      /usr/local/share/leapview/deployment/leapview-backup.service \
-      /usr/local/share/leapview/deployment/leapview-backup.timer \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.timer && \
-    mkdir -p /var/lib/leapview && \
-    chown -R leapview:leapview /var/lib/leapview /app
+USER 65532:65532
 
-USER leapview
-
-ENV LEAPVIEW_ADDR=:8080 \
+ENV SSL_CERT_FILE=/etc/ssl/certs/ca-certificates.crt \
+    ZONEINFO=/usr/local/share/leapview/zoneinfo.zip \
+    HOME=/var/lib/leapview/home \
+    LEAPVIEW_ADDR=:8080 \
     LEAPVIEW_ENVIRONMENT=prod \
     LEAPVIEW_HOME=/var/lib/leapview/home \
     LEAPVIEW_MAP_ASSET_DIR=/app/.data/map-assets \
@@ -205,7 +225,7 @@ ENV LEAPVIEW_ADDR=:8080 \
 
 EXPOSE 8080
 VOLUME ["/var/lib/leapview"]
-HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["leapview", "healthcheck"]
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 CMD ["/usr/local/bin/leapview", "healthcheck"]
 
-ENTRYPOINT ["leapview"]
+ENTRYPOINT ["/usr/local/bin/leapview"]
 CMD ["serve", "--production"]

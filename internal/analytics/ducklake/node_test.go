@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -293,14 +294,23 @@ func TestSnapshotRelationRejectsUnsafeTableNames(t *testing.T) {
 func TestNodeAppliesOneSharedResourceEnvelope(t *testing.T) {
 	ctx := context.Background()
 	tempDir := filepath.Join(t.TempDir(), "temp")
-	node, err := Open(ctx, admittedConfig(t, Config{
+	config := admittedConfig(t, Config{
 		RootDir:        t.TempDir(),
 		MaxConnections: 3,
 		MemoryMaxBytes: 256 << 20,
 		TempMaxBytes:   512 << 20,
 		MaxThreads:     2,
 		TempDir:        tempDir,
-	}))
+	})
+	// A regular file is intentionally not a usable home directory. Production
+	// runs with a read-only root filesystem, so pooled connections must load the
+	// admitted artifact rather than relying on DuckDB's implicit ~/.duckdb path.
+	nonDirectoryHome := filepath.Join(t.TempDir(), "home")
+	if err := os.WriteFile(nonDirectoryHome, []byte("not a directory\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", nonDirectoryHome)
+	node, err := Open(ctx, config)
 	if extensionUnavailable(err) {
 		t.Skipf("ducklake extension unavailable: %v", err)
 	}

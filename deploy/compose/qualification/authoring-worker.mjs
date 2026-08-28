@@ -24,6 +24,14 @@ async function signIn(page, email, temporaryPassword, password) {
   await page.getByLabel('Temporary password').fill(temporaryPassword)
   await page.getByLabel('New password').fill(password)
   await page.getByLabel('New password').press('Enter')
+
+  // A successful password change revokes every existing session, including
+  // the bootstrap session used for the change. Prove that boundary by signing
+  // in again with the replacement password before continuing the journey.
+  await page.getByLabel('Email').waitFor({ state: 'visible', timeout: 30_000 })
+  await page.getByLabel('Email').fill(email)
+  await page.getByLabel('Password').fill(password)
+  await page.getByLabel('Password').press('Enter')
   await page.waitForURL((url) => !url.pathname.startsWith('/login'), { timeout: 30_000 })
 }
 

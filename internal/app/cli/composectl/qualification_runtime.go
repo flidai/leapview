@@ -38,6 +38,7 @@ type qualificationContainerRuntime interface {
 type qualificationContainer interface {
 	Name() string
 	Exec(context.Context, io.Reader, ...string) ([]byte, error)
+	ExecEnvironment(context.Context, io.Reader, map[string]string, ...string) ([]byte, error)
 	CopyTo(context.Context, string, string) ([]byte, error)
 	Restart(context.Context) ([]byte, error)
 	Kill(context.Context, string) ([]byte, error)
@@ -193,9 +194,26 @@ func (container *dockerCLIQualificationContainer) Exec(
 	stdin io.Reader,
 	command ...string,
 ) ([]byte, error) {
+	return container.ExecEnvironment(ctx, stdin, nil, command...)
+}
+
+func (container *dockerCLIQualificationContainer) ExecEnvironment(
+	ctx context.Context,
+	stdin io.Reader,
+	environment map[string]string,
+	command ...string,
+) ([]byte, error) {
 	arguments := []string{"exec"}
 	if stdin != nil {
 		arguments = append(arguments, "-i")
+	}
+	values := make([]string, 0, len(environment))
+	for name, value := range environment {
+		values = append(values, name+"="+value)
+	}
+	sort.Strings(values)
+	for _, value := range values {
+		arguments = append(arguments, "--env", value)
 	}
 	arguments = append(arguments, container.name)
 	arguments = append(arguments, command...)

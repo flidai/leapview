@@ -1,9 +1,16 @@
 # syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
 ARG LEAPVIEW_IMAGE
-FROM ${LEAPVIEW_IMAGE}
+FROM ${LEAPVIEW_IMAGE} AS leapview-payload
+
+FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df
 
 USER root
+
+# Qualification tooling has its own frozen package boundary. Nothing installed
+# here is inherited by the production server image.
+COPY --from=leapview-payload /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
+COPY debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends dbus-daemon gnome-keyring && \
@@ -11,9 +18,12 @@ RUN apt-get update && \
 
 RUN groupadd --system author && \
     useradd --system --gid author --home-dir /home/author --create-home --shell /bin/bash author && \
-    mkdir -p /workspace && \
-    cp -a /app/evaluation /workspace/evaluation && \
+    mkdir -p /workspace /usr/local/libexec && \
     chown -R author:author /home/author /workspace
+
+COPY --from=leapview-payload --chown=author:author /app/evaluation /app/evaluation
+COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview
+COPY --from=leapview-payload /usr/local/libexec/leapviewctl /usr/local/libexec/leapviewctl
 
 USER author
 WORKDIR /workspace

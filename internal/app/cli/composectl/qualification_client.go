@@ -304,10 +304,17 @@ func runQualificationLogin(
 		"--format", "json",
 	)
 	command.Env = environment
-	var output bytes.Buffer
+	return runQualificationLoginCommand(command, notify)
+}
+
+func runQualificationLoginCommand(
+	command *exec.Cmd,
+	notify func(qualificationLoginChallenge) error,
+) error {
+	var diagnostics bytes.Buffer
 	reader, writer := io.Pipe()
-	command.Stdout = io.MultiWriter(&output, writer)
-	command.Stderr = io.MultiWriter(&output, writer)
+	command.Stdout = writer
+	command.Stderr = &diagnostics
 	if err := command.Start(); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("start leapview login: %w", err)
@@ -364,11 +371,11 @@ func runQualificationLogin(
 	_ = writer.Close()
 	scanErr := <-scanned
 	_ = reader.Close()
+	if waitErr != nil {
+		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(diagnostics.Bytes(), 100))
+	}
 	if scanErr != nil {
 		return fmt.Errorf("read leapview login: %w", scanErr)
-	}
-	if waitErr != nil {
-		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(output.Bytes(), 100))
 	}
 	return nil
 }

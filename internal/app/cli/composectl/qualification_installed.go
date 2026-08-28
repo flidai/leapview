@@ -120,6 +120,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	var restoreRoot string
 	var browserContainer string
 	var legacyVolume string
+	var qualificationClientImage string
 	credentialsPath := filepath.Join(c.root, ".qualification-credentials.json")
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
@@ -165,6 +166,15 @@ func (c *Controller) QualifyInstalledCandidate(
 			return nil
 		}
 		_, err := c.qualificationDocker(cleanupCtx, nil, "volume", "rm", "--force", legacyVolume)
+		return ignoreQualificationNotFound(err)
+	})
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		if qualificationClientImage == "" {
+			return nil
+		}
+		_, err := c.qualificationDocker(
+			cleanupCtx, nil, "image", "rm", "--force", qualificationClientImage,
+		)
 		return ignoreQualificationNotFound(err)
 	})
 	cleanup.Add(func(cleanupCtx context.Context) error {
@@ -216,6 +226,9 @@ func (c *Controller) QualifyInstalledCandidate(
 			len(strings.TrimPrefix(imageReference, "ghcr.io/flidai/leapview@sha256:")) != 64) {
 		return fmt.Errorf("qualification requires an immutable LeapView GHCR digest")
 	}
+	if err := c.qualifyProductionImageContract(ctx, imageReference); err != nil {
+		return err
+	}
 	if options.MinFreeBytes > 0 && !options.AllowLocal {
 		return fmt.Errorf("minimum-free-bytes is a local-image qualification override")
 	}
@@ -252,6 +265,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		),
 	)
 	primaryProject = "leapview-qualification-" + runSuffix
+	qualificationClientImage = "leapview-qualification-client:" + runSuffix
 	if err := copyQualificationFile(
 		c.path("deployment.env.example"),
 		c.path(deploymentEnvName),
@@ -331,11 +345,12 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err != nil {
 		return err
 	}
-	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
+	syncOutput, err := c.qualificationContainers.Existing(containerID).ExecEnvironment(
 		ctx, nil,
-		"env",
-		"LEAPVIEW_API_TOKEN="+credentials.PublisherToken,
-		"LEAPVIEW_TARGET=http://localhost:8080",
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": credentials.PublisherToken,
+			"LEAPVIEW_TARGET":    "http://localhost:8080",
+		},
 		"leapview", "data", "sync",
 		"--project", "/app/evaluation/project/leapview.yaml",
 		"--connection", "sample",
@@ -356,6 +371,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	if _, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
 		Image:           imageReference,
+		ClientImage:     qualificationClientImage,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,
 		EvidenceDir:     evidenceDir,
@@ -419,11 +435,12 @@ func (c *Controller) QualifyInstalledCandidate(
 	ctx = phases.Begin(rootContext, "governance", 10*time.Minute)
 
 	queryBody := `{"dimensions":[{"field":"state"}],"metrics":[{"field":"order_count"},{"field":"revenue"}],"limit":10}`
-	queryOutput, err := c.qualificationContainers.Existing(containerID).Exec(
+	queryOutput, err := c.qualificationContainers.Existing(containerID).ExecEnvironment(
 		ctx, nil,
-		"env",
-		"LEAPVIEW_API_TOKEN="+workloadToken,
-		"LEAPVIEW_TARGET=http://localhost:8080",
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": workloadToken,
+			"LEAPVIEW_TARGET":    "http://localhost:8080",
+		},
 		"leapview", "api", "call", "querySemanticModel",
 		"--path", "model=semantic-model:sales",
 		"--body-json", queryBody,
@@ -457,10 +474,12 @@ func (c *Controller) QualifyInstalledCandidate(
 		ProjectDataToken:     projectDataToken,
 		RecoveryControlToken: recoveryControlToken,
 		MetricsToken:         metricsToken,
+		OperatorToken:        credentials.AuditToken,
 		ContainerID:          containerID,
 		ComposeProject:       primaryProject,
 		ProjectID:            "project:leapview-evaluation",
 		Image:                imageReference,
+		ClientImage:          qualificationClientImage,
 	})
 	if err != nil {
 		return err
@@ -784,14 +803,40 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "create", *legacyVolume); err != nil {
 		return err
 	}
+	helper := normalizedQualificationName(
+		fmt.Sprintf("leapview-v010-volume-%s-%d", runtime.GOARCH, os.Getpid()),
+	)
 	if _, err := c.qualificationDocker(
-		ctx,
-		strings.NewReader("released v0.1.0 state marker\n"),
-		"run", "--rm", "--interactive",
-		"--entrypoint", "tee",
+		ctx, nil,
+		"create", "--name", helper,
 		"--volume", *legacyVolume+":/var/lib/leapview",
 		imageReference,
-		"/var/lib/leapview/libredash.db",
+		"version",
+	); err != nil {
+		return err
+	}
+	helperActive := true
+	defer func() {
+		if helperActive {
+			_, _ = c.qualificationDocker(context.Background(), nil, "rm", "--force", helper)
+		}
+	}()
+	marker, err := os.CreateTemp("", "leapview-v010-marker-*")
+	if err != nil {
+		return err
+	}
+	markerPath := marker.Name()
+	defer os.Remove(markerPath)
+	if _, err := marker.WriteString("released v0.1.0 state marker\n"); err != nil {
+		_ = marker.Close()
+		return err
+	}
+	if err := marker.Close(); err != nil {
+		return err
+	}
+	if _, err := c.qualificationDocker(
+		ctx, nil,
+		"cp", markerPath, helper+":/var/lib/leapview/libredash.db",
 	); err != nil {
 		return err
 	}
@@ -810,23 +855,29 @@ func (c *Controller) verifyQualificationLegacyPolicy(
 		!strings.Contains(string(output), "v0.1.0 state is fresh-install-only") {
 		return fmt.Errorf("candidate did not reject released v0.1.0 state")
 	}
-	for _, check := range [][]string{
-		{"test", "-f", "/var/lib/leapview/libredash.db"},
-		{"test", "!", "-e", "/var/lib/leapview/leapview.db"},
-	} {
-		arguments := []string{
-			"run", "--rm",
-			"--entrypoint", check[0],
-			"--volume", *legacyVolume + ":/var/lib/leapview",
-			imageReference,
-		}
-		arguments = append(arguments, check[1:]...)
-		if _, err := c.qualificationDocker(
-			ctx, nil, arguments...,
-		); err != nil {
-			return err
-		}
+	legacyExists, err := c.qualificationContainerPathExists(
+		ctx, helper, "/var/lib/leapview/libredash.db",
+	)
+	if err != nil {
+		return err
 	}
+	currentExists, err := c.qualificationContainerPathExists(
+		ctx, helper, "/var/lib/leapview/leapview.db",
+	)
+	if err != nil {
+		return err
+	}
+	if !legacyExists || currentExists {
+		return fmt.Errorf(
+			"candidate legacy rejection changed state: legacy=%t current=%t",
+			legacyExists,
+			currentExists,
+		)
+	}
+	if _, err := c.qualificationDocker(ctx, nil, "rm", "--force", helper); err != nil {
+		return err
+	}
+	helperActive = false
 	if _, err := c.qualificationDocker(ctx, nil, "volume", "rm", *legacyVolume); err != nil {
 		return err
 	}
@@ -941,10 +992,9 @@ func (c *Controller) runQualificationPerformance(
 		}
 		path := fmt.Sprintf("/evidence/performance-cold-%d.json", index)
 		coldPaths = append(coldPaths, path)
-		if _, err := c.qualificationContainers.Existing(browserContainer).Exec(
+		if _, err := c.qualificationContainers.Existing(browserContainer).ExecEnvironment(
 			ctx, nil,
-			"env",
-			"QUALIFICATION_METRICS_TOKEN="+metricsToken,
+			map[string]string{"QUALIFICATION_METRICS_TOKEN": metricsToken},
 			"node", "/work/performance.mjs", "cold", path,
 		); err != nil {
 			return qualificationContainerOperationError(
@@ -956,11 +1006,12 @@ func (c *Controller) runQualificationPerformance(
 		}
 	}
 	coldJSON, _ := json.Marshal(coldPaths)
-	if _, err := c.qualificationContainers.Existing(browserContainer).Exec(
+	if _, err := c.qualificationContainers.Existing(browserContainer).ExecEnvironment(
 		ctx, nil,
-		"env",
-		"QUALIFICATION_METRICS_TOKEN="+metricsToken,
-		"QUALIFICATION_COLD_RESULTS="+string(coldJSON),
+		map[string]string{
+			"QUALIFICATION_METRICS_TOKEN": metricsToken,
+			"QUALIFICATION_COLD_RESULTS":  string(coldJSON),
+		},
 		"node", "/work/performance.mjs", "workload", "/evidence/performance-report.json",
 	); err != nil {
 		return qualificationContainerOperationError(
@@ -1000,14 +1051,11 @@ func (c *Controller) runQualificationPerformance(
 	if err != nil {
 		return err
 	}
-	rowsOutput, err := c.qualificationContainers.Existing(appContainer).Exec(
-		ctx, nil,
-		"wc", "-l", "/app/evaluation/data/orders.csv",
+	rows, err := c.qualificationContainerLineCount(
+		ctx,
+		appContainer,
+		"/app/evaluation/data/orders.csv",
 	)
-	if err != nil {
-		return err
-	}
-	rows, err := firstQualificationInteger(rowsOutput, "evaluation order rows")
 	if err != nil {
 		return err
 	}
@@ -1040,18 +1088,20 @@ func (c *Controller) qualificationDiskUsage(
 	appContainer string,
 	label string,
 ) (int64, error) {
-	output, err := c.qualificationContainers.Existing(appContainer).Exec(
-		ctx, nil,
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
+	output, err := c.qualificationContainerTreeBytes(
+		ctx,
+		appContainer,
 		"/var/lib/leapview",
+		".db-wal",
+		".db-shm",
 	)
 	if err != nil {
 		return 0, err
 	}
-	return firstQualificationInteger(output, label)
+	if output < 0 {
+		return 0, fmt.Errorf("%s is negative", label)
+	}
+	return output, nil
 }
 
 func verifyQualificationDenialsAndMetrics(

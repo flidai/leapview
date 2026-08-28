@@ -1,6 +1,7 @@
 package composectl
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -26,7 +27,7 @@ import (
 	"github.com/creachadair/jrpc2/channel"
 	"github.com/creachadair/jrpc2/handler"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,6 +50,18 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 		if !strings.Contains(output.String(), required) {
 			t.Errorf("qualification help missing %q:\n%s", required, output.String())
 		}
+	}
+}
+
+func TestQualificationLoginReportsProcessFailureBeforeIncompleteEventStream(t *testing.T) {
+	command := exec.Command("sh", "-c", "printf '%s\\n' '{\"schemaVersion\":1,\"type\":\"deviceChallenge\",\"verificationUrl\":\"https://example.test/device\",\"userCode\":\"EXPIRED\"}'; printf '%s\\n' 'credential store unavailable' >&2; exit 1")
+	command.Env = os.Environ()
+	err := runQualificationLoginCommand(command, func(qualificationLoginChallenge) error { return nil })
+	if err == nil || !strings.Contains(err.Error(), "credential store unavailable") {
+		t.Fatalf("login error = %v", err)
+	}
+	if strings.Contains(err.Error(), "EXPIRED") || strings.Contains(err.Error(), "event stream is incomplete") {
+		t.Fatalf("login error exposed stdout or masked process failure: %v", err)
 	}
 }
 
@@ -718,10 +731,17 @@ func TestParseQualificationPoolBootstrapResult(t *testing.T) {
 
 func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 	root := t.TempDir()
-	executor := &recordingQualificationExecutor{output: []byte("39996109\t/var/lib/leapview\n")}
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker",
-		qualificationExecutor: executor,
+		qualificationExecutor: qualificationInspectionArchiveExecutor(
+			t,
+			[]qualificationInspectionTarEntry{
+				{name: "leapview", mode: 0o700, typeflag: tar.TypeDir},
+				{name: "leapview/leapview.db", mode: 0o600, typeflag: tar.TypeReg, contents: "persistent"},
+				{name: "leapview/leapview.db-wal", mode: 0o600, typeflag: tar.TypeReg, contents: "transient-wal"},
+				{name: "leapview/leapview.db-shm", mode: 0o600, typeflag: tar.TypeReg, contents: "transient-shm"},
+			},
+		),
 	})
 	require.NoError(t, err)
 
@@ -731,22 +751,8 @@ func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 		"performance disk",
 	)
 	require.NoError(t, err)
-	wantArguments := []string{
-		"exec",
-		"leapview-app",
-		"du",
-		"-sb",
-		"--exclude=*.db-wal",
-		"--exclude=*.db-shm",
-		"/var/lib/leapview",
-	}
-	if got != 39996109 || len(executor.requests) != 1 ||
-		!slices.Equal(executor.requests[0].Arguments, wantArguments) {
-		t.Fatalf(
-			"disk usage = %d, request = %#v",
-			got,
-			executor.requests,
-		)
+	if got != int64(len("persistent")) {
+		t.Fatalf("disk usage = %d, want %d", got, len("persistent"))
 	}
 }
 
@@ -772,6 +778,94 @@ func TestQualificationRecoveryDataIsReadableByHardenedRuntimeUser(t *testing.T) 
 		if got := info.Mode().Perm(); got != want {
 			t.Errorf("%s mode = %o, want %o", path, got, want)
 		}
+	}
+}
+
+func TestPrepareQualificationRecoveryDataStreamsHardenedInputs(t *testing.T) {
+	writeArchive := func(
+		output io.Writer,
+		entries []qualificationInspectionTarEntry,
+	) error {
+		writer := tar.NewWriter(output)
+		for _, entry := range entries {
+			header := &tar.Header{
+				Name: entry.name, Mode: entry.mode,
+				Typeflag: entry.typeflag, Linkname: entry.linkname,
+				Size: int64(len(entry.contents)),
+			}
+			if err := writer.WriteHeader(header); err != nil {
+				return err
+			}
+			if entry.typeflag == tar.TypeReg {
+				if _, err := io.WriteString(writer, entry.contents); err != nil {
+					return err
+				}
+			}
+		}
+		return writer.Close()
+	}
+	var requests []qualificationCommandRequest
+	executor := qualificationExecutorFunc(func(
+		_ context.Context,
+		request qualificationCommandRequest,
+	) ([]byte, error) {
+		requests = append(requests, request)
+		switch {
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/app/evaluation/data/orders.csv", "-",
+		}):
+			return nil, writeArchive(request.Stdout, []qualificationInspectionTarEntry{{
+				name: "orders.csv", mode: 0o440, typeflag: tar.TypeReg,
+				contents: "order_id,amount\norder-1,10\n",
+			}})
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/app/evaluation/project", "-",
+		}):
+			return nil, writeArchive(request.Stdout, []qualificationInspectionTarEntry{
+				{name: "project", mode: 0o550, typeflag: tar.TypeDir},
+				{
+					name: "project/leapview.yaml", mode: 0o440,
+					typeflag: tar.TypeReg, contents: "name: leapview-evaluation\n",
+				},
+			})
+		case slices.Equal(request.Arguments, []string{
+			"cp", "leapview-app:/var/lib/leapview/qualification-recovery", "-",
+		}):
+			return nil, errors.New("could not find the file in the container")
+		case len(request.Arguments) == 3 &&
+			request.Arguments[0] == "cp" &&
+			request.Arguments[2] == "leapview-app:/var/lib/leapview/qualification-recovery":
+			return nil, nil
+		default:
+			return nil, fmt.Errorf("unexpected Docker arguments: %v", request.Arguments)
+		}
+	})
+	controller, err := New(Options{
+		Root: t.TempDir(), DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+	workDir := t.TempDir()
+	require.NoError(t, controller.prepareQualificationRecoveryData(
+		t.Context(),
+		qualificationRecoveryOptions{ContainerID: "leapview-app"},
+		workDir,
+	))
+
+	require.Len(t, requests, 4)
+	for _, index := range []int{0, 1, 2} {
+		require.NotNil(t, requests[index].Stdout)
+		require.Equal(t, "-", requests[index].Arguments[2])
+	}
+	for directory, projectName := range map[string]string{
+		"project-a": qualificationRecoveryReleaseProjectName,
+		"project-b": qualificationRecoveryDeploymentProjectName,
+	} {
+		contents, readErr := os.ReadFile(filepath.Join(
+			workDir, "qualification-recovery", directory, "leapview.yaml",
+		))
+		require.NoError(t, readErr)
+		require.Contains(t, string(contents), "name: "+projectName)
 	}
 }
 
@@ -820,7 +914,10 @@ func TestQualificationRecoveryProjectNamesSatisfyResourceSchema(t *testing.T) {
 
 func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) {
 	root := t.TempDir()
-	executor := &recordingQualificationExecutor{output: []byte("ok")}
+	executor := &recordingQualificationExecutor{output: []byte(`[
+		{"Type":"volume","Name":"qualification-state","Destination":"/var/lib/leapview"},
+		{"Type":"tmpfs","Name":"","Destination":"/tmp"}
+	]`)}
 	controller, err := New(Options{
 		Root: root, DockerBin: "docker-probe", qualificationExecutor: executor,
 	})
@@ -829,22 +926,460 @@ func TestQualificationRecoveryArmsActivationBarrierWithDockerCopy(t *testing.T) 
 	if err := controller.armQualificationActivationBarrier(t.Context(), "app-container", workDir); err != nil {
 		t.Fatal(err)
 	}
-	if len(executor.requests) != 2 {
-		t.Fatalf("docker requests = %d, want clear + cp", len(executor.requests))
+	if len(executor.requests) != 3 {
+		t.Fatalf("docker requests = %d, want inspect + clear + cp", len(executor.requests))
 	}
 	if got, want := executor.requests[0].Arguments, []string{
-		"exec", "app-container", "rm", "-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+		"inspect", "--format", "{{json .Mounts}}", "app-container",
+	}; !slices.Equal(got, want) {
+		t.Fatalf("inspect arguments = %v, want %v", got, want)
+	}
+	if got, want := executor.requests[1].Arguments, []string{
+		"run", "--rm",
+		"--user", "0:0",
+		"--mount", "type=volume,src=qualification-state,dst=/var/lib/leapview",
+		"--entrypoint", "/bin/rm",
+		qualificationBrowserImage,
+		"-f",
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 	}; !slices.Equal(got, want) {
 		t.Fatalf("clear arguments = %v, want %v", got, want)
 	}
-	cp := executor.requests[1].Arguments
-	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker) {
+	cp := executor.requests[2].Arguments
+	if len(cp) != 3 || cp[0] != "cp" || cp[2] != "app-container:"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker) {
 		t.Fatalf("arm copy arguments = %v", cp)
 	}
 	if contents, err := os.ReadFile(cp[1]); err != nil || string(contents) != "qualification-recovery\n" {
 		t.Fatalf("arm marker contents = %q, err = %v", contents, err)
+	}
+}
+
+func TestQualificationContainerNamedVolumeFailsClosed(t *testing.T) {
+	tests := []struct {
+		name   string
+		output string
+		want   string
+	}{
+		{
+			name:   "missing state mount",
+			output: `[{"Type":"tmpfs","Name":"","Destination":"/tmp"}]`,
+			want:   `no mount at "/var/lib/leapview"`,
+		},
+		{
+			name:   "bind mounted state",
+			output: `[{"Type":"bind","Name":"","Destination":"/var/lib/leapview"}]`,
+			want:   `is not backed by a named volume`,
+		},
+		{
+			name:   "invalid inspection",
+			output: `not-json`,
+			want:   `decode qualification container mounts`,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			executor := &recordingQualificationExecutor{output: []byte(test.output)}
+			controller, err := New(Options{
+				Root: t.TempDir(), DockerBin: "docker-probe", qualificationExecutor: executor,
+			})
+			require.NoError(t, err)
+			_, err = controller.qualificationContainerNamedVolume(
+				t.Context(),
+				"app-container",
+				"/var/lib/leapview",
+			)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("qualificationContainerNamedVolume() error = %v, want %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestQualificationPublicationRetryEventuallySucceeds(t *testing.T) {
+	attempts := 0
+	var backoffs []time.Duration
+	output, err := retryQualificationPublication(
+		t.Context(),
+		func(_ context.Context, delay time.Duration) error {
+			backoffs = append(backoffs, delay)
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			if attempts < 3 {
+				return nil, errors.New("publish failed (DELIVERY_INPUT_UNAVAILABLE): target input unavailable")
+			}
+			return []byte(`{"status":"committed"}`), nil
+		},
+	)
+	require.NoError(t, err)
+	if got, want := string(output), `{"status":"committed"}`; got != want {
+		t.Fatalf("output = %q, want %q", got, want)
+	}
+	if attempts != 3 {
+		t.Fatalf("attempts = %d, want 3", attempts)
+	}
+	if got, want := backoffs, []time.Duration{250 * time.Millisecond, 500 * time.Millisecond}; !slices.Equal(got, want) {
+		t.Fatalf("backoffs = %v, want %v", got, want)
+	}
+}
+
+func TestQualificationPublicationRetryRejectsNonMatchingErrorImmediately(t *testing.T) {
+	wantErr := errors.New("publish failed (DELIVERY_CONFLICT): target changed")
+	attempts := 0
+	sleeps := 0
+	_, err := retryQualificationPublication(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			return nil, wantErr
+		},
+	)
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("error = %v, want original error %v", err, wantErr)
+	}
+	if attempts != 1 || sleeps != 0 {
+		t.Fatalf("attempts = %d, sleeps = %d, want 1/0", attempts, sleeps)
+	}
+}
+
+func TestQualificationPublicationRetryLimitIsRespected(t *testing.T) {
+	attempts := 0
+	var backoffs []time.Duration
+	var lastErr error
+	_, err := retryQualificationPublication(
+		t.Context(),
+		func(_ context.Context, delay time.Duration) error {
+			backoffs = append(backoffs, delay)
+			return nil
+		},
+		func(context.Context) ([]byte, error) {
+			attempts++
+			lastErr = fmt.Errorf(
+				"attempt %d failed (DELIVERY_INPUT_UNAVAILABLE): target input unavailable",
+				attempts,
+			)
+			return nil, lastErr
+		},
+	)
+	if err != lastErr {
+		t.Fatalf("error = %v, want final attempt error %v", err, lastErr)
+	}
+	if attempts != qualificationPublicationRetryAttempts {
+		t.Fatalf("attempts = %d, want %d", attempts, qualificationPublicationRetryAttempts)
+	}
+	if len(backoffs) != qualificationPublicationRetryAttempts-1 {
+		t.Fatalf("backoff count = %d, want %d", len(backoffs), qualificationPublicationRetryAttempts-1)
+	}
+	for _, delay := range backoffs {
+		if delay > qualificationPublicationRetryMaxBackoff {
+			t.Fatalf("unbounded backoff %s exceeds %s", delay, qualificationPublicationRetryMaxBackoff)
+		}
+	}
+}
+
+func TestQualificationGCBaselineRetriesTemporaryUnavailability(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	want := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-before-restart", Status: "complete"},
+	}}
+	got, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			attempts++
+			if attempts == 1 {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"operator snapshot: %s", qualificationGCSnapshotUnavailableMarker,
+				)
+			}
+			return want, nil
+		},
+	)
+	require.NoError(t, err)
+	if attempts != 2 || sleeps != 1 || !got.containsCycle("gc-before-restart") {
+		t.Fatalf("attempts = %d, sleeps = %d, observation = %+v, want 2/1/baseline cycle", attempts, sleeps, got)
+	}
+}
+
+func TestQualificationGCBaselineWaitsForInactiveLease(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	got, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			attempts++
+			observation := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-before-restart", Status: "complete"},
+			}}
+			if attempts == 1 {
+				observation.DegradedReasons = []string{qualificationGCLeaseActiveReason}
+			}
+			return observation, nil
+		},
+	)
+	require.NoError(t, err)
+	if attempts != 2 || sleeps != 1 || got.gcLeaseActive() {
+		t.Fatalf("attempts = %d, sleeps = %d, observation = %+v, want 2/1/inactive lease", attempts, sleeps, got)
+	}
+}
+
+func TestQualificationGCBaselineFailsUnrelatedSnapshotErrorImmediately(t *testing.T) {
+	want := errors.New("authorization failed")
+	sleeps := 0
+	_, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{}, want
+		},
+	)
+	if !errors.Is(err, want) || sleeps != 0 {
+		t.Fatalf("error = %v, sleeps = %d, want unrelated error immediately", err, sleeps)
+	}
+}
+
+func TestQualificationGCBaselineTimeoutReportsLeaseDiagnostics(t *testing.T) {
+	_, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{
+				DegradedReasons: []string{qualificationGCLeaseActiveReason},
+				Cycles: []qualificationGCCycleObservation{
+					{ID: "gc-running", PoolID: "pool-1", Epoch: 9, Status: "deleting"},
+				},
+			}, nil
+		},
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "gc-running(pool=pool-1 epoch=9 status=deleting)") ||
+		!strings.Contains(err.Error(), "observedLeaseActive=true") ||
+		!strings.Contains(err.Error(), qualificationGCLeaseActiveReason) ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
+func TestQualificationGCStabilityOldCompletedCycleDoesNotSatisfyGate(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", PoolID: "pool-1", Epoch: 1, Status: "complete"},
+	}}
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return baseline, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	if err == nil || queryProbes != 0 ||
+		!strings.Contains(err.Error(), "gc-old(pool=pool-1 epoch=1 status=complete)") ||
+		!strings.Contains(err.Error(), "0 governed-query probes") ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v, query probes = %d", err, queryProbes)
+	}
+}
+
+func TestQualificationGCStabilityActiveLeaseBlocksProgression(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", Status: "complete"},
+	}}
+	observations := []qualificationGCStabilityObservation{
+		{
+			DegradedReasons: []string{qualificationGCLeaseActiveReason},
+			Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-new", Status: "complete"},
+				{ID: "gc-old", Status: "complete"},
+			},
+		},
+		{
+			Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-new", Status: "complete"},
+				{ID: "gc-old", Status: "complete"},
+			},
+		},
+	}
+	observationIndex := 0
+	sleeps := 0
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			observation := observations[observationIndex]
+			observationIndex++
+			return observation, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	if observationIndex != 2 || sleeps != 1 || queryProbes != 1 {
+		t.Fatalf(
+			"observations = %d, sleeps = %d, query probes = %d, want 2/1/1",
+			observationIndex, sleeps, queryProbes,
+		)
+	}
+}
+
+func TestQualificationGCStabilityNewCompletedCycleAllowsProgression(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", Status: "complete"},
+	}}
+	observations := []qualificationGCStabilityObservation{
+		{Cycles: []qualificationGCCycleObservation{{ID: "gc-new", Status: "running"}}},
+		{Cycles: []qualificationGCCycleObservation{{ID: "gc-new", Status: "complete"}}},
+	}
+	observationIndex := 0
+	queryProbes := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return nil },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			observation := observations[observationIndex]
+			observationIndex++
+			return observation, nil
+		},
+		func(context.Context) error {
+			queryProbes++
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	if observationIndex != 2 || queryProbes != 1 {
+		t.Fatalf("observations = %d, query probes = %d, want 2/1", observationIndex, queryProbes)
+	}
+}
+
+func TestQualificationGCStabilityTimeoutReportsCycleAndLeaseDiagnostics(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-old", PoolID: "pool-1", Epoch: 7, Status: "complete"},
+	}}
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{
+				DegradedReasons: []string{qualificationGCLeaseActiveReason},
+				Cycles: []qualificationGCCycleObservation{
+					{ID: "gc-new", PoolID: "pool-1", Epoch: 8, Status: "deleting"},
+				},
+			}, nil
+		},
+		func(context.Context) error { return nil },
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "baselineCycles=[gc-old(pool=pool-1 epoch=7 status=complete)]") ||
+		!strings.Contains(err.Error(), "observedCycles=[gc-new(pool=pool-1 epoch=8 status=deleting)]") ||
+		!strings.Contains(err.Error(), "observedLeaseActive=true") ||
+		!strings.Contains(err.Error(), qualificationGCLeaseActiveReason) ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
+func TestQualificationGCStabilityRetriesExactQueryFence(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{}
+	stable := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-new", Status: "complete"},
+	}}
+	queryProbes := 0
+	sleeps := 0
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) { return stable, nil },
+		func(context.Context) error {
+			queryProbes++
+			if queryProbes < 3 {
+				return fmt.Errorf("query failed: %s", qualificationGCQueryFenceMarker)
+			}
+			return nil
+		},
+	)
+	require.NoError(t, err)
+	if queryProbes != 3 || sleeps != 2 {
+		t.Fatalf("query probes = %d, sleeps = %d, want 3/2", queryProbes, sleeps)
+	}
+}
+
+func TestQualificationGCStabilityFailsUnrelatedQueryErrorImmediately(t *testing.T) {
+	baseline := qualificationGCStabilityObservation{}
+	stable := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-new", Status: "complete"},
+	}}
+	queryProbes := 0
+	sleeps := 0
+	want := errors.New("authorization failed")
+	err := waitForQualificationGCStability(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		baseline,
+		func(context.Context) (qualificationGCStabilityObservation, error) { return stable, nil },
+		func(context.Context) error {
+			queryProbes++
+			return want
+		},
+	)
+	if !errors.Is(err, want) || queryProbes != 1 || sleeps != 0 {
+		t.Fatalf(
+			"error = %v, query probes = %d, sleeps = %d, want unrelated error after 1/0",
+			err, queryProbes, sleeps,
+		)
+	}
+}
+
+func TestQualificationGCProbeQueryUsesUniqueCacheIdentity(t *testing.T) {
+	first := qualificationGCProbeQuery(1)
+	second := qualificationGCProbeQuery(2)
+	firstMetrics := first["metrics"].([]map[string]string)
+	secondMetrics := second["metrics"].([]map[string]string)
+
+	if firstMetrics[0]["field"] != "order_count" || secondMetrics[0]["field"] != "order_count" {
+		t.Fatalf("probe changed governed metric: first=%v second=%v", firstMetrics, secondMetrics)
+	}
+	if firstMetrics[0]["alias"] == secondMetrics[0]["alias"] {
+		t.Fatalf("probe aliases must differ to bypass the result cache: first=%v second=%v", firstMetrics, secondMetrics)
+	}
+	if first["limit"] != 10 || second["limit"] != 10 {
+		t.Fatalf("probe changed query bounds: first=%v second=%v", first, second)
 	}
 }
 
@@ -884,6 +1419,47 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	}
 	if !slices.Equal(got, want) {
 		t.Fatalf("client arguments = %v, want %v", got, want)
+	}
+}
+
+func TestQualificationRecoveryClientUsesSeparateToolingImage(t *testing.T) {
+	request := qualificationRecoveryClientRequest(
+		qualificationRecoveryOptions{
+			Image:       "production-image@sha256:runtime",
+			ClientImage: "qualification-client:exact",
+		},
+		"recovery-client",
+		"/host/work",
+		"/host/client-home",
+		"/host/caddy-root.crt",
+	)
+	if request.Image != "qualification-client:exact" {
+		t.Fatalf("recovery client image = %q, want qualification tooling image", request.Image)
+	}
+	if request.Image == "production-image@sha256:runtime" {
+		t.Fatal("recovery client must not assume the shellless production image is a tooling container")
+	}
+	if !slices.Equal(request.Entrypoint, []string{"sleep"}) ||
+		!slices.Equal(request.Command, []string{"infinity"}) {
+		t.Fatalf("recovery client lifecycle = entrypoint %v command %v", request.Entrypoint, request.Command)
+	}
+	var workVolume qualificationContainerVolume
+	for _, volume := range request.Volumes {
+		if volume.Target == "/work" {
+			workVolume = volume
+		}
+	}
+	if workVolume.Source != "/host/work" || !workVolume.ReadOnly {
+		t.Fatalf("recovery work volume = %+v", workVolume)
+	}
+	for _, clientPath := range []string{
+		qualificationRecoveryClientInput,
+		qualificationRecoveryClientProjectA,
+		qualificationRecoveryClientProjectB,
+	} {
+		if !strings.HasPrefix(clientPath, workVolume.Target+"/qualification-recovery/") {
+			t.Fatalf("recovery client path %q is outside its prepared fixture root", clientPath)
+		}
 	}
 }
 

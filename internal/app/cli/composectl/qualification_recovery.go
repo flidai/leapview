@@ -14,13 +14,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
+	"github.com/flidai/leapview/internal/deployment/qualificationbarrier"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
@@ -28,6 +29,15 @@ import (
 const qualificationRecoveryDiskLimitKiB = int64(51200)
 const qualificationRecoveryReleaseInterruptionDelay = 15 * time.Second
 const qualificationRecoveryActivationBarrierTimeout = 2 * time.Minute
+const qualificationPublicationRetryAttempts = 8
+const qualificationPublicationRetryInitialBackoff = 250 * time.Millisecond
+const qualificationPublicationRetryMaxBackoff = 4 * time.Second
+const qualificationDeliveryInputUnavailableMarker = "(DELIVERY_INPUT_UNAVAILABLE):"
+const qualificationGCStabilityTimeout = 3 * time.Minute
+const qualificationGCStabilityPollInterval = 500 * time.Millisecond
+const qualificationGCQueryFenceMarker = "sealed catalog query lease acquisition failed: delivery transition conflict: GC lease excludes query root"
+const qualificationGCLeaseActiveReason = "gc_lease_active"
+const qualificationGCSnapshotUnavailableMarker = "Delivery status is temporarily unavailable"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -38,6 +48,9 @@ const (
 	qualificationRefreshPipelineID              = "pipeline:evaluation-refresh"
 	qualificationRecoveryReleaseProjectName     = "recovery-release-project"
 	qualificationRecoveryDeploymentProjectName  = "recovery-deployment-project"
+	qualificationRecoveryClientInput            = "/work/qualification-recovery/input"
+	qualificationRecoveryClientProjectA         = "/work/qualification-recovery/project-a/leapview.yaml"
+	qualificationRecoveryClientProjectB         = "/work/qualification-recovery/project-b/leapview.yaml"
 )
 
 type qualificationRecoveryOptions struct {
@@ -48,10 +61,12 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
+	OperatorToken        string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
 	Image                string
+	ClientImage          string
 }
 
 type qualificationRecoveryReport struct {
@@ -143,10 +158,12 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
+		"operator token":         options.OperatorToken,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
 		"image":                  options.Image,
+		"client image":           options.ClientImage,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
@@ -216,6 +233,7 @@ func (c *Controller) runQualificationRecovery(
 	})
 	client := &http.Client{Timeout: 30 * time.Second}
 	apiRoot := "http://127.0.0.1:8080"
+	gcProbeSequence := uint64(0)
 
 	if err := phases.Finish(nil); err != nil {
 		return report, err
@@ -241,6 +259,13 @@ func (c *Controller) runQualificationRecovery(
 	if err := c.prepareQualificationRecoveryData(ctx, options, workDir); err != nil {
 		return report, err
 	}
+	managedUploadGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	if _, err := c.qualificationDocker(
 		ctx, nil, "update", "--cpus", "0.25", options.ContainerID,
 	); err != nil {
@@ -252,9 +277,9 @@ func (c *Controller) runQualificationRecovery(
 		options.PublisherToken,
 		filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"),
 		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--connection", "sample",
-		"--from", "/work/input",
+		"--from", qualificationRecoveryClientInput,
 		"--format", "json",
 	)
 	if err != nil {
@@ -298,6 +323,13 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	_ = syncCommand.Stop()
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, managedUploadGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	var sessionObject struct {
 		Status string `json:"status"`
 		Files  []struct {
@@ -332,9 +364,9 @@ func (c *Controller) runQualificationRecovery(
 		recoveryClient,
 		options.PublisherToken,
 		"leapview", "data", "sync",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--connection", "sample",
-		"--from", "/work/input",
+		"--from", qualificationRecoveryClientInput,
 		"--format", "json",
 	)
 	if err != nil {
@@ -374,6 +406,13 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "release finalization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	releaseGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	releaseLog := filepath.Join(options.EvidenceDir, "recovery-release-finalization.log")
 	if _, err := c.qualificationDocker(
 		ctx,
@@ -385,7 +424,7 @@ func (c *Controller) runQualificationRecovery(
 	releaseCommand, err := c.startQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken, releaseLog,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -405,10 +444,17 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	_ = releaseCommand.Stop()
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, releaseGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-a/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectA,
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
 		"--format", "json",
 	)
@@ -437,13 +483,20 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "deployment activation interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	deploymentGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", "0.25", options.ContainerID); err != nil {
 		return report, err
 	}
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
-		"--project", "/work/project-b/leapview.yaml",
+		"--project", qualificationRecoveryClientProjectB,
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
 		"--format", "json",
 	)
@@ -508,6 +561,13 @@ func (c *Controller) runQualificationRecovery(
 		_ = deploymentCommand.Stop()
 		return report, err
 	}
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, deploymentGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	recoveredEvidence, err := qualificationPublicationEvidence(
 		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
 		deploymentCandidate, pendingPublication,
@@ -521,10 +581,11 @@ func (c *Controller) runQualificationRecovery(
 			recoveredEvidence.Status,
 		)
 	}
-	committedOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
+	committedOutput, err := c.runQualificationPublicationRetry(
+		ctx,
+		recoveryClient,
+		options.PublisherToken,
+		deploymentCandidate.ID,
 	)
 	if err != nil {
 		return report, err
@@ -561,6 +622,16 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "refresh materialization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	// Capture the durable GC cycle set before throttling and starting refresh.
+	// Once the refresh writer is running, the operator snapshot may be
+	// intentionally unavailable while its delivery transaction is in flight.
+	refreshGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	// Make the execution interval observable before killing the process. On a
 	// fast or warm target the refresh can otherwise move from queued directly
 	// to succeeded between one-second status polls, leaving the recovery gate
@@ -596,6 +667,13 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, refreshGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	refreshEvents, err := waitForQualificationEvents(
 		ctx, client, refreshURL+"/events?limit=100", options.WorkloadToken,
 		[]string{"refresh.queued", "refresh.succeeded"},
@@ -610,6 +688,14 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "query and SSE reconnect"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	queryBody := map[string]any{
+		"dimensions": []map[string]string{{"field": "state"}},
+		"metrics": []map[string]string{
+			{"field": "order_count"},
+			{"field": "revenue"},
+		},
+		"limit": 10,
+	}
 	diskBefore, err := c.qualificationContainerDiskKiB(ctx, options.ContainerID)
 	if err != nil {
 		return report, err
@@ -623,26 +709,23 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
-	queryBody := map[string]any{
-		"dimensions": []map[string]string{{"field": "state"}},
-		"metrics": []map[string]string{
-			{"field": "order_count"},
-			{"field": "revenue"},
-		},
-		"limit": 10,
-	}
 	for cycle := 1; cycle <= 3; cycle++ {
+		gcBaseline, err := c.captureQualificationGCBaseline(
+			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
+		)
+		if err != nil {
+			return report, err
+		}
 		if err := c.killAndRecoverQualificationCandidate(ctx, options.ContainerID, report.Stage); err != nil {
 			return report, err
 		}
-		var queryResult struct {
-			Rows []json.RawMessage `json:"rows"`
-		}
-		if err := qualificationAPI(
-			ctx, client, http.MethodPost,
-			apiRoot+"/api/v1/semantic-models/semantic-model:sales/query",
-			options.WorkloadToken, queryBody, "", &queryResult,
-		); err != nil {
+		queryResult, err := c.waitQualificationGCStable(
+			ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+			options.WorkloadToken, gcBaseline, &gcProbeSequence,
+			options.ContainerID, fmt.Sprintf("%s cycle %d", report.Stage, cycle),
+		)
+		if err != nil {
 			return report, err
 		}
 		if len(queryResult.Rows) != 4 {
@@ -872,23 +955,26 @@ func (c *Controller) prepareQualificationRecoveryData(
 	options qualificationRecoveryOptions,
 	workDir string,
 ) error {
-	sourceCSV := filepath.Join(workDir, "orders.csv")
-	if _, err := c.qualificationDocker(
-		ctx, nil, "cp",
-		options.ContainerID+":/app/evaluation/data/orders.csv",
-		sourceCSV,
-	); err != nil {
+	sourceCSV, cleanupCSV, err := c.qualificationCopyFromContainer(
+		ctx,
+		options.ContainerID,
+		"/app/evaluation/data/orders.csv",
+	)
+	if err != nil {
 		return err
 	}
-	sourceProject := filepath.Join(workDir, "source-project")
-	if _, err := c.qualificationDocker(
-		ctx, nil, "cp",
-		options.ContainerID+":/app/evaluation/project",
-		sourceProject,
-	); err != nil {
+	defer cleanupCSV()
+	sourceProject, cleanupProject, err := c.qualificationCopyFromContainer(
+		ctx,
+		options.ContainerID,
+		"/app/evaluation/project",
+	)
+	if err != nil {
 		return err
 	}
-	inputDir := filepath.Join(workDir, "input")
+	defer cleanupProject()
+	recoveryRoot := filepath.Join(workDir, "qualification-recovery")
+	inputDir := filepath.Join(recoveryRoot, "input")
 	if err := os.MkdirAll(inputDir, 0o700); err != nil {
 		return err
 	}
@@ -903,7 +989,7 @@ func (c *Controller) prepareQualificationRecoveryData(
 		"project-a": qualificationRecoveryReleaseProjectName,
 		"project-b": qualificationRecoveryDeploymentProjectName,
 	} {
-		target := filepath.Join(workDir, name)
+		target := filepath.Join(recoveryRoot, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
@@ -917,33 +1003,37 @@ func (c *Controller) prepareQualificationRecoveryData(
 			[]byte("name: leapview-evaluation"),
 			[]byte("name: "+title),
 		)
+		// Container archives preserve the hardened read-only project file mode.
+		// This is a private host-side recovery fixture, so make only the copied
+		// fixture owner-writable before changing its qualification-only name.
+		if err := os.Chmod(projectPath, 0o600); err != nil {
+			return err
+		}
 		if err := os.WriteFile(projectPath, contents, 0o600); err != nil {
 			return err
 		}
 	}
 	candidate := c.qualificationContainers.Existing(options.ContainerID)
-	_, _ = candidate.Exec(
-		ctx, nil,
-		"rm", "-rf", "/var/lib/leapview/qualification-recovery",
+	exists, err := c.qualificationContainerPathExists(
+		ctx,
+		options.ContainerID,
+		"/var/lib/leapview/qualification-recovery",
 	)
-	if _, err := candidate.Exec(
-		ctx, nil,
-		"mkdir", "-p", "/var/lib/leapview/qualification-recovery",
-	); err != nil {
+	if err != nil {
 		return err
 	}
-	for _, name := range []string{"input", "project-a", "project-b"} {
-		source := filepath.Join(workDir, name)
-		if err := makeQualificationContainerReadable(source); err != nil {
-			return err
-		}
-		if _, err := candidate.CopyTo(
-			ctx,
-			source,
-			"/var/lib/leapview/qualification-recovery/"+name,
-		); err != nil {
-			return err
-		}
+	if exists {
+		return fmt.Errorf("qualification recovery destination already exists")
+	}
+	if err := makeQualificationContainerReadable(recoveryRoot); err != nil {
+		return err
+	}
+	if _, err := candidate.CopyTo(
+		ctx,
+		recoveryRoot,
+		"/var/lib/leapview/qualification-recovery",
+	); err != nil {
+		return err
 	}
 	return nil
 }
@@ -1057,9 +1147,28 @@ func (c *Controller) startQualificationRecoveryClient(
 	container := normalizedQualificationName(
 		options.ComposeProject + "-recovery-client",
 	)
-	if _, err := c.qualificationContainers.Start(ctx, qualificationContainerRequest{
+	if _, err := c.qualificationContainers.Start(ctx, qualificationRecoveryClientRequest(
+		options,
+		container,
+		workDir,
+		clientHome,
+		certificateFile,
+	)); err != nil {
+		return "", err
+	}
+	return container, nil
+}
+
+func qualificationRecoveryClientRequest(
+	options qualificationRecoveryOptions,
+	container string,
+	workDir string,
+	clientHome string,
+	certificateFile string,
+) qualificationContainerRequest {
+	return qualificationContainerRequest{
 		Name:        container,
-		Image:       options.Image,
+		Image:       options.ClientImage,
 		NetworkMode: "host",
 		NoHealth:    true,
 		Volumes: []qualificationContainerVolume{
@@ -1072,10 +1181,7 @@ func (c *Controller) startQualificationRecoveryClient(
 		},
 		Entrypoint: []string{"sleep"},
 		Command:    []string{"infinity"},
-	}); err != nil {
-		return "", err
 	}
-	return container, nil
 }
 
 func qualificationClientExecArguments(
@@ -1130,18 +1236,316 @@ func (c *Controller) runQualificationClientCommand(
 	token string,
 	arguments ...string,
 ) ([]byte, error) {
-	return c.qualificationContainers.Existing(clientContainer).Exec(
+	return c.qualificationContainers.Existing(clientContainer).ExecEnvironment(
 		ctx, nil,
-		append(
-			[]string{
-				"env",
-				"LEAPVIEW_API_TOKEN=" + token,
-				"LEAPVIEW_TARGET=https://localhost",
-				"LEAPVIEW_HOME=/client-home",
-			},
-			arguments...,
-		)...,
+		map[string]string{
+			"LEAPVIEW_API_TOKEN": token,
+			"LEAPVIEW_TARGET":    "https://localhost",
+			"LEAPVIEW_HOME":      "/client-home",
+		},
+		arguments...,
 	)
+}
+
+// runQualificationPublicationRetry retries only the idempotent publication
+// replay used after the qualification harness intentionally interrupts target
+// activation. A restarted target may briefly hold its physical-pool GC fence;
+// every other failure remains immediate and unchanged.
+func (c *Controller) runQualificationPublicationRetry(
+	ctx context.Context,
+	clientContainer string,
+	token string,
+	candidateID string,
+) ([]byte, error) {
+	return retryQualificationPublication(ctx, c.sleep, func(attemptCtx context.Context) ([]byte, error) {
+		return c.runQualificationClientCommand(
+			attemptCtx,
+			clientContainer,
+			token,
+			"leapview", "publish", candidateID,
+			"--format", "json",
+		)
+	})
+}
+
+func retryQualificationPublication(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	publish func(context.Context) ([]byte, error),
+) ([]byte, error) {
+	backoff := qualificationPublicationRetryInitialBackoff
+	for attempt := 1; attempt <= qualificationPublicationRetryAttempts; attempt++ {
+		output, err := publish(ctx)
+		if err == nil ||
+			!strings.Contains(err.Error(), qualificationDeliveryInputUnavailableMarker) ||
+			attempt == qualificationPublicationRetryAttempts {
+			return output, err
+		}
+		if err := sleep(ctx, backoff); err != nil {
+			return nil, err
+		}
+		backoff = min(backoff*2, qualificationPublicationRetryMaxBackoff)
+	}
+	panic("unreachable qualification publication retry")
+}
+
+type qualificationGCCycleObservation struct {
+	ID     string
+	PoolID string
+	Epoch  int64
+	Status string
+}
+
+type qualificationGCStabilityObservation struct {
+	DegradedReasons []string
+	Cycles          []qualificationGCCycleObservation
+}
+
+func (observation qualificationGCStabilityObservation) gcLeaseActive() bool {
+	return slices.Contains(observation.DegradedReasons, qualificationGCLeaseActiveReason)
+}
+
+func (observation qualificationGCStabilityObservation) containsCycle(id string) bool {
+	for _, cycle := range observation.Cycles {
+		if cycle.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+func (observation qualificationGCStabilityObservation) cycleSummary() []string {
+	summary := make([]string, 0, len(observation.Cycles))
+	for _, cycle := range observation.Cycles {
+		summary = append(summary, fmt.Sprintf(
+			"%s(pool=%s epoch=%d status=%s)",
+			cycle.ID, cycle.PoolID, cycle.Epoch, cycle.Status,
+		))
+	}
+	return summary
+}
+
+func qualificationGCObservation(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+) (qualificationGCStabilityObservation, error) {
+	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
+		target,
+		token,
+		httpClient,
+	))
+	response, err := client.GetDeliveryOperatorSnapshot(
+		ctx,
+		deploymentgen.GenGetDeliveryOperatorSnapshotClientRequest{Project: projectID},
+	)
+	if err != nil {
+		return qualificationGCStabilityObservation{}, err
+	}
+	observation := qualificationGCStabilityObservation{
+		DegradedReasons: append([]string(nil), response.Body.DegradedReasons...),
+		Cycles:          make([]qualificationGCCycleObservation, 0, len(response.Body.GcCycles)),
+	}
+	for _, cycle := range response.Body.GcCycles {
+		observation.Cycles = append(observation.Cycles, qualificationGCCycleObservation{
+			ID: cycle.Id, PoolID: cycle.PoolId, Epoch: cycle.Epoch, Status: string(cycle.Status),
+		})
+	}
+	return observation, nil
+}
+
+func (c *Controller) captureQualificationGCBaseline(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	token string,
+	containerID string,
+	stage string,
+) (qualificationGCStabilityObservation, error) {
+	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
+	defer cancel()
+	observation, err := waitForQualificationGCBaseline(
+		waitCtx,
+		c.sleep,
+		func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCObservation(probeCtx, httpClient, target, projectID, token)
+		},
+	)
+	if err == nil {
+		return observation, nil
+	}
+	return qualificationGCStabilityObservation{}, qualificationContainerOperationError(
+		ctx,
+		c.qualificationContainers.Existing(containerID),
+		"capture physical-pool GC baseline before "+stage,
+		err,
+	)
+}
+
+func waitForQualificationGCBaseline(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	observe func(context.Context) (qualificationGCStabilityObservation, error),
+) (qualificationGCStabilityObservation, error) {
+	observations := 0
+	var last qualificationGCStabilityObservation
+	var lastObservationErr error
+	for {
+		observations++
+		observation, err := observe(ctx)
+		if err == nil {
+			last = observation
+			lastObservationErr = nil
+			if !observation.gcLeaseActive() {
+				return observation, nil
+			}
+		} else {
+			if !strings.Contains(err.Error(), qualificationGCSnapshotUnavailableMarker) {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"physical-pool GC baseline snapshot failed: %w", err,
+				)
+			}
+			lastObservationErr = err
+		}
+		if sleepErr := sleep(ctx, qualificationGCStabilityPollInterval); sleepErr != nil {
+			if lastObservationErr != nil {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"physical-pool GC baseline was not observable after %d snapshots (lastSnapshotError=%v): %w",
+					observations, lastObservationErr, sleepErr,
+				)
+			}
+			return qualificationGCStabilityObservation{}, fmt.Errorf(
+				"physical-pool GC baseline did not become idle after %d snapshots (observedCycles=%v observedLeaseActive=%t degradedReasons=%v): %w",
+				observations, last.cycleSummary(), last.gcLeaseActive(), last.DegradedReasons, sleepErr,
+			)
+		}
+	}
+}
+
+func (c *Controller) waitQualificationGCStable(
+	ctx context.Context,
+	httpClient *http.Client,
+	target string,
+	projectID string,
+	operatorToken string,
+	workloadToken string,
+	baseline qualificationGCStabilityObservation,
+	probeSequence *uint64,
+	containerID string,
+	stage string,
+) (struct {
+	Rows []json.RawMessage `json:"rows"`
+}, error) {
+	var queryResult struct {
+		Rows []json.RawMessage `json:"rows"`
+	}
+	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
+	defer cancel()
+	err := waitForQualificationGCStability(
+		waitCtx,
+		c.sleep,
+		baseline,
+		func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCObservation(
+				probeCtx, httpClient, target, projectID, operatorToken,
+			)
+		},
+		func(probeCtx context.Context) error {
+			queryResult.Rows = nil
+			*probeSequence = *probeSequence + 1
+			return qualificationAPI(
+				probeCtx, httpClient, http.MethodPost,
+				target+"/api/v1/semantic-models/semantic-model:sales/query",
+				workloadToken, qualificationGCProbeQuery(*probeSequence), "", &queryResult,
+			)
+		},
+	)
+	if err == nil {
+		return queryResult, nil
+	}
+	return queryResult, qualificationContainerOperationError(
+		ctx,
+		c.qualificationContainers.Existing(containerID),
+		"observe physical-pool GC stability after "+stage,
+		err,
+	)
+}
+
+// qualificationGCProbeQuery gives every probe a distinct result-cache identity.
+// A cached 200 response does not acquire a sealed-catalog query lease and cannot
+// establish that the startup GC fence has been released.
+func qualificationGCProbeQuery(sequence uint64) map[string]any {
+	return map[string]any{
+		"dimensions": []map[string]string{{"field": "state"}},
+		"metrics": []map[string]string{
+			{"field": "order_count", "alias": fmt.Sprintf("gc_probe_%d", sequence)},
+			{"field": "revenue"},
+		},
+		"limit": 10,
+	}
+}
+
+func waitForQualificationGCStability(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	baseline qualificationGCStabilityObservation,
+	observe func(context.Context) (qualificationGCStabilityObservation, error),
+	acquireQueryLease func(context.Context) error,
+) error {
+	observations := 0
+	queryProbes := 0
+	var last qualificationGCStabilityObservation
+	var lastObservationErr error
+	var lastQueryErr error
+	for {
+		observations++
+		observation, err := observe(ctx)
+		if err == nil {
+			last = observation
+			lastObservationErr = nil
+			if !observation.gcLeaseActive() && qualificationHasNewCompletedGCCycle(baseline, observation) {
+				queryProbes++
+				queryErr := acquireQueryLease(ctx)
+				if queryErr == nil {
+					return nil
+				}
+				lastQueryErr = queryErr
+				if !strings.Contains(queryErr.Error(), qualificationGCQueryFenceMarker) {
+					return fmt.Errorf("physical-pool GC governed-query lease probe failed: %w", queryErr)
+				}
+			}
+		} else {
+			lastObservationErr = err
+		}
+		if sleepErr := sleep(ctx, qualificationGCStabilityPollInterval); sleepErr != nil {
+			if lastObservationErr != nil {
+				return fmt.Errorf(
+					"physical-pool GC stability was not observable after %d snapshots (baselineCycles=%v lastSnapshotError=%v): %w",
+					observations, baseline.cycleSummary(), lastObservationErr, sleepErr,
+				)
+			}
+			return fmt.Errorf(
+				"physical-pool GC did not stabilize after %d snapshots and %d governed-query probes (baselineCycles=%v baselineLeaseActive=%t observedCycles=%v observedLeaseActive=%t degradedReasons=%v lastQueryError=%v): %w",
+				observations, queryProbes, baseline.cycleSummary(), baseline.gcLeaseActive(),
+				last.cycleSummary(), last.gcLeaseActive(), last.DegradedReasons, lastQueryErr, sleepErr,
+			)
+		}
+	}
+}
+
+func qualificationHasNewCompletedGCCycle(
+	baseline qualificationGCStabilityObservation,
+	observation qualificationGCStabilityObservation,
+) bool {
+	for _, cycle := range observation.Cycles {
+		if !baseline.containsCycle(cycle.ID) && cycle.Status == string(deploymentgen.DeliveryGCStatusComplete) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *qualificationRunningCommand) Stop() error {
@@ -1214,7 +1618,7 @@ func (c *Controller) armQualificationActivationBarrier(
 	if err := c.clearQualificationActivationBarrier(ctx, containerID); err != nil {
 		return fmt.Errorf("clear qualification activation barrier markers: %w", err)
 	}
-	armedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierArmedMarker)
+	armedFile := filepath.Join(workDir, qualificationbarrier.ArmedMarker)
 	if err := os.WriteFile(armedFile, []byte("qualification-recovery\n"), 0o600); err != nil {
 		return fmt.Errorf("write qualification activation barrier marker: %w", err)
 	}
@@ -1222,7 +1626,7 @@ func (c *Controller) armQualificationActivationBarrier(
 		ctx,
 		nil,
 		"cp", armedFile,
-		containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
+		containerID+":"+qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
 	); err != nil {
 		return fmt.Errorf("arm qualification activation barrier: %w", err)
 	}
@@ -1230,11 +1634,10 @@ func (c *Controller) armQualificationActivationBarrier(
 }
 
 func (c *Controller) clearQualificationActivationBarrier(ctx context.Context, containerID string) error {
-	_, err := c.qualificationContainers.Existing(containerID).Exec(ctx, nil, "rm", "-f",
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierArmedMarker),
-		qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+	return c.removeQualificationContainerPathsWithTooling(ctx, containerID,
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ArmedMarker),
+		qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 	)
-	return err
 }
 
 func (c *Controller) waitForQualificationActivationBarrier(
@@ -1242,14 +1645,14 @@ func (c *Controller) waitForQualificationActivationBarrier(
 	containerID string,
 	workDir string,
 ) error {
-	reachedFile := filepath.Join(workDir, sealedcontrol.QualificationActivationBarrierReachedMarker)
+	reachedFile := filepath.Join(workDir, qualificationbarrier.ReachedMarker)
 	return qualificationWait(ctx, 250*time.Millisecond, func(waitCtx context.Context) (bool, error) {
 		_ = os.Remove(reachedFile)
 		_, err := c.qualificationDocker(
 			waitCtx,
 			nil,
 			"cp",
-			containerID+":"+qualificationActivationBarrierContainerPath(sealedcontrol.QualificationActivationBarrierReachedMarker),
+			containerID+":"+qualificationActivationBarrierContainerPath(qualificationbarrier.ReachedMarker),
 			reachedFile,
 		)
 		if err != nil {
@@ -1628,38 +2031,18 @@ func (c *Controller) qualificationContainerDiskKiB(
 	ctx context.Context,
 	containerID string,
 ) (int64, error) {
-	output, err := c.qualificationContainers.Existing(containerID).
-		Exec(ctx, nil, "du", "-sk", "/var/lib/leapview")
-	if err != nil {
-		return 0, err
-	}
-	fields := strings.Fields(string(output))
-	if len(fields) == 0 {
-		return 0, fmt.Errorf("container disk usage is empty")
-	}
-	return parseQualificationInteger(fields[0], "container disk usage")
-}
-
-func (c *Controller) countQualificationContainerPaths(
-	ctx context.Context,
-	containerID string,
-	root string,
-	pattern string,
-) (int64, error) {
-	output, err := c.qualificationContainers.Existing(containerID).Exec(
-		ctx, nil,
-		"find", root, "-maxdepth", "1", "-name", pattern, "-print",
+	bytesUsed, err := c.qualificationContainerTreeBytes(
+		ctx,
+		containerID,
+		"/var/lib/leapview",
 	)
 	if err != nil {
 		return 0, err
 	}
-	count := int64(0)
-	for _, line := range strings.Split(strings.TrimSpace(string(output)), "\n") {
-		if strings.TrimSpace(line) != "" {
-			count++
-		}
+	if bytesUsed == 0 {
+		return 0, nil
 	}
-	return count, nil
+	return (bytesUsed + 1023) / 1024, nil
 }
 
 func (c *Controller) waitForQualificationComposeOneoff(

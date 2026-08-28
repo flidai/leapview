@@ -167,7 +167,7 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	for _, required := range []string{
 		"FROM build AS extension-supply",
 		"./internal/app/tools/extensionsupply",
-		"COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions",
+		"COPY --from=extension-supply /out/extension-supply /runtime-root/usr/local/share/leapview/extensions",
 		"LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH=/usr/local/share/leapview/extensions/extension-supply.json",
 	} {
 		if !strings.Contains(dockerfile, required) {
@@ -185,7 +185,14 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 		t.Fatal("standard Compose must not expose extension supply selection as authored env")
 	}
 	release := read(t, filepath.Join(root, ".github", "workflows", "release.yml"))
-	for _, required := range []string{"Verify target-native offline extension supply", "extension-supply.json.sha256", "duckdb_extension"} {
+	for _, required := range []string{
+		"Verify target-native offline extension supply",
+		`docker cp "$inspection_container:/usr/local/share/leapview/extensions/." - > "$supply_archive"`,
+		"--no-same-owner",
+		"--no-same-permissions",
+		"go run ./internal/app/tools/extensionsupply",
+		"--check",
+	} {
 		if !strings.Contains(release, required) {
 			t.Fatalf("release qualification missing extension supply check %q", required)
 		}
@@ -196,7 +203,7 @@ func TestFiveMinuteEvaluationContract(t *testing.T) {
 	root := filepath.Join("..", "..")
 	publicReleaseImage := readPublicReleaseImage(t)
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
-	if !strings.Contains(dockerfile, "COPY evaluation ./evaluation") {
+	if !strings.Contains(dockerfile, "COPY evaluation /runtime-root/app/evaluation") {
 		t.Fatal("runtime image does not include the self-contained evaluation project and data")
 	}
 	dashboard := read(t, filepath.Join(root, "evaluation", "project", "dashboards", "sales-overview.yaml"))
@@ -447,18 +454,22 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	for _, required := range []string{
 		`table.evaluate((element) => element.scrollIntoView({ block: 'center' }))`,
-		`rows.first().waitFor({ state: 'visible', timeout: 30_000 })`,
-		`stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`interactiveCells.first().waitFor({ state: 'visible', timeout: 30_000 })`,
+		`stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })`,
 	} {
 		if !strings.Contains(browser, required) {
 			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
 		}
 	}
-	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
-		t.Error("browser qualification must assert the table cell accessibility label")
+	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
+		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
-	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
-		t.Error("performance qualification must select only the sortable Order header")
+	if !strings.Contains(performance, `column.key === 'order_id'`) ||
+		!strings.Contains(performance, `table.locator('button.header-button').nth(orderColumnIndex)`) {
+		t.Error("performance qualification must select the sortable header by its stable order_id column key")
+	}
+	if !strings.Contains(browser, "table diagnostics=") || !strings.Contains(browser, ".slice(0, 24)") {
+		t.Error("browser qualification failures must include bounded table diagnostics")
 	}
 	if strings.Contains(browser, "encodeURIComponent(process.env.QUALIFICATION_PROJECT_ID") ||
 		!strings.Contains(browser, "Authorization: `Bearer ${credentials.auditToken}`") {
@@ -483,6 +494,12 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	}
 	if strings.Contains(performance, "measures:") || !strings.Contains(performance, "metrics: [{ field: 'order_count' }, { field: 'revenue' }]") {
 		t.Error("performance governed query must use semantic metrics")
+	}
+	passwordChange := strings.Index(authoringWorker, "getByLabel('New password').press('Enter')")
+	reauthentication := strings.Index(authoringWorker, "getByLabel('Email').waitFor({ state: 'visible', timeout: 30_000 })")
+	authenticatedNavigation := strings.Index(authoringWorker, "page.waitForURL((url) => !url.pathname.startsWith('/login')")
+	if passwordChange < 0 || reauthentication < passwordChange || authenticatedNavigation < reauthentication {
+		t.Error("authoring qualification must reauthenticate after password-change session revocation")
 	}
 	for _, required := range []string{"Automated step", "Human check", "Interruption recovery", "fresh-install-only", "./leapviewctl qualify installed-candidate"} {
 		if !strings.Contains(runbook, required) {
@@ -521,6 +538,11 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(client, "LEAPVIEW_API_TOKEN") {
 		t.Error("authoring must use browser-approved login")
 	}
+	if strings.Contains(client, "command.Stderr = io.MultiWriter(&output, writer)") ||
+		!strings.Contains(client, "command.Stdout = writer") ||
+		!strings.Contains(client, "command.Stderr = &diagnostics") {
+		t.Error("qualification login must keep stderr diagnostics out of the JSON event stream")
+	}
 	for _, required := range []string{"verifyExactAuthoringCandidate", "authoring-report.json", "BrowserApprovedLogin", "NativeKeyring", "PrivatePreview", "ExactCandidateActivated", "RequestDeliveryPublicationApproval", "ApproveDeliveryPublicationApproval", "dbus-run-session", "PROJECT_ADMIN", "capabilities"} {
 		if !strings.Contains(authoring, required) {
 			t.Errorf("typed authoring controller missing %q", required)
@@ -545,7 +567,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
 		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
-	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
+	for _, required := range []string{"ARG LEAPVIEW_IMAGE", "FROM ${LEAPVIEW_IMAGE}", "COPY --from=leapview-payload /usr/local/bin/leapview /usr/local/bin/leapview", "COPY --from=leapview-payload --chown=author:author /app/evaluation /app/evaluation", "dbus-daemon", "gnome-keyring", "USER author", "CMD [\"/usr/local/libexec/leapviewctl\", \"qualify\", \"client-worker\"]"} {
 		if !strings.Contains(clientImage, required) {
 			t.Errorf("authoring client image missing %q", required)
 		}

@@ -105,6 +105,7 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
+    const table = page.locator('lv-report-table')
     const filterValues = ['SP', 'RJ', 'MG', 'PR']
     const filter = page.getByRole('combobox', { name: 'State' })
     for (let index = 0; index < policy.assumptions.samples.filterInteractions; index += 1) {
@@ -113,14 +114,18 @@ async function runWorkload(path) {
       const startedAt = performance.now()
       await filter.selectOption({ label: value })
       await waitForDashboardGeneration(page, generation, 30_000)
-      await page.getByRole('cell', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }
     metricSamples.push(await metricSnapshot())
 
-    const table = page.locator('lv-report-table')
-    const orderSort = table.getByRole('button', { name: /^Order(?: [↑↓])?$/ })
+    const orderColumnIndex = await table.evaluate((element) =>
+      element.columns.findIndex((column) => column.key === 'order_id')
+    )
+    if (orderColumnIndex < 0) throw new Error('performance table has no order_id column')
+    const orderSort = table.locator('button.header-button').nth(orderColumnIndex)
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()
