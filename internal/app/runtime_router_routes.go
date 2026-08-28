@@ -83,6 +83,7 @@ type staticRouteDependencies struct {
 // middleware explicit and prevents feature modules from silently changing it.
 func mountRouterMiddleware(mux *chi.Mux, dependencies routerMiddlewareDependencies) {
 	mux.Use(apihttpmiddleware.RequestCorrelation)
+	mux.Use(apihttpmiddleware.TraceContext)
 	if dependencies.requestLogging {
 		mux.Use(apihttpmiddleware.RequestLogger(dependencies.logger))
 	}

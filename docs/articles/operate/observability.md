@@ -30,6 +30,8 @@ Secrets, bearer tokens, passwords, raw OAuth payloads, and sensitive query data 
 
 LeapView establishes `X-Request-ID` and `X-Correlation-ID` before process-wide middleware and route handling. A non-empty client request ID is preserved for idempotency compatibility; otherwise LeapView generates one. A missing correlation ID defaults to the request ID. Both canonical values are returned in response headers, including responses rejected by early security middleware, so proxy and application logs can agree on public request time, status, and correlation identity.
 
+When an upstream service supplies valid W3C `traceparent` and `tracestate` headers, LeapView validates and carries that remote trace context through the request. Request and panic logs add the parsed `trace_id` and `upstream_span_id`; they never log the raw trace headers, baggage, authorization, cookies, query values, or request bodies. Missing or malformed trace context is ignored without rejecting the request or generating a trace ID, and the request ID remains LeapView's local correlation identity. This contract does not create spans, sample traces, or export telemetry.
+
 ## Delivery signals
 
 Track project deployment IDs, environment, acting principal, candidate validation results, managed revision pins, activation outcome, and active deployment. Uploading an artifact or staging a data revision is not the same as successful activation.
