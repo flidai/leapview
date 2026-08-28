@@ -216,7 +216,7 @@ test('dashboard builder keeps adding a visual as a distinct, enabled control', a
   }
 })
 
-test('dashboard builder exposes rename, duplicate, and delete actions for the selected visual', async () => {
+test('dashboard builder keeps visual actions out of the header and supports copy, paste, and immediate delete shortcuts', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -224,46 +224,80 @@ test('dashboard builder exposes rename, duplicate, and delete actions for the se
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const actions = Array.from(root.querySelectorAll<HTMLButtonElement>('[data-visual-action]')).map((button) => ({
-        action: button.getAttribute('data-visual-action'),
-        label: button.getAttribute('aria-label'),
-        disabled: button.disabled,
-      }))
-      const rename = root.querySelector<HTMLButtonElement>('[data-visual-action="rename"]')
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
-      rename?.click()
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'c', ctrlKey: true, bubbles: true, cancelable: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'v', ctrlKey: true, bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
-      const titleInput = root.querySelector<HTMLInputElement>('input[aria-label="Visual title"]')
-      if (titleInput) {
-        titleInput.value = 'Bookings by status'
-        titleInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-        const form = root.querySelector<HTMLFormElement>('form.visual-rename-form')
-        form?.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true, composed: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Delete', bubbles: true, cancelable: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        actionCount: root.querySelectorAll('[data-visual-action]').length,
+        heading: root.querySelector('.visual-builder .pane-title')?.textContent?.trim(),
+        commands,
       }
-      await new Promise((resolve) => setTimeout(resolve, 20))
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
-      await element.updateComplete
-      root.querySelector<HTMLButtonElement>('[data-visual-action="duplicate"]')?.click()
-      await new Promise((resolve) => setTimeout(resolve, 20))
-      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
-      await element.updateComplete
-      root.querySelector<HTMLButtonElement>('[data-visual-action="delete"]')?.click()
-      await element.updateComplete
-      root.querySelector<HTMLButtonElement>('[data-visual-action="delete"]')?.click()
-      await new Promise((resolve) => setTimeout(resolve, 20))
-      return { actions, titleInput: Boolean(titleInput), commands }
     })
-    expect(state.actions).toEqual([
-      { action: 'rename', label: 'Rename Sales by status', disabled: false },
-      { action: 'duplicate', label: 'Duplicate Sales by status', disabled: false },
-      { action: 'delete', label: 'Delete Sales by status', disabled: false },
-    ])
-    expect(state.titleInput).toBe(true)
-    expect(state.commands).toHaveLength(3)
-    expect(state.commands[0]).toMatchObject({ action: 'rename_visual', pageId: 'overview', visualId: 'sales-chart', title: 'Bookings by status' })
-    expect(state.commands[1]).toMatchObject({ action: 'duplicate_visual', pageId: 'overview', visualId: 'sales-chart' })
-    expect(state.commands[2]).toMatchObject({ action: 'remove_visual', pageId: 'overview', visualId: 'sales-chart' })
+    expect(state.actionCount).toBe(0)
+    expect(state.heading).toBe('Sales by status')
+    expect(state.commands).toHaveLength(2)
+    expect(state.commands[0]).toMatchObject({ action: 'duplicate_visual', pageId: 'overview', visualId: 'sales-chart' })
+    expect(state.commands[1]).toMatchObject({ action: 'remove_visual', pageId: 'overview', visualId: 'sales-chart' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder restores exact revisions through toolbar undo and redo', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const undo = root.querySelector<HTMLButtonElement>('[data-builder-action="undo"]')!
+      const redo = root.querySelector<HTMLButtonElement>('[data-builder-action="redo"]')!
+      const initiallyDisabled = { undo: undo.disabled, redo: redo.disabled }
+
+      root.querySelector<HTMLButtonElement>('.field')?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const undoEnabledAfterEdit = !undo.disabled
+      undo.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      mergePatch({ builder: { revision: { id: 'rev-9', number: 9, contentHash: 'sha256:ghi' } } })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const redoEnabledAfterUndo = !redo.disabled
+      redo.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { initiallyDisabled, undoEnabledAfterEdit, redoEnabledAfterUndo, commands }
+    })
+    expect(state.initiallyDisabled).toEqual({ undo: true, redo: true })
+    expect(state.undoEnabledAfterEdit).toBe(true)
+    expect(state.redoEnabledAfterUndo).toBe(true)
+    expect(state.commands[1]).toMatchObject({
+      action: 'restore_revision',
+      revisionId: 'rev-8',
+      targetRevisionId: 'rev-7',
+      targetRevisionNumber: '7',
+      targetRevisionContentHash: 'sha256:abc',
+    })
+    expect(state.commands[2]).toMatchObject({
+      action: 'restore_revision',
+      revisionId: 'rev-9',
+      targetRevisionId: 'rev-8',
+      targetRevisionNumber: '8',
+      targetRevisionContentHash: 'sha256:def',
+    })
   } finally {
     await page.close()
   }
@@ -819,7 +853,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     })
     expect(state.badgeCount).toBe(0)
     expect(state.metadataLines).toBe(1)
-    expect(state.topLevelActions).toEqual(['Preview', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'Preview', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })

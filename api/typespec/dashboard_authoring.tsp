@@ -224,6 +224,10 @@ model DashboardAuthoringDuplicateVisualIntent {
   title?: string;
 }
 
+model DashboardAuthoringRestoreRevisionIntent {
+  targetRevision: DashboardAuthoringRevisionToken;
+}
+
 model DashboardAuthoringUpdateVisualFormatIntent {
   pageId: string;
   visualId: string;
@@ -299,6 +303,11 @@ model DashboardAuthoringRenameVisualCommand extends DashboardAuthoringCommandReq
 model DashboardAuthoringDuplicateVisualCommand extends DashboardAuthoringCommandRequest {
   kind: "duplicateVisual";
   duplicateVisual: DashboardAuthoringDuplicateVisualIntent;
+}
+
+model DashboardAuthoringRestoreRevisionCommand extends DashboardAuthoringCommandRequest {
+  kind: "restoreRevision";
+  restoreRevision: DashboardAuthoringRestoreRevisionIntent;
 }
 
 model DashboardAuthoringUpdateVisualFormatCommand extends DashboardAuthoringCommandRequest {

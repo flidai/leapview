@@ -221,6 +221,18 @@ func (DuplicateVisualPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// RestoreRevisionPayload restores the canonical document from an exact,
+// retained revision. The restore itself is appended as a new revision so the
+// draft history remains monotonic and auditable.
+type RestoreRevisionPayload struct {
+	TargetRevision RevisionToken `json:"targetRevision"`
+}
+
+func (RestoreRevisionPayload) authoringPayload() {}
+func (RestoreRevisionPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // UpdateVisualFormatPayload changes only explicit, renderer-neutral visual
 // formatting controls. Omitted pointers preserve existing values.
 type UpdateVisualFormatPayload struct {
@@ -387,6 +399,7 @@ type Command struct {
 	SetVisualType      *SetVisualTypePayload      `json:"setVisualType,omitempty"`
 	RenameVisual       *RenameVisualPayload       `json:"renameVisual,omitempty"`
 	DuplicateVisual    *DuplicateVisualPayload    `json:"duplicateVisual,omitempty"`
+	RestoreRevision    *RestoreRevisionPayload    `json:"restoreRevision,omitempty"`
 	UpdateVisualFormat *UpdateVisualFormatPayload `json:"updateVisualFormat,omitempty"`
 	RemoveField        *RemoveFieldPayload        `json:"removeField,omitempty"`
 	MoveField          *MoveFieldPayload          `json:"moveField,omitempty"`
@@ -429,6 +442,9 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.DuplicateVisual != nil {
 		payloads = append(payloads, c.DuplicateVisual)
+	}
+	if c.RestoreRevision != nil {
+		payloads = append(payloads, c.RestoreRevision)
 	}
 	if c.UpdateVisualFormat != nil {
 		payloads = append(payloads, c.UpdateVisualFormat)
@@ -506,7 +522,7 @@ func (c Command) IsBuilderIntent() bool {
 	switch payload.(type) {
 	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
-		*RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload:
+		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload:
 		return true
 	default:
 		return false
@@ -679,6 +695,10 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
 			return fmt.Errorf("%w: duplicate visual title cannot be blank", ErrInvalidPayload)
+		}
+	case *RestoreRevisionPayload:
+		if err := value.TargetRevision.ValidateComplete(); err != nil {
+			return fmt.Errorf("%w: restore target: %v", ErrInvalidPayload, err)
 		}
 	case *UpdateVisualFormatPayload:
 		if err := validateVisualTargetFields(value.PageID, value.VisualID, "update visual format"); err != nil {

@@ -36,7 +36,7 @@ func ApplyEdit(lifecycle DashboardLifecycle, current Revision, command Command, 
 	}
 	payload, _ := command.payloadValue()
 	switch payload.(type) {
-	case *PublishPayload, *ArchivePayload:
+	case *PublishPayload, *ArchivePayload, *RestoreRevisionPayload:
 		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: lifecycle operations are not edit commands", ErrInvalidPayload)
 	}
 	authored, err := current.Document.Clone()
@@ -77,6 +77,61 @@ func ApplyEdit(lifecycle DashboardLifecycle, current Revision, command Command, 
 	if visibility, ok := payload.(*SetVisibilityPayload); ok {
 		next.Visibility = visibility.Visibility
 	}
+	next.Draft = &Draft{ID: lifecycle.Draft.ID, DashboardID: lifecycle.ID, Revision: revision.Token(), Provenance: command.Provenance.Clone()}
+	if err := next.Validate(); err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	return next, revision, nil
+}
+
+// ApplyRevisionRestore appends a new draft revision whose document is cloned
+// from an exact retained revision. This gives interactive clients undo/redo
+// without rewriting history or weakening optimistic concurrency.
+func ApplyRevisionRestore(lifecycle DashboardLifecycle, current, target Revision, command Command, nextRevisionID RevisionID, nextNumber uint64, nextCreatedAt time.Time) (DashboardLifecycle, Revision, error) {
+	if err := lifecycle.Validate(); err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	if err := current.Validate(); err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	if err := target.Validate(); err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	if err := command.Validate(); err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	if current.DashboardID != lifecycle.ID || lifecycle.Draft == nil || !sameRevisionToken(lifecycle.Draft.Revision, current.Token()) {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: lifecycle does not select current revision", ErrStaleRevision)
+	}
+	if command.DashboardID != lifecycle.ID || command.DraftID != lifecycle.Draft.ID || !sameRevisionToken(command.ExpectedRevision, current.Token()) {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: command does not select current revision", ErrStaleRevision)
+	}
+	if command.RestoreRevision == nil || !sameRevisionToken(command.RestoreRevision.TargetRevision, target.Token()) {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: restore command does not select target revision", ErrStaleRevision)
+	}
+	if target.DashboardID != current.DashboardID || target.Number >= current.Number {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: restore target must be an earlier revision of this dashboard", ErrInvalidPayload)
+	}
+	if nextNumber != current.Number+1 {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: next revision number must be current number + 1", ErrInvalidAuthoring)
+	}
+	authored, err := target.Document.Clone()
+	if err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	if err := ValidateCanonicalDocument(authored); err != nil {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: restored dashboard: %v", ErrInvalidPayload, err)
+	}
+	if command.ContentHash != "" && command.ContentHash != target.ContentHash {
+		return DashboardLifecycle{}, Revision{}, fmt.Errorf("%w: expected resulting content hash %q, got %q", ErrConflict, command.ContentHash, target.ContentHash)
+	}
+	revision, err := NewRevision(nextRevisionID, current.DashboardID, nextNumber, nextCreatedAt, authored, command.Provenance)
+	if err != nil {
+		return DashboardLifecycle{}, Revision{}, err
+	}
+	next := lifecycle
+	next.Title = canonicalDocumentTitle(authored)
+	next.SemanticModel = resourceID(authored.Spec.SemanticModel)
 	next.Draft = &Draft{ID: lifecycle.Draft.ID, DashboardID: lifecycle.ID, Revision: revision.Token(), Provenance: command.Provenance.Clone()}
 	if err := next.Validate(); err != nil {
 		return DashboardLifecycle{}, Revision{}, err

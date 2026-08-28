@@ -121,6 +121,37 @@ func canonicalReducerFixture(t *testing.T) (DashboardLifecycle, Revision) {
 	return lifecycle, revision
 }
 
+func TestApplyRevisionRestoreAppendsMonotonicRevisionFromExactTarget(t *testing.T) {
+	lifecycle, target := canonicalReducerFixture(t)
+	edit := Command{
+		ID: "add-page", DashboardID: target.DashboardID, DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: target.Token(), Provenance: canonicalReducerProvenance(),
+		AddPage: &AddPagePayload{PageID: "details", Title: "Details"},
+	}
+	lifecycle, current, err := ApplyEdit(lifecycle, target, edit, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	restore := Command{
+		ID: "restore-page", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+		RestoreRevision: &RestoreRevisionPayload{TargetRevision: target.Token()},
+	}
+	nextLifecycle, restored, err := ApplyRevisionRestore(lifecycle, current, target, restore, "rev-3", 3, time.Date(2026, 8, 18, 12, 2, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Number != 3 || len(restored.Document.Spec.Pages) != 1 || restored.Document.Spec.Pages[0].ID != "overview" {
+		t.Fatalf("restored revision = number %d pages %#v", restored.Number, restored.Document.Spec.Pages)
+	}
+	if !sameRevisionToken(nextLifecycle.Draft.Revision, restored.Token()) {
+		t.Fatalf("draft token = %#v, want %#v", nextLifecycle.Draft.Revision, restored.Token())
+	}
+	if restored.ContentHash != target.ContentHash {
+		t.Fatalf("restored content hash = %q, want %q", restored.ContentHash, target.ContentHash)
+	}
+}
+
 func canonicalReducerProvenance() Provenance {
 	return Provenance{Origin: OriginUI, ActorID: "actor", ConversationID: "conversation", ToolCallID: "tool"}
 }

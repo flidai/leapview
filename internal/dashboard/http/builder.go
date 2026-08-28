@@ -377,37 +377,40 @@ func (h Handler) DashboardBuilderExportYAML(w nethttp.ResponseWriter, r *nethttp
 }
 
 type dashboardBuilderCommandSignal struct {
-	DashboardID         string                            `json:"dashboardId"`
-	DraftID             string                            `json:"draftId"`
-	RevisionID          string                            `json:"revisionId"`
-	RevisionNumber      json.RawMessage                   `json:"revisionNumber"`
-	RevisionContentHash string                            `json:"revisionContentHash"`
-	PageID              string                            `json:"pageId"`
-	VisualID            string                            `json:"visualId"`
-	ComponentID         string                            `json:"componentId"`
-	FieldID             string                            `json:"fieldId"`
-	Role                string                            `json:"role"`
-	TargetRole          string                            `json:"targetRole"`
-	Direction           string                            `json:"direction"`
-	Index               *int                              `json:"index,omitempty"`
-	Type                string                            `json:"type"`
-	Title               string                            `json:"title"`
-	NewVisualID         string                            `json:"newVisualId"`
-	NewComponentID      string                            `json:"newComponentId"`
-	TitleVisible        *bool                             `json:"titleVisible,omitempty"`
-	LegendVisible       *bool                             `json:"legendVisible,omitempty"`
-	AxisVisible         *bool                             `json:"axisVisible,omitempty"`
-	DataLabelsVisible   *bool                             `json:"dataLabelsVisible,omitempty"`
-	Visibility          string                            `json:"visibility"`
-	Placement           *document.DashboardPlacement      `json:"placement,omitempty"`
-	Placements          []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
-	Column              int32                             `json:"column,omitempty"`
-	Row                 int32                             `json:"row,omitempty"`
-	ColumnSpan          int32                             `json:"columnSpan,omitempty"`
-	RowSpan             int32                             `json:"rowSpan,omitempty"`
-	Col                 int32                             `json:"col,omitempty"`
-	ColSpan             int32                             `json:"colSpan,omitempty"`
-	Action              string                            `json:"action"`
+	DashboardID               string                            `json:"dashboardId"`
+	DraftID                   string                            `json:"draftId"`
+	RevisionID                string                            `json:"revisionId"`
+	RevisionNumber            json.RawMessage                   `json:"revisionNumber"`
+	RevisionContentHash       string                            `json:"revisionContentHash"`
+	TargetRevisionID          string                            `json:"targetRevisionId"`
+	TargetRevisionNumber      json.RawMessage                   `json:"targetRevisionNumber"`
+	TargetRevisionContentHash string                            `json:"targetRevisionContentHash"`
+	PageID                    string                            `json:"pageId"`
+	VisualID                  string                            `json:"visualId"`
+	ComponentID               string                            `json:"componentId"`
+	FieldID                   string                            `json:"fieldId"`
+	Role                      string                            `json:"role"`
+	TargetRole                string                            `json:"targetRole"`
+	Direction                 string                            `json:"direction"`
+	Index                     *int                              `json:"index,omitempty"`
+	Type                      string                            `json:"type"`
+	Title                     string                            `json:"title"`
+	NewVisualID               string                            `json:"newVisualId"`
+	NewComponentID            string                            `json:"newComponentId"`
+	TitleVisible              *bool                             `json:"titleVisible,omitempty"`
+	LegendVisible             *bool                             `json:"legendVisible,omitempty"`
+	AxisVisible               *bool                             `json:"axisVisible,omitempty"`
+	DataLabelsVisible         *bool                             `json:"dataLabelsVisible,omitempty"`
+	Visibility                string                            `json:"visibility"`
+	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
+	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
+	Column                    int32                             `json:"column,omitempty"`
+	Row                       int32                             `json:"row,omitempty"`
+	ColumnSpan                int32                             `json:"columnSpan,omitempty"`
+	RowSpan                   int32                             `json:"rowSpan,omitempty"`
+	Col                       int32                             `json:"col,omitempty"`
+	ColSpan                   int32                             `json:"colSpan,omitempty"`
+	Action                    string                            `json:"action"`
 }
 
 type dashboardBuilderPlacementSignal struct {
@@ -495,6 +498,12 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.RenameVisual = &authoring.RenameVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), Title: strings.TrimSpace(s.Title)}
 	case "duplicate_visual":
 		command.DuplicateVisual = &authoring.DuplicateVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), NewVisualID: strings.TrimSpace(s.NewVisualID), NewComponentID: strings.TrimSpace(s.NewComponentID), Title: strings.TrimSpace(s.Title)}
+	case "restore_revision":
+		targetNumber, targetErr := parseRevisionNumber(s.TargetRevisionNumber)
+		if targetErr != nil {
+			return authoring.Command{}, fmt.Errorf("restore target: %w", targetErr)
+		}
+		command.RestoreRevision = &authoring.RestoreRevisionPayload{TargetRevision: authoring.RevisionToken{RevisionID: authoring.RevisionID(strings.TrimSpace(s.TargetRevisionID)), Number: targetNumber, ContentHash: strings.TrimSpace(s.TargetRevisionContentHash)}}
 	case "remove_visual":
 		command.RemoveVisual = &authoring.RemoveVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID)}
 	case "update_visual_format":
