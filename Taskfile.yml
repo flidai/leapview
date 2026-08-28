@@ -277,6 +277,20 @@ tasks:
       - task: build
       - bun scripts/capture_site_product.ts
 
+  bench:arrow:quick:
+    desc: Run the bounded Arrow evidence benchmark matrix for local iteration
+    cmds:
+      - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$/(narrow|wide)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+
+  bench:arrow:full:
+    desc: Run all Arrow evidence workloads with comparison-grade sample counts
+    cmds:
+      - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:
