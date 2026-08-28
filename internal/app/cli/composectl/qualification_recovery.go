@@ -233,6 +233,7 @@ func (c *Controller) runQualificationRecovery(
 	})
 	client := &http.Client{Timeout: 30 * time.Second}
 	apiRoot := "http://127.0.0.1:8080"
+	gcProbeSequence := uint64(0)
 
 	if err := phases.Finish(nil); err != nil {
 		return report, err
@@ -256,6 +257,13 @@ func (c *Controller) runQualificationRecovery(
 		return report, fmt.Errorf("active managed-data revision is empty")
 	}
 	if err := c.prepareQualificationRecoveryData(ctx, options, workDir); err != nil {
+		return report, err
+	}
+	managedUploadGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
 		return report, err
 	}
 	if _, err := c.qualificationDocker(
@@ -315,6 +323,13 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	_ = syncCommand.Stop()
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, managedUploadGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	var sessionObject struct {
 		Status string `json:"status"`
 		Files  []struct {
@@ -391,6 +406,13 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "release finalization interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	releaseGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	releaseLog := filepath.Join(options.EvidenceDir, "recovery-release-finalization.log")
 	if _, err := c.qualificationDocker(
 		ctx,
@@ -422,6 +444,13 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	_ = releaseCommand.Stop()
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, releaseGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	releaseOutput, err := c.runQualificationClientCommand(
 		ctx, recoveryClient, options.PublisherToken,
 		"leapview", "dev", "--once", "--no-browser",
@@ -454,6 +483,13 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.Stage = "deployment activation interruption"
 	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
+	deploymentGCBaseline, err := c.captureQualificationGCBaseline(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.ContainerID, report.Stage,
+	)
+	if err != nil {
+		return report, err
+	}
 	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", "0.25", options.ContainerID); err != nil {
 		return report, err
 	}
@@ -523,6 +559,13 @@ func (c *Controller) runQualificationRecovery(
 		func() { _ = deploymentCommand.Stop() },
 	); err != nil {
 		_ = deploymentCommand.Stop()
+		return report, err
+	}
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, deploymentGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
 		return report, err
 	}
 	recoveredEvidence, err := qualificationPublicationEvidence(
@@ -624,6 +667,13 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
+	if _, err := c.waitQualificationGCStable(
+		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
+		options.WorkloadToken, refreshGCBaseline, &gcProbeSequence,
+		options.ContainerID, report.Stage,
+	); err != nil {
+		return report, err
+	}
 	refreshEvents, err := waitForQualificationEvents(
 		ctx, client, refreshURL+"/events?limit=100", options.WorkloadToken,
 		[]string{"refresh.queued", "refresh.succeeded"},
@@ -645,14 +695,6 @@ func (c *Controller) runQualificationRecovery(
 			{"field": "revenue"},
 		},
 		"limit": 10,
-	}
-	gcProbeSequence := uint64(0)
-	if _, err := c.waitQualificationGCStable(
-		ctx, client, apiRoot, options.ProjectID, options.OperatorToken,
-		options.WorkloadToken, refreshGCBaseline, &gcProbeSequence,
-		options.ContainerID, "refresh recovery",
-	); err != nil {
-		return report, err
 	}
 	diskBefore, err := c.qualificationContainerDiskKiB(ctx, options.ContainerID)
 	if err != nil {
