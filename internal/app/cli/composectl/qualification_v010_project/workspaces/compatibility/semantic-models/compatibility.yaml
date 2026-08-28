@@ -1,0 +1,15 @@
+apiVersion: libredash.dev/v1
+kind: SemanticModel
+metadata:
+  workspace: compatibility
+  name: compatibility
+spec:
+  baseTable: orders
+  tables:
+    - orders
+  measures:
+    defaults:
+      table: orders
+    order_count:
+      label: Orders
+      expression: count(orders.order_id)

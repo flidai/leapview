@@ -99,6 +99,126 @@ its own `admin backup`, then provision a fresh LeapView instance and redeploy
 authored projects. Pass `--evidence-dir` to redirect the bounded report and
 failure screenshot.
 
+## v0.1 preservation release gate
+
+The release workflow runs the v0.1 preservation gate in the pre-publication
+qualification job after the candidate image has been assembled and admitted,
+the candidate-bound transition policy has been generated, and the release
+archive has passed its checksum verification. The historical v0.1 artifact has
+only a `linux/amd64` runtime, so this gate runs on the `amd64` qualification
+runner. The regular installed-candidate journey still runs independently on
+every release architecture.
+
+### Release-runner requirements
+
+The runner must provide all of the following:
+
+- a `linux/amd64` host capable of executing `linux/amd64` containers;
+- Docker Engine with Buildx and permission to pull images, inspect OCI index
+  and manifest bytes, and create and remove isolated containers, networks,
+  volumes, and run directories;
+- the extracted candidate's `leapviewctl`, `release-transition-policy.json`,
+  and the exact `assembled-image-admission.json` produced by candidate image
+  admission; and
+- authenticated pull access to the policy-declared historical artifact in
+  `ghcr.io/yacobolo/libredash`.
+
+Configure GHCR credentials with `docker login ghcr.io` before qualification.
+The resolver reads `config.json` from `DOCKER_CONFIG` when that variable is set,
+or from `$HOME/.docker/config.json` otherwise. An auth entry, configured GHCR
+credential helper, identity token, or credential store must be present. The
+credential needs read access to the historical package only; do not grant
+write, delete, or package-administration permission. In GitHub Actions the
+qualification job has `packages: read`, and the token used by the login step
+must also have been granted pull access to the cross-namespace historical
+package. A syntactically configured credential that lacks that package access
+still fails when the exact OCI object is resolved.
+
+Do not copy registry credentials into the release archive, command arguments,
+qualification directory, or uploaded evidence. The qualification evidence
+contains normalized identities and checksums, not tokens, Docker configuration,
+raw authenticated responses, or application credentials.
+
+### Invocation and publication boundary
+
+The release runner derives the policy checksum from the verified archive and
+uses one evidence directory for the existing pre-publication artifact. The
+equivalent controlled invocation is:
+
+```sh
+docker login ghcr.io
+evidence_dir="$RUNNER_TEMP/installed-candidate-evidence"
+policy="$PACKAGE_ROOT/release-transition-policy.json"
+policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"
+predecessor_evidence="$evidence_dir/v0.1-reviewed-identity.json"
+
+./leapviewctl qualify v0.1-artifact-review \
+  --transition-policy "$policy" \
+  --policy-sha256 "$policy_sha256" \
+  --evidence "$predecessor_evidence"
+
+./leapviewctl qualify v0.1-preservation \
+  --candidate-admission "$GITHUB_WORKSPACE/candidate/assembled-image-admission.json" \
+  --transition-policy "$policy" \
+  --policy-sha256 "$policy_sha256" \
+  --predecessor-evidence "$predecessor_evidence" \
+  --evidence-dir "$evidence_dir"
+```
+
+Do not replace either input with a locally built image, mutable tag, policy
+from another archive, or reconstructed admission record. The artifact-review
+command removes stale output before it starts and publishes evidence atomically
+only after owner validation. The preservation command independently resolves
+the exact historical artifact again and rejects a different artifact,
+provenance record, or policy identity.
+
+Any nonzero command result or missing final evidence file fails the `amd64`
+qualification job. Release publication depends on the complete qualification
+matrix, so the image and release assets cannot be published after this gate
+fails. The evidence is produced and checked before the workflow can report
+qualification success.
+
+### Evidence chain
+
+The existing GitHub Actions artifact
+`prepublication-<release-tag>-amd64` retains the v0.1 evidence for 14 days:
+
+| File | Meaning |
+| --- | --- |
+| `v0.1-reviewed-identity.json` | The Phase 1 owner-validated review of the authenticated, exact policy-declared v0.1 OCI index, `linux/amd64` manifest, config digest, source revision, and provenance. It is bound to the candidate policy SHA-256 and intentionally has no execution section. |
+| `v0.1-preservation-qualification.json` | The same evidence contract extended with the observed container identity, authentic bootstrap/workload journey, before/after stopped-state inventory and checksums, clean restart and shutdown, isolated fresh-candidate inventory, policy denials, mutation-free checksums, and cleanup proof. This file exists only after the complete journey passes owner validation. |
+
+The second document does not merely refer to the first by filename. Before
+success, the controller requires their historical identity, OCI artifact,
+provenance, policy version, and policy SHA-256 to match exactly. It also binds
+the candidate identity to the assembled-image admission output. Preserve both
+documents together when reviewing a release decision.
+
+Success proves that the exact historical application executed, deterministic
+application state survived a clean stop and restart, the admitted candidate
+started with isolated clean state, and unsupported legacy-state adoption was
+denied before mutation. It does not declare an in-place v0.1 migration path or
+authorize restoring a v0.1 archive into LeapView.
+
+### Diagnose failures
+
+Open the GitHub Actions **Pre-publication qualification (amd64)** job, locate
+the first failing v0.1 step, and download its
+`prepublication-<release-tag>-amd64` artifact when present. The upload step runs
+after failures so reviewed identity evidence and bounded logs may be available;
+absence of `v0.1-preservation-qualification.json` means the complete journey
+did not pass. Never infer success from the review document alone.
+
+| Failure | Required response |
+| --- | --- |
+| Credentials unavailable or not configured | Configure an owner-readable Docker credential file through `docker login ghcr.io` or the approved credential helper. Verify the token can read the historical package. Do not make the package public, copy a token into evidence, or enable a local-image fallback. |
+| Historical artifact unavailable | Confirm access to the exact immutable reference declared by policy. Escalate removal or registry unavailability to the release owner; do not substitute a tag, registry namespace, rebuilt image, or different digest. |
+| OCI or image digest mismatch | Stop the release and retain the registry diagnostic. The index bytes, platform manifest, config, or pulled image no longer matches the reviewed immutable graph. Do not regenerate policy or evidence to accept the observation. |
+| Candidate policy digest mismatch | Re-extract the checksummed candidate archive, recompute `sha256sum release-transition-policy.json`, and pass that exact value and file to both commands. Do not edit or reserialize the policy. |
+| Reviewed predecessor evidence rejected | Regenerate `v0.1-reviewed-identity.json` with the same shipped controller, exact policy file, and policy checksum used by the preservation command. Do not hand-edit, reuse evidence from another candidate, or copy only its identity fields. |
+| Candidate admission rejected | Use the original `assembled-image-admission.json` from the candidate artifact. A different image digest, source revision, workflow attestation, SBOM result, or vulnerability-policy result requires rebuilding and readmitting the candidate. |
+| Preservation or fresh-candidate journey failed | Inspect the bounded step diagnostic to identify readiness, bootstrap, authentication, workload, inventory, restart, denial, or cleanup failure. Fix and readmit the candidate or restore the historical artifact service before rerunning; do not publish partial evidence. |
+
 ## Evidence and timing
 
 Retain only `qualification-report.json`, `authoring-report.json`, `performance-report.json`,

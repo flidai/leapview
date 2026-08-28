@@ -819,6 +819,78 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 	}
 }
 
+func TestV010ReleaseWorkflowInvokesPolicyBoundPreservationQualification(t *testing.T) {
+	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	require.NoError(t, validateV010ReleaseWorkflow(workflow))
+}
+
+func TestV010ReleaseWorkflowRejectsIncompleteOrUnboundWiring(t *testing.T) {
+	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	for _, test := range []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{
+			name: "missing admission artifact",
+			old:  `candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
+		},
+		{
+			name: "missing predecessor evidence",
+			old:  `--predecessor-evidence "$predecessor_evidence"`,
+		},
+		{
+			name:        "wrong policy digest",
+			old:         `policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
+			replacement: `policy_sha256="0000000000000000000000000000000000000000000000000000000000000000"`,
+		},
+		{
+			name: "missing evidence artifact",
+			old:  `${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, test.old, test.replacement, 1)
+			require.NotEqual(t, workflow, mutated, "contract mutation did not match workflow")
+			require.Error(t, validateV010ReleaseWorkflow(mutated))
+		})
+	}
+}
+
+func validateV010ReleaseWorkflow(workflow string) error {
+	required := []string{
+		"- name: Run exact v0.1 preservation qualification",
+		"if: matrix.arch == 'amd64'",
+		"- name: Set up exact OCI resolver",
+		`candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
+		`policy="$PACKAGE_ROOT/release-transition-policy.json"`,
+		`policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
+		`./leapviewctl qualify v0.1-artifact-review`,
+		`--policy-sha256 "$policy_sha256"`,
+		`--evidence "$predecessor_evidence"`,
+		`test -s "$predecessor_evidence"`,
+		`./leapviewctl qualify v0.1-preservation`,
+		`--candidate-admission "$candidate_admission"`,
+		`--predecessor-evidence "$predecessor_evidence"`,
+		`test -s "$qualification_evidence"`,
+		`${{ runner.temp }}/installed-candidate-evidence/v0.1-reviewed-identity.json`,
+		`${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
+		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+	}
+	for _, contract := range required {
+		if !strings.Contains(workflow, contract) {
+			return fmt.Errorf("release workflow missing v0.1 qualification contract %q", contract)
+		}
+	}
+	review := strings.Index(workflow, "./leapviewctl qualify v0.1-artifact-review")
+	qualification := strings.Index(workflow, "./leapviewctl qualify v0.1-preservation")
+	upload := strings.Index(workflow, "- name: Upload bounded qualification evidence")
+	if review < 0 || qualification < 0 || upload < 0 || review >= qualification || qualification >= upload {
+		return fmt.Errorf("release workflow must review v0.1 identity, qualify preservation, then upload evidence")
+	}
+	return nil
+}
+
 func TestControllerLifecycleWithStateAwareUpgradeRollback(t *testing.T) {
 	root := t.TempDir()
 	buildController(t, root)
