@@ -832,6 +832,10 @@ func TestV010ReleaseWorkflowRejectsIncompleteOrUnboundWiring(t *testing.T) {
 		replacement string
 	}{
 		{
+			name: "missing restored historical authentication",
+			old:  `- name: Restore least-privilege GHCR access for historical qualification`,
+		},
+		{
 			name: "missing admission artifact",
 			old:  `candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
 		},
@@ -859,6 +863,7 @@ func TestV010ReleaseWorkflowRejectsIncompleteOrUnboundWiring(t *testing.T) {
 
 func validateV010ReleaseWorkflow(workflow string) error {
 	required := []string{
+		"- name: Restore least-privilege GHCR access for historical qualification",
 		"- name: Run exact v0.1 preservation qualification",
 		"if: matrix.arch == 'amd64'",
 		"- name: Set up exact OCI resolver",
@@ -883,10 +888,26 @@ func validateV010ReleaseWorkflow(workflow string) error {
 		}
 	}
 	review := strings.Index(workflow, "./leapviewctl qualify v0.1-artifact-review")
+	authenticated := strings.Index(workflow, "- name: Log in to GHCR for admission")
+	installed := strings.Index(workflow, "- name: Run installed-candidate journey")
+	reauthenticated := strings.Index(workflow, "- name: Restore least-privilege GHCR access for historical qualification")
 	qualification := strings.Index(workflow, "./leapviewctl qualify v0.1-preservation")
 	upload := strings.Index(workflow, "- name: Upload bounded qualification evidence")
-	if review < 0 || qualification < 0 || upload < 0 || review >= qualification || qualification >= upload {
-		return fmt.Errorf("release workflow must review v0.1 identity, qualify preservation, then upload evidence")
+	if authenticated < 0 || installed < 0 || reauthenticated < 0 || review < 0 || qualification < 0 || upload < 0 ||
+		authenticated >= installed || installed >= reauthenticated || reauthenticated >= review || review >= qualification || qualification >= upload {
+		return fmt.Errorf("release workflow must authenticate, qualify the installed candidate, restore authentication, review v0.1 identity, qualify preservation, then upload evidence")
+	}
+	reauthenticationBlock := workflow[reauthenticated:review]
+	for _, contract := range []string{
+		"if: matrix.arch == 'amd64'",
+		"uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4",
+		"registry: ghcr.io",
+		"username: ${{ github.actor }}",
+		"password: ${{ secrets.GITHUB_TOKEN }}",
+	} {
+		if !strings.Contains(reauthenticationBlock, contract) {
+			return fmt.Errorf("historical qualification authentication is incomplete: missing %q", contract)
+		}
 	}
 	return nil
 }

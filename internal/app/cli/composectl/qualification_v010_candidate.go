@@ -381,14 +381,87 @@ func (c *Controller) collectV010FreshCandidateInventory(
 	if err != nil {
 		return compatibility.V010FreshCandidateInventory{}, err
 	}
-	if legacyPrincipals != 0 || dashboards != 0 || semanticModels != 0 {
+	instanceOutput, err := call("api", "call", "getInstance", "--target", "http://127.0.0.1:8080")
+	if err != nil {
+		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("observe fresh candidate environment: %w", err)
+	}
+	var instance struct {
+		ID          string `json:"id"`
+		Environment string `json:"environment"`
+	}
+	if err := decodeV010JourneyJSON(instanceOutput, &instance); err != nil || strings.TrimSpace(instance.ID) == "" ||
+		(instance.Environment != "fai-517-candidate" && instance.Environment != v010Environment) {
+		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("fresh candidate environment observation is invalid")
+	}
+	// listDeployments is the supported RESOURCE_READ observation for the exact
+	// project claim during bootstrap. A clean installation has no claim and is
+	// denied by that route; an admitted legacy claim makes the read succeed even
+	// when its deployment list is empty. Earlier authenticated observations prove
+	// the credential itself before this claim-specific denial is interpreted.
+	projectOutput, projectErr := call(
+		"api", "call", "listDeployments", "--target", "http://127.0.0.1:8080",
+		"--path", "project="+v010ProjectID,
+	)
+	projectVisible := projectErr == nil
+	if projectErr != nil && !v010CandidateAPIStatus(projectErr, 403) {
+		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("observe fresh candidate legacy project: %w", projectErr)
+	}
+	if projectVisible {
+		var deployments struct {
+			Items []json.RawMessage `json:"items"`
+		}
+		if err := decodeV010JourneyJSON(projectOutput, &deployments); err != nil {
+			return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("decode fresh candidate legacy project observation: %w", err)
+		}
+	}
+	projectVisible = projectVisible || instance.Environment == v010Environment
+	managedDataOutput, err := call(
+		"api", "call", "listManagedConnections", "--target", "http://127.0.0.1:8080",
+		"--path", "project="+v010ProjectID,
+	)
+	if err != nil {
+		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("observe fresh candidate legacy managed-data metadata: %w", err)
+	}
+	var managedData struct {
+		Items []struct {
+			ID        string `json:"id"`
+			ProjectID string `json:"projectId"`
+		} `json:"items"`
+	}
+	if err := decodeV010JourneyJSON(managedDataOutput, &managedData); err != nil {
+		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("decode fresh candidate legacy managed-data observation: %w", err)
+	}
+	managedDataVisible := len(managedData.Items) > 0
+	for _, item := range managedData.Items {
+		if strings.TrimSpace(item.ID) == "" || item.ProjectID != v010ProjectID {
+			return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("fresh candidate legacy managed-data observation is invalid")
+		}
+	}
+	if legacyPrincipals != 0 || dashboards != 0 || semanticModels != 0 || projectVisible || managedDataVisible {
 		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("fresh candidate exposed preserved v0.1 principals, project, or managed data")
 	}
 	return compatibility.V010FreshCandidateInventory{
 		AdminEmail: credentials.Email, AdminPrincipalID: adminResponse.Items[0].ID,
 		LegacyPrincipalCount: legacyPrincipals, DashboardCount: dashboards, SemanticModelCount: semanticModels,
-		LegacyProjectVisible: false, LegacyManagedDataVisible: false,
+		LegacyProjectVisible: projectVisible, LegacyManagedDataVisible: managedDataVisible,
 	}, nil
+}
+
+func v010CandidateAPIStatus(err error, status int) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	want := fmt.Sprintf("%d", status)
+	for _, marker := range []string{
+		`"status":` + want + `,`, `"status": ` + want + `,`,
+		`"status":` + want + `}`, `"status": ` + want + `}`,
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Controller) attemptV010LegacyStateAdoption(ctx context.Context, image, volume, target, home string) error {

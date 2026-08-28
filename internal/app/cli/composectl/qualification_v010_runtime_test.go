@@ -51,6 +51,12 @@ type v010DockerFixture struct {
 	candidateStopped         bool
 	candidateInitialized     bool
 	candidateLegacyVisible   bool
+	candidateLegacyProject   bool
+	candidateLegacyManaged   bool
+	candidateLegacyEnv       bool
+	candidateProjectObserved bool
+	candidateManagedObserved bool
+	candidateEnvObserved     bool
 	candidateDenialMutates   bool
 	candidateDenialAttempted bool
 }
@@ -258,6 +264,25 @@ func (fixture *v010DockerFixture) executeCandidateCLI(arguments []string) ([]byt
 		}
 		return []byte(`{"items":[],"page":{}}`), nil
 	case strings.Contains(joined, "listSemanticModels"):
+		return []byte(`{"items":[],"page":{}}`), nil
+	case strings.Contains(joined, "getInstance"):
+		fixture.candidateEnvObserved = true
+		environment := "fai-517-candidate"
+		if fixture.candidateLegacyEnv {
+			environment = v010Environment
+		}
+		return json.Marshal(map[string]string{"id": "candidate-instance", "environment": environment})
+	case strings.Contains(joined, "listDeployments"):
+		fixture.candidateProjectObserved = true
+		if fixture.candidateLegacyProject {
+			return []byte(`{"items":[],"page":{}}`), nil
+		}
+		return nil, errors.New(`GET /api/v1/projects/compatibility/deployments: {"status":403,"code":"FORBIDDEN"}`)
+	case strings.Contains(joined, "listManagedConnections"):
+		fixture.candidateManagedObserved = true
+		if fixture.candidateLegacyManaged {
+			return []byte(`{"items":[{"id":"qualification","projectId":"compatibility","title":"Qualification"}],"page":{}}`), nil
+		}
 		return []byte(`{"items":[],"page":{}}`), nil
 	default:
 		return nil, fmt.Errorf("unexpected candidate CLI command %v", arguments)
@@ -566,6 +591,22 @@ func TestDockerV010ArtifactResolverFailsClosed(t *testing.T) {
 	}
 }
 
+func TestDockerV010ArtifactResolverRequiresAuthenticationRestoredAfterLogout(t *testing.T) {
+	credentials := writeV010DockerCredentials(t)
+	resolver := newDockerV010ArtifactResolver(t.TempDir(), "docker-probe", nil)
+	resolver.configPath = credentials
+	require.NoError(t, resolver.requireRegistryCredentials())
+
+	require.NoError(t, os.WriteFile(credentials, []byte(`{"auths":{}}`), 0o600))
+	require.ErrorContains(t, resolver.requireRegistryCredentials(), "not configured")
+
+	restored := writeV010DockerCredentials(t)
+	document, err := os.ReadFile(restored)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(credentials, document, 0o600))
+	require.NoError(t, resolver.requireRegistryCredentials())
+}
+
 func TestV010ArtifactExecutionUsesIsolatedIdentityAndCleansUp(t *testing.T) {
 	fixture := newV010DockerFixture(t)
 	t.Setenv("DOCKER_CONFIG", filepath.Dir(writeV010DockerCredentials(t)))
@@ -746,6 +787,9 @@ func TestV010FreshCandidateFailsClosedOnLegacyVisibilityOrMutation(t *testing.T)
 		want   string
 	}{
 		{name: "legacy state visible", mutate: func(f *v010DockerFixture) { f.candidateLegacyVisible = true }, want: "exposed preserved v0.1"},
+		{name: "legacy project visible", mutate: func(f *v010DockerFixture) { f.candidateLegacyProject = true }, want: "exposed preserved v0.1"},
+		{name: "legacy environment visible", mutate: func(f *v010DockerFixture) { f.candidateLegacyEnv = true }, want: "exposed preserved v0.1"},
+		{name: "legacy managed data visible", mutate: func(f *v010DockerFixture) { f.candidateLegacyManaged = true }, want: "exposed preserved v0.1"},
 		{name: "denial mutates state", mutate: func(f *v010DockerFixture) { f.candidateDenialMutates = true }, want: "changed preserved predecessor state"},
 		{name: "candidate identity mismatch", mutate: func(f *v010DockerFixture) { f.candidateRevision = strings.Repeat("0", 40) }, want: "does not match the admitted policy artifact"},
 	} {
@@ -761,6 +805,22 @@ func TestV010FreshCandidateFailsClosedOnLegacyVisibilityOrMutation(t *testing.T)
 			require.ErrorContains(t, err, test.want)
 		})
 	}
+}
+
+func TestV010FreshCandidateRecordsObservedLegacyProjectAndManagedDataAbsence(t *testing.T) {
+	fixture := newV010DockerFixture(t)
+	t.Setenv("DOCKER_CONFIG", filepath.Dir(writeV010DockerCredentials(t)))
+	controller, err := New(Options{
+		Root: t.TempDir(), DockerBin: "docker-probe", qualificationExecutor: qualificationExecutorFunc(fixture.execute),
+	})
+	require.NoError(t, err)
+	evidence, err := controller.qualifyV010ArtifactExecution(t.Context(), v010CandidateBoundTestPolicy(t))
+	require.NoError(t, err)
+	require.True(t, fixture.candidateEnvObserved)
+	require.True(t, fixture.candidateProjectObserved)
+	require.True(t, fixture.candidateManagedObserved)
+	require.False(t, evidence.Execution.FreshCandidate.CandidateInventory.LegacyProjectVisible)
+	require.False(t, evidence.Execution.FreshCandidate.CandidateInventory.LegacyManagedDataVisible)
 }
 
 func candidateServerRunCommand(requests [][]string, image string) string {
