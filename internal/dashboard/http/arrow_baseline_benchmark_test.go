@@ -368,6 +368,7 @@ type dashboardBaselineFixture struct {
 	service  *dashboardruntime.Service
 	core     *materializeruntime.Runtime
 	database *dashboardBaselineDatabase
+	governor dashboardBaselineGovernor
 	handler  Handler
 }
 
@@ -383,10 +384,18 @@ func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixt
 		tb.Fatal(err)
 	}
 	database := &dashboardBaselineDatabase{rows: rows}
-	factory := &dashboardBaselineFactory{database: database, dependencyEvidence: dependencyEvidence}
 	identity, err := projectgraph.NewServingIdentity(dashboardBaselineProjectID, "test", dashboardBaselineSnapshot)
 	if err != nil {
 		tb.Fatal(err)
+	}
+	resultPartition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: resultidentity.PartitionProduction, ProjectID: identity.ProjectID, Environment: identity.Environment,
+	})
+	if err != nil {
+		tb.Fatal(err)
+	}
+	factory := &dashboardBaselineFactory{
+		database: database, dependencyEvidence: dependencyEvidence, resultPartition: resultPartition,
 	}
 	service, err := dashboardruntime.NewFromGeneration(context.Background(), "", factory, identity, definition)
 	if err != nil {
@@ -397,7 +406,11 @@ func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixt
 			tb.Errorf("close dashboard baseline fixture: %v", err)
 		}
 	})
-	return &dashboardBaselineFixture{service: service, core: factory.core, database: database, handler: Handler{Metrics: service, ProjectID: dashboardBaselineProjectID}}
+	return &dashboardBaselineFixture{
+		service: service, core: factory.core, database: database,
+		governor: dashboardBaselineGovernor{policyFingerprint: dashboardBaselineDigest("effective-policy")},
+		handler:  Handler{Metrics: service, ProjectID: dashboardBaselineProjectID},
+	}
 }
 
 func dashboardBaselineDependencyEvidence(model *semanticmodel.Model) (resultidentity.Evidence, error) {
@@ -507,6 +520,7 @@ func (f *dashboardBaselineFixture) queryEnvelope(tb testing.TB, visual string, r
 
 func (f *dashboardBaselineFixture) queryEnvelopeWithContext(tb testing.TB, ctx context.Context, visual string, rows int) visualizationir.VisualizationEnvelope {
 	tb.Helper()
+	ctx = dataquery.WithGovernor(ctx, f.governor)
 	resolved, err := f.service.Resolver().Resolve(projectgraph.ResourceID(dashboardBaselineDashboardID))
 	if err != nil {
 		tb.Fatal(err)
@@ -536,6 +550,15 @@ type dashboardBaselineObservation struct {
 	nextCursor      string
 }
 
+type dashboardBaselineGovernor struct {
+	policyFingerprint string
+}
+
+func (g dashboardBaselineGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	request.EffectivePolicyFingerprint = g.policyFingerprint
+	return request, nil, nil
+}
+
 func (o dashboardBaselineObservation) cacheHits() int {
 	count := 0
 	for _, outcome := range o.outcomes {
@@ -559,6 +582,7 @@ func (o dashboardBaselineObservation) cacheMisses() int {
 type dashboardBaselineFactory struct {
 	database           *dashboardBaselineDatabase
 	dependencyEvidence resultidentity.Evidence
+	resultPartition    resultidentity.Partition
 	core               *materializeruntime.Runtime
 }
 
@@ -567,7 +591,7 @@ func (f *dashboardBaselineFactory) OpenDashboardProjectDataRuntimes(ctx context.
 	model := models[dashboardBaselineModelID]
 	core, err := materializeruntime.NewRuntimeView(ctx, materializeruntime.RuntimeConfig{
 		ModelID: dashboardBaselineModelID.String(), Model: model, Database: f.database,
-		Sources: dashboardBaselineSources{}, SnapshotOnly: true, QueryCacheNamespace: dashboardBaselineSnapshot,
+		Sources: dashboardBaselineSources{}, SnapshotOnly: true, ResultPartition: f.resultPartition,
 		DependencyEvidence: f.dependencyEvidence,
 	})
 	if err != nil {
