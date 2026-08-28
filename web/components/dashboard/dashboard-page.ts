@@ -270,6 +270,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding-inline: 0;
     }
 
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-link {
+      display: grid;
+      width: var(--control-medium-size);
+      gap: 0;
+      padding: 0;
+    }
+
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-label {
+      display: none;
+    }
+
     .rail-footer {
       border-top: var(--lv-border-muted);
     }
@@ -303,6 +314,24 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .dashboard-back-link svg {
       width: var(--base-size-16);
       height: var(--base-size-16);
+    }
+
+    .rail-back-link {
+      display: inline-flex;
+      width: auto;
+      max-width: 100%;
+      align-items: center;
+      gap: var(--base-size-8);
+      padding-right: var(--base-size-8);
+    }
+
+    .rail-back-label {
+      display: block;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
     }
 
     .mobile-dashboard-back-link {
@@ -1106,11 +1135,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
           <div class="rail-header">
             ${this.presentation === 'app' ? html`
               <a
-                class="dashboard-back-link"
+                class="dashboard-back-link rail-back-link"
                 href="/"
                 aria-label="Back to dashboards"
                 title="All dashboards"
-              >${lucideIcon(ArrowLeft)}</a>
+              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Dashboards</span></a>
             ` : nothing}
           </div>
           <header class="header">

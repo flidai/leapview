@@ -399,6 +399,7 @@ test('app report frame aligns identity and footer with the canvas around context
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
       const railHeader = element.shadowRoot.querySelector('.rail-header') as HTMLElement
       const back = railHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
+      const backLabel = back.querySelector('.rail-back-label') as HTMLElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
       const sectionTitle = root.querySelector('.section-title') as HTMLElement
@@ -414,6 +415,7 @@ test('app report frame aligns identity and footer with the canvas around context
       const reportHeaderRect = reportHeader.getBoundingClientRect()
       const railHeaderRect = railHeader.getBoundingClientRect()
       const backRect = back.getBoundingClientRect()
+      const expandedBackLabelDisplay = getComputedStyle(backLabel).display
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
       const titleRect = title.getBoundingClientRect()
@@ -429,6 +431,7 @@ test('app report frame aligns identity and footer with the canvas around context
       const collapsedMainRect = main.getBoundingClientRect()
       const collapsedRailHeaderRect = railHeader.getBoundingClientRect()
       const collapsedBackRect = back.getBoundingClientRect()
+      const collapsedBackLabelDisplay = getComputedStyle(backLabel).display
       const collapsedTitleRect = title.getBoundingClientRect()
       const collapsedReportFooterRect = reportFooter.getBoundingClientRect()
       return {
@@ -437,6 +440,8 @@ test('app report frame aligns identity and footer with the canvas around context
         text: back.textContent?.trim(),
         backTag: back.tagName,
         title: back.getAttribute('title'),
+        expandedBackLabelDisplay,
+        collapsedBackLabelDisplay,
         reportTitle: reportHeader.querySelector('h1')?.textContent?.trim(),
         reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
         sidebarTitleCount: root.querySelectorAll('.sidebar-title').length,
@@ -458,6 +463,7 @@ test('app report frame aligns identity and footer with the canvas around context
           (collapsedBackRect.left + collapsedBackRect.width / 2)
             - (collapsedRailHeaderRect.left + collapsedRailHeaderRect.width / 2),
         ) < 2,
+        collapsedBackWidth: Math.round(collapsedBackRect.width),
         titleMovesWithCanvas: Math.round(collapsedTitleRect.left - titleRect.left)
           === Math.round(collapsedMainRect.left - mainRect.left),
         collapseInHeader: header.contains(collapse),
@@ -477,9 +483,11 @@ test('app report frame aligns identity and footer with the canvas around context
     expect(state).toEqual({
       href: '/',
       label: 'Back to dashboards',
-      text: '',
+      text: 'Dashboards',
       backTag: 'A',
       title: 'All dashboards',
+      expandedBackLabelDisplay: 'block',
+      collapsedBackLabelDisplay: 'none',
       reportTitle: 'Executive Sales Dashboard',
       reportTitleCount: 1,
       sidebarTitleCount: 0,
@@ -497,6 +505,7 @@ test('app report frame aligns identity and footer with the canvas around context
       collapsedTitleInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,
+      collapsedBackWidth: 32,
       titleMovesWithCanvas: true,
       collapseInHeader: true,
       sectionTitle: 'Pages',
