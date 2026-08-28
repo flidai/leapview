@@ -157,6 +157,24 @@ func (m *Module) writeDeliveryReadError(w http.ResponseWriter, r *http.Request, 
 	case errors.Is(err, deployment.ErrDeliveryConflict), errors.Is(err, deployment.ErrDeliveryStale):
 		status, code, message = http.StatusConflict, "DELIVERY_READ_CONFLICT", "Delivery status changed while it was being read"
 	}
+	if status == http.StatusServiceUnavailable {
+		stage, category := "unspecified", "unclassified"
+		var diagnostic interface {
+			DeliveryReadStage() string
+			DeliveryReadCategory() string
+		}
+		if errors.As(err, &diagnostic) {
+			stage, category = diagnostic.DeliveryReadStage(), diagnostic.DeliveryReadCategory()
+		}
+		m.candidateLogger().WarnContext(
+			r.Context(),
+			"canonical delivery read failed",
+			"method", r.Method,
+			"path", r.URL.Path,
+			"stage", stage,
+			"category", category,
+		)
+	}
 	apitransport.WriteProblem(w, r, status, code, message, nil)
 }
 

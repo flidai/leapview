@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -50,8 +51,10 @@ func TestDeliveryMutationErrorsUseTypedPublicContracts(t *testing.T) {
 }
 
 type deliveryReadFixture struct {
-	candidate   deployment.DeliveryCandidate
-	publication deployment.DeliveryPublication
+	candidate        deployment.DeliveryCandidate
+	publication      deployment.DeliveryPublication
+	operatorSnapshot deployment.DeliveryOperatorSnapshot
+	operatorErr      error
 }
 
 func (f deliveryReadFixture) PlanByID(context.Context, string) (deployment.DeliveryPlan, error) {
@@ -76,8 +79,25 @@ func (f deliveryReadFixture) DeliveryPublicationByID(context.Context, string) (d
 	return f.publication, nil
 }
 func (f deliveryReadFixture) DeliveryOperatorSnapshot(context.Context, string, string) (deployment.DeliveryOperatorSnapshot, error) {
+	if f.operatorErr != nil {
+		return deployment.DeliveryOperatorSnapshot{}, f.operatorErr
+	}
+	if f.operatorSnapshot.ProjectID != "" {
+		return f.operatorSnapshot, nil
+	}
 	return deployment.DeliveryOperatorSnapshot{}, sql.ErrNoRows
 }
+
+type boundedDeliveryReadDiagnostic struct {
+	err error
+}
+
+func (e boundedDeliveryReadDiagnostic) Error() string { return e.err.Error() }
+func (e boundedDeliveryReadDiagnostic) Unwrap() error { return e.err }
+func (boundedDeliveryReadDiagnostic) DeliveryReadStage() string {
+	return "physical_pool_admission_timestamp"
+}
+func (boundedDeliveryReadDiagnostic) DeliveryReadCategory() string { return "timestamp_parse" }
 
 func deliveryTestModule(reader deployment.DeliveryReader, principal bool) *Module {
 	return &Module{
@@ -107,6 +127,32 @@ func TestDeliveryReadReturnsTypedUnavailableFailure(t *testing.T) {
 	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", "candidate-1")
 	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "DELIVERY_READ_UNAVAILABLE") {
 		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDeliveryReadUnavailableLogsOnlyBoundedDiagnostic(t *testing.T) {
+	const sensitiveCause = "parse /var/lib/leapview/private.db value tenant-secret"
+	var logs bytes.Buffer
+	m := deliveryTestModule(deliveryReadFixture{operatorErr: boundedDeliveryReadDiagnostic{err: errors.New(sensitiveCause)}}, true)
+	m.logger = slog.New(slog.NewTextHandler(&logs, nil))
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/v1/projects/finance/delivery/operator", nil)
+	m.GetDeliveryOperatorSnapshot(recorder, request, "finance")
+
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "DELIVERY_READ_UNAVAILABLE") {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), sensitiveCause) || strings.Contains(logs.String(), sensitiveCause) {
+		t.Fatalf("delivery read leaked raw cause: body=%q logs=%q", recorder.Body.String(), logs.String())
+	}
+	for _, expected := range []string{
+		"canonical delivery read failed",
+		"stage=physical_pool_admission_timestamp",
+		"category=timestamp_parse",
+	} {
+		if !strings.Contains(logs.String(), expected) {
+			t.Fatalf("diagnostic log = %q, missing %q", logs.String(), expected)
+		}
 	}
 }
 

@@ -42,10 +42,18 @@ func parseDeliveryTime(value string) (time.Time, error) {
 		return time.Time{}, nil
 	}
 	t, err := time.Parse(time.RFC3339Nano, value)
-	if err != nil {
+	if err == nil {
+		return t.UTC(), nil
+	}
+	// Physical-pool admissions created by SQLite use CURRENT_TIMESTAMP, whose
+	// stable UTC representation predates the RFC3339 timestamps written by the
+	// delivery repositories. Operator snapshots must remain able to read both
+	// forms because admissions are immutable and may survive an upgrade.
+	legacy, legacyErr := time.ParseInLocation("2006-01-02 15:04:05.999999999", value, time.UTC)
+	if legacyErr != nil {
 		return time.Time{}, err
 	}
-	return t.UTC(), nil
+	return legacy.UTC(), nil
 }
 
 func parseNullableDeliveryTime(value sql.NullString) (time.Time, error) {
