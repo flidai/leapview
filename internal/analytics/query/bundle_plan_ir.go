@@ -127,19 +127,24 @@ func (p *Planner) buildBundlePlanIR(requests []BundleRequest, resolutions []aggr
 	return merged, nil
 }
 
-func (p *Planner) bundleBranchFingerprints(requests []BundleRequest, resolutions []aggregateResolution) ([]string, error) {
+func (p *Planner) bundleBranchDependencyProjections(requests []BundleRequest, resolutions []aggregateResolution) ([]DependencyProjection, []string, error) {
+	projections := make([]DependencyProjection, len(requests))
 	fingerprints := make([]string, len(requests))
 	for i := range requests {
 		graph, err := p.buildAggregatePlanIR(requests[i].Request, resolutions[i])
 		if err != nil {
-			return nil, err
+			return nil, nil, err
+		}
+		projections[i], err = (Plan{IR: graph}).ResultDependencies()
+		if err != nil {
+			return nil, nil, err
 		}
 		fingerprints[i], err = graph.Fingerprint()
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 	}
-	return fingerprints, nil
+	return projections, fingerprints, nil
 }
 
 func planIRTopologicalIDs(graph *planir.Graph) []string {

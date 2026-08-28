@@ -450,6 +450,17 @@ func (p Project) RelationExecutionDigests(context string) (map[string]string, er
 // transitive source/binding/pin context; callers can therefore change an
 // unrelated source without invalidating untouched physical references.
 func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (map[string]string, error) {
+	return p.relationExecutionDigestsByContext(contexts, func(table semanticmodel.Table) any { return table }, func(encoded []byte) string {
+		sum := sha256.Sum256(encoded)
+		return "sha256:" + hex.EncodeToString(sum[:])
+	})
+}
+
+func (p Project) relationExecutionDigestsByContext(
+	contexts map[string]string,
+	projectTable func(semanticmodel.Table) any,
+	digest func([]byte) string,
+) (map[string]string, error) {
 	tables := p.ModelTables()
 	resources := make(map[string]string)
 	resourceIDsByName := make(map[string]string)
@@ -489,10 +500,10 @@ func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (
 		}
 		delete(visiting, name)
 		return struct {
-			Table        semanticmodel.Table `json:"table"`
-			Dependencies map[string]any      `json:"dependencies,omitempty"`
-			Context      string              `json:"context"`
-		}{Table: table, Dependencies: dependencies, Context: contexts[resourceIDsByName[name]]}, nil
+			Table        any            `json:"table"`
+			Dependencies map[string]any `json:"dependencies,omitempty"`
+			Context      string         `json:"context"`
+		}{Table: projectTable(table), Dependencies: dependencies, Context: contexts[resourceIDsByName[name]]}, nil
 	}
 	result := make(map[string]string, len(tables))
 	for id, name := range resources {
@@ -507,8 +518,7 @@ func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (
 		if err != nil {
 			return nil, fmt.Errorf("encode relation %q: %w", id, err)
 		}
-		sum := sha256.Sum256(encoded)
-		result[id] = "sha256:" + hex.EncodeToString(sum[:])
+		result[id] = digest(encoded)
 	}
 	return result, nil
 }

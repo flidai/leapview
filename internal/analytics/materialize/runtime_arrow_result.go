@@ -10,6 +10,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/query/planir"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
@@ -19,6 +20,8 @@ type plannedArrowQuery struct {
 	planningMS    int64
 	countOnly     bool
 	totalFromData bool
+	dependency    resultidentity.Dependency
+	reusable      bool
 }
 
 func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
@@ -38,28 +41,41 @@ func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
 }
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {
+	cacheable := dashboardQueryResultCacheable(request)
+	var planned plannedArrowQuery
+	var planErr error
+	if cacheable {
+		planned, planErr = r.planOwnedArrowQuery(request)
+		if planErr == nil {
+			planned.dependency, planned.reusable = r.dependencyForPlan(planned.plan)
+		}
+	}
 	execute := func() (arrowQueryExecution, error) {
 		var execution arrowQueryExecution
+		current := planned
 		execCtx, statements := withPhysicalStatementCounter(dataquery.WithResultBudget(ctx, r.queryResultLimits()))
 		summary, err := admitPhysicalQuery(execCtx, request, func(queryCtx context.Context) (dataquery.Result, error) {
-			planned, planErr := r.planOwnedArrowQuery(request)
-			if planErr != nil {
-				return dataquery.Result{PlanningMS: planned.planningMS}, planErr
+			if !cacheable {
+				var planningErr error
+				current, planningErr = r.planOwnedArrowQuery(request)
+				if planningErr != nil {
+					return dataquery.Result{PlanningMS: current.planningMS}, planningErr
+				}
 			}
 			lease, leasedCtx, acquireErr := acquireDatabaseLease(queryCtx, r.db)
 			if acquireErr != nil {
-				return dataquery.Result{PlanningMS: planned.planningMS}, acquireErr
+				return dataquery.Result{PlanningMS: current.planningMS}, acquireErr
 			}
 			if lease != nil {
 				defer lease.Release()
 				queryCtx = leasedCtx
 			}
 			if extensionErr := r.ensureRequiredExtensions(queryCtx); extensionErr != nil {
-				return dataquery.Result{PlanningMS: planned.planningMS}, extensionErr
+				return dataquery.Result{PlanningMS: current.planningMS}, extensionErr
 			}
 			queryCtx, connectionWait := dataquery.WithConnectionWaitCounter(queryCtx)
 			databaseStarted := time.Now()
-			data, queryErr := r.captureArrowPlan(queryCtx, planned.plan)
+			data, queryErr := r.captureArrowPlan(queryCtx, current.plan)
 			databaseMS := elapsedStageMS(databaseStarted)
 			waitMS := connectionWait.Duration().Milliseconds()
 			if waitMS >= databaseMS {
@@ -68,20 +84,20 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 				databaseMS -= waitMS
 			}
 			execution.data = data
-			execution.metadata = resultcache.Metadata{SQL: planned.plan.SQL}
-			result := dataquery.Result{SQL: planned.plan.SQL, PlanningMS: planned.planningMS, ConnectionWaitMS: waitMS, DatabaseMS: databaseMS}
+			execution.metadata = resultcache.Metadata{SQL: current.plan.SQL}
+			result := dataquery.Result{SQL: current.plan.SQL, PlanningMS: current.planningMS, ConnectionWaitMS: waitMS, DatabaseMS: databaseMS}
 			if queryErr != nil {
 				return result, queryErr
 			}
-			if total, known, extractErr := arrowResultTotal(request, data, planned.countOnly || planned.totalFromData); extractErr != nil {
+			if total, known, extractErr := arrowResultTotal(request, data, current.countOnly || current.totalFromData); extractErr != nil {
 				return result, extractErr
 			} else if known {
 				execution.metadata.TotalRows = total
 				execution.metadata.TotalRowsKnown = true
 			}
-			if request.IncludeTotal && !execution.metadata.TotalRowsKnown && planned.countPlan != nil {
+			if request.IncludeTotal && !execution.metadata.TotalRowsKnown && current.countPlan != nil {
 				countStarted := time.Now()
-				countData, countErr := r.captureArrowPlan(queryCtx, *planned.countPlan)
+				countData, countErr := r.captureArrowPlan(queryCtx, *current.countPlan)
 				result.DatabaseMS += elapsedStageMS(countStarted)
 				if countErr != nil {
 					return result, countErr
@@ -103,9 +119,14 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 	}
 
 	var result dataquery.Result
-	var err error
-	if dashboardQueryResultCacheable(request) {
-		result, err = r.queryCache.executeArrow(ctx, request, execute)
+	err := planErr
+	if planErr != nil {
+		// Planning used to run inside admitPhysicalQuery, which classified an
+		// unsuccessful attempt as an execution failure. Preserve that public
+		// classification even though planning now precedes cache eligibility.
+		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
+	} else if cacheable && planned.reusable && queryCacheIdentityAvailable(request, r.resultPartition, planned.dependency) {
+		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute()
@@ -123,6 +144,13 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		} else {
 			result = execution.summary
 		}
+		if cacheable {
+			result.CacheOutcome = dataquery.CacheMiss
+			observeQueryCacheOutcome(ctx, result, err)
+		}
+	}
+	if planErr != nil && cacheable {
+		observeQueryCacheOutcome(ctx, result, err)
 	}
 	if _, ok := dataquery.ResultLimitReasonOf(err); ok {
 		return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionFailed, Error: err.Error()}, err
@@ -133,6 +161,21 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		}
 	}
 	return result, err
+}
+
+func (r *Runtime) dependencyForPlan(plan semanticquery.Plan) (resultidentity.Dependency, bool) {
+	if r == nil || !r.dependencyEvidence.Available() {
+		return resultidentity.Dependency{}, false
+	}
+	projection, err := plan.ResultDependencies()
+	if err != nil {
+		return resultidentity.Dependency{}, false
+	}
+	dependency, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
+	if err != nil {
+		return resultidentity.Dependency{}, false
+	}
+	return dependency, true
 }
 
 func (r *Runtime) captureArrowPlan(ctx context.Context, plan semanticquery.Plan) (*arrowresult.Result, error) {

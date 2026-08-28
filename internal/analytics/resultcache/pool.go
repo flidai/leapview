@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/flidai/leapview/pkg/arrowresult"
 	"golang.org/x/sync/singleflight"
@@ -72,13 +73,16 @@ type Pool struct {
 }
 
 type Scope struct {
-	pool *Pool
-	key  string
+	pool   *Pool
+	key    string
+	closed atomic.Bool
 }
 type scopeState struct {
 	id         ScopeID
 	generation Token
 	closed     bool
+	shared     bool
+	references int
 	entries    map[string]struct{}
 	usage      usage
 }
@@ -203,7 +207,7 @@ func (s *Scope) Stats() UsageSnapshot {
 	}
 	s.pool.mu.Lock()
 	defer s.pool.mu.Unlock()
-	if state := s.pool.scopes[s.key]; state != nil {
+	if state := s.openStateLocked(); state != nil {
 		return UsageSnapshot{Entries: state.usage.entries, Bytes: state.usage.bytes}
 	}
 	return UsageSnapshot{}
@@ -240,8 +244,59 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	if existing := p.scopes[key]; existing != nil && !existing.closed {
 		return nil, fmt.Errorf("result cache scope already exists")
 	}
-	p.scopes[key] = &scopeState{id: id, entries: map[string]struct{}{}}
+	p.scopes[key] = &scopeState{id: id, references: 1, entries: map[string]struct{}{}}
 	return &Scope{pool: p, key: key}, nil
+}
+
+// OpenSharedScope acquires one handle to a stable cache scope. All live
+// handles with the same identity share entries and invalidation generation.
+// Closing one handle leaves the scope available to the others; the final
+// close releases the retained entries.
+func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
+	if p == nil {
+		return nil, fmt.Errorf("result cache pool is required")
+	}
+	if id.RuntimeID == "" {
+		return nil, fmt.Errorf("result cache runtime ID is required")
+	}
+	key := id.RuntimeID
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil, fmt.Errorf("result cache pool is closed")
+	}
+	if existing := p.scopes[key]; existing != nil && !existing.closed {
+		if !existing.shared {
+			return nil, fmt.Errorf("result cache scope already exists")
+		}
+		existing.references++
+		return &Scope{pool: p, key: key}, nil
+	}
+	p.scopes[key] = &scopeState{id: id, shared: true, references: 1, entries: map[string]struct{}{}}
+	return &Scope{pool: p, key: key}, nil
+}
+
+func (s *Scope) openStateLocked() *scopeState {
+	if s == nil || s.pool == nil || s.closed.Load() || s.pool.closed {
+		return nil
+	}
+	state := s.pool.scopes[s.key]
+	if state == nil || state.closed {
+		return nil
+	}
+	return state
+}
+
+func (s *Scope) requireOpen() error {
+	if s == nil || s.pool == nil {
+		return fmt.Errorf("result cache scope is required")
+	}
+	s.pool.mu.Lock()
+	defer s.pool.mu.Unlock()
+	if s.openStateLocked() == nil {
+		return fmt.Errorf("result cache scope is closed")
+	}
+	return nil
 }
 
 func (s *Scope) Generation() Token {
@@ -250,7 +305,7 @@ func (s *Scope) Generation() Token {
 	}
 	s.pool.mu.Lock()
 	defer s.pool.mu.Unlock()
-	if state := s.pool.scopes[s.key]; state != nil {
+	if state := s.openStateLocked(); state != nil {
 		return state.generation
 	}
 	return 0
@@ -265,8 +320,8 @@ func (s *Scope) LookupArrow(key string) (*EntryLease, Token, bool, error) {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if p.closed || state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		return nil, 0, false, fmt.Errorf("result cache scope is closed")
 	}
 	element := p.entries[s.key+"\x00"+key]
@@ -294,8 +349,8 @@ func (s *Scope) LookupBytes(key string) ([]byte, Token, bool, error) {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if p.closed || state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		return nil, 0, false, fmt.Errorf("result cache scope is closed")
 	}
 	element := p.entries[s.key+"\x00"+key]
@@ -319,8 +374,8 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if p.closed || state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		p.stores[StoreClosed]++
 		return StoreClosed
 	}
@@ -363,8 +418,8 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if p.closed || state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		p.stores[StoreClosed]++
 		return StoreClosed
 	}
@@ -402,8 +457,8 @@ func (s *Scope) Delete(key string) {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		return
 	}
 	p.removeLocked(p.entries[s.key+"\x00"+key], "")
@@ -469,8 +524,8 @@ func (s *Scope) Invalidate() {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		return
 	}
 	for composite := range state.entries {
@@ -483,11 +538,18 @@ func (s *Scope) Close() error {
 	if s == nil || s.pool == nil {
 		return nil
 	}
+	if !s.closed.CompareAndSwap(false, true) {
+		return nil
+	}
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	state := p.scopes[s.key]
 	if state == nil || state.closed {
+		return nil
+	}
+	if state.shared && state.references > 1 {
+		state.references--
 		return nil
 	}
 	for composite := range state.entries {
@@ -509,8 +571,8 @@ func (e canceledFlight) Unwrap() error { return e.err }
 func OwnerCanceled(err error) error { return canceledFlight{err: err} }
 
 func (s *Scope) Coalesce(ctx context.Context, key string, execute func() (any, error)) (any, bool, error) {
-	if s == nil || s.pool == nil {
-		return nil, false, fmt.Errorf("result cache scope is required")
+	if err := s.requireOpen(); err != nil {
+		return nil, false, err
 	}
 	flightKey := s.key + "\x00" + key
 	for {
@@ -542,8 +604,8 @@ func (s *Scope) Coalesce(ctx context.Context, key string, execute func() (any, e
 // releasing buffers still needed by other waiters. If the owning execution was
 // canceled, a live waiter starts a replacement flight.
 func (s *Scope) CoalesceArrow(ctx context.Context, key string, execute func() (ArrowFlightValue, error)) (*ArrowFlightLease, ArrowFlightStatus, error) {
-	if s == nil || s.pool == nil {
-		return nil, ArrowFlightStatus{}, fmt.Errorf("result cache scope is required")
+	if err := s.requireOpen(); err != nil {
+		return nil, ArrowFlightStatus{}, err
 	}
 	flightKey := s.key + "\x00" + key
 	for {

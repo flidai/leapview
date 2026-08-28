@@ -535,6 +535,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/arrow-optimization-evidence
+            title: Evidence-gated Arrow optimization
+            type: explanation
+            summary: Measure dashboard Arrow boundaries before approving a production migration.
+            source: articles/architecture/arrow-optimization-evidence.md
           - slug: architecture/journey-qualification
             title: Cross-role journey qualification
             type: reference

@@ -277,6 +277,20 @@ tasks:
       - task: build
       - bun scripts/capture_site_product.ts
 
+  bench:arrow:quick:
+    desc: Run the bounded Arrow evidence benchmark matrix for local iteration
+    cmds:
+      - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$/(narrow|wide)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+
+  bench:arrow:full:
+    desc: Run all Arrow evidence workloads with comparison-grade sample counts
+    cmds:
+      - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:
@@ -978,6 +992,19 @@ tasks:
       # attestations are enforced, rather than trusting client provenance text.
       - go test ./internal/project/module -run '^(TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads|TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart)$' -count=1 -v
 
+  test:ubdr:v0.1-artifact:
+    desc: Validate exact v0.1 registry provenance and authentic isolated application journey
+    deps:
+      - db:generate
+      - api:generate
+    cmds:
+      - >-
+        go test
+        ./internal/platform/compatibility
+        ./internal/app/cli/composectl
+        -run 'V010'
+        -count=1
+
   test:ubdr:transition-policy:
     desc: Validate the versioned release-transition policy and pre-mutation denial contract
     deps:
@@ -992,11 +1019,51 @@ tasks:
         ./internal/app/cli/hostinstall
         ./internal/app/cli/composectl
         ./internal/platform
-        -run 'Bind|Predecessor|Transition|Upgrade|Rollback|Legacy|ReleasePolicy'
+        -run 'Bind|Predecessor|Transition|Upgrade|Rollback|Legacy|ReleasePolicy|V010'
         -count=1
       - >-
         go run ./internal/app/tools/transitionpolicy
         --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/transition-policy
+
+  test:ubdr:backup-manifest-v2:
+    desc: Validate backup manifest v2, bounded restore preflight, and non-mutation evidence
+    deps:
+      - db:generate
+      - api:generate
+    cmds:
+      - >-
+        go test
+        ./internal/platform
+        ./internal/admin/offline
+        ./internal/admin/cli
+        ./internal/app/adminoffline
+        -run 'Backup|Restore|Manifest|Preflight'
+        -count=1
+      - >-
+        go run ./internal/app/tools/backupmanifestv2
+        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/backup-manifest-v2
+
+  test:ubdr:recovery-ledger:
+    desc: Validate the durable scheduled recovery ledger, fencing, restart, evidence publication, and retention contracts
+    deps:
+      - db:generate
+      - config:generate
+      - ui-signals:generate
+    cmds:
+      - >-
+        go test
+        ./internal/refresh/module
+        ./internal/refresh/recovery
+        ./internal/refresh/sqlite
+        ./internal/platform
+        ./internal/app
+        -run 'Recovery|Occurrence|Lease|Fence|Schedule|Retention|MigrationChain'
+        -count=1
+      - go test ./internal/platform/safetext -count=1
+      - go test ./internal/analytics/queryaudit/... -count=1
+      - >-
+        go run ./internal/app/tools/recoveryledger
+        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/recovery-ledger
 
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane

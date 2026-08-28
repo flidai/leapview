@@ -22,6 +22,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -584,47 +585,48 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
-	Models                   map[string]*semanticmodel.Model
-	ModelTables              map[string]semanticmodel.Table
-	Database                 analyticsruntime.ProjectDatabase
-	CredentialResolver       CredentialResolver
-	ConnectionResolver       analyticsruntime.ConnectionResolver
-	ExtensionAdmission       ExtensionAdmission
-	SnapshotID               int64
-	ServingStateID           string
-	ProjectID                projectgraph.ResourceID
-	Environment              string
-	TargetType               string
-	TargetID                 string
-	SemanticDigest           string
-	ArtifactDigest           string
-	SourceDataDigest         string
-	CandidateID              string
-	AuthorizationFingerprint string
-	BindingFingerprint       string
-	RequiredExtensions       []string
-	SkipInitialRefresh       bool
-	MaterializationOnly      bool
-	QueryCache               *resultcache.Scope
-	ResultLimits             dataquery.ResultLimits
+	Models              map[string]*semanticmodel.Model
+	ModelTables         map[string]semanticmodel.Table
+	Database            analyticsruntime.ProjectDatabase
+	CredentialResolver  CredentialResolver
+	ConnectionResolver  analyticsruntime.ConnectionResolver
+	ExtensionAdmission  ExtensionAdmission
+	SnapshotID          int64
+	ServingStateID      string
+	ProjectID           projectgraph.ResourceID
+	Environment         string
+	TargetType          string
+	TargetID            string
+	SemanticDigest      string
+	ArtifactDigest      string
+	SourceDataDigest    string
+	RequiredExtensions  []string
+	SkipInitialRefresh  bool
+	MaterializationOnly bool
+	ResultPartition     resultidentity.Partition
+	QueryResultCache    *resultcache.Scope
+	ImmutableByteCache  *resultcache.Scope
+	ResultLimits        dataquery.ResultLimits
+	DependencyEvidence  map[string]resultidentity.Evidence
 }
 
 type ProjectRuntime struct {
-	mu                   sync.Mutex
-	projectID            projectgraph.ResourceID
-	db                   analyticsmaterialize.Database
-	sessions             analyticsresource.SessionProvider
-	committer            duckLakeCommitter
-	sources              *SourceRuntime
-	models               map[string]*semanticmodel.Model
-	materializationModel *semanticmodel.Model
-	views                map[string]*analyticsmaterialize.Runtime
-	lastRefresh          time.Time
-	lastSnapshotID       int64
-	sourceObservations   []analyticsmaterialize.SourceObservation
-	commitMetadata       map[string]string
-	cacheScope           *resultcache.Scope
-	viewConfig           ProjectRuntimeConfig
+	mu                      sync.Mutex
+	projectID               projectgraph.ResourceID
+	db                      analyticsmaterialize.Database
+	sessions                analyticsresource.SessionProvider
+	committer               duckLakeCommitter
+	sources                 *SourceRuntime
+	models                  map[string]*semanticmodel.Model
+	materializationModel    *semanticmodel.Model
+	views                   map[string]*analyticsmaterialize.Runtime
+	lastRefresh             time.Time
+	lastSnapshotID          int64
+	sourceObservations      []analyticsmaterialize.SourceObservation
+	commitMetadata          map[string]string
+	queryResultCacheScope   *resultcache.Scope
+	immutableByteCacheScope *resultcache.Scope
+	viewConfig              ProjectRuntimeConfig
 }
 
 // Planner returns the activation-owned planner for one semantic model. The
@@ -656,6 +658,11 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	if err := config.ProjectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project id: %w", err)
 	}
+	dependencyEvidence := make(map[string]resultidentity.Evidence, len(config.DependencyEvidence))
+	for modelID, evidence := range config.DependencyEvidence {
+		dependencyEvidence[modelID] = evidence
+	}
+	config.DependencyEvidence = dependencyEvidence
 	db := config.Database
 	if db == nil {
 		return nil, fmt.Errorf("process DuckDB environment is required")
@@ -687,17 +694,18 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	runtime := &ProjectRuntime{
-		projectID:            config.ProjectID,
-		db:                   db,
-		sessions:             db,
-		committer:            db,
-		sources:              sources,
-		models:               config.Models,
-		materializationModel: materializationModel,
-		views:                map[string]*analyticsmaterialize.Runtime{},
-		commitMetadata:       projectCommitMetadata(config),
-		cacheScope:           config.QueryCache,
-		viewConfig:           config,
+		projectID:               config.ProjectID,
+		db:                      db,
+		sessions:                db,
+		committer:               db,
+		sources:                 sources,
+		models:                  config.Models,
+		materializationModel:    materializationModel,
+		views:                   map[string]*analyticsmaterialize.Runtime{},
+		commitMetadata:          projectCommitMetadata(config),
+		queryResultCacheScope:   config.QueryResultCache,
+		immutableByteCacheScope: config.ImmutableByteCache,
+		viewConfig:              config,
 	}
 	if config.SnapshotID > 0 {
 		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
@@ -728,6 +736,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 	}
 	next := make(map[string]*analyticsmaterialize.Runtime, len(r.models))
 	for modelID, model := range r.models {
+		dependencyEvidence := config.DependencyEvidence[modelID]
 		tableRelation := func(table string) (string, error) {
 			physical := strings.TrimSpace(table)
 			if err := validateIdentifier(physical); err != nil {
@@ -739,10 +748,12 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID: modelID, Model: model, QueryCacheNamespace: projectQueryCacheNamespace(config),
+			ModelID: modelID, Model: model, ResultPartition: config.ResultPartition,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
-			QueryCache: config.QueryCache, ResultLimits: config.ResultLimits,
+			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,
+			ResultLimits:       config.ResultLimits,
+			DependencyEvidence: dependencyEvidence,
 			RequiredExtensions: config.RequiredExtensions,
 		})
 		if err != nil {
@@ -833,22 +844,6 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 		}
 	}
 	return nil
-}
-
-func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
-	return fmt.Sprintf(
-		"snapshot=%d;serving=%q;project=%q;environment=%q;semantic=%q;artifact=%q;source=%q;candidate=%q;authorization=%q;bindings=%q",
-		config.SnapshotID,
-		config.ServingStateID,
-		config.ProjectID.String(),
-		config.Environment,
-		config.SemanticDigest,
-		config.ArtifactDigest,
-		config.SourceDataDigest,
-		config.CandidateID,
-		config.AuthorizationFingerprint,
-		config.BindingFingerprint,
-	)
 }
 
 func (r *ProjectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
@@ -1289,8 +1284,13 @@ func (r *ProjectRuntime) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if r.cacheScope != nil {
-		if err := r.cacheScope.Close(); err != nil {
+	if r.queryResultCacheScope != nil {
+		if err := r.queryResultCacheScope.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if r.immutableByteCacheScope != nil && r.immutableByteCacheScope != r.queryResultCacheScope {
+		if err := r.immutableByteCacheScope.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}

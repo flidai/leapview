@@ -66,7 +66,7 @@
     "release": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "version", "sourceRevision", "distribution", "artifacts", "legacyMarkers", "defaults"],
+      "required": ["id", "version", "sourceRevision", "distribution", "artifacts", "legacyMarkers", "legacyBackupVersions", "defaults"],
       "properties": {
         "id": {
           "type": "string",
@@ -93,6 +93,11 @@
           "type": "array",
           "uniqueItems": true,
           "items": { "type": "string", "minLength": 1 }
+        },
+        "legacyBackupVersions": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "integer", "enum": [1] }
         },
         "defaults": {
           "type": "object",

@@ -104,6 +104,7 @@ type SealedRuntimeFactory interface {
 type ManagedDataResolution struct {
 	RevisionID string
 	Roots      map[string]string
+	Revisions  map[string]string
 	Lifetime   ManagedDataLifetime
 }
 type ManagedDataLifetime interface{ Release() error }
@@ -140,8 +141,26 @@ type CandidateRuntimeContext struct {
 	OwnerID                  string
 	AuthorizationFingerprint string
 	BindingFingerprint       string
+	RuntimeVersion           string
+	BindingKinds             map[string]string
+	Capabilities             []RuntimeCapabilityEvidence
 	CompatibilityFingerprint string
 	GateEvidenceDigest       string
+}
+
+// RuntimeCapabilityEvidence is the non-secret, target-verified identity of
+// one admitted analytical runtime capability. It deliberately carries no
+// artifact path, origin, signature, or request-scoped state.
+type RuntimeCapabilityEvidence struct {
+	Name             string
+	Identity         string
+	Digest           string
+	DuckDBVersion    string
+	ExtensionVersion string
+	GOOS             string
+	GOARCH           string
+	Platform         string
+	SupportProfile   string
 }
 
 type ManagerOptions struct {

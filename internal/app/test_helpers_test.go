@@ -280,6 +280,8 @@ type assemblyConfig struct {
 	RefreshPipelineClock    refreshmodule.Clock
 	RefreshMaterializer     refreshrun.Materializer
 	EnableRefreshDispatcher bool
+	RecoveryLifecycle       *refreshmodule.RecoveryLifecycle
+	RecoveryInterval        time.Duration
 	RuntimeHost             *runtimehostmodule.Module
 	ProjectID               projectgraph.ResourceID
 	ProjectIDResolver       func(context.Context) (projectgraph.ResourceID, error)
@@ -421,6 +423,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			Auth: options.Auth, Reloader: options.Reloader, Workload: options.Workload,
 			DeploymentConfig: options.DeploymentConfig, RefreshPipelineClock: options.RefreshPipelineClock,
 			RefreshMaterializer: options.RefreshMaterializer, EnableRefreshDispatcher: options.EnableRefreshDispatcher,
+			RecoveryLifecycle: options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{

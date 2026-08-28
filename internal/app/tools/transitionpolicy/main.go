@@ -56,25 +56,6 @@ func main() {
 	}
 }
 
-type candidateAdmissionRecord struct {
-	SchemaVersion  int    `json:"schemaVersion"`
-	Image          string `json:"image"`
-	Digest         string `json:"digest"`
-	RegistryDigest string `json:"registryDigest"`
-	Attestation    struct {
-		Verified       bool   `json:"verified"`
-		Repository     string `json:"repository"`
-		Workflow       string `json:"workflow"`
-		SourceRevision string `json:"sourceRevision"`
-	} `json:"attestation"`
-	SBOM struct {
-		Discoverable bool `json:"discoverable"`
-	} `json:"sbom"`
-	VulnerabilityPolicy struct {
-		Passed bool `json:"passed"`
-	} `json:"vulnerabilityPolicy"`
-}
-
 type predecessorVerification struct {
 	SchemaVersion   int                           `json:"schemaVersion"`
 	PolicyVersion   string                        `json:"policyVersion"`
@@ -160,21 +141,10 @@ func validateCandidateAdmission(path, image, revision string) error {
 	if err != nil {
 		return fmt.Errorf("read candidate admission: %w", err)
 	}
-	var record candidateAdmissionRecord
-	if err := json.Unmarshal(contents, &record); err != nil {
-		return fmt.Errorf("decode candidate admission: %w", err)
-	}
-	digest := ""
-	if index := strings.LastIndex(image, "@"); index >= 0 {
-		digest = image[index+1:]
-	}
-	if record.SchemaVersion != 1 || !record.Attestation.Verified || record.Attestation.Repository != "flidai/leapview" ||
-		record.Attestation.Workflow != "flidai/leapview/.github/workflows/release.yml" ||
-		!record.SBOM.Discoverable || !record.VulnerabilityPolicy.Passed ||
-		record.Image != image || record.Digest != digest || record.RegistryDigest != digest || record.Attestation.SourceRevision != revision {
-		return fmt.Errorf("candidate admission does not authorize release identity %s at revision %s", image, revision)
-	}
-	return nil
+	_, err = compatibility.ValidateCandidateAdmissionEvidence(contents, compatibility.ReleaseIdentity{
+		Image: image, SourceRevision: revision,
+	})
+	return err
 }
 
 func verifyPredecessors(policy *compatibility.Policy, template compatibility.CandidateTransitionTemplate, resolve predecessorResolver) (predecessorVerification, error) {

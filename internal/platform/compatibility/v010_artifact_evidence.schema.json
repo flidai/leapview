@@ -1,0 +1,385 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://leapview.dev/schemas/v0.1-artifact-evidence.schema.json",
+  "title": "LeapView v0.1 released artifact identity evidence",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "kind",
+    "verifiedAt",
+    "policyVersion",
+    "policySha256",
+    "identity",
+    "artifact",
+    "provenance",
+    "result"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "kind": { "const": "leapview-v0.1-release-identity" },
+    "verifiedAt": { "type": "string", "format": "date-time" },
+    "policyVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+    "policySha256": { "$ref": "#/$defs/sha256" },
+    "identity": { "$ref": "#/$defs/releaseIdentity" },
+    "artifact": { "$ref": "#/$defs/artifact" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "execution": { "$ref": "#/$defs/execution" },
+    "result": { "const": "verified" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+    "releaseIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "version", "sourceRevision", "image", "distribution", "platform"],
+      "properties": {
+        "releaseId": { "const": "v0.1.0" },
+        "version": { "const": "0.1.0" },
+        "sourceRevision": { "const": "5bf4aded574df459e80d81b77d1989ecd4fa7de0" },
+        "image": { "const": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" },
+        "distribution": { "const": "authentication-required" },
+        "platform": { "const": "linux/amd64" }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repository", "image", "resolvedDigest", "platform", "platformManifestDigest", "configDigest", "authenticated"],
+      "properties": {
+        "repository": { "const": "ghcr.io/yacobolo/libredash" },
+        "image": { "const": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" },
+        "resolvedDigest": { "const": "sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" },
+        "platform": { "const": "linux/amd64" },
+        "platformManifestDigest": { "const": "sha256:a8a60264b099c21eb46bf2ed8de1cca7f5867687d570ca2c6c3f9de4ad11018a" },
+        "configDigest": { "const": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9" },
+        "authenticated": { "const": true }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["sourceRepository", "sourceTag", "version", "sourceRevision"],
+      "properties": {
+        "sourceRepository": { "const": "https://github.com/Yacobolo/libredash" },
+        "sourceTag": { "const": "v0.1.0" },
+        "version": { "const": "0.1.0" },
+        "sourceRevision": { "const": "5bf4aded574df459e80d81b77d1989ecd4fa7de0" }
+      }
+    },
+    "execution": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId",
+        "containerId",
+        "containerName",
+        "image",
+        "imageId",
+        "platform",
+        "networkName",
+        "stateVolumeName",
+        "startedAt",
+        "stoppedAt",
+        "startedState",
+        "stoppedState",
+        "cleanShutdown",
+        "cleanupVerified",
+        "journey",
+        "preservation",
+        "freshCandidate"
+      ],
+      "properties": {
+        "runId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "containerId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "containerName": { "type": "string", "pattern": "^leapview-v010-[0-9a-f]{32}$" },
+        "image": { "const": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" },
+        "imageId": { "const": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9" },
+        "platform": { "const": "linux/amd64" },
+        "networkName": { "type": "string", "pattern": "^leapview-v010-[0-9a-f]{32}-network$" },
+        "stateVolumeName": { "type": "string", "pattern": "^leapview-v010-[0-9a-f]{32}-state$" },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "stoppedAt": { "type": "string", "format": "date-time" },
+        "startedState": { "const": "running" },
+        "stoppedState": { "const": "exited" },
+        "cleanShutdown": { "const": true },
+        "cleanupVerified": { "const": true },
+        "journey": { "$ref": "#/$defs/journey" },
+        "preservation": { "$ref": "#/$defs/preservation" },
+        "freshCandidate": { "$ref": "#/$defs/freshCandidate" }
+      }
+    },
+    "journey": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "startedAt",
+        "readyAt",
+        "completedAt",
+        "adminEmail",
+        "adminPrincipalId",
+        "userEmail",
+        "userPrincipalId",
+        "projectId",
+        "environment",
+        "publishId",
+        "activatedDigest",
+        "projectDigest",
+        "managedDataRows",
+        "semanticResultSha256",
+        "dashboardResultSha256",
+        "authenticationVerified",
+        "projectActivated",
+        "managedDataVerified",
+        "workloadVerified"
+      ],
+      "properties": {
+        "startedAt": { "type": "string", "format": "date-time" },
+        "readyAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "adminEmail": { "const": "fai-517-admin@qualification.invalid" },
+        "adminPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "userEmail": { "const": "fai-517-user@qualification.invalid" },
+        "userPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "projectId": { "const": "compatibility" },
+        "environment": { "const": "fai-517" },
+        "publishId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "activatedDigest": { "type": "string", "pattern": "^(sha256:)?[0-9a-f]{64}$" },
+        "projectDigest": { "type": "string", "pattern": "^(sha256:)?[0-9a-f]{64}$" },
+        "managedDataRows": { "const": 3 },
+        "semanticResultSha256": { "const": "21bc8a539aa05a0d97e07b294bfead69daaee6e6be3d15698efa2ed8d028c473" },
+        "dashboardResultSha256": { "const": "4e235add0e3c1f6c9a399981e981fdfd04f33c472a451b4516bb6a569a9a4ef9" },
+        "authenticationVerified": { "const": true },
+        "projectActivated": { "const": true },
+        "managedDataVerified": { "const": true },
+        "workloadVerified": { "const": true }
+      }
+    },
+    "preservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "observedBeforeShutdownAt",
+        "shutdownAt",
+        "restartedAt",
+        "observedAfterRestartAt",
+        "inventory",
+        "beforeSha256",
+        "afterSha256",
+        "restartIdentityVerified",
+        "statePreserved"
+      ],
+      "properties": {
+        "observedBeforeShutdownAt": { "type": "string", "format": "date-time" },
+        "shutdownAt": { "type": "string", "format": "date-time" },
+        "restartedAt": { "type": "string", "format": "date-time" },
+        "observedAfterRestartAt": { "type": "string", "format": "date-time" },
+        "inventory": { "$ref": "#/$defs/inventory" },
+        "beforeSha256": { "$ref": "#/$defs/sha256" },
+        "afterSha256": { "$ref": "#/$defs/sha256" },
+        "restartIdentityVerified": { "const": true },
+        "statePreserved": { "const": true }
+      }
+    },
+    "inventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "application",
+        "principals",
+        "project",
+        "publish",
+        "assets",
+        "managedDataRows",
+        "semanticResultSha256",
+        "dashboardResultSha256"
+      ],
+      "properties": {
+        "application": { "$ref": "#/$defs/inventoryApplication" },
+        "principals": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": { "$ref": "#/$defs/inventoryPrincipal" }
+        },
+        "project": { "$ref": "#/$defs/inventoryProject" },
+        "publish": { "$ref": "#/$defs/inventoryPublish" },
+        "assets": {
+          "type": "array",
+          "minItems": 4,
+          "maxItems": 256,
+          "items": { "$ref": "#/$defs/inventoryAsset" }
+        },
+        "managedDataRows": { "const": 3 },
+        "semanticResultSha256": { "const": "21bc8a539aa05a0d97e07b294bfead69daaee6e6be3d15698efa2ed8d028c473" },
+        "dashboardResultSha256": { "const": "4e235add0e3c1f6c9a399981e981fdfd04f33c472a451b4516bb6a569a9a4ef9" }
+      }
+    },
+    "inventoryApplication": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["image", "imageId", "containerId", "platform", "sourceRevision"],
+      "properties": {
+        "image": { "const": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153" },
+        "imageId": { "const": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9" },
+        "containerId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "platform": { "const": "linux/amd64" },
+        "sourceRevision": { "const": "5bf4aded574df459e80d81b77d1989ecd4fa7de0" }
+      }
+    },
+    "inventoryPrincipal": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "email", "displayName"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "email": { "enum": ["fai-517-admin@qualification.invalid", "fai-517-user@qualification.invalid"] },
+        "displayName": { "type": "string", "minLength": 1, "maxLength": 128 }
+      }
+    },
+    "inventoryProject": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "environment", "activeServingStateId"],
+      "properties": {
+        "id": { "const": "compatibility" },
+        "title": { "const": "FAI-517 Compatibility" },
+        "environment": { "const": "fai-517" },
+        "activeServingStateId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" }
+      }
+    },
+    "inventoryPublish": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "projectId", "environment", "status", "digest"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "projectId": { "const": "compatibility" },
+        "environment": { "const": "fai-517" },
+        "status": { "const": "active" },
+        "digest": { "type": "string", "pattern": "^(sha256:)?[0-9a-f]{64}$" }
+      }
+    },
+    "inventoryAsset": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type", "key", "servingStateId", "contentHash"],
+      "properties": {
+        "id": { "type": "string", "minLength": 1, "maxLength": 256 },
+        "type": { "type": "string", "pattern": "^[a-z_]{1,64}$" },
+        "key": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,256}$" },
+        "servingStateId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "contentHash": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "genericReleaseIdentity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["releaseId", "version", "sourceRevision", "image", "distribution", "platform"],
+      "properties": {
+        "releaseId": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "version": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "sourceRevision": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "image": { "type": "string", "pattern": "^[^@[:space:]]+@sha256:[0-9a-f]{64}$" },
+        "distribution": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "platform": { "const": "linux/amd64" }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schemaVersion", "policyVersion", "operation", "allowed", "reasonCode", "remediation", "requirements", "current", "next"],
+      "properties": {
+        "schemaVersion": { "const": 1 },
+        "policyVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "operation": { "enum": ["fresh-install", "upgrade", "rollback"] },
+        "allowed": { "type": "boolean" },
+        "reasonCode": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "remediation": { "type": "string", "maxLength": 512 },
+        "requirements": { "type": "array", "maxItems": 16, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
+        "current": {
+          "oneOf": [
+            { "$ref": "#/$defs/genericReleaseIdentity" },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["image", "platform"],
+              "properties": {
+                "image": { "const": "" },
+                "platform": { "const": "" }
+              }
+            }
+          ]
+        },
+        "next": { "$ref": "#/$defs/genericReleaseIdentity" }
+      }
+    },
+    "freshCandidateInventory": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["adminEmail", "adminPrincipalId", "legacyPrincipalCount", "dashboardCount", "semanticModelCount", "legacyProjectVisible", "legacyManagedDataVisible"],
+      "properties": {
+        "adminEmail": { "const": "fai-517-candidate@qualification.invalid" },
+        "adminPrincipalId": { "type": "string", "pattern": "^[A-Za-z0-9._:-]{1,128}$" },
+        "legacyPrincipalCount": { "const": 0 },
+        "dashboardCount": { "const": 0 },
+        "semanticModelCount": { "const": 0 },
+        "legacyProjectVisible": { "const": false },
+        "legacyManagedDataVisible": { "const": false }
+      }
+    },
+    "legacyDenial": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["scenario", "operation", "reasonCode", "beforeSha256", "afterSha256", "deniedBeforeMutation"],
+      "properties": {
+        "scenario": { "enum": ["preserved-state-mount", "legacy-state-reference", "direct-legacy-artifact-adoption"] },
+        "operation": { "enum": ["fresh-install", "upgrade"] },
+        "reasonCode": { "enum": ["transition.denied.fresh_install_only", "transition.denied.release_unknown"] },
+        "beforeSha256": { "$ref": "#/$defs/sha256" },
+        "afterSha256": { "$ref": "#/$defs/sha256" },
+        "deniedBeforeMutation": { "const": true }
+      }
+    },
+    "freshCandidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runId", "containerId", "containerName", "stateVolumeName", "networkName",
+        "predecessor", "candidate", "candidateImageId", "policyVersion", "policySha256",
+        "freshInstallDecision", "freshStateBeforeSha256", "freshStateAfterSha256",
+        "candidateBeforeDenialsSha256", "candidateAfterDenialsSha256",
+        "predecessorBeforeDenialsSha256", "predecessorAfterDenialsSha256",
+        "candidateInventory", "denials", "startedAt", "completedAt",
+        "cleanStateVerified", "legacyStateUnavailable", "mutationFree", "cleanupVerified"
+      ],
+      "properties": {
+        "runId": { "type": "string", "pattern": "^[0-9a-f]{32}$" },
+        "containerId": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+        "containerName": { "type": "string", "pattern": "^leapview-v010-candidate-[0-9a-f]{32}$" },
+        "stateVolumeName": { "type": "string", "pattern": "^leapview-v010-candidate-[0-9a-f]{32}-state$" },
+        "networkName": { "type": "string", "pattern": "^leapview-v010-candidate-[0-9a-f]{32}-network$" },
+        "predecessor": { "$ref": "#/$defs/releaseIdentity" },
+        "candidate": { "$ref": "#/$defs/genericReleaseIdentity" },
+        "candidateImageId": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "policyVersion": { "type": "string", "minLength": 1, "maxLength": 64 },
+        "policySha256": { "$ref": "#/$defs/sha256" },
+        "freshInstallDecision": { "$ref": "#/$defs/decision" },
+        "freshStateBeforeSha256": { "$ref": "#/$defs/sha256" },
+        "freshStateAfterSha256": { "$ref": "#/$defs/sha256" },
+        "candidateBeforeDenialsSha256": { "$ref": "#/$defs/sha256" },
+        "candidateAfterDenialsSha256": { "$ref": "#/$defs/sha256" },
+        "predecessorBeforeDenialsSha256": { "$ref": "#/$defs/sha256" },
+        "predecessorAfterDenialsSha256": { "$ref": "#/$defs/sha256" },
+        "candidateInventory": { "$ref": "#/$defs/freshCandidateInventory" },
+        "denials": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/legacyDenial" } },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "completedAt": { "type": "string", "format": "date-time" },
+        "cleanStateVerified": { "const": true },
+        "legacyStateUnavailable": { "const": true },
+        "mutationFree": { "const": true },
+        "cleanupVerified": { "const": true }
+      }
+    }
+  }
+}

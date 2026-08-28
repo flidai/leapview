@@ -1,6 +1,7 @@
 package planir
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -41,6 +42,40 @@ func (g *Graph) Canonical() ([]byte, error) {
 		out.Nodes = append(out.Nodes, canonicalNode{Kind: node.Kind(), Meta: canonicalMeta(node.Meta()), Data: data})
 	}
 	return json.Marshal(out)
+}
+
+// DependencyCanonical returns the canonical logical plan used for result
+// dependency identity. Execution targets are deliberately removed: their
+// revisions are represented separately by relation evidence.
+func (g *Graph) DependencyCanonical() ([]byte, error) {
+	canonical, err := g.Canonical()
+	if err != nil {
+		return nil, err
+	}
+	var projection any
+	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	decoder.UseNumber()
+	if err := decoder.Decode(&projection); err != nil {
+		return nil, fmt.Errorf("decode canonical dependency plan: %w", err)
+	}
+	removeExecutionTargets(projection)
+	return json.Marshal(projection)
+}
+
+func removeExecutionTargets(value any) {
+	switch typed := value.(type) {
+	case map[string]any:
+		delete(typed, "relation")
+		delete(typed, "from_relation")
+		delete(typed, "to_relation")
+		for _, child := range typed {
+			removeExecutionTargets(child)
+		}
+	case []any:
+		for _, child := range typed {
+			removeExecutionTargets(child)
+		}
+	}
 }
 
 func canonicalData(node Node) (json.RawMessage, error) {
@@ -385,6 +420,17 @@ func relationshipRouteKey(route RelationshipRoute) string {
 // Fingerprint returns the SHA-256 digest of Canonical in lowercase hex.
 func (g *Graph) Fingerprint() (string, error) {
 	canonical, err := g.Canonical()
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(canonical)
+	return hex.EncodeToString(digest[:]), nil
+}
+
+// DependencyFingerprint returns the target-independent SHA-256 fingerprint
+// used by result identity. Fingerprint remains the executable-plan identity.
+func (g *Graph) DependencyFingerprint() (string, error) {
+	canonical, err := g.DependencyCanonical()
 	if err != nil {
 		return "", err
 	}

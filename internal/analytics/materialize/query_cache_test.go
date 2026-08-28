@@ -2,6 +2,7 @@ package materialize
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"sort"
@@ -21,6 +22,8 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/pkg/arrowresult"
 	"github.com/stretchr/testify/require"
@@ -33,6 +36,9 @@ func activatedCacheRuntime(t testing.TB, runtime *Runtime) *Runtime {
 	t.Helper()
 	if runtime == nil || runtime.model == nil {
 		return runtime
+	}
+	if runtime.resultPartition.Version() == 0 {
+		runtime.resultPartition = materializeTestPartition(t, resultidentity.PartitionProduction, "")
 	}
 	for alias, spec := range runtime.model.Datasets {
 		table, ok := runtime.model.Tables[alias]
@@ -76,13 +82,142 @@ func activatedCacheRuntime(t testing.TB, runtime *Runtime) *Runtime {
 		t.Fatalf("activate cache fixture: %v", err)
 	}
 	runtime.planner = planner
+	if !runtime.dependencyEvidence.Available() {
+		relations := make([]resultidentity.DatasetRelation, 0, len(runtime.model.Datasets))
+		for dataset := range runtime.model.Datasets {
+			relations = append(relations, resultidentity.DatasetRelation{
+				Dataset: dataset,
+				Relation: resultidentity.RelationRevision{
+					RelationID: "model:fixture", RevisionDigest: materializeTestDigest('b'),
+				},
+			})
+		}
+		modelID := projectgraph.ResourceID(runtime.modelID)
+		if modelID.Validate() != nil {
+			modelID = "semantic:fixture"
+		}
+		evidence, evidenceErr := resultidentity.NewEvidence(resultidentity.EvidenceInput{
+			SemanticModelID: modelID, SemanticModelDigest: materializeTestDigest('a'),
+			DatasetRelations: relations, BindingFingerprint: materializeTestDigest('c'),
+			RuntimeDigest: materializeTestDigest('d'), CapabilityDigest: materializeTestDigest('e'),
+		})
+		if evidenceErr != nil {
+			t.Fatalf("activate dependency evidence: %v", evidenceErr)
+		}
+		runtime.dependencyEvidence = evidence
+	}
 	return runtime
+}
+
+func materializeTestDigest(value byte) string {
+	return "sha256:" + strings.Repeat(string(value), 64)
+}
+
+func materializeTestPartition(t testing.TB, kind resultidentity.PartitionKind, candidateID string) resultidentity.Partition {
+	t.Helper()
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: kind, ProjectID: "project:test", Environment: "test", CandidateID: candidateID,
+	})
+	require.NoError(t, err)
+	return partition
+}
+
+func materializeTestDependency(t testing.TB, revision byte) resultidentity.Dependency {
+	t.Helper()
+	dependency, err := resultidentity.NewDependency(resultidentity.DependencyInput{
+		SemanticModelID: "semantic:test", SemanticModelDigest: materializeTestDigest('a'),
+		Relations: []resultidentity.RelationRevision{{
+			RelationID: "model:test", RevisionDigest: materializeTestDigest(revision),
+		}},
+		BindingFingerprint: materializeTestDigest('c'),
+		Execution: resultidentity.ExecutionIdentity{
+			PlannerDigest: materializeTestDigest('d'), RuntimeDigest: materializeTestDigest('e'),
+			CapabilityDigest: materializeTestDigest('f'), SettingsDigest: materializeTestDigest('1'),
+		},
+		ResultFormat: resultidentity.ResultFormat{Name: "arrow-result", Version: 1},
+	})
+	require.NoError(t, err)
+	return dependency
+}
+
+func materializeCacheTestIdentity() (resultidentity.Partition, resultidentity.Dependency) {
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: resultidentity.PartitionProduction, ProjectID: "project:test", Environment: "test",
+	})
+	if err != nil {
+		panic(err)
+	}
+	dependency, err := resultidentity.NewDependency(resultidentity.DependencyInput{
+		SemanticModelID: "semantic:test", SemanticModelDigest: materializeTestDigest('a'),
+		Relations:          []resultidentity.RelationRevision{{RelationID: "model:test", RevisionDigest: materializeTestDigest('b')}},
+		BindingFingerprint: materializeTestDigest('c'),
+		Execution: resultidentity.ExecutionIdentity{
+			PlannerDigest: materializeTestDigest('d'), RuntimeDigest: materializeTestDigest('e'),
+			CapabilityDigest: materializeTestDigest('f'), SettingsDigest: materializeTestDigest('1'),
+		},
+		ResultFormat: resultidentity.ResultFormat{Name: "arrow-result", Version: 1},
+	})
+	if err != nil {
+		panic(err)
+	}
+	return partition, dependency
+}
+
+func canonicalTestPolicy(request dataquery.Query) dataquery.Query {
+	if request.EffectivePolicyFingerprint == "" || !strings.HasPrefix(request.EffectivePolicyFingerprint, "sha256:") || len(request.EffectivePolicyFingerprint) != 71 {
+		sum := sha256.Sum256([]byte(request.EffectivePolicyFingerprint))
+		request.EffectivePolicyFingerprint = fmt.Sprintf("sha256:%x", sum)
+	}
+	return request
+}
+
+func (c *queryResultCache) cacheKeyForTest(request dataquery.Query) (string, uint64, error) {
+	partition, dependency := materializeCacheTestIdentity()
+	return c.cacheKey(canonicalTestPolicy(request), partition, dependency)
+}
+
+func TestQueryResultCacheKeyUsesStableCompositeIdentity(t *testing.T) {
+	cache := newQueryResultCache(16)
+	request := dataquery.Query{
+		Operation: dataquery.OperationDashboardRows, ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields:                     []dataquery.Field{{Field: "orders.id", Alias: "id"}},
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+	}
+	production := materializeTestPartition(t, resultidentity.PartitionProduction, "")
+	dependency := materializeTestDependency(t, '2')
+	first, _, err := cache.cacheKey(request, production, dependency)
+	require.NoError(t, err)
+	require.Contains(t, first, `"version":1`)
+	require.Contains(t, first, `"dependencyDigest":"`+dependency.Digest()+`"`)
+	secondCache := newQueryResultCache(16)
+	second, _, err := secondCache.cacheKey(request, production, dependency)
+	require.NoError(t, err)
+	require.Equal(t, first, second, "snapshot and serving generation must not enter the key")
+	emptyCollections := request
+	emptyCollections.Filters = []dataquery.Filter{}
+	emptyCollections.Sort = []dataquery.Sort{}
+	emptyCollections.ColumnMasks = []dataquery.ColumnMask{}
+	normalized, _, err := cache.cacheKey(emptyCollections, production, dependency)
+	require.NoError(t, err)
+	require.Equal(t, first, normalized)
+
+	changedDependency, _, err := cache.cacheKey(request, production, materializeTestDependency(t, '3'))
+	require.NoError(t, err)
+	require.NotEqual(t, first, changedDependency)
+
+	candidate := materializeTestPartition(t, resultidentity.PartitionCandidate, "candidate-one")
+	candidateRequest := request
+	candidateRequest.CandidateID = "candidate-one"
+	candidateKey, _, err := cache.cacheKey(candidateRequest, candidate, dependency)
+	require.NoError(t, err)
+	require.NotEqual(t, first, candidateKey)
 }
 
 // The row-shaped helpers below exist only to preserve cache-policy tests while
 // production cache storage is Arrow-only.
 func (c *queryResultCache) execute(ctx context.Context, request dataquery.Query, execute func() (dataquery.Result, error)) (dataquery.Result, error) {
-	key, generation, err := c.cacheKey(request)
+	key, generation, err := c.cacheKeyForTest(request)
 	if err != nil {
 		return dataquery.Result{}, err
 	}
@@ -112,7 +247,7 @@ func (c *queryResultCache) execute(ctx context.Context, request dataquery.Query,
 }
 
 func (c *queryResultCache) lookup(request dataquery.Query) (dataquery.Result, string, uint64, bool, error) {
-	key, generation, err := c.cacheKey(request)
+	key, generation, err := c.cacheKeyForTest(request)
 	if err != nil {
 		return dataquery.Result{}, "", 0, false, err
 	}
@@ -182,11 +317,22 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
-	request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, ModelID: "sales", Kind: dataquery.KindModelTableRows, Target: "orders", Fields: []dataquery.Field{{Field: "id"}}, Limit: 1}
+	request := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows, EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders", Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1}
 	first, err := runtime.ExecuteDataQuery(context.Background(), request)
 	require.NoError(t, err)
+	planned, err := runtime.planOwnedArrowQuery(request)
+	require.NoError(t, err)
+	dependency, reusable := runtime.dependencyForPlan(planned.plan)
+	require.True(t, reusable)
+	key, _, err := runtime.queryCache.cacheKey(request, runtime.resultPartition, dependency)
+	require.NoError(t, err)
+	entry, _, found, err := runtime.queryCache.scope.LookupArrow(key)
+	require.NoError(t, err)
+	require.True(t, found)
+	defer entry.Release()
+	require.Empty(t, entry.Metadata().SQL)
 	second, err := runtime.ExecuteDataQuery(context.Background(), request)
 	require.NoError(t, err)
 	if first.CacheOutcome != dataquery.CacheMiss || second.CacheOutcome != dataquery.CacheHit {
@@ -203,6 +349,311 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	}
 }
 
+func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{
+		RuntimeEntries: 16, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 2 << 20,
+	})
+	require.NoError(t, err)
+	firstResults, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	secondResults, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	firstBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-one"})
+	require.NoError(t, err)
+	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-two"})
+	require.NoError(t, err)
+
+	model := func() *semanticmodel.Model {
+		return &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}}
+	}
+	firstDB, secondDB := &countingCacheRuntimeDatabase{}, &countingCacheRuntimeDatabase{}
+	first := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales", model: model(), db: firstDB,
+		queryCache: newQueryResultCacheWithScopes(firstResults, firstBytes),
+	})
+	second := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales", model: model(), db: secondDB,
+		queryCache: newQueryResultCacheWithScopes(secondResults, secondBytes),
+	})
+	bindPlanner := func(runtime *Runtime, snapshot string) {
+		planner, plannerErr := semanticquery.NewCompiledPlanner(runtime.model, semanticquery.WithTableRelation(func(table string) (string, error) {
+			return snapshot + "." + table, nil
+		}))
+		require.NoError(t, plannerErr)
+		runtime.planner = planner
+	}
+	bindPlanner(first, "snapshot_one")
+	bindPlanner(second, "snapshot_two")
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	firstResult, err := first.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, firstResult.CacheOutcome)
+	require.Contains(t, firstResult.SQL, "snapshot_one")
+	firstPlan, err := first.planOwnedArrowQuery(request)
+	require.NoError(t, err)
+	firstDependency, reusable := first.dependencyForPlan(firstPlan.plan)
+	require.True(t, reusable)
+	key, generation, err := first.queryCache.cacheKey(request, first.resultPartition, firstDependency)
+	require.NoError(t, err)
+	first.queryCache.store(key, generation, dataquery.Result{
+		SQL:  "select * from snapshot_one.stale_physical_target",
+		Rows: []dataquery.Row{{"id": int64(1)}}, Columns: dataquery.ColumnsFromNames([]string{"id"}),
+	})
+	require.True(t, first.StoreImmutableBytes("tile", []byte("generation-one")))
+
+	require.NoError(t, firstResults.Close())
+	require.NoError(t, firstBytes.Close())
+	secondResult, err := second.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheHit, secondResult.CacheOutcome)
+	require.Contains(t, secondResult.SQL, "snapshot_two")
+	require.NotContains(t, secondResult.SQL, "snapshot_one")
+	require.Equal(t, int32(1), firstDB.queries.Load())
+	require.Zero(t, secondDB.queries.Load())
+	changedEvidence, err := resultidentity.NewEvidence(resultidentity.EvidenceInput{
+		SemanticModelID: "sales", SemanticModelDigest: materializeTestDigest('a'),
+		DatasetRelations: []resultidentity.DatasetRelation{{
+			Dataset: "orders", Relation: resultidentity.RelationRevision{
+				RelationID: "model:fixture", RevisionDigest: materializeTestDigest('8'),
+			},
+		}},
+		BindingFingerprint: materializeTestDigest('c'), RuntimeDigest: materializeTestDigest('d'),
+		CapabilityDigest: materializeTestDigest('e'),
+	})
+	require.NoError(t, err)
+	second.dependencyEvidence = changedEvidence
+	changedResult, err := second.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, changedResult.CacheOutcome)
+	require.Equal(t, int32(1), secondDB.queries.Load())
+	_, found, err := second.LookupImmutableBytes("tile")
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestRuntimeInvalidDependencyEvidenceBypassesResultReuseAndRetainsCurrentPlanSQL(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	runtime.dependencyEvidence = resultidentity.Evidence{}
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	for range 2 {
+		result, err := runtime.ExecuteDataQuery(context.Background(), request)
+		require.NoError(t, err)
+		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+		require.NotEmpty(t, result.SQL)
+		require.Contains(t, result.SQL, "orders")
+	}
+	require.Equal(t, int32(2), database.queries.Load())
+	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+}
+
+func TestRuntimeNonCacheableQueryRetainsCurrentPlanSQL(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: &countingCacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceAPI, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	result, err := runtime.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.NotEmpty(t, result.SQL)
+	require.Contains(t, result.SQL, "orders")
+}
+
+func TestRuntimeInvalidPolicyEvidenceBypassesResultReuse(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: "sha256:malformed", ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	for range 2 {
+		result, err := runtime.ExecuteDataQuery(context.Background(), request)
+		require.NoError(t, err)
+		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+	}
+	require.Equal(t, int32(2), database.queries.Load())
+	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+}
+
+func TestRuntimePlanningFailureRetainsExecutionFailureClassification(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	admission, err := workload.New(workload.Config{
+		MaxRunning: 1,
+		Classes: map[workload.Class]workload.Policy{
+			workload.Interactive: {MaximumRunning: 1},
+		},
+	})
+	require.NoError(t, err)
+	ctx := workload.WithAdmitter(context.Background(), admission)
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.missing", Alias: "missing"}}, Limit: 1,
+	}
+	key, generation, err := runtime.queryCache.cacheKeyForTest(request)
+	require.NoError(t, err)
+	runtime.queryCache.store(key, generation, dataquery.Result{
+		Columns: dataquery.ColumnsFromNames([]string{"missing"}),
+		Rows:    []dataquery.Row{{"missing": "stale"}},
+	})
+	result, err := runtime.ExecuteDataQuery(ctx, request)
+	require.Error(t, err)
+	require.Equal(t, dataquery.ExecutionFailed, result.ExecutionState)
+	require.Empty(t, result.Status)
+	require.Empty(t, result.Error)
+	require.Equal(t, int32(0), database.queries.Load())
+	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+}
+
+type rejectingQueryAdmitter struct{ calls int }
+
+func (a *rejectingQueryAdmitter) Acquire(_ context.Context, request workload.Request) (workload.Lease, error) {
+	a.calls++
+	return nil, &workload.Rejection{
+		Reason: workload.InstanceMemoryLimit, Class: request.Class,
+		PrincipalID: request.PrincipalID, Operation: request.Operation,
+	}
+}
+
+func TestRuntimeNonCacheableQueryIsAdmittedBeforePlanning(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: &countingCacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	admitter := &rejectingQueryAdmitter{}
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceAPI, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.missing", Alias: "missing"}}, Limit: 1,
+	}
+	result, err := runtime.ExecuteDataQuery(workload.WithAdmitter(context.Background(), admitter), request)
+	require.Error(t, err)
+	require.Equal(t, 1, admitter.calls)
+	require.Equal(t, dataquery.ExecutionRejected, result.ExecutionState)
+	reason, found := workload.ReasonOf(err)
+	require.True(t, found)
+	require.Equal(t, workload.InstanceMemoryLimit, reason)
+}
+
+func TestRuntimeCacheableQueryPlansBeforeAdmissionAndCacheLookup(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: &countingCacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.missing", Alias: "missing"}}, Limit: 1,
+	}
+	key, generation, err := runtime.queryCache.cacheKeyForTest(request)
+	require.NoError(t, err)
+	runtime.queryCache.store(key, generation, dataquery.Result{Rows: []dataquery.Row{{"missing": "stale"}}})
+	admitter := &rejectingQueryAdmitter{}
+	result, err := runtime.ExecuteDataQuery(workload.WithAdmitter(context.Background(), admitter), request)
+	require.Error(t, err)
+	require.Zero(t, admitter.calls)
+	require.Equal(t, dataquery.ExecutionFailed, result.ExecutionState)
+	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+}
+
+func TestRuntimeDerivesDependencyFromExecutedPlanProjection(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	planned, err := runtime.planOwnedArrowQuery(request)
+	require.NoError(t, err)
+	first, ok := runtime.dependencyForPlan(planned.plan)
+	require.True(t, ok)
+
+	changed, err := resultidentity.NewEvidence(resultidentity.EvidenceInput{
+		SemanticModelID: "sales", SemanticModelDigest: materializeTestDigest('a'),
+		DatasetRelations: []resultidentity.DatasetRelation{{
+			Dataset: "orders", Relation: resultidentity.RelationRevision{
+				RelationID: "model:fixture", RevisionDigest: materializeTestDigest('9'),
+			},
+		}},
+		BindingFingerprint: materializeTestDigest('c'), RuntimeDigest: materializeTestDigest('d'),
+		CapabilityDigest: materializeTestDigest('e'),
+	})
+	require.NoError(t, err)
+	runtime.dependencyEvidence = changed
+	second, ok := runtime.dependencyForPlan(planned.plan)
+	require.True(t, ok)
+	require.NotEqual(t, first.Digest(), second.Digest())
+	runtime.resultLimits = dataquery.ResultLimits{MaxRows: 7, MaxBytes: 4096}
+	settingsChanged, ok := runtime.dependencyForPlan(planned.plan)
+	require.True(t, ok)
+	require.NotEqual(t, second.Digest(), settingsChanged.Digest())
+}
+
+func TestRuntimeBundleMissingBranchDependencyEvidenceBypassesResultReuse(t *testing.T) {
+	database := &bundleCountingDatabase{}
+	runtime := bundleCacheRuntime(t, database)
+	runtime.dependencyEvidence = resultidentity.Evidence{}
+	for range 2 {
+		result, err := runtime.ExecuteDataQueryBundle(context.Background(), bundleCacheRequests())
+		require.NoError(t, err)
+		require.Equal(t, dataquery.CacheMiss, result.Results["orders"].CacheOutcome)
+		require.Equal(t, dataquery.CacheMiss, result.Results["events"].CacheOutcome)
+	}
+	require.Equal(t, int32(2), database.queries.Load())
+}
+
 func TestRuntimeSemanticRowsIncludeTotalCountsFilteredPopulationBeforePagination(t *testing.T) {
 	database := &totalRowsRuntimeDatabase{}
 	runtime := activatedCacheRuntime(t, &Runtime{
@@ -214,7 +665,7 @@ func TestRuntimeSemanticRowsIncludeTotalCountsFilteredPopulationBeforePagination
 			}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
 	result, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
@@ -247,7 +698,7 @@ func TestRuntimeSemanticRowsIncludeTotalCountsFilteredPopulationBeforePagination
 }
 
 func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
-	cache := newQueryResultCache(256, "")
+	cache := newQueryResultCache(256)
 	request := dataquery.Query{
 		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 		Operation:                  dataquery.OperationDashboardFilterOptions,
@@ -299,7 +750,7 @@ func TestQueryResultCacheUsesGovernedRequestAndReturnsDeepCopies(t *testing.T) {
 }
 
 func TestQueryResultCacheEnforcesByteBudgetAndRejectsOversizedEntries(t *testing.T) {
-	cache := newQueryResultCacheWithLimits(10, 1200, "bytes")
+	cache := newQueryResultCacheWithLimits(10, 1200)
 	first := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Metrics: []dataquery.Field{{Field: "revenue"}}}
 	second := first
 	second.Metrics = []dataquery.Field{{Field: "orders"}}
@@ -328,7 +779,7 @@ func TestQueryResultCacheEnforcesByteBudgetAndRejectsOversizedEntries(t *testing
 }
 
 func TestQueryResultCacheKeyIncludesRawValueField(t *testing.T) {
-	cache := newQueryResultCache(256, "")
+	cache := newQueryResultCache(256)
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardHistogram,
 		ModelID: "sales", Kind: dataquery.KindSemanticHistogram, Target: "orders",
@@ -352,30 +803,19 @@ func TestQueryResultCacheKeyIncludesRawValueField(t *testing.T) {
 }
 
 func TestQueryResultCacheKeyIncludesAuthorizationProjection(t *testing.T) {
-	cache := newQueryResultCache(256, "")
+	cache := newQueryResultCache(256)
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardCount,
 		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders", IncludeTotal: true,
 		AuthorizationFields: []dataquery.Field{{Field: "orders.customer_email"}},
 	}
-	first, _, err := cache.cacheKey(request)
+	first, _, err := cache.cacheKeyForTest(request)
 	require.NoError(t, err)
 	request.AuthorizationFields = []dataquery.Field{{Field: "orders.customer_id"}}
-	second, _, err := cache.cacheKey(request)
+	second, _, err := cache.cacheKeyForTest(request)
 	require.NoError(t, err)
 	if first == second {
 		t.Fatal("count cache key ignored its authorization projection")
-	}
-}
-
-func TestQueryResultCacheKeyIncludesRuntimeNamespace(t *testing.T) {
-	request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate}
-	first, _, err := newQueryResultCache(256, "snapshot=1;source=old").cacheKey(request)
-	require.NoError(t, err)
-	second, _, err := newQueryResultCache(256, "snapshot=2;source=new").cacheKey(request)
-	require.NoError(t, err)
-	if first == second {
-		t.Fatal("cache keys matched across snapshot/source namespaces")
 	}
 }
 
@@ -408,7 +848,7 @@ func TestDashboardResultCacheEligibility(t *testing.T) {
 }
 
 func TestQueryResultCacheKeysSpatialTileBudgetZoom(t *testing.T) {
-	cache := newQueryResultCache(256, "snapshot=1")
+	cache := newQueryResultCache(256)
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTileBudget,
 		ModelID: "sales", Kind: dataquery.KindSemanticSpatialTileBudget, Target: "orders",
@@ -418,16 +858,16 @@ func TestQueryResultCacheKeysSpatialTileBudgetZoom(t *testing.T) {
 			Zoom: 10, Buffer: 768, FeatureCap: 5_000, MaximumBytes: 512 * 1024,
 		},
 	}
-	baseline, _, err := cache.cacheKey(request)
+	baseline, _, err := cache.cacheKeyForTest(request)
 	require.NoError(t, err)
-	if !strings.Contains(baseline, `"SpatialTileGenerationVersion":5`) {
+	if !strings.Contains(baseline, `"spatialTileGenerationVersion":5`) {
 		t.Fatalf("spatial tile budget cache key has no generation version: %s", baseline)
 	}
 	variant := request
 	budget := *request.SpatialTileBudget
 	budget.Zoom++
 	variant.SpatialTileBudget = &budget
-	key, _, err := cache.cacheKey(variant)
+	key, _, err := cache.cacheKeyForTest(variant)
 	require.NoError(t, err)
 	if key == baseline {
 		t.Fatal("spatial tile budget zoom reused the baseline key")
@@ -435,7 +875,7 @@ func TestQueryResultCacheKeysSpatialTileBudgetZoom(t *testing.T) {
 }
 
 func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T) {
-	cache := newQueryResultCache(256, "snapshot=1")
+	cache := newQueryResultCache(256)
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTile,
 		ModelID: "sales", Kind: dataquery.KindSemanticSpatialTile, Target: "orders",
@@ -445,9 +885,9 @@ func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T
 			Zoom: 10, MetatileX: 376, MetatileY: 512, MetatileSize: 4, CellPixels: 48, Buffer: 768, FeatureCap: 5000, Precision: dataquery.SpatialTilePrecisionRaw,
 		},
 	}
-	baseline, _, err := cache.cacheKey(request)
+	baseline, _, err := cache.cacheKeyForTest(request)
 	require.NoError(t, err)
-	if !strings.Contains(baseline, `"SpatialTileGenerationVersion":5`) {
+	if !strings.Contains(baseline, `"spatialTileGenerationVersion":5`) {
 		t.Fatalf("spatial tile cache key has no generation version: %s", baseline)
 	}
 	variants := []func(*dataquery.SpatialTile){
@@ -463,7 +903,7 @@ func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T
 		tile := *request.SpatialTile
 		variant.SpatialTile = &tile
 		mutate(variant.SpatialTile)
-		key, _, err := cache.cacheKey(variant)
+		key, _, err := cache.cacheKeyForTest(variant)
 		require.NoError(t, err)
 		if key == baseline {
 			t.Fatalf("spatial tile cache variant %d reused the baseline key", index)
@@ -472,7 +912,7 @@ func TestQueryResultCacheKeysEverySpatialTileCoordinateAndPrecision(t *testing.T
 }
 
 func TestQueryResultCacheDoesNotCacheErrorsAndInvalidatesGeneration(t *testing.T) {
-	cache := newQueryResultCache(1, "")
+	cache := newQueryResultCache(1)
 	request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders"}
 	var calls atomic.Int32
 	execute := func() (dataquery.Result, error) {
@@ -498,13 +938,13 @@ func TestQueryResultCacheDoesNotCacheErrorsAndInvalidatesGeneration(t *testing.T
 
 func TestQueryResultCacheLiveWaiterRetriesCanceledFlightAndCachesResult(t *testing.T) {
 	synctest.Test(t, func(t *testing.T) {
-		cache := newQueryResultCache(256, "")
+		cache := newQueryResultCache(256)
 		request := dataquery.Query{
 			ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 			Operation: dataquery.OperationDashboardFilterOptions,
 		}
 
-		key, generation, err := cache.cacheKey(request)
+		key, generation, err := cache.cacheKeyForTest(request)
 		require.NoError(t, err)
 		flightStarted := make(chan struct{})
 		releaseCanceledFlight := make(chan struct{})
@@ -590,7 +1030,7 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         cacheRuntimeDatabase{},
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
 	physicalQueries := 0
 	cacheOutcomes := []string{}
@@ -599,10 +1039,11 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 	})
 	ctx = dataquery.WithCacheOutcomeObserver(ctx, func(outcome string) { cacheOutcomes = append(cacheOutcomes, outcome) })
 	request := dataquery.Query{
-		Surface: dataquery.SurfaceDashboard,
-		ModelID: "sales", Kind: dataquery.KindModelTableRows, Target: "orders",
+		Surface:                    dataquery.SurfaceDashboard,
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 		Operation: dataquery.OperationDashboardFilterOptions,
-		Fields:    []dataquery.Field{{Field: "id"}},
+		Fields:    []dataquery.Field{{Field: "orders.id", Alias: "id"}},
 		Limit:     50,
 	}
 
@@ -633,11 +1074,12 @@ func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *te
 			},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
 	base := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
-		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 50,
 	}
 	selected := base
@@ -681,12 +1123,13 @@ func TestRuntimeReauthorizesBeforeCacheLookupAndRejectsRevocation(t *testing.T) 
 			},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
-	governor := &revocableCacheGovernor{fingerprint: "sha256:policy-one"}
+	governor := &revocableCacheGovernor{fingerprint: materializeTestDigest('9')}
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
-		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 50,
 	}
 	execute := func() error {
@@ -848,7 +1291,7 @@ func TestRuntimeBundleCanceledExecutionDoesNotCacheOrAuditSuccess(t *testing.T) 
 }
 
 func TestQueryResultCacheCoalescesExactBundleFlightsAndRetriesCanceledOwner(t *testing.T) {
-	cache := newQueryResultCache(256, "bundle")
+	cache := newQueryResultCache(256)
 	ownerCtx, cancelOwner := context.WithCancel(context.Background())
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -962,11 +1405,11 @@ func bundleCacheRuntime(t testing.TB, database Database) *Runtime {
 	}}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}, Metrics: map[string]semanticmodel.Metric{
 		"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
 		"event_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
-	}}, db: database, queryCache: newQueryResultCache(256, "bundle-test")})
+	}}, db: database, queryCache: newQueryResultCache(256)})
 }
 
 func bundleCacheRequests() []dataquery.BundleRequest {
-	base := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate, ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders"}
+	base := dataquery.Query{Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate, EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders"}
 	first := base
 	first.Metrics = []dataquery.Field{{Field: "order_count", Alias: "value"}}
 	second := base
@@ -1019,7 +1462,7 @@ func TestRuntimeDoesNotCacheNonDashboardQueries(t *testing.T) {
 			},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceAPI, Operation: dataquery.OperationAPIQuery,
@@ -1042,7 +1485,7 @@ func TestRuntimeCountFailsClosedForMaskedAuthorizationProjection(t *testing.T) {
 		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
 			"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"email": {Type: "string", Datatype: semanticmodel.DataTypeString}}},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
-		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256, ""),
+		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
 	})
 	_, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardCount,
@@ -1066,11 +1509,12 @@ func TestRuntimeDashboardCacheHitDoesNotConsumeReadPermit(t *testing.T) {
 			},
 		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
 		db:         database,
-		queryCache: newQueryResultCache(256, ""),
+		queryCache: newQueryResultCache(256),
 	})
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
-		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 50,
 	}
 	if _, err := runtime.ExecuteDataQuery(context.Background(), request); err != nil {
@@ -1115,7 +1559,7 @@ func TestRuntimeRefreshInvalidatesCacheBeforeFailingSchemaDiscovery(t *testing.T
 		model:      &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{}},
 		db:         failingDiscoveryRuntimeDatabase{},
 		sources:    cacheSourceRegistrar{},
-		queryCache: newQueryResultCache(256, "mutable"),
+		queryCache: newQueryResultCache(256),
 	}
 	request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate}
 	var executions atomic.Int32
@@ -1159,7 +1603,7 @@ func TestRuntimeRefreshInvalidatesCacheAfterPartialMaterializationFailure(t *tes
 				}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"first": {Model: "first"}, "second": {Model: "second"}}},
 				db:         database,
 				sources:    partialRefreshSourcePreparer{},
-				queryCache: newQueryResultCache(256, "mutable"),
+				queryCache: newQueryResultCache(256),
 			}
 			request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate}
 			var executions atomic.Int32

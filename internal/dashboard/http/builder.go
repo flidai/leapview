@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	"github.com/flidai/leapview/internal/dashboard/ui"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
@@ -401,7 +402,7 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		return authoring.Command{}, err
 	}
 	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
-	if requestID == "" {
+	if requestID == "" || httpmiddleware.RequestIDWasGenerated(r) {
 		requestID = strings.TrimSpace(r.Header.Get("Idempotency-Key"))
 	}
 	if requestID == "" {

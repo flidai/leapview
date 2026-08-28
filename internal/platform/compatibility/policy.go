@@ -69,13 +69,14 @@ type Policy struct {
 }
 
 type Release struct {
-	ID             string          `json:"id"`
-	Version        string          `json:"version"`
-	SourceRevision string          `json:"sourceRevision"`
-	Distribution   string          `json:"distribution"`
-	Artifacts      []Artifact      `json:"artifacts"`
-	LegacyMarkers  []string        `json:"legacyMarkers"`
-	Defaults       ReleaseDefaults `json:"defaults"`
+	ID                   string          `json:"id"`
+	Version              string          `json:"version"`
+	SourceRevision       string          `json:"sourceRevision"`
+	Distribution         string          `json:"distribution"`
+	Artifacts            []Artifact      `json:"artifacts"`
+	LegacyMarkers        []string        `json:"legacyMarkers"`
+	LegacyBackupVersions []int           `json:"legacyBackupVersions"`
+	Defaults             ReleaseDefaults `json:"defaults"`
 }
 
 type Artifact struct {
@@ -249,11 +250,33 @@ func MarshalPolicy(policy *Policy) ([]byte, error) {
 	if err := policy.Validate(); err != nil {
 		return nil, err
 	}
-	contents, err := json.MarshalIndent(policy, "", "  ")
+	normalized := normalizePolicyArrays(policy)
+	contents, err := json.MarshalIndent(normalized, "", "  ")
 	if err != nil {
 		return nil, fmt.Errorf("encode release-transition policy: %w", err)
 	}
 	return append(contents, '\n'), nil
+}
+
+func normalizePolicyArrays(policy *Policy) *Policy {
+	normalized := *policy
+	normalized.Releases = append([]Release{}, policy.Releases...)
+	for index := range normalized.Releases {
+		release := &normalized.Releases[index]
+		release.Artifacts = append([]Artifact{}, release.Artifacts...)
+		release.LegacyMarkers = append([]string{}, release.LegacyMarkers...)
+		release.LegacyBackupVersions = append([]int{}, release.LegacyBackupVersions...)
+		release.Defaults.FreshInstall.Requirements = append([]string{}, release.Defaults.FreshInstall.Requirements...)
+		release.Defaults.Upgrade.Requirements = append([]string{}, release.Defaults.Upgrade.Requirements...)
+		release.Defaults.Rollback.Requirements = append([]string{}, release.Defaults.Rollback.Requirements...)
+	}
+	normalized.Transitions = append([]Transition{}, policy.Transitions...)
+	for index := range normalized.Transitions {
+		transition := &normalized.Transitions[index]
+		transition.Platforms = append([]string{}, transition.Platforms...)
+		transition.Decision.Requirements = append([]string{}, transition.Decision.Requirements...)
+	}
+	return &normalized
 }
 
 // BindCandidate produces the runtime policy only after the admitted candidate
@@ -351,7 +374,7 @@ func (p *Policy) BindCandidateWithTemplate(identity ReleaseIdentity, platforms [
 	bound.CandidateRelease = releaseID
 	bound.Releases = append(bound.Releases, Release{
 		ID: releaseID, Version: version, SourceRevision: identity.SourceRevision,
-		Distribution: identity.Distribution, Artifacts: artifacts, LegacyMarkers: []string{},
+		Distribution: identity.Distribution, Artifacts: artifacts, LegacyMarkers: []string{}, LegacyBackupVersions: []int{},
 		Defaults: ReleaseDefaults{
 			FreshInstall: Rule{Allowed: true, ReasonCode: ReasonAllowedFreshInstall, Requirements: []string{}},
 			Upgrade:      denied, Rollback: denied,
@@ -475,6 +498,16 @@ func (p *Policy) validate() error {
 			}
 			markers[marker] = struct{}{}
 		}
+		legacyVersions := make(map[int]struct{}, len(release.LegacyBackupVersions))
+		for _, version := range release.LegacyBackupVersions {
+			if version != 1 {
+				return fmt.Errorf("release %q has unsupported legacy backup version %d", release.ID, version)
+			}
+			if _, exists := legacyVersions[version]; exists {
+				return fmt.Errorf("release %q has duplicate legacy backup version %d", release.ID, version)
+			}
+			legacyVersions[version] = struct{}{}
+		}
 		for name, rule := range map[string]Rule{
 			"freshInstall": release.Defaults.FreshInstall,
 			"upgrade":      release.Defaults.Upgrade,
@@ -581,6 +614,19 @@ func (p *Policy) ReleaseByID(id string) (Release, bool) {
 		}
 	}
 	return Release{}, false
+}
+
+func (p *Policy) AllowsLegacyBackup(target ReleaseIdentity, manifestVersion int) bool {
+	release, ok := p.resolve(target)
+	if !ok || release.ID != p.CandidateRelease {
+		return false
+	}
+	for _, version := range release.LegacyBackupVersions {
+		if version == manifestVersion {
+			return true
+		}
+	}
+	return false
 }
 
 func (r Release) IdentityForPlatform(platform string) ReleaseIdentity {

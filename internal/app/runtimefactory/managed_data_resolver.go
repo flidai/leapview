@@ -35,9 +35,14 @@ func (r managedDataResolver) ResolveManagedDataForIdentity(ctx context.Context, 
 	for connectionID, root := range resolved.Roots {
 		roots[connectionID.String()] = root
 	}
+	revisions := make(map[string]string, len(resolved.Revisions))
+	for connectionID, revision := range resolved.Revisions {
+		revisions[connectionID.String()] = revision
+	}
 	return runtimehost.ManagedDataResolution{
 		RevisionID: resolved.RevisionID,
 		Roots:      roots,
+		Revisions:  revisions,
 		Lifetime:   resolved.Lifetime,
 	}, nil
 }

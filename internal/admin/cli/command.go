@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
@@ -24,16 +25,20 @@ const (
 
 // Options are the values accepted by offline Admin operations.
 type Options struct {
-	Apply             bool
-	AuditDays         int
-	QueryDays         int
-	ArchivedAgentDays int
-	AuthStateDays     int
-	BackupOut         string
-	RestoreFrom       string
-	RestoreBefore     string
-	ConfirmRestore    bool
-	DatabaseOnly      bool
+	Apply                   bool
+	AuditDays               int
+	QueryDays               int
+	ArchivedAgentDays       int
+	AuthStateDays           int
+	BackupOut               string
+	RestoreFrom             string
+	RestoreBefore           string
+	ConfirmRestore          bool
+	DatabaseOnly            bool
+	PreflightOnly           bool
+	ExternalRecovery        string
+	CurrentExternalRecovery string
+	ExternalEvidence        string
 }
 
 // Operations are the offline administrative use cases exposed by the CLI.
@@ -45,6 +50,7 @@ type Operations interface {
 	StorageCleanup(context.Context, adminoffline.StorageCleanupRequest, io.Writer) error
 	Maintenance(context.Context, adminoffline.MaintenanceRequest, io.Writer) error
 	AuditOutbox(context.Context, adminoffline.AuditOutboxRequest, io.Writer) error
+	RecoveryLedgerStatus(context.Context, io.Writer) error
 	Backup(context.Context, adminoffline.BackupRequest, io.Writer) error
 	Restore(context.Context, adminoffline.RestoreRequest, io.Reader, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
@@ -121,30 +127,83 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	auditOutbox.Flags().BoolVar(&values.Apply, "apply", false, "apply the exact requeue operation")
 
 	backup := operationCommand(operations, "backup", "Create a consistent LeapView instance backup", func(command *cobra.Command) error {
+		var recoveryPoints []adminoffline.ExternalRecoveryPoint
+		if err := readOptionalJSONFile(values.ExternalRecovery, &recoveryPoints); err != nil {
+			return fmt.Errorf("read external recovery points: %w", err)
+		}
 		return operations.Backup(ctx, adminoffline.BackupRequest{
-			Out: values.BackupOut, DatabaseOnly: values.DatabaseOnly,
+			Out: values.BackupOut, DatabaseOnly: values.DatabaseOnly, ExternalRecoveryPoints: recoveryPoints,
 		}, command.OutOrStdout())
 	})
 	backup.Flags().StringVar(&values.BackupOut, "out", "", "backup archive output path")
 	backup.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "backup only the platform SQLite database")
+	backup.Flags().StringVar(&values.ExternalRecovery, "external-recovery-points", "", "JSON file containing exact external recovery points (never credentials)")
 
 	restore := operationCommand(operations, "restore", "Restore LeapView from a validated instance backup", func(command *cobra.Command) error {
+		externalEvidence := map[string]string{}
+		if err := readOptionalJSONFile(values.ExternalEvidence, &externalEvidence); err != nil {
+			return fmt.Errorf("read external recovery evidence: %w", err)
+		}
+		var currentRecoveryPoints []adminoffline.ExternalRecoveryPoint
+		if err := readOptionalJSONFile(values.CurrentExternalRecovery, &currentRecoveryPoints); err != nil {
+			return fmt.Errorf("read current external recovery points: %w", err)
+		}
 		return operations.Restore(ctx, adminoffline.RestoreRequest{
 			From: values.RestoreFrom, CurrentBackup: values.RestoreBefore,
-			Confirm: values.ConfirmRestore, DatabaseOnly: values.DatabaseOnly,
+			Confirm: values.ConfirmRestore, DatabaseOnly: values.DatabaseOnly, PreflightOnly: values.PreflightOnly,
+			ExternalEvidence: externalEvidence, CurrentExternalRecoveryPoints: currentRecoveryPoints,
 		}, command.InOrStdin(), command.OutOrStdout())
 	})
 	restore.Flags().StringVar(&values.RestoreFrom, "from", "", "backup archive path to restore")
 	restore.Flags().StringVar(&values.RestoreBefore, "current-out", "", "path for a backup of the current instance before replacement; - creates and discards a validated temporary checkpoint")
 	restore.Flags().BoolVar(&values.ConfirmRestore, "confirm", false, "confirm replacement of the configured LeapView instance")
 	restore.Flags().BoolVar(&values.DatabaseOnly, "database-only", false, "restore only the platform SQLite database")
+	restore.Flags().BoolVar(&values.PreflightOnly, "preflight-only", false, "emit the read-only restore plan without creating a checkpoint or replacing target state")
+	restore.Flags().StringVar(&values.ExternalEvidence, "external-evidence", "", "JSON map of evidence keys to verified external recovery points")
+	restore.Flags().StringVar(&values.CurrentExternalRecovery, "current-external-recovery-points", "", "JSON file containing exact recovery points for the pre-restore safety checkpoint")
 
-	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore)
+	recoveryGroup := adminGroupCommand("recovery", "Inspect durable recovery qualification evidence")
+	recoveryStatus := operationCommand(operations, "status", "Show due, stale, failed, and publication state from the recovery ledger", func(command *cobra.Command) error {
+		return operations.RecoveryLedgerStatus(ctx, command.OutOrStdout())
+	})
+	recoveryStatus.Args = cobra.NoArgs
+	recoveryStatus.Annotations = map[string]string{
+		"leapview.dev/effect":       "read",
+		"leapview.dev/confirmation": "never",
+	}
+	recoveryGroup.AddCommand(recoveryStatus)
+
+	parent.AddCommand(initialize, storage, maintenance, auditOutbox, backup, restore, recoveryGroup)
 	delivery := deliveryPoolCommand(ctx, operations)
 	delivery.AddCommand(deliveryAuditCommand(ctx, operations))
 	delivery.AddCommand(deliveryRepairCommand(ctx, operations))
 	parent.AddCommand(delivery)
 	return parent
+}
+
+func readOptionalJSONFile(path string, target any) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	decoder := json.NewDecoder(file)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("JSON file contains multiple values")
+		}
+		return err
+	}
+	return nil
 }
 
 func deliveryAuditCommand(ctx context.Context, operations Operations) *cobra.Command {

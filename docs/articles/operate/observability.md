@@ -28,7 +28,7 @@ Collect structured application logs from the service output. Preserve timestamp,
 
 Secrets, bearer tokens, passwords, raw OAuth payloads, and sensitive query data must not appear in logs. Restrict log access according to the most sensitive metadata retained.
 
-Carry a request identifier through the trusted reverse proxy and application. Proxy access logs and application logs should agree on public request time, status, and correlation identity.
+LeapView establishes `X-Request-ID` and `X-Correlation-ID` before process-wide middleware and route handling. A non-empty client request ID is preserved for idempotency compatibility; otherwise LeapView generates one. A missing correlation ID defaults to the request ID. Both canonical values are returned in response headers, including responses rejected by early security middleware, so proxy and application logs can agree on public request time, status, and correlation identity.
 
 ## Delivery signals
 
@@ -60,5 +60,111 @@ After deployment or upgrade, run a small authenticated sequence:
 6. Confirm the active managed revision for production.
 
 Keep the synthetic principal read-only and scoped to the test project. This verifies routing, auth, active project state, and analytical execution without granting deployment privilege.
+
+## Recovery qualification ledger
+
+Scheduled backup, restore, upgrade, and rollback qualifications use one durable
+occurrence identity derived from the schedule, planned UTC time, scenario,
+policy version, and target scope. Scheduler retries therefore attach to the
+same occurrence instead of creating a second drill. Each attempt is protected
+by a renewable generation fence; an expired worker cannot heartbeat, complete,
+or publish evidence after another worker reclaims the occurrence.
+
+Inspect the bounded operator projection with the service stopped or from the
+same controlled maintenance environment used for other offline Admin commands:
+
+```sh
+leapview admin recovery status
+```
+
+The JSON response distinguishes an unconfigured system from configured
+schedules, scheduled runs that were never materialized, overdue work, expired
+execution or publication leases, running and failed work, and evidence
+publication state. This projection is passive: scheduler and worker failure is
+visible without requiring another worker to mutate the ledger. It also reports
+recovered leases, last-success age, recovery-point age, and the latest restore,
+readiness, and end-to-end qualification durations for the fixed operation set. The
+same aggregate values are exported on the protected Prometheus endpoint under
+`leapview_recovery_qualification_*`. Labels are limited to operation and
+publication state—occurrence, schedule, artifact, scenario, and target
+identifiers are never metric labels.
+
+Terminal records retain the exact immutable artifact identity, measured
+timestamps and durations, result, bounded content-digested evidence references,
+and a redacted failure reason. Evidence upload has its own retryable lease, so
+an upload outage does not rerun a destructive recovery drill. Never store raw
+logs, archives, credentials, signed URLs, or secret-bearing query strings in a
+ledger evidence reference.
+Failed, canceled, or expired work that produced no owner evidence is terminal
+with `evidenceStatus: "none"`; only a failed publication of real evidence is
+retried, using persisted backoff.
+
+Schedule definitions are immutable revisions. Changing artifact identity,
+policy, target, scenario, cadence, or staleness closes the prior revision only
+after its due occurrences are materialized, then creates a new revision
+boundary. A catch-up run therefore cannot be relabeled as qualification of a
+newer artifact.
+
+The application recovery lifecycle reconciles definitions, enqueues due work,
+claims one fenced logical occurrence, calls the operation owner's adapter, and
+publishes the exact existing transition qualification, backup-manifest-v2, or
+restore-preflight bytes after retaining and verifying them in the private
+content-addressed evidence store. Ledger references use bounded
+`artifact://qualification/...` identities rather than host filesystem paths, so
+node topology is not copied into durable records. Evidence
+publication and retention remain separate from scenario execution. If no
+reviewed definitions and adapters are configured, status reports
+`unconfigured: true`; an empty ledger must not be interpreted as successful
+qualification.
+
+Production composition registers the four owner adapters when
+`LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true`. Supply the exact released
+`LEAPVIEW_IMAGE`, the admitted candidate bundle with its candidate-bound policy
+through `LEAPVIEW_RECOVERY_QUALIFICATION_BUNDLE`, and its `leapviewctl` through
+`LEAPVIEW_RECOVERY_QUALIFICATION_CONTROLLER`. The work directory must be an
+absolute private path outside `LEAPVIEW_HOME`; evidence is retained beneath the
+instance artifact directory and excluded from subsequent qualification
+backups. `LEAPVIEW_RECOVERY_QUALIFICATION_CRON` controls the reviewed schedule.
+Startup fails closed if the managed policy is not bound to the running image or
+does not contain the exact predecessor identity. Every schedule revision and
+occurrence stores the SHA-256 of that exact policy; a different policy with the
+same policy version is rejected. The controller must execute the isolated
+release qualification environment available to the service account; the
+ledger never substitutes synthetic reports when it is unavailable.
+
+For `LEAPVIEW_MANAGED_DATA_BACKEND=s3`, configure both canonical FAI-515 input
+files. `LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS` is an absolute
+path to a JSON array such as:
+
+```json
+[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]
+```
+
+`LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE` is an absolute path to the
+operator evidence map used by both restore preflight and restore:
+
+```json
+{"managed-data-version":"version-42"}
+```
+
+The resulting owner manifest retains the canonical provider, endpoint, region,
+bucket, prefix, recovery point, and evidence key. Both files must be regular,
+non-symlink JSON files; startup and each scheduled run fail closed if they are
+missing or invalid.
+
+Backup and restore adapters call the platform backup, preflight, and restore
+owners against an isolated restore target. Upgrade and rollback adapters call
+the installed-candidate transition owner with the immutable predecessor and
+candidate bundle. Recovery points are read from those validated owner reports;
+restore and readiness durations are derived only from ledger-owned persisted
+start and completion phases. Time spent before or after those phases affects
+only the separately reported end-to-end qualification duration. A reclaimed
+occurrence uses a new fenced run-directory generation and removes only its own
+superseded, no-longer-leased generations.
+
+Persisted failures use bounded machine codes and credential-scrubbed summaries.
+Full owner errors belong only in restricted transient logs. URL credentials,
+DSNs, JSON secrets, signed URL parameters, provider credentials, and multiline
+error bodies must never be copied into the ledger.
 
 See [Operational troubleshooting](/docs/guides/operate/troubleshooting), [Audit events](/docs/security/audit), and the [environment reference](/docs/configuration).

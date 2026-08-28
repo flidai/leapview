@@ -53,6 +53,8 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"target: /tmp",
 		"size: 536870912",
 		"mode: 01777",
+		"LEAPVIEW_IMAGE: ${LEAPVIEW_IMAGE:?set LEAPVIEW_IMAGE in deployment.env}",
+		"./release-transition-policy.json:/run/leapview/release-transition-policy.json:ro",
 	} {
 		if !strings.Contains(compose, required) {
 			t.Fatalf("compose.yaml missing %q", required)
@@ -817,6 +819,99 @@ func TestControllerReleasePackagingContract(t *testing.T) {
 	}
 }
 
+func TestV010ReleaseWorkflowInvokesPolicyBoundPreservationQualification(t *testing.T) {
+	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	require.NoError(t, validateV010ReleaseWorkflow(workflow))
+}
+
+func TestV010ReleaseWorkflowRejectsIncompleteOrUnboundWiring(t *testing.T) {
+	workflow := read(t, filepath.Join("..", "..", ".github", "workflows", "release.yml"))
+	for _, test := range []struct {
+		name        string
+		old         string
+		replacement string
+	}{
+		{
+			name: "missing restored historical authentication",
+			old:  `- name: Restore least-privilege GHCR access for historical qualification`,
+		},
+		{
+			name: "missing admission artifact",
+			old:  `candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
+		},
+		{
+			name: "missing predecessor evidence",
+			old:  `--predecessor-evidence "$predecessor_evidence"`,
+		},
+		{
+			name:        "wrong policy digest",
+			old:         `policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
+			replacement: `policy_sha256="0000000000000000000000000000000000000000000000000000000000000000"`,
+		},
+		{
+			name: "missing evidence artifact",
+			old:  `${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			mutated := strings.Replace(workflow, test.old, test.replacement, 1)
+			require.NotEqual(t, workflow, mutated, "contract mutation did not match workflow")
+			require.Error(t, validateV010ReleaseWorkflow(mutated))
+		})
+	}
+}
+
+func validateV010ReleaseWorkflow(workflow string) error {
+	required := []string{
+		"- name: Restore least-privilege GHCR access for historical qualification",
+		"- name: Run exact v0.1 preservation qualification",
+		"if: matrix.arch == 'amd64'",
+		"- name: Set up exact OCI resolver",
+		`candidate_admission="$GITHUB_WORKSPACE/candidate/assembled-image-admission.json"`,
+		`policy="$PACKAGE_ROOT/release-transition-policy.json"`,
+		`policy_sha256="$(sha256sum "$policy" | awk '{print $1}')"`,
+		`./leapviewctl qualify v0.1-artifact-review`,
+		`--policy-sha256 "$policy_sha256"`,
+		`--evidence "$predecessor_evidence"`,
+		`test -s "$predecessor_evidence"`,
+		`./leapviewctl qualify v0.1-preservation`,
+		`--candidate-admission "$candidate_admission"`,
+		`--predecessor-evidence "$predecessor_evidence"`,
+		`test -s "$qualification_evidence"`,
+		`${{ runner.temp }}/installed-candidate-evidence/v0.1-reviewed-identity.json`,
+		`${{ runner.temp }}/installed-candidate-evidence/v0.1-preservation-qualification.json`,
+		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+	}
+	for _, contract := range required {
+		if !strings.Contains(workflow, contract) {
+			return fmt.Errorf("release workflow missing v0.1 qualification contract %q", contract)
+		}
+	}
+	review := strings.Index(workflow, "./leapviewctl qualify v0.1-artifact-review")
+	authenticated := strings.Index(workflow, "- name: Log in to GHCR for admission")
+	installed := strings.Index(workflow, "- name: Run installed-candidate journey")
+	reauthenticated := strings.Index(workflow, "- name: Restore least-privilege GHCR access for historical qualification")
+	qualification := strings.Index(workflow, "./leapviewctl qualify v0.1-preservation")
+	upload := strings.Index(workflow, "- name: Upload bounded qualification evidence")
+	if authenticated < 0 || installed < 0 || reauthenticated < 0 || review < 0 || qualification < 0 || upload < 0 ||
+		authenticated >= installed || installed >= reauthenticated || reauthenticated >= review || review >= qualification || qualification >= upload {
+		return fmt.Errorf("release workflow must authenticate, qualify the installed candidate, restore authentication, review v0.1 identity, qualify preservation, then upload evidence")
+	}
+	reauthenticationBlock := workflow[reauthenticated:review]
+	for _, contract := range []string{
+		"if: matrix.arch == 'amd64'",
+		"uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4",
+		"registry: ghcr.io",
+		"username: ${{ github.actor }}",
+		"password: ${{ secrets.GITHUB_TOKEN }}",
+	} {
+		if !strings.Contains(reauthenticationBlock, contract) {
+			return fmt.Errorf("historical qualification authentication is incomplete: missing %q", contract)
+		}
+	}
+	return nil
+}
+
 func TestControllerLifecycleWithStateAwareUpgradeRollback(t *testing.T) {
 	root := t.TempDir()
 	buildController(t, root)
@@ -943,8 +1038,8 @@ func writeReleaseTransitionPolicy(t *testing.T, path, previousImage, candidateIm
 	policy := &compatibility.Policy{
 		SchemaVersion: compatibility.CurrentSchemaVersion, PolicyVersion: "test/release-v2", CandidateRelease: "v2.0.0",
 		Releases: []compatibility.Release{
-			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
-			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+			{ID: "v1.0.0", Version: "1.0.0", SourceRevision: strings.Repeat("a", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: previousImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
+			{ID: "v2.0.0", Version: "2.0.0", SourceRevision: strings.Repeat("b", 40), Distribution: "public", LegacyMarkers: []string{}, LegacyBackupVersions: []int{}, Artifacts: []compatibility.Artifact{{Platform: "linux/amd64", Image: candidateImage}}, Defaults: compatibility.ReleaseDefaults{FreshInstall: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedFreshInstall, Requirements: []string{}}, Upgrade: denied, Rollback: denied}},
 		},
 		Transitions: []compatibility.Transition{
 			{Operation: compatibility.OperationUpgrade, From: "v1.0.0", To: "v2.0.0", Platforms: []string{"linux/amd64"}, Decision: compatibility.Rule{Allowed: true, ReasonCode: compatibility.ReasonAllowedExplicitTransition, Requirements: requirements}},

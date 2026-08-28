@@ -1,0 +1,236 @@
+{
+  "schemaVersion": 1,
+  "kind": "leapview-v0.1-release-identity",
+  "verifiedAt": "2026-07-13T15:45:27Z",
+  "policyVersion": "ubdr/v1",
+  "policySha256": "10a8e5a5fdaba641ba830866286b09ce8da04621925649ff86955094af526914",
+  "identity": {
+    "releaseId": "v0.1.0",
+    "version": "0.1.0",
+    "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0",
+    "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "distribution": "authentication-required",
+    "platform": "linux/amd64"
+  },
+  "artifact": {
+    "repository": "ghcr.io/yacobolo/libredash",
+    "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "resolvedDigest": "sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "platform": "linux/amd64",
+    "platformManifestDigest": "sha256:a8a60264b099c21eb46bf2ed8de1cca7f5867687d570ca2c6c3f9de4ad11018a",
+    "configDigest": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9",
+    "authenticated": true
+  },
+  "provenance": {
+    "sourceRepository": "https://github.com/Yacobolo/libredash",
+    "sourceTag": "v0.1.0",
+    "version": "0.1.0",
+    "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0"
+  },
+  "execution": {
+    "runId": "0123456789abcdef0123456789abcdef",
+    "containerId": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+    "containerName": "leapview-v010-0123456789abcdef0123456789abcdef",
+    "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "imageId": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9",
+    "platform": "linux/amd64",
+    "networkName": "leapview-v010-0123456789abcdef0123456789abcdef-network",
+    "stateVolumeName": "leapview-v010-0123456789abcdef0123456789abcdef-state",
+    "startedAt": "2026-07-13T15:45:28Z",
+    "stoppedAt": "2026-07-13T15:45:34Z",
+    "startedState": "running",
+    "stoppedState": "exited",
+    "cleanShutdown": true,
+    "cleanupVerified": true,
+    "journey": {
+      "startedAt": "2026-07-13T15:45:28Z",
+      "readyAt": "2026-07-13T15:45:28Z",
+      "completedAt": "2026-07-13T15:45:29Z",
+      "adminEmail": "fai-517-admin@qualification.invalid",
+      "adminPrincipalId": "principal_admin",
+      "userEmail": "fai-517-user@qualification.invalid",
+      "userPrincipalId": "principal_user",
+      "projectId": "compatibility",
+      "environment": "fai-517",
+      "publishId": "publish_001",
+      "activatedDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "projectDigest": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+      "managedDataRows": 3,
+      "semanticResultSha256": "21bc8a539aa05a0d97e07b294bfead69daaee6e6be3d15698efa2ed8d028c473",
+      "dashboardResultSha256": "4e235add0e3c1f6c9a399981e981fdfd04f33c472a451b4516bb6a569a9a4ef9",
+      "authenticationVerified": true,
+      "projectActivated": true,
+      "managedDataVerified": true,
+      "workloadVerified": true
+    },
+    "preservation": {
+      "observedBeforeShutdownAt": "2026-07-13T15:45:30Z",
+      "shutdownAt": "2026-07-13T15:45:31Z",
+      "restartedAt": "2026-07-13T15:45:32Z",
+      "observedAfterRestartAt": "2026-07-13T15:45:33Z",
+      "inventory": {
+        "application": {
+          "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+          "imageId": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9",
+          "containerId": "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef",
+          "platform": "linux/amd64",
+          "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0"
+        },
+        "principals": [
+          {
+            "id": "principal_admin",
+            "email": "fai-517-admin@qualification.invalid",
+            "displayName": "fai-517-admin@qualification.invalid"
+          },
+          {
+            "id": "principal_user",
+            "email": "fai-517-user@qualification.invalid",
+            "displayName": "FAI-517 User"
+          }
+        ],
+        "project": {
+          "id": "compatibility",
+          "title": "FAI-517 Compatibility",
+          "environment": "fai-517",
+          "activeServingStateId": "serving_001"
+        },
+        "publish": {
+          "id": "publish_001",
+          "projectId": "compatibility",
+          "environment": "fai-517",
+          "status": "active",
+          "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        },
+        "assets": [
+          {
+            "id": "dashboard:compatibility.preservation",
+            "type": "dashboard",
+            "key": "compatibility.preservation",
+            "servingStateId": "serving_001",
+            "contentHash": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+          },
+          {
+            "id": "model_table:compatibility.orders",
+            "type": "model_table",
+            "key": "compatibility.orders",
+            "servingStateId": "serving_001",
+            "contentHash": "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+          },
+          {
+            "id": "semantic_model:compatibility.compatibility",
+            "type": "semantic_model",
+            "key": "compatibility.compatibility",
+            "servingStateId": "serving_001",
+            "contentHash": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+          },
+          {
+            "id": "source:qualification.orders",
+            "type": "source",
+            "key": "qualification.orders",
+            "servingStateId": "serving_001",
+            "contentHash": "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+          }
+        ],
+        "managedDataRows": 3,
+        "semanticResultSha256": "21bc8a539aa05a0d97e07b294bfead69daaee6e6be3d15698efa2ed8d028c473",
+        "dashboardResultSha256": "4e235add0e3c1f6c9a399981e981fdfd04f33c472a451b4516bb6a569a9a4ef9"
+      },
+      "beforeSha256": "fb88cd5b7e02d39497d90c48f12f49f9a61c159df9d0f4548daf1ab44e72c3e6",
+      "afterSha256": "fb88cd5b7e02d39497d90c48f12f49f9a61c159df9d0f4548daf1ab44e72c3e6",
+      "restartIdentityVerified": true,
+      "statePreserved": true
+    },
+    "freshCandidate": {
+      "runId": "abcdef0123456789abcdef0123456789",
+      "containerId": "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789",
+      "containerName": "leapview-v010-candidate-abcdef0123456789abcdef0123456789",
+      "stateVolumeName": "leapview-v010-candidate-abcdef0123456789abcdef0123456789-state",
+      "networkName": "leapview-v010-candidate-abcdef0123456789abcdef0123456789-network",
+      "predecessor": {
+        "releaseId": "v0.1.0",
+        "version": "0.1.0",
+        "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0",
+        "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+        "distribution": "authentication-required",
+        "platform": "linux/amd64"
+      },
+      "candidate": {
+        "releaseId": "v0.2.0-rc.2",
+        "version": "0.2.0-rc.2",
+        "sourceRevision": "4444444444444444444444444444444444444444",
+        "image": "ghcr.io/flidai/leapview@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+        "distribution": "public",
+        "platform": "linux/amd64"
+      },
+      "candidateImageId": "sha256:9999999999999999999999999999999999999999999999999999999999999999",
+      "policyVersion": "ubdr/v1",
+      "policySha256": "10a8e5a5fdaba641ba830866286b09ce8da04621925649ff86955094af526914",
+      "freshInstallDecision": {
+        "schemaVersion": 1,
+        "policyVersion": "ubdr/v1",
+        "operation": "fresh-install",
+        "allowed": true,
+        "reasonCode": "transition.allowed.fresh_install",
+        "remediation": "",
+        "requirements": [],
+        "current": { "image": "", "platform": "" },
+        "next": {
+          "releaseId": "v0.2.0-rc.2",
+          "version": "0.2.0-rc.2",
+          "sourceRevision": "4444444444444444444444444444444444444444",
+          "image": "ghcr.io/flidai/leapview@sha256:4444444444444444444444444444444444444444444444444444444444444444",
+          "distribution": "public",
+          "platform": "linux/amd64"
+        }
+      },
+      "freshStateBeforeSha256": "1111111111111111111111111111111111111111111111111111111111111111",
+      "freshStateAfterSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "candidateBeforeDenialsSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "candidateAfterDenialsSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+      "predecessorBeforeDenialsSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "predecessorAfterDenialsSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+      "candidateInventory": {
+        "adminEmail": "fai-517-candidate@qualification.invalid",
+        "adminPrincipalId": "candidate_admin",
+        "legacyPrincipalCount": 0,
+        "dashboardCount": 0,
+        "semanticModelCount": 0,
+        "legacyProjectVisible": false,
+        "legacyManagedDataVisible": false
+      },
+      "denials": [
+        {
+          "scenario": "preserved-state-mount",
+          "operation": "upgrade",
+          "reasonCode": "transition.denied.fresh_install_only",
+          "beforeSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "afterSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "deniedBeforeMutation": true
+        },
+        {
+          "scenario": "legacy-state-reference",
+          "operation": "upgrade",
+          "reasonCode": "transition.denied.fresh_install_only",
+          "beforeSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "afterSha256": "3333333333333333333333333333333333333333333333333333333333333333",
+          "deniedBeforeMutation": true
+        },
+        {
+          "scenario": "direct-legacy-artifact-adoption",
+          "operation": "fresh-install",
+          "reasonCode": "transition.denied.release_unknown",
+          "beforeSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "afterSha256": "2222222222222222222222222222222222222222222222222222222222222222",
+          "deniedBeforeMutation": true
+        }
+      ],
+      "startedAt": "2026-07-13T15:45:35Z",
+      "completedAt": "2026-07-13T15:45:36Z",
+      "cleanStateVerified": true,
+      "legacyStateUnavailable": true,
+      "mutationFree": true,
+      "cleanupVerified": true
+    }
+  },
+  "result": "verified"
+}

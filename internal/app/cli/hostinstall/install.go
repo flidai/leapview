@@ -43,6 +43,7 @@ type Paths struct {
 type Lifecycle interface {
 	Initialize(context.Context, composectl.InitOptions) error
 	Start(context.Context) error
+	RunScheduledRecoveryQualification(context.Context) error
 }
 
 type LifecycleFactory func(root string) (Lifecycle, error)
@@ -131,6 +132,9 @@ func (i *Installer) Install(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("validate host installation payload: %w", err)
 	}
+	if !payloadHasQualification(payload) {
+		return fmt.Errorf("validate host installation payload: the complete recovery qualification bundle is required")
+	}
 	if err := validatePolicyArtifact(payload["release-transition-policy.json"], normalized.Image, runtime.GOOS+"/"+runtime.GOARCH); err != nil {
 		return err
 	}
@@ -187,6 +191,13 @@ func (i *Installer) Install(ctx context.Context) error {
 	if err := securefs.WritePrivateFileAtomic(filepath.Join(i.paths.Root, installMarkerName), marker); err != nil {
 		return fmt.Errorf("write host installation marker: %w", err)
 	}
+	// Reconcile the four owner schedules through the same production entrypoint
+	// used by the timer. This validates the released controller, bundle, Docker
+	// capability, managed storage, and evidence permissions before installation
+	// can claim scheduled qualification is active.
+	if err := lifecycle.RunScheduledRecoveryQualification(ctx); err != nil {
+		return fmt.Errorf("validate managed recovery qualification: %w", err)
+	}
 	if err := i.run(ctx, i.paths.Systemctl, "daemon-reload"); err != nil {
 		return fmt.Errorf("reload systemd: %w", err)
 	}
@@ -195,6 +206,9 @@ func (i *Installer) Install(ctx context.Context) error {
 	}
 	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-backup-maintenance.timer"); err != nil {
 		return fmt.Errorf("enable LeapView backup maintenance timer: %w", err)
+	}
+	if err := i.run(ctx, i.paths.Systemctl, "enable", "--now", "leapview-recovery-qualification.timer"); err != nil {
+		return fmt.Errorf("enable LeapView recovery qualification timer: %w", err)
 	}
 	return nil
 }

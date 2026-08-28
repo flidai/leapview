@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticscontract "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
@@ -34,6 +35,7 @@ type Options struct {
 	AuthorizationFingerprint string
 	BindingFingerprint       string
 	SkipInitialRefresh       bool
+	DependencyEvidence       map[string]resultidentity.Evidence
 }
 
 type Factory struct{ options Options }
@@ -60,6 +62,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		SemanticDigest: options.SemanticModelDigest, ArtifactDigest: options.ArtifactDigest, SourceDataDigest: options.SourceDataDigest,
 		CandidateID: options.CandidateID, AuthorizationFingerprint: options.AuthorizationFingerprint,
 		BindingFingerprint: options.BindingFingerprint,
+		DependencyEvidence: options.DependencyEvidence,
 		SkipInitialRefresh: options.SkipInitialRefresh,
 	})
 	if err != nil {

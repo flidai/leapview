@@ -54,6 +54,7 @@ func run(ctx context.Context) error {
 	}
 	command := composectl.Command(ctx, controller)
 	command.AddCommand(hostinstall.Command(ctx, hostinstall.CommandOptions{
+		Root:      root,
 		DockerBin: dockerBin,
 		Stdin:     os.Stdin,
 		Stdout:    os.Stdout,

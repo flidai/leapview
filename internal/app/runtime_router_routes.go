@@ -82,6 +82,7 @@ type staticRouteDependencies struct {
 // separate from capability route mounting makes the order of security
 // middleware explicit and prevents feature modules from silently changing it.
 func mountRouterMiddleware(mux *chi.Mux, dependencies routerMiddlewareDependencies) {
+	mux.Use(apihttpmiddleware.RequestCorrelation)
 	if dependencies.requestLogging {
 		mux.Use(apihttpmiddleware.RequestLogger(dependencies.logger))
 	}

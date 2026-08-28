@@ -1,0 +1,31 @@
+{
+  "schemaVersion": 1,
+  "kind": "leapview-v0.1-release-identity",
+  "verifiedAt": "2026-07-13T15:45:27Z",
+  "policyVersion": "ubdr/v1",
+  "policySha256": "aa5563af84408c0efe3828bd8a8d18467dc263075a945e86106dab3f332c7c19",
+  "identity": {
+    "releaseId": "v0.1.0",
+    "version": "0.1.0",
+    "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0",
+    "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "distribution": "authentication-required",
+    "platform": "linux/amd64"
+  },
+  "artifact": {
+    "repository": "ghcr.io/yacobolo/libredash",
+    "image": "ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "resolvedDigest": "sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153",
+    "platform": "linux/amd64",
+    "platformManifestDigest": "sha256:a8a60264b099c21eb46bf2ed8de1cca7f5867687d570ca2c6c3f9de4ad11018a",
+    "configDigest": "sha256:fbeefbd98aebc862dee9204478e6c8dd30a54c760929bfe1d7e4236cfe63c8f9",
+    "authenticated": true
+  },
+  "provenance": {
+    "sourceRepository": "https://github.com/Yacobolo/libredash",
+    "sourceTag": "v0.1.0",
+    "version": "0.1.0",
+    "sourceRevision": "5bf4aded574df459e80d81b77d1989ecd4fa7de0"
+  },
+  "result": "verified"
+}

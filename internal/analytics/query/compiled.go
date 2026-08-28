@@ -480,6 +480,161 @@ func SemanticModelFingerprint(model *semanticmodel.Model) string {
 	return semanticModelFingerprint(model)
 }
 
+// SemanticModelDigest returns the canonical SHA-256 identity accepted by the
+// result identity contract. It reuses the compiled-planner source snapshot and
+// fails closed when that snapshot cannot be represented.
+func SemanticModelDigest(model *semanticmodel.Model) (string, error) {
+	snapshot := semanticModelDependencySnapshot(model)
+	if snapshot == nil {
+		return "", fmt.Errorf("semantic model has no execution fingerprint")
+	}
+	encoded, err := json.Marshal(struct {
+		Version int                  `json:"version"`
+		Model   *semanticmodel.Model `json:"model"`
+	}{Version: 1, Model: snapshot})
+	if err != nil {
+		return "", fmt.Errorf("encode semantic model dependency identity: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
+// semanticModelDependencySnapshot removes descriptive authoring and display
+// metadata from the executable model projection. The ordinary compiled-model
+// fingerprint intentionally remains unchanged; this narrower snapshot exists
+// only for stable result dependency identity.
+func semanticModelDependencySnapshot(model *semanticmodel.Model) *semanticmodel.Model {
+	snapshot := model.ExecutionSnapshot()
+	if snapshot == nil {
+		return nil
+	}
+	snapshot.Title = ""
+	snapshot.Description = ""
+	for name, dataset := range snapshot.Datasets {
+		dataset.DisplayName = ""
+		dataset.Description = ""
+		snapshot.Datasets[name] = dataset
+	}
+	for name, table := range snapshot.Tables {
+		table.Description = ""
+		table.Checks = nil
+		table.SQLAnalysisEvidence = nil
+		for field, column := range table.Columns {
+			column.Description = ""
+			table.Columns[field] = column
+		}
+		for field, dimension := range table.Dimensions {
+			dimension.Label = ""
+			dimension.Description = ""
+			table.Dimensions[field] = dimension
+		}
+		for entityName, entity := range table.Entities {
+			entity.Description = ""
+			table.Entities[entityName] = entity
+		}
+		for index := range table.Schema.Columns {
+			table.Schema.Columns[index].Comment = ""
+		}
+		snapshot.Tables[name] = table
+	}
+	for name, dimension := range snapshot.Dimensions {
+		dimension.Label = ""
+		dimension.Description = ""
+		snapshot.Dimensions[name] = dimension
+	}
+	for name, metric := range snapshot.Metrics {
+		metric.Label = ""
+		metric.Description = ""
+		metric.Unit = ""
+		metric.Format = ""
+		metric.Hidden = false
+		snapshot.Metrics[name] = metric
+	}
+	for index := range snapshot.Relationships {
+		snapshot.Relationships[index].Description = ""
+	}
+	normalizeSemanticModelDependencyCollections(snapshot)
+	return snapshot
+}
+
+// normalizeSemanticModelDependencyCollections collapses only optional
+// collection representations for which absent and empty have identical
+// planner meaning. Collections whose nil state selects a different semantic
+// variant (for example filter all/any groups) are deliberately preserved.
+func normalizeSemanticModelDependencyCollections(snapshot *semanticmodel.Model) {
+	if snapshot == nil {
+		return
+	}
+	if len(snapshot.Relationships) == 0 {
+		snapshot.Relationships = nil
+	}
+	if len(snapshot.Dimensions) == 0 {
+		snapshot.Dimensions = nil
+	} else {
+		for name, dimension := range snapshot.Dimensions {
+			if len(dimension.Grains) == 0 {
+				dimension.Grains = nil
+			}
+			snapshot.Dimensions[name] = dimension
+		}
+	}
+	if len(snapshot.Filters) == 0 {
+		snapshot.Filters = nil
+	} else {
+		for name, filter := range snapshot.Filters {
+			snapshot.Filters[name] = normalizeSemanticModelDependencyFilter(filter)
+		}
+	}
+	if len(snapshot.Metrics) == 0 {
+		snapshot.Metrics = nil
+	} else {
+		for name, metric := range snapshot.Metrics {
+			if len(metric.Where) == 0 {
+				metric.Where = nil
+			}
+			snapshot.Metrics[name] = metric
+		}
+	}
+	for name, table := range snapshot.Tables {
+		if len(table.Columns) == 0 {
+			table.Columns = nil
+		}
+		if len(table.Entities) == 0 {
+			table.Entities = nil
+		}
+		if len(table.Dimensions) == 0 {
+			table.Dimensions = nil
+		}
+		if len(table.Schema.Columns) == 0 {
+			table.Schema.Columns = nil
+		}
+		if len(table.SourceDependencies) == 0 {
+			table.SourceDependencies = nil
+		}
+		if len(table.ModelDependencies) == 0 {
+			table.ModelDependencies = nil
+		}
+		snapshot.Tables[name] = table
+	}
+}
+
+func normalizeSemanticModelDependencyFilter(filter semanticmodel.SemanticFilterSpec) semanticmodel.SemanticFilterSpec {
+	if len(filter.Path) == 0 {
+		filter.Path = nil
+	}
+	for index, child := range filter.All {
+		filter.All[index] = normalizeSemanticModelDependencyFilter(child)
+	}
+	for index, child := range filter.Any {
+		filter.Any[index] = normalizeSemanticModelDependencyFilter(child)
+	}
+	if filter.Not != nil {
+		child := normalizeSemanticModelDependencyFilter(*filter.Not)
+		filter.Not = &child
+	}
+	return filter
+}
+
 func semanticModelFingerprint(model *semanticmodel.Model) string {
 	if model == nil {
 		return ""

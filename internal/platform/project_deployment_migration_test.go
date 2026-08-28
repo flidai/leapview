@@ -43,7 +43,7 @@ func TestManagedDataMigrationCreatesProjectDeploymentsWithoutLegacyRollouts(t *t
 
 // TestDeliveryMigrationChainIsContiguousAndRestartSafe keeps the embedded
 // Goose chain's current tail explicit. A fresh install and a second Open both
-// apply/verify every migration through 092; a missing or duplicated sequence
+// apply/verify every migration through 093; a missing or duplicated sequence
 // entry would either fail the numeric assertion or leave one of the tail
 // columns absent after restart.
 func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
 
 // TestDeliveryMigrationUpgradeFrom072 exercises the real upgrade path rather
 // than only a fresh install: seed a database through the last pre-delivery
-// migration, then let Open apply 073..092 in one restart-safe upgrade.
+// migration, then let Open apply 073..093 in one restart-safe upgrade.
 func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "delivery-upgrade.db")
@@ -166,25 +166,71 @@ func TestRefreshPipelineContractMigrationDropsLegacyExecutionState(t *testing.T)
 	}
 }
 
+func TestRecoveryQualificationLedgerMigrationUpDownAndLegacyUpgrade(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "recovery-ledger-upgrade.db")
+	legacy, err := sql.Open("sqlite", sqliteDSN(path))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer legacy.Close()
+	legacy.SetMaxOpenConns(1)
+	goose.SetBaseFS(migrationsFS)
+	goose.SetLogger(goose.NopLogger())
+	if err := goose.SetDialect("sqlite3"); err != nil {
+		t.Fatal(err)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 92); err != nil {
+		t.Fatalf("seed legacy migration 092: %v", err)
+	}
+	for _, table := range []string{
+		"recovery_qualification_schedules", "recovery_qualification_occurrences",
+		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+	} {
+		assertSQLTableCount(t, ctx, legacy, table, 0)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 93); err != nil {
+		t.Fatalf("upgrade legacy database to recovery ledger: %v", err)
+	}
+	for _, table := range []string{
+		"recovery_qualification_schedules", "recovery_qualification_occurrences",
+		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+	} {
+		assertSQLTableCount(t, ctx, legacy, table, 1)
+	}
+	if err := goose.DownToContext(ctx, legacy, "migrations", 92); err != nil {
+		t.Fatalf("downgrade recovery ledger migration: %v", err)
+	}
+	for _, table := range []string{
+		"recovery_qualification_schedules", "recovery_qualification_occurrences",
+		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+	} {
+		assertSQLTableCount(t, ctx, legacy, table, 0)
+	}
+	if err := goose.UpToContext(ctx, legacy, "migrations", 93); err != nil {
+		t.Fatalf("reapply recovery ledger migration: %v", err)
+	}
+}
+
 func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store) {
 	t.Helper()
 	var latest int64
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied = 1`).Scan(&latest); err != nil {
 		t.Fatalf("inspect applied Goose migrations: %v", err)
 	}
-	if latest != 92 {
-		t.Fatalf("latest applied migration = %d, want 92", latest)
+	if latest != 93 {
+		t.Fatalf("latest applied migration = %d, want 93", latest)
 	}
 	rows, err := store.SQLDB().QueryContext(ctx, `
 		SELECT version_id
 		FROM goose_db_version
-		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 91
+		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 93
 		ORDER BY version_id`)
 	if err != nil {
 		t.Fatalf("inspect applied delivery migration sequence: %v", err)
 	}
 	defer rows.Close()
-	for want := int64(73); want <= 91; want++ {
+	for want := int64(73); want <= 93; want++ {
 		if !rows.Next() {
 			t.Fatalf("applied delivery migration sequence ended before %d", want)
 		}
@@ -225,6 +271,12 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 		if count != 1 {
 			t.Fatalf("migration tail column %s.%s count = %d, want 1", field.table, field.column, count)
 		}
+	}
+	for _, table := range []string{
+		"recovery_qualification_schedules", "recovery_qualification_occurrences",
+		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+	} {
+		assertTableCount(t, ctx, store, table, 1)
 	}
 	var eventDDL string
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'delivery_events'`).Scan(&eventDDL); err != nil {
@@ -298,6 +350,17 @@ func assertTableCount(t *testing.T, ctx context.Context, store *Store, table str
 	t.Helper()
 	var got int
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&got); err != nil {
+		t.Fatalf("inspect table %s: %v", table, err)
+	}
+	if got != want {
+		t.Fatalf("table %s count = %d, want %d", table, got, want)
+	}
+}
+
+func assertSQLTableCount(t *testing.T, ctx context.Context, database *sql.DB, table string, want int) {
+	t.Helper()
+	var got int
+	if err := database.QueryRowContext(ctx, `SELECT count(*) FROM sqlite_master WHERE type = 'table' AND name = ?`, table).Scan(&got); err != nil {
 		t.Fatalf("inspect table %s: %v", table, err)
 	}
 	if got != want {
