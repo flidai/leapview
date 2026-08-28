@@ -22,6 +22,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -607,6 +608,7 @@ type ProjectRuntimeConfig struct {
 	MaterializationOnly      bool
 	QueryCache               *resultcache.Scope
 	ResultLimits             dataquery.ResultLimits
+	DependencyEvidence       map[string]resultidentity.Evidence
 }
 
 type ProjectRuntime struct {
@@ -656,6 +658,11 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	if err := config.ProjectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project id: %w", err)
 	}
+	dependencyEvidence := make(map[string]resultidentity.Evidence, len(config.DependencyEvidence))
+	for modelID, evidence := range config.DependencyEvidence {
+		dependencyEvidence[modelID] = evidence
+	}
+	config.DependencyEvidence = dependencyEvidence
 	db := config.Database
 	if db == nil {
 		return nil, fmt.Errorf("process DuckDB environment is required")
@@ -728,6 +735,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 	}
 	next := make(map[string]*analyticsmaterialize.Runtime, len(r.models))
 	for modelID, model := range r.models {
+		dependencyEvidence := config.DependencyEvidence[modelID]
 		tableRelation := func(table string) (string, error) {
 			physical := strings.TrimSpace(table)
 			if err := validateIdentifier(physical); err != nil {
@@ -743,6 +751,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryCache: config.QueryCache, ResultLimits: config.ResultLimits,
+			DependencyEvidence: dependencyEvidence,
 			RequiredExtensions: config.RequiredExtensions,
 		})
 		if err != nil {

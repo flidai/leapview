@@ -17,8 +17,8 @@ import (
 func TestBundlePipelineCancellationBoundariesReleaseArrowOwnership(t *testing.T) {
 	stages := []bundleStage{
 		bundleStageGovern,
-		bundleStageCache,
 		bundleStagePlan,
+		bundleStageCache,
 		bundleStageExecute,
 		bundleStageSplitStoreDecode,
 		bundleStageTransformObserve,

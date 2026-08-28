@@ -45,6 +45,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -929,9 +930,10 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	if err := analyticsModule.ConfigureActiveRuntimeBindings(activeConnectionEvidenceSource{
+	activeRuntimeEvidence := activeConnectionEvidenceSource{
 		releases: releaseModule, targetID: instanceID, environment: string(environment),
-	}); err != nil {
+	}
+	if err := analyticsModule.ConfigureActiveRuntimeBindings(activeRuntimeEvidence); err != nil {
 		return fail(err)
 	}
 	managedDataResolution := managedDataModule.RuntimeResolution()
@@ -1119,7 +1121,8 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
-			PoolS3: gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
+			PoolS3:             gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
+			ActivationEvidence: activeRuntimeEvidence,
 			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
@@ -1639,7 +1642,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if build.GateEvidence != nil {
 				bindingFingerprint = build.GateEvidence.BindingGeneration
 			}
-			receipt, err := canonicalRuntime.Prepare(readyCtx, deployment.CandidateRuntimeRequest{Candidate: input.Candidate, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, Generation: deployment.CandidateGenerationRuntime{Identity: artifacts.Generation.Identity, ArtifactDigest: artifacts.Generation.ArtifactDigest, DataRevision: artifacts.Generation.DataRevision, DataMode: deployment.CandidateDataMode(artifacts.Generation.DataMode), Connections: candidateConnectionRequirements(artifacts.Generation.Connections), AuthoredConnections: candidateReleaseAuthoredConnections(artifacts.Generation.AuthoredConnections), ManagedDataConnections: candidateManagedDataConnections(artifacts.Generation.ManagedDataPins), Restrictions: candidateRuntimeRestrictions(artifacts.Generation.Restrictions), BindingFingerprint: bindingFingerprint, GateEvidence: build.GateEvidence}})
+			receipt, err := canonicalRuntime.Prepare(readyCtx, deployment.CandidateRuntimeRequest{Candidate: input.Candidate, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, Generation: deployment.CandidateGenerationRuntime{Identity: artifacts.Generation.Identity, ArtifactDigest: artifacts.Generation.ArtifactDigest, DataRevision: artifacts.Generation.DataRevision, DataMode: deployment.CandidateDataMode(artifacts.Generation.DataMode), Connections: candidateConnectionRequirements(artifacts.Generation.Connections), AuthoredConnections: candidateReleaseAuthoredConnections(artifacts.Generation.AuthoredConnections), ManagedDataConnections: candidateManagedDataConnections(artifacts.Generation.ManagedDataPins), Extensions: append([]extension.Evidence(nil), artifacts.Extensions...), Restrictions: candidateRuntimeRestrictions(artifacts.Generation.Restrictions), BindingFingerprint: bindingFingerprint, GateEvidence: build.GateEvidence}})
 			if err != nil {
 				return deployment.Candidate{}, err
 			}

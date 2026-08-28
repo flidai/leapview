@@ -72,6 +72,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		SourceDataDigest: request.SourceDataDigest,
 		CandidateID:      request.CandidateID, AuthorizationFingerprint: request.AuthorizationFingerprint,
 		BindingFingerprint: request.BindingFingerprint,
+		DependencyEvidence: request.DependencyEvidence,
 		RequiredExtensions: request.RequiredExtensions,
 		SkipInitialRefresh: request.SkipInitialRefresh,
 	})

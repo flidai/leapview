@@ -71,7 +71,7 @@ func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []agg
 	if err != nil {
 		return BundlePlan{}, fmt.Errorf("render bundle plan IR: %w", err)
 	}
-	fingerprints, err := p.bundleBranchFingerprints(requests, resolutions)
+	projections, fingerprints, err := p.bundleBranchDependencyProjections(requests, resolutions)
 	if err != nil {
 		return BundlePlan{}, err
 	}
@@ -84,7 +84,11 @@ func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []agg
 		for _, member := range resolutions[index].Members {
 			columns = append(columns, BundleColumn{Output: member.Alias, Physical: fmt.Sprintf("__bundle_%d_%s", index, member.Alias)})
 		}
-		branches[index] = BundleBranch{ID: item.ID, Ordinal: index, Columns: columns, Fingerprint: fingerprints[index]}
+		branches[index] = BundleBranch{
+			ID: item.ID, Ordinal: index, Columns: columns,
+			Fingerprint:          fingerprints[index],
+			DependencyProjection: projections[index],
+		}
 	}
 	lineage, err := irGraph.Dependencies()
 	if err != nil {

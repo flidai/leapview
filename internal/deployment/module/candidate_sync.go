@@ -498,6 +498,7 @@ func (m *Module) prepareCandidate(
 			Connections:            candidateConnectionRequirements(generation.Connections),
 			AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
 			ManagedDataConnections: candidateManagedDataConnections(generation.ManagedDataPins),
+			Extensions:             append([]extension.Evidence(nil), artifacts.Extensions...),
 		},
 	})
 	if err != nil {

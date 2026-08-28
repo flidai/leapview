@@ -62,6 +62,7 @@ type CandidateCompatibility struct {
 	Bindings                                 []CandidateBindingVersion
 	AuthoredConnections                      []CandidateAuthoredConnection
 	ManagedDataConnections                   []string
+	Capabilities                             []RuntimeCapabilityEvidence
 	Restrictions                             []CandidateRestriction
 }
 type CandidateRegistration struct {
@@ -173,6 +174,9 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 		CandidateID: normalized.CandidateID, OwnerID: normalized.OwnerID,
 		AuthorizationFingerprint: normalized.Compatibility.AuthorizationFingerprint,
 		BindingFingerprint:       fingerprintCandidateBindings(normalized.Compatibility.Bindings),
+		RuntimeVersion:           normalized.Compatibility.RuntimeVersion,
+		BindingKinds:             candidateBindingKinds(normalized.Compatibility),
+		Capabilities:             cloneRuntimeCapabilities(normalized.Compatibility.Capabilities),
 		CompatibilityFingerprint: "sha256:" + fmt.Sprintf("%x", fingerprint),
 		GateEvidenceDigest:       normalized.Compatibility.GateEvidenceDigest,
 	}, expiresAt: normalized.ExpiresAt, fingerprint: fingerprint, lifetime: input.Lifetime}
@@ -184,6 +188,24 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 		return nil, err
 	}
 	return prepared, nil
+}
+
+func candidateBindingKinds(value CandidateCompatibility) map[string]string {
+	kinds := make(map[string]string, len(value.Bindings)+len(value.AuthoredConnections)+len(value.ManagedDataConnections))
+	for _, binding := range value.Bindings {
+		kinds[binding.LogicalConnection] = binding.ConnectorKind
+	}
+	for _, authored := range value.AuthoredConnections {
+		kinds[authored.LogicalConnection] = authored.ConnectorKind
+	}
+	for _, connection := range value.ManagedDataConnections {
+		kinds[connection] = "managed"
+	}
+	return kinds
+}
+
+func cloneRuntimeCapabilities(values []RuntimeCapabilityEvidence) []RuntimeCapabilityEvidence {
+	return append([]RuntimeCapabilityEvidence(nil), values...)
 }
 func (r *Registry) registerPreparedCandidate(reg CandidateRegistration, candidate servingstate.PreparedRuntime) error {
 	if r == nil || r.candidates == nil {
@@ -363,6 +385,17 @@ func normalizeCompatibility(value CandidateCompatibility) (CandidateCompatibilit
 		}
 	}
 	value.ManagedDataConnections = managed
+	capabilities := cloneRuntimeCapabilities(value.Capabilities)
+	sort.Slice(capabilities, func(i, j int) bool {
+		if capabilities[i].Name != capabilities[j].Name {
+			return capabilities[i].Name < capabilities[j].Name
+		}
+		if capabilities[i].Identity != capabilities[j].Identity {
+			return capabilities[i].Identity < capabilities[j].Identity
+		}
+		return capabilities[i].Digest < capabilities[j].Digest
+	})
+	value.Capabilities = capabilities
 	restrictions := append([]CandidateRestriction(nil), value.Restrictions...)
 	for i := range restrictions {
 		p := &restrictions[i]

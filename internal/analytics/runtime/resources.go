@@ -12,6 +12,7 @@ import (
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resource"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -48,6 +49,7 @@ type ProjectRequest struct {
 	// exact sealed base and the caller refreshes only impacted relations.
 	SkipInitialRefresh bool
 	ResultLimits       dataquery.ResultLimits
+	DependencyEvidence map[string]resultidentity.Evidence
 }
 
 // Project is the narrow analytical runtime consumed by dashboard adapters.
