@@ -92,7 +92,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   @state() private fieldQuery = ''
   @state() private localPageID = ''
-  @state() private localVisualID = ''
+  // null follows the server's initial selection; an empty string records an
+  // explicit canvas deselection without falling back to the first visual.
+  @state() private localVisualID: string | null = null
   @state() private visualType: BuilderVisualType = 'bar'
   @state() private inspectorTab: BuilderInspectorTab = 'build'
   @state() private fieldFilter: BuilderFieldFilter = 'all'
@@ -1060,11 +1062,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       fill: var(--lv-bg-panel-muted);
     }
 
-    .add-selected-visual {
-      width: 100%;
-      margin-top: var(--base-size-8);
-    }
-
     .visual-reference-link {
       color: var(--lv-fg-accent);
       font: var(--lv-type-caption);
@@ -1999,7 +1996,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="canvas-scroll">
           ${builder.preview.error ? html`<p class="preview-error" role="alert">${builder.preview.error}</p>` : nothing}
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a visual. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
-          <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
+          <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
             ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
             ${page.visuals.length === 0
               ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual in the builder to begin.</span></div></div>`
@@ -2023,7 +2020,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
     return html`
-      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${() => this.selectVisualFromPointer(visual.id)} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
+      <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? html`<span class="visual-preview"><lv-visualization-host authoring .envelope=${preview}><span slot="authoring-drag-handle" class="visual-drag-header" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span></lv-visualization-host></span>`
@@ -2038,9 +2035,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <aside class="pane properties visual-builder" aria-label="Visual builder">
         <div class="pane-header">
           <div class="inspector-heading">
-            <div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>
+            <div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : page ? 'Add a visual' : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>
           </div>
-          <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Select a visual on the canvas to configure it.' : 'Add a page to start building.'}</p>
+          <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
         <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
@@ -2069,18 +2066,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const currentType = visual ? this.visualTypeForRender(visual) : undefined
     const pickerHelpID = 'builder-visual-type-help'
     const groups = this.visualCatalogGroups(builder.visualCatalog ?? [])
-    const selectedEntry = this.visualCatalogEntry(visual ? currentType ?? '' : this.visualType, builder)
+    const selectedEntry = visual ? this.visualCatalogEntry(currentType ?? '', builder) : undefined
     return html`
       <section class="property-group" aria-label=${visual ? 'Edit visual type' : 'Add visual'}>
-        <span class="property-label">${visual ? 'Edit visual type' : 'Add a visual'}</span>
-        <p id=${pickerHelpID} class="pane-hint">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type for the new visual.'}</p>
+        <span class="property-label">${visual ? 'Visual type' : 'Add a visual'}</span>
+        <p id=${pickerHelpID} class="pane-hint">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
         <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
           ${groups.map(([group, entries]) => html`
             <section class="visual-picker-group" aria-label=${group}>
               <h3 class="visual-picker-group-title">${group}</h3>
               <div class="visual-picker">
                 ${entries.map((entry) => html`
-                  <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${`${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${visual ? currentType === entry.type : this.visualType === entry.type} ?disabled=${this.commandPending || (Boolean(visual) && !builder.capabilities.canEdit)} @click=${() => this.selectVisualType(entry.type, visual)}>
+                  <button type="button" class="visual-picker-button" data-visual-picker-type=${entry.type} data-visual-type=${entry.type} data-visual-group=${entry.group} aria-label=${visual ? `Change to ${entry.label} visual` : `Add ${entry.label} visual`} aria-describedby=${pickerHelpID} title=${entry.label} aria-pressed=${Boolean(visual && currentType === entry.type)} ?disabled=${this.commandPending || (visual ? !builder.capabilities.canEdit : !page || !builder.capabilities.canAddVisual)} @click=${() => this.selectVisualType(entry.type, visual)}>
                     ${renderVisualTypeIcon(entry.type)}
                     <span>${entry.label}</span>
                   </button>
@@ -2090,7 +2087,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           `)}
         </div>
         ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Open ${selectedEntry.label} visual reference</a>` : nothing}
-        <button type="button" class="primary add-selected-visual" data-builder-action="add-visual" ?disabled=${!page || !builder.capabilities.canAddVisual || this.commandPending} @click=${this.addVisual}>${visual ? 'Add another ' : 'Add '}${this.visualLabel(this.visualType, builder)} visual</button>
       </section>
     `
   }
@@ -2460,7 +2456,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private effectiveVisualID(builder: DashboardBuilderSignal | null, page: DashboardBuilderPageSignal): string {
-    if (this.localVisualID && page.visuals.some((visual) => visual.id === this.localVisualID)) return this.localVisualID
+    if (this.localVisualID !== null) {
+      if (this.localVisualID && page.visuals.some((visual) => visual.id === this.localVisualID)) return this.localVisualID
+      return ''
+    }
     if (builder?.selectedVisualId && page.visuals.some((visual) => visual.id === builder.selectedVisualId)) return builder.selectedVisualId
     return page.visuals[0]?.id ?? ''
   }
@@ -2481,16 +2480,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.emitCommand('add_page', { pageId: '', title: '' })
   }
-  private addVisual = (): void => {
+  private addVisual(type: BuilderVisualType = this.visualType): void {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!builder?.capabilities.canAddVisual || !page) return
+    if (!builder?.capabilities.canAddVisual || !page || this.commandPending) return
     this.pendingAddVisual = {
       revision: this.revisionKey(builder),
       visualIDs: new Set(page.visuals.map((visual) => visual.id)),
       pageID: page.id,
     }
-    this.emitCommand('add_visual', { pageId: page.id, visualId: '', componentId: '', type: this.visualType, title: '' })
+    this.visualType = type
+    this.visualActionMessage = `Adding a ${this.visualLabel(type, builder)} visual.`
+    this.emitCommand('add_visual', { pageId: page.id, visualId: '', componentId: '', type, title: '' })
   }
 
   private copySelectedVisual(): boolean {
@@ -2527,7 +2528,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private selectVisualType(type: BuilderVisualType, visual: DashboardBuilderVisualSignal | undefined): void {
     this.visualType = type
-    if (!visual) return
+    if (!visual) {
+      this.addVisual(type)
+      return
+    }
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending) return
@@ -2689,6 +2693,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectVisual(visualID)
   }
 
+  private readonly deselectVisualFromCanvas = (event: MouseEvent): void => {
+    const target = event.target
+    if (target instanceof Element && target.closest('.visual')) return
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!page || !this.effectiveVisualID(builder, page)) return
+    this.localVisualID = ''
+    this.inspectorTab = 'build'
+    this.visualActionMessage = 'Visual selection cleared.'
+    this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
+  }
+
   private selectVisualOnKey(event: KeyboardEvent, visualID: string): void {
     // The tile remains a focusable authoring container while its chart body is
     // fully interactive. Do not steal keyboard events from visual controls.
@@ -2755,6 +2771,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private commandDetail(): Record<string, string> {
     const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
     return {
       dashboardId: builder?.dashboardId ?? '',
       semanticModelId: builder?.semanticModel?.id ?? '',
@@ -2762,8 +2779,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       revisionId: builder?.revision.id ?? '',
       revisionNumber: String(builder?.revision.number ?? 0),
       revisionContentHash: builder?.revision.contentHash ?? '',
-      pageId: builder ? (this.selectedPage(builder)?.id ?? '') : '',
-      visualId: this.localVisualID,
+      pageId: page?.id ?? '',
+      visualId: builder && page ? this.effectiveVisualID(builder, page) : '',
     }
   }
 
