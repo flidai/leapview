@@ -1083,6 +1083,100 @@ func TestQualificationPublicationRetryLimitIsRespected(t *testing.T) {
 	}
 }
 
+func TestQualificationGCBaselineRetriesTemporaryUnavailability(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	want := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+		{ID: "gc-before-restart", Status: "complete"},
+	}}
+	got, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			attempts++
+			if attempts == 1 {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"operator snapshot: %s", qualificationGCSnapshotUnavailableMarker,
+				)
+			}
+			return want, nil
+		},
+	)
+	require.NoError(t, err)
+	if attempts != 2 || sleeps != 1 || !got.containsCycle("gc-before-restart") {
+		t.Fatalf("attempts = %d, sleeps = %d, observation = %+v, want 2/1/baseline cycle", attempts, sleeps, got)
+	}
+}
+
+func TestQualificationGCBaselineWaitsForInactiveLease(t *testing.T) {
+	attempts := 0
+	sleeps := 0
+	got, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			attempts++
+			observation := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
+				{ID: "gc-before-restart", Status: "complete"},
+			}}
+			if attempts == 1 {
+				observation.DegradedReasons = []string{qualificationGCLeaseActiveReason}
+			}
+			return observation, nil
+		},
+	)
+	require.NoError(t, err)
+	if attempts != 2 || sleeps != 1 || got.gcLeaseActive() {
+		t.Fatalf("attempts = %d, sleeps = %d, observation = %+v, want 2/1/inactive lease", attempts, sleeps, got)
+	}
+}
+
+func TestQualificationGCBaselineFailsUnrelatedSnapshotErrorImmediately(t *testing.T) {
+	want := errors.New("authorization failed")
+	sleeps := 0
+	_, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error {
+			sleeps++
+			return nil
+		},
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{}, want
+		},
+	)
+	if !errors.Is(err, want) || sleeps != 0 {
+		t.Fatalf("error = %v, sleeps = %d, want unrelated error immediately", err, sleeps)
+	}
+}
+
+func TestQualificationGCBaselineTimeoutReportsLeaseDiagnostics(t *testing.T) {
+	_, err := waitForQualificationGCBaseline(
+		t.Context(),
+		func(context.Context, time.Duration) error { return context.DeadlineExceeded },
+		func(context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCStabilityObservation{
+				DegradedReasons: []string{qualificationGCLeaseActiveReason},
+				Cycles: []qualificationGCCycleObservation{
+					{ID: "gc-running", PoolID: "pool-1", Epoch: 9, Status: "deleting"},
+				},
+			}, nil
+		},
+	)
+	if err == nil ||
+		!strings.Contains(err.Error(), "gc-running(pool=pool-1 epoch=9 status=deleting)") ||
+		!strings.Contains(err.Error(), "observedLeaseActive=true") ||
+		!strings.Contains(err.Error(), qualificationGCLeaseActiveReason) ||
+		!errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("timeout error = %v", err)
+	}
+}
+
 func TestQualificationGCStabilityOldCompletedCycleDoesNotSatisfyGate(t *testing.T) {
 	baseline := qualificationGCStabilityObservation{Cycles: []qualificationGCCycleObservation{
 		{ID: "gc-old", PoolID: "pool-1", Epoch: 1, Status: "complete"},

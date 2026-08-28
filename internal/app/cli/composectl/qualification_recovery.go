@@ -37,6 +37,7 @@ const qualificationGCStabilityTimeout = 3 * time.Minute
 const qualificationGCStabilityPollInterval = 500 * time.Millisecond
 const qualificationGCQueryFenceMarker = "sealed catalog query lease acquisition failed: delivery transition conflict: GC lease excludes query root"
 const qualificationGCLeaseActiveReason = "gc_lease_active"
+const qualificationGCSnapshotUnavailableMarker = "Delivery status is temporarily unavailable"
 
 const (
 	qualificationRecoveryFullCPUs               = "1"
@@ -1322,13 +1323,15 @@ func (c *Controller) captureQualificationGCBaseline(
 	containerID string,
 	stage string,
 ) (qualificationGCStabilityObservation, error) {
-	observation, err := qualificationGCObservation(ctx, httpClient, target, projectID, token)
-	if err == nil && observation.gcLeaseActive() {
-		err = fmt.Errorf(
-			"pre-restart physical-pool GC lease is active (degradedReasons=%v cycles=%v)",
-			observation.DegradedReasons, observation.cycleSummary(),
-		)
-	}
+	waitCtx, cancel := qualificationContext(ctx, qualificationGCStabilityTimeout)
+	defer cancel()
+	observation, err := waitForQualificationGCBaseline(
+		waitCtx,
+		c.sleep,
+		func(probeCtx context.Context) (qualificationGCStabilityObservation, error) {
+			return qualificationGCObservation(probeCtx, httpClient, target, projectID, token)
+		},
+	)
 	if err == nil {
 		return observation, nil
 	}
@@ -1338,6 +1341,46 @@ func (c *Controller) captureQualificationGCBaseline(
 		"capture physical-pool GC baseline before "+stage,
 		err,
 	)
+}
+
+func waitForQualificationGCBaseline(
+	ctx context.Context,
+	sleep func(context.Context, time.Duration) error,
+	observe func(context.Context) (qualificationGCStabilityObservation, error),
+) (qualificationGCStabilityObservation, error) {
+	observations := 0
+	var last qualificationGCStabilityObservation
+	var lastObservationErr error
+	for {
+		observations++
+		observation, err := observe(ctx)
+		if err == nil {
+			last = observation
+			lastObservationErr = nil
+			if !observation.gcLeaseActive() {
+				return observation, nil
+			}
+		} else {
+			if !strings.Contains(err.Error(), qualificationGCSnapshotUnavailableMarker) {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"physical-pool GC baseline snapshot failed: %w", err,
+				)
+			}
+			lastObservationErr = err
+		}
+		if sleepErr := sleep(ctx, qualificationGCStabilityPollInterval); sleepErr != nil {
+			if lastObservationErr != nil {
+				return qualificationGCStabilityObservation{}, fmt.Errorf(
+					"physical-pool GC baseline was not observable after %d snapshots (lastSnapshotError=%v): %w",
+					observations, lastObservationErr, sleepErr,
+				)
+			}
+			return qualificationGCStabilityObservation{}, fmt.Errorf(
+				"physical-pool GC baseline did not become idle after %d snapshots (observedCycles=%v observedLeaseActive=%t degradedReasons=%v): %w",
+				observations, last.cycleSummary(), last.gcLeaseActive(), last.DegradedReasons, sleepErr,
+			)
+		}
+	}
 }
 
 func (c *Controller) waitQualificationGCStable(
