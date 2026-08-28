@@ -1,0 +1,27 @@
+apiVersion: libredash.dev/v1
+kind: Dashboard
+metadata:
+  workspace: compatibility
+  name: preservation
+  title: v0.1 Preservation
+spec:
+  semanticModel: compatibility
+  visuals:
+    total:
+      kind: kpi
+      shape: single_value
+      query:
+        measures:
+          order_count:
+  pages:
+    - name: overview
+      title: Overview
+      visuals:
+        - id: total
+          kind: kpi_card
+          visual: total
+          placement:
+            col: 1
+            row: 1
+            col_span: 3
+            row_span: 2

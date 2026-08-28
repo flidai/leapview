@@ -290,6 +290,75 @@ func waitForArrowFlightWaiters(t *testing.T, pool *Pool, key string, want int) {
 	}
 }
 
+func TestSharedScopeKeepsEntriesUntilLastHandleCloses(t *testing.T) {
+	pool, err := New(testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, first, "query", "generation-one")
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entry, _, ok, err := second.LookupArrow("query")
+	if err != nil || !ok {
+		t.Fatalf("second shared handle lookup ok=%v err=%v", ok, err)
+	}
+	entry.Release()
+	if _, _, _, err := first.LookupArrow("query"); err == nil {
+		t.Fatal("closed shared handle remained usable")
+	}
+	if err := second.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertMiss(t, reopened, "query")
+}
+
+func TestGenerationScopeCloseDoesNotAffectSharedResultScope(t *testing.T) {
+	pool, err := New(testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	results, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := pool.OpenScope(ScopeID{RuntimeID: "serving-generation-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, results, "query", "stable")
+	if outcome := bytes.StoreBytes("tile", bytes.Generation(), []byte("generation-owned")); outcome != StoreStored {
+		t.Fatalf("store bytes = %q", outcome)
+	}
+	if err := bytes.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entry, _, ok, err := results.LookupArrow("query")
+	if err != nil || !ok {
+		t.Fatalf("result lookup after byte scope close ok=%v err=%v", ok, err)
+	}
+	entry.Release()
+	reopenedBytes, err := pool.OpenScope(ScopeID{RuntimeID: "serving-generation-two"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, ok, err := reopenedBytes.LookupBytes("tile"); err != nil || ok {
+		t.Fatalf("generation-two byte lookup ok=%v err=%v", ok, err)
+	}
+}
+
 func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {
 	pool, _ := New(testLimits())
 	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})

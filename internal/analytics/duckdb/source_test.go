@@ -357,7 +357,8 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	require.NoError(t, err)
 	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": badModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope, ExtensionAdmission: admission,
+		SnapshotID: snapshotID, SkipInitialRefresh: true,
+		QueryResultCache: cacheScope, ImmutableByteCache: cacheScope, ExtensionAdmission: admission,
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "snapshot schema discovery")
