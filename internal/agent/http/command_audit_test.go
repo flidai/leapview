@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/agent"
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/platform"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
@@ -187,6 +188,29 @@ func TestAgentUICommandInvocationUsesStableGeneratedIdentity(t *testing.T) {
 		// The second invocation should replace the context state with the run
 		// operation while preserving the same request identity.
 		t.Fatalf("run operation ID = %q/%v", operationID, ok)
+	}
+}
+
+func TestAgentUICommandIdentityIgnoresGeneratedCorrelationRequestID(t *testing.T) {
+	var identities []string
+	var requestIDs []string
+	handler := httpmiddleware.RequestCorrelation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		identities = append(identities, uiRequestIdentity(r, "hello"))
+		requestIDs = append(requestIDs, r.Header.Get("X-Request-ID"))
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for range 2 {
+		request := httptest.NewRequest(http.MethodPost, "/chats/turns", nil)
+		request.AddCookie(&http.Cookie{Name: "pagestream_client_id", Value: "client-fixed"})
+		handler.ServeHTTP(httptest.NewRecorder(), request)
+	}
+
+	if identities[0] != identities[1] || !strings.HasPrefix(identities[0], "ui_") {
+		t.Fatalf("retry identities = %#v, want one stable UI identity", identities)
+	}
+	if requestIDs[0] == requestIDs[1] || !strings.HasPrefix(requestIDs[0], "req_") || !strings.HasPrefix(requestIDs[1], "req_") {
+		t.Fatalf("canonical request IDs = %#v, want distinct generated identities", requestIDs)
 	}
 }
 

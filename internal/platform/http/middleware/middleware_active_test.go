@@ -223,6 +223,9 @@ func TestRequestCorrelationGeneratesAndPropagatesIdentity(t *testing.T) {
 	handler := RequestCorrelation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID = r.Header.Get("X-Request-ID")
 		correlationID = r.Header.Get("X-Correlation-ID")
+		if !RequestIDWasGenerated(r) {
+			t.Fatal("request ID was not marked as generated")
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	response := httptest.NewRecorder()
@@ -245,6 +248,9 @@ func TestRequestCorrelationGeneratesAndPropagatesIdentity(t *testing.T) {
 
 func TestRequestCorrelationPreservesClientIdentity(t *testing.T) {
 	handler := RequestCorrelation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if RequestIDWasGenerated(r) {
+			t.Fatal("client request ID was marked as generated")
+		}
 		if got := r.Header.Get("X-Request-ID"); got != "client-request" {
 			t.Fatalf("request ID = %q, want client-request", got)
 		}
