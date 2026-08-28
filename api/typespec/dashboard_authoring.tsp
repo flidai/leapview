@@ -236,6 +236,8 @@ model DashboardAuthoringUpdateVisualFormatIntent {
   legendVisible?: boolean;
   axisVisible?: boolean;
   dataLabelsVisible?: boolean;
+  formatKey?: string;
+  formatValue?: string;
 }
 
 model DashboardAuthoringRemoveFieldIntent {

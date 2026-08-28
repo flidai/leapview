@@ -67211,6 +67211,8 @@ components:
         updateVisualFormat:
           axisVisible: true
           dataLabelsVisible: true
+          formatKey: example
+          formatValue: example
           legendVisible: true
           pageId: example
           title: example
@@ -67243,9 +67245,17 @@ components:
         dataLabelsVisible:
           type: boolean
           example: true
+        formatKey:
+          type: string
+          example: example
+        formatValue:
+          type: string
+          example: example
       example:
         axisVisible: true
         dataLabelsVisible: true
+        formatKey: example
+        formatValue: example
         legendVisible: true
         pageId: example
         title: example

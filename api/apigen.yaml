@@ -84,6 +84,10 @@ targets:
     ir_out: gen/ui-signals-ir.json
     ts_out: ../web/generated/signals/index.ts
     contract_imports:
+      LeapViewDashboard:
+        go_package: github.com/flidai/leapview/internal/dashboard/document
+        go_alias: dashboarddocument
+        typescript_module: ../dashboard
       LeapViewVisualization:
         go_package: github.com/flidai/leapview/internal/dashboard/visualization/ir
         go_alias: visualizationir

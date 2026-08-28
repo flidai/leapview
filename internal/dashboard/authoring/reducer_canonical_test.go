@@ -380,6 +380,15 @@ func TestCanonicalReducerSelectedVisualEditingCommands(t *testing.T) {
 	if basePresentation, _ := base.Presentation.Base(); basePresentation == nil || basePresentation.AxisVisible == nil || *basePresentation.AxisVisible {
 		t.Fatalf("axis format = %#v", base.Presentation)
 	}
+	stacking := "percent"
+	if err := apply(&UpdateVisualFormatPayload{PageID: "overview", VisualID: "base-component", FormatKey: "stacking", FormatValue: &stacking}); err != nil {
+		t.Fatal(err)
+	}
+	base = current.Document.Spec.Visuals["base"]
+	presentation, ok = base.Presentation.Value.(*document.CartesianDashboardPresentation)
+	if !ok || presentation.Stacking == nil || *presentation.Stacking != document.DashboardStackingModePercent {
+		t.Fatalf("contract format = %#v", base.Presentation)
+	}
 	if err := apply(&DuplicateVisualPayload{PageID: "overview", VisualID: "base-component"}); err != nil {
 		t.Fatal(err)
 	}

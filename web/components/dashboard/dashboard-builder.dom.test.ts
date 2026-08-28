@@ -116,6 +116,8 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         regions,
         boxes,
         pickerButtons,
+        pickerGroups: Array.from(root.querySelectorAll('.visual-picker-group-title')).map((heading) => heading.textContent?.trim()),
+        referenceHref: root.querySelector<HTMLAnchorElement>('.visual-reference-link')?.getAttribute('href'),
         tabs,
         panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
         pageBarBelowCanvas: Boolean(canvas && pageBar && pageBar.top >= canvas.top + canvas.height - 1),
@@ -137,14 +139,11 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.rightDockContainsBothPanes).toBe(true)
     expect(state.dataPaneRightOfVisual).toBe(true)
     expect(state.pageBarVisible).toBe(true)
-    expect(state.pickerButtons).toEqual([
-      { type: 'bar', label: 'Bar chart', title: 'Bar', hasIcon: true, color: 'rgb(9, 105, 218)' },
-      { type: 'column', label: 'Column chart', title: 'Column', hasIcon: true, color: 'rgb(26, 127, 55)' },
-      { type: 'line', label: 'Line chart', title: 'Line', hasIcon: true, color: 'rgb(130, 80, 223)' },
-      { type: 'area', label: 'Area chart', title: 'Area', hasIcon: true, color: 'rgb(207, 34, 46)' },
-      { type: 'kpi', label: 'KPI chart', title: 'KPI', hasIcon: true, color: 'rgb(191, 57, 137)' },
-      { type: 'table', label: 'Table chart', title: 'Table', hasIcon: true, color: 'rgb(27, 124, 131)' },
-    ])
+    expect(state.pickerButtons).toHaveLength(26)
+    expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot'])
+    expect(state.pickerButtons.every((button) => button.hasIcon && button.label?.endsWith(' visual') && button.title)).toBe(true)
+    expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables'])
+    expect(state.referenceHref).toBe('/docs/visuals/bar')
     expect(state.tabs).toEqual([
       { id: 'build', label: 'Build', selected: 'true' },
       { id: 'format', label: 'Format', selected: 'false' },
@@ -352,25 +351,23 @@ test('dashboard builder keeps format controls visible and persistent across insp
       const controlSelectors = [
         'input[data-format-control="title-text"]',
         'input[data-format-control="title-visible"]',
-        'input[data-format-control="legend-visible"]',
-        'input[data-format-control="axis-visible"]',
-        'input[data-format-control="data-labels-visible"]',
+        'input[data-format-control="axisVisible"]',
+        'select[data-format-control="legend"]',
+        'select[data-format-control="labels.density"]',
+        'select[data-format-control="stacking"]',
       ]
       const controls = controlSelectors.map((selector) => {
-        const control = root.querySelector<HTMLInputElement>(selector)
-        return { selector, present: Boolean(control), label: control?.getAttribute('aria-label'), disabled: control?.disabled ?? null, value: control?.value ?? null, checked: control?.checked ?? null }
+        const control = root.querySelector<HTMLInputElement | HTMLSelectElement>(selector)
+        return { selector, present: Boolean(control), label: control?.getAttribute('aria-label'), disabled: control?.disabled ?? null, value: control?.value ?? null, checked: control instanceof HTMLInputElement ? control.checked : null }
       })
-      const title = root.querySelector<HTMLInputElement>('input[data-format-control="title-text"]')
-      const legend = root.querySelector<HTMLInputElement>('input[data-format-control="legend-visible"]')
+      const legend = root.querySelector<HTMLSelectElement>('select[data-format-control="legend"]')
       let command: Record<string, unknown> | undefined
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
-      if (title) {
-        title.value = 'Bookings'
-        title.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
-        title.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      if (legend) {
+        legend.value = 'bottom'
+        legend.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       }
       await new Promise((resolve) => setTimeout(resolve, 20))
-      const changed = { title: title?.value, legend: legend?.checked }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const pages = element.builder.pages.map((page: any) => ({
         ...page,
@@ -381,6 +378,7 @@ test('dashboard builder keeps format controls visible and persistent across insp
           legendVisible: false,
           axisVisible: true,
           dataLabelsVisible: false,
+          formatOptions: visual.formatOptions.map((option: any) => option.key === 'legend' ? { ...option, value: 'bottom' } : option),
         } : visual),
       }))
       mergePatch({ builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
@@ -391,23 +389,22 @@ test('dashboard builder keeps format controls visible and persistent across insp
       await element.updateComplete
       return {
         controls,
-        changed,
         persisted: {
           title: root.querySelector<HTMLInputElement>('input[data-format-control="title-text"]')?.value,
           titleVisible: root.querySelector<HTMLInputElement>('input[data-format-control="title-visible"]')?.checked,
-          legend: root.querySelector<HTMLInputElement>('input[data-format-control="legend-visible"]')?.checked,
-          axis: root.querySelector<HTMLInputElement>('input[data-format-control="axis-visible"]')?.checked,
-          dataLabels: root.querySelector<HTMLInputElement>('input[data-format-control="data-labels-visible"]')?.checked,
+          legend: root.querySelector<HTMLSelectElement>('select[data-format-control="legend"]')?.value,
+          axis: root.querySelector<HTMLInputElement>('input[data-format-control="axisVisible"]')?.checked,
+          dataLabels: root.querySelector<HTMLSelectElement>('select[data-format-control="labels.density"]')?.value,
         },
         command,
       }
     })
-    expect(state.controls.map((control) => control.present)).toEqual([true, true, true, true, true])
-    expect(state.controls.map((control) => control.disabled)).toEqual([false, false, false, false, false])
-    expect(state.controls.map((control) => control.label)).toEqual(['Title text', 'Show title', 'Show legend', 'Show axes', 'Show data labels'])
-    expect(state.controls.map((control) => control.checked)).toEqual([false, true, true, true, false])
-    expect(state.command).toMatchObject({ action: 'update_visual_format', pageId: 'overview', visualId: 'sales-chart' })
-    expect(state.persisted).toEqual({ title: 'Bookings', titleVisible: true, legend: false, axis: true, dataLabels: false })
+    expect(state.controls.map((control) => control.present)).toEqual([true, true, true, true, true, true])
+    expect(state.controls.map((control) => control.disabled)).toEqual([false, false, false, false, false, false])
+    expect(state.controls.map((control) => control.label)).toEqual(['Title text', 'Show title', 'Show axes', 'Legend', 'Data labels', 'Stacking'])
+    expect(state.controls.map((control) => control.value)).toEqual(['Sales by status', 'on', 'on', 'right', 'hidden', 'none'])
+    expect(state.command).toMatchObject({ action: 'update_visual_format', pageId: 'overview', visualId: 'sales-chart', formatKey: 'legend', formatValue: 'bottom' })
+    expect(state.persisted).toEqual({ title: 'Bookings', titleVisible: true, legend: 'bottom', axis: true, dataLabels: 'hidden' })
   } finally {
     await page.close()
   }
@@ -671,7 +668,7 @@ test('dashboard builder switches Build and Format inspector tabs', async () => {
     expect(state.initial).toEqual({ selected: 'build', panel: 'Build visual', dataPaneVisible: true, dataSearchCount: 1 })
     expect(state.formatted.selected).toBe('format')
     expect(state.formatted.panel).toBe('Format visual')
-    expect(state.formatted.formatControls).toBe(5)
+    expect(state.formatted.formatControls).toBe(6)
     expect(state.formatted.dataPaneVisible).toBe(true)
     expect(state.formatted.dataSearchCount).toBe(1)
     expect(state.rebuilt).toEqual({ selected: 'build', panel: 'Build visual', hasFieldBrowser: true, dataPaneVisible: true, dataSearchCount: 1 })
@@ -1317,6 +1314,12 @@ test('dashboard builder follows the streamed exact-revision preview href', async
 })
 
 function testDocument(): string {
+  const visualCatalog = [
+    ['line', 'Line chart', 'Cartesian'], ['area', 'Area chart', 'Cartesian'], ['bar', 'Bar chart', 'Cartesian'], ['column', 'Column chart', 'Cartesian'], ['pie', 'Pie chart', 'Part to whole'], ['donut', 'Donut chart', 'Part to whole'], ['scatter', 'Scatter chart', 'Distribution'], ['funnel', 'Funnel chart', 'Part to whole'],
+    ['treemap', 'Treemap', 'Hierarchy & flow'], ['gauge', 'Gauge', 'Specialized'], ['heatmap', 'Heatmap', 'Distribution'], ['sankey', 'Sankey', 'Hierarchy & flow'], ['graph', 'Graph', 'Hierarchy & flow'], ['map', 'Map', 'Specialized'],
+    ['candlestick', 'Candlestick chart', 'Cartesian'], ['boxplot', 'Boxplot', 'Distribution'], ['combo', 'Combo chart', 'Cartesian'], ['waterfall', 'Waterfall chart', 'Cartesian'], ['histogram', 'Histogram', 'Distribution'], ['radar', 'Radar chart', 'Specialized'], ['tree', 'Tree', 'Hierarchy & flow'], ['sunburst', 'Sunburst', 'Hierarchy & flow'], ['kpi', 'KPI', 'Specialized'],
+    ['table', 'Table', 'Tables'], ['matrix', 'Matrix', 'Tables'], ['pivot', 'Pivot', 'Tables'],
+  ].map(([type, label, group]) => ({ type, label, group, referenceHref: `/docs/visuals/${type}`, roles: type === 'table' || type === 'map' ? ['detail'] : type === 'kpi' || type === 'gauge' || type === 'histogram' || type === 'boxplot' ? ['metric'] : ['dimension', 'metric'] }))
   const signals = {
     builder: {
       projectId: 'sales', dashboardId: 'revenue', draftId: 'draft-7',
@@ -1325,8 +1328,14 @@ function testDocument(): string {
       origin: { kind: 'file', label: 'Project file', sourcePath: 'dashboards/revenue.yaml' },
       sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
       semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'decimal' }] }] },
+      visualCatalog,
       pages: [
-        { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', title: 'Sales by status', titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
+        { id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [{ id: 'sales-chart', visualId: 'sales-chart', title: 'Sales by status', titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, formatOptions: [
+          { key: 'axisVisible', label: 'Show axes', section: 'Display', control: 'toggle', value: 'true', choices: [] },
+          { key: 'legend', label: 'Legend', section: 'Display', control: 'select', value: 'right', choices: [{ value: 'none', label: 'None' }, { value: 'top', label: 'Top' }, { value: 'right', label: 'Right' }, { value: 'bottom', label: 'Bottom' }, { value: 'left', label: 'Left' }] },
+          { key: 'labels.density', label: 'Data labels', section: 'Display', control: 'select', value: 'hidden', choices: [{ value: 'hidden', label: 'Hidden' }, { value: 'automatic', label: 'Automatic' }, { value: 'dense', label: 'Dense' }, { value: 'always', label: 'Always' }] },
+          { key: 'stacking', label: 'Stacking', section: 'Chart', control: 'select', value: 'none', choices: [{ value: 'none', label: 'None' }, { value: 'normal', label: 'Normal' }, { value: 'percent', label: 'Percent' }] },
+        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
         { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] },
       ],
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',
