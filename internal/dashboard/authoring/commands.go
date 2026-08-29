@@ -23,6 +23,10 @@ const (
 	// maxPlacementUpdates bounds one atomic browser reflow command and keeps
 	// validation and revision hashing work proportional to the page size.
 	maxPlacementUpdates = 1024
+	// maxFilterTargets bounds one browser target-scope mutation. Canonical
+	// builder projections expose at most this many visual components, keeping
+	// validation and revision hashing proportional to the authored document.
+	maxFilterTargets = 1024
 )
 
 func (a AuthorizationAction) Valid() bool {
@@ -396,6 +400,23 @@ func (UpdateFilterPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// SetFilterTargetsPayload changes only the visual target policy of one
+// canonical report filter. A nil Targets slice means the filter applies to
+// every semantically compatible visual on every page (the authored
+// all-pages/default form). A non-nil slice must contain one or more visual
+// definition IDs and narrows the filter to those targets. Keeping this edit
+// separate from UpdateFilterPayload preserves defaults, operators, and other
+// code-only filter properties authored in YAML or by an agent.
+type SetFilterTargetsPayload struct {
+	FilterID string   `json:"filterId"`
+	Targets  []string `json:"targets"`
+}
+
+func (SetFilterTargetsPayload) authoringPayload() {}
+func (SetFilterTargetsPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 type RemoveFilterPayload struct {
 	FilterID string `json:"filterId"`
 }
@@ -488,6 +509,7 @@ type Command struct {
 	SetFilters            *SetFiltersPayload            `json:"setFilters,omitempty"`
 	AddFilter             *AddFilterPayload             `json:"addFilter,omitempty"`
 	UpdateFilter          *UpdateFilterPayload          `json:"updateFilter,omitempty"`
+	SetFilterTargets      *SetFilterTargetsPayload      `json:"setFilterTargets,omitempty"`
 	RemoveFilter          *RemoveFilterPayload          `json:"removeFilter,omitempty"`
 	AddFilterComponent    *AddFilterComponentPayload    `json:"addFilterComponent,omitempty"`
 	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
@@ -561,6 +583,9 @@ func (c Command) payloads() []authoringPayload {
 	if c.UpdateFilter != nil {
 		payloads = append(payloads, c.UpdateFilter)
 	}
+	if c.SetFilterTargets != nil {
+		payloads = append(payloads, c.SetFilterTargets)
+	}
 	if c.RemoveFilter != nil {
 		payloads = append(payloads, c.RemoveFilter)
 	}
@@ -620,7 +645,7 @@ func (c Command) IsBuilderIntent() bool {
 	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
-		*AddFilterPayload, *UpdateFilterPayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
+		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
 		return true
 	default:
 		return false
@@ -935,6 +960,32 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
 			return err
+		}
+	case *SetFilterTargetsPayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		// A nil slice is the explicit all-pages form. Once supplied, at least
+		// one target is required; canonical DashboardFilter validation rejects
+		// an authored empty targets array as ambiguous/invalid.
+		if value.Targets == nil {
+			break
+		}
+		if len(value.Targets) == 0 {
+			return fmt.Errorf("%w: set filter targets cannot be empty when specified", ErrInvalidPayload)
+		}
+		if len(value.Targets) > maxFilterTargets {
+			return fmt.Errorf("%w: set filter targets exceeds bounded visual limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Targets))
+		for _, target := range value.Targets {
+			if err := validateCanonicalObjectID("filter target", target); err != nil {
+				return err
+			}
+			if _, exists := seen[target]; exists {
+				return fmt.Errorf("%w: set filter targets contains duplicate target %q", ErrInvalidPayload, target)
+			}
+			seen[target] = struct{}{}
 		}
 	case *RemoveFilterPayload:
 		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {

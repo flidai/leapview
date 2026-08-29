@@ -514,6 +514,45 @@ func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *tes
 	}
 }
 
+func TestCanonicalReducerSetsFilterTargetsAndRestoresAllPages(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		command := Command{ID: CommandID("filter-target-edit-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("filter-target-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 18, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	if err := apply(&AddFilterPayload{Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	filter := current.Document.Spec.Filters[0]
+	// Seed code-owned properties, then narrow targets. The dedicated payload
+	// must not replace defaults/operators or any other authored fields.
+	defaultExpression := document.DashboardFilterExpression{Value: &document.NullCheckDashboardFilterExpression{Type: "nullCheck", Operator: document.DashboardFilterOperatorIsNotNull}}
+	operators := []document.DashboardFilterOperator{document.DashboardFilterOperatorIn}
+	targets := []string{"base"}
+	filter.Default, filter.Operators, filter.Targets = &defaultExpression, &operators, &targets
+	if err := apply(&SetFiltersPayload{Filters: []document.DashboardFilter{filter}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&SetFilterTargetsPayload{FilterID: filter.ID, Targets: []string{"base"}}); err != nil {
+		t.Fatal(err)
+	}
+	updated := current.Document.Spec.Filters[0]
+	if updated.Targets == nil || len(*updated.Targets) != 1 || (*updated.Targets)[0] != "base" {
+		t.Fatalf("narrowed targets = %#v", updated.Targets)
+	}
+	if updated.Default == nil || updated.Operators == nil {
+		t.Fatalf("set targets replaced code-owned fields: %#v", updated)
+	}
+	if err := apply(&SetFilterTargetsPayload{FilterID: filter.ID, Targets: nil}); err != nil {
+		t.Fatal(err)
+	}
+	if current.Document.Spec.Filters[0].Targets != nil {
+		t.Fatalf("all-pages target policy = %#v, want nil", current.Document.Spec.Filters[0].Targets)
+	}
+}
+
 func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
 	switch value := payload.(type) {
 	case *MetadataPatch:
@@ -548,6 +587,8 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.AddFilter = value
 	case *UpdateFilterPayload:
 		command.UpdateFilter = value
+	case *SetFilterTargetsPayload:
+		command.SetFilterTargets = value
 	case *RemoveFilterPayload:
 		command.RemoveFilter = value
 	case *AddFilterComponentPayload:

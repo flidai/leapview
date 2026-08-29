@@ -42,6 +42,18 @@ model DashboardBuilderEnvelope {
   `runtime`: RouteRuntimeSignal;
   @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "status" })
   `status`: DashboardStatus;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterContract" })
+  `builderFilterContract`: DashboardFilterContract;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterState" })
+  `builderFilterState`: DashboardFilterState;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterOptionPages" })
+  `builderFilterOptionPages`: Record<DashboardFilterOptionPage>;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterValidation" })
+  `builderFilterValidation`: DashboardFilterValidationResult;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterCommand" })
+  `builderFilterCommand`: DashboardFilterCommand;
+  @apigen.`metadata`(#{ `x-leapview-patch-mode`: "replace", `x-leapview-signal-key`: "builderFilterOptionRequest" })
+  `builderFilterOptionRequest`: DashboardFilterOptionRequest;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "builder", "signal"] })
