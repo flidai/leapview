@@ -84,7 +84,10 @@ func buildDependencyEvidence(
 	if err != nil {
 		return nil, err
 	}
-	sourceDataEvidence := artifact.SourceDataIdentityEvidence(revisions, activation.BindingKinds)
+	sourceDataEvidence, err := artifact.SourceDataIdentityEvidence(revisions, activation.BindingKinds)
+	if err != nil {
+		return nil, fmt.Errorf("source data identity evidence: %w", err)
+	}
 	result := make(map[string]resultidentity.Evidence, len(compiled.Manifest.SemanticModels))
 	for id, model := range compiled.Manifest.SemanticModels {
 		semanticID, err := projectgraph.NewResourceID(id)

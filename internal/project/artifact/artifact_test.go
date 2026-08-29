@@ -10,6 +10,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/sourcedataidentity"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -196,7 +197,7 @@ func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.
 	}
 
 	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
-	sourceEvidence := project.SourceDataIdentityEvidence(map[string]string{
+	sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 	}, map[string]string{"connection:warehouse": "managed"})
 	projection, err := project.SemanticModelRelationEvidence(
@@ -262,7 +263,7 @@ func TestLegacyRelationContextPreservesSourceDependenciesProjection(t *testing.T
 	if err != nil || len(missing) != 0 {
 		t.Fatalf("result identity accepted missing direct-source evidence: %#v, %v", missing, err)
 	}
-	sourceEvidence := project.SourceDataIdentityEvidence(map[string]string{
+	sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 	}, map[string]string{"connection:warehouse": "managed"})
 	available, err := project.SemanticModelRelationEvidence(
@@ -288,7 +289,7 @@ func TestResultIdentitySQLLineageRequiresValidatedCompleteEvidence(t *testing.T)
 		if err != nil {
 			t.Fatal(err)
 		}
-		sourceEvidence := project.SourceDataIdentityEvidence(map[string]string{
+		sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
 			"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 		}, map[string]string{"connection:warehouse": "managed"})
 		relations, err := project.SemanticModelRelationEvidence(
@@ -351,7 +352,7 @@ func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(
 		}
 		evidence, err := project.SemanticModelRelationEvidence(
 			semanticID,
-			project.SourceDataIdentityEvidence(map[string]string{
+			mustSourceDataIdentityEvidence(t, project, map[string]string{
 				"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 			}, map[string]string{"connection:warehouse": "managed"}),
 			map[string]string{"connection:warehouse": "managed"},
@@ -479,26 +480,26 @@ func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	first := project.SourceDataIdentityEvidence(map[string]string{
+	first := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
 	}, map[string]string{"connection:warehouse": "managed"})
 	evidence := first["source:orders"]
 	if !evidence.Available() || evidence.SourceID() != "source:orders" {
 		t.Fatalf("managed source evidence = %#v, want available source:orders", evidence)
 	}
-	second := project.SourceDataIdentityEvidence(map[string]string{
+	second := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("b", 64),
 	}, map[string]string{"connection:warehouse": "managed"})
 	if second["source:orders"].EquivalenceDigest() == evidence.EquivalenceDigest() {
 		t.Fatal("managed manifest revision did not rotate source-data identity")
 	}
-	if got := project.SourceDataIdentityEvidence(nil, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
+	if got := mustSourceDataIdentityEvidence(t, project, nil, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
 		t.Fatalf("missing managed revision produced fallback evidence: %#v", got)
 	}
-	if got := project.SourceDataIdentityEvidence(map[string]string{"connection:warehouse": "revision-a"}, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
+	if got := mustSourceDataIdentityEvidence(t, project, map[string]string{"connection:warehouse": "revision-a"}, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
 		t.Fatalf("malformed managed revision produced fallback evidence: %#v", got)
 	}
-	if got := project.SourceDataIdentityEvidence(map[string]string{
+	if got := mustSourceDataIdentityEvidence(t, project, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("c", 64),
 	}, map[string]string{"connection:warehouse": "sqlite"}); len(got) != 0 {
 		t.Fatalf("connector binding mismatch produced source evidence: %#v", got)
@@ -522,11 +523,36 @@ func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := external.SourceDataIdentityEvidence(map[string]string{
+	if got := mustSourceDataIdentityEvidence(t, external, map[string]string{
 		"connection:warehouse": "sha256:" + strings.Repeat("c", 64),
 	}, map[string]string{"connection:warehouse": "http"}); len(got) != 0 {
 		t.Fatalf("unsupported external connector accepted digest-shaped fallback evidence: %#v", got)
 	}
+}
+
+func TestSourceDataIdentityAliasCapacityRejectsOverflow(t *testing.T) {
+	t.Parallel()
+
+	if got, err := sourceDataIdentityAliasCapacity(3); err != nil || got != 6 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(3) = %d, %v; want 6, nil", got, err)
+	}
+	maximumInt := int(^uint(0) >> 1)
+	maximumSafe := maximumInt / 2
+	if got, err := sourceDataIdentityAliasCapacity(maximumSafe); err != nil || got != maximumSafe*2 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(maximumSafe) = %d, %v; want %d, nil", got, err, maximumSafe*2)
+	}
+	if got, err := sourceDataIdentityAliasCapacity(maximumSafe + 1); err == nil || got != 0 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(overflow) = %d, %v; want 0, error", got, err)
+	}
+}
+
+func mustSourceDataIdentityEvidence(t *testing.T, project Project, revisions, bindingKinds map[string]string) map[projectgraph.ResourceID]sourcedataidentity.Evidence {
+	t.Helper()
+	evidence, err := project.SourceDataIdentityEvidence(revisions, bindingKinds)
+	if err != nil {
+		t.Fatalf("SourceDataIdentityEvidence() error = %v", err)
+	}
+	return evidence
 }
 
 func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {
