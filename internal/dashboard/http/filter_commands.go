@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	nethttp "net/http"
 	"sort"
@@ -73,6 +74,16 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	before := record.State.Filters.State
+	if err := validateFilterCommandPageScope(definition, pageID, signals.FilterCommand); err != nil {
+		writeJSON(w, nethttp.StatusOK, map[string]any{
+			"filterState": uisignals.DashboardFilterStateFromDomain(before),
+			"filterValidation": map[string]any{
+				"accepted": false, "message": err.Error(), "currentRevision": before.Revision,
+				"clientMutationID": signals.FilterCommand.ClientMutationID,
+			},
+		})
+		return
+	}
 	changedKeys := changedFilterBindings(signals.FilterCommand, before)
 	sessionService := dashboardsession.Service{
 		Store: h.SessionStore, ApplicationMode: definition.FilterApplication.WithDefaults().Mode,
@@ -162,6 +173,34 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	writeJSON(w, nethttp.StatusOK, response)
+}
+
+func validateFilterCommandPageScope(definition dashboarddefinition.Definition, pageID string, command dashboardfilter.Command) error {
+	bindings := definition.CompiledFilterBindings()
+	validateKey := func(key string) error {
+		binding, ok := bindings[key]
+		if !ok {
+			return fmt.Errorf("unknown filter binding %q", key)
+		}
+		if binding.Scope == dashboardfilter.ScopePage && binding.PageID != pageID {
+			return fmt.Errorf("filter binding %q is not available on page %q", binding.ID, pageID)
+		}
+		return nil
+	}
+	switch command.Kind {
+	case dashboardfilter.CommandMutate:
+		return validateKey(command.BindingKey)
+	case dashboardfilter.CommandReset:
+		if command.ResetScope == dashboardfilter.ResetDashboard {
+			return nil
+		}
+		for _, key := range command.BindingKeys {
+			if err := validateKey(key); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 func filterCommandOperation(command dashboardfilter.Command) string {

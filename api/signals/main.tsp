@@ -135,7 +135,15 @@ model DashboardBuilderFilterSignal {
   `required`: boolean;
   `readerEditable`: boolean;
   `targets`: string[];
+  `bindings`: DashboardBuilderFilterBindingSignal[];
   `urlParameter`?: string;
+}
+
+model DashboardBuilderFilterBindingSignal {
+  `id`: string;
+  `scope`: "report" | "page";
+  `pageId`?: string;
+  `targets`: string[];
 }
 
 model DashboardBuilderPageSignal {

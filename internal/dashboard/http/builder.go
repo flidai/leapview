@@ -459,6 +459,7 @@ type dashboardBuilderCommandSignal struct {
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
 	FilterID                  string                            `json:"filterId"`
+	Scope                     string                            `json:"scope"`
 	Targets                   []string                          `json:"targets"`
 	Dataset                   string                            `json:"dataset"`
 	ControlType               string                            `json:"controlType"`
@@ -577,6 +578,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		// A nil Targets slice (JSON field omitted) is the canonical all-pages
 		// form; a non-nil list narrows the filter to visual definition IDs.
 		command.SetFilterTargets = &authoring.SetFilterTargetsPayload{FilterID: strings.TrimSpace(s.FilterID), Targets: s.Targets}
+	case "set_filter_scope":
+		command.SetFilterScope = &authoring.SetFilterScopePayload{FilterID: strings.TrimSpace(s.FilterID), Scope: strings.TrimSpace(s.Scope), PageID: strings.TrimSpace(s.PageID), Targets: s.Targets}
 	case "remove_filter":
 		command.RemoveFilter = &authoring.RemoveFilterPayload{FilterID: strings.TrimSpace(s.FilterID)}
 	case "add_filter_component":
@@ -701,19 +704,35 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		},
 		PageID: firstBuilderPage(builder),
 	})
-	if err == nil || result.Definition.ID != "" {
+	contractDefinition := result.Definition
+	contractEvidence := result.SemanticEvidence
+	filterState := result.PagePatch.Filters.CompiledState
+	if contractDefinition.ID == "" {
+		compiled, compileErr := h.Authoring.Compile(h.analyticalContext(ctx), preview.CompileRequest{
+			ProjectID: projectID, ActorID: strings.TrimSpace(actorID),
+			DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
+			DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
+			ExpectedRevision: authoring.RevisionToken{
+				RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
+			},
+		})
+		if compileErr == nil {
+			contractDefinition = compiled.Definition
+			contractEvidence = compiled.SemanticEvidence
+		}
+	}
+	if contractDefinition.ID != "" {
 		// The preview is compiled and queried under one active semantic serving
 		// lease. Include that generation in the synthetic draft identity so a
 		// runtime cutover cannot reuse ephemeral state from the prior runtime.
-		if generation := strings.TrimSpace(result.SemanticEvidence.Identity.GenerationID); generation != "" {
+		if generation := strings.TrimSpace(contractEvidence.Identity.GenerationID); generation != "" {
 			if servingStateID := builderServingStateIDForGeneration(builder, generation); servingStateID != "" {
 				envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
 			}
 		}
-		envelope.BuilderFilterContract = uisignals.DashboardFilterContractFromDefinition(result.Definition)
-		filterState := result.PagePatch.Filters.CompiledState
+		envelope.BuilderFilterContract = uisignals.DashboardFilterContractFromDefinition(contractDefinition)
 		if filterState == nil {
-			state := result.Definition.DefaultFilterState()
+			state := contractDefinition.DefaultFilterState()
 			filterState = &state
 		}
 		envelope.BuilderFilterState = uisignals.DashboardFilterStateFromDomain(*filterState)

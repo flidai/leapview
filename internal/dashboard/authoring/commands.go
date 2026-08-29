@@ -417,6 +417,21 @@ func (SetFilterTargetsPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// SetFilterScopePayload selects report or page state scope and may narrow that
+// binding to explicit visual consumers. Page targets are page-local component
+// IDs; report targets are visual IDs or qualified page/component IDs.
+type SetFilterScopePayload struct {
+	FilterID string   `json:"filterId"`
+	Scope    string   `json:"scope"`
+	PageID   string   `json:"pageId,omitempty"`
+	Targets  []string `json:"targets,omitempty"`
+}
+
+func (SetFilterScopePayload) authoringPayload() {}
+func (SetFilterScopePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 type RemoveFilterPayload struct {
 	FilterID string `json:"filterId"`
 }
@@ -510,6 +525,7 @@ type Command struct {
 	AddFilter             *AddFilterPayload             `json:"addFilter,omitempty"`
 	UpdateFilter          *UpdateFilterPayload          `json:"updateFilter,omitempty"`
 	SetFilterTargets      *SetFilterTargetsPayload      `json:"setFilterTargets,omitempty"`
+	SetFilterScope        *SetFilterScopePayload        `json:"setFilterScope,omitempty"`
 	RemoveFilter          *RemoveFilterPayload          `json:"removeFilter,omitempty"`
 	AddFilterComponent    *AddFilterComponentPayload    `json:"addFilterComponent,omitempty"`
 	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
@@ -586,6 +602,9 @@ func (c Command) payloads() []authoringPayload {
 	if c.SetFilterTargets != nil {
 		payloads = append(payloads, c.SetFilterTargets)
 	}
+	if c.SetFilterScope != nil {
+		payloads = append(payloads, c.SetFilterScope)
+	}
 	if c.RemoveFilter != nil {
 		payloads = append(payloads, c.RemoveFilter)
 	}
@@ -645,7 +664,7 @@ func (c Command) IsBuilderIntent() bool {
 	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
-		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
+		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
 		return true
 	default:
 		return false
@@ -979,11 +998,40 @@ func validatePayload(payload authoringPayload) error {
 		}
 		seen := make(map[string]struct{}, len(value.Targets))
 		for _, target := range value.Targets {
-			if err := validateCanonicalObjectID("filter target", target); err != nil {
+			if err := validateCanonicalFilterTarget(target, true); err != nil {
 				return err
 			}
 			if _, exists := seen[target]; exists {
 				return fmt.Errorf("%w: set filter targets contains duplicate target %q", ErrInvalidPayload, target)
+			}
+			seen[target] = struct{}{}
+		}
+	case *SetFilterScopePayload:
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		switch value.Scope {
+		case "report":
+			if strings.TrimSpace(value.PageID) != "" {
+				return fmt.Errorf("%w: report filter scope cannot include page id", ErrInvalidPayload)
+			}
+		case "page":
+			if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("%w: filter scope must be report or page", ErrInvalidPayload)
+		}
+		if len(value.Targets) > maxFilterTargets {
+			return fmt.Errorf("%w: filter scope targets exceed bounded visual limit", ErrInvalidPayload)
+		}
+		seen := make(map[string]struct{}, len(value.Targets))
+		for _, target := range value.Targets {
+			if err := validateCanonicalFilterTarget(target, value.Scope == "report"); err != nil {
+				return err
+			}
+			if _, exists := seen[target]; exists {
+				return fmt.Errorf("%w: filter scope contains duplicate target %q", ErrInvalidPayload, target)
 			}
 			seen[target] = struct{}{}
 		}
@@ -1056,6 +1104,20 @@ func validateCanonicalObjectID(kind, value string) error {
 		return fmt.Errorf("%w: invalid canonical %s %q", ErrInvalidPayload, kind, value)
 	}
 	return nil
+}
+
+func validateCanonicalFilterTarget(value string, allowQualified bool) error {
+	if !allowQualified || !strings.Contains(value, "/") {
+		return validateCanonicalObjectID("filter target", value)
+	}
+	parts := strings.Split(value, "/")
+	if len(parts) != 2 {
+		return fmt.Errorf("%w: invalid canonical filter target %q", ErrInvalidPayload, value)
+	}
+	if err := validateCanonicalObjectID("filter target page id", parts[0]); err != nil {
+		return err
+	}
+	return validateCanonicalObjectID("filter target component id", parts[1])
 }
 
 func validateVisualTargetFields(pageID, visualID, operation string) error {

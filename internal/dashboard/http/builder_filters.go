@@ -69,10 +69,10 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 
 	// Compile the exact revision before creating state. This prevents a client
 	// from manufacturing a filter contract or binding set for another draft.
-	compiled, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
+	compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
-		ExpectedRevision: request.Revision, PageID: request.PageID,
+		ExpectedRevision: request.Revision,
 	})
 	if err != nil {
 		writeBuilderFilterError(w, err)
@@ -90,6 +90,10 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
 	if err != nil {
 		writeBuilderFilterError(w, err)
+		return
+	}
+	if err := validateFilterCommandPageScope(compiled.Definition, request.PageID, signals.BuilderFilterCommand); err != nil {
+		writeJSON(w, nethttp.StatusOK, builderFilterValidationResponse(compiled.Definition, record.State.Filters.State, false, err.Error(), signals.BuilderFilterCommand.ClientMutationID))
 		return
 	}
 	service := dashboardsession.Service{
@@ -149,10 +153,10 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 	// Compile first, then ensure the exact-revision state exists. The builder
 	// may request options immediately after bootstrap, before any mutation has
 	// created its ephemeral session record.
-	compiled, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
+	compiled, err := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: authoring.DashboardID(request.DashboardID), DraftID: authoring.DraftID(request.Builder.DraftID),
-		ExpectedRevision: request.Revision, PageID: request.PageID,
+		ExpectedRevision: request.Revision,
 	})
 	if err != nil {
 		writeBuilderFilterError(w, err)
@@ -169,12 +173,6 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 		writeJSON(w, nethttp.StatusOK, map[string]any{"builderFilterOptionPages": map[string]any{}})
 		return
 	}
-	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
-	if err != nil {
-		writeBuilderFilterError(w, err)
-		return
-	}
-	state := record.State.Filters.State
 	bindings := compiled.Definition.CompiledFilterBindings()
 	binding, ok := bindings[signals.BuilderFilterOptionRequest.BindingKey]
 	if !ok || (binding.Scope == dashboardfilter.ScopePage && binding.PageID != request.PageID) {
@@ -186,14 +184,20 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 		nethttp.Error(w, "unknown compiled builder filter definition", nethttp.StatusInternalServerError)
 		return
 	}
+	record, err := h.ensureBuilderFilterSession(r.Context(), request.Key, request.PageID, compiled.Definition)
+	if err != nil {
+		writeBuilderFilterError(w, err)
+		return
+	}
+	state := record.State.Filters.State
 	queryMetrics, supportsDynamic := h.Metrics.(interface {
-		QueryCompiledFilterOptionsForDefinition(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error)
+		QueryCompiledFilterOptionsForDefinitionAtGeneration(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery, string) (dashboardfilter.OptionResult, error)
 	})
 	engine := dashboardfilter.NewOptionEngineWithCache(h.OptionCursorSecret, h.OptionCache, func(ctx context.Context, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
 		if !supportsDynamic {
-			return dashboardfilter.OptionResult{}, fmt.Errorf("compiled filter options are not supported by this runtime")
+			return dashboardfilter.OptionResult{}, fmt.Errorf("generation-bound compiled filter options are not supported by this runtime")
 		}
-		return queryMetrics.QueryCompiledFilterOptionsForDefinition(ctx, compiled.Definition, query)
+		return queryMetrics.QueryCompiledFilterOptionsForDefinitionAtGeneration(ctx, compiled.Definition, query, compiled.SemanticEvidence.Identity.GenerationID)
 	})
 	keysByRef := make(map[dashboardfilter.BindingRef]string, len(bindings))
 	for key, candidate := range bindings {

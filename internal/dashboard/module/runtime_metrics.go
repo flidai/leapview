@@ -463,6 +463,26 @@ func (m runtimeMetrics) QueryCompiledFilterOptionsForDefinition(ctx context.Cont
 	return port.QueryCompiledFilterOptionsForDefinition(ctx, definition, query)
 }
 
+// QueryCompiledFilterOptionsForDefinitionAtGeneration executes exact-draft
+// options only when the newly acquired runtime is still the generation used
+// to compile the definition. This closes the cutover window between the
+// compile-only authoring lease and the independently admitted option query.
+func (m runtimeMetrics) QueryCompiledFilterOptionsForDefinitionAtGeneration(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery, expectedGeneration string) (dashboardfilter.OptionResult, error) {
+	runtime, release, identity, err := m.activeWithState(ctx)
+	if err != nil {
+		return dashboardfilter.OptionResult{}, err
+	}
+	defer release()
+	if expectedGeneration == "" || identity.GenerationID != expectedGeneration {
+		return dashboardfilter.OptionResult{}, fmt.Errorf("compiled filter option generation changed: expected %q, active %q", expectedGeneration, identity.GenerationID)
+	}
+	port, ok := runtime.(definitionFilterRuntime)
+	if !ok {
+		return dashboardfilter.OptionResult{}, fmt.Errorf("active runtime does not provide compiled filter options")
+	}
+	return port.QueryCompiledFilterOptionsForDefinition(ctx, definition, query)
+}
+
 func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {

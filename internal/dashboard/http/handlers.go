@@ -118,6 +118,7 @@ type AuthoringApplication interface {
 	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
 	Execute(context.Context, projectgraph.ResourceID, authoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
+	Compile(context.Context, preview.CompileRequest) (preview.Compilation, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)

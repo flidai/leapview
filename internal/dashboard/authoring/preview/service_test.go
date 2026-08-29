@@ -95,6 +95,24 @@ func TestPreviewRejectsStaleBeforeLeaseAndCompilesThroughOneLease(t *testing.T) 
 	}
 }
 
+func TestCompileDraftReturnsContractWithoutQueryingPage(t *testing.T) {
+	f := newPreviewFixture(t)
+	result, err := f.service.Compile(t.Context(), CompileRequest{
+		ProjectID: f.request.ProjectID, ActorID: f.request.ActorID,
+		DashboardID: f.request.DashboardID, DraftID: f.request.DraftID,
+		ExpectedRevision: f.request.ExpectedRevision,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Definition.ID != "sales" || result.Revision != f.revision.Token() || result.SemanticEvidence.Identity.GenerationID != "serving-1" {
+		t.Fatalf("compile result = %#v", result)
+	}
+	if f.provider.acquireCalls != 1 || f.provider.lease.releases != 1 || f.runtime.projectionCalls != 1 || f.runtime.queryCalls != 0 {
+		t.Fatalf("compile lease/runtime calls = acquire %d release %d projection %d query %d", f.provider.acquireCalls, f.provider.lease.releases, f.runtime.projectionCalls, f.runtime.queryCalls)
+	}
+}
+
 func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testing.T) {
 	f := newPreviewFixture(t)
 	f.runtime.modelID = "other_model"
@@ -110,6 +128,10 @@ func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testi
 	metric, dimension := "missing_metric", "status"
 	value.Query.Value = &document.AggregateDashboardQuery{Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{{String: &dimension}}, Metrics: []document.DashboardMetricSelection{{String: &metric}}}
 	invalidDoc.Spec.Visuals["orders"] = value
+	invalidDoc.Spec.Pages[0].Components = []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{
+		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_card", Type: "visual", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}},
+		Type: "visual", Visual: "orders",
+	}}}
 	invalidRevision, err := authoring.NewRevision("revision-invalid", "sales", 2, time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC), invalidDoc, f.revision.Provenance)
 	if err != nil {
 		t.Fatal(err)
@@ -122,6 +144,19 @@ func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testi
 	}
 	if f.provider.lease.releases != 1 || f.repository.writeCalls != 0 {
 		t.Fatalf("strict preview side effects release=%d writes=%d", f.provider.lease.releases, f.repository.writeCalls)
+	}
+	// Filter contract compilation is deliberately independent from unrelated
+	// visual query lowering, so option loading remains usable while that visual
+	// is in an invalid draft state.
+	if _, err := f.service.Compile(t.Context(), CompileRequest{
+		ProjectID: f.request.ProjectID, ActorID: f.request.ActorID,
+		DashboardID: f.request.DashboardID, DraftID: f.request.DraftID,
+		ExpectedRevision: f.request.ExpectedRevision,
+	}); err != nil {
+		t.Fatalf("compile-only filter contract failed on unrelated visual query: %v", err)
+	}
+	if f.runtime.queryCalls != 0 || f.provider.lease.releases != 2 {
+		t.Fatalf("compile-only path queried visual or leaked lease: query=%d release=%d", f.runtime.queryCalls, f.provider.lease.releases)
 	}
 }
 

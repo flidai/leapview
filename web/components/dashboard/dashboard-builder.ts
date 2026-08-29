@@ -2510,13 +2510,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const placedComponent = page?.filterComponents?.find((component) => component.filterId === filter.id)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const scope = this.filterScope(filter, page, visual)
-    const pageTargets = this.pageVisualTargets(page)
     return html`
       <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
         <div class="filter-scope-options" role="radiogroup" aria-label="Filter scope">
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'report'} ?disabled=${!editable} @change=${() => this.setFilterTargets(filter, [])} /><span>All pages<small>Apply to every compatible visual.</small></span></label>
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'page'} ?disabled=${!editable || pageTargets.length === 0} @change=${() => this.setFilterTargets(filter, pageTargets)} /><span>Visuals on this page<small>${page ? `Target ${pageTargets.length} visual definition${pageTargets.length === 1 ? '' : 's'} used on ${page.title}; reused visuals stay linked.` : 'Select a page first.'}</small></span></label>
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'visual'} ?disabled=${!editable || !visual} @change=${() => visual && this.setFilterTargets(filter, [visual.visualId])} /><span>This visual<small>${visual ? `Only ${visual.title}.` : 'Select a visual first.'}</small></span></label>
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'report'} ?disabled=${!editable} @change=${() => this.setFilterScope(filter, 'report')} /><span>All pages<small>One report binding applies to every compatible visual.</small></span></label>
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'page'} ?disabled=${!editable || !page} @change=${() => page && this.setFilterScope(filter, 'page', page)} /><span>This page<small>${page ? `Create a page-scoped binding for ${page.title}.` : 'Select a page first.'}</small></span></label>
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'visual'} ?disabled=${!editable || !visual || !page} @change=${() => page && visual && this.setFilterScope(filter, 'page', page, [visual.id])} /><span>This visual<small>${visual ? `Only ${visual.title}.` : 'Select a visual first.'}</small></span></label>
           ${scope === 'custom' ? html`<p class="filter-scope-empty">Custom targets are preserved from dashboard code until you choose another scope.</p>` : nothing}
         </div>
         <label>Label
@@ -3423,16 +3422,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return (builder.filters ?? []).find((filter) => filter.id === this.selectedFilterID)
   }
 
-  private pageVisualTargets(page: DashboardBuilderPageSignal | undefined): string[] {
-    return [...new Set((page?.visuals ?? []).map((visual) => visual.visualId).filter(Boolean))].sort()
-  }
-
   private filterScope(filter: DashboardBuilderFilterSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined): BuilderFilterScope {
+    const pageBindings = (filter.bindings ?? []).filter((binding) => binding.scope === 'page')
+    if (pageBindings.length > 0) {
+      const binding = page && pageBindings.find((candidate) => candidate.pageId === page.id)
+      if (!binding) return 'custom'
+      const targets = [...new Set(binding.targets ?? [])].sort()
+      if (targets.length === 0) return 'page'
+      if (visual && targets.length === 1 && targets[0] === visual.id) return 'visual'
+      return 'custom'
+    }
     const targets = [...new Set(filter.targets ?? [])].sort()
     if (targets.length === 0) return 'report'
-    const pageTargets = this.pageVisualTargets(page)
-    if (pageTargets.length > 0 && targets.length === pageTargets.length && targets.every((target, index) => target === pageTargets[index])) return 'page'
-    if (visual && targets.length === 1 && targets[0] === visual.visualId) return 'visual'
     return 'custom'
   }
 
@@ -3499,13 +3500,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     })
   }
 
-  private setFilterTargets(filter: DashboardBuilderFilterSignal, targets: string[]): void {
+  private setFilterScope(filter: DashboardBuilderFilterSignal, scope: 'report' | 'page', page?: DashboardBuilderPageSignal, targets: string[] = []): void {
     if (!this.builder?.capabilities.canEdit || this.commandPending) return
-    const next = [...new Set(targets.filter(Boolean))].sort()
-    this.visualActionMessage = next.length === 0
-      ? `Applying ${filter.label} to all compatible visuals.`
-      : `Saving ${filter.label} target scope.`
-    this.emitCommand('set_filter_targets', next.length === 0 ? { filterId: filter.id } : { filterId: filter.id, targets: next })
+    this.visualActionMessage = scope === 'page'
+      ? `Moving ${filter.label} to ${page?.title ?? 'this page'}.`
+      : targets.length === 1
+        ? `Applying ${filter.label} to the selected visual.`
+        : `Moving ${filter.label} to all pages.`
+    this.emitCommand('set_filter_scope', {
+      filterId: filter.id,
+      scope,
+      ...(scope === 'page' && page ? { pageId: page.id } : {}),
+      ...(targets.length > 0 ? { targets } : {}),
+    })
   }
 
   private removeFilter(filter: DashboardBuilderFilterSignal): void {

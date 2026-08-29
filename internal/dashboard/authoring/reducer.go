@@ -190,7 +190,20 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 				if len(value.Spec.Pages) <= 1 {
 					return fmt.Errorf("%w: cannot remove the last page", ErrInvalidPayload)
 				}
+				removedVisuals := canonicalRemovedPageVisuals(page)
+				removedBindings := map[string]struct{}{}
+				if page.FilterBindings != nil {
+					for _, binding := range *page.FilterBindings {
+						removedBindings[binding.Filter] = struct{}{}
+					}
+				}
 				value.Spec.Pages = append(value.Spec.Pages[:index], value.Spec.Pages[index+1:]...)
+				for _, removed := range removedVisuals {
+					if !canonicalVisualReferenced(value, removed.definitionID) {
+						delete(value.Spec.Visuals, removed.definitionID)
+					}
+				}
+				pruneCanonicalFilterTargetsAfterVisualRemoval(value, page.ID, removedVisuals, removedBindings)
 				return nil
 			}
 		}
@@ -252,6 +265,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return updateCanonicalFilter(value, *patch)
 	case *SetFilterTargetsPayload:
 		return setCanonicalFilterTargets(value, *patch)
+	case *SetFilterScopePayload:
+		return setCanonicalFilterScope(value, *patch)
 	case *RemoveFilterPayload:
 		return removeCanonicalFilter(value, *patch)
 	case *AddFilterComponentPayload:
@@ -347,11 +362,155 @@ func setCanonicalFilterTargets(value *document.DashboardDocument, patch SetFilte
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
 }
 
+func setCanonicalFilterScope(value *document.DashboardDocument, patch SetFilterScopePayload) error {
+	filterFound := false
+	for filterIndex := range value.Spec.Filters {
+		filter := &value.Spec.Filters[filterIndex]
+		if filter.ID == patch.FilterID {
+			filterFound = true
+			if patch.Scope != "report" || len(patch.Targets) == 0 {
+				filter.Targets = nil
+			} else {
+				targets := append([]string(nil), patch.Targets...)
+				filter.Targets = &targets
+			}
+			break
+		}
+	}
+	if !filterFound {
+		return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+	}
+	if patch.Scope == "report" {
+		// Restoring report scope removes every explicit page binding while
+		// preserving slicer components, which now resolve to the report binding.
+		for pageIndex := range value.Spec.Pages {
+			page := &value.Spec.Pages[pageIndex]
+			if page.FilterBindings == nil {
+				continue
+			}
+			retained := (*page.FilterBindings)[:0]
+			for _, binding := range *page.FilterBindings {
+				if binding.Filter != patch.FilterID {
+					retained = append(retained, binding)
+				}
+			}
+			if len(retained) == 0 {
+				page.FilterBindings = nil
+			} else {
+				copied := append([]document.DashboardPageFilterBinding(nil), retained...)
+				page.FilterBindings = &copied
+			}
+		}
+		return nil
+	}
+	for pageIndex := range value.Spec.Pages {
+		page := &value.Spec.Pages[pageIndex]
+		if page.ID != patch.PageID {
+			continue
+		}
+		if len(patch.Targets) > 0 {
+			if err := ensureCanonicalPageTargetsHaveIndependentVisuals(value, pageIndex, patch.Targets); err != nil {
+				return err
+			}
+		}
+		bindings := []document.DashboardPageFilterBinding{}
+		if page.FilterBindings != nil {
+			bindings = append(bindings, (*page.FilterBindings)...)
+			for bindingIndex := range bindings {
+				binding := &bindings[bindingIndex]
+				if binding.Filter == patch.FilterID {
+					binding.Targets = optionalCanonicalTargets(patch.Targets)
+					page.FilterBindings = &bindings
+					return nil
+				}
+			}
+		}
+		bindings = append(bindings, document.DashboardPageFilterBinding{ID: nextCanonicalPageFilterBindingID(*page, patch.FilterID), Filter: patch.FilterID, Targets: optionalCanonicalTargets(patch.Targets)})
+		page.FilterBindings = &bindings
+		return nil
+	}
+	return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+}
+
+func optionalCanonicalTargets(targets []string) *[]string {
+	if len(targets) == 0 {
+		return nil
+	}
+	copied := append([]string(nil), targets...)
+	return &copied
+}
+
+// ensureCanonicalPageTargetsHaveIndependentVisuals preserves true component
+// scope in the current runtime, whose query identity is the visual definition
+// ID. When one definition is placed more than once on a page, the selected
+// component receives an equivalent private definition before it is targeted.
+func ensureCanonicalPageTargetsHaveIndependentVisuals(value *document.DashboardDocument, pageIndex int, targets []string) error {
+	page := &value.Spec.Pages[pageIndex]
+	for _, target := range targets {
+		componentIndex := -1
+		definitionID := ""
+		for index, component := range page.Components {
+			base, err := component.Base()
+			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
+			if err == nil && base != nil && ok && base.ID == target {
+				componentIndex, definitionID = index, visual.Visual
+				break
+			}
+		}
+		if componentIndex < 0 {
+			return fmt.Errorf("%w: visual component %q on page %q", ErrNotFound, target, page.ID)
+		}
+		placements := 0
+		for _, component := range page.Components {
+			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
+			if ok && visual.Visual == definitionID {
+				placements++
+			}
+		}
+		if placements <= 1 {
+			continue
+		}
+		definition, exists := value.Spec.Visuals[definitionID]
+		if !exists {
+			return fmt.Errorf("%w: visual definition %q", ErrNotFound, definitionID)
+		}
+		encoded, err := json.Marshal(definition)
+		if err != nil {
+			return fmt.Errorf("%w: clone scoped visual: %v", ErrInvalidPayload, err)
+		}
+		var clone document.DashboardVisual
+		if err := json.Unmarshal(encoded, &clone); err != nil {
+			return fmt.Errorf("%w: clone scoped visual: %v", ErrInvalidPayload, err)
+		}
+		newID := nextCanonicalBuilderID(definitionID, 2, func(candidate string) bool {
+			_, exists := value.Spec.Visuals[candidate]
+			return exists
+		})
+		value.Spec.Visuals[newID] = clone
+		page.Components[componentIndex].Value.(*document.VisualDashboardPageComponent).Visual = newID
+	}
+	return nil
+}
+
 func removeCanonicalFilter(value *document.DashboardDocument, patch RemoveFilterPayload) error {
 	for index := range value.Spec.Filters {
 		if value.Spec.Filters[index].ID == patch.FilterID {
 			value.Spec.Filters = append(value.Spec.Filters[:index], value.Spec.Filters[index+1:]...)
 			for pageIndex := range value.Spec.Pages {
+				if value.Spec.Pages[pageIndex].FilterBindings != nil {
+					bindings := (*value.Spec.Pages[pageIndex].FilterBindings)[:0]
+					for _, binding := range *value.Spec.Pages[pageIndex].FilterBindings {
+						if binding.Filter != patch.FilterID {
+							bindings = append(bindings, binding)
+						}
+					}
+					if len(bindings) == 0 {
+						value.Spec.Pages[pageIndex].FilterBindings = nil
+					} else {
+						copied := append([]document.DashboardPageFilterBinding(nil), bindings...)
+						value.Spec.Pages[pageIndex].FilterBindings = &copied
+					}
+				}
 				components := value.Spec.Pages[pageIndex].Components[:0]
 				for _, component := range value.Spec.Pages[pageIndex].Components {
 					filter, ok := component.Value.(*document.FilterDashboardPageComponent)
@@ -374,6 +533,20 @@ func pruneCanonicalFilterComponents(value *document.DashboardDocument) {
 		retained[filter.ID] = struct{}{}
 	}
 	for pageIndex := range value.Spec.Pages {
+		if value.Spec.Pages[pageIndex].FilterBindings != nil {
+			bindings := (*value.Spec.Pages[pageIndex].FilterBindings)[:0]
+			for _, binding := range *value.Spec.Pages[pageIndex].FilterBindings {
+				if _, ok := retained[binding.Filter]; ok {
+					bindings = append(bindings, binding)
+				}
+			}
+			if len(bindings) == 0 {
+				value.Spec.Pages[pageIndex].FilterBindings = nil
+			} else {
+				copied := append([]document.DashboardPageFilterBinding(nil), bindings...)
+				value.Spec.Pages[pageIndex].FilterBindings = &copied
+			}
+		}
 		components := value.Spec.Pages[pageIndex].Components[:0]
 		for _, component := range value.Spec.Pages[pageIndex].Components {
 			filter, ok := component.Value.(*document.FilterDashboardPageComponent)
@@ -409,6 +582,30 @@ func addCanonicalFilterComponent(value *document.DashboardDocument, patch AddFil
 	if pageIndex < 0 {
 		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
 	}
+	pageScoped, locallyBound := false, false
+	for index := range value.Spec.Pages {
+		bindings := value.Spec.Pages[index].FilterBindings
+		if bindings == nil {
+			continue
+		}
+		for _, binding := range *bindings {
+			if binding.Filter != patch.FilterID {
+				continue
+			}
+			pageScoped = true
+			if index == pageIndex {
+				locallyBound = true
+			}
+		}
+	}
+	if pageScoped && !locallyBound {
+		bindings := []document.DashboardPageFilterBinding{}
+		if value.Spec.Pages[pageIndex].FilterBindings != nil {
+			bindings = append(bindings, (*value.Spec.Pages[pageIndex].FilterBindings)...)
+		}
+		bindings = append(bindings, document.DashboardPageFilterBinding{ID: nextCanonicalPageFilterBindingID(value.Spec.Pages[pageIndex], patch.FilterID), Filter: patch.FilterID})
+		value.Spec.Pages[pageIndex].FilterBindings = &bindings
+	}
 	for _, component := range value.Spec.Pages[pageIndex].Components {
 		filter, ok := component.Value.(*document.FilterDashboardPageComponent)
 		if ok && filter.Filter == patch.FilterID {
@@ -438,6 +635,24 @@ func addCanonicalFilterComponent(value *document.DashboardDocument, patch AddFil
 		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "filter", Placement: placement}, Type: "filter", Filter: patch.FilterID,
 	}})
 	return nil
+}
+
+func nextCanonicalPageFilterBindingID(page document.DashboardPage, filterID string) string {
+	exists := func(candidate string) bool {
+		if page.FilterBindings == nil {
+			return false
+		}
+		for _, binding := range *page.FilterBindings {
+			if binding.ID == candidate {
+				return true
+			}
+		}
+		return false
+	}
+	if !exists(filterID) {
+		return filterID
+	}
+	return nextCanonicalBuilderID(filterID, 2, exists)
 }
 
 func removeCanonicalFilterComponent(value *document.DashboardDocument, patch RemoveFilterComponentPayload) error {
@@ -1096,6 +1311,7 @@ func removeCanonicalVisual(value *document.DashboardDocument, patch RemoveVisual
 				if !canonicalVisualReferenced(value, definitionID) {
 					delete(value.Spec.Visuals, definitionID)
 				}
+				pruneCanonicalFilterTargetsAfterVisualRemoval(value, patch.PageID, []canonicalRemovedVisual{{componentID: base.ID, definitionID: definitionID}}, nil)
 				return nil
 			}
 		}
@@ -1108,6 +1324,116 @@ func canonicalVisualReferenced(value *document.DashboardDocument, visualID strin
 		for _, component := range page.Components {
 			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
 			if ok && visual.Visual == visualID {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+type canonicalRemovedVisual struct {
+	componentID  string
+	definitionID string
+}
+
+func canonicalRemovedPageVisuals(page document.DashboardPage) []canonicalRemovedVisual {
+	removed := []canonicalRemovedVisual{}
+	for _, component := range page.Components {
+		base, err := component.Base()
+		visual, ok := component.Value.(*document.VisualDashboardPageComponent)
+		if err == nil && base != nil && ok {
+			removed = append(removed, canonicalRemovedVisual{componentID: base.ID, definitionID: visual.Visual})
+		}
+	}
+	return removed
+}
+
+// pruneCanonicalFilterTargetsAfterVisualRemoval keeps the authored document
+// compilable without broadening a visual- or page-scoped filter. A binding
+// attached only to deleted content disappears with that content; shared page
+// bindings retain their surviving targets.
+func pruneCanonicalFilterTargetsAfterVisualRemoval(value *document.DashboardDocument, pageID string, removed []canonicalRemovedVisual, affected map[string]struct{}) {
+	if affected == nil {
+		affected = map[string]struct{}{}
+	}
+	componentIDs := make(map[string]struct{}, len(removed))
+	qualifiedIDs := make(map[string]struct{}, len(removed))
+	unreferencedDefinitions := make(map[string]struct{}, len(removed))
+	for _, visual := range removed {
+		componentIDs[visual.componentID] = struct{}{}
+		qualifiedIDs[pageID+"/"+visual.componentID] = struct{}{}
+		if !canonicalVisualReferenced(value, visual.definitionID) {
+			unreferencedDefinitions[visual.definitionID] = struct{}{}
+		}
+	}
+	for pageIndex := range value.Spec.Pages {
+		page := &value.Spec.Pages[pageIndex]
+		if page.ID != pageID || page.FilterBindings == nil {
+			continue
+		}
+		bindings := make([]document.DashboardPageFilterBinding, 0, len(*page.FilterBindings))
+		for _, binding := range *page.FilterBindings {
+			if binding.Targets == nil {
+				bindings = append(bindings, binding)
+				continue
+			}
+			retained := make([]string, 0, len(*binding.Targets))
+			for _, target := range *binding.Targets {
+				if _, removed := componentIDs[target]; !removed {
+					retained = append(retained, target)
+				}
+			}
+			if len(retained) == 0 {
+				affected[binding.Filter] = struct{}{}
+				continue
+			}
+			binding.Targets = &retained
+			bindings = append(bindings, binding)
+		}
+		if len(bindings) == 0 {
+			page.FilterBindings = nil
+		} else {
+			page.FilterBindings = &bindings
+		}
+	}
+	for filterIndex := range value.Spec.Filters {
+		filter := &value.Spec.Filters[filterIndex]
+		if filter.Targets == nil {
+			continue
+		}
+		retained := make([]string, 0, len(*filter.Targets))
+		for _, target := range *filter.Targets {
+			_, qualifiedRemoved := qualifiedIDs[target]
+			_, definitionRemoved := unreferencedDefinitions[target]
+			if !qualifiedRemoved && !definitionRemoved {
+				retained = append(retained, target)
+			}
+		}
+		if len(retained) == 0 {
+			affected[filter.ID] = struct{}{}
+		}
+		filter.Targets = &retained
+	}
+	for filterID := range affected {
+		if canonicalFilterHasPageBinding(*value, filterID) {
+			continue
+		}
+		for _, filter := range value.Spec.Filters {
+			if filter.ID == filterID && (filter.Targets == nil || len(*filter.Targets) == 0) {
+				_ = removeCanonicalFilter(value, RemoveFilterPayload{FilterID: filterID})
+				break
+			}
+		}
+	}
+}
+
+func canonicalFilterHasPageBinding(value document.DashboardDocument, filterID string) bool {
+	for _, page := range value.Spec.Pages {
+		if page.FilterBindings == nil {
+			continue
+		}
+		for _, binding := range *page.FilterBindings {
+			if binding.Filter == filterID {
 				return true
 			}
 		}

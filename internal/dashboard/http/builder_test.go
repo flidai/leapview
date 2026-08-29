@@ -18,6 +18,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
@@ -33,12 +35,15 @@ type builderAuthoringFake struct {
 	builderReq       builderview.Request
 	executed         authoring.Command
 	preview          preview.Preview
+	compilation      preview.Compilation
 	previewCtx       context.Context
 	previewReq       preview.PreviewRequest
 	previewCalls     int
+	compileCalls     int
 	yaml             []byte
 	err              error
 	previewErr       error
+	compileErr       error
 	exportErr        error
 	exportDraftCalls int
 	exportDraftReq   sourceadapter.ExportRequest
@@ -373,6 +378,11 @@ func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
 				t.Fatalf("set filter targets all-pages = %#v", command.SetFilterTargets)
 			}
 		}},
+		{name: "set page filter scope", action: map[string]any{"action": "set_filter_scope", "filterId": "status", "scope": "page", "pageId": "overview"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterScope == nil || command.SetFilterScope.FilterID != "status" || command.SetFilterScope.Scope != "page" || command.SetFilterScope.PageID != "overview" {
+				t.Fatalf("set filter scope = %#v", command.SetFilterScope)
+			}
+		}},
 		{name: "remove", action: map[string]any{"action": "remove_filter", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {
 			if command.RemoveFilter == nil || command.RemoveFilter.FilterID != "status" {
 				t.Fatalf("remove filter = %#v", command.RemoveFilter)
@@ -415,6 +425,13 @@ func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.Prev
 	f.previewReq = request
 	f.previewCalls++
 	return f.preview, f.previewErr
+}
+func (f *builderAuthoringFake) Compile(_ context.Context, _ preview.CompileRequest) (preview.Compilation, error) {
+	f.compileCalls++
+	if f.compilation.Definition.ID == "" && f.preview.Definition.ID != "" {
+		return preview.Compilation{Revision: f.preview.Revision, Definition: f.preview.Definition, SemanticEvidence: f.preview.SemanticEvidence}, f.compileErr
+	}
+	return f.compilation, f.compileErr
 }
 func (f *builderAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
 	return f.yaml, f.exportErr
@@ -616,17 +633,28 @@ func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	fake := &builderAuthoringFake{
 		builder:    uisignals.DashboardBuilderSignal{ProjectID: "project", DashboardID: "sales", DraftID: "draft-1"},
 		previewErr: errors.New("query preview failed"),
+		compilation: preview.Compilation{Definition: dashboarddefinition.Definition{
+			ID: "sales", SemanticModel: "sales_model",
+			FilterDefinitions: map[string]dashboardfilter.Definition{"status": {Label: "Status", Field: "status", ValueKind: dashboardfilter.ValueString}},
+			FilterBindings: map[string]dashboardfilter.Binding{"status": {
+				Key: "status-key", ID: "status", Filter: "status", Scope: dashboardfilter.ScopeReport, ValueKind: dashboardfilter.ValueString,
+				Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered},
+			}},
+		}},
 	}
 	handler := Handler{Authoring: fake}
 	envelope := handler.dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
-	if fake.previewCalls != 1 {
-		t.Fatalf("preview calls = %d, want 1", fake.previewCalls)
+	if fake.previewCalls != 1 || fake.compileCalls != 1 {
+		t.Fatalf("preview/compile calls = %d/%d, want 1/1", fake.previewCalls, fake.compileCalls)
 	}
 	if envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "query preview failed" {
 		t.Fatalf("preview failure state = %#v", envelope.Builder.Preview)
 	}
 	if envelope.BuilderVisuals == nil || len(envelope.BuilderVisuals) != 0 {
 		t.Fatalf("preview failure visuals = %#v, want empty map", envelope.BuilderVisuals)
+	}
+	if _, ok := envelope.BuilderFilterContract.Definitions["status"]; !ok {
+		t.Fatalf("preview failure omitted compile-only filter contract: %#v", envelope.BuilderFilterContract)
 	}
 	statusFailure := &builderAuthoringFake{
 		builder: uisignals.DashboardBuilderSignal{ProjectID: "project", DashboardID: "sales", DraftID: "draft-1"},

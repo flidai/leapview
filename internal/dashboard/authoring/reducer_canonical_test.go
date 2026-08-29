@@ -395,11 +395,21 @@ func TestCanonicalReducerSelectedVisualEditingCommands(t *testing.T) {
 	if len(current.Document.Spec.Visuals) != 2 || len(current.Document.Spec.Pages[0].Components) != 2 {
 		t.Fatalf("duplicate counts = %d/%d", len(current.Document.Spec.Visuals), len(current.Document.Spec.Pages[0].Components))
 	}
+	if err := apply(&AddFilterPayload{Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	filterID := current.Document.Spec.Filters[0].ID
+	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "overview", Targets: []string{"base-component"}}); err != nil {
+		t.Fatal(err)
+	}
 	if err := apply(&RemoveVisualPayload{PageID: "overview", VisualID: "base-component"}); err != nil {
 		t.Fatal(err)
 	}
 	if len(current.Document.Spec.Pages[0].Components) != 1 || len(current.Document.Spec.Visuals) != 1 {
 		t.Fatalf("remove counts = %d/%d", len(current.Document.Spec.Visuals), len(current.Document.Spec.Pages[0].Components))
+	}
+	if len(current.Document.Spec.Filters) != 0 || current.Document.Spec.Pages[0].FilterBindings != nil {
+		t.Fatalf("removed visual retained attached page filter: filters=%#v bindings=%#v", current.Document.Spec.Filters, current.Document.Spec.Pages[0].FilterBindings)
 	}
 }
 
@@ -538,8 +548,14 @@ func TestCanonicalReducerSetsFilterTargetsAndRestoresAllPages(t *testing.T) {
 	if err := apply(&SetFilterTargetsPayload{FilterID: filter.ID, Targets: []string{"base"}}); err != nil {
 		t.Fatal(err)
 	}
+	if err := apply(&SetFilterTargetsPayload{FilterID: filter.ID, Targets: []string{"overview/base"}}); err != nil {
+		t.Fatalf("qualified report target: %v", err)
+	}
+	if got := (*current.Document.Spec.Filters[0].Targets)[0]; got != "overview/base" {
+		t.Fatalf("qualified report target = %q", got)
+	}
 	updated := current.Document.Spec.Filters[0]
-	if updated.Targets == nil || len(*updated.Targets) != 1 || (*updated.Targets)[0] != "base" {
+	if updated.Targets == nil || len(*updated.Targets) != 1 || (*updated.Targets)[0] != "overview/base" {
 		t.Fatalf("narrowed targets = %#v", updated.Targets)
 	}
 	if updated.Default == nil || updated.Operators == nil {
@@ -553,12 +569,78 @@ func TestCanonicalReducerSetsFilterTargetsAndRestoresAllPages(t *testing.T) {
 	}
 }
 
+func TestCanonicalReducerMovesFilterBetweenPageAndReportScope(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(payload authoringPayload) error {
+		command := Command{ID: CommandID("filter-scope-edit-" + strconv.FormatUint(current.Number, 10)), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID("filter-scope-rev-"+strconv.FormatUint(current.Number+1, 10)), current.Number+1, time.Date(2026, 8, 18, 19, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	if err := apply(&AddPagePayload{PageID: "details", Title: "Details"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&AddFilterPayload{Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	filterID := current.Document.Spec.Filters[0].ID
+	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "overview"}); err != nil {
+		t.Fatal(err)
+	}
+	bindings := current.Document.Spec.Pages[0].FilterBindings
+	if bindings == nil || len(*bindings) != 1 || (*bindings)[0].ID != filterID || (*bindings)[0].Filter != filterID {
+		t.Fatalf("page bindings = %#v", bindings)
+	}
+	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "details"}); err != nil {
+		t.Fatal(err)
+	}
+	if current.Document.Spec.Pages[0].FilterBindings == nil || current.Document.Spec.Pages[1].FilterBindings == nil {
+		t.Fatalf("page binding was moved instead of reused across pages: %#v", current.Document.Spec.Pages)
+	}
+	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "report"}); err != nil {
+		t.Fatal(err)
+	}
+	if current.Document.Spec.Pages[0].FilterBindings != nil || current.Document.Spec.Pages[1].FilterBindings != nil {
+		t.Fatalf("report scope retained page bindings: %#v", current.Document.Spec.Pages)
+	}
+	if err := apply(&SetFilterScopePayload{FilterID: filterID, Scope: "page", PageID: "details"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&RemovePagePayload{PageID: "details"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Filters) != 0 {
+		t.Fatalf("removed page retained its page-scoped filter: %#v", current.Document.Spec.Filters)
+	}
+}
+
+func TestCanonicalReducerIsolatesRepeatedVisualBeforeComponentScopedFilter(t *testing.T) {
+	_, current := canonicalReducerFixture(t)
+	doc := current.Document
+	doc.Spec.Pages[0].Components = append(doc.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{
+		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "base-copy", Type: "visual", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 6, RowSpan: 4}}, Type: "visual", Visual: "base",
+	}})
+	if err := addCanonicalFilter(&doc, AddFilterPayload{FilterID: "status", Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := setCanonicalFilterScope(&doc, SetFilterScopePayload{FilterID: "status", Scope: "page", PageID: "overview", Targets: []string{"base-component"}}); err != nil {
+		t.Fatal(err)
+	}
+	first := doc.Spec.Pages[0].Components[0].Value.(*document.VisualDashboardPageComponent).Visual
+	second := doc.Spec.Pages[0].Components[1].Value.(*document.VisualDashboardPageComponent).Visual
+	if first == second || len(doc.Spec.Visuals) != 2 {
+		t.Fatalf("component-scoped filter did not isolate repeated visual: %q/%q visuals=%#v", first, second, doc.Spec.Visuals)
+	}
+}
+
 func canonicalReducerCommandWithPayload(command Command, payload authoringPayload) Command {
 	switch value := payload.(type) {
 	case *MetadataPatch:
 		command.Metadata = value
 	case *AddPagePayload:
 		command.AddPage = value
+	case *RemovePagePayload:
+		command.RemovePage = value
 	case *AddVisualPayload:
 		command.AddVisual = value
 	case *SetPlacementsPayload:
@@ -589,6 +671,8 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.UpdateFilter = value
 	case *SetFilterTargetsPayload:
 		command.SetFilterTargets = value
+	case *SetFilterScopePayload:
+		command.SetFilterScope = value
 	case *RemoveFilterPayload:
 		command.RemoveFilter = value
 	case *AddFilterComponentPayload:
