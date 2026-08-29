@@ -424,11 +424,7 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 		if marshalErr != nil {
 			return marshalErr
 		}
-		bindingID, parseErr := pgUUID(binding.ID)
-		if parseErr != nil {
-			return parseErr
-		}
-		if err = accessdb.New(tx).InsertAuthorizationRoleBinding(ctx, accessdb.InsertAuthorizationRoleBindingParams{ID: bindingID, ProjectID: projectID,
+		if err = accessdb.New(tx).InsertAuthorizationRoleBinding(ctx, accessdb.InsertAuthorizationRoleBindingParams{ID: binding.ID, ProjectID: projectID,
 			Environment: environment, GenerationID: generation, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
 			Role: string(binding.Role), Capabilities: caps, Name: binding.Name}); err != nil {
 			return err
@@ -436,11 +432,7 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 	}
 	for _, grant := range snapshot.Grants() {
 		canonical := grant.Canonical
-		grantID, parseErr := pgUUID(grant.ID)
-		if parseErr != nil {
-			return parseErr
-		}
-		if err = accessdb.New(tx).InsertAuthorizationGrant(ctx, accessdb.InsertAuthorizationGrantParams{ID: grantID, ProjectID: projectID,
+		if err = accessdb.New(tx).InsertAuthorizationGrant(ctx, accessdb.InsertAuthorizationGrantParams{ID: grant.ID, ProjectID: projectID,
 			Environment: environment, GenerationID: generation, SubjectKind: string(canonical.Subject().Kind), SubjectID: canonical.Subject().ID,
 			ResourceID: canonical.Resource().ID().String(), ResourceKind: string(canonical.Resource().Kind()), Capability: canonical.Capability().String(), Name: grant.Name}); err != nil {
 			return err
@@ -455,11 +447,7 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 		if !json.Valid([]byte(policy.ExpressionJSON)) {
 			return fmt.Errorf("data policy %q expression is invalid JSON", policy.ID)
 		}
-		policyID, parseErr := pgUUID(policy.ID)
-		if parseErr != nil {
-			return parseErr
-		}
-		if err = accessdb.New(tx).InsertAuthorizationDataPolicy(ctx, accessdb.InsertAuthorizationDataPolicyParams{ID: policyID, ProjectID: projectID,
+		if err = accessdb.New(tx).InsertAuthorizationDataPolicy(ctx, accessdb.InsertAuthorizationDataPolicyParams{ID: policy.ID, ProjectID: projectID,
 			Environment: environment, GenerationID: generation, ResourceID: policy.Resource.ID().String(), ResourceKind: string(policy.Resource.Kind()),
 			SubjectKind: subjectKind, SubjectID: subjectID, PolicyType: policy.PolicyType, Expression: []byte(policy.ExpressionJSON)}); err != nil {
 			return err
