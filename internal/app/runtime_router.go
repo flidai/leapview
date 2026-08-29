@@ -728,7 +728,7 @@ func buildApplicationSurfaces(
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
-		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog,
+		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database),
 		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {

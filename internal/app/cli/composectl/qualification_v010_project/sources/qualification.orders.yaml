@@ -1,0 +1,12 @@
+apiVersion: libredash.dev/v1
+kind: Source
+metadata:
+  name: qualification.orders
+spec:
+  connection: qualification
+  path: orders.csv
+  fields:
+    order_id:
+      type: string
+    order_status:
+      type: string

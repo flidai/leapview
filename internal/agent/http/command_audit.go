@@ -11,6 +11,7 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/agent"
 	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 )
 
@@ -139,7 +140,7 @@ func (h *Handler) recordLegacyCommandAudit(r *stdhttp.Request, operationID agent
 // one. The operation-specific idempotency key is derived from this identity
 // by beginUICommandInvocation.
 func uiRequestIdentity(r *stdhttp.Request, input string) string {
-	if value := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID"); value != "" {
+	if value := firstNonEmptyHeader(r, "X-Request-Id", "X-Request-ID"); value != "" && !httpmiddleware.RequestIDWasGenerated(r) {
 		return value
 	}
 	clientID := "default"

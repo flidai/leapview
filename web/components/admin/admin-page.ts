@@ -100,6 +100,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       padding: var(--base-size-64) 0;
     }
 
+    .main-profile {
+      width: min(calc(100% - var(--base-size-48)), 40rem);
+    }
+
     .main-settings .page-title-block {
       display: grid;
       gap: var(--base-size-8);
@@ -603,6 +607,10 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
         padding: var(--base-size-32) var(--base-size-16) var(--base-size-64);
       }
 
+      .main-profile {
+        width: 100%;
+      }
+
       .main-settings .page-header h1 {
         font: var(--lv-type-page-title);
       }
@@ -657,6 +665,7 @@ class LeapViewAdminPage extends DatastarLit(LitElement) {
       'main',
       page.active === 'principals' || page.active === 'groups' || page.active === 'principal-detail' || page.active === 'group-detail' || page.active === 'projects-admin' || page.active === 'storage' || page.active === 'storage-detail' ? 'main-directory' : '',
       isPersonalSettings(page.active) || isProductSettings(page.active) ? 'main-settings' : '',
+      page.active === 'profile' ? 'main-profile' : '',
     ].filter(Boolean).join(' ')
     return html`
       <div class="route">

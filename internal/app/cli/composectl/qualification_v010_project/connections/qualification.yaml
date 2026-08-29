@@ -1,0 +1,6 @@
+apiVersion: libredash.dev/v1
+kind: Connection
+metadata:
+  name: qualification
+spec:
+  kind: local

@@ -47,26 +47,28 @@ func TestDependencyCacheKeyUsesStableTypedPartition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	prod := newQueryResultCacheWithScopeAndPartition(prodScope, production)
-	cand := newQueryResultCacheWithScopeAndPartition(candScope, candidate)
+	prod := newQueryResultCacheWithScopes(prodScope, prodScope)
+	cand := newQueryResultCacheWithScopes(candScope, candScope)
 	query := dataquery.Query{Kind: dataquery.KindSemanticRows, Target: "orders", EffectivePolicyFingerprint: identityDigest('9')}
 	dependency := identityDependency(t)
-	prodKey, _, err := prod.cacheKeyWithDependency(query, dependency)
+	prodKey, _, err := prod.cacheKey(query, production, dependency)
 	if err != nil {
 		t.Fatal(err)
 	}
-	candKey, _, err := cand.cacheKeyWithDependency(query, dependency)
+	candidateQuery := query
+	candidateQuery.CandidateID = "candidate-1"
+	candKey, _, err := cand.cacheKey(candidateQuery, candidate, dependency)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if prodKey == candKey {
 		t.Fatal("production and candidate partitions shared a cache key")
 	}
-	if _, _, err := prod.cacheKeyWithDependency(query, dependency); err != nil {
+	if _, _, err := prod.cacheKey(query, production, dependency); err != nil {
 		t.Fatal(err)
 	}
 	query.EffectivePolicyFingerprint = "not-a-digest"
-	if _, _, err := prod.cacheKeyWithDependency(query, dependency); err == nil {
+	if _, _, err := prod.cacheKey(query, production, dependency); err == nil {
 		t.Fatal("invalid policy fingerprint was accepted on production partition")
 	}
 }
@@ -85,8 +87,8 @@ func TestProductionDependencyCacheKeyFailsClosedWithoutPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache := newQueryResultCacheWithScopeAndPartition(scope, partition)
-	if _, _, err := cache.cacheKeyWithDependency(dataquery.Query{Kind: dataquery.KindSemanticRows, Target: "orders"}, identityDependency(t)); err == nil {
+	cache := newQueryResultCacheWithScopes(scope, scope)
+	if _, _, err := cache.cacheKey(dataquery.Query{Kind: dataquery.KindSemanticRows, Target: "orders"}, partition, identityDependency(t)); err == nil {
 		t.Fatal("missing production policy fingerprint did not fail closed")
 	}
 	_ = analyticscache.CacheKeyVersion // contract is intentionally referenced by this production-path test.

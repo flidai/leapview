@@ -5,9 +5,11 @@ package http
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"net/url"
 	"path"
 	"sort"
 	"strings"
@@ -84,6 +86,19 @@ type CatalogAuthorizer interface {
 	Resolve(context.Context, string, projectcatalog.Ref, access.Capability, bool) (projectcatalog.Result, error)
 }
 
+type ProductSearchCatalog interface {
+	Search(context.Context, projectcatalog.SearchRequest) (projectcatalog.Page, error)
+}
+
+var productSearchKinds = []projectgraph.Kind{
+	projectgraph.KindDashboard,
+	projectgraph.KindModel,
+	projectgraph.KindSource,
+	projectgraph.KindConnection,
+	projectgraph.KindSemanticModel,
+	projectgraph.KindPipeline,
+}
+
 // ProjectDefinitionReader resolves one coherent complete definition snapshot
 // from the exact active serving generation. The returned compiled semantic
 // models are retained by that same generation; callers must not compile the
@@ -138,6 +153,7 @@ type BrowserHandler struct {
 	DashboardAppearances     DashboardAppearanceStore
 	QueryExecutor            DataQueryExecutor
 	Catalog                  CatalogAuthorizer
+	SearchCatalog            ProductSearchCatalog
 	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
 	Environment              string
 	TargetID                 string
@@ -198,6 +214,7 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 		return handler.ServeHTTP
 	}
 	r.Get("/", wrap(h.Insights))
+	r.Get("/search", wrap(h.ProductSearch))
 	r.Get("/explore", wrap(h.Explore))
 	r.Post("/explore/command", wrap(h.DataExplorerCommand))
 	r.Get("/sources", wrap(h.Sources))
@@ -229,6 +246,82 @@ func (h *BrowserHandler) MountAuthenticated(r chi.Router) {
 	r.Get("/models/search", wrap(h.ModelsSearch))
 	r.Get("/semantic-models/search", wrap(h.SemanticModelsSearch))
 	r.Get("/dashboards/search", wrap(h.DashboardsSearch))
+}
+
+func (h *BrowserHandler) ProductSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	principal, ok := h.currentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		stdhttp.Error(w, "authentication is required", stdhttp.StatusUnauthorized)
+		return
+	}
+	if h.SearchCatalog == nil {
+		stdhttp.Error(w, "search is temporarily unavailable", stdhttp.StatusServiceUnavailable)
+		return
+	}
+	query := strings.TrimSpace(r.URL.Query().Get("q"))
+	limit := 24
+	page, err := h.SearchCatalog.Search(r.Context(), projectcatalog.SearchRequest{
+		PrincipalID: principal.ID, DevAuthBypass: principal.DevBypass, Query: query,
+		Kinds: append([]projectgraph.Kind(nil), productSearchKinds...), Limit: limit,
+	})
+	if err != nil {
+		status := stdhttp.StatusServiceUnavailable
+		if errors.Is(err, projectcatalog.ErrInvalidRequest) || errors.Is(err, projectcatalog.ErrInvalidCursor) {
+			status = stdhttp.StatusBadRequest
+		}
+		stdhttp.Error(w, stdhttp.StatusText(status), status)
+		return
+	}
+	items := make([]productSearchResult, 0, len(page.Items))
+	for _, item := range page.Items {
+		if result, ok := productSearchResultFor(item); ok {
+			items = append(items, result)
+		}
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(struct {
+		Items []productSearchResult `json:"items"`
+	}{Items: items})
+}
+
+type productSearchResult struct {
+	Reference   projectcatalog.Ref `json:"reference"`
+	Name        string             `json:"name"`
+	DisplayName string             `json:"displayName,omitempty"`
+	Description string             `json:"description,omitempty"`
+	Href        string             `json:"href"`
+}
+
+func productSearchResultFor(item projectcatalog.Result) (productSearchResult, bool) {
+	href := productSearchHref(item)
+	if href == "" {
+		return productSearchResult{}, false
+	}
+	return productSearchResult{
+		Reference: item.Ref, Name: item.Name, DisplayName: item.DisplayName, Description: item.Description,
+		Href: href,
+	}, true
+}
+
+func productSearchHref(item projectcatalog.Result) string {
+	id := item.Ref.ID.String()
+	switch item.Ref.Kind {
+	case projectgraph.KindConnection:
+		return assetnav.ConnectionAssetSectionHref(id, "details")
+	case projectgraph.KindSource:
+		return assetnav.ProjectAssetSectionHref(id, "details")
+	case projectgraph.KindModel:
+		return "/models/" + url.PathEscape(id) + "/details"
+	case projectgraph.KindSemanticModel:
+		return "/semantic-models/" + url.PathEscape(id) + "/details"
+	case projectgraph.KindPipeline:
+		return "/pipelines/" + url.PathEscape(id) + "/details"
+	case projectgraph.KindDashboard:
+		return "/dashboards/" + url.PathEscape(id)
+	default:
+		return ""
+	}
 }
 
 func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) {

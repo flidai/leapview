@@ -1,12 +1,16 @@
 package app
 
 import (
+	"bytes"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	"github.com/flidai/leapview/internal/platform/observability"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestHealthRoutesRemainUnauthenticated(t *testing.T) {
@@ -22,6 +26,55 @@ func TestHealthRoutesRemainUnauthenticated(t *testing.T) {
 		}
 		if got := response.Header().Get("Content-Type"); !strings.HasPrefix(got, "application/json") {
 			t.Fatalf("%s Content-Type = %q, want application/json", path, got)
+		}
+	}
+}
+
+func TestCorrelationIdentitySurvivesEarlyMiddlewareFailure(t *testing.T) {
+	const (
+		traceID        = "0af7651916cd43dd8448eb211c80319c"
+		upstreamSpanID = "b7ad6b7169203331"
+		traceparent    = "00-" + traceID + "-" + upstreamSpanID + "-01"
+	)
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	mux := chi.NewRouter()
+	mountRouterMiddleware(mux, routerMiddlewareDependencies{
+		logger:         logger,
+		telemetry:      observability.New(),
+		allowedHosts:   []string{"app.example.com"},
+		requestLogging: true,
+	})
+	mux.Get("/healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	request.Host = "unexpected.example.com"
+	request.Header.Set("traceparent", traceparent)
+	request.Header.Set("tracestate", "vendor=secret-state")
+	response := httptest.NewRecorder()
+
+	mux.ServeHTTP(response, request)
+
+	if response.Code != http.StatusMisdirectedRequest {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusMisdirectedRequest)
+	}
+	requestID := response.Header().Get("X-Request-ID")
+	if !strings.HasPrefix(requestID, "req_") {
+		t.Fatalf("response request ID = %q, want generated req_ identity", requestID)
+	}
+	if got := response.Header().Get("X-Correlation-ID"); got != requestID {
+		t.Fatalf("response correlation ID = %q, want request ID %q", got, requestID)
+	}
+	logged := logs.String()
+	for _, want := range []string{"status=421", "request_id=" + requestID, "correlation_id=" + requestID, "trace_id=" + traceID, "upstream_span_id=" + upstreamSpanID} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log %q missing %q", logged, want)
+		}
+	}
+	for _, sensitive := range []string{traceparent, "secret-state", "traceparent", "tracestate"} {
+		if strings.Contains(logged, sensitive) {
+			t.Fatalf("log %q contains sensitive trace context %q", logged, sensitive)
 		}
 	}
 }

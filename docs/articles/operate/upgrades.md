@@ -51,6 +51,58 @@ refreshes, denials, backup, and restore before cutover. Retain the stopped
 v0.1.0 container, its volume, configuration, immutable image, archive, and
 checksum as the rollback boundary until the migration is accepted.
 
+## Inspect the automated v0.1 preservation gate
+
+Every release runs the v0.1 preservation qualification before publication.
+The gate consumes the real assembled-image admission record, the
+candidate-bound transition policy, its exact SHA-256, and the reviewed
+historical v0.1 identity. Because the historical image is available only for
+`linux/amd64`, its execution journey runs in the release workflow's `amd64`
+pre-publication job. A failure in that job prevents the dependent publication
+job from releasing the image or archives.
+
+The release runner must have Docker Engine with Buildx, permission to create
+and remove isolated containers, networks, volumes, and run directories, and an
+owner-readable Docker credential configuration with pull access to
+`ghcr.io/yacobolo/libredash`. The credential requires package read access only.
+Qualification fails closed when credentials are missing, the exact artifact is
+unavailable, or the registry returns different immutable OCI bytes. There is no
+tag, alternate namespace, local image, or source-build fallback.
+
+Inspect the GitHub Actions **Pre-publication qualification (amd64)** job and its
+`prepublication-<release-tag>-amd64` artifact. It contains two related JSON
+documents:
+
+- `v0.1-reviewed-identity.json` proves that the exact authenticated historical
+  artifact, platform manifest, config, and source provenance matched the
+  reviewed policy identity. It is bound to the candidate policy SHA-256 but is
+  not execution evidence.
+- `v0.1-preservation-qualification.json` extends the same evidence contract
+  with the authentic v0.1 application journey, stopped-state inventory and
+  before/after checksums, clean restart proof, isolated candidate identity,
+  fresh-install and legacy-state denial decisions, mutation-free checksums, and
+  cleanup result.
+
+The final document is published atomically only after owner validation. Its
+historical identity, artifact graph, provenance, policy version, and policy
+digest must match the reviewed document, while its candidate identity must
+match the admission record. If the final document is absent, qualification did
+not succeed even when the reviewed identity file was uploaded.
+
+A successful gate means deterministic state created through supported v0.1
+interfaces survived clean shutdown and restart, while the admitted candidate
+started in separate clean state and rejected unsupported legacy-state reuse
+without mutation. It does not make v0.1 state compatible with LeapView and does
+not replace the export-and-fresh-install procedure above.
+
+For a failure, preserve the bounded workflow diagnostic and both evidence files
+that exist. Reauthenticate for a credential error; escalate an unavailable or
+digest-mismatched historical artifact without substituting it; re-extract the
+candidate archive for a policy checksum error; regenerate predecessor evidence
+with the same shipped controller and policy if it is rejected; and rebuild and
+readmit the candidate when its admission identity or qualification journey
+fails. Never edit evidence, policy, or admission JSON to make a release pass.
+
 ## Assess the release
 
 Before scheduling an upgrade, review release notes for:

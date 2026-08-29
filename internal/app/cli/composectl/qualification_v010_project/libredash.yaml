@@ -1,0 +1,14 @@
+apiVersion: libredash.dev/v1
+kind: Project
+metadata:
+  name: fai-517-v010-preservation
+spec:
+  connections:
+    include:
+      - connections/*.yaml
+  sources:
+    include:
+      - sources/*.yaml
+  workspaces:
+    include:
+      - workspaces/*/workspace.yaml

@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
 
@@ -169,18 +170,18 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 	}
 	for _, branch := range governed.branches {
 		projection, ok := projections[branch.ID]
-		if !ok || !r.dependencyProjectionReusable(projection) {
+		if !ok {
 			out.slots[branch.ID] = bundleCacheSlot{}
 			out.misses = append(out.misses, branch)
 			continue
 		}
-		dependency, dependencyErr := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
-		if dependencyErr != nil {
+		dependency, reusable := r.dependencyForProjection(projection)
+		if !reusable || !queryCacheIdentityAvailable(branch.Query, r.resultPartition, dependency) {
 			out.slots[branch.ID] = bundleCacheSlot{}
 			out.misses = append(out.misses, branch)
 			continue
 		}
-		cached, key, generation, hit, err := r.queryCache.lookupArrowWithDependency(ctx, branch.Query, dependency)
+		cached, key, generation, hit, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
 		if err != nil {
 			return resolvedBundle{}, &dataquery.BundleBranchError{ID: branch.ID, Err: err}
 		}
@@ -195,12 +196,12 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 	return out, nil
 }
 
-func (r *Runtime) dependencyProjectionReusable(projection semanticquery.DependencyProjection) bool {
+func (r *Runtime) dependencyForProjection(projection semanticquery.DependencyProjection) (resultidentity.Dependency, bool) {
 	if r == nil || !r.dependencyEvidence.Available() {
-		return false
+		return resultidentity.Dependency{}, false
 	}
-	_, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
-	return err == nil
+	dependency, err := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
+	return dependency, err == nil
 }
 
 func (r *Runtime) executeDegenerateBundle(ctx context.Context, resolved resolvedBundle) (dataquery.BundleResult, error) {
@@ -404,7 +405,7 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		if !slot.reusable {
 			continue
 		}
-		r.queryCache.scope.StoreArrow(slot.key, resultcache.Token(slot.generation), branches[request.ID], resultcache.Metadata{SQL: planned.plan.Plan.SQL})
+		r.queryCache.scope.StoreArrow(slot.key, resultcache.Token(slot.generation), branches[request.ID], resultcache.Metadata{})
 	}
 	r.queryCache.syncStats()
 	return execution, nil

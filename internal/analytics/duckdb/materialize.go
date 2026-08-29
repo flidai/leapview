@@ -585,49 +585,48 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
-	Models                   map[string]*semanticmodel.Model
-	ModelTables              map[string]semanticmodel.Table
-	Database                 analyticsruntime.ProjectDatabase
-	CredentialResolver       CredentialResolver
-	ConnectionResolver       analyticsruntime.ConnectionResolver
-	ExtensionAdmission       ExtensionAdmission
-	SnapshotID               int64
-	ServingStateID           string
-	ProjectID                projectgraph.ResourceID
-	Environment              string
-	TargetType               string
-	TargetID                 string
-	SemanticDigest           string
-	ArtifactDigest           string
-	SourceDataDigest         string
-	CandidateID              string
-	AuthorizationFingerprint string
-	BindingFingerprint       string
-	RequiredExtensions       []string
-	SkipInitialRefresh       bool
-	MaterializationOnly      bool
-	QueryCache               *resultcache.Scope
-	ResultLimits             dataquery.ResultLimits
-	DependencyEvidence       map[string]resultidentity.Evidence
-	QueryCachePartition      resultidentity.Partition
+	Models              map[string]*semanticmodel.Model
+	ModelTables         map[string]semanticmodel.Table
+	Database            analyticsruntime.ProjectDatabase
+	CredentialResolver  CredentialResolver
+	ConnectionResolver  analyticsruntime.ConnectionResolver
+	ExtensionAdmission  ExtensionAdmission
+	SnapshotID          int64
+	ServingStateID      string
+	ProjectID           projectgraph.ResourceID
+	Environment         string
+	TargetType          string
+	TargetID            string
+	SemanticDigest      string
+	ArtifactDigest      string
+	SourceDataDigest    string
+	RequiredExtensions  []string
+	SkipInitialRefresh  bool
+	MaterializationOnly bool
+	ResultPartition     resultidentity.Partition
+	QueryResultCache    *resultcache.Scope
+	ImmutableByteCache  *resultcache.Scope
+	ResultLimits        dataquery.ResultLimits
+	DependencyEvidence  map[string]resultidentity.Evidence
 }
 
 type ProjectRuntime struct {
-	mu                   sync.Mutex
-	projectID            projectgraph.ResourceID
-	db                   analyticsmaterialize.Database
-	sessions             analyticsresource.SessionProvider
-	committer            duckLakeCommitter
-	sources              *SourceRuntime
-	models               map[string]*semanticmodel.Model
-	materializationModel *semanticmodel.Model
-	views                map[string]*analyticsmaterialize.Runtime
-	lastRefresh          time.Time
-	lastSnapshotID       int64
-	sourceObservations   []analyticsmaterialize.SourceObservation
-	commitMetadata       map[string]string
-	cacheScope           *resultcache.Scope
-	viewConfig           ProjectRuntimeConfig
+	mu                      sync.Mutex
+	projectID               projectgraph.ResourceID
+	db                      analyticsmaterialize.Database
+	sessions                analyticsresource.SessionProvider
+	committer               duckLakeCommitter
+	sources                 *SourceRuntime
+	models                  map[string]*semanticmodel.Model
+	materializationModel    *semanticmodel.Model
+	views                   map[string]*analyticsmaterialize.Runtime
+	lastRefresh             time.Time
+	lastSnapshotID          int64
+	sourceObservations      []analyticsmaterialize.SourceObservation
+	commitMetadata          map[string]string
+	queryResultCacheScope   *resultcache.Scope
+	immutableByteCacheScope *resultcache.Scope
+	viewConfig              ProjectRuntimeConfig
 }
 
 // Planner returns the activation-owned planner for one semantic model. The
@@ -695,17 +694,18 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		}
 	}
 	runtime := &ProjectRuntime{
-		projectID:            config.ProjectID,
-		db:                   db,
-		sessions:             db,
-		committer:            db,
-		sources:              sources,
-		models:               config.Models,
-		materializationModel: materializationModel,
-		views:                map[string]*analyticsmaterialize.Runtime{},
-		commitMetadata:       projectCommitMetadata(config),
-		cacheScope:           config.QueryCache,
-		viewConfig:           config,
+		projectID:               config.ProjectID,
+		db:                      db,
+		sessions:                db,
+		committer:               db,
+		sources:                 sources,
+		models:                  config.Models,
+		materializationModel:    materializationModel,
+		views:                   map[string]*analyticsmaterialize.Runtime{},
+		commitMetadata:          projectCommitMetadata(config),
+		queryResultCacheScope:   config.QueryResultCache,
+		immutableByteCacheScope: config.ImmutableByteCache,
+		viewConfig:              config,
 	}
 	if config.SnapshotID > 0 {
 		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
@@ -735,10 +735,6 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 		config.SnapshotID = r.lastSnapshotID
 	}
 	next := make(map[string]*analyticsmaterialize.Runtime, len(r.models))
-	cachePartition := config.QueryCachePartition
-	if cachePartition.Version() == 0 {
-		return fmt.Errorf("typed query cache partition is required")
-	}
 	for modelID, model := range r.models {
 		dependencyEvidence := config.DependencyEvidence[modelID]
 		tableRelation := func(table string) (string, error) {
@@ -752,13 +748,13 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID: modelID, Model: model,
+			ModelID: modelID, Model: model, ResultPartition: config.ResultPartition,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
-			QueryCache: config.QueryCache, ResultLimits: config.ResultLimits,
-			QueryCachePartition: cachePartition,
-			DependencyEvidence:  dependencyEvidence,
-			RequiredExtensions:  config.RequiredExtensions,
+			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,
+			ResultLimits:       config.ResultLimits,
+			DependencyEvidence: dependencyEvidence,
+			RequiredExtensions: config.RequiredExtensions,
 		})
 		if err != nil {
 			for _, opened := range next {
@@ -1288,8 +1284,13 @@ func (r *ProjectRuntime) Close() error {
 			errs = append(errs, err)
 		}
 	}
-	if r.cacheScope != nil {
-		if err := r.cacheScope.Close(); err != nil {
+	if r.queryResultCacheScope != nil {
+		if err := r.queryResultCacheScope.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if r.immutableByteCacheScope != nil && r.immutableByteCacheScope != r.queryResultCacheScope {
+		if err := r.immutableByteCacheScope.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}

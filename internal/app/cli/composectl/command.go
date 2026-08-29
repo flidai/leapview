@@ -172,6 +172,39 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 			return controller.RunScheduledRecoveryQualification(ctx)
 		},
 	}
+	v010Qualification := QualificationV010Options{}
+	qualifyV010 := &cobra.Command{
+		Use:   "v0.1-preservation",
+		Short: "Qualify exact v0.1 preservation and candidate fresh-install denial",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.QualifyV010Preservation(ctx, v010Qualification)
+		},
+	}
+	qualifyV010.Flags().StringVar(&v010Qualification.CandidateAdmission, "candidate-admission", "", "exact candidate OCI admission evidence")
+	qualifyV010.Flags().StringVar(&v010Qualification.TransitionPolicy, "transition-policy", "", "candidate-bound release-transition policy")
+	qualifyV010.Flags().StringVar(&v010Qualification.PolicySHA256, "policy-sha256", "", "expected SHA-256 of the candidate-bound policy")
+	qualifyV010.Flags().StringVar(&v010Qualification.PredecessorEvidence, "predecessor-evidence", "", "reviewed exact v0.1 artifact identity evidence")
+	qualifyV010.Flags().StringVar(&v010Qualification.EvidenceDir, "evidence-dir", "", "existing qualification evidence directory")
+	_ = qualifyV010.MarkFlagRequired("candidate-admission")
+	_ = qualifyV010.MarkFlagRequired("transition-policy")
+	_ = qualifyV010.MarkFlagRequired("policy-sha256")
+	_ = qualifyV010.MarkFlagRequired("predecessor-evidence")
+	v010ArtifactReview := QualificationV010ArtifactReviewOptions{}
+	qualifyV010ArtifactReview := &cobra.Command{
+		Use:   "v0.1-artifact-review",
+		Short: "Publish reviewed exact v0.1 artifact identity evidence",
+		Args:  cobra.NoArgs,
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return controller.ReviewV010Artifact(ctx, v010ArtifactReview)
+		},
+	}
+	qualifyV010ArtifactReview.Flags().StringVar(&v010ArtifactReview.TransitionPolicy, "transition-policy", "", "candidate-bound release-transition policy")
+	qualifyV010ArtifactReview.Flags().StringVar(&v010ArtifactReview.PolicySHA256, "policy-sha256", "", "expected SHA-256 of the candidate-bound policy")
+	qualifyV010ArtifactReview.Flags().StringVar(&v010ArtifactReview.Evidence, "evidence", "", "destination for reviewed exact v0.1 artifact identity evidence")
+	_ = qualifyV010ArtifactReview.MarkFlagRequired("transition-policy")
+	_ = qualifyV010ArtifactReview.MarkFlagRequired("policy-sha256")
+	_ = qualifyV010ArtifactReview.MarkFlagRequired("evidence")
 
 	qualify := &cobra.Command{
 		Use:   "qualify",
@@ -195,7 +228,7 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.Project, "project", "", "qualification project")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
-	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyScheduledRecovery, qualifyClientWorker)
+	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyScheduledRecovery, qualifyV010ArtifactReview, qualifyV010, qualifyClientWorker)
 
 	root.AddCommand(version, initialize, start, status, logs, firstLogin, backup, restore, upgrade, rollback, qualify)
 	return root
