@@ -103,6 +103,10 @@ func cacheTestKey() ManifestKey {
 	return ManifestKey{PartitionKind: PartitionProduction, ProjectID: partition.ProjectID().String(), Environment: partition.Environment(), PartitionFormatVersion: int64(partition.Version()), DependencyDigest: cacheTestDigest('a'), PolicyFingerprint: cacheTestDigest('b'), CanonicalQueryDigest: cacheTestDigest('c'), KeyFormatVersion: 1}
 }
 
+func cacheTestNamespace() Namespace {
+	return Namespace{PartitionKind: PartitionProduction, ProjectID: "project_sales", Environment: "prod"}
+}
+
 func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T) {
 	p := cacheTestDB(t)
 	repo := New(p)
@@ -112,11 +116,11 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-a", Lease: time.Second})
+	first, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-a", Lease: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-b", Lease: time.Second}); !errors.Is(err, ErrBusy) {
+	if _, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-b", Lease: time.Second}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second fill error = %v, want ErrBusy", err)
 	}
 	manifest, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/" + cacheTestDigest('e'), ByteSize: 42, Metadata: []byte(`{"rows":1}`), Lease: first})
@@ -130,22 +134,54 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	if got.ManifestID != manifest.ManifestID || got.ByteSize != 42 || string(got.Metadata) != `{"rows": 1}` {
 		t.Fatalf("manifest = %#v", got)
 	}
-	released, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-c", Lease: time.Second})
+	released, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-c", Lease: time.Second})
 	if err != nil {
 		t.Fatalf("published fill was not released: %v", err)
 	}
 	if err := repo.ReleaseFill(ctx, released); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.InvalidateDependency(ctx, key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, nil); !errors.Is(err, ErrInvalid) {
+	invalidation := NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: key.DependencyDigest, IdempotencyKey: "invalidate-test", Reason: "dependency refresh"}
+	missingIdempotency := invalidation
+	missingIdempotency.IdempotencyKey = ""
+	if _, err := repo.InvalidateNamespace(ctx, missingIdempotency, cacheTestEvidence("dependency-refresh")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing invalidation idempotency key = %v, want invalid", err)
+	}
+	if _, err := repo.InvalidateNamespace(ctx, invalidation, nil); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("missing invalidation evidence = %v, want invalid", err)
 	}
-	changed, err := repo.InvalidateDependency(ctx, key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("dependency-refresh"))
-	if err != nil || changed != 1 {
-		t.Fatalf("InvalidateDependency() = %d, %v", changed, err)
+	changed, err := repo.InvalidateNamespace(ctx, invalidation, cacheTestEvidence("dependency-refresh"))
+	if err != nil || changed.RetiredManifests != 1 {
+		t.Fatalf("InvalidateNamespace() = %#v, %v", changed, err)
+	}
+	replay, err := repo.InvalidateNamespace(ctx, invalidation, cacheTestEvidence("dependency-refresh"))
+	if err != nil || replay.EventID != changed.EventID || replay.NamespaceEpoch != changed.NamespaceEpoch || replay.RetiredManifests != changed.RetiredManifests {
+		t.Fatalf("invalidation replay = %#v, %v; want %#v", replay, err, changed)
+	}
+	if epoch, err := repo.CurrentEpoch(ctx, cacheTestNamespace()); err != nil || epoch != changed.NamespaceEpoch {
+		t.Fatalf("epoch after replay = %d, %v; want %d", epoch, err, changed.NamespaceEpoch)
 	}
 	if _, found, err := repo.Lookup(ctx, key); err != nil || found {
 		t.Fatalf("invalidated manifest lookup = found %v, err %v", found, err)
+	}
+}
+
+func TestRepositoryRejectsCrossNamespacePublish(t *testing.T) {
+	p := cacheTestDB(t)
+	repo := New(p)
+	key := cacheTestKey()
+	fillKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongNamespace := Namespace{PartitionKind: PartitionProduction, ProjectID: "project_other", Environment: "prod"}
+	lease, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: wrongNamespace, CacheKey: fillKey, OwnerID: "wrong-scope", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.Publish(t.Context(), PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/wrong-scope", ByteSize: 1, Lease: lease})
+	if !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("cross-namespace publish error = %v, want stale fence", err)
 	}
 }
 
@@ -161,7 +197,7 @@ func TestRepositoryConcurrentFillAcquisitionHasOneOwnerAndAdvancesFence(t *testi
 		wg.Add(1)
 		go func(owner string) {
 			defer wg.Done()
-			lease, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: key, OwnerID: owner, Lease: time.Second})
+			lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: key, OwnerID: owner, Lease: time.Second})
 			results <- lease
 			errs <- err
 		}(owner)
@@ -189,7 +225,7 @@ func TestRepositoryConcurrentFillAcquisitionHasOneOwnerAndAdvancesFence(t *testi
 	if err := repo.ReleaseFill(ctx, acquired); err != nil {
 		t.Fatal(err)
 	}
-	next, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: key, OwnerID: "node-c", Lease: time.Second})
+	next, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: key, OwnerID: "node-c", Lease: time.Second})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,14 +242,14 @@ func TestRepositoryExpiredOwnerIsFencedBeforePublish(t *testing.T) {
 	repo := New(p)
 	ctx := context.Background()
 	key := cacheTestDigest('7')
-	old, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: key, OwnerID: "node-old", Lease: time.Minute})
+	old, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: key, OwnerID: "node-old", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Exec(ctx, `UPDATE cache.cache_fill_lease SET acquired_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second' WHERE lease_id=$1`, old.LeaseID); err != nil {
 		t.Fatal(err)
 	}
-	next, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: key, OwnerID: "node-new", Lease: time.Minute})
+	next, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: key, OwnerID: "node-new", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +275,7 @@ func TestRepositoryRejectsUnrelatedFenceOnPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-a", Lease: time.Minute})
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-a", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +297,7 @@ func TestRepositoryPublishReplayIsIdempotentAndChangedContentsConflict(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-replay", Lease: time.Minute})
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-replay", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +332,7 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lease, err := repo.AcquireFill(ctx, AcquireFillInput{CacheKey: fillKey, OwnerID: "node-retention", Lease: time.Minute})
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-retention", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -340,8 +376,9 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err := repo.RetireRetentionRoot(ctx, rootID, cacheTestEvidence("dashboard-closed")); err != nil {
 		t.Fatalf("idempotent root retirement replay: %v", err)
 	}
-	if changed, err := repo.InvalidateDependency(ctx, key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("dependency-refresh")); err != nil || changed != 1 {
-		t.Fatalf("invalidate before retention expiry = %d, %v", changed, err)
+	retentionInvalidation := NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: key.DependencyDigest, IdempotencyKey: "retention-invalidate", Reason: "dependency refresh"}
+	if changed, err := repo.InvalidateNamespace(ctx, retentionInvalidation, cacheTestEvidence("dependency-refresh")); err != nil || changed.RetiredManifests != 1 {
+		t.Fatalf("invalidate before retention expiry = %#v, %v", changed, err)
 	}
 	var manifestRetireEvidence []byte
 	if err := p.QueryRow(ctx, `SELECT retire_evidence FROM cache.cache_manifest WHERE manifest_id=$1`, manifest.ManifestID).Scan(&manifestRetireEvidence); err != nil {
@@ -351,8 +388,8 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err != nil || !bytes.Equal(normalizedManifestRetireEvidence, cacheTestEvidence("dependency-refresh")) {
 		t.Fatalf("persisted manifest retirement evidence = %s", manifestRetireEvidence)
 	}
-	if changed, err := repo.InvalidateDependency(ctx, key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("different")); !errors.Is(err, ErrConflict) || changed != 0 {
-		t.Fatalf("mismatched manifest retirement replay = %d, %v", changed, err)
+	if changed, err := repo.InvalidateNamespace(ctx, retentionInvalidation, cacheTestEvidence("different")); !errors.Is(err, ErrConflict) || changed.RetiredManifests != 0 {
+		t.Fatalf("mismatched manifest retirement replay = %#v, %v", changed, err)
 	}
 	if err := repo.ExpireManifest(ctx, manifest.ManifestID, cacheTestEvidence("manifest-gc")); !errors.Is(err, ErrConflict) {
 		t.Fatalf("manifest expired with retiring root: %v", err)
@@ -397,8 +434,8 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err := repo.ExpireManifest(ctx, manifest.ManifestID, cacheTestEvidence("manifest-gc")); err != nil {
 		t.Fatalf("idempotent manifest expiry replay: %v", err)
 	}
-	if changed, err := repo.InvalidateDependency(ctx, key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("different")); !errors.Is(err, ErrConflict) || changed != 0 {
-		t.Fatalf("mismatched invalidation after expiry = %d, %v", changed, err)
+	if changed, err := repo.InvalidateNamespace(ctx, retentionInvalidation, cacheTestEvidence("different")); !errors.Is(err, ErrConflict) || changed.RetiredManifests != 0 {
+		t.Fatalf("mismatched invalidation after expiry = %#v, %v", changed, err)
 	}
 	if _, err := p.Exec(ctx, `UPDATE cache.cache_manifest SET object_key='cache/mutated' WHERE manifest_id=$1`, manifest.ManifestID); err == nil {
 		t.Fatal("direct manifest object mutation succeeded")
@@ -422,7 +459,7 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		lease, err := repo.AcquireFill(t.Context(), AcquireFillInput{CacheKey: cacheKey, OwnerID: "race-owner", Lease: time.Minute})
+		lease, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "race-owner", Lease: time.Minute})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -495,8 +532,8 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 		if err := expireTx.Rollback(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		if changed, err := repo.InvalidateDependency(t.Context(), key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("dependency-refresh")); err != nil || changed != 1 {
-			t.Fatalf("invalidate after root race = %d, %v", changed, err)
+		if changed, err := repo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: key.DependencyDigest, IdempotencyKey: "race-root", Reason: "dependency refresh"}, cacheTestEvidence("dependency-refresh")); err != nil || changed.RetiredManifests != 1 {
+			t.Fatalf("invalidate after root race = %#v, %v", changed, err)
 		}
 		if err := repo.ExpireManifest(t.Context(), manifest.ManifestID, cacheTestEvidence("manifest-gc")); !errors.Is(err, ErrConflict) {
 			t.Fatalf("expiry with committed root = %v, want conflict", err)
@@ -506,8 +543,8 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 	t.Run("expiry lock first", func(t *testing.T) {
 		p, repo, manifest, key := newFixture(t)
 		defer p.Close()
-		if changed, err := repo.InvalidateDependency(t.Context(), key.PartitionKind, key.ProjectID, key.Environment, key.CandidateID, key.DependencyDigest, cacheTestEvidence("dependency-refresh")); err != nil || changed != 1 {
-			t.Fatalf("initial invalidate = %d, %v", changed, err)
+		if changed, err := repo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: key.DependencyDigest, IdempotencyKey: "race-expiry", Reason: "dependency refresh"}, cacheTestEvidence("dependency-refresh")); err != nil || changed.RetiredManifests != 1 {
+			t.Fatalf("initial invalidate = %#v, %v", changed, err)
 		}
 		expireTx, err := p.Begin(t.Context())
 		if err != nil {
@@ -559,4 +596,109 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 			t.Fatalf("root after expiry = %v, want not found", err)
 		}
 	})
+}
+
+func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ns := Namespace{PartitionKind: PartitionProduction, ProjectID: "project_sales", Environment: "prod"}
+	if got, err := repo.CurrentEpoch(t.Context(), ns); err != nil || got != 1 {
+		t.Fatalf("initial epoch = %d, %v; want 1", got, err)
+	}
+	digestA, digestB := cacheTestDigest('a'), cacheTestDigest('b')
+	first, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestA})
+	if err != nil || first.Revision != 1 {
+		t.Fatalf("initial dependency revision = %#v, %v", first, err)
+	}
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: ns, CacheKey: cacheKey, OwnerID: "revision-owner", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Publish(t.Context(), PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/revision", ByteSize: 1, Lease: fence}); err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, Evidence: cacheTestEvidence("source-refresh")})
+	if err != nil || second.Revision != 2 || second.RevisionDigest != digestB {
+		t.Fatalf("changed dependency revision = %#v, %v", second, err)
+	}
+	if got, err := repo.CurrentEpoch(t.Context(), ns); err != nil || got != 2 {
+		t.Fatalf("changed epoch = %d, %v; want 2", got, err)
+	}
+	if _, found, err := repo.Lookup(t.Context(), key); err != nil || found {
+		t.Fatalf("old dependency manifest found=%v err=%v", found, err)
+	}
+	events, err := repo.ReconcileInvalidations(t.Context(), ReconcileOptions{AfterEventID: 0, Limit: 10})
+	if err != nil || len(events) != 1 || events[0].NamespaceEpoch != 2 || events[0].DependencyID != "orders" {
+		t.Fatalf("reconciled invalidations = %#v, %v", events, err)
+	}
+	if _, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: cacheTestDigest('c'), ExpectedRevision: 1}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale revision update = %v, want conflict", err)
+	}
+	staleKey := cacheTestKey()
+	staleKey.CanonicalQueryDigest = cacheTestDigest('9')
+	staleDigest, err := staleKey.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	stale, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: ns, CacheKey: staleDigest, OwnerID: "stale-owner", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.BumpNamespaceEpoch(t.Context(), ns, 2); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Publish(t.Context(), PublishInput{Key: staleKey, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale namespace publish = %v, want stale fence", err)
+	}
+	hint, err := ParseNotificationHint(`{"event_id":1,"namespace":"` + ns.Key() + `"}`)
+	if err != nil || hint.EventID != 1 || hint.NamespaceKey != ns.Key() {
+		t.Fatalf("notification hint = %#v, %v", hint, err)
+	}
+}
+
+func TestCacheRoleConformance(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
+	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "readonly-secret", Login: true})
+	database := h.NewDatabase(t, "cache_roles")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admin.Close()
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeSchema, runtimeDelete, runtimePrune, readonlyInsert bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT')`, runtimeRole.Name, readonlyRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &readonlyInsert); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSchema || runtimeDelete || !runtimePrune || readonlyInsert {
+		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, readonlyInsert)
+	}
+	runtime, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer runtime.Close()
+	if _, err := runtime.Exec(t.Context(), `DELETE FROM cache.cache_invalidation`); err == nil {
+		t.Fatal("runtime DELETE on durable invalidation history succeeded")
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err != nil {
+		t.Fatalf("runtime bounded prune function failed: %v", err)
+	}
 }
