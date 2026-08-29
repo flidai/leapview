@@ -43,6 +43,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -340,7 +341,7 @@ func reconcileActivatedDashboardPublications(
 	if err := json.Unmarshal([]byte(raw), &publications); err != nil {
 		return fmt.Errorf("decode activated dashboard publications for serving state %q: %w", state.ID, err)
 	}
-	if err := projectmodule.EnsureIdentity(ctx, database, activated.ServingIdentity.ProjectID); err != nil {
+	if err := projectmodule.EnsureIdentity(ctx, projectsqlite.NewRepository(database), activated.ServingIdentity.ProjectID); err != nil {
 		return fmt.Errorf("ensure project identity for dashboard publications: %w", err)
 	}
 	tx, err := database.BeginTx(ctx, nil)
