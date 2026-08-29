@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	cursordb "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DBTX is the native PostgreSQL surface accepted by this capability.
@@ -48,6 +50,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception:schema-ddl. schema.sql owns the capability DDL, guards,
+	// view, and grants; migration callers retain transaction ownership.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -143,13 +147,15 @@ func (r *Repository) Rotate(ctx context.Context) (string, error) {
 }
 
 func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
-	if _, err := tx.Exec(ctx, `LOCK TABLE platform.api_cursor_signing_keys IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if err := cursordb.New(tx).LockCursorSigningKeys(ctx); err != nil {
 		return keyRing{}, err
 	}
 	var active int
-	if err := tx.QueryRow(ctx, `SELECT count(*) FROM platform.api_cursor_signing_keys WHERE active AND verify_until IS NULL`).Scan(&active); err != nil {
+	count, err := cursordb.New(tx).CountActiveCursorSigningKeys(ctx)
+	if err != nil {
 		return keyRing{}, err
 	}
+	active = int(count)
 	if active == 0 {
 		secret := make([]byte, 32)
 		if _, err := rand.Read(secret); err != nil {
@@ -160,38 +166,27 @@ func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
 			return keyRing{}, err
 		}
 		id := "v1-" + idSuffix
-		if _, err := tx.Exec(ctx, `INSERT INTO platform.api_cursor_signing_keys (key_id,secret,active,created_at) VALUES ($1,$2,true,clock_timestamp())`, id, secret); err != nil {
+		if err := cursordb.New(tx).InsertActiveCursorSigningKey(ctx, cursordb.InsertActiveCursorSigningKeyParams{KeyID: id, Secret: secret}); err != nil {
 			return keyRing{}, err
 		}
 	}
 	// Verification retention is bounded by verify_until; remove expired
 	// secrets while holding the same table lock so the durable ring does not
 	// grow without limit across repeated rotations.
-	var ignored int64
-	if err := tx.QueryRow(ctx, `SELECT platform.prune_expired_cursor_signing_keys($1)`, 1000).Scan(&ignored); err != nil {
+	if _, err := cursordb.New(tx).PruneExpiredCursorSigningKeys(ctx, 1000); err != nil {
 		return keyRing{}, err
 	}
-	rows, err := tx.Query(ctx, `SELECT key_id,secret,active FROM platform.api_cursor_signing_keys WHERE verify_until IS NULL OR verify_until > clock_timestamp() ORDER BY created_at,key_id`)
+	rows, err := cursordb.New(tx).ListVerifiableCursorSigningKeys(ctx)
 	if err != nil {
 		return keyRing{}, err
 	}
-	defer rows.Close()
 	keys := make(map[string][]byte)
 	current := ""
-	for rows.Next() {
-		var id string
-		var secret []byte
-		var active bool
-		if err := rows.Scan(&id, &secret, &active); err != nil {
-			return keyRing{}, err
+	for _, row := range rows {
+		keys[row.KeyID] = append([]byte(nil), row.Secret...)
+		if row.Active {
+			current = row.KeyID
 		}
-		keys[id] = append([]byte(nil), secret...)
-		if active {
-			current = id
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return keyRing{}, err
 	}
 	if current == "" || len(keys) == 0 {
 		return keyRing{}, errors.New("cursor signing key ring has no active key")
@@ -200,7 +195,7 @@ func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
 }
 
 func (r *Repository) rotateTx(ctx context.Context, tx Tx) (string, error) {
-	if _, err := tx.Exec(ctx, `LOCK TABLE platform.api_cursor_signing_keys IN SHARE ROW EXCLUSIVE MODE`); err != nil {
+	if err := cursordb.New(tx).LockCursorSigningKeys(ctx); err != nil {
 		return "", err
 	}
 	secret := make([]byte, 32)
@@ -212,10 +207,10 @@ func (r *Repository) rotateTx(ctx context.Context, tx Tx) (string, error) {
 		return "", err
 	}
 	id := "v1-" + idSuffix
-	if _, err := tx.Exec(ctx, `UPDATE platform.api_cursor_signing_keys SET active=false, verify_until=clock_timestamp()+$1::interval WHERE active`, verificationRetention.String()); err != nil {
+	if err := cursordb.New(tx).RetireActiveCursorSigningKeys(ctx, pgtype.Interval{Microseconds: verificationRetention.Microseconds(), Valid: true}); err != nil {
 		return "", err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO platform.api_cursor_signing_keys (key_id,secret,active,created_at) VALUES ($1,$2,true,clock_timestamp())`, id, secret); err != nil {
+	if err := cursordb.New(tx).InsertActiveCursorSigningKey(ctx, cursordb.InsertActiveCursorSigningKeyParams{KeyID: id, Secret: secret}); err != nil {
 		return "", err
 	}
 	return id, nil

@@ -170,6 +170,30 @@ sql:
         emit_empty_slices: true
         omit_unused_structs: true
 
+  - engine: "postgresql"
+    queries: "internal/platform/operation/postgres/queries"
+    schema: "internal/platform/operation/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/operation/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/platform/http/cursorsigning/postgres/queries"
+    schema: "internal/platform/http/cursorsigning/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/http/cursorsigning/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
   - engine: "sqlite"
     queries:
       - "internal/dashboard/publication/sqlite/queries"

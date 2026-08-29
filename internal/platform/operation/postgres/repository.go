@@ -16,9 +16,11 @@ import (
 	"strings"
 	"time"
 
+	operationdb "github.com/flidai/leapview/internal/platform/operation/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DBTX is implemented by pgx.Conn, pgx.Tx, pgxpool.Pool and pgxpool.Conn.
@@ -180,6 +182,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception:schema-ddl. schema.sql owns the capability DDL, guards,
+	// functions, and grants; migration callers retain transaction ownership.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -311,20 +315,26 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 	if err != nil {
 		return AcquireResult{}, err
 	}
-	var insertedID string
-	err = tx.QueryRow(ctx, `
-INSERT INTO platform.operation
- (scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,created_at,updated_at,retention_interval,expires_at)
-VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,1,'{}'::jsonb,NULL,NULL,$8,$8,$9::interval,$10)
-ON CONFLICT (scope_id,idempotency_key) DO NOTHING
-	RETURNING operation_id`, in.Scope, in.OperationType, in.IdempotencyKey, digest, operationID, in.OwnerID, now.Add(lease), now, fmt.Sprintf("%.9f seconds", retention.Seconds()), now.Add(retention)).Scan(&insertedID)
+	insertedUUID := uuidParam(operationID)
+	if !insertedUUID.Valid {
+		return AcquireResult{}, ErrInvalid
+	}
+	_, err = operationdb.New(tx).InsertOperation(ctx, operationdb.InsertOperationParams{
+		ScopeID: in.Scope, OperationType: in.OperationType, IdempotencyKey: in.IdempotencyKey,
+		RequestDigest: digest, OperationID: insertedUUID, OwnerID: in.OwnerID,
+		LeaseExpiresAt: timestampParam(now.Add(lease)), CreatedAt: timestampParam(now),
+		RetentionInterval: intervalParam(retention), ExpiresAt: timestampParam(now.Add(retention)),
+	})
 	if err == nil {
 		inserted = true
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return AcquireResult{}, err
 	}
-	op, err = scanOperation(tx.QueryRow(ctx, `SELECT scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,attempt_evidence,resolution_evidence,created_at,updated_at,terminal_at,expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2 FOR UPDATE`, in.Scope, in.IdempotencyKey))
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+	if err == nil {
+		op, err = operationFromForUpdateRow(stored)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return AcquireResult{}, ErrNotFound
 	}
@@ -350,8 +360,10 @@ ON CONFLICT (scope_id,idempotency_key) DO NOTHING
 		if op.AttemptID == "" {
 			// No external attempt was started. It is safe to hand the operation
 			// to a successor, but the fence must advance monotonically.
-			var generation int64
-			err := tx.QueryRow(ctx, `UPDATE platform.operation SET owner_id=$1, fencing_generation=fencing_generation+1, lease_expires_at=$2, updated_at=$3 WHERE scope_id=$4 AND idempotency_key=$5 AND state='pending' AND lease_expires_at <= $3 AND attempt_id IS NULL RETURNING fencing_generation`, in.OwnerID, now.Add(lease), now, in.Scope, in.IdempotencyKey).Scan(&generation)
+			generation, err := operationdb.New(tx).TakeoverOperation(ctx, operationdb.TakeoverOperationParams{
+				OwnerID: in.OwnerID, LeaseExpiresAt: timestampParam(now.Add(lease)), UpdatedAt: timestampParam(now),
+				ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
+			})
 			if err == nil {
 				op.OwnerID = in.OwnerID
 				op.FencingGeneration = generation
@@ -367,7 +379,9 @@ ON CONFLICT (scope_id,idempotency_key) DO NOTHING
 		// Expiry with an external attempt says nothing about external commit.
 		// Fence the old owner and retain an indeterminate terminal record;
 		// reconciliation evidence is required before replay can resolve it.
-		_, err := tx.Exec(ctx, `UPDATE platform.operation SET state='indeterminate', outcome='{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}'::jsonb, fencing_generation=fencing_generation+1, updated_at=$1, terminal_at=$1, expires_at=$1::timestamptz+retention_interval WHERE scope_id=$2 AND idempotency_key=$3 AND state='pending'`, now, in.Scope, in.IdempotencyKey)
+		_, err := operationdb.New(tx).MarkOperationIndeterminate(ctx, operationdb.MarkOperationIndeterminateParams{
+			UpdatedAt: timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
+		})
 		if err != nil {
 			return AcquireResult{}, err
 		}
@@ -395,7 +409,11 @@ func (r *Repository) Get(ctx context.Context, scope, idempotencyKey string) (Ope
 	if scope != strings.TrimSpace(scope) || idempotencyKey != strings.TrimSpace(idempotencyKey) || scope == "" || len(scope) > 255 || idempotencyKey == "" || len(idempotencyKey) > 512 {
 		return Operation{}, ErrInvalid
 	}
-	op, err := scanOperation(r.db.QueryRow(ctx, `SELECT scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,attempt_evidence,resolution_evidence,created_at,updated_at,terminal_at,expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, scope, idempotencyKey))
+	stored, err := operationdb.New(r.db).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: scope, IdempotencyKey: idempotencyKey})
+	var op Operation
+	if err == nil {
+		op, err = operationFromRow(stored)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, ErrNotFound
 	}
@@ -451,11 +469,14 @@ func (r *Repository) nowTx(ctx context.Context, tx Tx) (time.Time, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var now time.Time
-	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	now, err := operationdb.New(tx).ClockTimestamp(ctx)
+	if err != nil {
 		return time.Time{}, err
 	}
-	return now.UTC(), nil
+	if !now.Valid {
+		return time.Time{}, errors.New("postgresql clock timestamp is null")
+	}
+	return now.Time.UTC(), nil
 }
 
 func (r *Repository) Complete(ctx context.Context, lease Lease, outcome json.RawMessage) error {
@@ -480,7 +501,10 @@ func (r *Repository) CompleteTx(ctx context.Context, tx Tx, lease Lease, outcome
 	if err != nil {
 		return err
 	}
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET state='completed', outcome=$1::jsonb, updated_at=$2, terminal_at=$2, expires_at=$2::timestamptz+retention_interval WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, string(canonical), now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
+	command, err := operationdb.New(tx).CompleteOperation(ctx, operationdb.CompleteOperationParams{
+		Outcome: canonical, UpdatedAt: timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+	})
 	if err != nil {
 		return err
 	}
@@ -512,7 +536,10 @@ func (r *Repository) FailTx(ctx context.Context, tx Tx, lease Lease, outcome jso
 	if err != nil {
 		return err
 	}
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET state='failed', outcome=$1::jsonb, updated_at=$2, terminal_at=$2, expires_at=$2::timestamptz+retention_interval WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, string(canonical), now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
+	command, err := operationdb.New(tx).FailOperation(ctx, operationdb.FailOperationParams{
+		Outcome: canonical, UpdatedAt: timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+	})
 	if err != nil {
 		return err
 	}
@@ -547,7 +574,11 @@ func (r *Repository) MarkIndeterminateTx(ctx context.Context, tx Tx, lease Lease
 	if lease.AttemptID == "" || lease.AttemptIdentity == "" {
 		return ErrInvalid
 	}
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET state='indeterminate', outcome='{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}'::jsonb, attempt_evidence=$1::jsonb, fencing_generation=fencing_generation+1, updated_at=$2, terminal_at=$2, expires_at=$2::timestamptz+retention_interval WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND attempt_id=$8 AND attempt_identity=$9 AND state='pending' AND lease_expires_at > $2`, string(canonicalEvidence), now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration, lease.AttemptID, lease.AttemptIdentity)
+	command, err := operationdb.New(tx).MarkLeaseIndeterminate(ctx, operationdb.MarkLeaseIndeterminateParams{
+		AttemptEvidence: canonicalEvidence, UpdatedAt: timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+		AttemptID: uuidParam(lease.AttemptID), AttemptIdentity: textParam(lease.AttemptIdentity),
+	})
 	if err != nil {
 		return err
 	}
@@ -588,7 +619,10 @@ func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, lease Lease, durat
 		return Lease{}, err
 	}
 	newExpiry := now.Add(duration)
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET lease_expires_at=$1, updated_at=$2 WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, newExpiry, now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
+	command, err := operationdb.New(tx).RenewOperationLease(ctx, operationdb.RenewOperationLeaseParams{
+		LeaseExpiresAt: timestampParam(newExpiry), UpdatedAt: timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+	})
 	if err != nil {
 		return Lease{}, err
 	}
@@ -636,7 +670,11 @@ func (r *Repository) BeginAttemptTx(ctx context.Context, tx Tx, in BeginAttemptI
 	if err != nil {
 		return Attempt{}, err
 	}
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET attempt_id=$1, attempt_identity=$2, updated_at=$3 WHERE scope_id=$4 AND idempotency_key=$5 AND operation_id=$6 AND owner_id=$7 AND fencing_generation=$8 AND state='pending' AND lease_expires_at > $3 AND (attempt_id IS NULL OR (attempt_id=$1 AND attempt_identity=$2))`, attemptID, identity, now, in.Lease.Scope, in.Lease.IdempotencyKey, in.Lease.OperationID, in.Lease.OwnerID, in.Lease.FencingGeneration)
+	command, err := operationdb.New(tx).BindOperationAttempt(ctx, operationdb.BindOperationAttemptParams{
+		AttemptID: uuidParam(attemptID), AttemptIdentity: textParam(identity), UpdatedAt: timestampParam(now),
+		ScopeID: in.Lease.Scope, IdempotencyKey: in.Lease.IdempotencyKey, OperationID: uuidParam(in.Lease.OperationID),
+		OwnerID: in.Lease.OwnerID, FencingGeneration: in.Lease.FencingGeneration,
+	})
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -683,7 +721,11 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 	}
 	// Lock before deciding whether this is the first reconciliation or an
 	// idempotent retry. A different outcome/evidence pair is a conflict.
-	op, err := scanOperation(tx.QueryRow(ctx, `SELECT scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,attempt_evidence,resolution_evidence,created_at,updated_at,terminal_at,expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2 FOR UPDATE`, in.Scope, in.IdempotencyKey))
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+	var op Operation
+	if err == nil {
+		op, err = operationFromForUpdateRow(stored)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, ErrNotFound
 	}
@@ -704,11 +746,18 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 		}
 		return Operation{}, ErrConflict
 	}
-	_, err = tx.Exec(ctx, `UPDATE platform.operation SET state=$1, outcome=$2::jsonb, attempt_evidence=COALESCE(attempt_evidence,$3::jsonb), resolution_evidence=$3::jsonb, updated_at=$4, terminal_at=$4, expires_at=$4::timestamptz+retention_interval WHERE scope_id=$5 AND idempotency_key=$6 AND attempt_id=$7 AND attempt_identity=$8 AND state='indeterminate'`, string(in.State), string(canonicalOutcome), string(canonicalEvidence), now, in.Scope, in.IdempotencyKey, in.AttemptID, in.AttemptIdentity)
+	_, err = operationdb.New(tx).ReconcileOperation(ctx, operationdb.ReconcileOperationParams{
+		State: string(in.State), Outcome: canonicalOutcome, Evidence: canonicalEvidence,
+		UpdatedAt: timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
+		AttemptID: uuidParam(in.AttemptID), AttemptIdentity: textParam(in.AttemptIdentity),
+	})
 	if err != nil {
 		return Operation{}, err
 	}
-	op, err = scanOperation(tx.QueryRow(ctx, `SELECT scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,attempt_evidence,resolution_evidence,created_at,updated_at,terminal_at,expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, in.Scope, in.IdempotencyKey))
+	storedAfter, err := operationdb.New(tx).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+	if err == nil {
+		op, err = operationFromRow(storedAfter)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, ErrNotFound
 	}
@@ -741,11 +790,7 @@ func (r *Repository) PruneTx(ctx context.Context, tx Tx, before time.Time, limit
 			return 0, err
 		}
 	}
-	var count int64
-	if err := tx.QueryRow(ctx, `SELECT platform.prune_operations($1,$2)`, before, limit).Scan(&count); err != nil {
-		return 0, err
-	}
-	return count, nil
+	return operationdb.New(tx).PruneOperations(ctx, operationdb.PruneOperationsParams{PBefore: timestampParam(before), PLimit: int32(limit)})
 }
 
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
@@ -775,7 +820,10 @@ func (r *Repository) transitionError(ctx context.Context, tx Tx, lease Lease) er
 	var owner string
 	var generation int64
 	var expiry time.Time
-	err := tx.QueryRow(ctx, `SELECT state,owner_id,fencing_generation,lease_expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2 AND operation_id=$3`, lease.Scope, lease.IdempotencyKey, lease.OperationID).Scan(&state, &owner, &generation, &expiry)
+	transition, err := operationdb.New(tx).GetOperationTransitionState(ctx, operationdb.GetOperationTransitionStateParams{ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey, OperationID: uuidParam(lease.OperationID)})
+	if err == nil {
+		state, owner, generation, expiry = State(transition.State), transition.OwnerID, transition.FencingGeneration, transition.LeaseExpiresAt.Time
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
@@ -892,46 +940,76 @@ func newUUID() (string, error) {
 	return fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(b[0:4]), hex.EncodeToString(b[4:6]), hex.EncodeToString(b[6:8]), hex.EncodeToString(b[8:10]), hex.EncodeToString(b[10:16])), nil
 }
 
-func scanOperation(row pgx.Row) (Operation, error) {
-	var op Operation
-	var state string
-	var outcome string
-	var attemptEvidence *string
-	var resolutionEvidence *string
-	var attemptID, attemptIdentity *string
-	var terminalAt *time.Time
-	err := row.Scan(&op.Scope, &op.OperationType, &op.IdempotencyKey, &op.RequestDigest, &op.OperationID, &state, &op.OwnerID, &op.LeaseExpiresAt, &op.FencingGeneration, &outcome, &attemptID, &attemptIdentity, &attemptEvidence, &resolutionEvidence, &op.CreatedAt, &op.UpdatedAt, &terminalAt, &op.ExpiresAt)
-	if err != nil {
-		return Operation{}, err
+func operationFromRow(row operationdb.GetOperationRow) (Operation, error) {
+	return operationFromValues(row.ScopeID, row.OperationType, row.IdempotencyKey, row.RequestDigest,
+		row.OperationID, row.State, row.OwnerID, row.LeaseExpiresAt, row.FencingGeneration,
+		row.Outcome, row.AttemptID, row.AttemptIdentity, row.AttemptEvidence, row.ResolutionEvidence,
+		row.CreatedAt, row.UpdatedAt, row.TerminalAt, row.ExpiresAt)
+}
+
+func operationFromForUpdateRow(row operationdb.GetOperationForUpdateRow) (Operation, error) {
+	return operationFromValues(row.ScopeID, row.OperationType, row.IdempotencyKey, row.RequestDigest,
+		row.OperationID, row.State, row.OwnerID, row.LeaseExpiresAt, row.FencingGeneration,
+		row.Outcome, row.AttemptID, row.AttemptIdentity, row.AttemptEvidence, row.ResolutionEvidence,
+		row.CreatedAt, row.UpdatedAt, row.TerminalAt, row.ExpiresAt)
+}
+
+func operationFromValues(scope, operationType, key, digest string, operationID pgtype.UUID, state, owner string, leaseExpires pgtype.Timestamptz, generation int64, outcome []byte, attemptID pgtype.UUID, attemptIdentity pgtype.Text, attemptEvidence, resolutionEvidence []byte, createdAt, updatedAt, terminalAt, expiresAt pgtype.Timestamptz) (Operation, error) {
+	op := Operation{Scope: scope, OperationType: operationType, IdempotencyKey: key, RequestDigest: digest, State: State(state), OwnerID: owner, FencingGeneration: generation}
+	if operationID.Valid {
+		op.OperationID = operationID.String()
 	}
-	op.State = State(state)
-	if terminalAt != nil {
-		op.TerminalAt = *terminalAt
+	if !leaseExpires.Valid || !createdAt.Valid || !updatedAt.Valid || !expiresAt.Valid {
+		return Operation{}, errors.New("persisted operation timestamps are invalid")
 	}
-	if canonical, err := canonicalJSON([]byte(outcome)); err == nil {
+	op.LeaseExpiresAt, op.CreatedAt, op.UpdatedAt, op.ExpiresAt = leaseExpires.Time, createdAt.Time, updatedAt.Time, expiresAt.Time
+	if terminalAt.Valid {
+		op.TerminalAt = terminalAt.Time
+	}
+	if canonical, err := canonicalJSON(outcome); err == nil {
 		op.Outcome = canonical
 	} else {
-		op.Outcome = json.RawMessage(outcome)
+		op.Outcome = json.RawMessage(append([]byte(nil), outcome...))
 	}
-	if attemptEvidence != nil {
-		if canonical, err := canonicalJSON([]byte(*attemptEvidence)); err == nil {
+	if attemptID.Valid {
+		op.AttemptID = attemptID.String()
+	}
+	if attemptIdentity.Valid {
+		op.AttemptIdentity = attemptIdentity.String
+	}
+	if len(attemptEvidence) > 0 {
+		if canonical, err := canonicalJSON(attemptEvidence); err == nil {
 			op.AttemptEvidence = canonical
 		} else {
-			op.AttemptEvidence = json.RawMessage(*attemptEvidence)
+			op.AttemptEvidence = json.RawMessage(append([]byte(nil), attemptEvidence...))
 		}
 	}
-	if resolutionEvidence != nil {
-		if canonical, err := canonicalJSON([]byte(*resolutionEvidence)); err == nil {
+	if len(resolutionEvidence) > 0 {
+		if canonical, err := canonicalJSON(resolutionEvidence); err == nil {
 			op.ResolutionEvidence = canonical
 		} else {
-			op.ResolutionEvidence = json.RawMessage(*resolutionEvidence)
+			op.ResolutionEvidence = json.RawMessage(append([]byte(nil), resolutionEvidence...))
 		}
 	}
-	if attemptID != nil {
-		op.AttemptID = *attemptID
-	}
-	if attemptIdentity != nil {
-		op.AttemptIdentity = *attemptIdentity
-	}
 	return op, nil
+}
+
+func uuidParam(value string) pgtype.UUID {
+	var result pgtype.UUID
+	if err := result.Scan(value); err != nil {
+		return pgtype.UUID{}
+	}
+	return result
+}
+
+func textParam(value string) pgtype.Text {
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func timestampParam(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value, Valid: !value.IsZero()}
+}
+
+func intervalParam(value time.Duration) pgtype.Interval {
+	return pgtype.Interval{Microseconds: value.Microseconds(), Valid: true}
 }
