@@ -121,6 +121,8 @@ func scanPrincipal(row pgx.Row) (access.Principal, error) {
 	p.Kind = access.PrincipalKind(kind)
 	if kind == "service" {
 		p.Kind = access.PrincipalKindServicePrincipal
+	} else if kind == "dashboard_publication" {
+		p.Kind = access.PrincipalKindDashboardPublication
 	}
 	p.Email = email
 	p.DisplayName = display
@@ -180,6 +182,8 @@ func (r *Repository) ListPrincipals(ctx context.Context, filter access.Principal
 		p.Kind = access.PrincipalKind(kind)
 		if kind == "service" {
 			p.Kind = access.PrincipalKindServicePrincipal
+		} else if kind == "dashboard_publication" {
+			p.Kind = access.PrincipalKindDashboardPublication
 		}
 		p.DisabledAt = formatTimePtr(disabled)
 		p.BlockedAt = formatTimePtr(blocked)
@@ -222,6 +226,8 @@ func (r *Repository) SearchPrincipals(ctx context.Context, query string, limit i
 		p.Kind = access.PrincipalKind(kind)
 		if kind == "service" {
 			p.Kind = access.PrincipalKindServicePrincipal
+		} else if kind == "dashboard_publication" {
+			p.Kind = access.PrincipalKindDashboardPublication
 		}
 		p.DisabledAt = formatTimePtr(disabled)
 		p.BlockedAt = formatTimePtr(blocked)
@@ -264,7 +270,7 @@ func (r *Repository) UpsertPrincipal(ctx context.Context, input access.Principal
 		sqlKind = "service"
 	}
 	if kind == access.PrincipalKindDashboardPublication {
-		sqlKind = "system"
+		sqlKind = "dashboard_publication"
 	}
 	if existing, lookupErr := r.PrincipalByID(ctx, id); lookupErr == nil && existing.Kind != kind {
 		return access.Principal{}, fmt.Errorf("principal kind is immutable")

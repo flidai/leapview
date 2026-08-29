@@ -11,7 +11,9 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
 
@@ -190,6 +192,135 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	}
 	if _, err := db.admin.Exec(t.Context(), `UPDATE access.device_authorization SET consumed_at=NULL WHERE id='da_extended'`); err == nil {
 		t.Fatal("device consumption rewind accepted")
+	}
+}
+
+func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx := t.Context()
+	project, err := graph.NewProjectGraph([]graph.Resource{
+		{ID: "project_adapter", Kind: graph.KindProject, Name: "adapter"},
+		{ID: "dashboard_adapter", Kind: graph.KindDashboard, Name: "dashboard"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := graph.ServingIdentity{ProjectID: "project_adapter", Environment: "production", GenerationID: "generation_adapter"}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resource, err := access.NewResourceRef("dashboard_adapter", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	grant, err := access.NewCanonicalGrant(project, subject, resource, access.CapabilityResourceRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "grant_adapter", Canonical: grant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallAuthorizationSnapshotTx(ctx, tx, snapshot); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("install authorization snapshot: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var snapshots, grants int
+	if err := db.admin.QueryRow(ctx, `SELECT count(*) FROM access.authorization_snapshot WHERE project_id=$1 AND environment=$2 AND generation_id=$3`, identity.ProjectID.String(), identity.Environment, identity.GenerationID).Scan(&snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.admin.QueryRow(ctx, `SELECT count(*) FROM access.authorization_grant WHERE project_id=$1 AND environment=$2 AND generation_id=$3`, identity.ProjectID.String(), identity.Environment, identity.GenerationID).Scan(&grants); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 1 || grants != 1 {
+		t.Fatalf("installed snapshot rows = %d snapshots, %d grants", snapshots, grants)
+	}
+	// A transaction rollback leaves no partial snapshot or child rows.
+	rollbackIdentity := identity
+	rollbackIdentity.GenerationID = "generation_rollback"
+	rollbackSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(rollbackIdentity, project, []accesssnapshot.Grant{{ID: "grant_rollback", Canonical: grant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallAuthorizationSnapshotTx(ctx, tx, rollbackSnapshot); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("install rollback snapshot: %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.admin.QueryRow(ctx, `SELECT count(*) FROM access.authorization_snapshot WHERE project_id=$1 AND generation_id=$2`, rollbackIdentity.ProjectID.String(), rollbackIdentity.GenerationID).Scan(&snapshots); err != nil {
+		t.Fatal(err)
+	}
+	if snapshots != 0 {
+		t.Fatalf("rolled-back snapshot rows = %d", snapshots)
+	}
+	// Replaying the exact immutable identity is idempotent.
+	tx, err = db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallAuthorizationSnapshotTx(ctx, tx, snapshot); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("replay authorization snapshot: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Reusing an immutable identity with a different digest is rejected.
+	conflictGrant, err := access.NewCanonicalGrant(project, subject, resource, access.CapabilityResourceEdit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	conflictSnapshot, err := accesssnapshot.NewAuthorizationSnapshot(identity, project, []accesssnapshot.Grant{{ID: "grant_conflict", Canonical: conflictGrant}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallAuthorizationSnapshotTx(ctx, tx, conflictSnapshot); !errors.Is(err, ErrAuthorizationSnapshotIdentityConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("conflicting snapshot error = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err = db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), "public"); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("activate dashboard publication principal: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	publicationID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+project.ProjectID().String()+".public")).String()
+	var principalKind string
+	if err := db.admin.QueryRow(ctx, `SELECT principal_type FROM access.principal WHERE id=$1::uuid`, publicationID).Scan(&principalKind); err != nil {
+		t.Fatal(err)
+	}
+	if principalKind != "dashboard_publication" {
+		t.Fatalf("publication principal type = %q", principalKind)
+	}
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, db.runtime, project.ProjectID(), strings.Repeat("x", 513)); err == nil {
+		t.Fatal("oversized publication name accepted")
 	}
 }
 

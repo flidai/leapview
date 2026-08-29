@@ -37,7 +37,7 @@ CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON audit.audit_even
 
 CREATE TABLE access.principal (
     id uuid PRIMARY KEY,
-    principal_type text NOT NULL CHECK (principal_type IN ('user','service','system')),
+    principal_type text NOT NULL CHECK (principal_type IN ('user','service','system','dashboard_publication')),
     status text NOT NULL DEFAULT 'active' CHECK (status IN ('active','disabled','pending')),
     email text NOT NULL DEFAULT '' CHECK (length(email) <= 320),
     display_name text NOT NULL DEFAULT '' CHECK (length(display_name) <= 512),
@@ -495,6 +495,43 @@ CREATE UNIQUE INDEX authoring_credential_active_session_idx ON access.authoring_
 CREATE INDEX authoring_credential_access_expiry_idx ON access.authoring_credential(access_expires_at);
 CREATE INDEX authoring_credential_refresh_expiry_idx ON access.authoring_credential(refresh_expires_at) WHERE refresh_expires_at IS NOT NULL;
 
+-- MCP OAuth state is owned by the access capability.  It is deliberately
+-- separate from the browser/session credential tables: fosite request state
+-- is opaque JSON, while client identity and token signatures remain typed and
+-- uniquely indexed.  The runtime role may mutate these rows; no SQLite
+-- compatibility projection exists on the PostgreSQL path.
+CREATE TABLE access.oauth_client (
+    id text PRIMARY KEY CHECK (id = btrim(id) AND length(id) BETWEEN 1 AND 255),
+    name text NOT NULL CHECK (name = btrim(name) AND length(name) BETWEEN 1 AND 255),
+    redirect_uris jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(redirect_uris)='array' AND octet_length(redirect_uris::text)<=16384),
+    grant_types jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(grant_types)='array' AND octet_length(grant_types::text)<=4096),
+    response_types jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(response_types)='array' AND octet_length(response_types::text)<=4096),
+    scopes jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(scopes)='array' AND octet_length(scopes::text)<=4096),
+    audience jsonb NOT NULL DEFAULT '[]'::jsonb CHECK (jsonb_typeof(audience)='array' AND octet_length(audience::text)<=4096),
+    public_client boolean NOT NULL DEFAULT false,
+    secret_hash bytea,
+    token_endpoint_auth_method text NOT NULL DEFAULT 'none' CHECK (token_endpoint_auth_method = btrim(token_endpoint_auth_method) AND length(token_endpoint_auth_method)<=64),
+    principal_id uuid REFERENCES access.principal(id),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+CREATE TABLE access.oauth_session (
+    kind text NOT NULL CHECK (kind IN ('authorize_code','access_token','refresh_token','pkce')),
+    signature text NOT NULL CHECK (signature = btrim(signature) AND length(signature) BETWEEN 1 AND 512),
+    request_id text NOT NULL CHECK (request_id = btrim(request_id) AND length(request_id) BETWEEN 1 AND 512),
+    request_json jsonb NOT NULL CHECK (jsonb_typeof(request_json)='object' AND octet_length(request_json::text)<=131072),
+    access_signature text NOT NULL DEFAULT '' CHECK (access_signature = btrim(access_signature) AND length(access_signature)<=512),
+    active boolean NOT NULL DEFAULT true,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (kind, signature)
+);
+CREATE INDEX oauth_session_request_idx ON access.oauth_session(kind, request_id);
+CREATE TABLE access.oauth_client_assertion (
+    jti text PRIMARY KEY CHECK (jti = btrim(jti) AND length(jti) BETWEEN 1 AND 512),
+    expires_at timestamptz NOT NULL
+);
+CREATE INDEX oauth_client_assertion_expiry_idx ON access.oauth_client_assertion(expires_at);
+
 CREATE OR REPLACE FUNCTION access.reject_authorization_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME = 'authorization_snapshot' THEN
@@ -555,6 +592,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
+        EXECUTE 'GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
@@ -562,6 +600,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
+        EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON audit.audit_event TO leapview_control_readonly';
     END IF;

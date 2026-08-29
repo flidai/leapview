@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/ory/fosite"
 	"github.com/ory/fosite/compose"
 )
@@ -38,7 +39,8 @@ type Config struct {
 type Service struct {
 	config         Config
 	provider       fosite.OAuth2Provider
-	store          *Store
+	store          StoreBackend
+	postgresBacked bool
 	repo           access.Repository
 	metadataClient *http.Client
 }
@@ -89,8 +91,47 @@ type TokenResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
+// StoreBackend is the durable MCP OAuth state contract. Implementations may
+// use PostgreSQL, while the legacy Store uses SQLite only through New.
+type StoreBackend interface {
+	fosite.Storage
+	SetClientResolver(func(context.Context, string) (StoredClient, error))
+	ClientName(context.Context, string) (string, error)
+	CreateClient(context.Context, StoredClient) error
+	EnsureServiceClient(context.Context, string, string, string) error
+	SetSessionRetention(time.Duration)
+}
+
 func New(db *sql.DB, repo access.Repository, config Config) (*Service, error) {
-	if db == nil || repo == nil {
+	if db == nil {
+		return nil, fmt.Errorf("MCP OAuth SQLite storage is required")
+	}
+	return newWithStore(NewStore(db), repo, config, false)
+}
+
+// NewPostgres constructs MCP OAuth over the access control PostgreSQL
+// connection. The caller is responsible for applying the access baseline
+// before invoking this constructor.
+func NewPostgres(db accesspostgres.DBTX, repo access.Repository, config Config) (*Service, error) {
+	store, err := NewPostgresStore(db)
+	if err != nil {
+		return nil, err
+	}
+	return newWithStore(store, repo, config, true)
+}
+
+// NewWithStore constructs MCP OAuth over an explicitly supplied durable store.
+// It is intentionally non-PostgreSQL-marked; production should use
+// NewPostgres, which owns the marker after constructing PostgresStore.
+func NewWithStore(store StoreBackend, repo access.Repository, config Config) (*Service, error) {
+	return newWithStore(store, repo, config, false)
+}
+
+// newWithStore is constructor-owned so an arbitrary StoreBackend cannot claim
+// PostgreSQL backing through a user-defined marker method. Only NewPostgres
+// sets postgresBacked=true after constructing the concrete PG adapter.
+func newWithStore(store StoreBackend, repo access.Repository, config Config, postgresBacked bool) (*Service, error) {
+	if store == nil || repo == nil {
 		return nil, fmt.Errorf("MCP OAuth requires storage and access repository")
 	}
 	config.IssuerURL = strings.TrimSuffix(strings.TrimSpace(config.IssuerURL), "/")
@@ -113,8 +154,7 @@ func New(db *sql.DB, repo access.Repository, config Config) (*Service, error) {
 	if config.AuthorizationCodeTTL <= 0 {
 		config.AuthorizationCodeTTL = 5 * time.Minute
 	}
-	store := NewStore(db)
-	store.sessionRetention = max(config.AccessTokenTTL, config.RefreshTokenTTL, config.AuthorizationCodeTTL) + 24*time.Hour
+	store.SetSessionRetention(max(config.AccessTokenTTL, config.RefreshTokenTTL, config.AuthorizationCodeTTL) + 24*time.Hour)
 	metadataClient := config.ClientMetadataHTTPClient
 	if metadataClient == nil {
 		metadataClient = secureClientMetadataHTTPClient()
@@ -144,10 +184,14 @@ func New(db *sql.DB, repo access.Repository, config Config) (*Service, error) {
 		compose.OAuth2TokenRevocationFactory,
 		compose.OAuth2PKCEFactory,
 	)
-	service := &Service{config: config, provider: provider, store: store, repo: repo, metadataClient: metadataClient}
-	store.setClientResolver(service.resolveClientMetadata)
+	service := &Service{config: config, provider: provider, store: store, postgresBacked: postgresBacked, repo: repo, metadataClient: metadataClient}
+	store.SetClientResolver(service.resolveClientMetadata)
 	return service, nil
 }
+
+// IsPostgresBacked reports whether the service's state store is a PostgreSQL
+// implementation. A nil or legacy SQLite service returns false.
+func (s *Service) IsPostgresBacked() bool { return s != nil && s.postgresBacked }
 
 func (s *Service) Consent(r *http.Request) (Consent, error) {
 	request, err := s.normalizeResourceRequest(r, true)
@@ -161,7 +205,7 @@ func (s *Service) Consent(r *http.Request) (Consent, error) {
 	if !authorizeRequest.GetRequestedScopes().Has(ScopeMCPUse) {
 		return Consent{}, fosite.ErrInvalidScope.WithHint("The mcp:use scope is required.")
 	}
-	name, err := s.store.clientName(request.Context(), authorizeRequest.GetClient().GetID())
+	name, err := s.store.ClientName(request.Context(), authorizeRequest.GetClient().GetID())
 	if err != nil {
 		return Consent{}, err
 	}
@@ -263,7 +307,7 @@ func (s *Service) clientCredentialsToken(w http.ResponseWriter, r *http.Request)
 		writeOAuthJSONError(w, http.StatusBadRequest, "invalid_scope", "only mcp:use is supported")
 		return
 	}
-	if err := s.store.ensureServiceClient(r.Context(), accessPrincipal{id: principal.ID, name: principal.DisplayName, resource: s.config.ResourceURL}); err != nil {
+	if err := s.store.EnsureServiceClient(r.Context(), principal.ID, principal.DisplayName, s.config.ResourceURL); err != nil {
 		writeOAuthJSONError(w, http.StatusInternalServerError, "server_error", "could not initialize service client")
 		return
 	}
@@ -370,7 +414,7 @@ func (s *Service) Register(w http.ResponseWriter, r *http.Request) {
 		Scopes: []string{ScopeMCPUse, ScopeOfflineAccess}, Audience: []string{s.config.ResourceURL},
 		Public: true, TokenEndpointAuthMethod: "none",
 	}
-	if err := s.store.createClient(r.Context(), client); err != nil {
+	if err := s.store.CreateClient(r.Context(), client); err != nil {
 		writeOAuthJSONError(w, http.StatusInternalServerError, "server_error", "could not register client")
 		return
 	}

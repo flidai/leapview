@@ -20,7 +20,7 @@ func newStandaloneAccessDatabase(t *testing.T) auditDatabase {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true})
-	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "leapview-conformance-secret", Login: true})
 	h.GrantRole(t, owner, migrator)
 	d := h.NewDatabase(t, "")
 	h.GrantDatabase(t, d.Name, migrator, "CONNECT", "CREATE")
@@ -59,7 +59,40 @@ func newStandaloneAccessDatabase(t *testing.T) auditDatabase {
 		t.Fatal(err)
 	}
 	t.Cleanup(runtime.Close)
-	return auditDatabase{admin: admin, runtime: runtime}
+	readonly, err := pgxpool.New(ctx, d.URL(readonlyRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readonly.Close)
+	return auditDatabase{admin: admin, runtime: runtime, readonly: readonly}
+}
+
+func TestAccessCorePostgreSQL18ReadonlyExcludesCredentialMaterial(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	var count int
+	if err := db.readonly.QueryRow(ctx, `SELECT count(*) FROM access.principal`).Scan(&count); err != nil {
+		t.Fatalf("read safe access metadata: %v", err)
+	}
+	credentialTables := []string{
+		"session",
+		"local_credential",
+		"api_token",
+		"service_principal_secret",
+		"desktop_authorization_code",
+		"device_authorization",
+		"authoring_credential",
+		"oauth_client",
+		"oauth_session",
+		"oauth_client_assertion",
+	}
+	for _, table := range credentialTables {
+		if _, err := db.readonly.Exec(ctx, `SELECT * FROM access.`+table+` LIMIT 0`); err == nil || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("readonly query access.%s error = %v, want permission denied", table, err)
+		}
+	}
 }
 
 func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
