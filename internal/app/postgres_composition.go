@@ -89,8 +89,8 @@ func postgresDatabaseName(ctx context.Context, pool *platformpostgres.Pool) (str
 	if pool == nil {
 		return "", errors.New("PostgreSQL pool is nil")
 	}
-	var database string
-	if err := pool.QueryRow(ctx, `SELECT current_database()`).Scan(&database); err != nil {
+	database, err := pool.CurrentDatabase(ctx)
+	if err != nil {
 		return "", err
 	}
 	if database == "" {
@@ -133,17 +133,12 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	if err := l.pools.Runtime.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL control runtime pool: %w", err)
 	}
-	var revision int64
-	var migrationID, checksum string
-	if err := l.pools.Runtime.QueryRow(ctx, `
-		SELECT revision, migration_id, checksum
-		FROM platform.schema_revision
-		WHERE revision = $1`, postgresbaseline.BaselineRevision).
-		Scan(&revision, &migrationID, &checksum); err != nil {
+	revision, err := l.pools.Runtime.SchemaRevision(ctx, postgresbaseline.BaselineRevision)
+	if err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
 	}
-	if revision != postgresbaseline.BaselineRevision || migrationID != postgresbaseline.BaselineMigrationID || checksum != postgresbaseline.Checksum() {
-		return fmt.Errorf("PostgreSQL control schema revision mismatch: got revision=%d migration=%q checksum=%q", revision, migrationID, checksum)
+	if revision.Revision != postgresbaseline.BaselineRevision || revision.MigrationID != postgresbaseline.BaselineMigrationID || revision.Checksum != postgresbaseline.Checksum() {
+		return fmt.Errorf("PostgreSQL control schema revision mismatch: got revision=%d migration=%q checksum=%q", revision.Revision, revision.MigrationID, revision.Checksum)
 	}
 	if l.pools.Readonly != nil {
 		if err := l.pools.Readonly.Ping(ctx); err != nil {

@@ -14,6 +14,7 @@ import (
 	"io"
 	"strings"
 
+	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -28,6 +29,12 @@ const BaselineMigrationID = "001_control_plane"
 // AdvisoryLockKey serializes all baseline attempts in a transaction-scoped
 // PostgreSQL advisory lock. It is deliberately stable across process builds.
 const AdvisoryLockKey int64 = 0x4c565f7067730001
+
+// SET LOCAL ROLE is PostgreSQL utility syntax and cannot be prepared by
+// sqlc's database-backed vet rule. Keep this one protocol-level statement
+// explicit and narrowly marked while all parameterized migration operations
+// remain generated below.
+const setMigrationRoleSQL = `SET LOCAL ROLE leapview_control_owner`
 
 //go:embed 001_control_plane.sql
 var baselineSQL string
@@ -99,6 +106,16 @@ type Tx interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// migrationDBTX adapts the intentionally narrow migration transaction seam
+// to sqlc's pgx/v5 DBTX contract. Apply only uses Exec and QueryRow; Query is
+// rejected explicitly so a future accidental streaming call cannot silently
+// retain a transaction connection.
+type migrationDBTX struct{ Tx }
+
+func (m migrationDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("PostgreSQL migration transaction does not support Query")
+}
+
 // Apply executes foundation and every ordered capability on a caller-owned
 // transaction. The advisory lock, DDL, revision record, and verification all
 // share that transaction; callers decide commit/rollback. Existing matching
@@ -114,10 +131,12 @@ func Apply(ctx context.Context, tx Tx, plan Plan) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock($1::bigint)`, AdvisoryLockKey); err != nil {
+	queries := platformdb.New(migrationDBTX{Tx: tx})
+	if err := queries.AcquireMigrationLock(ctx, AdvisoryLockKey); err != nil {
 		return fmt.Errorf("acquire PostgreSQL migration advisory lock: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `SET LOCAL ROLE leapview_control_owner`); err != nil {
+	// sqlc-exception: analyzer-incompatible. PostgreSQL SET LOCAL ROLE cannot be prepared by sqlc vet.
+	if _, err := tx.Exec(ctx, setMigrationRoleSQL); err != nil {
 		return fmt.Errorf("assume PostgreSQL migration owner role: %w", err)
 	}
 	if _, err := tx.Exec(ctx, baselineSQL); err != nil {
@@ -125,15 +144,10 @@ func Apply(ctx context.Context, tx Tx, plan Plan) error {
 	}
 
 	checksum := plan.Checksum()
-	var recordedRevision int64
-	var recordedID, recordedChecksum string
-	err := tx.QueryRow(ctx, `
-		SELECT revision, migration_id, checksum
-		FROM platform.schema_revision WHERE revision = $1`, BaselineRevision).
-		Scan(&recordedRevision, &recordedID, &recordedChecksum)
+	recorded, err := queries.GetSchemaRevision(ctx, BaselineRevision)
 	if err == nil {
-		if recordedRevision != BaselineRevision || recordedID != BaselineMigrationID || recordedChecksum != checksum {
-			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recordedRevision, recordedID, recordedChecksum)
+		if recorded.Revision != BaselineRevision || recorded.MigrationID != BaselineMigrationID || recorded.Checksum != checksum {
+			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
 		}
 		// Reapply the deny-by-default role policy even when DDL is already
 		// present. This repairs accidental ACL widening without replaying
@@ -155,20 +169,18 @@ func Apply(ctx context.Context, tx Tx, plan Plan) error {
 	if _, err := tx.Exec(ctx, plan.RolePolicySQL); err != nil {
 		return fmt.Errorf("apply PostgreSQL migration role policy: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO platform.schema_revision (revision, migration_id, checksum)
-		VALUES ($1, $2, $3)`, BaselineRevision, BaselineMigrationID, checksum); err != nil {
+	if err := queries.InsertSchemaRevision(ctx, platformdb.InsertSchemaRevisionParams{
+		Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: checksum,
+	}); err != nil {
 		return fmt.Errorf("record PostgreSQL schema revision: %w", err)
 	}
 
-	if err := tx.QueryRow(ctx, `
-		SELECT revision, migration_id, checksum
-		FROM platform.schema_revision WHERE revision = $1`, BaselineRevision).
-		Scan(&recordedRevision, &recordedID, &recordedChecksum); err != nil {
+	recorded, err = queries.GetSchemaRevision(ctx, BaselineRevision)
+	if err != nil {
 		return fmt.Errorf("verify PostgreSQL schema revision: %w", err)
 	}
-	if recordedRevision != BaselineRevision || recordedID != BaselineMigrationID || recordedChecksum != checksum {
-		return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recordedRevision, recordedID, recordedChecksum)
+	if recorded.Revision != BaselineRevision || recorded.MigrationID != BaselineMigrationID || recorded.Checksum != checksum {
+		return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
 	}
 	return nil
 }

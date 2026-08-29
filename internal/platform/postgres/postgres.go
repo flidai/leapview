@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -156,6 +157,14 @@ type Pool struct {
 	pool           *pgxpool.Pool
 	acquireTimeout time.Duration
 	config         Config
+}
+
+// SchemaRevision is the platform-owned readiness record. The generated SQLC
+// row remains an internal implementation detail of this package.
+type SchemaRevision struct {
+	Revision    int64
+	MigrationID string
+	Checksum    string
 }
 
 // PoolConfig returns the normalized policy used to construct the pool.
@@ -351,6 +360,30 @@ func (p *Pool) Ping(ctx context.Context) error {
 	})
 }
 
+// CurrentDatabase returns PostgreSQL's authoritative database identity. The
+// query is generated from the platform capability SQLC package so callers do
+// not hand-roll a static query at the composition boundary.
+func (p *Pool) CurrentDatabase(ctx context.Context) (string, error) {
+	if p == nil || p.pool == nil {
+		return "", errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).CurrentDatabase(ctx)
+}
+
+// SchemaRevision is the typed readiness record for one platform schema
+// revision. It is intentionally exposed on Pool so app composition does not
+// import the platform package's internal generated implementation directly.
+func (p *Pool) SchemaRevision(ctx context.Context, revision int64) (SchemaRevision, error) {
+	if p == nil || p.pool == nil {
+		return SchemaRevision{}, errors.New("postgres pool is nil")
+	}
+	record, err := platformdb.New(p).GetSchemaRevision(ctx, revision)
+	if err != nil {
+		return SchemaRevision{}, err
+	}
+	return SchemaRevision{Revision: record.Revision, MigrationID: record.MigrationID, Checksum: record.Checksum}, nil
+}
+
 // Close releases all pooled connections. It is safe to call on a nil Pool.
 func (p *Pool) Close() {
 	if p != nil && p.pool != nil {
@@ -474,14 +507,22 @@ func ConfigurePool(poolConfig *pgxpool.Config, cfg Config) error {
 	return nil
 }
 
-// ValidateProbeSQL is the single startup probe used to establish the server
-// capability tuple. Keeping it exported lets conformance tests assert the
-// exact probe through a fake without requiring a live database.
-const ValidateProbeSQL = `SELECT current_setting('server_version_num'), current_user, current_setting('default_transaction_read_only'), pg_is_in_recovery()`
-
 // Probe is the read-only query seam used by Validate.
 type Probe interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// probeDBTX preserves the narrow Probe fake seam while satisfying sqlc's
+// pgx/v5 DBTX interface. Validate only invokes QueryRow; the other methods are
+// deliberately unreachable and return an explicit error if that changes.
+type probeDBTX struct{ Probe }
+
+func (p probeDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, errors.New("PostgreSQL validation probe does not support Exec")
+}
+
+func (p probeDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, errors.New("PostgreSQL validation probe does not support Query")
 }
 
 // Validate checks PostgreSQL major version, runtime role, and read/write
@@ -494,11 +535,11 @@ func Validate(ctx context.Context, probe Probe, cfg Config) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
-	var versionNum, role, readOnly string
-	var recovery bool
-	if err := probe.QueryRow(ctx, ValidateProbeSQL).Scan(&versionNum, &role, &readOnly, &recovery); err != nil {
+	row, err := platformdb.New(probeDBTX{Probe: probe}).Probe(ctx)
+	if err != nil {
 		return fmt.Errorf("probe PostgreSQL capabilities: %w", err)
 	}
+	versionNum, role, readOnly, recovery := row.ServerVersionNum, row.RuntimeRole, row.DefaultTransactionReadOnly, row.InRecovery
 	major, err := parseMajor(versionNum)
 	if err != nil {
 		return fmt.Errorf("invalid PostgreSQL server version %q: %w", versionNum, err)

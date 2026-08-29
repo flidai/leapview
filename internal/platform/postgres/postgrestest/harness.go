@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
@@ -145,8 +146,8 @@ func (h *Harness) EnsureRole(t *testing.T, role Role) Role {
 
 	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
-	var exists bool
-	if err := h.admin.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = $1)`, role.Name).Scan(&exists); err != nil {
+	exists, err := platformdb.New(h.admin).RoleExists(ctx, role.Name)
+	if err != nil {
 		t.Fatalf("check PostgreSQL role %q: %v", role.Name, err)
 	}
 	if !exists {
