@@ -18,6 +18,7 @@ import (
 	"time"
 
 	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
+	cachedb "github.com/flidai/leapview/internal/analytics/cache/postgres/internal/db"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -25,6 +26,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type DBTX interface {
@@ -38,9 +40,9 @@ type beginner interface {
 }
 
 type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
 }
 
 var (
@@ -335,6 +337,55 @@ type Repository struct {
 	lease time.Duration
 }
 
+func dbUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
+
+func dbTime(value *time.Time) pgtype.Timestamptz {
+	if value == nil {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
+}
+
+func timeValue(value pgtype.Timestamptz) (*time.Time, error) {
+	if !value.Valid {
+		return nil, nil
+	}
+	t := value.Time.UTC()
+	return &t, nil
+}
+
+func manifestFromRow(row cachedb.CacheCacheManifest) (Manifest, error) {
+	if !row.ManifestID.Valid || !row.CreatedAt.Valid {
+		return Manifest{}, fmt.Errorf("%w: persisted manifest identity or timestamp is null", ErrInvalid)
+	}
+	expires, err := timeValue(row.ExpiresAt)
+	if err != nil {
+		return Manifest{}, err
+	}
+	retired, err := timeValue(row.RetiredAt)
+	if err != nil {
+		return Manifest{}, err
+	}
+	expired, err := timeValue(row.ExpiredAt)
+	if err != nil {
+		return Manifest{}, err
+	}
+	return Manifest{
+		ManifestID:            row.ManifestID.Bytes,
+		Key:                   ManifestKey{PartitionKind: PartitionKind(row.PartitionKind), ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID), PartitionFormatVersion: row.PartitionFormatVersion, DependencyDigest: row.DependencyDigest, PolicyFingerprint: row.PolicyFingerprint, CanonicalQueryDigest: row.CanonicalQueryDigest, KeyFormatVersion: row.KeyFormatVersion},
+		StorageSecurityDomain: row.StorageSecurityDomain, ObjectDigest: row.ObjectDigest, ObjectKey: row.ObjectKey, ByteSize: row.ByteSize,
+		Metadata: append(json.RawMessage(nil), row.Metadata...), State: row.State, CreatedAt: row.CreatedAt.Time.UTC(), ExpiresAt: expires, RetiredAt: retired, ExpiredAt: expired,
+		RetireEvidence: append(json.RawMessage(nil), row.RetireEvidence...), ExpireEvidence: append(json.RawMessage(nil), row.ExpireEvidence...),
+	}, nil
+}
+
+func valueOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
 //go:embed schema.sql
 var schemaSQL string
 
@@ -347,6 +398,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. Capability-owned schema DDL is embedded and
+	// applied by migration runners rather than generated query code.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -403,9 +456,23 @@ func ensureNamespaceTx(ctx context.Context, tx Tx, n Namespace) (int64, error) {
 	if err := validateNamespace(n); err != nil {
 		return 0, err
 	}
-	var epoch int64
-	err := tx.QueryRow(ctx, `SELECT cache.ensure_namespace($1,$2,$3,$4,$5)`, n.Key(), n.PartitionKind, n.ProjectID, n.Environment, candidateArg(n.CandidateID)).Scan(&epoch)
-	return epoch, err
+	return cachedb.New(tx).EnsureNamespace(ctx, cachedb.EnsureNamespaceParams{NamespaceKey: n.Key(), PartitionKind: string(n.PartitionKind), ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID)})
+}
+
+func nullableString(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
+}
+
+// candidateArg is retained for capability-owned test/setup SQL that binds a
+// nullable candidate identifier directly.
+func candidateArg(candidateID string) any {
+	if candidateID == "" {
+		return nil
+	}
+	return candidateID
 }
 
 // CurrentEpoch returns the durable invalidation epoch for an exact namespace.
@@ -420,8 +487,7 @@ func (r *Repository) CurrentEpoch(ctx context.Context, n Namespace) (int64, erro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var epoch int64
-	err := r.db.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1`, n.Key()).Scan(&epoch)
+	epoch, err := cachedb.New(r.db).GetNamespaceEpoch(ctx, n.Key())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 1, nil
 	}
@@ -455,13 +521,6 @@ func validatePartitionScope(k ManifestKey) error {
 		return fmt.Errorf("%w: unsupported partition format version", ErrInvalid)
 	}
 	return nil
-}
-
-func candidateArg(candidateID string) any {
-	if candidateID == "" {
-		return nil
-	}
-	return candidateID
 }
 
 func validatePublish(in PublishInput) error {
@@ -546,14 +605,15 @@ func (r *Repository) Lookup(ctx context.Context, in LookupInput) (Manifest, bool
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	manifest, err := scanManifest(r.db.QueryRow(ctx, manifestSelect+manifestKeyWhere+` AND state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp())`, in.PartitionKind, in.ProjectID, in.Environment, candidateArg(in.CandidateID), in.PartitionFormatVersion, in.DependencyDigest, in.PolicyFingerprint, in.CanonicalQueryDigest, in.KeyFormatVersion))
+	row, err := cachedb.New(r.db).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(in.PartitionKind), ProjectID: in.ProjectID, Environment: in.Environment, CandidateID: nullableString(in.CandidateID), PartitionFormatVersion: in.PartitionFormatVersion, DependencyDigest: in.DependencyDigest, PolicyFingerprint: in.PolicyFingerprint, CanonicalQueryDigest: in.CanonicalQueryDigest, KeyFormatVersion: in.KeyFormatVersion})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, false, nil
 	}
 	if err != nil {
 		return Manifest{}, false, err
 	}
-	return manifest, true, nil
+	manifest, err := manifestFromRow(row)
+	return manifest, err == nil, err
 }
 
 func (r *Repository) ListByDependency(ctx context.Context, partitionKind PartitionKind, projectID, environment, candidateID, dependency string, limit int) ([]Manifest, error) {
@@ -566,20 +626,19 @@ func (r *Repository) ListByDependency(ctx context.Context, partitionKind Partiti
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rows, err := r.db.Query(ctx, `SELECT `+manifestColumns+` FROM cache.cache_manifest WHERE partition_kind=$1 AND project_id=$2 AND environment=$3 AND candidate_id IS NOT DISTINCT FROM $4 AND partition_format_version=$5 AND dependency_digest=$6 AND state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp()) ORDER BY created_at, manifest_id LIMIT $7`, partitionKind, projectID, environment, candidateArg(candidateID), resultidentity.PartitionVersion, dependency, limit)
+	rows, err := cachedb.New(r.db).ListManifestsByDependency(ctx, cachedb.ListManifestsByDependencyParams{PartitionKind: string(partitionKind), ProjectID: projectID, Environment: environment, CandidateID: nullableString(candidateID), PartitionFormatVersion: resultidentity.PartitionVersion, DependencyDigest: dependency, LimitCount: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	result := make([]Manifest, 0, limit)
-	for rows.Next() {
-		m, e := scanManifest(rows)
+	for _, row := range rows {
+		m, e := manifestFromRow(row)
 		if e != nil {
 			return nil, e
 		}
 		result = append(result, m)
 	}
-	return result, rows.Err()
+	return result, nil
 }
 
 // ObjectReachable reports whether an object is still protected by the durable
@@ -601,27 +660,7 @@ func (r *Repository) ObjectReachable(ctx context.Context, n Namespace, securityD
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var reachable bool
-	err := r.db.QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1
-			FROM cache.cache_manifest AS m
-			WHERE m.partition_kind=$1
-			  AND m.project_id=$2
-			  AND m.environment=$3
-			  AND m.candidate_id IS NOT DISTINCT FROM $4
-			  AND m.storage_security_domain=$5
-			  AND m.object_key=$6
-			  AND (
-				m.state IN ('admitted','retiring')
-				OR EXISTS (
-					SELECT 1 FROM cache.cache_retention_root AS rr
-					WHERE rr.manifest_id=m.manifest_id
-					  AND rr.state IN ('live','retiring')
-				)
-			  )
-		)`, n.PartitionKind, n.ProjectID, n.Environment, candidateArg(n.CandidateID), securityDomain, objectKey).Scan(&reachable)
-	return reachable, err
+	return cachedb.New(r.db).ObjectReachable(ctx, cachedb.ObjectReachableParams{PartitionKind: string(n.PartitionKind), ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID), StorageSecurityDomain: securityDomain, ObjectKey: objectKey})
 }
 
 // InvalidateNamespace records a durable, idempotent invalidation and advances
@@ -694,8 +733,7 @@ func (r *Repository) InvalidateNamespaceTx(ctx context.Context, tx Tx, in Namesp
 	if err != nil {
 		return InvalidationResult{}, err
 	}
-	var out InvalidationResult
-	err = tx.QueryRow(ctx, `SELECT invalidation_id,event_id,namespace_epoch,retired_manifests,created_at FROM cache.invalidate_namespace($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, id, in.Namespace.Key(), in.Kind, in.DependencyID, nullableDigest(in.DependencyDigest), in.ExpectedEpoch, in.IdempotencyKey, reason, canonicalEvidence).Scan(&out.InvalidationID, &out.EventID, &out.NamespaceEpoch, &out.RetiredManifests, &out.CreatedAt)
+	row, err := cachedb.New(tx).InvalidateNamespace(ctx, cachedb.InvalidateNamespaceParams{InvalidationID: dbUUID(id), NamespaceKey: in.Namespace.Key(), DependencyKind: string(in.Kind), DependencyID: in.DependencyID, DependencyDigest: nullableString(in.DependencyDigest), ExpectedEpoch: in.ExpectedEpoch, IdempotencyKey: in.IdempotencyKey, Reason: reason, Evidence: canonicalEvidence})
 	if err != nil {
 		if strings.Contains(err.Error(), "epoch conflict") {
 			return InvalidationResult{}, ErrEpoch
@@ -705,6 +743,10 @@ func (r *Repository) InvalidateNamespaceTx(ctx context.Context, tx Tx, in Namesp
 		}
 		return InvalidationResult{}, err
 	}
+	if !row.InvalidationID.Valid || !row.CreatedAt.Valid {
+		return InvalidationResult{}, fmt.Errorf("%w: invalidation result is incomplete", ErrInvalid)
+	}
+	out := InvalidationResult{InvalidationID: row.InvalidationID.Bytes, EventID: row.EventID, NamespaceEpoch: row.NamespaceEpoch, RetiredManifests: row.RetiredManifests, CreatedAt: row.CreatedAt.Time.UTC()}
 	out.Namespace = in.Namespace
 	out.CreatedAt = out.CreatedAt.UTC()
 	return out, nil
@@ -713,13 +755,6 @@ func (r *Repository) InvalidateNamespaceTx(ctx context.Context, tx Tx, in Namesp
 func isUniqueViolation(err error) bool {
 	var pgErr *pgconn.PgError
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
-}
-
-func nullableDigest(value string) any {
-	if value == "" {
-		return nil
-	}
-	return value
 }
 
 // RecordDependencyRevision publishes a source/project/semantic/deployment
@@ -769,11 +804,7 @@ func (r *Repository) RecordDependencyRevisionTx(ctx context.Context, tx Tx, in D
 	if _, err := ensureNamespaceTx(ctx, tx, in.Namespace); err != nil {
 		return DependencyRevision{}, err
 	}
-	var revision int64
-	var digest, oldDigest string
-	var updated time.Time
-	var changed bool
-	var revisionEvidence any
+	var revisionEvidence []byte
 	if len(in.Evidence) > 0 {
 		canonicalEvidence, evidenceErr := lifecycleEvidence(in.Evidence)
 		if evidenceErr != nil {
@@ -789,7 +820,7 @@ func (r *Repository) RecordDependencyRevisionTx(ctx context.Context, tx Tx, in D
 	if err != nil {
 		return DependencyRevision{}, err
 	}
-	err = tx.QueryRow(ctx, `SELECT revision,revision_digest,updated_at,changed,coalesce(old_digest,'') FROM cache.record_dependency_revision($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, in.Namespace.Key(), in.Kind, in.DependencyID, in.RevisionDigest, in.ExpectedRevision, invID, key, "dependency revision changed", revisionEvidence).Scan(&revision, &digest, &updated, &changed, &oldDigest)
+	row, err := cachedb.New(tx).RecordDependencyRevision(ctx, cachedb.RecordDependencyRevisionParams{NamespaceKey: in.Namespace.Key(), DependencyKind: string(in.Kind), DependencyID: in.DependencyID, RevisionDigest: in.RevisionDigest, ExpectedRevision: in.ExpectedRevision, InvalidationID: dbUUID(invID), IdempotencyKey: key, Reason: "dependency revision changed", Evidence: revisionEvidence})
 	if err != nil {
 		if strings.Contains(err.Error(), "revision conflict") {
 			return DependencyRevision{}, ErrConflict
@@ -799,9 +830,18 @@ func (r *Repository) RecordDependencyRevisionTx(ctx context.Context, tx Tx, in D
 		}
 		return DependencyRevision{}, err
 	}
+	revision, digest := row.Revision, row.RevisionDigest
+	var updated time.Time
+	if row.UpdatedAt.Valid {
+		updated = row.UpdatedAt.Time
+	}
 	if updated.IsZero() {
-		if err := tx.QueryRow(ctx, `SELECT updated_at FROM cache.cache_dependency_revision WHERE namespace_key=$1 AND dependency_kind=$2 AND dependency_id=$3`, in.Namespace.Key(), in.Kind, in.DependencyID).Scan(&updated); err != nil {
+		stamp, err := cachedb.New(tx).GetDependencyRevisionUpdatedAt(ctx, cachedb.GetDependencyRevisionUpdatedAtParams{NamespaceKey: in.Namespace.Key(), DependencyKind: string(in.Kind), DependencyID: in.DependencyID})
+		if err != nil {
 			return DependencyRevision{}, err
+		}
+		if stamp.Valid {
+			updated = stamp.Time
 		}
 	}
 	return DependencyRevision{Namespace: in.Namespace, Kind: in.Kind, DependencyID: in.DependencyID, Revision: revision, RevisionDigest: digest, UpdatedAt: updated.UTC()}, nil
@@ -875,6 +915,8 @@ func Listen(ctx context.Context, conn NotificationConn) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: listen-protocol. LISTEN is connection-local PostgreSQL
+	// protocol control and cannot be represented by sqlc.
 	_, err := conn.Exec(ctx, `LISTEN `+NotificationChannel)
 	return err
 }
@@ -917,37 +959,28 @@ func (r *Repository) ReconcileInvalidations(ctx context.Context, opts ReconcileO
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rows, err := r.db.Query(ctx, `SELECT i.invalidation_id,i.event_id,i.namespace_key,e.partition_kind,e.project_id,e.environment,e.candidate_id,i.dependency_kind,i.dependency_id,i.dependency_digest,i.namespace_epoch,i.retired_manifests,i.reason,i.evidence,i.created_at FROM cache.cache_invalidation i JOIN cache.cache_namespace_epoch e ON e.namespace_key=i.namespace_key WHERE i.event_id>$1 ORDER BY i.event_id LIMIT $2`, opts.AfterEventID, limit)
+	rows, err := cachedb.New(r.db).ReconcileInvalidations(ctx, cachedb.ReconcileInvalidationsParams{AfterEventID: opts.AfterEventID, LimitCount: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := make([]Invalidation, 0, limit)
-	for rows.Next() {
+	for _, row := range rows {
 		var item Invalidation
-		var partition PartitionKind
-		var namespaceKey string
-		var candidate *string
-		var digest *string
-		var created time.Time
-		if err := rows.Scan(&item.InvalidationID, &item.EventID, &namespaceKey, &partition, &item.Namespace.ProjectID, &item.Namespace.Environment, &candidate, &item.Kind, &item.DependencyID, &digest, &item.NamespaceEpoch, &item.RetiredManifests, &item.Reason, &item.Evidence, &created); err != nil {
-			return nil, err
+		if !row.InvalidationID.Valid || !row.CreatedAt.Valid {
+			return nil, ErrConflict
 		}
-		item.Namespace.PartitionKind = partition
-		if candidate != nil {
-			item.Namespace.CandidateID = *candidate
-		}
-		item.DependencyDigest = ""
-		if digest != nil {
-			item.DependencyDigest = *digest
-		}
-		item.CreatedAt = created.UTC()
-		if namespaceKey != item.Namespace.Key() {
+		item.InvalidationResult = InvalidationResult{InvalidationID: row.InvalidationID.Bytes, EventID: row.EventID, Namespace: Namespace{PartitionKind: PartitionKind(row.PartitionKind), ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID)}, NamespaceEpoch: row.NamespaceEpoch, RetiredManifests: row.RetiredManifests, CreatedAt: row.CreatedAt.Time.UTC()}
+		item.Kind = DependencyKind(row.DependencyKind)
+		item.DependencyID = row.DependencyID
+		item.DependencyDigest = valueOrEmpty(row.DependencyDigest)
+		item.Reason = row.Reason
+		item.Evidence = append(json.RawMessage(nil), row.Evidence...)
+		if row.NamespaceKey != item.Namespace.Key() {
 			return nil, ErrConflict
 		}
 		out = append(out, item)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // Reconcile is a short alias used by listeners that treat NOTIFY as a wake
@@ -973,11 +1006,11 @@ func (r *Repository) Prune(ctx context.Context, opts PruneOptions) (PruneStats, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var stats PruneStats
-	if err := r.db.QueryRow(ctx, `SELECT invalidations,expired_leases FROM cache.prune_coordination($1,$2)`, opts.Before.UTC(), limit).Scan(&stats.Invalidations, &stats.ExpiredLeases); err != nil {
+	row, err := cachedb.New(r.db).PruneCoordination(ctx, cachedb.PruneCoordinationParams{Before: dbTime(&opts.Before), LimitCount: int32(limit)})
+	if err != nil {
 		return PruneStats{}, err
 	}
-	return stats, nil
+	return PruneStats{Invalidations: row.Invalidations, ExpiredLeases: row.ExpiredLeases}, nil
 }
 
 func (r *Repository) Stats(ctx context.Context) (CacheStats, error) {
@@ -987,17 +1020,19 @@ func (r *Repository) Stats(ctx context.Context) (CacheStats, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var stats CacheStats
-	if err := r.db.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state='admitted'),count(*) FILTER (WHERE state='retiring'),count(*) FILTER (WHERE state='expired') FROM cache.cache_manifest`).Scan(&stats.AdmittedManifests, &stats.RetiringManifests, &stats.ExpiredManifests); err != nil {
+	manifestCounts, err := cachedb.New(r.db).CountManifestStates(ctx)
+	if err != nil {
 		return CacheStats{}, err
 	}
-	if err := r.db.QueryRow(ctx, `SELECT count(*) FROM cache.cache_fill_lease WHERE expires_at>clock_timestamp()`).Scan(&stats.ActiveFills); err != nil {
+	activeFills, err := cachedb.New(r.db).CountActiveFills(ctx)
+	if err != nil {
 		return CacheStats{}, err
 	}
-	if err := r.db.QueryRow(ctx, `SELECT count(*),coalesce(max(epoch),0) FROM cache.cache_invalidation i JOIN cache.cache_namespace_epoch e ON e.namespace_key=i.namespace_key`).Scan(&stats.InvalidationEvents, &stats.MaxEpoch); err != nil {
+	eventCounts, err := cachedb.New(r.db).CountInvalidationEventsAndMaxEpoch(ctx)
+	if err != nil {
 		return CacheStats{}, err
 	}
-	return stats, nil
+	return CacheStats{AdmittedManifests: manifestCounts.AdmittedManifests, RetiringManifests: manifestCounts.RetiringManifests, ExpiredManifests: manifestCounts.ExpiredManifests, ActiveFills: activeFills, InvalidationEvents: eventCounts.InvalidationEvents, MaxEpoch: eventCounts.MaxEpoch}, nil
 }
 
 // AcquireFill atomically claims a key or returns ErrBusy. Expired ownership
@@ -1033,8 +1068,7 @@ func (r *Repository) AcquireFill(ctx context.Context, in AcquireFillInput) (Fill
 		_ = tx.Rollback(ctx)
 		return FillLease{}, err
 	}
-	var out FillLease
-	err = tx.QueryRow(ctx, `SELECT lease_id,cache_key,namespace_epoch,owner_id,fencing_epoch,expires_at,acquired_at FROM cache.acquire_fill($1,$2,$3,$4,$5,$6::bigint * interval '1 microsecond')`, id, in.CacheKey, in.Namespace.Key(), namespaceEpoch, in.OwnerID, lease.Microseconds()).Scan(&out.LeaseID, &out.CacheKey, &out.NamespaceEpoch, &out.OwnerID, &out.FencingEpoch, &out.ExpiresAt, &out.AcquiredAt)
+	row, err := cachedb.New(tx).AcquireFill(ctx, cachedb.AcquireFillParams{LeaseID: dbUUID(id), CacheKey: in.CacheKey, NamespaceKey: in.Namespace.Key(), NamespaceEpoch: namespaceEpoch, OwnerID: in.OwnerID, LeaseMicroseconds: lease.Microseconds()})
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
 		return FillLease{}, ErrBusy
@@ -1043,12 +1077,14 @@ func (r *Repository) AcquireFill(ctx context.Context, in AcquireFillInput) (Fill
 		_ = tx.Rollback(ctx)
 		return FillLease{}, err
 	}
+	if !row.LeaseID.Valid || !row.ExpiresAt.Valid || !row.AcquiredAt.Valid {
+		_ = tx.Rollback(ctx)
+		return FillLease{}, ErrBusy
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return FillLease{}, err
 	}
-	out.Namespace = in.Namespace
-	out.ExpiresAt = out.ExpiresAt.UTC()
-	out.AcquiredAt = out.AcquiredAt.UTC()
+	out := FillLease{LeaseID: row.LeaseID.Bytes, CacheKey: row.CacheKey, Namespace: in.Namespace, NamespaceEpoch: row.NamespaceEpoch, OwnerID: row.OwnerID, FencingEpoch: row.FencingEpoch, ExpiresAt: row.ExpiresAt.Time.UTC(), AcquiredAt: row.AcquiredAt.Time.UTC()}
 	return out, nil
 }
 
@@ -1056,8 +1092,8 @@ func (r *Repository) RenewFill(ctx context.Context, lease FillLease, duration ti
 	if err := validLease(lease); err != nil || duration <= 0 || duration > maxLeaseDuration {
 		return ErrInvalid
 	}
-	var ok bool
-	if err := r.db.QueryRow(ctx, `SELECT cache.renew_fill($1,$2,$3,$4,$5::bigint * interval '1 microsecond')`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch, duration.Microseconds()).Scan(&ok); err != nil {
+	ok, err := cachedb.New(r.db).RenewFill(ctx, cachedb.RenewFillParams{LeaseID: dbUUID(lease.LeaseID), CacheKey: lease.CacheKey, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch, LeaseMicroseconds: duration.Microseconds()})
+	if err != nil {
 		return err
 	}
 	if !ok {
@@ -1072,8 +1108,8 @@ func (r *Repository) ReleaseFill(ctx context.Context, lease FillLease) error {
 	// Retain the row as an expired fence so the next owner receives a strictly
 	// higher epoch. A maintenance reconciler may remove old rows only after its
 	// configured grace period.
-	var ok bool
-	if err := r.db.QueryRow(ctx, `SELECT cache.release_fill($1,$2,$3,$4)`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch).Scan(&ok); err != nil {
+	ok, err := cachedb.New(r.db).ReleaseFill(ctx, cachedb.ReleaseFillParams{LeaseID: dbUUID(lease.LeaseID), CacheKey: lease.CacheKey, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch})
+	if err != nil {
 		return err
 	}
 	if !ok {
@@ -1129,22 +1165,26 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 		return Manifest{}, err
 	}
 	expiresAt := normalizedExpiry(in.ExpiresAt)
-	var fenceID uuid.UUID
-	var epoch int64
 	var namespaceEpoch int64
 	var namespaceKey string
 	var fenceManifest *uuid.UUID
 	var fenceActive bool
-	var lockedNamespaceEpoch int64
-	if err := tx.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1 FOR UPDATE`, in.Lease.Namespace.Key()).Scan(&lockedNamespaceEpoch); errors.Is(err, pgx.ErrNoRows) {
+	_, err = cachedb.New(tx).GetNamespaceEpochForUpdate(ctx, in.Lease.Namespace.Key())
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, ErrStaleFence
 	} else if err != nil {
 		return Manifest{}, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT lease_id,fencing_epoch,namespace_key,namespace_epoch,manifest_id,(expires_at > clock_timestamp()) FROM cache.cache_fill_lease WHERE cache_key=$1 AND owner_id=$2 AND fencing_epoch=$3 AND lease_id=$4 FOR UPDATE`, in.Lease.CacheKey, in.Lease.OwnerID, in.Lease.FencingEpoch, in.Lease.LeaseID).Scan(&fenceID, &epoch, &namespaceKey, &namespaceEpoch, &fenceManifest, &fenceActive); errors.Is(err, pgx.ErrNoRows) {
+	leaseRow, err := cachedb.New(tx).GetFillLeaseForUpdate(ctx, cachedb.GetFillLeaseForUpdateParams{CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, LeaseID: dbUUID(in.Lease.LeaseID)})
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, ErrStaleFence
 	} else if err != nil {
 		return Manifest{}, err
+	}
+	namespaceKey, namespaceEpoch, fenceManifest, fenceActive = leaseRow.NamespaceKey, leaseRow.NamespaceEpoch, nil, leaseRow.Active
+	if leaseRow.ManifestID.Valid {
+		id := uuid.UUID(leaseRow.ManifestID.Bytes)
+		fenceManifest = &id
 	}
 	if in.Lease.Namespace.Key() != namespaceKey {
 		return Manifest{}, ErrStaleFence
@@ -1153,13 +1193,18 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 		return Manifest{}, ErrStaleFence
 	}
 	var currentEpoch int64
-	if err := tx.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1`, namespaceKey).Scan(&currentEpoch); errors.Is(err, pgx.ErrNoRows) || currentEpoch != namespaceEpoch {
+	currentEpoch, err = cachedb.New(tx).GetNamespaceEpoch(ctx, namespaceKey)
+	if errors.Is(err, pgx.ErrNoRows) || currentEpoch != namespaceEpoch {
 		return Manifest{}, ErrStaleFence
 	} else if err != nil {
 		return Manifest{}, err
 	}
 	if fenceManifest != nil {
-		m, scanErr := scanManifest(tx.QueryRow(ctx, manifestSelect+` WHERE manifest_id=$1`, *fenceManifest))
+		row, scanErr := cachedb.New(tx).GetManifestByID(ctx, dbUUID(*fenceManifest))
+		m, convErr := manifestFromRow(row)
+		if scanErr == nil {
+			scanErr = convErr
+		}
 		if errors.Is(scanErr, pgx.ErrNoRows) {
 			return Manifest{}, ErrConflict
 		}
@@ -1167,9 +1212,11 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 			return Manifest{}, scanErr
 		}
 		var admittedLive bool
-		if err := tx.QueryRow(ctx, `SELECT state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp()) FROM cache.cache_manifest WHERE manifest_id=$1`, m.ManifestID).Scan(&admittedLive); err != nil {
+		admittedValue, err := cachedb.New(tx).ManifestIsAdmittedLive(ctx, dbUUID(m.ManifestID))
+		if err != nil {
 			return Manifest{}, err
 		}
+		admittedLive = admittedValue != nil && *admittedValue
 		if !admittedLive || !publishManifestEqual(m, in, metadata, expiresAt) {
 			return Manifest{}, ErrConflict
 		}
@@ -1182,8 +1229,8 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if err != nil {
 		return Manifest{}, err
 	}
-	var admittedID uuid.UUID
-	if err := tx.QueryRow(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)`, id, in.Lease.LeaseID, in.Lease.CacheKey, in.Lease.OwnerID, in.Lease.FencingEpoch, in.Lease.Namespace.Key(), in.Lease.NamespaceEpoch, in.Key.PartitionKind, in.Key.ProjectID, in.Key.Environment, candidateArg(in.Key.CandidateID), in.Key.PartitionFormatVersion, in.Key.DependencyDigest, in.Key.PolicyFingerprint, in.Key.CanonicalQueryDigest, in.Key.KeyFormatVersion, in.StorageSecurityDomain, in.ObjectDigest, in.ObjectKey, in.ByteSize, metadata, expiresAt).Scan(&admittedID); err != nil {
+	admittedValue, err := cachedb.New(tx).AdmitManifest(ctx, cachedb.AdmitManifestParams{ManifestID: dbUUID(id), LeaseID: dbUUID(in.Lease.LeaseID), CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, NamespaceKey: in.Lease.Namespace.Key(), NamespaceEpoch: in.Lease.NamespaceEpoch, PartitionKind: string(in.Key.PartitionKind), ProjectID: in.Key.ProjectID, Environment: in.Key.Environment, CandidateID: nullableString(in.Key.CandidateID), PartitionFormatVersion: in.Key.PartitionFormatVersion, DependencyDigest: in.Key.DependencyDigest, PolicyFingerprint: in.Key.PolicyFingerprint, CanonicalQueryDigest: in.Key.CanonicalQueryDigest, KeyFormatVersion: in.Key.KeyFormatVersion, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: metadata, ExpiresAt: dbTime(expiresAt)})
+	if err != nil {
 		if strings.Contains(err.Error(), "stale fill fence") {
 			return Manifest{}, ErrStaleFence
 		}
@@ -1192,6 +1239,10 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 		}
 		return Manifest{}, err
 	}
+	if !admittedValue.Valid {
+		return Manifest{}, ErrConflict
+	}
+	admittedID := admittedValue.Bytes
 	m, found, err := lookupTx(ctx, tx, in.Key)
 	if err != nil {
 		return Manifest{}, err
@@ -1242,19 +1293,22 @@ func (r *Repository) AddRetentionRoot(ctx context.Context, rootID uuid.UUID, man
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var admitted bool
-	if err := tx.QueryRow(ctx, `SELECT (state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp())) FROM cache.cache_manifest WHERE manifest_id=$1 FOR UPDATE`, manifestID).Scan(&admitted); errors.Is(err, pgx.ErrNoRows) {
+	admittedValue, err := cachedb.New(tx).GetAdmittedManifestForUpdate(ctx, dbUUID(manifestID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
+	admitted := admittedValue != nil && *admittedValue
 	if !admitted {
 		return ErrNotFound
 	}
-	var existingManifestID uuid.UUID
-	var existingState, existingReason string
-	rootErr := tx.QueryRow(ctx, `SELECT manifest_id,state,reason FROM cache.cache_retention_root WHERE root_id=$1 FOR UPDATE`, rootID).Scan(&existingManifestID, &existingState, &existingReason)
+	rootRow, rootErr := cachedb.New(tx).GetRetentionRootForUpdate(ctx, dbUUID(rootID))
 	if rootErr == nil {
+		if !rootRow.ManifestID.Valid {
+			return ErrConflict
+		}
+		existingManifestID, existingState, existingReason := rootRow.ManifestID.Bytes, rootRow.State, rootRow.Reason
 		if existingManifestID == manifestID && existingState == "live" && existingReason == reason {
 			if err := tx.Commit(ctx); err != nil {
 				return err
@@ -1267,8 +1321,8 @@ func (r *Repository) AddRetentionRoot(ctx context.Context, rootID uuid.UUID, man
 	if !errors.Is(rootErr, pgx.ErrNoRows) {
 		return rootErr
 	}
-	var inserted bool
-	if err := tx.QueryRow(ctx, `SELECT cache.add_retention_root($1,$2,$3)`, rootID, manifestID, reason).Scan(&inserted); err != nil {
+	inserted, err := cachedb.New(tx).AddRetentionRoot(ctx, cachedb.AddRetentionRootParams{RootID: dbUUID(rootID), ManifestID: dbUUID(manifestID), Reason: reason})
+	if err != nil {
 		return err
 	}
 	if !inserted {
@@ -1305,13 +1359,13 @@ func (r *Repository) RetireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var state string
-	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT state,retire_evidence FROM cache.cache_retention_root WHERE root_id=$1 FOR UPDATE`, rootID).Scan(&state, &previous); errors.Is(err, pgx.ErrNoRows) {
+	rootRow, err := cachedb.New(tx).GetRetentionRootRetireForUpdate(ctx, dbUUID(rootID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
+	state, previous := rootRow.State, rootRow.RetireEvidence
 	if state == "retiring" {
 		if sameLifecycleEvidence(previous, canonicalEvidence) {
 			if err := tx.Commit(ctx); err != nil {
@@ -1325,8 +1379,8 @@ func (r *Repository) RetireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 	if state != "live" {
 		return ErrConflict
 	}
-	var updated bool
-	if err := tx.QueryRow(ctx, `SELECT cache.retire_retention_root($1,$2::jsonb)`, rootID, canonicalEvidence).Scan(&updated); err != nil {
+	updated, err := cachedb.New(tx).RetireRetentionRoot(ctx, cachedb.RetireRetentionRootParams{RootID: dbUUID(rootID), Evidence: canonicalEvidence})
+	if err != nil {
 		return err
 	}
 	if !updated {
@@ -1366,13 +1420,13 @@ func (r *Repository) ExpireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var state string
-	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT state,expire_evidence FROM cache.cache_retention_root WHERE root_id=$1 FOR UPDATE`, rootID).Scan(&state, &previous); errors.Is(err, pgx.ErrNoRows) {
+	rootRow, err := cachedb.New(tx).GetRetentionRootExpireForUpdate(ctx, dbUUID(rootID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
+	state, previous := rootRow.State, rootRow.ExpireEvidence
 	if state == "expired" {
 		if sameLifecycleEvidence(previous, canonicalEvidence) {
 			if err := tx.Commit(ctx); err != nil {
@@ -1386,8 +1440,8 @@ func (r *Repository) ExpireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 	if state != "retiring" {
 		return ErrConflict
 	}
-	var updated bool
-	if err := tx.QueryRow(ctx, `SELECT cache.expire_retention_root($1,$2::jsonb)`, rootID, canonicalEvidence).Scan(&updated); err != nil {
+	updated, err := cachedb.New(tx).ExpireRetentionRoot(ctx, cachedb.ExpireRetentionRootParams{RootID: dbUUID(rootID), Evidence: canonicalEvidence})
+	if err != nil {
 		return err
 	}
 	if !updated {
@@ -1424,13 +1478,13 @@ func (r *Repository) ExpireManifest(ctx context.Context, manifestID uuid.UUID, e
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var state string
-	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT state,expire_evidence FROM cache.cache_manifest WHERE manifest_id=$1 FOR UPDATE`, manifestID).Scan(&state, &previous); errors.Is(err, pgx.ErrNoRows) {
+	manifestRow, err := cachedb.New(tx).GetManifestExpireForUpdate(ctx, dbUUID(manifestID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrConflict
 	} else if err != nil {
 		return err
 	}
+	state, previous := manifestRow.State, manifestRow.ExpireEvidence
 	if state == StateExpired {
 		if sameLifecycleEvidence(previous, canonicalEvidence) {
 			if err := tx.Commit(ctx); err != nil {
@@ -1444,15 +1498,15 @@ func (r *Repository) ExpireManifest(ctx context.Context, manifestID uuid.UUID, e
 	if state != StateRetiring {
 		return ErrConflict
 	}
-	var rootsLive bool
-	if err := tx.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM cache.cache_retention_root WHERE manifest_id=$1 AND state IN ('live','retiring'))`, manifestID).Scan(&rootsLive); err != nil {
+	rootsLive, err := cachedb.New(tx).ManifestHasLiveRoots(ctx, dbUUID(manifestID))
+	if err != nil {
 		return err
 	}
 	if rootsLive {
 		return ErrConflict
 	}
-	var updated bool
-	if err := tx.QueryRow(ctx, `SELECT cache.expire_manifest($1,$2::jsonb)`, manifestID, canonicalEvidence).Scan(&updated); err != nil {
+	updated, err := cachedb.New(tx).ExpireManifest(ctx, cachedb.ExpireManifestParams{ManifestID: dbUUID(manifestID), Evidence: canonicalEvidence})
+	if err != nil {
 		return err
 	}
 	if !updated {
@@ -1493,13 +1547,13 @@ func (r *Repository) RetireManifest(ctx context.Context, manifestID uuid.UUID, e
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var state string
-	var previous []byte
-	if err := tx.QueryRow(ctx, `SELECT state,retire_evidence FROM cache.cache_manifest WHERE manifest_id=$1 FOR UPDATE`, manifestID).Scan(&state, &previous); errors.Is(err, pgx.ErrNoRows) {
+	manifestRow, err := cachedb.New(tx).GetManifestRetireForUpdate(ctx, dbUUID(manifestID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
 	}
+	state, previous := manifestRow.State, manifestRow.RetireEvidence
 	if state == StateRetiring {
 		if !sameLifecycleEvidence(previous, canonicalEvidence) {
 			return ErrConflict
@@ -1507,8 +1561,8 @@ func (r *Repository) RetireManifest(ctx context.Context, manifestID uuid.UUID, e
 	} else if state != StateAdmitted {
 		return ErrConflict
 	} else {
-		var updated bool
-		if err := tx.QueryRow(ctx, `SELECT cache.retire_manifest($1,$2::jsonb)`, manifestID, canonicalEvidence).Scan(&updated); err != nil {
+		updated, err := cachedb.New(tx).RetireManifest(ctx, cachedb.RetireManifestParams{ManifestID: dbUUID(manifestID), Evidence: canonicalEvidence})
+		if err != nil {
 			if strings.Contains(err.Error(), "retirement conflict") {
 				return ErrConflict
 			}
@@ -1525,49 +1579,14 @@ func (r *Repository) RetireManifest(ctx context.Context, manifestID uuid.UUID, e
 	return nil
 }
 
-const manifestColumns = `manifest_id,partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version,storage_security_domain,object_digest,object_key,byte_size,metadata,state,created_at,expires_at,retired_at,expired_at,retire_evidence,expire_evidence`
-const manifestKeyWhere = ` WHERE partition_kind=$1 AND project_id=$2 AND environment=$3 AND candidate_id IS NOT DISTINCT FROM $4 AND partition_format_version=$5 AND dependency_digest=$6 AND policy_fingerprint=$7 AND canonical_query_digest=$8 AND key_format_version=$9`
-const manifestSelect = `SELECT ` + manifestColumns + ` FROM cache.cache_manifest`
-
-type rowScanner interface{ Scan(...any) error }
-
-func scanManifest(row rowScanner) (Manifest, error) {
-	var m Manifest
-	var kind string
-	var candidate *string
-	var metadata []byte
-	var expires, retired, expired *time.Time
-	var retireEvidence, expireEvidence []byte
-	err := row.Scan(&m.ManifestID, &kind, &m.Key.ProjectID, &m.Key.Environment, &candidate, &m.Key.PartitionFormatVersion, &m.Key.DependencyDigest, &m.Key.PolicyFingerprint, &m.Key.CanonicalQueryDigest, &m.Key.KeyFormatVersion, &m.StorageSecurityDomain, &m.ObjectDigest, &m.ObjectKey, &m.ByteSize, &metadata, &m.State, &m.CreatedAt, &expires, &retired, &expired, &retireEvidence, &expireEvidence)
-	if err != nil {
-		return Manifest{}, err
-	}
-	m.Key.PartitionKind = PartitionKind(kind)
-	if candidate != nil {
-		m.Key.CandidateID = *candidate
-	}
-	m.Metadata = append(json.RawMessage(nil), metadata...)
-	m.CreatedAt = m.CreatedAt.UTC()
-	if expires != nil {
-		value := expires.UTC()
-		m.ExpiresAt = &value
-	}
-	if retired != nil {
-		value := retired.UTC()
-		m.RetiredAt = &value
-	}
-	if expired != nil {
-		value := expired.UTC()
-		m.ExpiredAt = &value
-	}
-	m.RetireEvidence = append(json.RawMessage(nil), retireEvidence...)
-	m.ExpireEvidence = append(json.RawMessage(nil), expireEvidence...)
-	return m, nil
-}
 func lookupTx(ctx context.Context, tx Tx, key ManifestKey) (Manifest, bool, error) {
-	m, err := scanManifest(tx.QueryRow(ctx, manifestSelect+manifestKeyWhere+` AND state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp())`, key.PartitionKind, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion))
+	row, err := cachedb.New(tx).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(key.PartitionKind), ProjectID: key.ProjectID, Environment: key.Environment, CandidateID: nullableString(key.CandidateID), PartitionFormatVersion: key.PartitionFormatVersion, DependencyDigest: key.DependencyDigest, PolicyFingerprint: key.PolicyFingerprint, CanonicalQueryDigest: key.CanonicalQueryDigest, KeyFormatVersion: key.KeyFormatVersion})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, false, nil
 	}
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	m, err := manifestFromRow(row)
 	return m, err == nil, err
 }
