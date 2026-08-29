@@ -199,7 +199,7 @@ func (r *Repository) WithTx(tx Tx) *Repository {
 	if r == nil {
 		return &Repository{}
 	}
-	return &Repository{db: tx, audit: r.audit, events: r.events}
+	return &Repository{db: tx, audit: r.audit, events: r.events, workflow: r.workflow}
 }
 
 func contextOrBackground(ctx context.Context) context.Context {

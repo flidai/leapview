@@ -419,6 +419,20 @@ func TestReleasePostgresTransactionCommitsAndRollsBackWorkflowAuditEventTogether
 
 type successfulAudit struct{}
 
+func TestWithTxPreservesTransactionalSideEffectAuthorities(t *testing.T) {
+	p := testEffectsDB(t)
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = tx.Rollback(context.Background()) })
+	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{}})
+	bound := base.WithTx(tx)
+	if !bound.AuditCapable() || !bound.EventCapable() || !bound.WorkflowCapable() {
+		t.Fatalf("transaction-bound repository dropped side-effect authorities: audit=%t events=%t workflow=%t", bound.AuditCapable(), bound.EventCapable(), bound.WorkflowCapable())
+	}
+}
+
 func (successfulAudit) RecordAuditEvent(context.Context, Tx, access.AuditIntent) (AuditEvent, error) {
 	return AuditEvent{}, nil
 }
