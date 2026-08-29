@@ -116,11 +116,11 @@ func TestPostgresCatalogValidationRejectsUnsafeIdentifiersAndMissingSchema(t *te
 func TestCommitMarkerCanonicalJSONAndBounds(t *testing.T) {
 	marker := CommitMarker{
 		SchemaVersion:  CommitMarkerSchemaVersion,
-		DeploymentID:   "deployment-1",
+		DeliveryID:     "delivery-1",
 		GenerationID:   "generation-2",
-		RefreshID:      "refresh-3",
 		AttemptID:      "attempt-4",
 		LeaseEpoch:     7,
+		RequestDigest:  "sha256:" + strings.Repeat("b", 64),
 		FencingToken:   "fence-7",
 		PlanDigest:     "sha256:" + strings.Repeat("a", 64),
 		Project:        "project:demo",
@@ -131,7 +131,7 @@ func TestCommitMarkerCanonicalJSONAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := `{"schema_version":1,"deployment_id":"deployment-1","generation_id":"generation-2","refresh_id":"refresh-3","attempt_id":"attempt-4","lease_epoch":7,"fencing_token":"fence-7","plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","project":"project:demo","environment":"production","physical_pool_id":"pool-1"}`
+	want := `{"schema_version":1,"delivery_id":"delivery-1","generation_id":"generation-2","attempt_id":"attempt-4","lease_epoch":7,"fencing_token":"fence-7","request_digest":"sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","plan_digest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","project":"project:demo","environment":"production","physical_pool_id":"pool-1"}`
 	if canonical != want {
 		t.Fatalf("canonical marker = %s, want %s", canonical, want)
 	}
@@ -157,13 +157,18 @@ func TestCommitMarkerCanonicalJSONAndBounds(t *testing.T) {
 	if _, err := invalidDigest.CanonicalJSON(); err == nil {
 		t.Fatal("non-sha256 plan digest accepted")
 	}
+	missingRequest := marker
+	missingRequest.RequestDigest = ""
+	if _, err := missingRequest.CanonicalJSON(); err == nil {
+		t.Fatal("missing request digest accepted")
+	}
 }
 
 func TestResolveCommittedSnapshotUsesLastCommitThenExactMarker(t *testing.T) {
 	marker := CommitMarker{
-		SchemaVersion: CommitMarkerSchemaVersion, DeploymentID: "deployment-1",
-		GenerationID: "generation-2", RefreshID: "refresh-3", AttemptID: "attempt-4",
-		LeaseEpoch: 7, PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-1",
+		GenerationID: "generation-2", AttemptID: "attempt-4",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
 		Environment: "production", PhysicalPoolID: "pool-1",
 	}
 	canonical, err := marker.CanonicalJSON()
@@ -185,9 +190,9 @@ func TestResolveCommittedSnapshotUsesLastCommitThenExactMarker(t *testing.T) {
 
 func TestResolveCommittedSnapshotRejectsDuplicatePersistentMarkers(t *testing.T) {
 	marker := CommitMarker{
-		SchemaVersion: CommitMarkerSchemaVersion, DeploymentID: "deployment-1",
-		GenerationID: "generation-2", RefreshID: "refresh-3", AttemptID: "attempt-4",
-		LeaseEpoch: 7, PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-1",
+		GenerationID: "generation-2", AttemptID: "attempt-4",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
 		Environment: "production", PhysicalPoolID: "pool-1",
 	}
 	canonical, err := marker.CanonicalJSON()
@@ -208,9 +213,9 @@ func TestResolveCommittedSnapshotRejectsDuplicatePersistentMarkers(t *testing.T)
 
 func TestResolveCommittedSnapshotPropagatesCatalogProbeError(t *testing.T) {
 	marker := CommitMarker{
-		SchemaVersion: CommitMarkerSchemaVersion, DeploymentID: "deployment-1",
-		GenerationID: "generation-2", RefreshID: "refresh-3", AttemptID: "attempt-4",
-		LeaseEpoch: 7, PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-1",
+		GenerationID: "generation-2", AttemptID: "attempt-4",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:demo",
 		Environment: "production", PhysicalPoolID: "pool-1",
 	}
 	db := openMarkerLookupDB(t, markerLookupState{lastErr: errors.New("catalog unavailable")})

@@ -2,11 +2,11 @@ package ducklake
 
 // PostgreSQL-backed DuckLake attachment and commit identity primitives.
 //
-// This file intentionally contains no runtime composition.  The existing
-// local catalog remains the default until the target control-plane wiring is
-// admitted.  Callers can use these helpers to build the exact statements and
-// evidence required by a PostgreSQL metadata catalog without ever putting a
-// PostgreSQL DSN (or credential) in an ATTACH statement.
+// This file intentionally contains no runtime composition. Runtime cutover
+// wires these target primitives separately. Callers can use these helpers to
+// build the exact statements and evidence required by a PostgreSQL metadata
+// catalog without ever putting a PostgreSQL DSN (or credential) in an ATTACH
+// statement.
 
 import (
 	"context"
@@ -35,6 +35,14 @@ const (
 )
 
 var catalogIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+var (
+	// ErrCommittedSnapshotNotFound means no persistent snapshot carries the
+	// exact marker. It is distinct from an ambiguous or malformed catalog so
+	// restart reconciliation can require positive session termination evidence.
+	ErrCommittedSnapshotNotFound  = errors.New("DuckLake committed snapshot identity was not found")
+	ErrCommittedSnapshotAmbiguous = errors.New("multiple DuckLake snapshots match the commit marker")
+)
 
 // PostgresCatalogMode selects the lifecycle contract for an attachment.
 // Initialization is the only mode allowed to create a missing catalog.
@@ -181,12 +189,12 @@ func quoteCatalogIdentifier(value string) string {
 // unbounded metadata map.
 type CommitMarker struct {
 	SchemaVersion  int    `json:"schema_version"`
-	DeploymentID   string `json:"deployment_id"`
+	DeliveryID     string `json:"delivery_id"`
 	GenerationID   string `json:"generation_id"`
-	RefreshID      string `json:"refresh_id"`
 	AttemptID      string `json:"attempt_id"`
 	LeaseEpoch     int64  `json:"lease_epoch"`
 	FencingToken   string `json:"fencing_token,omitempty"`
+	RequestDigest  string `json:"request_digest"`
 	PlanDigest     string `json:"plan_digest"`
 	Project        string `json:"project"`
 	Environment    string `json:"environment"`
@@ -197,9 +205,10 @@ type CommitMarker struct {
 // used by snapshot reconciliation.
 func (m CommitMarker) Normalize() (CommitMarker, error) {
 	for name, value := range map[string]string{
-		"deployment_id": m.DeploymentID, "generation_id": m.GenerationID,
-		"refresh_id": m.RefreshID, "attempt_id": m.AttemptID,
-		"plan_digest": m.PlanDigest, "project": m.Project,
+		"delivery_id": m.DeliveryID, "generation_id": m.GenerationID,
+		"attempt_id":     m.AttemptID,
+		"request_digest": m.RequestDigest,
+		"plan_digest":    m.PlanDigest, "project": m.Project,
 		"environment": m.Environment, "physical_pool_id": m.PhysicalPoolID,
 	} {
 		if err := validateMarkerValue(name, value); err != nil {
@@ -211,6 +220,9 @@ func (m CommitMarker) Normalize() (CommitMarker, error) {
 	}
 	if err := validatePlanDigest(m.PlanDigest); err != nil {
 		return CommitMarker{}, err
+	}
+	if err := validatePlanDigest(m.RequestDigest); err != nil {
+		return CommitMarker{}, fmt.Errorf("commit marker request_digest: %w", err)
 	}
 	if strings.TrimSpace(m.FencingToken) != "" {
 		if err := validateMarkerValue("fencing_token", m.FencingToken); err != nil {
@@ -395,14 +407,14 @@ func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marke
 	}
 	switch count {
 	case 0:
-		return 0, errors.New("DuckLake committed snapshot identity was not found")
+		return 0, ErrCommittedSnapshotNotFound
 	case 1:
 		if found <= 0 {
 			return 0, errors.New("DuckLake committed snapshot identity is invalid")
 		}
 		return found, nil
 	default:
-		return 0, errors.New("multiple DuckLake snapshots match the commit marker")
+		return 0, ErrCommittedSnapshotAmbiguous
 	}
 }
 
