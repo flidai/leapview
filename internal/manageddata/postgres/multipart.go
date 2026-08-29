@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -12,7 +13,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata.CreateS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
+func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata.CreateS3MultipartUploadInput) (result manageddata.S3MultipartUpload, returnErr error) {
 	db, err := requireDB(r)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
@@ -24,21 +25,55 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata
 	if err := validID(id, "multipart id"); err != nil || in.UploadSessionID == "" || in.LogicalPath == "" || in.SHA256 == "" || len(in.SHA256) != 64 || in.SizeBytes < 0 || in.IdempotencyIdentity == "" {
 		return manageddata.S3MultipartUpload{}, ErrInvalid
 	}
-	err = manageddb.New(db).InsertMultipartUpload(contextOrBackground(ctx), manageddb.InsertMultipartUploadParams{MultipartID: id, UploadID: in.UploadSessionID.String(), LogicalPath: in.LogicalPath, Sha256: in.SHA256, SizeBytes: in.SizeBytes, IdempotencyIdentity: in.IdempotencyIdentity})
+	if in.AuditIntent == nil {
+		return r.createS3MultipartUploadOn(ctx, db, in, id)
+	}
+	if r.audit == nil {
+		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	u, err := r.S3MultipartUploadByID(ctx, manageddata.MultipartUploadID(id))
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	u, err := r.createS3MultipartUploadOn(ctx, tx, in, id)
 	if err != nil {
-		if errors.Is(err, ErrNotFound) {
-			var existingID string
-			existingID, lookupErr := manageddb.New(db).GetMultipartByIdentity(contextOrBackground(ctx), manageddb.GetMultipartByIdentityParams{UploadID: in.UploadSessionID.String(), IdempotencyIdentity: in.IdempotencyIdentity})
+		return manageddata.S3MultipartUpload{}, err
+	}
+	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.S3MultipartUpload{}, err
+		}
+	}
+	return u, nil
+}
+
+func (r *Repository) createS3MultipartUploadOn(ctx context.Context, db DBTX, in manageddata.CreateS3MultipartUploadInput, id string) (manageddata.S3MultipartUpload, error) {
+	queries := manageddb.New(db)
+	if err := queries.InsertMultipartUpload(contextOrBackground(ctx), manageddb.InsertMultipartUploadParams{MultipartID: id, UploadID: in.UploadSessionID.String(), LogicalPath: in.LogicalPath, Sha256: in.SHA256, SizeBytes: in.SizeBytes, IdempotencyIdentity: in.IdempotencyIdentity}); err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	row, err := queries.GetMultipartByID(contextOrBackground(ctx), id)
+	if err != nil {
+		mapped := scanNotFound(err)
+		if errors.Is(mapped, ErrNotFound) {
+			existingID, lookupErr := queries.GetMultipartByIdentity(contextOrBackground(ctx), manageddb.GetMultipartByIdentityParams{UploadID: in.UploadSessionID.String(), IdempotencyIdentity: in.IdempotencyIdentity})
 			if lookupErr == nil && existingID != id {
 				return manageddata.S3MultipartUpload{}, ErrConflict
 			}
 		}
-		return u, err
+		return manageddata.S3MultipartUpload{}, mapped
 	}
+	u := multipartFromRow(row)
 	if u.UploadSessionID != in.UploadSessionID || u.LogicalPath != in.LogicalPath || u.SHA256 != in.SHA256 || u.SizeBytes != in.SizeBytes || u.IdempotencyIdentity != in.IdempotencyIdentity {
 		return manageddata.S3MultipartUpload{}, ErrConflict
 	}
@@ -55,7 +90,7 @@ func (r *Repository) S3MultipartUploadByID(ctx context.Context, id manageddata.M
 	}
 	return multipartFromRow(row), nil
 }
-func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, in manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
+func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, in manageddata.InitializeS3MultipartUploadInput) (result manageddata.S3MultipartUpload, returnErr error) {
 	db, err := requireDB(r)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
@@ -63,21 +98,53 @@ func (r *Repository) InitializeS3MultipartUpload(ctx context.Context, in managed
 	if in.ID == "" || in.ObjectKey == "" || (!in.Existing && in.ProviderUploadID == "") {
 		return manageddata.S3MultipartUpload{}, ErrInvalid
 	}
-	tag, err := manageddb.New(db).InitializeMultipart(contextOrBackground(ctx), manageddb.InitializeMultipartParams{MultipartID: in.ID.String(), ObjectKey: in.ObjectKey, ProviderUploadID: in.ProviderUploadID, Existing: in.Existing})
+	if in.AuditIntent == nil {
+		return r.initializeS3MultipartUploadOn(ctx, db, in)
+	}
+	if r.audit == nil {
+		return manageddata.S3MultipartUpload{}, fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.S3MultipartUpload{}, err
 	}
-	if tag.RowsAffected() == 0 {
-		u, e := r.S3MultipartUploadByID(ctx, in.ID)
-		if e != nil {
-			return u, e
-		}
-		if u.ObjectKey != in.ObjectKey || u.Existing != in.Existing || (!in.Existing && u.ProviderUploadID != in.ProviderUploadID) {
-			return manageddata.S3MultipartUpload{}, ErrConflict
-		}
-		return u, nil
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
 	}
-	return r.S3MultipartUploadByID(ctx, in.ID)
+	u, err := r.initializeS3MultipartUploadOn(ctx, tx, in)
+	if err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.S3MultipartUpload{}, err
+		}
+	}
+	return u, nil
+}
+
+func (r *Repository) initializeS3MultipartUploadOn(ctx context.Context, db DBTX, in manageddata.InitializeS3MultipartUploadInput) (manageddata.S3MultipartUpload, error) {
+	queries := manageddb.New(db)
+	tag, err := queries.InitializeMultipart(contextOrBackground(ctx), manageddb.InitializeMultipartParams{MultipartID: in.ID.String(), ObjectKey: in.ObjectKey, ProviderUploadID: in.ProviderUploadID, Existing: in.Existing})
+	if err != nil {
+		return manageddata.S3MultipartUpload{}, err
+	}
+	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	if err != nil {
+		return manageddata.S3MultipartUpload{}, scanNotFound(err)
+	}
+	u := multipartFromRow(row)
+	if tag.RowsAffected() == 0 && (u.ObjectKey != in.ObjectKey || u.Existing != in.Existing || (!in.Existing && u.ProviderUploadID != in.ProviderUploadID)) {
+		return manageddata.S3MultipartUpload{}, ErrConflict
+	}
+	return u, nil
 }
 func (r *Repository) ReserveS3MultipartPart(ctx context.Context, part manageddata.S3MultipartPart) (manageddata.S3MultipartPart, error) {
 	db, err := requireDB(r)
@@ -116,7 +183,7 @@ func (r *Repository) ListS3MultipartParts(ctx context.Context, id manageddata.Mu
 	}
 	return out, nil
 }
-func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, in manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error) {
+func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, in manageddata.BeginS3MultipartCompletionInput) (result manageddata.S3MultipartCompletion, returnErr error) {
 	db, err := requireDB(r)
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
@@ -124,29 +191,68 @@ func (r *Repository) BeginS3MultipartCompletion(ctx context.Context, in managedd
 	if in.ID == "" || in.IdempotencyIdentity == "" || len(in.RequestHash) != 64 {
 		return manageddata.S3MultipartCompletion{}, ErrInvalid
 	}
-	tag, err := manageddb.New(db).BeginMultipartCompletion(contextOrBackground(ctx), manageddb.BeginMultipartCompletionParams{MultipartID: in.ID.String(), CompletionIdentity: in.IdempotencyIdentity, CompletionRequestHash: in.RequestHash})
+	if in.AuditIntent == nil {
+		return r.beginS3MultipartCompletionOn(ctx, db, in)
+	}
+	if r.audit == nil {
+		return manageddata.S3MultipartCompletion{}, fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
-	u, err := r.S3MultipartUploadByID(ctx, in.ID)
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	completion, err := r.beginS3MultipartCompletionOn(ctx, tx, in)
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
 	}
+	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+		return manageddata.S3MultipartCompletion{}, err
+	}
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.S3MultipartCompletion{}, err
+		}
+	}
+	return completion, nil
+}
+
+func (r *Repository) beginS3MultipartCompletionOn(ctx context.Context, db DBTX, in manageddata.BeginS3MultipartCompletionInput) (manageddata.S3MultipartCompletion, error) {
+	queries := manageddb.New(db)
+	tag, err := queries.BeginMultipartCompletion(contextOrBackground(ctx), manageddb.BeginMultipartCompletionParams{MultipartID: in.ID.String(), CompletionIdentity: in.IdempotencyIdentity, CompletionRequestHash: in.RequestHash})
+	if err != nil {
+		return manageddata.S3MultipartCompletion{}, err
+	}
+	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	if err != nil {
+		return manageddata.S3MultipartCompletion{}, scanNotFound(err)
+	}
+	u := multipartFromRow(row)
 	if tag.RowsAffected() == 0 {
 		if u.Status != "completing" || u.CompletionIdentity != in.IdempotencyIdentity || u.CompletionRequestHash != in.RequestHash {
 			return manageddata.S3MultipartCompletion{}, ErrConflict
 		}
 	}
-	parts, err := r.ListS3MultipartParts(ctx, in.ID)
+	partRows, err := queries.ListMultipartParts(contextOrBackground(ctx), in.ID.String())
 	if err != nil {
 		return manageddata.S3MultipartCompletion{}, err
+	}
+	parts := make([]manageddata.S3MultipartPart, 0, len(partRows))
+	for _, row := range partRows {
+		parts = append(parts, manageddata.S3MultipartPart{MultipartUploadID: in.ID, PartNumber: row.PartNumber, SizeBytes: row.SizeBytes, SHA256: row.Sha256})
 	}
 	return manageddata.S3MultipartCompletion{Upload: u, Parts: parts, Execute: tag.RowsAffected() == 1}, nil
 }
 func (r *Repository) FinishS3MultipartCompletion(ctx context.Context, id manageddata.MultipartUploadID) (manageddata.S3MultipartUpload, error) {
 	return r.finishMultipart(ctx, id, "completing", "completed")
 }
-func (r *Repository) BeginS3MultipartAbort(ctx context.Context, in manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error) {
+func (r *Repository) BeginS3MultipartAbort(ctx context.Context, in manageddata.BeginS3MultipartAbortInput) (result manageddata.S3MultipartAbort, returnErr error) {
 	db, err := requireDB(r)
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, err
@@ -154,14 +260,49 @@ func (r *Repository) BeginS3MultipartAbort(ctx context.Context, in manageddata.B
 	if in.ID == "" || in.IdempotencyIdentity == "" {
 		return manageddata.S3MultipartAbort{}, ErrInvalid
 	}
-	tag, err := manageddb.New(db).BeginMultipartAbort(contextOrBackground(ctx), manageddb.BeginMultipartAbortParams{MultipartID: in.ID.String(), AbortIdentity: in.IdempotencyIdentity})
+	if in.AuditIntent == nil {
+		return r.beginS3MultipartAbortOn(ctx, db, in)
+	}
+	if r.audit == nil {
+		return manageddata.S3MultipartAbort{}, fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, err
 	}
-	u, err := r.S3MultipartUploadByID(ctx, in.ID)
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	abort, err := r.beginS3MultipartAbortOn(ctx, tx, in)
 	if err != nil {
 		return manageddata.S3MultipartAbort{}, err
 	}
+	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+		return manageddata.S3MultipartAbort{}, err
+	}
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.S3MultipartAbort{}, err
+		}
+	}
+	return abort, nil
+}
+
+func (r *Repository) beginS3MultipartAbortOn(ctx context.Context, db DBTX, in manageddata.BeginS3MultipartAbortInput) (manageddata.S3MultipartAbort, error) {
+	queries := manageddb.New(db)
+	tag, err := queries.BeginMultipartAbort(contextOrBackground(ctx), manageddb.BeginMultipartAbortParams{MultipartID: in.ID.String(), AbortIdentity: in.IdempotencyIdentity})
+	if err != nil {
+		return manageddata.S3MultipartAbort{}, err
+	}
+	row, err := queries.GetMultipartByID(contextOrBackground(ctx), in.ID.String())
+	if err != nil {
+		return manageddata.S3MultipartAbort{}, scanNotFound(err)
+	}
+	u := multipartFromRow(row)
 	if tag.RowsAffected() == 0 && (u.Status != "aborting" || u.AbortIdentity != in.IdempotencyIdentity) {
 		return manageddata.S3MultipartAbort{}, ErrConflict
 	}

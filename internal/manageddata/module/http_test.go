@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"strings"
 	"testing"
 	"time"
 )
@@ -11,6 +12,18 @@ import (
 func TestBuildRejectsMissingOwnedPersistence(t *testing.T) {
 	if _, err := Build(t.Context(), Config{}); err == nil {
 		t.Fatal("managed-data module accepted missing database")
+	}
+}
+
+func TestBuildProductionFailsClosedWithoutNativePostgres(t *testing.T) {
+	if _, err := Build(t.Context(), Config{Production: true}); err == nil || !strings.Contains(err.Error(), "native PostgreSQL") {
+		t.Fatalf("production build error = %v, want native PostgreSQL requirement", err)
+	}
+}
+
+func TestBuildProductionRejectsDatabaseSQLSQLite(t *testing.T) {
+	if _, err := Build(t.Context(), Config{Production: true, Database: new(sql.DB)}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
+		t.Fatalf("production SQLite build error = %v, want SQLite rejection", err)
 	}
 }
 

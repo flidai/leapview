@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
+	managedmaintenance "github.com/flidai/leapview/internal/manageddata/maintenance"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	jobspkg "github.com/flidai/leapview/pkg/jobs"
@@ -384,6 +386,327 @@ func TestPostgresReadonlyAndBackupGrantMatrix(t *testing.T) {
 	}
 	if _, err := bk.Exec(t.Context(), `DELETE FROM managed_data.collection`); err == nil {
 		t.Fatal("backup role unexpectedly has DELETE privilege")
+	}
+}
+
+func TestPostgresReachabilityStableSnapshotAndRollback(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	r := New(p)
+	source, err := NewReachabilitySource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_reachability", ProjectID: "project_reachability", ConnectionID: "connection_reachability", Name: "Reachability",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	if _, err := r.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+		ID: "upload_reachability", CollectionID: c.ID,
+		Manifest:       manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 3, SHA256: digest}}},
+		StorageBackend: "s3", StagingPrefix: "uploads/upload_reachability", ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(initial.SHA256s) != 1 || initial.SHA256s[0] != digest {
+		t.Fatalf("reachability snapshot = %#v", initial)
+	}
+	rollbackErr := errors.New("callback failed")
+	if err := source.WithStableSnapshot(t.Context(), initial.Generation, func(got managedmaintenance.ReachabilitySnapshot) error {
+		if got.Generation != initial.Generation || len(got.SHA256s) != 1 || got.SHA256s[0] != digest {
+			return errors.New("stable snapshot changed")
+		}
+		return rollbackErr
+	}); !errors.Is(err, rollbackErr) {
+		t.Fatalf("stable snapshot callback error = %v", err)
+	}
+	if after, err := source.Snapshot(t.Context()); err != nil || after.Generation != initial.Generation {
+		t.Fatalf("snapshot after rollback = %#v, %v", after, err)
+	}
+}
+
+func TestPostgresReachabilityStableSnapshotFencesLifecycleWrite(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	p.Config().MaxConns = 4
+	r := New(p)
+	source, err := NewReachabilitySource(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_reachability_fence", ProjectID: "project_reachability_fence", ConnectionID: "connection_reachability_fence", Name: "Reachability Fence",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+		ID: "upload_reachability_fence", CollectionID: c.ID,
+		Manifest:       manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 3, SHA256: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"}}},
+		StorageBackend: "s3", StagingPrefix: "uploads/upload_reachability_fence", ExpiresAt: time.Now().UTC().Add(time.Hour),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	initial, err := source.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered := make(chan struct{})
+	updateDone := make(chan error, 1)
+	if err := source.WithStableSnapshot(t.Context(), initial.Generation, func(managedmaintenance.ReachabilitySnapshot) error {
+		close(entered)
+		go func() {
+			updateDone <- r.UpdateUploadProgress(t.Context(), "upload_reachability_fence", manageddata.UploadProgress{UploadedFileCount: 1, UploadedSizeBytes: 3})
+		}()
+		select {
+		case err := <-updateDone:
+			t.Fatalf("lifecycle write completed while stable snapshot held: %v", err)
+		case <-time.After(100 * time.Millisecond):
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-updateDone:
+		if err != nil {
+			t.Fatalf("fenced lifecycle write: %v", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("lifecycle write remained blocked after stable snapshot commit")
+	}
+	select {
+	case <-entered:
+	default:
+		t.Fatal("stable snapshot callback did not run")
+	}
+}
+
+type transitionWorkflowProbe struct {
+	fail  bool
+	calls int
+}
+
+func (p *transitionWorkflowProbe) RecordWorkflow(ctx context.Context, tx Tx, _ jobspkg.WorkflowIntent) error {
+	p.calls++
+	if _, err := tx.Exec(ctx, `INSERT INTO managed_data.reconciliation_evidence(project_id,environment,object_key,observed_state,action,evidence) VALUES ('project_transition','prod','workflow-probe','observed','workflow','{"kind":"workflow"}')`); err != nil {
+		return err
+	}
+	if p.fail {
+		return errors.New("workflow probe failure")
+	}
+	return nil
+}
+
+type transitionAuditProbe struct {
+	fail  bool
+	calls int
+}
+
+func (p *transitionAuditProbe) RecordAuditIntent(ctx context.Context, tx Tx, _ access.AuditIntent) error {
+	p.calls++
+	if _, err := tx.Exec(ctx, `INSERT INTO managed_data.reconciliation_evidence(project_id,environment,object_key,observed_state,action,evidence) VALUES ('project_transition','prod','audit-probe','observed','audit','{"kind":"audit"}')`); err != nil {
+		return err
+	}
+	if p.fail {
+		return errors.New("audit probe failure")
+	}
+	return nil
+}
+
+func TestPostgresUploadTransitionAtomicReplayAndRollback(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	workflow := &transitionWorkflowProbe{}
+	audit := &transitionAuditProbe{}
+	r := NewWithOptions(p, Options{Workflow: workflow, Audit: audit})
+	c, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_transition", ProjectID: "project_transition", ConnectionID: "connection_transition", Name: "Transition",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newUpload := func(id string) manageddata.UploadSession {
+		t.Helper()
+		session, createErr := r.CreateUploadSession(t.Context(), manageddata.CreateUploadSessionInput{
+			ID: manageddata.UploadID(id), CollectionID: c.ID,
+			Manifest:       manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 1, SHA256: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"}}},
+			StorageBackend: "s3", StagingPrefix: "uploads/" + id, ExpiresAt: time.Now().UTC().Add(time.Hour),
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return session
+	}
+	intent := manageddata.UploadTransition{
+		Workflow:    jobspkg.WorkflowIntent{Event: jobspkg.EventInput{Key: "upload:transition:begin", ResourceKind: "upload", ResourceID: "upload_transition", EventType: "upload_session.finalizing", Data: []byte(`{"status":"finalizing"}`)}},
+		AuditIntent: &access.AuditIntent{EventID: "audit-transition", Source: "managed-data", Operation: "finalize", Action: "upload.finalize", ResourceKind: "upload", ResourceID: "upload_transition", Outcome: "accepted", MetadataJSON: `{"kind":"transition"}`},
+	}
+	session := newUpload("upload_transition")
+	finalizing, err := r.BeginUploadFinalizationTransition(t.Context(), session.ID, intent)
+	if err != nil || finalizing.Status != manageddata.UploadStatusCommitting {
+		t.Fatalf("atomic transition = %#v, %v", finalizing, err)
+	}
+	if workflow.calls != 1 || audit.calls != 1 {
+		t.Fatalf("side-effect calls workflow=%d audit=%d", workflow.calls, audit.calls)
+	}
+	var count int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM managed_data.reconciliation_evidence WHERE project_id='project_transition'`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("committed side effects count=%d err=%v", count, err)
+	}
+	// A replay of the committing transition is allowed and delegates
+	// idempotency to the workflow and audit authorities.
+	if replay, replayErr := r.BeginUploadFinalizationTransition(t.Context(), session.ID, intent); replayErr != nil || replay.Status != manageddata.UploadStatusCommitting {
+		t.Fatalf("transition replay = %#v, %v", replay, replayErr)
+	}
+	if workflow.calls != 2 || audit.calls != 2 {
+		t.Fatalf("replay side-effect calls workflow=%d audit=%d", workflow.calls, audit.calls)
+	}
+
+	failed := newUpload("upload_transition_failed")
+	workflow.fail = true
+	if _, err := r.BeginUploadFinalizationTransition(t.Context(), failed.ID, manageddata.UploadTransition{Workflow: jobspkg.WorkflowIntent{Event: jobspkg.EventInput{Key: "upload:transition:rollback", ResourceKind: "upload", ResourceID: failed.ID.String(), EventType: "upload_session.finalizing", Data: []byte(`{"status":"finalizing"}`)}}}); err == nil {
+		t.Fatal("workflow failure unexpectedly committed upload transition")
+	}
+	stored, err := r.UploadSessionByID(t.Context(), failed.ID)
+	if err != nil || stored.Status != manageddata.UploadStatusOpen {
+		t.Fatalf("rollback upload status=%s err=%v", stored.Status, err)
+	}
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM managed_data.reconciliation_evidence WHERE object_key='workflow-probe' AND project_id='project_transition'`).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("rolled-back side effect count=%d err=%v", count, err)
+	}
+}
+
+func TestPostgresAuditIntentMutationsAtomicReplayAndRollback(t *testing.T) {
+	p, _, _, _ := openManagedDataTestPool(t)
+	audit := &transitionAuditProbe{}
+	r := NewWithOptions(p, Options{Audit: audit})
+	c, err := r.CreateCollection(t.Context(), manageddata.CreateCollectionInput{
+		ID: "collection_audit_mutations", ProjectID: "project_transition", ConnectionID: "connection_audit_mutations", Name: "Audit Mutations",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := manageddata.Manifest{Files: []manageddata.File{{Path: "data.parquet", Size: 1, SHA256: "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd"}}}
+	auditIntent := func(id string) *access.AuditIntent {
+		return &access.AuditIntent{EventID: id, Source: "managed-data", Operation: "test", Action: "managed-data.test", ResourceKind: "upload", ResourceID: id, Outcome: "accepted", MetadataJSON: `{"kind":"test"}`}
+	}
+	input := manageddata.CreateUploadSessionInput{ID: "upload_audit_atomic", CollectionID: c.ID, Manifest: manifest, StorageBackend: "s3", StagingPrefix: "uploads/audit", ExpiresAt: time.Now().UTC().Add(time.Hour), AuditIntent: auditIntent("audit-upload")}
+	if _, err := r.CreateUploadSession(t.Context(), input); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateUploadSession(t.Context(), input); err != nil {
+		t.Fatalf("upload replay: %v", err)
+	}
+	if audit.calls != 2 {
+		t.Fatalf("upload audit calls=%d", audit.calls)
+	}
+	audit.fail = true
+	failed := input
+	failed.ID = "upload_audit_rollback"
+	failed.AuditIntent = auditIntent("audit-upload-rollback")
+	if _, err := r.CreateUploadSession(t.Context(), failed); err == nil {
+		t.Fatal("audit failure unexpectedly committed upload session")
+	}
+	var present bool
+	if err := p.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM managed_data.upload_session WHERE upload_id='upload_audit_rollback')`).Scan(&present); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("rolled-back upload session remained")
+	}
+	audit.fail = false
+	// Multipart create and initialize carry audit intents as well.
+	mpInput := manageddata.CreateS3MultipartUploadInput{ID: "multipart_audit_atomic", UploadSessionID: input.ID, LogicalPath: "data.parquet", SHA256: manifest.Files[0].SHA256, SizeBytes: 1, IdempotencyIdentity: "idem-audit", AuditIntent: auditIntent("audit-multipart-create")}
+	if _, err := r.CreateS3MultipartUpload(t.Context(), mpInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateS3MultipartUpload(t.Context(), mpInput); err != nil {
+		t.Fatalf("multipart create replay: %v", err)
+	}
+	if _, err := r.InitializeS3MultipartUpload(t.Context(), manageddata.InitializeS3MultipartUploadInput{ID: mpInput.ID, ObjectKey: "objects/data.parquet", ProviderUploadID: "provider-audit", AuditIntent: auditIntent("audit-multipart-init")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReserveS3MultipartPart(t.Context(), manageddata.S3MultipartPart{MultipartUploadID: mpInput.ID, PartNumber: 1, SizeBytes: 1, SHA256: manifest.Files[0].SHA256}); err != nil {
+		t.Fatal(err)
+	}
+	completionInput := manageddata.BeginS3MultipartCompletionInput{ID: mpInput.ID, IdempotencyIdentity: "complete-audit", RequestHash: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", AuditIntent: auditIntent("audit-multipart-complete")}
+	completion, err := r.BeginS3MultipartCompletion(t.Context(), completionInput)
+	if err != nil || !completion.Execute {
+		t.Fatalf("multipart completion audit: %#v %v", completion, err)
+	}
+	if replay, err := r.BeginS3MultipartCompletion(t.Context(), completionInput); err != nil || replay.Execute {
+		t.Fatalf("multipart completion replay: %#v %v", replay, err)
+	}
+	if _, err := r.FinishS3MultipartCompletion(t.Context(), mpInput.ID); err != nil {
+		t.Fatal(err)
+	}
+	mpAbort := mpInput
+	mpAbort.ID = "multipart_audit_abort"
+	mpAbort.IdempotencyIdentity = "idem-audit-abort"
+	if _, err := r.CreateS3MultipartUpload(t.Context(), mpAbort); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.InitializeS3MultipartUpload(t.Context(), manageddata.InitializeS3MultipartUploadInput{ID: mpAbort.ID, ObjectKey: "objects/abort.parquet", ProviderUploadID: "provider-abort"}); err != nil {
+		t.Fatal(err)
+	}
+	abortInput := manageddata.BeginS3MultipartAbortInput{ID: mpAbort.ID, IdempotencyIdentity: "abort-audit", AuditIntent: auditIntent("audit-multipart-abort")}
+	if abort, err := r.BeginS3MultipartAbort(t.Context(), abortInput); err != nil || !abort.Execute {
+		t.Fatalf("multipart abort audit: %#v %v", abort, err)
+	}
+	if replay, err := r.BeginS3MultipartAbort(t.Context(), abortInput); err != nil || replay.Execute {
+		t.Fatalf("multipart abort replay: %#v %v", replay, err)
+	}
+	if _, err := r.FinishS3MultipartAbort(t.Context(), mpAbort.ID); err != nil {
+		t.Fatal(err)
+	}
+	mpCompletionRollback := mpInput
+	mpCompletionRollback.ID = "multipart_audit_completion_rollback"
+	mpCompletionRollback.IdempotencyIdentity = "idem-audit-completion-rollback"
+	if _, err := r.CreateS3MultipartUpload(t.Context(), mpCompletionRollback); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.InitializeS3MultipartUpload(t.Context(), manageddata.InitializeS3MultipartUploadInput{ID: mpCompletionRollback.ID, ObjectKey: "objects/completion-rollback.parquet", ProviderUploadID: "provider-completion-rollback"}); err != nil {
+		t.Fatal(err)
+	}
+	mpAbortRollback := mpInput
+	mpAbortRollback.ID = "multipart_audit_abort_rollback"
+	mpAbortRollback.IdempotencyIdentity = "idem-audit-abort-rollback"
+	if _, err := r.CreateS3MultipartUpload(t.Context(), mpAbortRollback); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.InitializeS3MultipartUpload(t.Context(), manageddata.InitializeS3MultipartUploadInput{ID: mpAbortRollback.ID, ObjectKey: "objects/abort-rollback.parquet", ProviderUploadID: "provider-abort-rollback"}); err != nil {
+		t.Fatal(err)
+	}
+	audit.fail = true
+	if _, err := r.BeginS3MultipartCompletion(t.Context(), manageddata.BeginS3MultipartCompletionInput{ID: mpCompletionRollback.ID, IdempotencyIdentity: "complete-rollback", RequestHash: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", AuditIntent: auditIntent("audit-complete-rollback")}); err == nil {
+		t.Fatal("audit failure unexpectedly committed completion transition")
+	}
+	if status, err := r.S3MultipartUploadByID(t.Context(), mpCompletionRollback.ID); err != nil || status.Status != manageddata.S3MultipartStatusOpen {
+		t.Fatalf("completion rollback status=%s err=%v", status.Status, err)
+	}
+	if _, err := r.BeginS3MultipartAbort(t.Context(), manageddata.BeginS3MultipartAbortInput{ID: mpAbortRollback.ID, IdempotencyIdentity: "abort-rollback", AuditIntent: auditIntent("audit-abort-rollback")}); err == nil {
+		t.Fatal("audit failure unexpectedly committed abort transition")
+	}
+	if status, err := r.S3MultipartUploadByID(t.Context(), mpAbortRollback.ID); err != nil || status.Status != manageddata.S3MultipartStatusOpen {
+		t.Fatalf("abort rollback status=%s err=%v", status.Status, err)
+	}
+	failedMP := mpInput
+	failedMP.ID = "multipart_audit_rollback"
+	failedMP.IdempotencyIdentity = "idem-audit-rollback"
+	failedMP.AuditIntent = auditIntent("audit-multipart-rollback")
+	if _, err := r.CreateS3MultipartUpload(t.Context(), failedMP); err == nil {
+		t.Fatal("audit failure unexpectedly committed multipart upload")
+	}
+	if err := p.QueryRow(t.Context(), `SELECT EXISTS (SELECT 1 FROM managed_data.multipart_upload WHERE multipart_id='multipart_audit_rollback')`).Scan(&present); err != nil {
+		t.Fatal(err)
+	}
+	if present {
+		t.Fatal("rolled-back multipart upload remained")
 	}
 }
 

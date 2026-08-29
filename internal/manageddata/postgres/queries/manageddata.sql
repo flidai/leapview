@@ -178,6 +178,42 @@ FROM managed_data.revision
 WHERE collection_id = sqlc.arg(collection_id)
 ORDER BY sequence DESC;
 
+-- name: ListManagedDataReachabilitySources :many
+-- Keep this query deliberately limited to rows that can retain object bytes:
+-- ready revisions and non-terminal upload manifests.  The maintenance
+-- adapter validates and canonicalizes every manifest before deriving the
+-- generation and digest set.
+SELECT source_type, source_id, source_status, revision_digest, manifest,
+       file_count, size_bytes
+FROM (
+    SELECT 'revision'::text AS source_type,
+           r.revision_id AS source_id,
+           r.status AS source_status,
+           r.digest AS revision_digest,
+           r.manifest::text AS manifest,
+           r.file_count,
+           r.size_bytes
+      FROM managed_data.revision AS r
+     WHERE r.status = 'ready'
+    UNION ALL
+    SELECT 'upload'::text AS source_type,
+           u.upload_id AS source_id,
+           u.status AS source_status,
+           ''::text AS revision_digest,
+           u.manifest::text AS manifest,
+           u.expected_file_count AS file_count,
+           u.expected_size_bytes AS size_bytes
+      FROM managed_data.upload_session AS u
+     WHERE u.status IN ('open', 'committing')
+) AS sources
+ORDER BY source_type, source_id;
+
+-- name: ConfigureStableReachabilitySnapshot :exec
+SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY;
+
+-- name: LockStableReachabilitySnapshot :exec
+LOCK TABLE managed_data.upload_session, managed_data.revision IN SHARE MODE;
+
 -- name: GetUploadIDByRevision :one
 SELECT upload_id FROM managed_data.upload_session
 WHERE revision_id = sqlc.arg(revision_id) AND status = 'complete';

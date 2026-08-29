@@ -2,13 +2,12 @@ package module
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 
 	"github.com/flidai/leapview/internal/access"
 	manageddatagen "github.com/flidai/leapview/internal/manageddata/api/gen"
 	manageddatahttp "github.com/flidai/leapview/internal/manageddata/http"
+	"github.com/google/uuid"
 )
 
 var managedDataCommandOperationIDs = []string{
@@ -58,9 +57,12 @@ func buildManagedDataAuditIntentBuilder() (func(context.Context, manageddatahttp
 		if err != nil {
 			return nil, fmt.Errorf("managed-data operation %q privilege: %w", input.OperationID, err)
 		}
-		hash := sha256.Sum256([]byte(input.OperationID + "\x00" + input.TargetType + "\x00" + input.TargetID))
+		// Access PostgreSQL stores audit_id as UUID. UUID v5 (RFC 9562) gives
+		// us a deterministic retry identity while retaining the command target
+		// dimensions that previously formed the SHA-256 event identity.
+		eventID := uuid.NewSHA1(uuid.NameSpaceURL, []byte("managed-data\x00"+input.OperationID+"\x00"+input.TargetType+"\x00"+input.TargetID)).String()
 		return &access.AuditIntent{
-			EventID: "sha256:" + hex.EncodeToString(hash[:]), Source: contract.owner,
+			EventID: eventID, Source: contract.owner,
 			Operation: input.OperationID, PrincipalID: input.PrincipalID, Action: contract.action,
 			ResourceKind: input.TargetType, ResourceID: input.TargetID, Capability: capability,
 			Outcome: managedDataAuditOutcome(input.OperationID), RequestID: input.RequestID, CorrelationID: input.CorrelationID,

@@ -15,6 +15,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -46,13 +47,59 @@ type beginner interface {
 
 // Repository is safe to construct over a pgx pool, connection or caller-owned
 // transaction. WithTx is the preferred composition boundary for atomic work.
-type Repository struct{ db DBTX }
+// WorkflowRecorder and AuditIntentRecorder are narrow app-composition ports.
+// Their methods receive this capability's caller-owned pgx transaction and
+// must not commit or roll it back.
+type WorkflowRecorder interface {
+	RecordWorkflow(context.Context, Tx, jobspkg.WorkflowIntent) error
+}
+
+type AuditIntentRecorder interface {
+	RecordAuditIntent(context.Context, Tx, access.AuditIntent) error
+}
+
+type Options struct {
+	Workflow WorkflowRecorder
+	Audit    AuditIntentRecorder
+}
+
+type Repository struct {
+	db       DBTX
+	workflow WorkflowRecorder
+	audit    AuditIntentRecorder
+}
 
 var _ manageddata.Repository = (*Repository)(nil)
 
-func New(db DBTX) *Repository                  { return &Repository{db: db} }
-func NewRepository(db DBTX) *Repository        { return New(db) }
-func (r *Repository) WithTx(tx Tx) *Repository { return New(tx) }
+func New(db DBTX) *Repository           { return &Repository{db: db} }
+func NewRepository(db DBTX) *Repository { return New(db) }
+func NewWithOptions(db DBTX, options Options) *Repository {
+	return &Repository{db: db, workflow: options.Workflow, audit: options.Audit}
+}
+
+// TransitionCapabilitiesConfigured reports whether this repository can carry
+// workflow/event and Access audit side effects in the same native transaction
+// as upload lifecycle mutations.
+func (r *Repository) TransitionCapabilitiesConfigured() bool {
+	return r != nil && r.workflow != nil && r.audit != nil
+}
+func (r *Repository) WithTx(tx Tx) *Repository {
+	if r == nil {
+		return New(tx)
+	}
+	return &Repository{db: tx, workflow: r.workflow, audit: r.audit}
+}
+
+// DB exposes the already-configured native PostgreSQL handle to capability
+// adapters that need a caller-owned transaction (for example, the bounded
+// reachability maintenance source). It does not open connections or transfer
+// transaction ownership.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
 
 func contextOrBackground(ctx context.Context) context.Context {
 	if ctx == nil {
@@ -256,7 +303,7 @@ func (r *Repository) ArchiveCollection(ctx context.Context, id projectgraph.Reso
 	return nil
 }
 
-func (r *Repository) CreateUploadSession(ctx context.Context, in manageddata.CreateUploadSessionInput) (manageddata.UploadSession, error) {
+func (r *Repository) CreateUploadSession(ctx context.Context, in manageddata.CreateUploadSessionInput) (result manageddata.UploadSession, returnErr error) {
 	db, err := requireDB(r)
 	if err != nil {
 		return manageddata.UploadSession{}, err
@@ -291,21 +338,60 @@ func (r *Repository) CreateUploadSession(ctx context.Context, in manageddata.Cre
 	if baseRevisionID != "" {
 		baseRevisionPtr = &baseRevisionID
 	}
-	err = manageddb.New(db).InsertUploadSession(contextOrBackground(ctx), manageddb.InsertUploadSessionParams{UploadID: id, CollectionID: in.CollectionID.String(), BaseRevisionID: baseRevisionPtr, Manifest: b, ExpectedFileCount: count, ExpectedSizeBytes: size, StorageBackend: strings.TrimSpace(in.StorageBackend), StagingPrefix: in.StagingPrefix, CreatedBy: strings.TrimSpace(in.CreatedBy), ExpiresAt: pgtype.Timestamptz{Time: in.ExpiresAt.UTC(), Valid: true}, RequestDigest: d, ManifestDigest: manifestDigest})
+	if in.AuditIntent == nil {
+		return r.createUploadSessionOn(ctx, db, in, id, baseRevisionPtr, b, count, size, d, manifestDigest)
+	}
+	if r.audit == nil {
+		return manageddata.UploadSession{}, fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	s, err := r.UploadSessionByID(ctx, manageddata.UploadID(id))
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	s, err := r.createUploadSessionOn(ctx, tx, in, id, baseRevisionPtr, b, count, size, d, manifestDigest)
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	var storedDigest string
-	if storedDigest, err = manageddb.New(db).GetUploadRequestDigest(contextOrBackground(ctx), id); err != nil {
+	if err := r.audit.RecordAuditIntent(contextOrBackground(ctx), tx, *in.AuditIntent); err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.UploadSession{}, err
+		}
+	}
+	return s, nil
+}
+
+// createUploadSessionOn performs the SQL and exact-replay validation on the
+// supplied handle. Keeping reads on the same handle is required when the
+// caller owns a transaction so the audit intent and row mutation commit (or
+// roll back) atomically.
+func (r *Repository) createUploadSessionOn(ctx context.Context, db DBTX, in manageddata.CreateUploadSessionInput, id string, baseRevisionPtr *string, b []byte, count, size int64, requestDigest, manifestDigest string) (manageddata.UploadSession, error) {
+	queries := manageddb.New(db)
+	err := queries.InsertUploadSession(contextOrBackground(ctx), manageddb.InsertUploadSessionParams{UploadID: id, CollectionID: in.CollectionID.String(), BaseRevisionID: baseRevisionPtr, Manifest: b, ExpectedFileCount: count, ExpectedSizeBytes: size, StorageBackend: strings.TrimSpace(in.StorageBackend), StagingPrefix: in.StagingPrefix, CreatedBy: strings.TrimSpace(in.CreatedBy), ExpiresAt: pgtype.Timestamptz{Time: in.ExpiresAt.UTC(), Valid: true}, RequestDigest: requestDigest, ManifestDigest: manifestDigest})
+	if err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	row, err := queries.GetUploadSessionByID(contextOrBackground(ctx), id)
+	if err != nil {
+		return manageddata.UploadSession{}, scanNotFound(err)
+	}
+	s := uploadFromValues(row.UploadID, row.CollectionID, row.BaseRevisionID, row.RevisionID, row.Status, row.Manifest, row.StorageBackend, row.StagingPrefix, row.CreatedBy, row.ExpectedFileCount, row.ExpectedSizeBytes, row.UploadedFileCount, row.UploadedSizeBytes, row.CreatedAt, row.UpdatedAt, row.ExpiresAt, row.CompletedAt, row.Error)
+	storedDigest, err := queries.GetUploadRequestDigest(contextOrBackground(ctx), id)
+	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	storedManifest, storedErr := parseManifest([]byte(s.ManifestJSON))
 	storedJSON, _, _, canonicalErr := canonicalManifest(storedManifest)
-	if storedErr != nil || canonicalErr != nil || s.CollectionID != in.CollectionID || !bytes.Equal(storedJSON, b) || s.ExpectedFileCount != count || s.ExpectedSizeBytes != size || (suppliedID && storedDigest != d) {
+	if storedErr != nil || canonicalErr != nil || s.CollectionID != in.CollectionID || !bytes.Equal(storedJSON, b) || s.ExpectedFileCount != count || s.ExpectedSizeBytes != size || storedDigest != requestDigest {
 		return manageddata.UploadSession{}, ErrConflict
 	}
 	return s, nil
@@ -396,19 +482,50 @@ func (r *Repository) UpdateUploadProgress(ctx context.Context, id manageddata.Up
 func (r *Repository) BeginUploadFinalization(ctx context.Context, id manageddata.UploadID, _ jobspkg.WorkflowIntent) (manageddata.UploadSession, error) {
 	return r.BeginUploadFinalizationTransition(ctx, id, manageddata.UploadTransition{})
 }
-func (r *Repository) BeginUploadFinalizationTransition(ctx context.Context, id manageddata.UploadID, _ manageddata.UploadTransition) (manageddata.UploadSession, error) {
-	db, err := requireDB(r)
+
+func (r *Repository) BeginUploadFinalizationTransition(ctx context.Context, id manageddata.UploadID, transition manageddata.UploadTransition) (result manageddata.UploadSession, returnErr error) {
+	if err := r.requireTransitionPorts(transition); err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	tx, owned, err := r.beginTransition(ctx)
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
-	tag, err := manageddb.New(db).BeginUploadFinalization(contextOrBackground(ctx), id.String())
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	queries := manageddb.New(tx)
+	tag, err := queries.BeginUploadFinalization(contextOrBackground(ctx), id.String())
 	if err != nil {
 		return manageddata.UploadSession{}, err
 	}
 	if tag.RowsAffected() != 1 {
-		return manageddata.UploadSession{}, ErrConflict
+		row, lookupErr := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+		if lookupErr != nil {
+			return manageddata.UploadSession{}, scanNotFound(lookupErr)
+		}
+		if row.Status != string(manageddata.UploadStatusCommitting) {
+			return manageddata.UploadSession{}, ErrConflict
+		}
 	}
-	return r.UploadSessionByID(ctx, id)
+	if err := r.recordTransition(contextOrBackground(ctx), tx, transition); err != nil {
+		return manageddata.UploadSession{}, err
+	}
+	row, err := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+	if err != nil {
+		return manageddata.UploadSession{}, scanNotFound(err)
+	}
+	result = uploadFromValues(row.UploadID, row.CollectionID, row.BaseRevisionID, row.RevisionID, row.Status, row.Manifest, row.StorageBackend, row.StagingPrefix, row.CreatedBy, row.ExpectedFileCount, row.ExpectedSizeBytes, row.UploadedFileCount, row.UploadedSizeBytes, row.CreatedAt, row.UpdatedAt, row.ExpiresAt, row.CompletedAt, row.Error)
+	if owned {
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return manageddata.UploadSession{}, err
+		}
+	}
+	return result, nil
 }
 func (r *Repository) FailUploadFinalization(ctx context.Context, id manageddata.UploadID, msg string) (manageddata.UploadSession, error) {
 	if msg == "" || len(msg) > maxErrorBytes {
@@ -430,8 +547,86 @@ func (r *Repository) FailUploadFinalization(ctx context.Context, id manageddata.
 func (r *Repository) AbortUploadSession(ctx context.Context, id manageddata.UploadID) error {
 	return r.abortUploadSession(ctx, id)
 }
-func (r *Repository) AbortUploadSessionTransition(ctx context.Context, id manageddata.UploadID, _ manageddata.UploadTransition) error {
-	return r.abortUploadSession(ctx, id)
+func (r *Repository) AbortUploadSessionTransition(ctx context.Context, id manageddata.UploadID, transition manageddata.UploadTransition) (returnErr error) {
+	if err := r.requireTransitionPorts(transition); err != nil {
+		return err
+	}
+	tx, owned, err := r.beginTransition(ctx)
+	if err != nil {
+		return err
+	}
+	if owned {
+		defer func() {
+			if returnErr != nil {
+				_ = tx.Rollback(context.Background())
+			}
+		}()
+	}
+	queries := manageddb.New(tx)
+	tag, err := queries.AbortUploadSession(contextOrBackground(ctx), id.String())
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() != 1 {
+		row, lookupErr := queries.GetUploadSessionByID(contextOrBackground(ctx), id.String())
+		if lookupErr != nil {
+			return scanNotFound(lookupErr)
+		}
+		if row.Status != string(manageddata.UploadStatusAborted) {
+			return ErrConflict
+		}
+	}
+	if err := r.recordTransition(contextOrBackground(ctx), tx, transition); err != nil {
+		return err
+	}
+	if owned {
+		returnErr = tx.Commit(contextOrBackground(ctx))
+		return returnErr
+	}
+	return nil
+}
+
+func (r *Repository) requireTransitionPorts(transition manageddata.UploadTransition) error {
+	if manageddata.WorkflowIntentPresent(transition.Workflow) && r.workflow == nil {
+		return fmt.Errorf("%w: managed-data PostgreSQL workflow recorder is required", ErrInvalid)
+	}
+	if transition.AuditIntent != nil && r.audit == nil {
+		return fmt.Errorf("%w: managed-data PostgreSQL audit recorder is required", ErrInvalid)
+	}
+	return nil
+}
+
+func (r *Repository) recordTransition(ctx context.Context, tx Tx, transition manageddata.UploadTransition) error {
+	if manageddata.WorkflowIntentPresent(transition.Workflow) {
+		if err := r.workflow.RecordWorkflow(ctx, tx, transition.Workflow); err != nil {
+			return err
+		}
+	}
+	if transition.AuditIntent != nil {
+		if err := r.audit.RecordAuditIntent(ctx, tx, *transition.AuditIntent); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (r *Repository) beginTransition(ctx context.Context) (Tx, bool, error) {
+	db, err := requireDB(r)
+	if err != nil {
+		return nil, false, err
+	}
+	if tx, ok := db.(Tx); ok {
+		return tx, false, nil
+	}
+	b, ok := db.(beginner)
+	if !ok {
+		return nil, false, fmt.Errorf("%w: PostgreSQL transition requires a transaction-capable database", ErrInvalid)
+	}
+	tx, err := b.Begin(contextOrBackground(ctx))
+	if err != nil {
+		return nil, false, err
+	}
+	return tx, true, nil
 }
 func (r *Repository) abortUploadSession(ctx context.Context, id manageddata.UploadID) error {
 	db, err := requireDB(r)
@@ -678,6 +873,14 @@ func (r *Repository) EnvironmentPointer(ctx context.Context, c projectgraph.Reso
 	}
 	p := manageddata.EnvironmentPointer{CollectionID: projectgraph.ResourceID(row.CollectionID), Environment: manageddata.Environment(row.Environment), RevisionID: manageddata.RevisionID(row.RevisionID), RevisionDigest: row.RevisionDigest, DeploymentID: row.DeploymentID, Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: formatTime(row.UpdatedAt.Time)}
 	return p, nil
+}
+
+// ActiveEnvironmentPointer returns the durable environment pointer used by
+// the managed-data API. Production serving additionally validates immutable
+// generation bindings through the resolver; keeping this method on the
+// native repository preserves the capability-owned API adapter contract.
+func (r *Repository) ActiveEnvironmentPointer(ctx context.Context, c projectgraph.ResourceID, e manageddata.Environment) (manageddata.EnvironmentPointer, error) {
+	return r.EnvironmentPointer(ctx, c, e)
 }
 func (r *Repository) InstallEnvironmentPointerTx(ctx context.Context, tx Tx, p manageddata.EnvironmentPointer) error {
 	if tx == nil || !p.CollectionID.Valid() || p.RevisionID == "" || p.DeploymentID == "" || p.Generation < 1 {

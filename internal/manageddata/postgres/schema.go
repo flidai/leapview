@@ -15,7 +15,16 @@ type DBTX interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
-type Tx = DBTX
+
+// Tx is the strict native transaction surface accepted by managed-data
+// mutation side-effect ports. Commit and rollback are included in the shape
+// so a pool or connection cannot be passed where one atomic boundary is
+// required; adapters never invoke either method themselves.
+type Tx interface {
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 
 //go:embed schema.sql
 var schemaFiles embed.FS
