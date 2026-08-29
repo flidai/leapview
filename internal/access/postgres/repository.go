@@ -8,6 +8,7 @@ package postgres
 
 import (
 	"context"
+	_ "embed"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -19,6 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
+//go:embed schema.sql
+var schemaSQL string
+
 // Tx is the native pgx transaction surface required by RecordAuditEvent.
 // pgx.Tx and pgxpool.Tx satisfy it.  Commit and Rollback are deliberately not
 // part of this interface: ownership remains with the source capability.
@@ -28,11 +32,65 @@ type Tx interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Repository is a stateless PostgreSQL audit capability.
-type Repository struct{}
+// DBTX is the native pgx surface accepted by access methods. It is deliberately
+// small so a pool, connection, or caller-owned transaction can be supplied.
+type DBTX interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
 
-// New returns a direct immutable audit repository.
-func New() *Repository { return &Repository{} }
+type beginner interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
+// Repository is the stateful access authority. It always carries a native
+// PostgreSQL connection and an explicitly configured fingerprint key.
+type Repository struct {
+	db             DBTX
+	fingerprintKey []byte
+}
+
+// AuditRepository is the stateless transaction-bound audit appender.
+type AuditRepository struct{}
+
+// New returns the direct immutable audit appender. Source mutations must pass
+// their caller-owned pgx transaction to RecordAuditEvent.
+func New() *AuditRepository { return &AuditRepository{} }
+
+// FingerprintConfig supplies the HMAC key used to index bearer secrets. A
+// missing or short key is rejected; no environment or development fallback is
+// consulted.
+type FingerprintConfig struct{ Key []byte }
+
+// NewAccess constructs the PostgreSQL access authority. Transactions are
+// required for multi-write operations and are obtained from the supplied
+// connection pool/connection.
+func NewAccess(db DBTX, cfg FingerprintConfig) (*Repository, error) {
+	if db == nil {
+		return nil, errors.New("access PostgreSQL database is required")
+	}
+	if len(cfg.Key) < 32 {
+		return nil, errors.New("access fingerprint key must be at least 32 bytes")
+	}
+	return &Repository{db: db, fingerprintKey: append([]byte(nil), cfg.Key...)}, nil
+}
+
+// ApplySchema installs the clean access baseline in a caller-owned
+// PostgreSQL transaction.
+func ApplySchema(ctx context.Context, tx Tx) error {
+	if tx == nil {
+		return errors.New("access PostgreSQL transaction is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := tx.Exec(ctx, schemaSQL)
+	return err
+}
+
+// SchemaSQL returns the standalone access schema for migration runners.
+func SchemaSQL() string { return schemaSQL }
 
 // Event is the persisted audit row. IntentDigest is the digest of the
 // canonical access.AuditIntent and binds every immutable identity/payload
@@ -71,7 +129,7 @@ const (
 // payload returns access.ErrAuditIntentConflict.
 //
 // The method never begins, commits, or rolls back tx.
-func (r *Repository) RecordAuditEvent(ctx context.Context, tx Tx, intent access.AuditIntent) (Event, error) {
+func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent access.AuditIntent) (Event, error) {
 	if tx == nil {
 		return Event{}, errors.New("audit PostgreSQL transaction is nil")
 	}
@@ -185,7 +243,7 @@ const auditEventColumns = `audit_id::text, COALESCE(scope_id, ''),
 // GetAuditEvent reads one immutable audit row by retry identity.  The query is
 // bounded to one row and accepts the same native pgx surface as the append
 // method; a pool, connection, or caller-owned transaction may be supplied.
-func (r *Repository) GetAuditEvent(ctx context.Context, db Tx, auditID string) (Event, error) {
+func (r *AuditRepository) GetAuditEvent(ctx context.Context, db Tx, auditID string) (Event, error) {
 	if db == nil {
 		return Event{}, errors.New("audit PostgreSQL connection is nil")
 	}
@@ -206,7 +264,7 @@ func (r *Repository) GetAuditEvent(ctx context.Context, db Tx, auditID string) (
 // ListAuditEvents returns at most limit rows in reverse occurrence order.
 // This is a deliberately bounded read/export surface; callers cannot turn it
 // into an unbounded audit dump.
-func (r *Repository) ListAuditEvents(ctx context.Context, db Tx, limit int) ([]Event, error) {
+func (r *AuditRepository) ListAuditEvents(ctx context.Context, db Tx, limit int) ([]Event, error) {
 	if db == nil {
 		return nil, errors.New("audit PostgreSQL connection is nil")
 	}
