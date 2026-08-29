@@ -182,7 +182,7 @@ func (r *SQLRunRepository) CheckInvocationAdmission(ctx context.Context, identit
 	if err != nil {
 		return err
 	}
-	if active != 0 {
+	if active {
 		return refreshrun.ErrInvocationConflict
 	}
 	return nil
@@ -211,7 +211,7 @@ func (r *SQLRunRepository) CheckScheduledInvocationAdmission(ctx context.Context
 	if err != nil {
 		return err
 	}
-	if active == 0 {
+	if !active {
 		return tx.Commit()
 	}
 	affected, err := q.SkipRefreshPipelineOccurrence(ctx, platformdb.SkipRefreshPipelineOccurrenceParams{
@@ -274,7 +274,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		if activeExternal != 0 {
+		if activeExternal {
 			return refreshrun.RunRecord{}, refreshrun.ErrInvocationConflict
 		}
 	}
@@ -286,7 +286,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		if activeExternal != 0 {
+		if activeExternal {
 			if occurrence == nil {
 				return refreshrun.RunRecord{}, refreshrun.ErrAdmissionDeniedExternalActive
 			}
@@ -318,7 +318,7 @@ func (r *SQLRunRepository) createRun(ctx context.Context, input refreshrun.RunIn
 		if err != nil {
 			return refreshrun.RunRecord{}, err
 		}
-		admissionSkipped = active != 0
+		admissionSkipped = active
 	}
 	if rootPipeline && source == refreshrun.TriggerSchedule && policy == refreshschedule.ConcurrencyReplace {
 		target := platformdb.SupersedeRefreshTargetJobsParams{
@@ -677,7 +677,7 @@ func (r *SQLRunRepository) RunMayPublish(ctx context.Context, job refreshrun.Job
 		RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID, Environment: job.Identity.Environment, TargetRevision: job.TargetRevision,
 		LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
 	})
-	return allowed == 1, err
+	return allowed, err
 }
 
 func (r *SQLRunRepository) JobQueueStats(ctx context.Context, scope refreshrun.ReadScope) (refreshrun.JobQueueStats, error) {

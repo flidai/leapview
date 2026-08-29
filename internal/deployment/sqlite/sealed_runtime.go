@@ -37,7 +37,7 @@ func (r *Repository) HasIndeterminateDeliveryPublication(ctx context.Context, ta
 		return false, fmt.Errorf("delivery repository and target are required")
 	}
 	exists, err := deploydb.New(r.db).HasIndeterminateDeliveryPublication(ctx, targetID)
-	return exists != 0, err
+	return exists, err
 }
 
 // ServingStateIDForArtifact resolves the immutable compiled serving-state

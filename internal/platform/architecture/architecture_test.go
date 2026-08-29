@@ -2674,7 +2674,7 @@ func TestBuildSourceGenerationContract(t *testing.T) {
 	}
 	text := string(body)
 	commands := []string{
-		"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+		"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		"go run ./internal/app/tools/configgen",
 		"go run ./internal/app/tools/layoutcontractgen",
 		"go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target leapview-v1",
@@ -3861,7 +3861,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 	files := map[string][]string{
 		"Taskfile.yml": {
 			"db:generate:",
-			"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 			"- task: db:generate",
 		},
 		".gitignore": {
@@ -3869,6 +3869,7 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/platform/db/models.go",
 			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
+			"internal/**/internal/db/",
 			"internal/platform/**/sqlite/*db/",
 		},
 		".dockerignore": {
@@ -3876,10 +3877,11 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"internal/platform/db/models.go",
 			"internal/platform/db/*.sql.go",
 			"internal/*/internal/db/",
+			"internal/**/internal/db/",
 			"internal/platform/**/sqlite/*db/",
 		},
 		filepath.Join("scripts", "generate_build_sources.sh"): {
-			"go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate",
+			"GOTOOLCHAIN=go1.26.7 go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1 generate --no-remote",
 		},
 		"Dockerfile": {
 			"./scripts/generate_build_sources.sh",
@@ -3908,6 +3910,39 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 		for _, fragment := range fragments {
 			if !strings.Contains(string(body), fragment) {
 				t.Errorf("%s missing sqlc generation contract fragment %q", name, fragment)
+			}
+		}
+	}
+}
+
+func TestPostgreSQLSQLCVerificationIsOfflineAndDatabaseBacked(t *testing.T) {
+	root := repoRoot(t)
+	files := map[string][]string{
+		"Taskfile.yml": {
+			"db:verify:",
+			"vet --no-remote",
+			"diff --no-remote",
+			"db:prepare:",
+			"LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true",
+			"TestSQLCVetPreparesAgainstBaselinePostgreSQL18",
+			"- task: db:prepare",
+		},
+		filepath.Join("internal", "app", "postgresbaseline", "sqlc_prepare_test.go"): {
+			"postgresbaseline.Apply(ctx, tx)",
+			"sqlc/db-prepare",
+			"LEAPVIEW_SQLC_PREPARE_DATABASE_URL",
+			"github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1",
+			"PostgreSQL18",
+		},
+	}
+	for name, fragments := range files {
+		body, err := os.ReadFile(filepath.Join(root, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		for _, fragment := range fragments {
+			if !strings.Contains(string(body), fragment) {
+				t.Errorf("%s missing sqlc verification contract fragment %q", name, fragment)
 			}
 		}
 	}

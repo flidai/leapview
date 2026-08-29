@@ -84,7 +84,7 @@ func (u *PublicationUnitOfWork) CompleteCanonicalRefresh(ctx context.Context, jo
 	if expectedRuns < 1 || expectedJobs < 1 {
 		return refreshrun.ErrLeaseLost
 	}
-	if active == 1 {
+	if active {
 		completedRuns, err := q.CompleteRefreshPublicationRun(ctx, materializedb.CompleteRefreshPublicationRunParams{
 			RunID: job.RunID, ProjectID: job.Identity.ProjectID.String(), GenerationID: job.Identity.GenerationID,
 			Environment: job.Identity.Environment, TargetRevision: job.TargetRevision,
@@ -260,7 +260,7 @@ func (u *PublicationUnitOfWork) Publish(ctx context.Context, identity projectgra
 	if err != nil {
 		return err
 	}
-	if active != 1 {
+	if !active {
 		return refreshrun.ErrLeaseLost
 	}
 	expectedRuns, err := q.CountRefreshPublicationTreeRuns(ctx, materializedb.CountRefreshPublicationTreeRunsParams{

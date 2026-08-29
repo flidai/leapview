@@ -82,11 +82,19 @@ analyzer-incompatible statements. Mark each exception adjacent to the call
 with `sqlc-exception:<class>` or record it in a maintained capability
 inventory, with its rationale and verification. Generation is local and
 deterministic; sqlc Cloud is not used. Run `task db:generate` while iterating;
-the PostgreSQL CI gate defined by ADR-0016 must audit exception coverage,
-check generated diffs, and run database-backed prepare/vet and PostgreSQL 18
-integration checks as appropriate.
+`task db:check` runs pinned generation twice, rejects nondeterministic or tracked
+generated output, runs offline `sqlc vet` and `sqlc diff`, compiles generated PostgreSQL
+consumers, and audits raw SQL with the AST-based `sqlcaudit` tool. It then
+applies the clean product baseline to a disposable PostgreSQL 18 database and
+runs the `sqlc/db-prepare` rule for every PostgreSQL query package. The derived
+prepare config receives its short-lived database URI through an environment
+variable; credentials and sqlc Cloud are not used. The audit enforces zero
+static handwritten PostgreSQL SQL: every static `Exec`, `Query`, or `QueryRow`
+call must be a generated sqlc method. Dynamic SQL is allowed only for a
+narrowly justified ADR-0016 exception, marked adjacent to the call or recorded
+in an exact capability inventory with rationale and verification.
 
-Use `task docs:check` and `task config:check` to validate generated output. `task generated:check` detects drift in the public snapshots. CI generates build-only inputs once, verifies deterministic output, and shares them with downstream jobs.
+Use `task docs:check` and `task config:check` to validate generated output. `task generated:check` detects drift in the public snapshots. CI verifies deterministic build-only inputs and shares them with downstream jobs.
 
 ## Browser assets
 

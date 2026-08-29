@@ -1,0 +1,10 @@
+# ADR-0016 exception inventory. Keep entries exact; static SQL is never allowlisted.
+entries:
+  - file: internal/access/postgres/repository.go
+    line: 102
+    function: ApplySchema
+    method: Exec
+    fingerprint: sha256:a43b73aebae40e2c4f30927ea8e597e2f7973fd6f2f3387db7a82feff8ada6bf
+    class: schema-ddl
+    rationale: Capability-owned access schema DDL is embedded and applied on the caller-owned migration transaction.
+    verification: Access PostgreSQL schema tests cover migration application and rollback boundaries.

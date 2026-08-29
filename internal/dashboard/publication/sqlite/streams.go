@@ -147,7 +147,7 @@ func (r *StreamRegistry) Active(publicationID, streamID string, version publicat
 		PublicID: version.PublicID, ServingStateID: version.ServingStateID,
 		Now: time.Now().UTC().Format(time.RFC3339Nano),
 	})
-	return err == nil && exists == 1
+	return err == nil && exists
 }
 
 func (r *StreamRegistry) Reconcile(ctx context.Context, active map[string]publication.StreamVersion) {

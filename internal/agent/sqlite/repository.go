@@ -1001,7 +1001,7 @@ func (r *Repository) agentRunExists(ctx context.Context, principalID, runID stri
 	exists, err := r.q.AgentRunExistsForPrincipal(ctx, platformdb.AgentRunExistsForPrincipalParams{
 		RunID: runID, PrincipalID: principalID,
 	})
-	return exists != 0, err
+	return exists, err
 }
 
 func mapConversation(row platformdb.AgentConversation) agent.Conversation {

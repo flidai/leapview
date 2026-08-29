@@ -457,7 +457,7 @@ func refreshPublicationFenceActive(ctx context.Context, tx *sql.Tx, publication 
 	if err != nil {
 		return err
 	}
-	if active != 1 {
+	if !active {
 		return fmt.Errorf("%w: refresh publication authority was revoked", deployment.ErrDeliveryStale)
 	}
 	return nil

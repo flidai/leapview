@@ -24,7 +24,7 @@ but must never replace or generate it.
 `queries/scim_ops.sql`, `queries/snapshot_ops.sql`, and `queries/audit_ops.sql`
 contain the stable OAuth, principal, core access, extended access, device
 authorization, authoring credential, instance-clock, SCIM, snapshot, and audit
-leaves. `internal/db/*.go` is generated with sqlc v1.30.0 and
+leaves. `internal/db/*.go` is generated with sqlc v1.31.1 and
 `sql_package: pgx/v5`. Repository Go files retain transaction ownership,
 fosite and authoring replay/error mapping, secret handling, audit orchestration,
 state-machine checks, and domain conversion around those generated methods.

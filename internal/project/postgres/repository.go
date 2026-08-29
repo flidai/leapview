@@ -90,10 +90,12 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL, functions,
-	// triggers, and grants consumed by migration runners. It is intentionally
-	// kept as caller-owned schema execution rather than generated queries so
-	// migration transaction boundaries remain explicit.
+	// schema.sql is the capability-owned DDL, functions, triggers, and grants
+	// consumed by migration runners. It is intentionally kept as caller-owned
+	// schema execution rather than generated queries so migration transaction
+	// boundaries remain explicit.
+	// sqlc-exception: schema-ddl. Caller-owned schema execution is required for
+	// migration transaction boundaries and is not a generated query leaf.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
