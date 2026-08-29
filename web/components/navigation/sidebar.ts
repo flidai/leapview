@@ -12,11 +12,9 @@ import {
 	History,
 	Layers,
   LayoutDashboard,
-  Menu,
   MessagesSquare,
 	Monitor,
-	PanelLeftClose,
-	PanelLeftOpen,
+	PanelLeft,
 	Plus,
 	Plug,
 	Search,
@@ -151,7 +149,10 @@ const SIDEBAR_MIN_WIDTH = 160
 const SIDEBAR_MAX_WIDTH = 384
 const SIDEBAR_RESIZE_STEP = 8
 const SIDEBAR_DEFAULT_WIDTH = 248
-const ADMIN_SIDEBAR_DEFAULT_WIDTH = 192
+const SIDEBAR_WIDTH_STORAGE_KEY = 'leapview-sidebar-width'
+const LEGACY_ADMIN_SIDEBAR_WIDTH_STORAGE_KEY = 'leapview-admin-sidebar-width'
+const SIDEBAR_PEEK_NAVIGATION_STORAGE_KEY = 'leapview-sidebar-peek-navigation'
+const SIDEBAR_PEEK_NAVIGATION_TTL_MS = 5_000
 
 const configConverter = {
   fromAttribute(value: string | null): SidebarConfig {
@@ -185,6 +186,7 @@ class LeapViewSidebar extends LitElement {
   @property({ attribute: 'config', converter: configConverter }) config: SidebarConfig = defaultConfig
   @property({ attribute: 'status', converter: statusConverter }) status: SidebarStatus = {}
   @state() private collapsed = storedCollapsed()
+  @state() private peeking = false
   @state() private mobileOpen = false
   @state() private searchQuery = ''
   @state() private liveUserAvatarUrl: string | undefined
@@ -212,11 +214,9 @@ class LeapViewSidebar extends LitElement {
     }
 
     :host([data-collapsed]) {
-      --lv-sidebar-width: var(--lv-sidebar-width-collapsed);
-    }
-
-    :host([data-admin]) {
-      --lv-sidebar-width-default: var(--lv-admin-sidebar-width-expanded);
+      --lv-sidebar-width: calc(var(--base-size-28) + (var(--base-size-8) * 2));
+      z-index: var(--z-index-sidebar);
+      overflow: visible;
     }
 
     :host([data-resizing]),
@@ -255,6 +255,40 @@ class LeapViewSidebar extends LitElement {
       grid-template-rows: auto minmax(0, 1fr) auto;
       background: var(--lv-sidebar-bg);
       transition: width var(--motion-transition-stateChange);
+    }
+
+    .sidebar-content {
+      display: contents;
+    }
+
+    .collapsed-chrome {
+      display: none;
+    }
+
+    .collapsed-trigger {
+      display: grid;
+      width: var(--base-size-28);
+      height: var(--base-size-28);
+      place-items: center;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      background: transparent;
+      box-shadow: none;
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      padding: 0;
+      transition:
+        background-color var(--motion-transition-stateChange),
+        color var(--motion-transition-stateChange),
+        opacity var(--motion-transition-stateChange);
+    }
+
+    .collapsed-trigger:hover,
+    .collapsed-trigger:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
     }
 
     .resize-handle {
@@ -310,25 +344,30 @@ class LeapViewSidebar extends LitElement {
 
 		.area-switcher {
 			display: grid;
-			grid-template-columns: repeat(2, minmax(0, 1fr));
-			gap: var(--base-size-2);
-			border: var(--lv-border-muted);
+			grid-template-columns: repeat(2, 28px);
+			gap: 0;
+			border: 0;
 			border-radius: var(--lv-radius-default);
 			background: var(--lv-bg-panel-muted, var(--control-bgColor-hover));
-			padding: var(--base-size-2);
+			padding: 1px;
+    }
+
+    .brand-row > .area-switcher {
+      flex: 0 0 auto;
+      margin-left: auto;
     }
 
     .area-item {
+      box-sizing: border-box;
       display: grid;
-      min-width: 0;
-      min-height: var(--control-small-size);
-      grid-template-columns: calc(var(--control-xsmall-size) + var(--base-size-2)) minmax(0, 1fr);
+      width: 28px;
+      height: 28px;
+      grid-template-columns: 1fr;
       align-items: center;
-      justify-content: center;
-      gap: var(--base-size-4);
+      justify-items: center;
       border-radius: calc(var(--lv-radius-default) - var(--base-size-2));
       color: var(--lv-fg-muted);
-      padding: 0 var(--base-size-6);
+      padding: 0;
       text-decoration: none;
       font: var(--lv-type-body-compact);
       transition:
@@ -339,21 +378,27 @@ class LeapViewSidebar extends LitElement {
 
     .area-item:hover,
     .area-item:focus-visible {
-      background: var(--control-bgColor-hover);
+      background: transparent;
       color: var(--lv-fg-default);
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
     }
 
 		.area-item[aria-current='page'] {
-			background: var(--lv-bg-accent-muted, var(--control-bgColor-hover));
-			box-shadow: var(--lv-shadow-floating-sm, var(--lv-shadow-floating, none));
+			background: var(--lv-button-bg-rest, var(--button-default-bgColor-rest));
+			box-shadow: var(--lv-shadow-floating-sm);
 			color: var(--lv-fg-default);
 			font-weight: var(--base-text-weight-medium);
     }
 
     .area-item[aria-current='page'] .area-icon {
-      color: var(--lv-fg-accent);
+      color: var(--lv-fg-default);
+    }
+
+    .area-switcher .area-icon,
+    .area-switcher .area-icon svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
     }
 
     .collapsed-area-switcher {
@@ -400,6 +445,7 @@ class LeapViewSidebar extends LitElement {
     }
 
     .area-label {
+      display: none;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
@@ -487,13 +533,19 @@ class LeapViewSidebar extends LitElement {
       text-decoration: underline;
     }
 
-    .collapse-button {
+    .footer-actions {
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: var(--base-size-2);
+    }
+
+    .header-action {
       display: grid;
       width: var(--lv-button-height-xs);
       height: var(--lv-button-height-xs);
       flex: 0 0 auto;
       place-items: center;
-      margin-left: auto;
       border: var(--borderWidth-default) solid var(--lv-button-invisible-border-rest);
       border-radius: var(--lv-button-radius);
       background: var(--lv-button-invisible-bg-rest);
@@ -502,8 +554,8 @@ class LeapViewSidebar extends LitElement {
       padding: 0;
     }
 
-    .collapse-button:hover,
-    .collapse-button:focus-visible {
+    .header-action:hover,
+    .header-action:focus-visible {
       border-color: var(--lv-button-invisible-border-hover);
       background: var(--lv-button-invisible-bg-hover);
       color: var(--lv-fg-default);
@@ -511,8 +563,15 @@ class LeapViewSidebar extends LitElement {
       outline-offset: var(--focus-outline-offset);
     }
 
+    .header-action[aria-expanded='true'] {
+      border-color: var(--lv-button-invisible-border-hover);
+      background: var(--lv-button-invisible-bg-hover);
+      color: var(--lv-fg-default);
+    }
+
     .mobile-menu-button,
     .mobile-close-button,
+    .mobile-product-search,
     .mobile-backdrop,
     .mobile-drawer-header,
     .mobile-area-switcher,
@@ -794,10 +853,17 @@ class LeapViewSidebar extends LitElement {
       min-width: 0;
       grid-template-columns: minmax(0, 1fr);
       gap: var(--base-size-6);
-      align-items: center;
       padding: var(--base-size-8);
       border-top: var(--lv-border-muted);
       background: transparent;
+    }
+
+    .footer-row {
+      display: grid;
+      min-width: 0;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      gap: var(--base-size-2);
     }
 
     .user-card {
@@ -852,121 +918,85 @@ class LeapViewSidebar extends LitElement {
       font: var(--lv-type-caption);
     }
 
-    :host([data-collapsed]) .brand {
-      justify-items: center;
-      gap: var(--base-size-4);
-      padding: var(--base-size-8) var(--base-size-4);
-    }
+    @media (min-width: 641px) {
+      :host([data-collapsed]) aside {
+        position: fixed;
+        z-index: var(--z-index-sidebar);
+        top: 0;
+        left: 0;
+        width: var(--lv-sidebar-width);
+        overflow: visible;
+        border-right: 0;
+        background: transparent;
+        box-shadow: none;
+        transition: none;
+      }
 
-    :host([data-collapsed]) .brand-row {
-      display: grid;
-      justify-items: center;
-      gap: var(--base-size-8);
-    }
+      :host([data-collapsed]) .collapsed-chrome {
+        position: fixed;
+        z-index: calc(var(--z-index-sidebar) + 1);
+        top: var(--base-size-8);
+        left: var(--base-size-8);
+        display: flex;
+      }
 
-    :host([data-collapsed]) .name,
-    :host([data-collapsed]) .powered-by,
-    :host([data-collapsed]) .nav-group-label,
-    :host([data-collapsed]) .nav-text,
-    :host([data-collapsed]) .history,
-    :host([data-collapsed]) .user-text {
-      display: none;
-    }
+      :host([data-collapsed]) .sidebar-content > * {
+        opacity: 0;
+        pointer-events: none;
+        visibility: hidden;
+      }
 
-    :host([data-collapsed]) .user-settings-icon {
-      display: none;
-    }
+      :host([data-collapsed][data-peeking]) aside {
+        width: var(--lv-sidebar-resized-width, var(--lv-sidebar-width-default));
+        overflow: hidden;
+        border-right: var(--lv-border-default);
+        background: var(--lv-sidebar-bg);
+        box-shadow: var(--lv-shadow-floating);
+      }
 
-    :host([data-collapsed]) .area-switcher:not(.mobile-area-switcher) {
-      display: none;
-    }
+      :host([data-collapsed][data-peeking]) .sidebar-content > * {
+        opacity: 1;
+        pointer-events: auto;
+        visibility: visible;
+        transition: opacity var(--motion-transition-stateChange);
+      }
 
-    :host([data-collapsed]) .collapsed-area-switcher {
-      display: grid;
-    }
-
-    :host([data-collapsed]) .area-item {
-      width: var(--base-size-36);
-      min-height: var(--base-size-36);
-      grid-template-columns: 1fr;
-      justify-items: center;
-      padding: 0;
-    }
-
-    :host([data-collapsed]) .area-label {
-      display: none;
-    }
-
-    :host([data-collapsed]) .brand-identity {
-      display: grid;
-      flex: none;
-      grid-template-columns: auto;
-    }
-
-    :host([data-collapsed]) .collapse-button {
-      margin-left: 0;
-    }
-
-    :host([data-collapsed]) nav {
-      gap: var(--base-size-8);
-      padding: var(--base-size-8) var(--base-size-4);
-    }
-
-    :host([data-collapsed]) .nav-group {
-      justify-items: center;
-      gap: var(--base-size-8);
-    }
-
-    :host([data-collapsed]) .nav-item {
-      width: var(--base-size-36);
-      min-height: var(--base-size-36);
-      grid-template-columns: 1fr;
-      justify-items: center;
-      gap: 0;
-      padding: 0;
-    }
-
-    :host([data-collapsed]) .nav-icon {
-      width: var(--control-small-size);
-      height: var(--control-small-size);
-    }
-
-    :host([data-collapsed]) .nav-item[aria-current='page']::before {
-      content: none;
-    }
-
-    :host([data-collapsed]) .footer {
-      grid-template-columns: 1fr;
-      padding: var(--base-size-8) var(--base-size-4);
-    }
-
-    :host([data-collapsed]) .user-card {
-      grid-template-columns: 1fr;
-      justify-items: center;
-      padding: 0;
+      :host([data-collapsed][data-peeking]) .brand-row > .brand-identity,
+      :host([data-collapsed][data-peeking]) .brand-row > .brand-back {
+        visibility: hidden;
+      }
     }
 
     @media (max-width: 640px) {
       :host,
       :host([data-collapsed]) {
-        --lv-sidebar-width: 100%;
-        position: relative;
-        top: auto;
-        width: 100%;
-        height: auto;
-        min-height: var(--control-large-size);
-        max-height: none;
+        --lv-sidebar-width: calc(var(--base-size-28) + (var(--base-size-8) * 2));
+        position: sticky;
+        top: 0;
+        width: var(--lv-sidebar-width);
+        height: 100svh;
+        min-height: 100svh;
+        max-height: 100svh;
         overflow: visible;
       }
 
-      aside {
+      aside,
+      :host([data-collapsed]) aside {
         position: relative;
         display: block;
-        width: 100%;
-        height: auto;
-        min-height: var(--control-large-size);
-        max-height: none;
+        width: var(--lv-sidebar-width);
+        height: 100%;
+        min-height: 100%;
+        max-height: 100%;
         overflow: visible;
+        border-right: 0;
+        background: transparent;
+        box-shadow: none;
+      }
+
+      .collapsed-chrome,
+      :host([data-collapsed]) .collapsed-chrome {
+        display: none;
       }
 
       .brand {
@@ -975,24 +1005,42 @@ class LeapViewSidebar extends LitElement {
 
       .mobile-header {
         display: flex;
-        min-width: 0;
-        min-height: var(--control-large-size);
+        box-sizing: border-box;
+        width: var(--lv-sidebar-width);
+        height: var(--lv-sidebar-width);
         align-items: center;
-        gap: var(--base-size-8);
-        padding: 0 var(--base-size-12);
-      }
-
-      .mobile-header-title {
-        min-width: 0;
-        flex: 1 1 auto;
-        color: var(--lv-fg-default);
-        font: var(--lv-type-body-large);
-        font-weight: var(--base-text-weight-semibold);
+        justify-content: center;
+        padding: var(--base-size-8);
       }
 
       .mobile-sidebar-search {
         display: grid;
         margin-bottom: var(--base-size-8);
+      }
+
+      .mobile-product-search {
+        display: grid;
+        width: 100%;
+        min-height: var(--control-medium-size);
+        grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
+        align-items: center;
+        gap: var(--base-size-8);
+        margin-bottom: var(--base-size-8);
+        border: var(--lv-border-muted);
+        border-radius: var(--lv-button-radius);
+        background: transparent;
+        color: var(--lv-fg-muted);
+        padding: 0 var(--control-xsmall-paddingInline-normal);
+        text-align: left;
+        font: var(--lv-type-body-compact);
+      }
+
+      .mobile-product-search:hover,
+      .mobile-product-search:focus-visible {
+        background: var(--control-bgColor-hover);
+        color: var(--lv-fg-default);
+        outline: var(--focus-outline);
+        outline-offset: var(--focus-outline-offset);
       }
 
       .mobile-menu-button,
@@ -1009,6 +1057,11 @@ class LeapViewSidebar extends LitElement {
         padding: 0;
       }
 
+      .mobile-menu-button {
+        width: var(--base-size-28);
+        height: var(--base-size-28);
+      }
+
       .mobile-menu-button:hover,
       .mobile-menu-button:focus-visible,
       .mobile-close-button:hover,
@@ -1021,6 +1074,7 @@ class LeapViewSidebar extends LitElement {
 
       .collapse-button,
       :host([data-collapsed]) .collapse-button,
+      .search-button,
       .resize-handle {
         display: none;
       }
@@ -1089,6 +1143,7 @@ class LeapViewSidebar extends LitElement {
 			:host([data-collapsed]) .area-switcher {
 				display: grid;
 				grid-template-columns: repeat(2, minmax(0, 1fr));
+				gap: var(--base-size-2);
 				justify-items: stretch;
 				margin-bottom: var(--base-size-8);
 				border: 0;
@@ -1099,6 +1154,7 @@ class LeapViewSidebar extends LitElement {
       .area-item,
       :host([data-collapsed]) .area-item {
         width: auto;
+        height: auto;
         min-height: var(--control-small-size);
         grid-template-columns: var(--control-xsmall-size) minmax(0, auto);
         justify-items: stretch;
@@ -1169,6 +1225,7 @@ class LeapViewSidebar extends LitElement {
     super.connectedCallback()
     document.addEventListener('keydown', this.onKeyDown)
     document.addEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
+    window.addEventListener('pointermove', this.onWindowPointerMove, { passive: true })
     this.mobileMediaQuery = window.matchMedia('(max-width: 640px)')
     this.mobileMediaQuery.addEventListener('change', this.onMobileViewportChange)
     this.syncCollapsedState()
@@ -1177,6 +1234,7 @@ class LeapViewSidebar extends LitElement {
   disconnectedCallback(): void {
     document.removeEventListener('keydown', this.onKeyDown)
     document.removeEventListener('leapview-avatar-change', this.onAvatarChange as EventListener)
+    window.removeEventListener('pointermove', this.onWindowPointerMove)
     this.mobileMediaQuery?.removeEventListener('change', this.onMobileViewportChange)
     this.mobileMediaQuery = undefined
     super.disconnectedCallback()
@@ -1190,7 +1248,10 @@ class LeapViewSidebar extends LitElement {
       this.collapsed = this.config.admin ? false : storedCollapsed(this.config.compact)
       this.collapseStateInitialized = true
     }
-    if (changedProperties.has('config')) this.syncSidebarWidth()
+    if (changedProperties.has('config')) {
+      this.syncSidebarWidth()
+      this.restorePeekAfterNavigation()
+    }
   }
 
   protected updated(changedProperties: PropertyValues<this>): void {
@@ -1207,11 +1268,13 @@ class LeapViewSidebar extends LitElement {
     } else {
       this.removeAttribute('data-collapsed')
     }
+    this.toggleAttribute('data-peeking', this.effectiveCollapsed && this.peeking)
   }
 
   private toggleCollapsed(): void {
     if (this.config.admin) return
     this.collapsed = !this.collapsed
+    this.peeking = false
     try {
       localStorage.setItem('leapview-sidebar-collapsed', String(this.collapsed))
     } catch {
@@ -1222,6 +1285,57 @@ class LeapViewSidebar extends LitElement {
       bubbles: true,
       composed: true,
     }))
+  }
+
+  private beginPeek = (): void => {
+    if (!this.effectiveCollapsed || this.isMobileViewport) return
+    this.peeking = true
+  }
+
+  private endPeek = (): void => {
+    const aside = this.shadowRoot?.querySelector('aside')
+    if (aside?.contains(this.shadowRoot?.activeElement ?? null)) return
+    this.peeking = false
+  }
+
+  private handlePeekFocusOut = (): void => {
+    requestAnimationFrame(() => {
+      const aside = this.shadowRoot?.querySelector('aside')
+      if (!aside?.contains(this.shadowRoot?.activeElement ?? null)) this.peeking = false
+    })
+  }
+
+  private onWindowPointerMove = (event: PointerEvent): void => {
+    if (!this.effectiveCollapsed || !this.peeking || this.isMobileViewport) return
+    const aside = this.shadowRoot?.querySelector('aside')
+    if (!aside || aside.contains(this.shadowRoot?.activeElement ?? null)) return
+    const bounds = aside.getBoundingClientRect()
+    const expandedRight = Math.max(bounds.right, bounds.left + this.sidebarWidth)
+    const inside = event.clientX >= bounds.left && event.clientX <= expandedRight
+      && event.clientY >= bounds.top && event.clientY <= bounds.bottom
+    if (!inside) this.peeking = false
+  }
+
+  private rememberPeekForNavigation(): void {
+    if (!this.effectiveCollapsed || !this.peeking || this.isMobileViewport) return
+    try {
+      sessionStorage.setItem(SIDEBAR_PEEK_NAVIGATION_STORAGE_KEY, String(Date.now()))
+    } catch {
+      // Storage is an enhancement; navigation still works without preserving the peek.
+    }
+  }
+
+  private restorePeekAfterNavigation(): void {
+    let timestamp = 0
+    try {
+      timestamp = Number(sessionStorage.getItem(SIDEBAR_PEEK_NAVIGATION_STORAGE_KEY))
+      sessionStorage.removeItem(SIDEBAR_PEEK_NAVIGATION_STORAGE_KEY)
+    } catch {
+      return
+    }
+    if (!this.effectiveCollapsed || this.isMobileViewport || !Number.isFinite(timestamp)) return
+    if (Date.now() - timestamp > SIDEBAR_PEEK_NAVIGATION_TTL_MS) return
+    this.peeking = true
   }
 
   private get isMobileViewport(): boolean {
@@ -1249,9 +1363,11 @@ class LeapViewSidebar extends LitElement {
 
   private onKeyDown = (event: KeyboardEvent): void => {
     if (event.key !== 'Escape') return
-    if (!this.mobileOpen) return
-    event.preventDefault()
-    this.closeMobileNavigation(true)
+    if (this.mobileOpen) {
+      event.preventDefault()
+      this.closeMobileNavigation(true)
+      return
+    }
   }
 
   render() {
@@ -1262,7 +1378,12 @@ class LeapViewSidebar extends LitElement {
     const productLogoUrl = this.config.productLogoUrl?.trim()
     const hasCustomIdentity = productName !== leapViewBrandName || Boolean(productLogoUrl)
     return html`
-      <aside aria-label="${productName} navigation" ?data-mobile-open=${this.mobileOpen}>
+      <aside
+        aria-label="${productName} navigation"
+        ?data-mobile-open=${this.mobileOpen}
+        @mouseleave=${this.endPeek}
+        @focusout=${this.handlePeekFocusOut}
+      >
         <span
           class="resize-handle"
           role="separator"
@@ -1280,6 +1401,21 @@ class LeapViewSidebar extends LitElement {
           @pointercancel=${this.endSidebarResize}
           @dblclick=${this.resetSidebarWidth}
         ></span>
+        <div class="collapsed-chrome">
+          <button
+            class="collapsed-trigger"
+            type="button"
+            aria-label="Open navigation"
+            aria-expanded=${String(this.peeking)}
+            title="Open navigation"
+            @mouseenter=${this.beginPeek}
+            @focus=${this.beginPeek}
+            @click=${this.toggleCollapsed}
+          >
+            ${icon('expand')}
+          </button>
+        </div>
+        <div class="sidebar-content" ?inert=${collapsed && !this.peeking}>
         <header class="brand">
           <div class="brand-row">
             ${this.config.admin && this.config.primaryAction ? html`
@@ -1300,37 +1436,13 @@ class LeapViewSidebar extends LitElement {
                 ${hasCustomIdentity ? html`<a class="powered-by" href="https://leapview.dev" target="_blank" rel="noreferrer">Powered by LeapView</a>` : null}
               </span>
             `}
-            ${this.config.admin ? null : html`
-              <button
-                class="collapse-button"
-                type="button"
-                aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                aria-pressed=${String(collapsed)}
-                title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
-                @click=${this.toggleCollapsed}
-              >
-                ${icon(collapsed ? 'expand' : 'collapse')}
-              </button>
-            `}
+            ${this.config.admin ? null : this.renderAreaSwitcher()}
           </div>
-          ${this.config.admin ? null : this.renderAreaSwitcher()}
           ${this.config.admin ? null : this.renderCollapsedAreaSwitch()}
           ${this.config.admin ? this.renderSearch() : null}
         </header>
 
         <div class="mobile-header">
-          ${this.config.admin && this.config.primaryAction ? html`
-            <a
-              class="mobile-header-title brand-back"
-              href=${this.config.primaryAction.href}
-              aria-label=${this.config.primaryAction.label}
-              title=${this.config.primaryAction.label}
-              @click=${(event: MouseEvent) => this.followInternalLink(event, this.config.primaryAction!.href)}
-            >
-              <span class="brand-back-icon">${icon(this.config.primaryAction.icon)}</span>
-              <span class="brand-back-text">${this.config.primaryAction.label}</span>
-            </a>
-          ` : html`<strong class="mobile-header-title">${productName}</strong>`}
           <button
             class="mobile-menu-button"
             type="button"
@@ -1366,7 +1478,12 @@ class LeapViewSidebar extends LitElement {
             </button>
           </div>
           ${this.config.admin ? null : this.renderAreaSwitcher(true)}
-          ${this.config.admin ? this.renderSearch(true) : null}
+          ${this.config.admin ? this.renderSearch(true) : html`
+            <button class="mobile-product-search" type="button" aria-haspopup="dialog" @click=${this.openProductSearch}>
+              <span aria-hidden="true">${icon('search')}</span>
+              <span>Search LeapView</span>
+            </button>
+          `}
           ${this.config.primaryAction && !this.config.admin ? html`
             <section class="nav-group primary-action" aria-label=${this.config.primaryAction.label}>
               ${this.renderLink({
@@ -1382,14 +1499,41 @@ class LeapViewSidebar extends LitElement {
               ${this.config.admin ? html`<strong class="nav-group-label">${group.label}</strong>` : null}
               ${group.items.map((item) => item.disabled ? this.renderDisabledItem(item) : this.renderLink(item))}
             </section>
-          `) : this.config.admin ? html`<p class="search-empty">No matching pages</p>` : null}
+          `) : this.searchQuery.trim() ? html`<p class="search-empty">No matching pages</p>` : null}
           ${this.renderHistory()}
           ${this.config.admin ? null : html`<div class="mobile-footer">${this.renderUserCard()}</div>`}
         </nav>
 
         <footer class="footer">
-          ${this.renderUserCard()}
+          <div class="footer-row">
+            ${this.renderUserCard()}
+            ${this.config.admin || collapsed ? null : html`
+              <span class="footer-actions">
+                <button
+                  class="header-action search-button"
+                  type="button"
+                  aria-label="Search LeapView"
+                  aria-haspopup="dialog"
+                  title="Search LeapView"
+                  @click=${this.openProductSearch}
+                >
+                  ${icon('search')}
+                </button>
+                <button
+                  class="header-action collapse-button"
+                  type="button"
+                  aria-label=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  aria-pressed=${String(collapsed)}
+                  title=${collapsed ? 'Expand navigation' : 'Collapse navigation'}
+                  @click=${this.toggleCollapsed}
+                >
+                  ${icon(collapsed ? 'expand' : 'collapse')}
+                </button>
+              </span>
+            `}
+          </div>
         </footer>
+        </div>
       </aside>
     `
   }
@@ -1399,11 +1543,11 @@ class LeapViewSidebar extends LitElement {
   }
 
   private get widthStorageKey(): string {
-    return this.config.admin ? 'leapview-admin-sidebar-width' : 'leapview-sidebar-width'
+    return SIDEBAR_WIDTH_STORAGE_KEY
   }
 
   private get defaultSidebarWidth(): number {
-    return this.config.admin ? ADMIN_SIDEBAR_DEFAULT_WIDTH : SIDEBAR_DEFAULT_WIDTH
+    return SIDEBAR_DEFAULT_WIDTH
   }
 
   private syncSidebarWidth(): void {
@@ -1411,11 +1555,18 @@ class LeapViewSidebar extends LitElement {
     if (storageKey === this.loadedWidthStorageKey) return
     this.loadedWidthStorageKey = storageKey
     const storedWidth = storedSidebarWidth(storageKey)
+      ?? (this.config.admin ? storedSidebarWidth(LEGACY_ADMIN_SIDEBAR_WIDTH_STORAGE_KEY) : undefined)
     this.sidebarWidth = storedWidth ?? this.defaultSidebarWidth
     if (storedWidth === undefined) {
       this.style.removeProperty('--lv-sidebar-resized-width')
     } else {
       this.style.setProperty('--lv-sidebar-resized-width', `${storedWidth}px`)
+      try {
+        localStorage.setItem(storageKey, String(storedWidth))
+        localStorage.removeItem(LEGACY_ADMIN_SIDEBAR_WIDTH_STORAGE_KEY)
+      } catch {
+        // Ignore storage failures; the migrated width still applies to this session.
+      }
     }
   }
 
@@ -1484,12 +1635,13 @@ class LeapViewSidebar extends LitElement {
   }
 
   private renderSearch(mobile = false) {
+    const label = this.config.admin ? 'Search admin navigation' : 'Search navigation'
     return html`
       <label class=${mobile ? 'sidebar-search mobile-sidebar-search' : 'sidebar-search'}>
         <span class="sidebar-search-icon" aria-hidden="true">${icon('search')}</span>
         <input
           type="search"
-          aria-label="Search admin navigation"
+          aria-label=${label}
           placeholder="Search..."
           autocomplete="off"
           .value=${this.searchQuery}
@@ -1501,6 +1653,11 @@ class LeapViewSidebar extends LitElement {
 
   private updateSearchQuery(event: Event): void {
     this.searchQuery = (event.target as HTMLInputElement).value
+  }
+
+  private openProductSearch = (): void => {
+    this.closeMobileNavigation()
+    this.dispatchEvent(new CustomEvent('product-search-open', { bubbles: true, composed: true }))
   }
 
   private renderAreaSwitcher(mobile = false) {
@@ -1594,7 +1751,7 @@ class LeapViewSidebar extends LitElement {
   }
 
   private filteredGroups(): NavGroup[] {
-    if (!this.config.admin || !this.searchQuery.trim()) return this.config.groups
+    if (!this.searchQuery.trim()) return this.config.groups
     const query = this.searchQuery.trim().toLocaleLowerCase()
     return this.config.groups.flatMap((group) => {
       const groupMatches = group.label.toLocaleLowerCase().includes(query)
@@ -1660,6 +1817,7 @@ class LeapViewSidebar extends LitElement {
       return
     }
     event.preventDefault()
+    this.rememberPeekForNavigation()
     this.rememberCurrentArea()
     this.closeMobileNavigation()
     window.location.assign(target.href)
@@ -1690,9 +1848,9 @@ function icon(name: string) {
     'users-round': UsersRound,
     user: User,
     search: Search,
-    collapse: PanelLeftClose,
-    expand: PanelLeftOpen,
-    menu: Menu,
+    collapse: PanelLeft,
+    expand: PanelLeft,
+    menu: PanelLeft,
     close: X,
     plus: Plus,
     workflow: Workflow,

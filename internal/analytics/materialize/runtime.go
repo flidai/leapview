@@ -22,21 +22,24 @@ import (
 )
 
 type RuntimeConfig struct {
-	ModelID      string
-	Model        *semanticmodel.Model
-	QueryCache   *resultcache.Scope
-	ResultLimits dataquery.ResultLimits
+	ModelID string
+	Model   *semanticmodel.Model
+	// ResultPartition is the stable production or candidate namespace for
+	// dependency-keyed query result reuse.
+	ResultPartition resultidentity.Partition
+	// QueryResultCache has stable partition lifetime. ImmutableByteCache remains
+	// generation-owned so spatial tile and other opaque byte identities do not
+	// acquire cross-generation reuse semantics.
+	QueryResultCache   *resultcache.Scope
+	ImmutableByteCache *resultcache.Scope
+	ResultLimits       dataquery.ResultLimits
 	// DependencyEvidence is immutable activation evidence used to derive an
 	// exact dependency identity from each validated query plan. When it is
 	// absent or incomplete, result reuse fails closed while execution remains
 	// available.
 	DependencyEvidence resultidentity.Evidence
-	// QueryCachePartition is the stable production or isolated candidate
-	// partition. It excludes serving-generation identity; dependency evidence
-	// carries exact relation/runtime revisions.
-	QueryCachePartition resultidentity.Partition
-	RequiredExtensions  []string
-	TableRelation       semanticquery.TableRelation
+	RequiredExtensions []string
+	TableRelation      semanticquery.TableRelation
 
 	Database Database
 	Sources  SourcePreparer
@@ -68,6 +71,7 @@ type Runtime struct {
 	db                 Database
 	sources            SourcePreparer
 	queryCache         *queryResultCache
+	resultPartition    resultidentity.Partition
 	resultLimits       dataquery.ResultLimits
 	dependencyEvidence resultidentity.Evidence
 	requiredExtensions []string
@@ -120,7 +124,7 @@ func OpenRuntime(ctx context.Context, config RuntimeConfig) (*Runtime, error) {
 }
 
 func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime, retErr error) {
-	cacheOwned := config.QueryCache == nil || config.OwnQueryCache
+	cacheOwned := (config.QueryResultCache == nil && config.ImmutableByteCache == nil) || config.OwnQueryCache
 	var cache *queryResultCache
 	// Ownership transfers at call entry. This defer therefore covers planner
 	// compilation and validation failures that occur before a query cache is
@@ -132,8 +136,15 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 		var cleanupErr error
 		if cache != nil {
 			cleanupErr = cache.close()
-		} else if config.QueryCache != nil {
-			cleanupErr = config.QueryCache.Close()
+		} else {
+			var resultErr, byteErr error
+			if config.QueryResultCache != nil {
+				resultErr = config.QueryResultCache.Close()
+			}
+			if config.ImmutableByteCache != nil && config.ImmutableByteCache != config.QueryResultCache {
+				byteErr = config.ImmutableByteCache.Close()
+			}
+			cleanupErr = errors.Join(resultErr, byteErr)
 		}
 		var databaseErr error
 		if config.OwnDatabase {
@@ -170,15 +181,14 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if !planner.IsCompiled() {
 		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
-	if config.QueryCachePartition.Version() == 0 {
-		return nil, fmt.Errorf("typed query cache partition is required")
-	}
-	if config.QueryCache == nil {
-		cache = newQueryResultCacheWithPartition(256, 64<<20, config.QueryCachePartition)
+	if config.QueryResultCache == nil && config.ImmutableByteCache == nil {
+		cache = newQueryResultCache(256)
+	} else if config.QueryResultCache == nil || config.ImmutableByteCache == nil {
+		return nil, fmt.Errorf("query result and immutable byte cache scopes are both required")
 	} else {
-		cache = newQueryResultCacheWithScopeAndPartition(config.QueryCache, config.QueryCachePartition)
+		cache = newQueryResultCacheWithScopes(config.QueryResultCache, config.ImmutableByteCache)
 	}
-	if config.QueryCache != nil && config.OwnQueryCache {
+	if config.QueryResultCache != nil && config.OwnQueryCache {
 		cache.ownScope()
 	}
 	limits := config.ResultLimits
@@ -194,7 +204,8 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	runtime = &Runtime{
 		modelID: config.ModelID, model: config.Model, planner: planner, db: config.Database,
 		sources: config.Sources, requiredExtensions: normalizedExtensions(config.RequiredExtensions),
-		queryCache: cache, resultLimits: limits, dependencyEvidence: config.DependencyEvidence,
+		queryCache: cache, resultPartition: config.ResultPartition,
+		resultLimits: limits, dependencyEvidence: config.DependencyEvidence,
 		dbOwned: config.OwnDatabase, snapshotOnly: config.SnapshotOnly,
 	}
 	return runtime, nil

@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ChevronDown, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -129,10 +129,43 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .route {
       position: relative;
       display: grid;
+      height: 100svh;
       min-height: 100svh;
       grid-template-columns: auto minmax(0, 1fr) 0px;
+      grid-template-rows: auto minmax(0, 1fr) auto;
+      overflow: hidden;
       background: var(--lv-bg-app);
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
+    }
+
+    .route > .rail-header {
+      grid-column: 1;
+      grid-row: 1;
+    }
+
+    .route > .header {
+      grid-column: 2 / -1;
+      grid-row: 1;
+    }
+
+    .route > lv-sub-sidebar {
+      grid-column: 1;
+      grid-row: 2 / 4;
+    }
+
+    .route > .main {
+      grid-column: 2;
+      grid-row: 2;
+    }
+
+    .route > lv-chat-drawer {
+      grid-column: 3;
+      grid-row: 2 / 4;
+    }
+
+    .route > lv-report-footer {
+      grid-column: 2;
+      grid-row: 3;
     }
 
     .publication-attribution {
@@ -156,13 +189,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
+    :host([presentation='embed']) .rail-header,
     :host([presentation='embed']) .header,
     :host([presentation='embed']) lv-report-footer {
       display: none;
-    }
-
-    :host([presentation='embed']) .main {
-      grid-template-rows: minmax(0, 1fr);
     }
 
     .route.agent-open {
@@ -172,15 +202,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     .main {
       display: grid;
       min-width: 0;
-      height: 100svh;
+      height: 100%;
       min-height: 0;
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr);
       overflow: hidden;
       background: var(--lv-bg-app);
     }
 
     .main[data-report-layout='mobile'] {
-      height: 100svh;
+      height: 100%;
       min-height: 0;
       overflow: hidden;
     }
@@ -210,7 +240,95 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       align-items: center;
       gap: var(--base-size-8);
       border-bottom: var(--lv-border-muted);
-      padding: var(--lv-space-control) var(--base-size-16);
+      padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
+    }
+
+    .rail-header {
+      box-sizing: border-box;
+      min-width: 0;
+      contain: inline-size;
+      overflow: hidden;
+      border-right: var(--lv-border-muted);
+      background: var(--lv-sidebar-bg);
+    }
+
+    .rail-header {
+      display: grid;
+      align-items: center;
+      justify-items: start;
+      border-bottom: var(--lv-border-muted);
+      padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
+    }
+
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-header {
+      justify-items: center;
+      padding-inline: 0;
+    }
+
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-link {
+      display: grid;
+      width: var(--control-medium-size);
+      gap: 0;
+      padding: 0;
+    }
+
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-back-label {
+      display: none;
+    }
+
+    .header-leading {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: var(--base-size-8);
+    }
+
+    .dashboard-back-link {
+      display: grid;
+      width: var(--control-medium-size);
+      height: var(--control-medium-size);
+      flex: 0 0 auto;
+      place-items: center;
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      text-decoration: none;
+    }
+
+    .dashboard-back-link:hover,
+    .dashboard-back-link:focus-visible {
+      background: var(--lv-bg-control-hover);
+      color: var(--lv-fg-default);
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .dashboard-back-link svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .rail-back-link {
+      display: inline-flex;
+      width: auto;
+      min-width: 0;
+      max-width: 100%;
+      align-items: center;
+      gap: var(--base-size-8);
+      padding-right: var(--base-size-8);
+    }
+
+    .rail-back-label {
+      display: block;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .mobile-dashboard-back-link {
+      display: none;
     }
 
     .title-block {
@@ -626,8 +744,22 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       .route.agent-open {
         height: 100svh;
         min-height: 0;
-        grid-template-rows: auto minmax(0, 1fr);
+        grid-template-rows: auto minmax(0, 1fr) auto;
         overflow: hidden;
+      }
+
+      .route > .rail-header {
+        display: none;
+      }
+
+      .route > .header {
+        grid-column: 1;
+        grid-row: 1;
+      }
+
+      .route > lv-report-footer {
+        grid-column: 1;
+        grid-row: 3;
       }
 
       :host(:not([presentation='embed'])) .route > lv-sub-sidebar {
@@ -639,6 +771,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         z-index: var(--zIndex-sticky, 50);
         min-height: var(--control-large-size);
         padding: var(--base-size-8) var(--base-size-12);
+      }
+
+      :host(:not([presentation='embed'])) .dashboard-back-link {
+        width: var(--control-medium-size);
+        height: var(--control-medium-size);
+      }
+
+      :host(:not([presentation='embed'])) .mobile-dashboard-back-link {
+        display: grid;
       }
 
       :host(:not([presentation='embed'])) .detail {
@@ -699,7 +840,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         transform: none;
       }
 
-      .main {
+      .route > .main {
+        grid-column: 1;
         height: 100%;
         min-height: 0;
         grid-row: 2;
@@ -732,6 +874,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
       lv-chat-drawer:not([open]) {
         display: none;
+      }
+
+      .route > lv-chat-drawer {
+        grid-column: 1;
+        grid-row: 2 / 4;
       }
 
     }
@@ -977,17 +1124,30 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const activeFilterCount = this.activeFilterCount(snapshot)
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-        <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
-        <section
-          class="main"
-          data-report-layout=${this.reportLayout}
-          aria-label="LeapView report canvas"
-          @lv-report-zoom-state=${this.handleReportZoomState}
-        >
+          <div class="rail-header">
+            ${this.presentation === 'app' ? html`
+              <a
+                class="dashboard-back-link rail-back-link"
+                href="/"
+                aria-label="Back to dashboards"
+                title="All dashboards"
+              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Dashboards</span></a>
+            ` : nothing}
+          </div>
           <header class="header">
-            <div class="title-block">
-              <h1>${page.title}</h1>
-              <p class="detail">${page.headerDetail}</p>
+            <div class="header-leading">
+              ${this.presentation === 'app' ? html`
+                <a
+                  class="dashboard-back-link mobile-dashboard-back-link"
+                  href="/"
+                  aria-label="Back to dashboards"
+                  title="All dashboards"
+                >${lucideIcon(ArrowLeft)}</a>
+              ` : nothing}
+              <div class="title-block">
+                <h1>${page.title}</h1>
+                <p class="detail">${page.headerDetail}</p>
+              </div>
             </div>
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
@@ -1016,6 +1176,13 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 							` : nothing}
 						</div>
           </header>
+        <lv-sub-sidebar .config=${this.pageSidebar(page)} @click=${this.handlePageNavigation}></lv-sub-sidebar>
+        <section
+          class="main"
+          data-report-layout=${this.reportLayout}
+          aria-label="LeapView report canvas"
+          @lv-report-zoom-state=${this.handleReportZoomState}
+        >
           <div
             class="body"
             role=${this.reportLayout === 'mobile' ? 'region' : nothing}
@@ -1038,8 +1205,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
               </lv-report-canvas>
             </div>
           </div>
-          <lv-report-footer .status=${snapshot.status}></lv-report-footer>
         </section>
+        <lv-report-footer .status=${snapshot.status}></lv-report-footer>
 				${agentEnabled ? html`<lv-chat-drawer
 					?open=${this.agentDrawerOpen}
 					.suggestions=${this.agentSuggestions(page)}
@@ -1102,6 +1269,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       railLabel: 'Pages',
       ariaLabel: 'Report pages',
       storageKey: 'leapview-report-sidebar-collapsed',
+      widthStorageKey: 'leapview-report-sidebar-width',
       activeId: page.pageId,
       items: page.pages.map((item: DashboardPageNavSignal) => ({
         id: item.id,

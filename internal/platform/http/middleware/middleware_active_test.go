@@ -9,6 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"go.opentelemetry.io/otel/trace"
+)
+
+const (
+	testTraceID        = "0af7651916cd43dd8448eb211c80319c"
+	testUpstreamSpanID = "b7ad6b7169203331"
+	testTraceparent    = "00-" + testTraceID + "-" + testUpstreamSpanID + "-01"
 )
 
 func TestPanicRecoveryWritesGenericInternalServerError(t *testing.T) {
@@ -218,27 +226,202 @@ func TestSecurityHeadersPreserveHandlerOwnedCSP(t *testing.T) {
 	}
 }
 
+func TestRequestCorrelationGeneratesAndPropagatesIdentity(t *testing.T) {
+	var requestID, correlationID string
+	handler := RequestCorrelation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestID = r.Header.Get("X-Request-ID")
+		correlationID = r.Header.Get("X-Correlation-ID")
+		if !RequestIDWasGenerated(r) {
+			t.Fatal("request ID was not marked as generated")
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	if !strings.HasPrefix(requestID, "req_") {
+		t.Fatalf("request ID = %q, want generated req_ identity", requestID)
+	}
+	if correlationID != requestID {
+		t.Fatalf("correlation ID = %q, want request ID %q", correlationID, requestID)
+	}
+	if got := response.Header().Get("X-Request-ID"); got != requestID {
+		t.Fatalf("response request ID = %q, want %q", got, requestID)
+	}
+	if got := response.Header().Get("X-Correlation-ID"); got != correlationID {
+		t.Fatalf("response correlation ID = %q, want %q", got, correlationID)
+	}
+}
+
+func TestRequestCorrelationPreservesClientIdentity(t *testing.T) {
+	handler := RequestCorrelation(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if RequestIDWasGenerated(r) {
+			t.Fatal("client request ID was marked as generated")
+		}
+		if got := r.Header.Get("X-Request-ID"); got != "client-request" {
+			t.Fatalf("request ID = %q, want client-request", got)
+		}
+		if got := r.Header.Get("X-Correlation-ID"); got != "client-correlation" {
+			t.Fatalf("correlation ID = %q, want client-correlation", got)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("X-Request-ID", "client-request")
+	request.Header.Set("X-Correlation-ID", "client-correlation")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if got := response.Header().Get("X-Request-ID"); got != "client-request" {
+		t.Fatalf("response request ID = %q, want client-request", got)
+	}
+	if got := response.Header().Get("X-Correlation-ID"); got != "client-correlation" {
+		t.Fatalf("response correlation ID = %q, want client-correlation", got)
+	}
+}
+
+func TestTraceContextExtractsAndPropagatesValidW3CContext(t *testing.T) {
+	var propagated trace.SpanContext
+	handler := TraceContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		propagated = trace.SpanContextFromContext(r.Context())
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("traceparent", testTraceparent)
+	request.Header.Set("tracestate", "vendor=opaque")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+	if !propagated.IsValid() || !propagated.IsRemote() {
+		t.Fatalf("propagated span context = %+v, want valid remote context", propagated)
+	}
+	if got := propagated.TraceID().String(); got != testTraceID {
+		t.Fatalf("trace ID = %q, want %q", got, testTraceID)
+	}
+	if got := propagated.SpanID().String(); got != testUpstreamSpanID {
+		t.Fatalf("upstream span ID = %q, want %q", got, testUpstreamSpanID)
+	}
+	if got := propagated.TraceState().Get("vendor"); got != "opaque" {
+		t.Fatalf("trace state vendor = %q, want opaque", got)
+	}
+}
+
+func TestTraceContextIgnoresMalformedOrMissingParent(t *testing.T) {
+	for _, test := range []struct {
+		name        string
+		traceparent string
+	}{
+		{name: "missing"},
+		{name: "malformed", traceparent: "not-a-traceparent"},
+		{name: "zero trace ID", traceparent: "00-00000000000000000000000000000000-b7ad6b7169203331-01"},
+		{name: "zero span ID", traceparent: "00-0af7651916cd43dd8448eb211c80319c-0000000000000000-01"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			called := false
+			handler := TraceContext(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				if propagated := trace.SpanContextFromContext(r.Context()); propagated.IsValid() {
+					t.Errorf("propagated span context = %+v, want invalid context", propagated)
+				}
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			request := httptest.NewRequest(http.MethodGet, "/", nil)
+			if test.traceparent != "" {
+				request.Header.Set("traceparent", test.traceparent)
+			}
+			request.Header.Set("tracestate", "vendor=opaque")
+			response := httptest.NewRecorder()
+
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusNoContent || !called {
+				t.Fatalf("status = %d called = %v, want 204 and downstream call", response.Code, called)
+			}
+		})
+	}
+}
+
 func TestRequestLoggerOmitsSensitiveHeadersAndValues(t *testing.T) {
 	var logs bytes.Buffer
 	logger := slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	handler := RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	handler := RequestCorrelation(TraceContext(RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Write([]byte("ok"))
-	}))
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	}))))
+	request := httptest.NewRequest(http.MethodGet, "/?token=secret-query", nil)
 	request.Header.Set("Authorization", "Bearer secret-token")
 	request.Header.Set("X-Request-ID", "req_123")
-	request.Header.Set("X-Correlation-ID", "corr_456")
+	request.Header.Set("traceparent", testTraceparent)
+	request.Header.Set("tracestate", "vendor=secret-state")
+	request.Header.Set("baggage", "account=secret-baggage")
 	request.AddCookie(&http.Cookie{Name: "lv_session", Value: "secret-session"})
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 
 	logged := logs.String()
-	for _, want := range []string{"method=GET", "path=/", "status=200", "duration=", "bytes=2", "request_id=req_123", "correlation_id=corr_456"} {
+	for _, want := range []string{"method=GET", "path=/", "status=200", "duration=", "bytes=2", "request_id=req_123", "correlation_id=req_123", "trace_id=" + testTraceID, "upstream_span_id=" + testUpstreamSpanID} {
 		if !strings.Contains(logged, want) {
 			t.Fatalf("log %q missing %q", logged, want)
 		}
 	}
-	for _, secret := range []string{"secret-token", "secret-session", "Authorization", "Cookie"} {
+	for _, secret := range []string{"secret-token", "secret-session", "secret-query", "secret-state", "secret-baggage", "Authorization", "Cookie", "traceparent", "tracestate", "baggage", testTraceparent} {
+		if strings.Contains(logged, secret) {
+			t.Fatalf("log %q contains sensitive value %q", logged, secret)
+		}
+	}
+}
+
+func TestRequestLoggerOmitsTraceFieldsWithoutValidContext(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := TraceContext(RequestLogger(logger)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})))
+	request := httptest.NewRequest(http.MethodGet, "/", nil)
+	request.Header.Set("traceparent", "not-a-traceparent")
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	logged := logs.String()
+	for _, field := range []string{"trace_id=", "upstream_span_id="} {
+		if strings.Contains(logged, field) {
+			t.Fatalf("log %q contains invalid trace field %q", logged, field)
+		}
+	}
+}
+
+func TestPanicLoggerAddsValidatedTraceContextWithoutSensitiveRequestData(t *testing.T) {
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	handler := RequestCorrelation(TraceContext(PanicRecovery(logger)(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic("boom")
+	}))))
+	request := httptest.NewRequest(http.MethodPost, "/panic?token=secret-query", strings.NewReader("secret-body"))
+	request.Header.Set("Authorization", "Bearer secret-token")
+	request.Header.Set("traceparent", testTraceparent)
+	request.Header.Set("tracestate", "vendor=secret-state")
+	request.Header.Set("baggage", "account=secret-baggage")
+	request.AddCookie(&http.Cookie{Name: "lv_session", Value: "secret-session"})
+	response := httptest.NewRecorder()
+
+	handler.ServeHTTP(response, request)
+
+	if response.Code != http.StatusInternalServerError {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusInternalServerError)
+	}
+	logged := logs.String()
+	for _, want := range []string{"msg=\"http handler panic\"", "method=POST", "path=/panic", "trace_id=" + testTraceID, "upstream_span_id=" + testUpstreamSpanID} {
+		if !strings.Contains(logged, want) {
+			t.Fatalf("log %q missing %q", logged, want)
+		}
+	}
+	for _, secret := range []string{"secret-token", "secret-session", "secret-query", "secret-body", "secret-state", "secret-baggage", "Authorization", "Cookie", "traceparent", "tracestate", "baggage", testTraceparent} {
 		if strings.Contains(logged, secret) {
 			t.Fatalf("log %q contains sensitive value %q", logged, secret)
 		}

@@ -2,6 +2,7 @@ package module
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 
 	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
@@ -41,16 +42,9 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 	if environment == nil {
 		return nil, fmt.Errorf("analytical runtime environment is unavailable")
 	}
-	cachePartition := request.QueryCachePartition
-	if cachePartition.Version() == 0 {
-		return nil, fmt.Errorf("typed query cache partition is required")
-	}
-	wantKind := resultidentity.PartitionProduction
-	if request.CandidateID != "" {
-		wantKind = resultidentity.PartitionCandidate
-	}
-	if cachePartition.Kind() != wantKind || cachePartition.ProjectID() != request.ProjectID || cachePartition.Environment() != request.Environment || cachePartition.CandidateID() != request.CandidateID {
-		return nil, fmt.Errorf("query cache partition does not match project serving scope")
+	partition, err := projectResultPartition(request)
+	if err != nil {
+		return nil, err
 	}
 	var connectionResolver analyticsruntime.ConnectionResolver
 	if request.CandidateID != "" {
@@ -68,33 +62,59 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 			projectID: request.ProjectID, environment: request.Environment,
 		}
 	}
-	cacheScope, err := f.module.cache.OpenScope(resultcache.ScopeID{
-		RuntimeID: projectRuntimeCacheIdentity(request), PartitionID: analyticscache.PartitionIdentity(cachePartition),
+	runtimeIdentity := projectRuntimeCacheIdentity(request)
+	queryResultCache, err := f.module.cache.OpenScope(resultcache.ScopeID{
+		RuntimeID: runtimeIdentity + "\x00results", PartitionID: analyticscache.PartitionIdentity(partition),
 	})
 	if err != nil {
+		return nil, err
+	}
+	immutableByteCache, err := f.module.cache.OpenScope(resultcache.ScopeID{
+		RuntimeID: runtimeIdentity + "\x00bytes", PartitionID: "runtime-bytes:" + runtimeIdentity,
+	})
+	if err != nil {
+		_ = queryResultCache.Close()
 		return nil, err
 	}
 	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
 		Models: request.Models, Database: environment,
 		CredentialResolver: f.module.credentials,
 		ConnectionResolver: connectionResolver,
-		QueryCache:         cacheScope, ResultLimits: request.ResultLimits,
+		ResultPartition:    partition, QueryResultCache: queryResultCache,
+		ImmutableByteCache: immutableByteCache, ResultLimits: request.ResultLimits,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,
 		ProjectID: request.ProjectID, Environment: request.Environment,
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
-		SourceDataDigest: request.SourceDataDigest,
-		CandidateID:      request.CandidateID, AuthorizationFingerprint: request.AuthorizationFingerprint,
-		BindingFingerprint:  request.BindingFingerprint,
-		QueryCachePartition: cachePartition,
-		DependencyEvidence:  request.DependencyEvidence,
-		RequiredExtensions:  request.RequiredExtensions,
-		SkipInitialRefresh:  request.SkipInitialRefresh,
+		SourceDataDigest:   request.SourceDataDigest,
+		DependencyEvidence: request.DependencyEvidence,
+		RequiredExtensions: request.RequiredExtensions,
+		SkipInitialRefresh: request.SkipInitialRefresh,
 	})
 	if err != nil {
-		_ = cacheScope.Close()
+		_ = queryResultCache.Close()
+		_ = immutableByteCache.Close()
 		return nil, err
 	}
 	return runtime, nil
+}
+
+func projectResultPartition(request analyticsruntime.ProjectRequest) (resultidentity.Partition, error) {
+	kind := resultidentity.PartitionProduction
+	if request.CandidateID != "" {
+		kind = resultidentity.PartitionCandidate
+	}
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: kind, ProjectID: request.ProjectID, Environment: request.Environment,
+		CandidateID: request.CandidateID,
+	})
+	if err != nil {
+		return resultidentity.Partition{}, fmt.Errorf("query result cache partition: %w", err)
+	}
+	return partition, nil
+}
+
+func projectResultCacheIdentity(partition resultidentity.Partition) string {
+	return "result-partition:" + base64.RawURLEncoding.EncodeToString(partition.Canonical())
 }
 
 func projectRuntimeCacheIdentity(

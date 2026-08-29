@@ -43,7 +43,7 @@ func TestSearchUsesActiveCatalogAndMapsStableResults(t *testing.T) {
 	if fake.request.PrincipalID != "principal-1" || fake.request.Query != "sales" || len(fake.request.Kinds) != 7 {
 		t.Fatalf("catalog request=%#v", fake.request)
 	}
-	for _, want := range []string{`"kind":"dashboard"`, `"id":"dashboard_sales"`, `"displayName":"Sales dashboard"`, `"nextCursor":"next"`} {
+	for _, want := range []string{`"kind":"dashboard"`, `"id":"dashboard_sales"`, `"displayName":"Sales dashboard"`, `"href":"/dashboards/dashboard_sales"`, `"nextCursor":"next"`} {
 		if !strings.Contains(response.Body.String(), want) {
 			t.Fatalf("body=%s missing %s", response.Body.String(), want)
 		}

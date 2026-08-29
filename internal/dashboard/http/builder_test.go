@@ -22,6 +22,7 @@ import (
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
+	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -189,6 +190,35 @@ func TestDashboardBuilderCommandRoutesBuilderIntentsWithServerGeneratedIDs(t *te
 	}
 	if fake.executed.AddVisual.VisualID != "" || fake.executed.AddVisual.ComponentID != "" || fake.executed.AddVisual.Type != "bar" {
 		t.Fatalf("server-generated visual IDs were not preserved: %#v", fake.executed.AddVisual)
+	}
+}
+
+func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequestID(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	correlated := httpmiddleware.RequestCorrelation(nethttp.HandlerFunc(func(w nethttp.ResponseWriter, r *nethttp.Request) {
+		handler.DashboardBuilderCommand(w, withBuilderURLParams(r, "sales", "revenue"))
+	}))
+
+	for range 2 {
+		req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "publish",
+		}})
+		req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+		req.Header.Set("Idempotency-Key", "builder-retry-1")
+		rec := httptest.NewRecorder()
+
+		correlated.ServeHTTP(rec, req)
+
+		if rec.Code != nethttp.StatusOK {
+			t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+		}
+		if fake.executed.ID != "builder-retry-1" {
+			t.Fatalf("command ID = %q, want stable Idempotency-Key fallback", fake.executed.ID)
+		}
+		if got := rec.Header().Get("X-Request-ID"); !strings.HasPrefix(got, "req_") {
+			t.Fatalf("response request ID = %q, want generated correlation identity", got)
+		}
 	}
 }
 

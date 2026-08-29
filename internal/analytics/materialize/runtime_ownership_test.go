@@ -66,7 +66,7 @@ func ownershipModel() *semanticmodel.Model {
 func TestOpenRuntimeOwnedFailureClosesDatabaseExactlyOnceAndJoinsErrors(t *testing.T) {
 	primary, cleanup := errors.New("refresh failed"), errors.New("database close failed")
 	db := &ownershipDatabase{closeErr: cleanup}
-	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: primary}, QueryCachePartition: ownershipPartition(t), OwnDatabase: true})
+	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: primary}, ResultPartition: ownershipPartition(t), OwnDatabase: true})
 	if !errors.Is(err, primary) || !errors.Is(err, cleanup) {
 		t.Fatalf("OpenRuntime error = %v, want primary and cleanup", err)
 	}
@@ -77,7 +77,7 @@ func TestOpenRuntimeOwnedFailureClosesDatabaseExactlyOnceAndJoinsErrors(t *testi
 
 func TestOpenRuntimeBorrowedDatabaseRemainsOpenOnFailure(t *testing.T) {
 	db := &ownershipDatabase{}
-	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: errors.New("refresh failed")}, QueryCachePartition: ownershipPartition(t)})
+	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: errors.New("refresh failed")}, ResultPartition: ownershipPartition(t)})
 	if err == nil {
 		t.Fatal("OpenRuntime unexpectedly succeeded")
 	}
@@ -96,7 +96,7 @@ func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope, QueryCachePartition: ownershipPartition(t)})
+	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, ResultPartition: ownershipPartition(t), QueryResultCache: scope, ImmutableByteCache: scope})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +127,7 @@ func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope, QueryCachePartition: ownershipPartition(t), OwnQueryCache: true})
+	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, ResultPartition: ownershipPartition(t), QueryResultCache: scope, ImmutableByteCache: scope, OwnQueryCache: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +151,7 @@ func TestNewRuntimeViewOwnedCacheClosesOnModelCompilationFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewRuntimeView(context.Background(), RuntimeConfig{Model: nil, Database: db, Sources: ownershipSources{}, QueryCache: scope, OwnQueryCache: true, OwnDatabase: true})
+	_, err = NewRuntimeView(context.Background(), RuntimeConfig{Model: nil, Database: db, Sources: ownershipSources{}, QueryResultCache: scope, ImmutableByteCache: scope, OwnQueryCache: true, OwnDatabase: true})
 	if err == nil {
 		t.Fatal("model compilation unexpectedly succeeded")
 	}
@@ -176,7 +176,7 @@ func TestNewRuntimeViewBorrowedCacheRemainsOpenOnModelFailure(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewRuntimeView(context.Background(), RuntimeConfig{Model: nil, Database: &ownershipDatabase{}, Sources: ownershipSources{}, QueryCache: scope})
+	_, err = NewRuntimeView(context.Background(), RuntimeConfig{Model: nil, Database: &ownershipDatabase{}, Sources: ownershipSources{}, QueryResultCache: scope, ImmutableByteCache: scope})
 	if err == nil {
 		t.Fatal("model compilation unexpectedly succeeded")
 	}

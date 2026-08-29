@@ -204,7 +204,8 @@ test('principal administration exposes local controls and keeps external profile
         activity: [{ id: 'event-1', action: 'principal.updated', actorId: 'admin-1', actorName: 'Admin User', status: 'success', createdAt: '2026-08-02T11:00:00Z' }],
         selectedPrincipalId: 'local-1', loading: false,
       }
-      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state }, getPath: (path: string) => path === 'adminAccess' ? state : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
+      const chrome = { sidebar: { userAvatarUrl: '/profile/avatars/local-1/avatar-digest' } }
+      runtime.setDatastarLitRuntimeForTests?.({ root: { adminAccess: state, chrome }, getPath: (path: string) => path === 'adminAccess' ? state : path === 'chrome' ? chrome : undefined, effect: (fn: () => void) => { fn(); return () => {} } })
       const element = document.querySelector('lv-principal-administration') as any
       element.requestUpdate(); await element.updateComplete
       const commands: unknown[] = []
@@ -221,6 +222,7 @@ test('principal administration exposes local controls and keeps external profile
         status: element.shadowRoot.querySelector('[data-user-status]')?.textContent?.trim(),
         sharedLayout: Boolean(element.shadowRoot.querySelector('.detail-surface .detail-sections')),
         cardCount: element.shadowRoot.querySelectorAll('.detail-card').length,
+        avatarSrc: (element.shadowRoot.querySelector('lv-user-avatar') as any)?.shadowRoot?.querySelector('img')?.getAttribute('src'),
       }
       state.selectedPrincipalId = 'sso-1'
       element.requestUpdate(); await element.updateComplete
@@ -240,6 +242,7 @@ test('principal administration exposes local controls and keeps external profile
     expect(result.local.status).toBe('Active')
     expect(result.local.sharedLayout).toBe(true)
     expect(result.local.cardCount).toBe(0)
+    expect(result.local.avatarSrc).toBe('/profile/avatars/local-1/avatar-digest')
     expect(result.externalText).toContain('OKTA owns this identity')
     expect(result.externalForm).toBe(false)
   } finally { await page.close() }

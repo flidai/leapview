@@ -350,6 +350,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
       return {
         reflected: element.getAttribute('presentation'),
         sidebarVisible: visible('lv-sub-sidebar'),
+        backLinkCount: root.querySelector('lv-sub-sidebar')?.shadowRoot?.querySelectorAll('.back-link').length ?? 0,
         headerVisible: visible('.header'),
         footerVisible: visible('lv-report-footer'),
         hasAgentToggle: Boolean(root.querySelector('.agent-toggle')),
@@ -363,6 +364,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
     })
     expect(state.reflected).toBe('embed')
     expect(state.sidebarVisible).toBe(true)
+    expect(state.backLinkCount).toBe(0)
     expect(state.headerVisible).toBe(false)
     expect(state.footerVisible).toBe(false)
     expect(state.hasAgentToggle).toBe(false)
@@ -376,6 +378,255 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
     await page.close()
   }
 })
+
+test('app report frame aligns identity and footer with the canvas around contextual rails', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (
+      customElements.get('lv-dashboard-page')
+        && customElements.get('lv-sub-sidebar')
+        && (document.querySelector('lv-dashboard-page') as any)?.page
+    ))
+    await page.waitForTimeout(250)
+
+    const state = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      await sidebar.updateComplete
+      const root = sidebar.shadowRoot!
+      const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
+      const railHeader = element.shadowRoot.querySelector('.rail-header') as HTMLElement
+      const back = railHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
+      const backLabel = back.querySelector('.rail-back-label') as HTMLElement
+      const collapse = root.querySelector('.collapse') as HTMLButtonElement
+      const header = root.querySelector('header') as HTMLElement
+      const sectionTitle = root.querySelector('.section-title') as HTMLElement
+      const firstPage = root.querySelector('.item-link') as HTMLElement
+      const main = element.shadowRoot.querySelector('.main') as HTMLElement
+      const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      const title = reportHeader.querySelector('h1') as HTMLElement
+      const expandedWidth = Math.round(sidebar.getBoundingClientRect().width)
+      const expandedPageTop = Math.round(firstPage.getBoundingClientRect().top)
+      const backIconMarkup = back.querySelector('svg')?.innerHTML
+      const expandedToggleIconMarkup = collapse.querySelector('svg')?.innerHTML
+      const reportHeaderRect = reportHeader.getBoundingClientRect()
+      const railHeaderRect = railHeader.getBoundingClientRect()
+      const backRect = back.getBoundingClientRect()
+      const expandedBackLabelDisplay = getComputedStyle(backLabel).display
+      const sidebarRect = sidebar.getBoundingClientRect()
+      const mainRect = main.getBoundingClientRect()
+      const titleRect = title.getBoundingClientRect()
+      const reportFooterRect = reportFooter.getBoundingClientRect()
+      collapse.click()
+      await sidebar.updateComplete
+      await new Promise(resolve => setTimeout(resolve, 200))
+      const collapsedPageTop = Math.round(
+        (root.querySelector('.item-link') as HTMLElement).getBoundingClientRect().top,
+      )
+      const collapsedToggleIconMarkup = root.querySelector('.collapse svg')?.innerHTML
+      const collapsedMainRect = main.getBoundingClientRect()
+      const collapsedRailHeaderRect = railHeader.getBoundingClientRect()
+      const collapsedBackRect = back.getBoundingClientRect()
+      const collapsedBackLabelDisplay = getComputedStyle(backLabel).display
+      const collapsedTitleRect = title.getBoundingClientRect()
+      const collapsedSidebarRect = sidebar.getBoundingClientRect()
+      const collapsedReportFooterRect = reportFooter.getBoundingClientRect()
+      return {
+        href: back.getAttribute('href'),
+        label: back.getAttribute('aria-label'),
+        text: back.textContent?.trim(),
+        backTag: back.tagName,
+        title: back.getAttribute('title'),
+        expandedBackLabelDisplay,
+        collapsedBackLabelDisplay,
+        reportTitle: reportHeader.querySelector('h1')?.textContent?.trim(),
+        reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
+        sidebarTitleCount: root.querySelectorAll('.sidebar-title').length,
+        sidebarBackCount: root.querySelectorAll('.back-link').length,
+        backInRailHeader: railHeader.contains(back),
+        railHeaderAligned: Math.round(railHeaderRect.left) === Math.round(sidebarRect.left),
+        backInset: Math.round(backRect.left - railHeaderRect.left),
+        reportHeaderAligned: Math.round(reportHeaderRect.left) === Math.round(mainRect.left),
+        titleInset: Math.round(titleRect.left - mainRect.left),
+        sidebarBelowHeader: Math.abs(sidebarRect.top - railHeaderRect.bottom) < 2,
+        mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
+        railFooterCount: element.shadowRoot.querySelectorAll('.rail-footer').length,
+        sidebarSpansFooter: Math.abs(sidebarRect.bottom - reportFooterRect.bottom) < 2,
+        sidebarContinuesPastCanvas: sidebarRect.bottom > mainRect.bottom,
+        footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
+        collapsedSidebarSpansFooter: Math.abs(collapsedSidebarRect.bottom - collapsedReportFooterRect.bottom) < 2,
+        collapsedTitleInset: Math.round(collapsedTitleRect.left - collapsedMainRect.left),
+        collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
+        collapsedBackCentered: Math.abs(
+          (collapsedBackRect.left + collapsedBackRect.width / 2)
+            - (collapsedRailHeaderRect.left + collapsedRailHeaderRect.width / 2),
+        ) < 2,
+        collapsedBackWidth: Math.round(collapsedBackRect.width),
+        titleMovesWithCanvas: Math.round(collapsedTitleRect.left - titleRect.left)
+          === Math.round(collapsedMainRect.left - mainRect.left),
+        collapseInHeader: header.contains(collapse),
+        sectionTitle: sectionTitle.textContent?.trim(),
+        sectionTitleTransform: getComputedStyle(sectionTitle).textTransform,
+        expandedWidth,
+        collapseTag: collapse.tagName,
+        collapseLabel: collapse.getAttribute('aria-label'),
+        collapsed: sidebar.hasAttribute('data-collapsed'),
+        railLabelDisplay: getComputedStyle(root.querySelector('.rail-label')).display,
+        pageTopShift: collapsedPageTop - expandedPageTop,
+        toggleIconDistinctFromBack: expandedToggleIconMarkup !== backIconMarkup,
+        toggleIconChanges: collapsedToggleIconMarkup !== expandedToggleIconMarkup,
+      }
+    })
+
+    expect(state).toEqual({
+      href: '/',
+      label: 'Back to dashboards',
+      text: 'Dashboards',
+      backTag: 'A',
+      title: 'All dashboards',
+      expandedBackLabelDisplay: 'block',
+      collapsedBackLabelDisplay: 'none',
+      reportTitle: 'Executive Sales Dashboard',
+      reportTitleCount: 1,
+      sidebarTitleCount: 0,
+      sidebarBackCount: 0,
+      backInRailHeader: true,
+      railHeaderAligned: true,
+      backInset: 16,
+      reportHeaderAligned: true,
+      titleInset: 16,
+      sidebarBelowHeader: true,
+      mainBelowHeader: true,
+      railFooterCount: 0,
+      sidebarSpansFooter: true,
+      sidebarContinuesPastCanvas: true,
+      footerAligned: true,
+      collapsedSidebarSpansFooter: true,
+      collapsedTitleInset: 16,
+      collapsedFooterAligned: true,
+      collapsedBackCentered: true,
+      collapsedBackWidth: 32,
+      titleMovesWithCanvas: true,
+      collapseInHeader: true,
+      sectionTitle: 'Pages',
+      sectionTitleTransform: 'none',
+      expandedWidth: 144,
+      collapseTag: 'BUTTON',
+      collapseLabel: 'Expand Report pages',
+      collapsed: true,
+      railLabelDisplay: 'none',
+      pageTopShift: 0,
+      toggleIconDistinctFromBack: true,
+      toggleIconChanges: false,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('report pages rail resizes accessibly and persists its expanded width', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('leapview-report-sidebar-resize-test-ready')) return
+      sessionStorage.setItem('leapview-report-sidebar-resize-test-ready', 'true')
+      localStorage.setItem('leapview-report-sidebar-collapsed', 'false')
+      localStorage.removeItem('leapview-report-sidebar-width')
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (
+      customElements.get('lv-dashboard-page')
+        && customElements.get('lv-sub-sidebar')
+        && (document.querySelector('lv-dashboard-page') as any)?.page
+    ))
+
+    const keyboardState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      await sidebar.updateComplete
+      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      handle.dispatchEvent(new KeyboardEvent('keydown', {
+        key: 'ArrowRight', bubbles: true, cancelable: true,
+      }))
+      await sidebar.updateComplete
+      return {
+        label: handle.getAttribute('aria-label'),
+        orientation: handle.getAttribute('aria-orientation'),
+        role: handle.getAttribute('role'),
+        tabIndex: handle.tabIndex,
+        value: handle.getAttribute('aria-valuenow'),
+      }
+    })
+    expect(keyboardState).toEqual({
+      label: 'Resize report pages',
+      orientation: 'vertical',
+      role: 'separator',
+      tabIndex: 0,
+      value: '152',
+    })
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 152
+    })
+    expect(await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
+      const main = element.shadowRoot.querySelector('.main') as HTMLElement
+      const header = element.shadowRoot.querySelector('.header') as HTMLElement
+      const footer = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
+      return [main, header, footer].every(node => (
+        Math.round(node.getBoundingClientRect().left) === Math.round(sidebar.getBoundingClientRect().right)
+      ))
+    })).toBe(true)
+
+    const handleBox = await page.locator('lv-dashboard-page').evaluate((element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as HTMLElement
+      const handle = sidebar.shadowRoot!.querySelector('.resize-handle') as HTMLElement
+      const box = handle.getBoundingClientRect()
+      return { x: box.x, y: box.y, width: box.width, height: box.height }
+    })
+    await page.mouse.move(handleBox.x + handleBox.width / 2, handleBox.y + 100)
+    await page.mouse.down()
+    await page.mouse.move(handleBox.x + handleBox.width / 2 + 32, handleBox.y + 100)
+    await page.mouse.up()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 184
+    })
+
+    expect(await page.evaluate(() => localStorage.getItem('leapview-report-sidebar-width'))).toBe('184')
+    await page.reload()
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement
+      const sidebar = dashboard?.shadowRoot?.querySelector('lv-sub-sidebar') as HTMLElement
+      return Math.round(sidebar?.getBoundingClientRect().width ?? 0) === 184
+    })
+
+    const collapsedState = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar') as any
+      await sidebar.updateComplete
+      const collapse = sidebar.shadowRoot.querySelector('.collapse') as HTMLButtonElement
+      const handle = sidebar.shadowRoot.querySelector('.resize-handle') as HTMLElement
+      collapse.click()
+      await sidebar.updateComplete
+      await new Promise(resolve => setTimeout(resolve, 200))
+      return {
+        width: Math.round(sidebar.getBoundingClientRect().width),
+        handleDisplay: getComputedStyle(handle).display,
+      }
+    })
+    expect(collapsedState).toEqual({ width: 38, handleDisplay: 'none' })
+  } finally {
+    await page.evaluate(() => {
+      localStorage.removeItem('leapview-report-sidebar-width')
+      localStorage.removeItem('leapview-report-sidebar-collapsed')
+    }).catch(() => undefined)
+    await page.close()
+  }
+}, 15_000)
 
 test('narrow dashboards let viewers preserve the desktop canvas with internal scrollbars', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
@@ -3160,7 +3411,7 @@ test('dashboard agent restores its open state and active conversation after relo
 function testDocument(): string {
   const page = {
     kind: 'dashboard', title: 'Executive Sales Dashboard', dashboardId: 'executive-sales', dashboardTitle: 'Executive Sales Dashboard',
-    pageId: 'overview', pageTitle: 'Overview', headerDetail: '1. Overview', modelId: 'olist', modelTitle: 'Olist',
+    pageId: 'overview', pageTitle: 'Overview', headerDetail: 'Overview', modelId: 'olist', modelTitle: 'Olist',
     canvas: { width: 1024, height: 720 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 },
     pages: [
       { id: 'overview', title: 'Overview', href: '/dashboards/executive-sales/pages/overview', active: true },
@@ -3262,7 +3513,7 @@ function testDocument(): string {
       <head>
         <style>
           html, body { margin: 0; min-height: 100%; }
-          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #eaeef2; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-scrollbar-thumb: #8c959f; --lv-scrollbar-thumb-hover: #6e7781; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --borderWidth-default: 1px; --control-medium-size: 32px; --control-xlarge-size: 40px; --focus-outline: 2px solid #0969da; --focus-outline-offset: -2px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --spinner-size-small: 16px; --spinner-size-medium: 32px; --spinner-size-large: 64px; --base-duration-1000: 1000ms; --base-easing-linear: linear; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
+          body { ${typographyTestTokens} --lv-bg-app: #f6f8fa; --lv-bg-panel: #fff; --lv-bg-panel-muted: #eaeef2; --lv-bg-control-hover: #f3f4f6; --lv-chart-surface: #fff; --lv-report-page-bg: #fff; --lv-report-canvas-bg: #eaeef2; --lv-report-rail-bg: #fff; --lv-bg-overlay: #fff; --lv-fg-default: #24292f; --lv-fg-muted: #57606a; --lv-fg-link: #0969da; --lv-line-muted: #d8dee4; --lv-scrollbar-thumb: #8c959f; --lv-scrollbar-thumb-hover: #6e7781; --lv-border-default: 1px solid #d0d7de; --lv-border-muted: 1px solid #d8dee4; --lv-border-transparent: 1px solid transparent; --lv-radius-default: 6px; --lv-radius-full: 999px; --lv-sidebar-width-expanded: 248px; --lv-sub-sidebar-width-expanded: 144px; --lv-page-rail-width-collapsed: 38px; --lv-dashboard-filter-open-width: 320px; --lv-dashboard-agent-width: 420px; --base-size-2: 2px; --base-size-4: 4px; --base-size-6: 6px; --base-size-8: 8px; --base-size-10: 10px; --base-size-12: 12px; --base-size-16: 16px; --base-size-20: 20px; --base-size-24: 24px; --borderWidth-default: 1px; --control-small-size: 28px; --control-medium-size: 32px; --control-xlarge-size: 40px; --focus-outline: 2px solid #0969da; --focus-outline-offset: -2px; --zIndex-dropdown: 100; --zIndex-modal: 200; --zIndex-sticky: 50; --shadow-resting-small: 0 1px 2px rgb(0 0 0 / .08); --shadow-floating-small: 0 8px 24px rgb(0 0 0 / .12); --lv-duration-fast: 160ms; --spinner-size-small: 16px; --spinner-size-medium: 32px; --spinner-size-large: 64px; --base-duration-1000: 1000ms; --base-easing-linear: linear; --motion-easing-move: ease; --motion-transition-stateChange: 160ms ease; }
           body { --lv-loading-delay-short: 250ms; --lv-loading-delay-long: 500ms; }
           lv-dashboard-page { min-height: 720px; }
         </style>

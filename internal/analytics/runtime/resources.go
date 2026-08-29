@@ -50,9 +50,6 @@ type ProjectRequest struct {
 	SkipInitialRefresh bool
 	ResultLimits       dataquery.ResultLimits
 	DependencyEvidence map[string]resultidentity.Evidence
-	// QueryCachePartition is constructed once from project/environment/
-	// candidate identity and reused by the L1 scope and materialization views.
-	QueryCachePartition resultidentity.Partition
 }
 
 // Project is the narrow analytical runtime consumed by dashboard adapters.

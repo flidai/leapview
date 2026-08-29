@@ -32,6 +32,14 @@ func TestDashboardInitialEnvelopeUsesCanonicalSemanticModelResourceID(t *testing
 	}
 }
 
+func TestReportPageHeaderDetailUsesThePageTitleWithoutItsNavigationOrdinal(t *testing.T) {
+	page := dashboard.Page{ID: "overview", Title: "Overview"}
+
+	if got := ReportPageHeaderDetail(page); got != "Overview" {
+		t.Fatalf("header detail = %q, want page title without navigation ordinal", got)
+	}
+}
+
 func optionalString(value *string) string {
 	if value == nil {
 		return ""

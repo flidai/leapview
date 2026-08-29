@@ -7,6 +7,7 @@ import { entityDetailStyles, renderEntityDetail } from '../shared/entity-detail'
 import { lucideIcon } from '../shared/lucide-icons'
 import type { AccessActivitySignal, AccessAdministrationSignal, AccessGroupSignal, AccessPrincipalSignal, AuditLogSignal, ServiceAccountSignal, ServiceAccountsSignal, ProjectRegistrySignal } from '../../generated/signals'
 import '../shared/entity-list'
+import '../shared/user-avatar'
 import type { EntityListColumn, EntityListItem } from '../shared/entity-list'
 import '../shared/entity-multi-select'
 import type { EntityMultiSelectItem } from '../shared/entity-multi-select'
@@ -86,6 +87,7 @@ const tableStyles = css`
   .activity-item:last-child { border-bottom: 0; }
   .activity-dot { width: 8px; height: 8px; margin-top: 6px; border-radius: 50%; background: var(--lv-fg-muted); }
   .activity-copy { display: grid; gap: var(--base-size-2); }
+  .detail-user-avatar { --lv-user-avatar-size: 100%; width: 100%; height: 100%; }
   @media (max-width: 760px) {
     .detail-section { padding-block: var(--base-size-20); }
     .detail-empty-row { grid-template-columns: minmax(6.5rem, 0.7fr) minmax(0, 1.3fr); }
@@ -235,9 +237,10 @@ class LeapViewPrincipalAdministration extends LeapViewAccessAdministrationBase {
         </details>` : nothing}`
     const notice = principal.identitySource === 'external' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>${source} owns this identity.</strong> Profile fields and synchronized memberships are read-only in LeapView. Block access locally or revoke sessions here; update or permanently remove the user in ${source}.</p></div>`
       : principal.identitySource === 'system' ? html`<div class="detail-notice" role="note"><span class="detail-notice-icon" aria-hidden="true">${lucideIcon(Info, { size: 18, strokeWidth: 2 })}</span><p><strong>System-managed account.</strong> Profile fields are read-only because this account is provisioned by LeapView configuration. Block access locally or revoke sessions here; update it through its provisioning source.</p></div>` : nothing
+    const avatarUrl = currentPrincipalAvatarUrl(this.signal<{ sidebar?: { userAvatarUrl?: string } }>('chrome', {}), principal.id)
     return renderEntityDetail({
       label: 'User administration', feedback: this.feedback(), backHref: '/admin/principals', backLabel: 'All users',
-      avatar: principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
+      avatar: avatarUrl ? html`<lv-user-avatar class="detail-user-avatar" .name=${principal.displayName || principal.email} .imageUrl=${avatarUrl} aria-hidden="true"></lv-user-avatar>` : principalInitials(principal), title: principal.displayName || principal.email || principal.id, subtitle: principal.email,
       badges: html`<span class="badge">${source}</span><span class=${`badge status-${status.toLowerCase()}`} data-user-status>${status}</span>`,
       actions, notice,
       sections: html`
@@ -470,6 +473,17 @@ function identitySourceLabel(principal: AccessPrincipalSignal): string {
 
 function principalInitials(principal: AccessPrincipalSignal): string {
   return initialsForValue(principal.displayName || principal.email || principal.id)
+}
+
+function currentPrincipalAvatarUrl(chrome: { sidebar?: { userAvatarUrl?: string } }, principalId: string): string {
+  const avatarUrl = chrome.sidebar?.userAvatarUrl?.trim() ?? ''
+  if (!avatarUrl) return ''
+  try {
+    const parts = new URL(avatarUrl, window.location.origin).pathname.split('/')
+    return parts[1] === 'profile' && parts[2] === 'avatars' && decodeURIComponent(parts[3] ?? '') === principalId ? avatarUrl : ''
+  } catch {
+    return ''
+  }
 }
 
 function initialsForValue(value: string): string {
