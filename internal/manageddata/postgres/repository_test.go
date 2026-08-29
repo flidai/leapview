@@ -63,7 +63,7 @@ func openManagedDataTestPool(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *postg
 
 func TestSchemaSQLIsCleanAndBounded(t *testing.T) {
 	s := SchemaSQL()
-	for _, forbidden := range []string{"database/sql", "managed_data_collections", "CURRENT_TIMESTAMP"} {
+	for _, forbidden := range []string{"database/sql", "managed_data_collections", "CURRENT_TIMESTAMP", "physical_pool_id", "catalog_id", "snapshot_id"} {
 		if containsSQL(s, forbidden) {
 			t.Fatalf("schema contains forbidden legacy/unbounded token %q", forbidden)
 		}
@@ -224,17 +224,10 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	if _, err := p.Exec(t.Context(), `SELECT managed_data.mark_upload_cleanup('upload_orders')`); err == nil {
 		t.Fatal("runtime invoked cleanup evidence function")
 	}
-	// Retention roots require either an existing revision in the declared
-	// project or one complete DuckLake snapshot tuple; partial, combined and
-	// cross-project identities are rejected by checks/triggers.
+	// Retention roots require an existing revision in the declared project;
+	// DuckLake snapshot roots belong to the separate DuckLake authority.
 	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,state,evidence) VALUES ('root_missing','project_demo','prod','revision_missing','live','{"source":"test"}')`); err == nil {
 		t.Fatal("retention root accepted missing revision")
-	}
-	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,physical_pool_id,snapshot_id,state,evidence) VALUES ('root_partial','project_demo','prod','pool_1',1,'live','{"source":"test"}')`); err == nil {
-		t.Fatal("retention root accepted partial snapshot tuple")
-	}
-	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,physical_pool_id,catalog_id,snapshot_id,state,evidence) VALUES ('root_combined','project_demo','prod','revision_orders','pool_1','catalog_1',1,'live','{"source":"test"}')`); err == nil {
-		t.Fatal("retention root accepted combined revision and snapshot identity")
 	}
 	if _, err := p.Exec(t.Context(), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,state,evidence) VALUES ('root_wrong_project','project_other','prod','revision_orders','live','{"source":"test"}')`); err == nil {
 		t.Fatal("retention root accepted cross-project revision")
@@ -242,9 +235,6 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	root, err := r.RecordRetentionRoot(t.Context(), RetentionRoot{RootID: "root_revision", ProjectID: "project_demo", Environment: "prod", RevisionID: rev.ID.String(), State: "live", Evidence: json.RawMessage(`{"source":"test"}`)})
 	if err != nil || root.RevisionID != rev.ID.String() {
 		t.Fatalf("valid retention root: %v %#v", err, root)
-	}
-	if _, err := r.RecordRetentionRoot(t.Context(), RetentionRoot{RootID: "root_snapshot", ProjectID: "project_demo", Environment: "prod", PhysicalPoolID: "pool_1", CatalogID: "catalog_1", SnapshotID: ptrInt64(1), State: "live", Evidence: json.RawMessage(`{"source":"test"}`)}); err == nil {
-		t.Fatal("managed-data authority accepted a DuckLake snapshot retention root")
 	}
 	if root, err = r.TransitionRetentionRoot(t.Context(), "root_revision", "retiring"); err != nil || root.State != "retiring" {
 		t.Fatalf("retention live->retiring: %v %#v", err, root)
@@ -292,8 +282,6 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 		t.Fatal(err)
 	}
 }
-
-func ptrInt64(v int64) *int64 { return &v }
 
 func containsString(values []string, want string) bool {
 	for _, value := range values {

@@ -15,8 +15,6 @@ import (
 // Root state is monotonic: live -> retiring -> expired.
 type RetentionRoot struct {
 	RootID, ProjectID, Environment, RevisionID string
-	PhysicalPoolID, CatalogID                  string
-	SnapshotID                                 *int64
 	State                                      string
 	Evidence                                   json.RawMessage
 	CreatedAt, UpdatedAt                       time.Time
@@ -62,7 +60,7 @@ func (r *Repository) RecordRetentionRoot(ctx context.Context, root RetentionRoot
 	// DuckLake snapshot retention/root state has its own capability-owned
 	// authority.  Managed-data roots intentionally admit revisions only; a
 	// cross-database snapshot tuple would otherwise be unverifiable here.
-	if root.RootID == "" || root.ProjectID == "" || root.Environment == "" || root.RevisionID == "" || root.SnapshotID != nil || root.PhysicalPoolID != "" || root.CatalogID != "" {
+	if root.RootID == "" || root.ProjectID == "" || root.Environment == "" || root.RevisionID == "" {
 		return RetentionRoot{}, ErrInvalid
 	}
 	if root.State == "" {
