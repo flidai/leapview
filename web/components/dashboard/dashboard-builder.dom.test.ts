@@ -168,6 +168,133 @@ test('dashboard builder places the page tab bar below the canvas without consumi
   }
 })
 
+test('dashboard builder collapses right panes, persists the choice, and uses icon actions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const before = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      return {
+        canvasWidth: root.querySelector('.canvas-pane').getBoundingClientRect().width,
+        panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.getAttribute('data-collapsed')),
+        historyIcons: Array.from(root.querySelectorAll('[data-builder-action="undo"], [data-builder-action="redo"]')).map((button: Element) => ({
+          label: button.getAttribute('aria-label'),
+          hasIcon: Boolean(button.querySelector('svg[data-lucide="icon"]')),
+          text: button.textContent?.trim(),
+        })),
+        toggleTargets: Array.from(root.querySelectorAll('[data-pane-toggle]')).map((button: Element) => ({
+          pane: button.getAttribute('data-pane-toggle'),
+          controls: button.getAttribute('aria-controls'),
+          controlsExistingTarget: Boolean(root.querySelector(`#${button.getAttribute('aria-controls')}`)),
+          hasIcon: Boolean(button.querySelector('svg[data-lucide="icon"]')),
+        })),
+      }
+    })
+
+    const visualsToggle = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const root = element.shadowRoot
+      ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const collapsed = {
+        pane: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
+        hidden: (root.querySelector('#builder-visuals-content') as HTMLElement).hidden,
+        expanded: root.querySelector('[data-pane-toggle="visuals"]')?.getAttribute('aria-expanded'),
+      }
+      ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { collapsed, reopened: root.querySelector('.visual-builder')?.getAttribute('data-collapsed') }
+    })
+
+    await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const root = element.shadowRoot
+      ;(root.querySelector('[data-pane-toggle="filters"]') as HTMLButtonElement).click()
+      ;(root.querySelector('[data-pane-toggle="data"]') as HTMLButtonElement).click()
+      await element.updateComplete
+    })
+    const collapsed = await page.locator('lv-dashboard-builder').evaluate((element: any) => {
+      const root = element.shadowRoot
+      const filters = root.querySelector('.filters-pane') as HTMLElement
+      const data = root.querySelector('.data-pane') as HTMLElement
+      return {
+        canvasWidth: root.querySelector('.canvas-pane').getBoundingClientRect().width,
+        filtersCollapsed: filters.dataset.collapsed,
+        dataCollapsed: data.dataset.collapsed,
+        filtersHidden: (root.querySelector('#builder-filters-content') as HTMLElement).hidden,
+        dataHidden: (root.querySelector('#builder-data-content') as HTMLElement).hidden,
+        filtersExpanded: root.querySelector('[data-pane-toggle="filters"]')?.getAttribute('aria-expanded'),
+        filterToggleTitle: root.querySelector('[data-pane-toggle="filters"]')?.getAttribute('title'),
+      }
+    })
+
+    await page.reload()
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const restored = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      return {
+        filters: root.querySelector('.filters-pane')?.getAttribute('data-collapsed'),
+        visuals: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
+        data: root.querySelector('.data-pane')?.getAttribute('data-collapsed'),
+      }
+    })
+    await page.setViewportSize({ width: 900, height: 900 })
+    const responsive = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const dock = root.querySelector('.right-dock') as HTMLElement
+      const filters = root.querySelector('.filters-pane') as HTMLElement
+      const data = root.querySelector('.data-pane') as HTMLElement
+      return {
+        dockOverflow: dock.scrollWidth > dock.clientWidth + 1,
+        filtersOverflow: filters.scrollWidth > filters.clientWidth + 1,
+        dataOverflow: data.scrollWidth > data.clientWidth + 1,
+      }
+    })
+    await page.setViewportSize({ width: 1100, height: 900 })
+    const stacked = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const filters = root.querySelector('.filters-pane') as HTMLElement
+      const data = root.querySelector('.data-pane') as HTMLElement
+      return {
+        filtersHeight: filters.getBoundingClientRect().height,
+        dataHeight: data.getBoundingClientRect().height,
+        filtersOverflow: filters.scrollHeight > filters.clientHeight + 1,
+        dataOverflow: data.scrollHeight > data.clientHeight + 1,
+      }
+    })
+
+    expect(before.panes).toEqual(['false', 'false', 'false'])
+    expect(before.historyIcons).toEqual([
+      { label: 'Undo', hasIcon: true, text: 'Undo' },
+      { label: 'Redo', hasIcon: true, text: 'Redo' },
+    ])
+    expect(before.toggleTargets).toEqual([
+      { pane: 'filters', controls: 'builder-filters-content', controlsExistingTarget: true, hasIcon: true },
+      { pane: 'visuals', controls: 'builder-visuals-content', controlsExistingTarget: true, hasIcon: true },
+      { pane: 'data', controls: 'builder-data-content', controlsExistingTarget: true, hasIcon: true },
+    ])
+    expect(visualsToggle).toEqual({ collapsed: { pane: 'true', hidden: true, expanded: 'false' }, reopened: 'false' })
+    expect(collapsed.canvasWidth).toBeGreaterThan(before.canvasWidth + 200)
+    expect(collapsed.filtersCollapsed).toBe('true')
+    expect(collapsed.dataCollapsed).toBe('true')
+    expect(collapsed.filtersHidden).toBe(true)
+    expect(collapsed.dataHidden).toBe(true)
+    expect(collapsed.filtersExpanded).toBe('false')
+    expect(collapsed.filterToggleTitle).toBe('Expand Filters pane')
+    expect(restored).toEqual({ filters: 'true', visuals: 'false', data: 'true' })
+    expect(responsive).toEqual({ dockOverflow: false, filtersOverflow: false, dataOverflow: false })
+    expect(stacked.filtersHeight).toBeLessThanOrEqual(57)
+    expect(stacked.dataHeight).toBeLessThanOrEqual(57)
+    expect(stacked.filtersOverflow).toBe(false)
+    expect(stacked.dataOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder changes the selected visual type without creating a visual', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
