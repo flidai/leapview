@@ -39,6 +39,7 @@ internal/platform/db/db.go
 internal/platform/db/models.go
 internal/platform/db/*.sql.go
 internal/*/internal/db/
+internal/**/internal/db/
 internal/platform/**/sqlite/*db/
 web/generated
 
