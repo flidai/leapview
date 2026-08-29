@@ -1384,6 +1384,64 @@ test('dashboard builder authors report filters from governed fields through focu
   }
 })
 
+test('dashboard builder places, moves, and removes canonical filter slicers on the shared grid', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, any>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [] }] } })
+      await element.updateComplete
+      ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelector('.filter-placement-action') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      const pages = structuredClone(element.builder.pages)
+      pages[0].filterComponents = [{ id: 'status-slicer', filterId: 'filter_1', label: 'Status', controlType: 'multiSelect', placement: { col: 7, row: 1, colSpan: 3, rowSpan: 2 } }]
+      mergePatch({ builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:slicer' } } })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      await element.updateComplete
+
+      const tile = root.querySelector('.filter-component') as HTMLElement
+      const tileLabel = tile.getAttribute('aria-label')
+      const selected = tile.getAttribute('data-selected')
+      const preview = tile.textContent?.replace(/\s+/g, ' ').trim()
+      tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true, composed: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('.filter-placement-action') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+
+      return {
+        commands,
+        tileLabel,
+        selected,
+        preview,
+        gridItems: root.querySelectorAll('.canvas > .grid-stack-item').length,
+      }
+    })
+    expect(state.commands[0]).toMatchObject({ action: 'add_filter_component', pageId: 'overview', filterId: 'filter_1', componentId: '' })
+    expect(state.commands[1]).toMatchObject({ action: 'set_placements', pageId: 'overview' })
+    expect(state.commands[1].placements.map((placement: any) => placement.componentId).sort()).toEqual(['sales-chart', 'status-slicer'])
+    expect(state.commands[2]).toMatchObject({ action: 'remove_filter_component', pageId: 'overview', componentId: 'status-slicer' })
+    expect(state.tileLabel).toContain('selected dashboard slicer')
+    expect(state.selected).toBe('true')
+    expect(state.preview).toContain('Status')
+    expect(state.preview).toContain('values load in Preview')
+    expect(state.gridItems).toBe(2)
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const visualCatalog = [
     ['line', 'Line chart', 'Cartesian'], ['area', 'Area chart', 'Cartesian'], ['bar', 'Bar chart', 'Cartesian'], ['column', 'Column chart', 'Cartesian'], ['pie', 'Pie chart', 'Part to whole'], ['donut', 'Donut chart', 'Part to whole'], ['scatter', 'Scatter chart', 'Distribution'], ['funnel', 'Funnel chart', 'Part to whole'],
@@ -1407,8 +1465,8 @@ function testDocument(): string {
           { key: 'legend', label: 'Legend', section: 'Display', control: 'select', value: 'right', choices: [{ value: 'none', label: 'None' }, { value: 'top', label: 'Top' }, { value: 'right', label: 'Right' }, { value: 'bottom', label: 'Bottom' }, { value: 'left', label: 'Left' }] },
           { key: 'labels.density', label: 'Data labels', section: 'Display', control: 'select', value: 'hidden', choices: [{ value: 'hidden', label: 'Hidden' }, { value: 'automatic', label: 'Automatic' }, { value: 'dense', label: 'Dense' }, { value: 'always', label: 'Always' }] },
           { key: 'stacking', label: 'Stacking', section: 'Chart', control: 'select', value: 'none', choices: [{ value: 'none', label: 'None' }, { value: 'normal', label: 'Normal' }, { value: 'percent', label: 'Percent' }] },
-        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }] },
-        { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [] },
+        ], placement: { col: 1, row: 1, colSpan: 6, rowSpan: 5 }, slots: [{ id: 'category', label: 'Category', kind: 'dimension', fieldId: 'orders.status', required: true }], filters: [] }], filterComponents: [] },
+        { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [], filterComponents: [] },
       ],
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',
       capabilities: { canEdit: true, canShare: true, canPublish: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },

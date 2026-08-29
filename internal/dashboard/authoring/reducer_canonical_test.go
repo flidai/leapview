@@ -466,11 +466,51 @@ func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *tes
 	if controlType, _ := updated.Control.Type(); controlType != "singleSelect" {
 		t.Fatalf("control type = %q", controlType)
 	}
+	if err := apply(&AddFilterComponentPayload{PageID: "overview", FilterID: filterID, ComponentID: "status-slicer"}); err != nil {
+		t.Fatal(err)
+	}
+	components := current.Document.Spec.Pages[0].Components
+	placed, ok := components[len(components)-1].Value.(*document.FilterDashboardPageComponent)
+	if !ok || placed.ID != "status-slicer" || placed.Filter != filterID || placed.Placement.ColumnSpan != 3 || placed.Placement.RowSpan != 2 {
+		t.Fatalf("placed filter component = %#v", components[len(components)-1])
+	}
+	if err := apply(&RemoveFilterComponentPayload{PageID: "overview", ComponentID: "status-slicer"}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Pages[0].Components) != len(components)-1 {
+		t.Fatalf("component count after remove = %d", len(current.Document.Spec.Pages[0].Components))
+	}
+	if err := apply(&AddFilterComponentPayload{PageID: "overview", FilterID: filterID, ComponentID: "status-slicer"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply(&SetFiltersPayload{Clear: true}); err != nil {
+		t.Fatal(err)
+	}
+	if len(current.Document.Spec.Filters) != 0 {
+		t.Fatalf("filter count after clear = %d", len(current.Document.Spec.Filters))
+	}
+	for _, component := range current.Document.Spec.Pages[0].Components {
+		if filter, ok := component.Value.(*document.FilterDashboardPageComponent); ok && filter.Filter == filterID {
+			t.Fatalf("filter replacement left placed component %#v", filter)
+		}
+	}
+	if err := apply(&AddFilterPayload{Label: "Status", Dimension: "status", Dataset: "orders", ControlType: "multiSelect"}); err != nil {
+		t.Fatal(err)
+	}
+	filterID = current.Document.Spec.Filters[0].ID
+	if err := apply(&AddFilterComponentPayload{PageID: "overview", FilterID: filterID, ComponentID: "status-slicer"}); err != nil {
+		t.Fatal(err)
+	}
 	if err := apply(&RemoveFilterPayload{FilterID: filterID}); err != nil {
 		t.Fatal(err)
 	}
 	if len(current.Document.Spec.Filters) != 0 {
 		t.Fatalf("filter count after remove = %d", len(current.Document.Spec.Filters))
+	}
+	for _, component := range current.Document.Spec.Pages[0].Components {
+		if filter, ok := component.Value.(*document.FilterDashboardPageComponent); ok && filter.Filter == filterID {
+			t.Fatalf("filter removal left placed component %#v", filter)
+		}
 	}
 }
 
@@ -510,6 +550,10 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.UpdateFilter = value
 	case *RemoveFilterPayload:
 		command.RemoveFilter = value
+	case *AddFilterComponentPayload:
+		command.AddFilterComponent = value
+	case *RemoveFilterComponentPayload:
+		command.RemoveFilterComponent = value
 	case *SetInteractionPayload:
 		command.SetInteraction = value
 	default:

@@ -505,6 +505,10 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.UpdateFilter = &authoring.UpdateFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Description: strings.TrimSpace(s.Description), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType), Required: s.Required, ReaderEditable: s.ReaderEditable, URLParameter: strings.TrimSpace(s.URLParameter)}
 	case "remove_filter":
 		command.RemoveFilter = &authoring.RemoveFilterPayload{FilterID: strings.TrimSpace(s.FilterID)}
+	case "add_filter_component":
+		command.AddFilterComponent = &authoring.AddFilterComponentPayload{PageID: strings.TrimSpace(s.PageID), FilterID: strings.TrimSpace(s.FilterID), ComponentID: strings.TrimSpace(s.ComponentID)}
+	case "remove_filter_component":
+		command.RemoveFilterComponent = &authoring.RemoveFilterComponentPayload{PageID: strings.TrimSpace(s.PageID), ComponentID: strings.TrimSpace(s.ComponentID)}
 	case "assign_field":
 		command.AssignField = &authoring.AssignFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "set_visual_type":

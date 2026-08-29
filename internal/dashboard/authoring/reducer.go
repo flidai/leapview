@@ -244,6 +244,7 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		} else {
 			value.Spec.Filters = append([]document.DashboardFilter(nil), patch.Filters...)
 		}
+		pruneCanonicalFilterComponents(value)
 		return nil
 	case *AddFilterPayload:
 		return addCanonicalFilter(value, *patch)
@@ -251,6 +252,10 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return updateCanonicalFilter(value, *patch)
 	case *RemoveFilterPayload:
 		return removeCanonicalFilter(value, *patch)
+	case *AddFilterComponentPayload:
+		return addCanonicalFilterComponent(value, *patch)
+	case *RemoveFilterComponentPayload:
+		return removeCanonicalFilterComponent(value, *patch)
 	case *SetInteractionPayload:
 		visualID, err := resolveCanonicalInteractionVisual(*value, patch.PageID, patch.VisualID)
 		if err != nil {
@@ -318,21 +323,114 @@ func updateCanonicalFilter(value *document.DashboardDocument, patch UpdateFilter
 }
 
 func removeCanonicalFilter(value *document.DashboardDocument, patch RemoveFilterPayload) error {
-	for _, page := range value.Spec.Pages {
-		for _, component := range page.Components {
-			filter, ok := component.Value.(*document.FilterDashboardPageComponent)
-			if ok && filter.Filter == patch.FilterID {
-				return fmt.Errorf("%w: filter %q is placed on page %q", ErrConflict, patch.FilterID, page.ID)
-			}
-		}
-	}
 	for index := range value.Spec.Filters {
 		if value.Spec.Filters[index].ID == patch.FilterID {
 			value.Spec.Filters = append(value.Spec.Filters[:index], value.Spec.Filters[index+1:]...)
+			for pageIndex := range value.Spec.Pages {
+				components := value.Spec.Pages[pageIndex].Components[:0]
+				for _, component := range value.Spec.Pages[pageIndex].Components {
+					filter, ok := component.Value.(*document.FilterDashboardPageComponent)
+					if ok && filter.Filter == patch.FilterID {
+						continue
+					}
+					components = append(components, component)
+				}
+				value.Spec.Pages[pageIndex].Components = components
+			}
 			return nil
 		}
 	}
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+}
+
+func pruneCanonicalFilterComponents(value *document.DashboardDocument) {
+	retained := make(map[string]struct{}, len(value.Spec.Filters))
+	for _, filter := range value.Spec.Filters {
+		retained[filter.ID] = struct{}{}
+	}
+	for pageIndex := range value.Spec.Pages {
+		components := value.Spec.Pages[pageIndex].Components[:0]
+		for _, component := range value.Spec.Pages[pageIndex].Components {
+			filter, ok := component.Value.(*document.FilterDashboardPageComponent)
+			if ok {
+				if _, exists := retained[filter.Filter]; !exists {
+					continue
+				}
+			}
+			components = append(components, component)
+		}
+		value.Spec.Pages[pageIndex].Components = components
+	}
+}
+
+func addCanonicalFilterComponent(value *document.DashboardDocument, patch AddFilterComponentPayload) error {
+	filterExists := false
+	for _, filter := range value.Spec.Filters {
+		if filter.ID == patch.FilterID {
+			filterExists = true
+			break
+		}
+	}
+	if !filterExists {
+		return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+	}
+	pageIndex := -1
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID == patch.PageID {
+			pageIndex = index
+			break
+		}
+	}
+	if pageIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	}
+	for _, component := range value.Spec.Pages[pageIndex].Components {
+		filter, ok := component.Value.(*document.FilterDashboardPageComponent)
+		if ok && filter.Filter == patch.FilterID {
+			return fmt.Errorf("%w: filter %q is already placed on page %q", ErrConflict, patch.FilterID, patch.PageID)
+		}
+	}
+	componentID := strings.TrimSpace(patch.ComponentID)
+	if componentID == "" {
+		componentID = nextCanonicalBuilderID("filter_component", len(value.Spec.Pages[pageIndex].Components)+1, func(candidate string) bool {
+			for _, component := range value.Spec.Pages[pageIndex].Components {
+				base, _ := component.Base()
+				if base != nil && base.ID == candidate {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	for _, component := range value.Spec.Pages[pageIndex].Components {
+		base, _ := component.Base()
+		if base != nil && base.ID == componentID {
+			return fmt.Errorf("%w: component %q already exists", ErrConflict, componentID)
+		}
+	}
+	placement := nextCanonicalComponentPlacement(*value, pageIndex, 3, 2)
+	value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components, document.DashboardPageComponent{Value: &document.FilterDashboardPageComponent{
+		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: componentID, Type: "filter", Placement: placement}, Type: "filter", Filter: patch.FilterID,
+	}})
+	return nil
+}
+
+func removeCanonicalFilterComponent(value *document.DashboardDocument, patch RemoveFilterComponentPayload) error {
+	for pageIndex := range value.Spec.Pages {
+		if value.Spec.Pages[pageIndex].ID != patch.PageID {
+			continue
+		}
+		for componentIndex, component := range value.Spec.Pages[pageIndex].Components {
+			base, err := component.Base()
+			_, isFilter := component.Value.(*document.FilterDashboardPageComponent)
+			if err == nil && base != nil && isFilter && base.ID == patch.ComponentID {
+				value.Spec.Pages[pageIndex].Components = append(value.Spec.Pages[pageIndex].Components[:componentIndex], value.Spec.Pages[pageIndex].Components[componentIndex+1:]...)
+				return nil
+			}
+		}
+		return fmt.Errorf("%w: filter component %q on page %q", ErrNotFound, patch.ComponentID, patch.PageID)
+	}
+	return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
 }
 
 func optionalCanonicalString(value string) *string {
@@ -577,6 +675,11 @@ func canonicalPlacementColumns(value document.DashboardDocument, page document.D
 }
 
 func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex int, visualType document.DashboardVisualType) document.DashboardPlacement {
+	columnSpan, rowSpan := canonicalVisualPlacementSize(visualType)
+	return nextCanonicalComponentPlacement(value, pageIndex, columnSpan, rowSpan)
+}
+
+func nextCanonicalComponentPlacement(value document.DashboardDocument, pageIndex int, columnSpan, rowSpan int32) document.DashboardPlacement {
 	const defaultColumns int32 = 12
 	columns := defaultColumns
 	if value.Spec.Layout != nil && value.Spec.Layout.Columns > 0 {
@@ -586,7 +689,6 @@ func nextCanonicalVisualPlacement(value document.DashboardDocument, pageIndex in
 	if page.Layout != nil && page.Layout.Columns != nil && *page.Layout.Columns > 0 {
 		columns = *page.Layout.Columns
 	}
-	columnSpan, rowSpan := canonicalVisualPlacementSize(visualType)
 	columnSpan = minPositive(columns, columnSpan)
 	for row := int32(1); ; row++ {
 		for column := int32(1); column <= columns-columnSpan+1; column++ {

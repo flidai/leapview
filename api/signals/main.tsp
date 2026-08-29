@@ -132,6 +132,15 @@ model DashboardBuilderPageSignal {
   `canvas`: DashboardPageCanvas;
   `grid`: DashboardPageGrid;
   `visuals`: DashboardBuilderVisualSignal[];
+  `filterComponents`: DashboardBuilderFilterComponentSignal[];
+}
+
+model DashboardBuilderFilterComponentSignal {
+  `id`: string;
+  `filterId`: string;
+  `label`: string;
+  `controlType`: "singleSelect" | "multiSelect" | "text" | "numericRange" | "dateRange" | "relativePeriod";
+  `placement`: DashboardPagePlacement;
 }
 
 model DashboardBuilderVisualTypeSignal {

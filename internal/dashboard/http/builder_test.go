@@ -330,6 +330,16 @@ func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
 				t.Fatalf("remove filter = %#v", command.RemoveFilter)
 			}
 		}},
+		{name: "place slicer", action: map[string]any{"action": "add_filter_component", "pageId": "overview", "filterId": "status", "componentId": "status-slicer"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.AddFilterComponent == nil || command.AddFilterComponent.PageID != "overview" || command.AddFilterComponent.FilterID != "status" || command.AddFilterComponent.ComponentID != "status-slicer" {
+				t.Fatalf("add filter component = %#v", command.AddFilterComponent)
+			}
+		}},
+		{name: "remove slicer", action: map[string]any{"action": "remove_filter_component", "pageId": "overview", "componentId": "status-slicer"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemoveFilterComponent == nil || command.RemoveFilterComponent.PageID != "overview" || command.RemoveFilterComponent.ComponentID != "status-slicer" {
+				t.Fatalf("remove filter component = %#v", command.RemoveFilterComponent)
+			}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

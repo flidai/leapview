@@ -22,12 +22,13 @@ import (
 )
 
 const (
-	maxPages       = 128
-	maxVisuals     = 1024
-	maxTables      = 256
-	maxFields      = 1024
-	maxSlots       = 64
-	maxDiagnostics = 128
+	maxPages            = 128
+	maxVisuals          = 1024
+	maxFilterComponents = 1024
+	maxTables           = 256
+	maxFields           = 1024
+	maxSlots            = 64
+	maxDiagnostics      = 128
 )
 
 // Request identifies one project-scoped draft builder projection. Empty
@@ -296,6 +297,11 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 	result := make([]uisignals.DashboardBuilderPageSignal, 0, len(pages))
 	diagnostics := make([]uisignals.DashboardBuilderDiagnosticSignal, 0)
 	visualTotal := 0
+	filterComponentTotal := 0
+	filterDefinitions := make(map[string]dashboarddocument.DashboardFilter, len(authored.Spec.Filters))
+	for _, filter := range authored.Spec.Filters {
+		filterDefinitions[filter.ID] = filter
+	}
 	for _, page := range pages {
 		components := append([]dashboarddocument.DashboardPageComponent(nil), page.Components...)
 		sort.SliceStable(components, func(i, j int) bool {
@@ -307,8 +313,37 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			return left.ID < right.ID
 		})
 		visuals := make([]uisignals.DashboardBuilderVisualSignal, 0, len(components))
+		filterComponents := make([]uisignals.DashboardBuilderFilterComponentSignal, 0)
 		seenVisualIDs := make(map[string]struct{}, len(components))
 		for _, component := range components {
+			if filterComponent, ok := component.Value.(*dashboarddocument.FilterDashboardPageComponent); ok {
+				filterComponentTotal++
+				if filterComponentTotal > maxFilterComponents {
+					return nil, nil, "", "", fmt.Errorf("dashboard builder filter components exceed bounded limit")
+				}
+				base, err := component.Base()
+				if err != nil {
+					return nil, nil, "", "", err
+				}
+				definition, exists := filterDefinitions[filterComponent.Filter]
+				if !exists {
+					diagnostics = append(diagnostics, diagnostic("error", "FILTER_MISSING", fmt.Sprintf("Filter %q is missing from the authored document.", filterComponent.Filter), filterComponent.Filter))
+					continue
+				}
+				controlType, err := definition.Control.Type()
+				if err != nil {
+					return nil, nil, "", "", err
+				}
+				placement := dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)}
+				filterComponents = append(filterComponents, uisignals.DashboardBuilderFilterComponentSignal{
+					ID:          base.ID,
+					FilterID:    filterComponent.Filter,
+					Label:       display(definition.Label, definition.ID),
+					ControlType: controlType,
+					Placement:   uisignals.DashboardPagePlacementFromDashboard(placement),
+				})
+				continue
+			}
 			visualComponent, ok := component.Value.(*dashboarddocument.VisualDashboardPageComponent)
 			if !ok || strings.TrimSpace(visualComponent.Visual) == "" {
 				continue
@@ -321,12 +356,12 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			if visualTotal > maxVisuals {
 				return nil, nil, "", "", fmt.Errorf("dashboard builder visuals exceed bounded limit")
 			}
-			authored, ok := authored.Spec.Visuals[visualComponent.Visual]
+			authoredVisual, ok := authored.Spec.Visuals[visualComponent.Visual]
 			if !ok {
 				diagnostics = append(diagnostics, diagnostic("error", "VISUAL_MISSING", fmt.Sprintf("Visual %q is missing from the authored document.", visualComponent.Visual), visualComponent.Visual))
 				continue
 			}
-			visual, err := projectCanonicalVisual(base, visualComponent, authored)
+			visual, err := projectCanonicalVisual(base, visualComponent, authoredVisual)
 			if err != nil {
 				return nil, nil, "", "", err
 			}
@@ -354,11 +389,33 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			seenVisualIDs[visual.ID] = struct{}{}
 			visuals = append(visuals, visual)
 		}
-		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Visuals: visuals})
+		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Grid: projectCanonicalPageGrid(authored.Spec, page), Visuals: visuals, FilterComponents: filterComponents})
 	}
 	selectedPageID := choosePage(result, strings.TrimSpace(requestedPageID))
 	selectedVisualID := chooseVisual(result, selectedPageID, strings.TrimSpace(requestedVisualID))
 	return result, diagnostics, selectedPageID, selectedVisualID, nil
+}
+
+func projectCanonicalPageGrid(spec dashboarddocument.DashboardSpec, page dashboarddocument.DashboardPage) uisignals.DashboardPageGrid {
+	columns, rowHeight, gap, padding := int64(12), int64(48), int64(16), int64(16)
+	if spec.Layout != nil {
+		columns, rowHeight, gap, padding = int64(spec.Layout.Columns), int64(spec.Layout.RowHeight), int64(spec.Layout.Gap), int64(spec.Layout.Padding)
+	}
+	if page.Layout != nil {
+		if page.Layout.Columns != nil {
+			columns = int64(*page.Layout.Columns)
+		}
+		if page.Layout.RowHeight != nil {
+			rowHeight = int64(*page.Layout.RowHeight)
+		}
+		if page.Layout.Gap != nil {
+			gap = int64(*page.Layout.Gap)
+		}
+		if page.Layout.Padding != nil {
+			padding = int64(*page.Layout.Padding)
+		}
+	}
+	return uisignals.DashboardPageGrid{Columns: columns, RowHeight: rowHeight, Gap: gap, Padding: padding}
 }
 
 func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, component *dashboarddocument.VisualDashboardPageComponent, authored dashboarddocument.DashboardVisual) (uisignals.DashboardBuilderVisualSignal, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -199,6 +200,54 @@ func TestProjectPagesCanonicalOrderingAndGlobalBounds(t *testing.T) {
 	doc.Spec.Pages = make([]document.DashboardPage, maxPages+1)
 	if _, _, _, _, err := projectPages(doc, "", ""); err == nil || !strings.Contains(err.Error(), "pages exceed bounded limit") {
 		t.Fatalf("bound error = %v", err)
+	}
+}
+
+func TestProjectPagesProjectsCanonicalFilterComponentsAndMissingReferences(t *testing.T) {
+	doc := builderDocument()
+	doc.Spec.Pages[0].Components = append(doc.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.FilterDashboardPageComponent{
+		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "status-slicer", Type: "filter", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 3, RowSpan: 2}},
+		Type:                       "filter",
+		Filter:                     "status",
+	}})
+	pages, diagnostics, _, _, err := projectPages(doc, "overview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 || len(pages) != 1 || len(pages[0].FilterComponents) != 1 {
+		t.Fatalf("projection = pages %#v diagnostics %#v", pages, diagnostics)
+	}
+	if pages[0].Grid.Columns != 12 || pages[0].Grid.RowHeight != 48 || pages[0].Grid.Gap != 16 || pages[0].Grid.Padding != 16 {
+		t.Fatalf("default grid = %#v", pages[0].Grid)
+	}
+	component := pages[0].FilterComponents[0]
+	if component.ID != "status-slicer" || component.FilterID != "status" || component.Label != "Status" || component.ControlType != "multiSelect" {
+		t.Fatalf("filter component = %#v", component)
+	}
+	if component.Placement.Col != 7 || component.Placement.Row != 1 || component.Placement.ColSpan != 3 || component.Placement.RowSpan != 2 {
+		t.Fatalf("filter component placement = %#v", component.Placement)
+	}
+
+	doc.Spec.Pages[0].Components[1].Value.(*document.FilterDashboardPageComponent).Filter = "missing"
+	pages, diagnostics, _, _, err = projectPages(doc, "overview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages[0].FilterComponents) != 0 || len(diagnostics) != 1 || diagnostics[0].Code != "FILTER_MISSING" {
+		t.Fatalf("missing filter projection = pages %#v diagnostics %#v", pages, diagnostics)
+	}
+
+	doc = builderDocument()
+	doc.Spec.Pages[0].Components = make([]document.DashboardPageComponent, 0, maxFilterComponents+1)
+	for index := 0; index <= maxFilterComponents; index++ {
+		doc.Spec.Pages[0].Components = append(doc.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.FilterDashboardPageComponent{
+			DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "slicer-" + strconv.Itoa(index), Type: "filter", Placement: document.DashboardPlacement{Column: 1, Row: int32(index + 1), ColumnSpan: 3, RowSpan: 2}},
+			Type:                       "filter",
+			Filter:                     "status",
+		}})
+	}
+	if _, _, _, _, err := projectPages(doc, "overview", ""); err == nil || !strings.Contains(err.Error(), "filter components exceed bounded limit") {
+		t.Fatalf("filter component bound error = %v", err)
 	}
 }
 
