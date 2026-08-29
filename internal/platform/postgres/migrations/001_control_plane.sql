@@ -438,13 +438,21 @@ CREATE TABLE IF NOT EXISTS event.event_retention_root (
 CREATE TABLE IF NOT EXISTS audit.audit_event (
     audit_id       uuid PRIMARY KEY,
     scope_id       platform.resource_id,
-    principal_id   uuid REFERENCES access.principal(id) ON DELETE SET NULL,
+    -- Actor identity is immutable audit evidence.  It is intentionally not a
+    -- foreign key: deleting a principal must never rewrite historical rows.
+    principal_id   uuid,
+    source         platform.resource_id NOT NULL,
+    operation      platform.resource_id NOT NULL,
     action         platform.resource_id NOT NULL,
     resource_kind  platform.resource_id,
     resource_id    platform.resource_id,
+    capability     text NOT NULL CHECK (capability = btrim(capability) AND length(capability) <= 128),
     outcome        text NOT NULL CHECK (outcome IN ('success', 'failure', 'denied')),
     request_id     uuid,
     correlation_id uuid,
+    aggregate_key  text NOT NULL CHECK (aggregate_key = btrim(aggregate_key) AND length(aggregate_key) BETWEEN 1 AND 512),
+    aggregate_sequence bigint NOT NULL CHECK (aggregate_sequence >= 0),
+    intent_digest  platform.sha256_digest NOT NULL,
     metadata       jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(metadata) = 'object' AND octet_length(metadata::text) <= 32768),
     occurred_at    timestamptz NOT NULL DEFAULT clock_timestamp()
