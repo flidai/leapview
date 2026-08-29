@@ -65,21 +65,21 @@ func (s *PostgresStore) requireDB() (postgres.DBTX, error) {
 }
 
 func (s *PostgresStore) CreateClient(ctx context.Context, client storedClient) error {
-	r, err := s.requireDB()
-	if err != nil {
-		return err
-	}
 	redirects, _ := json.Marshal(client.RedirectURIs)
 	grants, _ := json.Marshal(client.GrantTypes)
 	responses, _ := json.Marshal(client.ResponseTypes)
 	scopes, _ := json.Marshal(client.Scopes)
 	audience, _ := json.Marshal(client.Audience)
-	_, err = r.Exec(ctx, `INSERT INTO access.oauth_client
-        (id,name,redirect_uris,grant_types,response_types,scopes,audience,public_client,secret_hash,token_endpoint_auth_method,principal_id)
-        VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,$8,$9,$10,NULLIF($11,'')::uuid)`,
-		client.ID, client.Name, redirects, grants, responses, scopes, audience,
-		client.Public, client.SecretHash, client.TokenEndpointAuthMethod, client.PrincipalID)
-	return err
+	r, err := s.requireDB()
+	if err != nil {
+		return err
+	}
+	return postgres.CreateOAuthClient(ctx, r, postgres.OAuthClientInput{
+		ID: client.ID, Name: client.Name, RedirectURIs: redirects, GrantTypes: grants,
+		ResponseTypes: responses, Scopes: scopes, Audience: audience,
+		PublicClient: client.Public, SecretHash: client.SecretHash,
+		TokenEndpointAuthMethod: client.TokenEndpointAuthMethod, PrincipalID: client.PrincipalID,
+	})
 }
 
 func (s *PostgresStore) EnsureServiceClient(ctx context.Context, principalID, principalName, resource string) error {
@@ -92,12 +92,7 @@ func (s *PostgresStore) EnsureServiceClient(ctx context.Context, principalID, pr
 	if err != nil {
 		return err
 	}
-	_, err = r.Exec(ctx, `INSERT INTO access.oauth_client
-        (id,name,redirect_uris,grant_types,response_types,scopes,audience,public_client,token_endpoint_auth_method,principal_id)
-        VALUES ($1,$2,$3::jsonb,$4::jsonb,$5::jsonb,$6::jsonb,$7::jsonb,false,'client_secret_post',$1::uuid)
-        ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name, scopes=EXCLUDED.scopes, audience=EXCLUDED.audience, principal_id=EXCLUDED.principal_id, updated_at=clock_timestamp()`,
-		principalID, principalName, redirects, grants, responses, scopes, audience)
-	return err
+	return postgres.EnsureOAuthClient(ctx, r, principalID, principalName, redirects, grants, responses, scopes, audience)
 }
 
 func (s *PostgresStore) GetClient(ctx context.Context, id string) (fosite.Client, error) {
@@ -112,11 +107,7 @@ func (s *PostgresStore) GetClient(ctx context.Context, id string) (fosite.Client
 	if err != nil {
 		return nil, err
 	}
-	var client storedClient
-	var principal *string
-	var redirects, grants, responses, scopes, audience []byte
-	err = r.QueryRow(ctx, `SELECT id,name,redirect_uris,grant_types,response_types,scopes,audience,public_client,secret_hash,token_endpoint_auth_method,principal_id::text FROM access.oauth_client WHERE id=$1`, id).
-		Scan(&client.ID, &client.Name, &redirects, &grants, &responses, &scopes, &audience, &client.Public, &client.SecretHash, &client.TokenEndpointAuthMethod, &principal)
+	row, err := postgres.GetOAuthClient(ctx, r, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		if s.resolveClient == nil {
 			return nil, fosite.ErrNotFound
@@ -131,16 +122,18 @@ func (s *PostgresStore) GetClient(ctx context.Context, id string) (fosite.Client
 	if err != nil {
 		return nil, err
 	}
+	client := storedClient{
+		ID: row.ID, Name: row.Name, Public: row.PublicClient,
+		SecretHash: row.SecretHash, TokenEndpointAuthMethod: row.TokenEndpointAuthMethod,
+		PrincipalID: row.PrincipalID,
+	}
 	for _, field := range []struct {
 		raw    []byte
 		target *[]string
-	}{{redirects, &client.RedirectURIs}, {grants, &client.GrantTypes}, {responses, &client.ResponseTypes}, {scopes, &client.Scopes}, {audience, &client.Audience}} {
+	}{{row.RedirectURIs, &client.RedirectURIs}, {row.GrantTypes, &client.GrantTypes}, {row.ResponseTypes, &client.ResponseTypes}, {row.Scopes, &client.Scopes}, {row.Audience, &client.Audience}} {
 		if err := json.Unmarshal(field.raw, field.target); err != nil {
 			return nil, fmt.Errorf("decode OAuth client %q: %w", id, err)
 		}
-	}
-	if principal != nil {
-		client.PrincipalID = *principal
 	}
 	return client.fositeClient(), nil
 }
@@ -156,8 +149,8 @@ func (s *PostgresStore) ClientName(ctx context.Context, id string) (string, erro
 	if err != nil {
 		return "", err
 	}
-	var name string
-	if err := r.QueryRow(ctx, `SELECT name FROM access.oauth_client WHERE id=$1`, id).Scan(&name); err != nil {
+	name, err := postgres.GetOAuthClientName(ctx, r, id)
+	if err != nil {
 		return "", err
 	}
 	return name, nil
@@ -171,20 +164,17 @@ func (s *PostgresStore) ClientAssertionJWTValid(ctx context.Context, jti string)
 	if err != nil {
 		return err
 	}
-	var expires time.Time
-	var valid bool
-	err = r.QueryRow(ctx, `SELECT expires_at, expires_at > clock_timestamp() FROM access.oauth_client_assertion WHERE jti=$1`, jti).Scan(&expires, &valid)
+	row, err := postgres.GetClientAssertion(ctx, r, jti)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	if valid {
+	if row.Valid {
 		return fosite.ErrJTIKnown
 	}
-	_, err = r.Exec(ctx, `DELETE FROM access.oauth_client_assertion WHERE jti=$1`, jti)
-	return err
+	return postgres.DeleteClientAssertion(ctx, r, jti)
 }
 
 func (s *PostgresStore) SetClientAssertionJWT(ctx context.Context, jti string, exp time.Time) error {
@@ -195,14 +185,14 @@ func (s *PostgresStore) SetClientAssertionJWT(ctx context.Context, jti string, e
 	if err != nil {
 		return err
 	}
-	var now time.Time
-	if err := r.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	now, err := postgres.OAuthClock(ctx, r)
+	if err != nil {
 		return err
 	}
 	if !exp.After(now) || exp.After(now.Add(24*time.Hour)) {
 		return errors.New("OAuth client assertion expiry is invalid")
 	}
-	_, err = r.Exec(ctx, `INSERT INTO access.oauth_client_assertion(jti,expires_at) VALUES($1,$2)`, jti, exp.UTC())
+	err = postgres.InsertClientAssertion(ctx, r, jti, exp)
 	var constraintErr *pgconn.PgError
 	if errors.As(err, &constraintErr) && constraintErr.Code == "23505" {
 		return fosite.ErrJTIKnown
@@ -278,28 +268,25 @@ func (s *PostgresStore) createSession(ctx context.Context, kind, signature, acce
 	if err != nil {
 		return err
 	}
-	_, err = s.runner(ctx).Exec(ctx, `INSERT INTO access.oauth_session(kind,signature,request_id,request_json,access_signature) VALUES($1,$2,$3,$4::jsonb,$5)`, kind, signature, request.GetID(), raw, accessSignature)
-	return err
+	return postgres.CreateOAuthSession(ctx, s.runner(ctx), kind, signature, request.GetID(), []byte(raw), accessSignature)
 }
 
 func (s *PostgresStore) pruneExpiredSessions(ctx context.Context) error {
 	if s.sessionRetention <= 0 {
 		return nil
 	}
-	var now time.Time
-	if err := s.runner(ctx).QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	now, err := postgres.OAuthClock(ctx, s.runner(ctx))
+	if err != nil {
 		return err
 	}
-	now = now.UTC()
 	last := s.lastPruneUnix.Load()
 	if last != 0 && now.Sub(time.Unix(last, 0)) < time.Hour {
 		return nil
 	}
-	_, err := s.runner(ctx).Exec(ctx, `DELETE FROM access.oauth_session WHERE created_at < $1`, now.Add(-s.sessionRetention))
-	if err != nil {
+	if err := postgres.DeleteExpiredOAuthSessions(ctx, s.runner(ctx), now.Add(-s.sessionRetention)); err != nil {
 		return err
 	}
-	if _, err = s.runner(ctx).Exec(ctx, `DELETE FROM access.oauth_client_assertion WHERE expires_at < $1`, now); err != nil {
+	if err := postgres.DeleteExpiredClientAssertions(ctx, s.runner(ctx), now); err != nil {
 		return err
 	}
 	s.lastPruneUnix.Store(now.Unix())
@@ -307,22 +294,19 @@ func (s *PostgresStore) pruneExpiredSessions(ctx context.Context) error {
 }
 
 func (s *PostgresStore) getSession(ctx context.Context, kind, signature string) (fosite.Requester, bool, error) {
-	var raw []byte
-	var active bool
-	err := s.runner(ctx).QueryRow(ctx, `SELECT request_json,active FROM access.oauth_session WHERE kind=$1 AND signature=$2`, kind, signature).Scan(&raw, &active)
+	row, err := postgres.GetOAuthSession(ctx, s.runner(ctx), kind, signature)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, false, fosite.ErrNotFound
 	}
 	if err != nil {
 		return nil, false, err
 	}
-	request, err := s.decodeRequester(ctx, raw)
-	return request, active, err
+	request, err := s.decodeRequester(ctx, row.RequestJSON)
+	return request, row.Active, err
 }
 
 func (s *PostgresStore) deleteSession(ctx context.Context, kind, signature string) error {
-	_, err := s.runner(ctx).Exec(ctx, `DELETE FROM access.oauth_session WHERE kind=$1 AND signature=$2`, kind, signature)
-	return err
+	return postgres.DeleteOAuthSession(ctx, s.runner(ctx), kind, signature)
 }
 
 func (s *PostgresStore) CreateAuthorizeCodeSession(ctx context.Context, code string, request fosite.Requester) error {
@@ -339,11 +323,11 @@ func (s *PostgresStore) GetAuthorizeCodeSession(ctx context.Context, code string
 	return r, nil
 }
 func (s *PostgresStore) InvalidateAuthorizeCodeSession(ctx context.Context, code string) error {
-	command, err := s.runner(ctx).Exec(ctx, `UPDATE access.oauth_session SET active=false WHERE kind=$1 AND signature=$2 AND active=true`, sessionAuthorizeCode, code)
+	rows, err := postgres.InvalidateAuthorizeCode(ctx, s.runner(ctx), sessionAuthorizeCode, code)
 	if err != nil {
 		return err
 	}
-	if command.RowsAffected() == 0 {
+	if rows == 0 {
 		return fosite.ErrNotFound
 	}
 	return nil
@@ -381,20 +365,7 @@ func (s *PostgresStore) DeleteRefreshTokenSession(ctx context.Context, signature
 	return s.deleteSession(ctx, sessionRefreshToken, signature)
 }
 func (s *PostgresStore) RotateRefreshToken(ctx context.Context, requestID, refreshSignature string) error {
-	var refreshed int64
-	err := s.runner(ctx).QueryRow(ctx, `WITH refresh AS (
-        UPDATE access.oauth_session
-        SET active=false
-        WHERE kind=$1 AND signature=$2 AND request_id=$3 AND active=true
-        RETURNING request_id
-    ), access_tokens AS (
-        UPDATE access.oauth_session AS access_session
-        SET active=false
-        FROM refresh
-        WHERE access_session.kind=$4 AND access_session.request_id=refresh.request_id
-        RETURNING access_session.signature
-    )
-    SELECT count(*) FROM refresh`, sessionRefreshToken, refreshSignature, requestID, sessionAccessToken).Scan(&refreshed)
+	refreshed, err := postgres.RotateRefreshToken(ctx, s.runner(ctx), sessionRefreshToken, refreshSignature, requestID, sessionAccessToken)
 	if err != nil {
 		return err
 	}
@@ -404,20 +375,7 @@ func (s *PostgresStore) RotateRefreshToken(ctx context.Context, requestID, refre
 	return nil
 }
 func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, requestID string) error {
-	var revoked int64
-	err := s.runner(ctx).QueryRow(ctx, `WITH refresh AS (
-        UPDATE access.oauth_session
-        SET active=false
-        WHERE kind=$1 AND request_id=$2 AND active=true
-        RETURNING request_id
-    ), access_tokens AS (
-        UPDATE access.oauth_session AS access_session
-        SET active=false
-        FROM refresh
-        WHERE access_session.kind=$3 AND access_session.request_id=refresh.request_id
-        RETURNING access_session.signature
-    )
-    SELECT count(*) FROM refresh`, sessionRefreshToken, requestID, sessionAccessToken).Scan(&revoked)
+	revoked, err := postgres.RevokeRefreshToken(ctx, s.runner(ctx), sessionRefreshToken, requestID, sessionAccessToken)
 	if err != nil {
 		return err
 	}
@@ -427,11 +385,11 @@ func (s *PostgresStore) RevokeRefreshToken(ctx context.Context, requestID string
 	return nil
 }
 func (s *PostgresStore) RevokeAccessToken(ctx context.Context, requestID string) error {
-	command, err := s.runner(ctx).Exec(ctx, `UPDATE access.oauth_session SET active=false WHERE kind=$1 AND request_id=$2 AND active=true`, sessionAccessToken, requestID)
+	rows, err := postgres.RevokeAccessToken(ctx, s.runner(ctx), sessionAccessToken, requestID)
 	if err != nil {
 		return err
 	}
-	if command.RowsAffected() == 0 {
+	if rows == 0 {
 		return fosite.ErrNotFound
 	}
 	return nil

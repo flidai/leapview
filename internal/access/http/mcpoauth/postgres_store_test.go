@@ -12,6 +12,7 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/ory/fosite"
 )
@@ -116,14 +117,25 @@ func TestPostgresStoreSessionTransactionsAndRotation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	principalID := uuid.NewString()
+	if _, err := db.runtime.Exec(t.Context(), `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'service','active',$2,$2)`, principalID, "oauth-principal@example.com"); err != nil {
+		t.Fatalf("create OAuth principal: %v", err)
+	}
 	client := StoredClient{
 		ID: "oauth-test-client", Name: "OAuth Test Client", RedirectURIs: []string{"https://client.example/callback"},
 		GrantTypes: []string{"authorization_code", "refresh_token"}, ResponseTypes: []string{"code"},
 		Scopes: []string{ScopeMCPUse}, Audience: []string{"https://leapview.example/mcp"}, Public: true,
-		TokenEndpointAuthMethod: "none",
+		TokenEndpointAuthMethod: "none", PrincipalID: principalID,
 	}
 	if err := store.CreateClient(t.Context(), client); err != nil {
 		t.Fatalf("create OAuth client: %v", err)
+	}
+	persisted, err := accesspostgres.GetOAuthClient(t.Context(), db.runtime, client.ID)
+	if err != nil {
+		t.Fatalf("read persisted OAuth client: %v", err)
+	}
+	if persisted.PrincipalID != principalID {
+		t.Fatalf("persisted OAuth principal id = %q, want %q", persisted.PrincipalID, principalID)
 	}
 	request := testOAuthRequester(client.ID, "request-commit")
 	txCtx, err := store.BeginTX(t.Context())

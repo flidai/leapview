@@ -184,7 +184,6 @@ func pgTimestamp(value time.Time) pgtype.Timestamptz {
 func pgInterval(value time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: int64(value / time.Microsecond), Valid: true}
 }
-
 func principalFromListGenerated(row accessdb.ListPrincipalsRow) access.Principal {
 	return principalFromGenerated(accessdb.GetPrincipalRow{
 		ID: row.ID, PrincipalType: row.PrincipalType, Status: row.Status,
@@ -210,11 +209,18 @@ func (r *Repository) PrincipalByID(ctx context.Context, id string) (access.Princ
 	if err != nil {
 		return access.Principal{}, err
 	}
-	p, err := scanPrincipal(db.QueryRow(ctx, principalSelect()+` WHERE id=$1::uuid AND revoked_at IS NULL`, id))
+	parsed, err := uuid.Parse(id)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	row, err := accessdb.New(db).GetPrincipal(ctx, pgtype.UUID{Bytes: parsed, Valid: true})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return access.Principal{}, pgx.ErrNoRows
 	}
-	return p, err
+	if err != nil {
+		return access.Principal{}, err
+	}
+	return principalFromGenerated(row), nil
 }
 
 func (r *Repository) ListPrincipals(ctx context.Context, filter access.PrincipalFilter) ([]access.Principal, error) {
@@ -223,33 +229,15 @@ func (r *Repository) ListPrincipals(ctx context.Context, filter access.Principal
 		return nil, err
 	}
 	email, query := strings.TrimSpace(filter.Email), strings.TrimSpace(filter.Query)
-	rows, err := db.Query(ctx, principalSelect()+` WHERE revoked_at IS NULL AND ($1='' OR lower(email)=lower($1)) AND ($2='' OR email ILIKE '%'||$2||'%' OR display_name ILIKE '%'||$2||'%') ORDER BY created_at DESC LIMIT $3`, email, query, maxPageSize)
+	rows, err := accessdb.New(db).ListPrincipals(ctx, accessdb.ListPrincipalsParams{Email: email, Query: query, PageSize: maxPageSize})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]access.Principal, 0)
-	for rows.Next() {
-		var p access.Principal
-		var kind, status string
-		var disabled, blocked, last, created, updated *time.Time
-		if err := rows.Scan(&p.ID, &kind, &status, &p.Email, &p.DisplayName, &disabled, &blocked, &last, &created, &updated); err != nil {
-			return nil, err
-		}
-		p.Kind = access.PrincipalKind(kind)
-		if kind == "service" {
-			p.Kind = access.PrincipalKindServicePrincipal
-		} else if kind == "dashboard_publication" {
-			p.Kind = access.PrincipalKindDashboardPublication
-		}
-		p.DisabledAt = formatTimePtr(disabled)
-		p.BlockedAt = formatTimePtr(blocked)
-		p.LastSeenAt = formatTimePtr(last)
-		p.CreatedAt = formatTimePtr(created)
-		p.UpdatedAt = formatTimePtr(updated)
-		out = append(out, p)
+	out := make([]access.Principal, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, principalFromListGenerated(row))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) SearchPrincipals(ctx context.Context, query string, limit int) ([]access.Principal, error) {
