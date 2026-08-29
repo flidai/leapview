@@ -1,0 +1,577 @@
+-- Canonical PostgreSQL delivery authority (FAI-565).
+--
+-- This is a capability-owned, clean-slate schema.  It deliberately contains
+-- no SQLite compatibility tables and does not duplicate DuckLake metadata.
+-- The package is applied as one clean baseline by the delivery capability.
+
+CREATE SCHEMA IF NOT EXISTS delivery;
+CREATE SCHEMA IF NOT EXISTS event;
+CREATE SCHEMA IF NOT EXISTS audit;
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_target (
+    target_id text PRIMARY KEY,
+    project_id text NOT NULL,
+    environment text NOT NULL,
+    target_revision bigint NOT NULL DEFAULT 1 CHECK (target_revision > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (target_id = btrim(target_id) AND octet_length(target_id) BETWEEN 1 AND 255),
+    CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
+    CHECK (environment = btrim(environment) AND octet_length(environment) BETWEEN 1 AND 255),
+    UNIQUE (project_id, environment)
+);
+
+-- Target-owned fencing counter. Keeping the counter in a separate row avoids
+-- conflating serving selection with lease state while preserving one lock
+-- scope for epoch allocation.
+CREATE TABLE IF NOT EXISTS delivery.delivery_target_fence (
+    target_id text PRIMARY KEY REFERENCES delivery.delivery_target(target_id),
+    next_fencing_epoch bigint NOT NULL DEFAULT 1 CHECK (next_fencing_epoch > 0)
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_plan (
+    plan_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    plan_revision bigint NOT NULL CHECK (plan_revision > 0),
+    plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_graph_digest text NOT NULL CHECK (compiled_graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_config_digest text NOT NULL CHECK (compiled_config_digest ~ '^sha256:[0-9a-f]{64}$'),
+    security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    qualification_required boolean NOT NULL DEFAULT false,
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 65536),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (target_id, plan_revision),
+    UNIQUE (plan_id, target_id)
+);
+
+-- The candidate table is the admission record. It stores no mutable serving
+-- pointer; only a qualified candidate can be used to create a generation.
+CREATE TABLE IF NOT EXISTS delivery.delivery_candidate (
+    candidate_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    plan_id uuid NOT NULL REFERENCES delivery.delivery_plan(plan_id),
+    snapshot_seal_id uuid,
+    status text NOT NULL DEFAULT 'building' CHECK (status = btrim(status) AND octet_length(status) BETWEEN 1 AND 32 AND status IN ('building','qualified','ready','admitted','rejected','retired')),
+    candidate_revision bigint NOT NULL CHECK (candidate_revision > 0),
+    artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    qualification_digest text CHECK (qualification_digest IS NULL OR qualification_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    qualified_at timestamptz,
+    retired_at timestamptz,
+    UNIQUE (target_id, candidate_revision),
+    UNIQUE (candidate_id, plan_id),
+    UNIQUE (candidate_id, target_id, plan_id),
+    UNIQUE (candidate_id, target_id, snapshot_seal_id),
+    FOREIGN KEY (plan_id, target_id) REFERENCES delivery.delivery_plan(plan_id, target_id),
+    CHECK ((status IN ('building','ready') AND snapshot_seal_id IS NULL AND qualification_digest IS NULL AND qualified_at IS NULL)
+        OR (status IN ('qualified','admitted') AND snapshot_seal_id IS NOT NULL AND qualification_digest IS NOT NULL AND qualified_at IS NOT NULL)
+        OR (status = 'rejected')
+        OR (status = 'retired' AND retired_at IS NOT NULL)),
+    CHECK (retired_at IS NULL OR status = 'retired')
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
+    attempt_id uuid PRIMARY KEY,
+    plan_id uuid NOT NULL REFERENCES delivery.delivery_plan(plan_id),
+    candidate_id uuid REFERENCES delivery.delivery_candidate(candidate_id),
+    owner_id text NOT NULL,
+    physical_pool_id text NOT NULL CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    fencing_epoch bigint NOT NULL CHECK (fencing_epoch > 0),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
+    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('running','committed','aborted','indeterminate','fenced')),
+    namespace text NOT NULL CHECK (namespace = btrim(namespace) AND octet_length(namespace) BETWEEN 1 AND 512),
+    lease_expires_at timestamptz NOT NULL,
+    session_identity text NOT NULL CHECK (session_identity = btrim(session_identity) AND octet_length(session_identity) BETWEEN 1 AND 512),
+    snapshot_id bigint CHECK (snapshot_id IS NULL OR snapshot_id > 0),
+    commit_marker jsonb,
+    termination_evidence jsonb,
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    finished_at timestamptz,
+    CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
+    CHECK (commit_marker IS NULL OR (jsonb_typeof(commit_marker) = 'object' AND octet_length(commit_marker::text) <= 4096)),
+    CHECK (termination_evidence IS NULL OR (jsonb_typeof(termination_evidence) = 'object' AND octet_length(termination_evidence::text) <= 32768)),
+    CHECK ((state = 'running' AND finished_at IS NULL) OR (state <> 'running' AND finished_at IS NOT NULL)),
+    CHECK ((state = 'running' AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NULL)
+        OR (state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL AND termination_evidence IS NULL)
+        OR (state IN ('aborted','indeterminate','fenced') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
+    UNIQUE (attempt_id, candidate_id),
+    FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
+    seal_id uuid PRIMARY KEY,
+    attempt_id uuid NOT NULL REFERENCES delivery.delivery_build_attempt(attempt_id),
+    candidate_id uuid REFERENCES delivery.delivery_candidate(candidate_id),
+    physical_pool_id text NOT NULL CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    tenant_domain text NOT NULL CHECK (tenant_domain = btrim(tenant_domain) AND octet_length(tenant_domain) BETWEEN 1 AND 255),
+    region text NOT NULL CHECK (region = btrim(region) AND octet_length(region) BETWEEN 1 AND 128),
+    encryption_domain text NOT NULL CHECK (encryption_domain = btrim(encryption_domain) AND octet_length(encryption_domain) BETWEEN 1 AND 255),
+    object_namespace text NOT NULL CHECK (object_namespace = btrim(object_namespace) AND octet_length(object_namespace) BETWEEN 1 AND 255),
+    catalog_database text NOT NULL CHECK (catalog_database = btrim(catalog_database) AND octet_length(catalog_database) BETWEEN 1 AND 255),
+    catalog_uuid text NOT NULL CHECK (catalog_uuid = btrim(catalog_uuid) AND octet_length(catalog_uuid) BETWEEN 1 AND 255),
+    catalog_version bigint NOT NULL CHECK (catalog_version > 0),
+    ducklake_snapshot_id bigint NOT NULL CHECK (ducklake_snapshot_id > 0),
+    relation_namespace text NOT NULL CHECK (relation_namespace = btrim(relation_namespace) AND octet_length(relation_namespace) BETWEEN 1 AND 512),
+    relation_manifest_digest text NOT NULL CHECK (relation_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
+    object_root text NOT NULL CHECK (object_root = btrim(object_root) AND octet_length(object_root) BETWEEN 1 AND 512),
+    object_root_digest text NOT NULL CHECK (object_root_digest ~ '^sha256:[0-9a-f]{64}$'),
+    artifact_root text NOT NULL CHECK (artifact_root = btrim(artifact_root) AND octet_length(artifact_root) BETWEEN 1 AND 512),
+    artifact_root_digest text NOT NULL CHECK (artifact_root_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_graph_digest text NOT NULL CHECK (compiled_graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_config_digest text NOT NULL CHECK (compiled_config_digest ~ '^sha256:[0-9a-f]{64}$'),
+    security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compatibility_digest text NOT NULL CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),
+    serving_artifact_digest text NOT NULL CHECK (serving_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    duckdb_version text NOT NULL CHECK (duckdb_version = btrim(duckdb_version) AND octet_length(duckdb_version) BETWEEN 1 AND 128),
+    ducklake_extension_version text NOT NULL CHECK (ducklake_extension_version = btrim(ducklake_extension_version) AND octet_length(ducklake_extension_version) BETWEEN 1 AND 128),
+    ducklake_spec_version text NOT NULL CHECK (ducklake_spec_version = btrim(ducklake_spec_version) AND octet_length(ducklake_spec_version) BETWEEN 1 AND 128),
+    catalog_schema_version text NOT NULL CHECK (catalog_schema_version = btrim(catalog_schema_version) AND octet_length(catalog_schema_version) BETWEEN 1 AND 128),
+    qualification_evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(qualification_evidence) = 'object' AND octet_length(qualification_evidence::text) <= 32768),
+    qualified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (attempt_id),
+    UNIQUE (seal_id, candidate_id),
+    UNIQUE (physical_pool_id, catalog_database, catalog_uuid, ducklake_snapshot_id),
+    FOREIGN KEY (attempt_id, candidate_id) REFERENCES delivery.delivery_build_attempt(attempt_id, candidate_id)
+);
+
+-- Candidate and seal reference one another during the lifecycle.  Install the
+-- nullable candidate->seal edge after both tables exist, preserving the clean
+-- baseline while avoiding a circular CREATE TABLE dependency.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+         WHERE conname = 'delivery_candidate_snapshot_seal_fk'
+           AND conrelid = 'delivery.delivery_candidate'::regclass
+    ) THEN
+        ALTER TABLE delivery.delivery_candidate
+            ADD CONSTRAINT delivery_candidate_snapshot_seal_fk
+            FOREIGN KEY (snapshot_seal_id) REFERENCES delivery.delivery_snapshot_seal(seal_id);
+    END IF;
+END;
+$$;
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_generation (
+    generation_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    candidate_id uuid NOT NULL REFERENCES delivery.delivery_candidate(candidate_id),
+    snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),
+    plan_id uuid NOT NULL REFERENCES delivery.delivery_plan(plan_id),
+    plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
+    artifact_root text NOT NULL CHECK (artifact_root = btrim(artifact_root) AND octet_length(artifact_root) BETWEEN 1 AND 512),
+    artifact_root_digest text NOT NULL CHECK (artifact_root_digest ~ '^sha256:[0-9a-f]{64}$'),
+    serving_artifact_digest text NOT NULL CHECK (serving_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_graph_digest text NOT NULL CHECK (compiled_graph_digest ~ '^sha256:[0-9a-f]{64}$'),
+    compiled_config_digest text NOT NULL CHECK (compiled_config_digest ~ '^sha256:[0-9a-f]{64}$'),
+    security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
+    generation_revision bigint NOT NULL CHECK (generation_revision > 0),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    UNIQUE (target_id, generation_revision),
+    UNIQUE (generation_id, target_id, candidate_id, snapshot_seal_id),
+    FOREIGN KEY (candidate_id, target_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, target_id, plan_id),
+    FOREIGN KEY (snapshot_seal_id, candidate_id) REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id)
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_publication (
+    publication_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    generation_id uuid NOT NULL,
+    candidate_id uuid NOT NULL REFERENCES delivery.delivery_candidate(candidate_id),
+    snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),
+    expected_target_revision bigint NOT NULL CHECK (expected_target_revision > 0),
+    result_target_revision bigint,
+    actor_id text NOT NULL CHECK (actor_id = btrim(actor_id) AND octet_length(actor_id) BETWEEN 1 AND 255),
+    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('pending','committed','rejected','indeterminate')),
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    committed_at timestamptz,
+    CHECK ((state = 'pending' AND result_target_revision IS NULL AND committed_at IS NULL)
+        OR (state = 'committed' AND result_target_revision IS NOT NULL AND committed_at IS NOT NULL)
+        OR (state IN ('rejected','indeterminate') AND result_target_revision IS NULL AND committed_at IS NULL)),
+    FOREIGN KEY (generation_id) REFERENCES delivery.delivery_generation(generation_id),
+    FOREIGN KEY (generation_id, target_id, candidate_id, snapshot_seal_id) REFERENCES delivery.delivery_generation(generation_id, target_id, candidate_id, snapshot_seal_id),
+    FOREIGN KEY (candidate_id, target_id, snapshot_seal_id) REFERENCES delivery.delivery_candidate(candidate_id, target_id, snapshot_seal_id),
+    FOREIGN KEY (snapshot_seal_id, candidate_id) REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id),
+    UNIQUE (target_id, request_digest)
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_active_pointer (
+    target_id text PRIMARY KEY REFERENCES delivery.delivery_target(target_id),
+    generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),
+    publication_id uuid NOT NULL REFERENCES delivery.delivery_publication(publication_id),
+    changed_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+-- A pointer carries only serving selection.  This deferred consistency check
+-- keeps the selected publication/generation pair bound to one target and one
+-- qualified candidate without duplicating candidate or seal columns here.
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_approval (
+    approval_id uuid PRIMARY KEY,
+    candidate_id uuid NOT NULL REFERENCES delivery.delivery_candidate(candidate_id),
+    principal_id uuid,
+    decision text NOT NULL CHECK (decision = btrim(decision) AND octet_length(decision) BETWEEN 1 AND 32 AND decision IN ('approved','denied','withdrawn')),
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 16384),
+    decided_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_lease (
+    lease_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    owner_id text NOT NULL CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
+    fencing_epoch bigint NOT NULL CHECK (fencing_epoch > 0),
+    state text NOT NULL DEFAULT 'active' CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('active','released','expired')),
+    expires_at timestamptz NOT NULL,
+    acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    released_at timestamptz,
+    UNIQUE (target_id, fencing_epoch),
+    CHECK (expires_at > acquired_at),
+    CHECK ((state = 'active' AND released_at IS NULL)
+        OR (state IN ('released','expired') AND released_at IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_retention_root (
+    root_id uuid PRIMARY KEY,
+    target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
+    candidate_id uuid REFERENCES delivery.delivery_candidate(candidate_id),
+    generation_id uuid REFERENCES delivery.delivery_generation(generation_id),
+    snapshot_seal_id uuid REFERENCES delivery.delivery_snapshot_seal(seal_id),
+    root_kind text NOT NULL CHECK (root_kind = btrim(root_kind) AND octet_length(root_kind) BETWEEN 1 AND 32 AND root_kind IN ('candidate','generation','rollback','recovery','query')),
+    state text NOT NULL CHECK (state = btrim(state) AND octet_length(state) BETWEEN 1 AND 32 AND state IN ('live','retiring','expired')),
+    expires_at timestamptz,
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 16384),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    retired_at timestamptz,
+    expired_at timestamptz,
+    CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL)
+        OR (state = 'retiring' AND retired_at IS NOT NULL AND expired_at IS NULL)
+        OR (state = 'expired' AND expired_at IS NOT NULL)),
+    CHECK ((root_kind = 'candidate' AND candidate_id IS NOT NULL)
+        OR (root_kind = 'generation' AND generation_id IS NOT NULL)
+        OR (root_kind NOT IN ('candidate','generation')))
+);
+
+CREATE TABLE IF NOT EXISTS event.event_log (
+    event_id uuid PRIMARY KEY,
+    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
+    aggregate_type text NOT NULL CHECK (aggregate_type = btrim(aggregate_type) AND octet_length(aggregate_type) BETWEEN 1 AND 128),
+    aggregate_id text NOT NULL CHECK (aggregate_id = btrim(aggregate_id) AND octet_length(aggregate_id) BETWEEN 1 AND 255),
+    aggregate_version bigint NOT NULL CHECK (aggregate_version > 0),
+    event_type text NOT NULL CHECK (event_type = btrim(event_type) AND octet_length(event_type) BETWEEN 1 AND 128),
+    schema_version bigint NOT NULL CHECK (schema_version > 0),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    correlation_id uuid,
+    payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object' AND octet_length(payload::text) <= 65536),
+    UNIQUE (scope_id, aggregate_type, aggregate_id, aggregate_version)
+);
+CREATE TABLE IF NOT EXISTS event.event_aggregate (
+    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
+    aggregate_type text NOT NULL CHECK (aggregate_type = btrim(aggregate_type) AND octet_length(aggregate_type) BETWEEN 1 AND 128),
+    aggregate_id text NOT NULL CHECK (aggregate_id = btrim(aggregate_id) AND octet_length(aggregate_id) BETWEEN 1 AND 255),
+    next_version bigint NOT NULL DEFAULT 1 CHECK (next_version > 0),
+    PRIMARY KEY (scope_id, aggregate_type, aggregate_id)
+);
+
+CREATE TABLE IF NOT EXISTS audit.audit_event (
+    audit_id uuid PRIMARY KEY,
+    event_id uuid UNIQUE,
+    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
+    actor_id text NOT NULL CHECK (actor_id = btrim(actor_id) AND octet_length(actor_id) BETWEEN 1 AND 255),
+    action text NOT NULL CHECK (action = btrim(action) AND octet_length(action) BETWEEN 1 AND 128),
+    resource_kind text NOT NULL CHECK (resource_kind = btrim(resource_kind) AND octet_length(resource_kind) BETWEEN 1 AND 128),
+    resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND octet_length(resource_id) BETWEEN 1 AND 255),
+    outcome text NOT NULL CHECK (outcome = btrim(outcome) AND octet_length(outcome) BETWEEN 1 AND 32 AND outcome IN ('accepted','rejected','failed','indeterminate','observed')),
+    request_digest text CHECK (request_digest IS NULL OR request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(metadata) = 'object' AND octet_length(metadata::text) <= 32768),
+    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
+CREATE OR REPLACE FUNCTION delivery.reject_authority_history_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'delivery authority history is immutable';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_target_identity_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id OR NEW.project_id <> OLD.project_id
+       OR NEW.environment <> OLD.environment THEN
+        RAISE EXCEPTION 'delivery target identity is immutable';
+    END IF;
+    IF NEW.target_revision < OLD.target_revision THEN
+        RAISE EXCEPTION 'delivery target revision cannot move backwards';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_fence_counter_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id OR NEW.next_fencing_epoch < OLD.next_fencing_epoch THEN
+        RAISE EXCEPTION 'delivery fencing counter is monotonic and owned by the authority';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_attempt_identity_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.attempt_id <> OLD.attempt_id OR NEW.plan_id <> OLD.plan_id
+       OR NEW.candidate_id IS DISTINCT FROM OLD.candidate_id
+       OR NEW.owner_id <> OLD.owner_id OR NEW.physical_pool_id <> OLD.physical_pool_id OR NEW.fencing_epoch <> OLD.fencing_epoch
+       OR NEW.request_digest <> OLD.request_digest OR NEW.plan_digest <> OLD.plan_digest
+       OR NEW.namespace <> OLD.namespace OR NEW.session_identity <> OLD.session_identity
+       OR NEW.lease_expires_at <> OLD.lease_expires_at OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'delivery build attempt identity is immutable';
+    END IF;
+    IF OLD.state <> 'running' AND (NEW.state <> OLD.state OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
+       OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
+       OR NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.updated_at <> OLD.updated_at) THEN
+        RAISE EXCEPTION 'terminal build attempt evidence is immutable';
+    END IF;
+    IF OLD.state = 'running' AND NEW.state = 'running'
+       AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
+            OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
+            OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
+            OR NEW.finished_at IS DISTINCT FROM OLD.finished_at) THEN
+        RAISE EXCEPTION 'running build attempt evidence is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_publication_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.publication_id <> OLD.publication_id
+       OR NEW.target_id <> OLD.target_id
+       OR NEW.generation_id <> OLD.generation_id
+       OR NEW.candidate_id <> OLD.candidate_id
+       OR NEW.snapshot_seal_id <> OLD.snapshot_seal_id
+       OR NEW.expected_target_revision <> OLD.expected_target_revision
+       OR NEW.actor_id <> OLD.actor_id
+       OR NEW.request_digest <> OLD.request_digest
+       OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'delivery publication identity is immutable';
+    END IF;
+    IF OLD.state <> 'pending' THEN
+        IF NEW.state <> OLD.state OR NEW.result_target_revision IS DISTINCT FROM OLD.result_target_revision
+           OR NEW.committed_at IS DISTINCT FROM OLD.committed_at THEN
+            RAISE EXCEPTION 'terminal publication is immutable';
+        END IF;
+    ELSIF NEW.state NOT IN ('pending','committed','rejected','indeterminate') THEN
+        RAISE EXCEPTION 'invalid publication transition';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_candidate_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.candidate_id <> OLD.candidate_id OR NEW.target_id <> OLD.target_id
+       OR NEW.plan_id <> OLD.plan_id OR NEW.candidate_revision <> OLD.candidate_revision
+       OR NEW.artifact_digest <> OLD.artifact_digest OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'delivery candidate identity is immutable';
+    END IF;
+    IF OLD.status = 'building' AND NEW.status NOT IN ('building','ready','qualified','rejected') THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    ELSIF OLD.status = 'ready' AND NEW.status NOT IN ('ready','qualified','rejected') THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    ELSIF OLD.status = 'qualified' AND NEW.status NOT IN ('qualified','admitted','rejected','retired') THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    ELSIF OLD.status = 'admitted' AND NEW.status NOT IN ('admitted','retired') THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    ELSIF OLD.status = 'rejected' AND NEW.status NOT IN ('rejected','retired') THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    ELSIF OLD.status = 'retired' AND NEW.status <> 'retired' THEN
+        RAISE EXCEPTION 'invalid candidate transition';
+    END IF;
+    IF OLD.status NOT IN ('building','ready') AND (NEW.snapshot_seal_id IS DISTINCT FROM OLD.snapshot_seal_id
+       OR NEW.qualification_digest IS DISTINCT FROM OLD.qualification_digest
+       OR NEW.qualified_at IS DISTINCT FROM OLD.qualified_at
+       OR NEW.retired_at IS DISTINCT FROM OLD.retired_at) THEN
+        RAISE EXCEPTION 'candidate qualification evidence is immutable';
+    END IF;
+    IF OLD.status IN ('building','ready') AND NEW.status <> 'qualified'
+       AND (NEW.snapshot_seal_id IS DISTINCT FROM OLD.snapshot_seal_id
+            OR NEW.qualification_digest IS DISTINCT FROM OLD.qualification_digest
+            OR NEW.qualified_at IS DISTINCT FROM OLD.qualified_at) THEN
+        RAISE EXCEPTION 'candidate qualification evidence requires qualification transition';
+    END IF;
+    IF OLD.retired_at IS NOT NULL AND NEW.retired_at IS DISTINCT FROM OLD.retired_at THEN
+        RAISE EXCEPTION 'candidate retirement timestamp is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_approval_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'delivery approval evidence is immutable';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.check_active_pointer_consistency()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    pub_target text;
+    pub_generation uuid;
+    pub_candidate uuid;
+    pub_seal uuid;
+    gen_target text;
+    gen_candidate uuid;
+    gen_seal uuid;
+    candidate_target text;
+BEGIN
+    SELECT target_id,generation_id,candidate_id,snapshot_seal_id
+      INTO pub_target,pub_generation,pub_candidate,pub_seal
+      FROM delivery.delivery_publication
+     WHERE publication_id=NEW.publication_id;
+    IF NOT FOUND OR pub_target <> NEW.target_id OR pub_generation <> NEW.generation_id THEN
+        RAISE EXCEPTION 'active pointer publication identity differs';
+    END IF;
+    SELECT target_id,candidate_id,snapshot_seal_id
+      INTO gen_target,gen_candidate,gen_seal
+      FROM delivery.delivery_generation
+     WHERE generation_id=NEW.generation_id;
+    IF NOT FOUND OR gen_target <> NEW.target_id OR gen_candidate <> pub_candidate OR gen_seal <> pub_seal THEN
+        RAISE EXCEPTION 'active pointer generation identity differs';
+    END IF;
+    SELECT target_id INTO candidate_target FROM delivery.delivery_candidate WHERE candidate_id=pub_candidate;
+    IF NOT FOUND OR candidate_target <> NEW.target_id THEN
+        RAISE EXCEPTION 'active pointer candidate identity differs';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_lease_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.lease_id <> OLD.lease_id OR NEW.target_id <> OLD.target_id
+       OR NEW.owner_id <> OLD.owner_id OR NEW.fencing_epoch <> OLD.fencing_epoch
+       OR NEW.acquired_at <> OLD.acquired_at THEN
+        RAISE EXCEPTION 'delivery lease identity is immutable';
+    END IF;
+    IF OLD.state <> 'active' AND (NEW.state <> OLD.state OR NEW.expires_at <> OLD.expires_at
+       OR NEW.released_at IS DISTINCT FROM OLD.released_at) THEN
+        RAISE EXCEPTION 'terminal lease is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_root_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.root_id <> OLD.root_id OR NEW.target_id <> OLD.target_id
+       OR NEW.candidate_id IS DISTINCT FROM OLD.candidate_id
+       OR NEW.generation_id IS DISTINCT FROM OLD.generation_id
+       OR NEW.snapshot_seal_id IS DISTINCT FROM OLD.snapshot_seal_id
+       OR NEW.root_kind <> OLD.root_kind OR NEW.created_at <> OLD.created_at
+       OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
+        RAISE EXCEPTION 'delivery retention root identity is immutable';
+    END IF;
+    IF OLD.state = 'live' AND NEW.state NOT IN ('live','retiring') THEN
+        RAISE EXCEPTION 'delivery retention root lifecycle is monotonic';
+    ELSIF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring','expired') THEN
+        RAISE EXCEPTION 'delivery retention root lifecycle is monotonic';
+    ELSIF OLD.state = 'expired' AND NEW.state <> 'expired' THEN
+        RAISE EXCEPTION 'delivery retention root lifecycle is monotonic';
+    END IF;
+    IF NEW.state = 'live' AND (NEW.retired_at IS NOT NULL OR NEW.expired_at IS NOT NULL) THEN
+        RAISE EXCEPTION 'live retention root cannot have terminal timestamps';
+    ELSIF NEW.state = 'retiring' AND (NEW.retired_at IS NULL OR NEW.expired_at IS NOT NULL) THEN
+        RAISE EXCEPTION 'retiring retention root requires retirement timestamp only';
+    ELSIF NEW.state = 'expired' AND NEW.expired_at IS NULL THEN
+        RAISE EXCEPTION 'expired retention root requires expiry timestamp';
+    END IF;
+    IF OLD.state IN ('retiring','expired') AND NEW.retired_at IS DISTINCT FROM OLD.retired_at THEN
+        RAISE EXCEPTION 'retention root retirement timestamp is immutable';
+    END IF;
+    IF OLD.state = 'expired' AND NEW.expired_at IS DISTINCT FROM OLD.expired_at THEN
+        RAISE EXCEPTION 'retention root expiry timestamp is immutable';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS delivery_target_identity_immutable ON delivery.delivery_target;
+CREATE TRIGGER delivery_target_identity_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_target
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_target_identity_mutation();
+DROP TRIGGER IF EXISTS delivery_fence_counter_monotonic ON delivery.delivery_target_fence;
+CREATE TRIGGER delivery_fence_counter_monotonic BEFORE UPDATE OR DELETE ON delivery.delivery_target_fence
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_fence_counter_mutation();
+DROP TRIGGER IF EXISTS delivery_plan_history_immutable ON delivery.delivery_plan;
+CREATE TRIGGER delivery_plan_history_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_plan
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+DROP TRIGGER IF EXISTS delivery_seal_history_immutable ON delivery.delivery_snapshot_seal;
+CREATE TRIGGER delivery_seal_history_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_snapshot_seal
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+DROP TRIGGER IF EXISTS delivery_generation_history_immutable ON delivery.delivery_generation;
+CREATE TRIGGER delivery_generation_history_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_generation
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+DROP TRIGGER IF EXISTS delivery_publication_history_immutable ON delivery.delivery_publication;
+CREATE TRIGGER delivery_publication_history_immutable BEFORE DELETE ON delivery.delivery_publication
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+DROP TRIGGER IF EXISTS delivery_attempt_identity_immutable ON delivery.delivery_build_attempt;
+CREATE TRIGGER delivery_attempt_identity_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_build_attempt
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_attempt_identity_mutation();
+DROP TRIGGER IF EXISTS delivery_publication_immutable ON delivery.delivery_publication;
+CREATE TRIGGER delivery_publication_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_publication
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_publication_mutation();
+DROP TRIGGER IF EXISTS delivery_candidate_immutable ON delivery.delivery_candidate;
+CREATE TRIGGER delivery_candidate_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_candidate
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_candidate_mutation();
+DROP TRIGGER IF EXISTS delivery_lease_immutable ON delivery.delivery_lease;
+CREATE TRIGGER delivery_lease_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_lease
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_lease_mutation();
+DROP TRIGGER IF EXISTS delivery_root_immutable ON delivery.delivery_retention_root;
+CREATE TRIGGER delivery_root_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_retention_root
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_root_mutation();
+DROP TRIGGER IF EXISTS delivery_approval_immutable ON delivery.delivery_approval;
+CREATE TRIGGER delivery_approval_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_approval
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_approval_mutation();
+DROP TRIGGER IF EXISTS delivery_active_pointer_consistency ON delivery.delivery_active_pointer;
+CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UPDATE ON delivery.delivery_active_pointer
+    DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION delivery.check_active_pointer_consistency();
+DROP TRIGGER IF EXISTS event_log_immutable ON event.event_log;
+CREATE TRIGGER event_log_immutable BEFORE UPDATE OR DELETE ON event.event_log
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+DROP TRIGGER IF EXISTS audit_event_immutable ON audit.audit_event;
+CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON audit.audit_event
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
+
+CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(target_id, state, expires_at);
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
+CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
+CREATE INDEX IF NOT EXISTS delivery_seal_attempt_idx ON delivery.delivery_snapshot_seal(attempt_id);
+CREATE INDEX IF NOT EXISTS delivery_root_snapshot_idx ON delivery.delivery_retention_root(snapshot_seal_id, state);
+
+-- Delivery authority evidence is never reachable through PUBLIC defaults.  The
+-- applying role remains the owner and therefore retains full control; deploy
+-- roles must be granted the minimum required privileges explicitly by the
+-- surrounding migration.
+REVOKE ALL ON SCHEMA delivery, event, audit FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA delivery, event, audit FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA delivery, event, audit FROM PUBLIC;
+GRANT USAGE ON SCHEMA delivery, event, audit TO CURRENT_USER;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, event, audit TO CURRENT_USER;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA delivery, event, audit TO CURRENT_USER;
