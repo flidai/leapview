@@ -7,7 +7,9 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT/deploy/postgres/compose.yaml"
 CONTROL_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview-local-control}"
+CONTROL_READONLY_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:-leapview-local-control-readonly}"
 DUCKLAKE_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}"
+CONTROL_MIGRATOR_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapview-local-control-migrator}"
 ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$ROOT/.tmp/postgres-dev.env}"
 
 # Keep worktrees isolated while retaining a stable project name for each path.
@@ -32,7 +34,7 @@ compose() {
 write_runtime_env() {
   # Passwords are accepted in this local-only helper only when URL-safe. This
   # avoids emitting or constructing malformed URLs while never printing them.
-  if [[ ! "$CONTROL_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+  if [[ ! "$CONTROL_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_READONLY_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_MIGRATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]]; then
     echo "PostgreSQL development runtime passwords must contain only URL-safe characters" >&2
     return 1
   fi
@@ -40,6 +42,8 @@ write_runtime_env() {
   mkdir -p "$(dirname "$ENV_FILE")"
   {
     printf 'LEAPVIEW_POSTGRES_CONTROL_URL=postgres://leapview_control_runtime:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_PASSWORD" "$PORT"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://leapview_control_migrator:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_MIGRATOR_PASSWORD" "$PORT"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_READONLY_URL=postgres://leapview_control_readonly:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_READONLY_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://leapview_ducklake_runtime:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_EXPECTED_MAJOR=18\n'
     printf 'LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime\n'
@@ -65,12 +69,20 @@ check_isolation() {
     echo "control runtime cannot connect to leapview_control" >&2
     return 1
   }
+  [[ "$(runtime_psql leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_control 'SELECT current_database()')" == "leapview_control" ]] || {
+    echo "control readonly cannot connect to leapview_control" >&2
+    return 1
+  }
   [[ "$(runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake 'SELECT current_database()')" == "leapview_ducklake" ]] || {
     echo "DuckLake runtime cannot connect to leapview_ducklake" >&2
     return 1
   }
   if runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
     echo "control runtime unexpectedly connected to leapview_ducklake" >&2
+    return 1
+  fi
+  if runtime_psql leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
+    echo "control readonly unexpectedly connected to leapview_ducklake" >&2
     return 1
   fi
   if runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_control 'SELECT 1' >/dev/null 2>&1; then
@@ -107,6 +119,10 @@ check_isolation() {
   fi
   if runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_control 'CREATE SCHEMA postgres_isolation_probe' >/dev/null 2>&1; then
     echo "control runtime unexpectedly created a schema" >&2
+    return 1
+  fi
+  if runtime_psql leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_control 'CREATE SCHEMA postgres_isolation_probe' >/dev/null 2>&1; then
+    echo "control readonly unexpectedly created a schema" >&2
     return 1
   fi
   echo "PostgreSQL development role isolation check passed"

@@ -2,8 +2,9 @@
 
 This directory provisions the development/test PostgreSQL baseline described
 by ADR-0016. It is intentionally separate from the production Compose bundle:
-production supplies two externally managed database URLs through its secret
-manager and does not run this service.
+production supplies externally managed control runtime and migrator URLs (and
+optionally a readonly URL) through its secret manager and does not run this
+service.
 
 The loopback-only service uses the pinned PostgreSQL 18 image and initializes
 two databases in one local server:
@@ -15,6 +16,10 @@ two databases in one local server:
 
 Owner roles cannot log in. Runtime roles can connect only to their own
 database, and migration roles receive owner membership for schema changes.
+The control readonly role has an independent login credential for its bounded
+pool. The backup role is a NOLOGIN group role with control database access;
+deployments attach a separately authenticated operator role to it rather than
+sharing runtime credentials.
 Migration processes must explicitly `SET ROLE` to their capability owner when
 performing owner-level DDL.
 The initialization script revokes default `PUBLIC` database/schema access.

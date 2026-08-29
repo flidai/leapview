@@ -104,14 +104,17 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != BaselineRevision {
 		t.Fatalf("schema revision = %d, want %d", revision, BaselineRevision)
 	}
-	var canUpdateAudit, canUpdateRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
+	var canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
 	var readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'SELECT'),
 		       has_table_privilege('leapview_control_runtime', 'event.event_log', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'event.event_log', 'DELETE'),
 		       has_table_privilege('leapview_control_runtime', 'lineage.graphs', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'lineage.revisions', 'INSERT'),
+		       has_function_privilege('leapview_control_runtime', 'lineage.publish_revision(text,text,text)', 'EXECUTE'),
 		       has_table_privilege('leapview_control_runtime', 'ducklake.generation_binding', 'UPDATE'),
 		       has_table_privilege('leapview_control_backup', 'audit.audit_event', 'INSERT'),
 		       has_table_privilege('leapview_control_backup', 'audit.audit_event', 'SELECT'),
@@ -127,11 +130,11 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		       has_table_privilege('leapview_control_readonly', 'access.desktop_authorization_code', 'SELECT'),
 		       has_table_privilege('leapview_control_readonly', 'access.device_authorization', 'SELECT'),
 		       has_table_privilege('leapview_control_readonly', 'access.authoring_credential', 'SELECT')`).
-		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canUpdateDuckLake, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential); err != nil {
+		Scan(&canUpdateAudit, &canUpdateRevision, &canReadRevision, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canInsertLineageRevision, &canPublishLineage, &canUpdateDuckLake, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canUpdateDuckLake || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential {
-		t.Fatalf("least-privilege grants leaked: audit update=%t revision update=%t event update=%t event delete=%t lineage update=%t ducklake update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t", canUpdateAudit, canUpdateRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential)
+	if canUpdateAudit || canUpdateRevision || !canReadRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateDuckLake || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential {
+		t.Fatalf("least-privilege grants leaked: audit update=%t revision update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t ducklake update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t", canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential)
 	}
 	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")

@@ -58,4 +58,7 @@ REVOKE ALL ON FUNCTION platform.reject_schema_revision_mutation() FROM PUBLIC;
 
 GRANT USAGE ON SCHEMA platform TO leapview_control_migrator;
 GRANT ALL ON TABLE platform.schema_revision TO leapview_control_owner, leapview_control_migrator;
-GRANT SELECT ON TABLE platform.schema_revision TO leapview_control_readonly, leapview_control_backup;
+GRANT SELECT ON TABLE platform.schema_revision TO
+    leapview_control_runtime,
+    leapview_control_readonly,
+    leapview_control_backup;

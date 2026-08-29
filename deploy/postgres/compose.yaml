@@ -1,9 +1,9 @@
 # Development/test-only PostgreSQL provisioning.
 #
 # Production deployments use externally managed PostgreSQL databases and
-# inject LEAPVIEW_POSTGRES_CONTROL_URL and LEAPVIEW_POSTGRES_DUCKLAKE_URL from
-# their secret manager. This file intentionally binds only to loopback and
-# must not be used as a production topology.
+# inject the control runtime/migrator URLs (plus the independent DuckLake URL)
+# from their secret manager. This file intentionally binds only to loopback
+# and must not be used as a production topology.
 name: ${COMPOSE_PROJECT_NAME:-leapview-postgres-dev}
 
 services:
@@ -17,6 +17,7 @@ services:
       # the invoking environment; the provisioning script never prints them.
       POSTGRES_PASSWORD: ${LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD:-leapview-local-bootstrap}
       LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview-local-control}
+      LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:-leapview-local-control-readonly}
       LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}
       LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapview-local-control-migrator}
       LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}

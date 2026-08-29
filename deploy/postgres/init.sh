@@ -5,6 +5,7 @@ set -euo pipefail
 # volume. It deliberately emits no credentials or connection URLs.
 
 control_runtime_password="${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview-local-control}"
+control_readonly_password="${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:-leapview-local-control-readonly}"
 ducklake_runtime_password="${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}"
 control_migrator_password="${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapview-local-control-migrator}"
 ducklake_migrator_password="${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}"
@@ -16,6 +17,7 @@ psql_admin=(psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_
 # roles receive only the grants needed by their own database.
 "${psql_admin[@]}" \
   --set=control_runtime_password="${control_runtime_password}" \
+  --set=control_readonly_password="${control_readonly_password}" \
   --set=ducklake_runtime_password="${ducklake_runtime_password}" \
   --set=control_migrator_password="${control_migrator_password}" \
   --set=ducklake_migrator_password="${ducklake_migrator_password}" <<'SQL'
@@ -31,13 +33,16 @@ BEGIN
         CREATE ROLE leapview_control_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
-        CREATE ROLE leapview_control_readonly NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+        CREATE ROLE leapview_control_readonly LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_ducklake_runtime') THEN
         CREATE ROLE leapview_ducklake_runtime LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         CREATE ROLE leapview_control_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        CREATE ROLE leapview_control_backup NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_ducklake_migrator') THEN
         CREATE ROLE leapview_ducklake_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
@@ -46,6 +51,7 @@ END
 $roles$;
 
 ALTER ROLE leapview_control_runtime PASSWORD :'control_runtime_password';
+ALTER ROLE leapview_control_readonly LOGIN PASSWORD :'control_readonly_password';
 ALTER ROLE leapview_ducklake_runtime PASSWORD :'ducklake_runtime_password';
 ALTER ROLE leapview_control_migrator PASSWORD :'control_migrator_password';
 ALTER ROLE leapview_ducklake_migrator PASSWORD :'ducklake_migrator_password';
@@ -83,7 +89,11 @@ psql_db() {
 
 psql_db leapview_control <<'SQL'
 REVOKE ALL ON DATABASE leapview_control FROM PUBLIC;
-GRANT CONNECT ON DATABASE leapview_control TO leapview_control_runtime, leapview_control_migrator;
+GRANT CONNECT ON DATABASE leapview_control TO
+    leapview_control_runtime,
+    leapview_control_migrator,
+    leapview_control_readonly,
+    leapview_control_backup;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 SQL
 

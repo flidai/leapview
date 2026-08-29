@@ -111,7 +111,11 @@ BEGIN
         GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, ducklake, jobs, cache TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
-        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit, lineage TO leapview_control_runtime;
+        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO leapview_control_runtime;
+        GRANT SELECT ON ALL TABLES IN SCHEMA lineage TO leapview_control_runtime;
+        GRANT INSERT ON lineage.graphs, lineage.nodes, lineage.edges, lineage.bindings TO leapview_control_runtime;
+        REVOKE INSERT, UPDATE, DELETE ON lineage.revisions FROM leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION lineage.publish_revision(text, text, text) TO leapview_control_runtime;
         REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime;
         REVOKE UPDATE, DELETE ON audit.audit_event FROM leapview_control_runtime;
         REVOKE UPDATE, DELETE ON ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime;
