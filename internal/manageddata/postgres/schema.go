@@ -37,6 +37,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception:schema-ddl. schema.sql owns capability DDL, guards,
+	// functions, and grants; migration callers retain transaction ownership.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }

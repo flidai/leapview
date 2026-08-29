@@ -7,7 +7,9 @@ import (
 	"reflect"
 	"time"
 
+	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // RetentionRoot records durable reachability for an admitted managed-data
@@ -73,7 +75,7 @@ func (r *Repository) RecordRetentionRoot(ctx context.Context, root RetentionRoot
 	if err != nil {
 		return RetentionRoot{}, err
 	}
-	_, err = db.Exec(contextOrBackground(ctx), `INSERT INTO managed_data.retention_root(root_id,project_id,environment,revision_id,state,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb) ON CONFLICT(root_id) DO NOTHING`, root.RootID, root.ProjectID, root.Environment, root.RevisionID, root.State, evidence)
+	err = manageddb.New(db).InsertRetentionRoot(contextOrBackground(ctx), manageddb.InsertRetentionRootParams{RootID: root.RootID, ProjectID: root.ProjectID, Environment: root.Environment, RevisionID: &root.RevisionID, State: root.State, Evidence: evidence})
 	if err != nil {
 		return RetentionRoot{}, err
 	}
@@ -92,17 +94,17 @@ func (r *Repository) RetentionRootByID(ctx context.Context, id string) (Retentio
 	if err != nil {
 		return RetentionRoot{}, err
 	}
-	var out RetentionRoot
-	var revision string
-	var evidence []byte
-	err = db.QueryRow(contextOrBackground(ctx), `SELECT root_id,project_id,environment,revision_id,state,evidence,created_at,updated_at FROM managed_data.retention_root WHERE root_id=$1`, id).Scan(&out.RootID, &out.ProjectID, &out.Environment, &revision, &out.State, &evidence, &out.CreatedAt, &out.UpdatedAt)
+	row, err := manageddb.New(db).GetRetentionRoot(contextOrBackground(ctx), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RetentionRoot{}, ErrNotFound
 	}
 	if err != nil {
 		return RetentionRoot{}, err
 	}
-	out.RevisionID, out.Evidence = revision, append([]byte(nil), evidence...)
+	out := RetentionRoot{RootID: row.RootID, ProjectID: row.ProjectID, Environment: row.Environment, State: row.State, Evidence: append([]byte(nil), row.Evidence...), CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time}
+	if row.RevisionID != nil {
+		out.RevisionID = *row.RevisionID
+	}
 	return out, nil
 }
 
@@ -122,7 +124,7 @@ func (r *Repository) TransitionRetentionRoot(ctx context.Context, id, target str
 	if target != "retiring" && target != "expired" {
 		return RetentionRoot{}, ErrInvalid
 	}
-	tag, err := db.Exec(contextOrBackground(ctx), `UPDATE managed_data.retention_root SET state=$2,updated_at=clock_timestamp() WHERE root_id=$1 AND ((state='live' AND $2='retiring') OR (state='retiring' AND $2='expired'))`, id, target)
+	tag, err := manageddb.New(db).TransitionRetentionRoot(contextOrBackground(ctx), manageddb.TransitionRetentionRootParams{RootID: id, State: target})
 	if err != nil {
 		return RetentionRoot{}, err
 	}
@@ -151,8 +153,12 @@ func (r *Repository) RecordReconciliationEvidence(ctx context.Context, evidence 
 	if err != nil {
 		return ReconciliationEvidence{}, err
 	}
-	err = db.QueryRow(contextOrBackground(ctx), `INSERT INTO managed_data.reconciliation_evidence(project_id,environment,object_key,observed_state,action,evidence) VALUES($1,$2,$3,$4,$5,$6::jsonb) RETURNING evidence_id,project_id,environment,object_key,observed_state,action,evidence,observed_at`, evidence.ProjectID, evidence.Environment, evidence.ObjectKey, evidence.ObservedState, evidence.Action, b).Scan(&evidence.EvidenceID, &evidence.ProjectID, &evidence.Environment, &evidence.ObjectKey, &evidence.ObservedState, &evidence.Action, &evidence.Evidence, &evidence.ObservedAt)
-	return evidence, err
+	row, err := manageddb.New(db).InsertReconciliationEvidence(contextOrBackground(ctx), manageddb.InsertReconciliationEvidenceParams{ProjectID: evidence.ProjectID, Environment: evidence.Environment, ObjectKey: evidence.ObjectKey, ObservedState: evidence.ObservedState, Action: evidence.Action, Evidence: b})
+	if err != nil {
+		return evidence, err
+	}
+	evidence.EvidenceID, evidence.ProjectID, evidence.Environment, evidence.ObjectKey, evidence.ObservedState, evidence.Action, evidence.Evidence, evidence.ObservedAt = row.EvidenceID, row.ProjectID, row.Environment, row.ObjectKey, row.ObservedState, row.Action, append([]byte(nil), row.Evidence...), row.ObservedAt.Time
+	return evidence, nil
 }
 
 // PruneUploadSessions invokes the bounded SECURITY DEFINER maintenance
@@ -165,11 +171,9 @@ func (r *Repository) PruneUploadSessions(ctx context.Context, before time.Time, 
 	if limit < 1 || limit > 1000 {
 		return 0, ErrInvalid
 	}
-	var cutoff any
+	cutoff := pgtype.Timestamptz{}
 	if !before.IsZero() {
-		cutoff = before.UTC()
+		cutoff = pgtype.Timestamptz{Time: before.UTC(), Valid: true}
 	}
-	var n int64
-	err = db.QueryRow(contextOrBackground(ctx), `SELECT managed_data.prune_upload_sessions($1,$2)`, cutoff, limit).Scan(&n)
-	return n, err
+	return manageddb.New(db).PruneUploadSessions(contextOrBackground(ctx), manageddb.PruneUploadSessionsParams{Cutoff: cutoff, PLimit: int32(limit)})
 }
