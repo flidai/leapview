@@ -31,6 +31,8 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
@@ -222,6 +224,11 @@ type dataAssemblyInputs struct {
 	ServingStateRepo servingStateRepository
 	StorageRetention *servingstatemodule.Retention
 	AccessRepo       access.Repository
+	APIIdempotency   idempotency.Store
+	CursorSigning    cursorsigning.Initializer
+	// RequireExplicitAPIProtocol prevents a production assembly from silently
+	// selecting the process-local or SQLite protocol implementations.
+	RequireExplicitAPIProtocol bool
 }
 
 type capabilityAssemblyInputs struct {
@@ -652,12 +659,12 @@ func buildApplicationSurfaces(
 			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
 		}
 		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
-		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, data.Database); err != nil {
-			return fail(fmt.Errorf("build API protocol: %w", err))
-		}
 	}
 	if platform.apiProtocol == nil {
-		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, nil); err != nil {
+		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
+			Database: data.Database, Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
+			RequireExplicit: data.RequireExplicitAPIProtocol,
+		}); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}
 	}

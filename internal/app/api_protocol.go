@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -17,21 +18,39 @@ import (
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 )
 
-func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB) error {
+type apiProtocolPersistence struct {
+	Database        *sql.DB
+	Idempotency     idempotency.Store
+	CursorSigning   cursorsigning.Initializer
+	RequireExplicit bool
+}
+
+func (p apiProtocolPersistence) authorities() (idempotency.Store, cursorsigning.Initializer, error) {
+	if (p.Idempotency == nil) != (p.CursorSigning == nil) {
+		return nil, nil, errors.New("API protocol requires both idempotency and cursor-signing authorities")
+	}
+	if p.Idempotency != nil {
+		return p.Idempotency, p.CursorSigning, nil
+	}
+	if p.RequireExplicit {
+		return nil, nil, errors.New("production API protocol requires explicit durable authorities")
+	}
+	if p.Database != nil {
+		return idempotencysqlite.NewStore(p.Database), cursorsigningsqlite.NewInitializer(p.Database), nil
+	}
+	return idempotency.NewMemoryStore(), cursorsigning.NewEphemeralInitializer(), nil
+}
+
+func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, persistence apiProtocolPersistence) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	// Profile-only assemblies use explicit process-local capabilities. A fully
 	// configured runtime supplies the transitional SQLite fixture below;
 	// PostgreSQL callers inject native adapters at this composition boundary.
-	var idempotencyStore idempotency.Store
-	var cursorInitializer cursorsigning.Initializer
-	if database == nil {
-		idempotencyStore = idempotency.NewMemoryStore()
-		cursorInitializer = cursorsigning.NewEphemeralInitializer()
-	} else {
-		idempotencyStore = idempotencysqlite.NewStore(database)
-		cursorInitializer = cursorsigningsqlite.NewInitializer(database)
+	idempotencyStore, cursorInitializer, err := persistence.authorities()
+	if err != nil {
+		return err
 	}
 	protocol, err := apiprotocol.Build(ctx, apiprotocol.Config{
 		Store:         idempotencyStore,
