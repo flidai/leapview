@@ -1360,6 +1360,13 @@ test('dashboard builder authors report filters from governed fields through focu
       await element.updateComplete
       ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
       await element.updateComplete
+      ;(root.querySelectorAll('.filter-scope-option input')[2] as HTMLInputElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelectorAll('.filter-scope-option input')[0] as HTMLInputElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       const control = root.querySelector('.filter-editor select') as HTMLSelectElement
       control.value = 'singleSelect'
       control.dispatchEvent(new Event('change', { bubbles: true }))
@@ -1370,15 +1377,18 @@ test('dashboard builder authors report filters from governed fields through focu
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
         panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.classList.contains('filters-pane') ? 'filters' : pane.classList.contains('visual-builder') ? 'visual' : 'data'),
-        scope: root.querySelector('.filter-scope-heading')?.textContent?.replace(/\s+/g, ' ').trim(),
+        scopes: Array.from(root.querySelectorAll('.filter-scope-heading')).map((heading: Element) => heading.textContent?.replace(/\s+/g, ' ').trim()),
         commands,
       }
     })
     expect(state.panes).toEqual(['filters', 'visual', 'data'])
-    expect(state.scope).toBe('Filters on all pages1')
+    expect(state.scopes).toEqual(['Filters on this visual0', 'Filters for page visuals0', 'Filters on all pages1'])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
-    expect(state.commands[1]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
-    expect(state.commands[2]).toMatchObject({ action: 'remove_filter', filterId: 'filter_1' })
+    expect(state.commands[1]).toMatchObject({ action: 'set_filter_targets', filterId: 'filter_1', targets: ['sales-chart'] })
+    expect(state.commands[2]).toMatchObject({ action: 'set_filter_targets', filterId: 'filter_1' })
+    expect(state.commands[2]).not.toHaveProperty('targets')
+    expect(state.commands[3]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
+    expect(state.commands[4]).toMatchObject({ action: 'remove_filter', filterId: 'filter_1' })
   } finally {
     await page.close()
   }
@@ -1393,7 +1403,9 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       await element.updateComplete
       const root = element.shadowRoot
       const commands: Record<string, any>[] = []
+      const filterCommands: Record<string, any>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      element.addEventListener('lv-builder-filter-command', (event: CustomEvent) => { filterCommands.push(event.detail) })
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [] }] } })
       await element.updateComplete
@@ -1404,9 +1416,30 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
 
       const pages = structuredClone(element.builder.pages)
       pages[0].filterComponents = [{ id: 'status-slicer', filterId: 'filter_1', label: 'Status', controlType: 'multiSelect', placement: { col: 7, row: 1, colSpan: 3, rowSpan: 2 } }]
-      mergePatch({ builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:slicer' } } })
+      const bindingKey = 'dashboard:revenue/report/filter_1'
+      const unfiltered = { kind: 'unfiltered' }
+      mergePatch({
+        builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:slicer' } },
+        builderFilterContract: {
+          applicationMode: 'immediate',
+          definitions: { filter_1: { id: 'filter_1', label: 'Status', field: 'orders.status', dataset: 'orders', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in', 'not_in'] }], options: { kind: 'distinct', limit: 50, includeNull: false, values: [] }, timezone: 'UTC', calendar: 'gregorian', weekStart: 'monday' } },
+          bindings: { [bindingKey]: { key: bindingKey, id: 'filter_1', filter: 'filter_1', scope: 'report', default: unfiltered, selectionMode: 'multiple', maxSelectedValues: 0, required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: ['overview/sales-chart'], optionDependencies: [] } },
+        },
+        builderFilterState: { revision: 1, appliedControls: { [bindingKey]: { expression: unfiltered, resolvedExpression: unfiltered } }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' },
+        builderFilterOptionPages: { [bindingKey]: { bindingKey, servingStateID: 'generation-7', streamGeneration: 0, filterRevision: 1, requestGeneration: 1, items: [{ value: { kind: 'string', value: 'complete' }, label: 'Complete', null: false, selected: false, available: true }], complete: true, consumerIdentity: `option:${bindingKey}` } },
+        builderFilterValidation: { accepted: true, message: '', currentRevision: 1, clientMutationID: '' },
+      })
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
+      await element.updateComplete
+
+      const slicer = root.querySelector('lv-slicer') as any
+      await slicer.updateComplete
+      const slicerLeaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
+      await slicerLeaf.updateComplete
+      const slicerSelect = slicerLeaf.shadowRoot.querySelector('select') as HTMLSelectElement
+      slicerSelect.value = JSON.stringify({ kind: 'string', value: 'complete' })
+      slicerSelect.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await element.updateComplete
 
       const tile = root.querySelector('.filter-component') as HTMLElement
@@ -1422,6 +1455,7 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
 
       return {
         commands,
+        filterCommands,
         tileLabel,
         selected,
         preview,
@@ -1432,11 +1466,84 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
     expect(state.commands[1]).toMatchObject({ action: 'set_placements', pageId: 'overview' })
     expect(state.commands[1].placements.map((placement: any) => placement.componentId).sort()).toEqual(['sales-chart', 'status-slicer'])
     expect(state.commands[2]).toMatchObject({ action: 'remove_filter_component', pageId: 'overview', componentId: 'status-slicer' })
+    expect(state.filterCommands[0]).toMatchObject({ kind: 'mutate', baseRevision: 1, bindingKey: 'dashboard:revenue/report/filter_1', operation: 'set', expression: { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'complete' }] } })
     expect(state.tileLabel).toContain('selected dashboard slicer')
     expect(state.selected).toBe('true')
     expect(state.preview).toContain('Status')
-    expect(state.preview).toContain('values load in Preview')
+    expect(state.preview).toContain('Interactive draft preview')
     expect(state.gridItems).toBe(2)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder accepts only the current filter option request generation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const key = 'dashboard:revenue/report/status'
+      const unfiltered = { kind: 'unfiltered' }
+      const contract = {
+        applicationMode: 'immediate',
+        definitions: { status: { id: 'status', label: 'Status', field: 'orders.status', dataset: 'orders', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in'] }], options: { kind: 'distinct', limit: 20, includeNull: false, values: [] } } },
+        bindings: { [key]: { key, id: 'status', filter: 'status', scope: 'report', default: unfiltered, selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [] } },
+      }
+      const requests: any[] = []
+      element.addEventListener('lv-builder-filter-options-request', (event: CustomEvent) => requests.push(event.detail))
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builderFilterContract: contract, builderFilterState: { revision: 1, appliedControls: { [key]: { expression: unfiltered, resolvedExpression: unfiltered } }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' } })
+      await element.updateComplete
+      element.dispatchEvent(new CustomEvent('lv-filter-options-needed', { bubbles: true, composed: true, detail: { bindingKey: key, search: '', limit: 20 } }))
+      await element.updateComplete
+      const valid = (requestGeneration: number, filterRevision = 1) => ({
+        [key]: { bindingKey: key, servingStateID: 'generation-7', streamGeneration: 0, filterRevision, requestGeneration, items: [{ value: { kind: 'string', value: 'paid' } , label: 'Paid', null: false, selected: false, available: true }], complete: true, consumerIdentity: `option:${key}` },
+      })
+      mergePatch({ builderFilterOptionPages: valid(1) })
+      await element.updateComplete
+      const accepted = Object.keys(element.builderFilterOptionPages)
+      element.dispatchEvent(new CustomEvent('lv-filter-options-needed', { bubbles: true, composed: true, detail: { bindingKey: key, search: '', limit: 20 } }))
+      await element.updateComplete
+      mergePatch({ builderFilterOptionPages: valid(1) })
+      await element.updateComplete
+      return { requests, accepted, afterStaleGeneration: Object.keys(element.builderFilterOptionPages), items: element.builderFilterOptionPages[key]?.items.map((item: any) => item.label) ?? [] }
+    })
+    expect(state.requests).toHaveLength(2)
+    expect(state.requests.map((request: any) => request.requestGeneration)).toEqual([1, 2])
+    expect(state.accepted).toEqual(['dashboard:revenue/report/status'])
+    expect(state.afterStaleGeneration).toEqual([])
+    expect(state.items).toEqual([])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder clears pending filter commands and surfaces transport failures', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const key = 'dashboard:revenue/report/status'
+      const unfiltered = { kind: 'unfiltered' }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builderFilterContract: { applicationMode: 'immediate', definitions: { status: { id: 'status', label: 'Status', field: 'orders.status', dataset: 'orders', valueKind: 'string', predicates: [{ kind: 'set', operators: ['in'] }], options: { kind: 'distinct', limit: 20, includeNull: false, values: [] } } }, bindings: { [key]: { key, id: 'status', filter: 'status', scope: 'report', default: unfiltered, selectionMode: 'single', maxSelectedValues: 1, required: false, readerEditable: true, paneVisible: true, paneOrder: 0, targets: [], optionDependencies: [] } } },
+        builderFilterState: { revision: 1, appliedControls: { [key]: { expression: unfiltered, resolvedExpression: unfiltered } }, draftControls: {}, dirtyBindings: [], defaultsRevision: 'defaults-1' },
+      })
+      await element.updateComplete
+      element.dispatchEvent(new CustomEvent('lv-filter-mutate', { bubbles: true, composed: true, detail: { bindingKey: key, expression: { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'paid' }] } } }))
+      const pendingBefore = element.builderFilterController.pending
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
+      await element.updateComplete
+      return { pendingBefore, pendingAfter: element.builderFilterController.pending, error: element.shadowRoot.querySelector('.filter-validation')?.textContent?.trim() ?? '' }
+    })
+    expect(state.pendingBefore).toBe(true)
+    expect(state.pendingAfter).toBe(false)
+    expect(state.error).toContain('Dashboard filter update could not be completed')
   } finally {
     await page.close()
   }

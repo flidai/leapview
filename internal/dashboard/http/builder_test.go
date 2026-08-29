@@ -23,6 +23,7 @@ import (
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -222,6 +223,43 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
+	page := "overview"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+		Pages:    []uisignals.DashboardBuilderPageSignal{{ID: page}}, SelectedPageID: &page,
+	}}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1",
+			"revisionContentHash": "sha256:" + strings.Repeat("a", 64), "pageId": page, "action": "publish",
+		},
+		"runtime": map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "projectId": "sales", "pageId": page},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "runtime-preserve-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, recorder.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("patches = %#v", patches)
+	}
+	runtime, ok := patches[0]["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime patch = %#v", patches[0]["runtime"])
+	}
+	for key, want := range map[string]string{"clientId": "client_1", "streamInstanceId": "stream_1", "projectId": "sales", "dashboardId": "revenue", "pageId": page} {
+		if runtime[key] != want {
+			t.Fatalf("runtime[%q] = %#v, want %q (runtime=%#v)", key, runtime[key], want, runtime)
+		}
+	}
+}
+
 func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
@@ -323,6 +361,16 @@ func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
 		{name: "update", action: map[string]any{"action": "update_filter", "filterId": "status", "title": "Order status", "dataset": "orders", "controlType": "singleSelect", "required": true, "readerEditable": false, "urlParameter": "status"}, assert: func(t *testing.T, command authoring.Command) {
 			if command.UpdateFilter == nil || command.UpdateFilter.FilterID != "status" || !command.UpdateFilter.Required || command.UpdateFilter.ReaderEditable || command.UpdateFilter.URLParameter != "status" {
 				t.Fatalf("update filter = %#v", command.UpdateFilter)
+			}
+		}},
+		{name: "set targets", action: map[string]any{"action": "set_filter_targets", "filterId": "status", "targets": []string{"orders", "summary"}}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterTargets == nil || command.SetFilterTargets.FilterID != "status" || len(command.SetFilterTargets.Targets) != 2 || command.SetFilterTargets.Targets[0] != "orders" || command.SetFilterTargets.Targets[1] != "summary" {
+				t.Fatalf("set filter targets = %#v", command.SetFilterTargets)
+			}
+		}},
+		{name: "set targets all pages", action: map[string]any{"action": "set_filter_targets", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterTargets == nil || command.SetFilterTargets.FilterID != "status" || command.SetFilterTargets.Targets != nil {
+				t.Fatalf("set filter targets all-pages = %#v", command.SetFilterTargets)
 			}
 		}},
 		{name: "remove", action: map[string]any{"action": "remove_filter", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {

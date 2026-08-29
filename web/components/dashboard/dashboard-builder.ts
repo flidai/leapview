@@ -14,8 +14,15 @@ import type {
   DashboardBuilderVisualSignal,
   DashboardBuilderVisualSlotSignal,
   DashboardBuilderVisualTypeSignal,
+  DashboardCompiledFilterBinding,
+  DashboardFilterCommand,
+  DashboardFilterContract,
+  DashboardFilterOptionPage,
+  DashboardFilterState,
+  DashboardFilterValidationResult,
   DashboardVisualizationSignal,
   DashboardStatus,
+  RouteRuntimeSignal,
 } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
@@ -24,6 +31,9 @@ import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFail
 import './visualization/host'
 import { DashboardVisualizationSignalDecoder } from './visualization/signal-envelope'
 import { renderVisualTypeIcon } from './visual-type-icon'
+import './filters/filter-control'
+import { DashboardFilterController } from './filters/filter-controller'
+import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -40,6 +50,7 @@ type BuilderInspectorTab = 'build' | 'format'
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
 type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
 type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
+type BuilderFilterScope = 'report' | 'page' | 'visual' | 'custom'
 
 type BuilderCatalogField = {
   field: DashboardBuilderFieldSignal
@@ -114,6 +125,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private pendingHistorySnapshot: BuilderHistorySnapshot | null = null
   private copiedVisual: BuilderClipboard | null = null
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
+  private builderFilterStateFingerprint = ''
+  private builderFilterValidationMutationID = ''
+  private readonly filterOptionGenerations = new Map<string, number>()
+  private readonly filterOptionRequestContexts = new Map<string, Map<number, string>>()
+  private readonly filterOptionInFlight = new Map<string, { context: string, generation: number, startedAt: number }>()
+  private readonly retainedFilterOptionPages = new Map<string, DashboardFilterOptionPage>()
+  private retainedFilterOptionServingStateID = ''
+  private builderFilterCommandInFlight: DashboardFilterCommand | null = null
+  private builderFilterTransportError = ''
+  private readonly builderFilterController = new DashboardFilterController((command) => {
+    this.builderFilterCommandInFlight = command
+    this.builderFilterTransportError = ''
+    this.dispatchEvent(new CustomEvent('lv-builder-filter-command', { bubbles: true, composed: true, detail: command }))
+    this.requestUpdate()
+  })
   private gridStack: GridStack | null = null
   private gridElement: HTMLElement | null = null
   private gridLayoutKey = ''
@@ -133,6 +159,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   override connectedCallback(): void {
     super.connectedCallback()
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    this.addEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
+    this.addEventListener('lv-filter-options-needed', this.handleBuilderFilterOptionsNeeded as EventListener, { capture: true })
     if (typeof window !== 'undefined') {
       window.addEventListener('keydown', this.handleBuilderKeydown)
       this.viewportMediaQuery = window.matchMedia('(max-width: 640px)')
@@ -142,6 +170,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   override disconnectedCallback(): void {
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    this.removeEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
+    this.removeEventListener('lv-filter-options-needed', this.handleBuilderFilterOptionsNeeded as EventListener, { capture: true })
     if (typeof window !== 'undefined') window.removeEventListener('keydown', this.handleBuilderKeydown)
     this.viewportMediaQuery?.removeEventListener('change', this.handleViewportChange)
     this.viewportMediaQuery = null
@@ -405,6 +435,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-12);
     }
 
+    .filter-validation {
+      margin: var(--base-size-6) 0 0;
+      color: var(--lv-fg-danger, var(--lv-fg-default));
+      font: var(--lv-type-caption);
+    }
+
     .filter-scope-heading {
       display: flex;
       align-items: center;
@@ -450,6 +486,51 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-list {
       display: grid;
       gap: var(--base-size-6);
+    }
+
+    .filter-scope-group {
+      display: grid;
+      gap: var(--base-size-6);
+      padding-bottom: var(--base-size-8);
+      border-bottom: var(--lv-border-muted);
+    }
+
+    .filter-scope-group:last-of-type {
+      border-bottom: 0;
+    }
+
+    .filter-scope-empty {
+      margin: 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .filter-scope-options {
+      display: grid;
+      gap: var(--base-size-6);
+      padding: var(--base-size-8);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .filter-scope-option {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: var(--base-size-8);
+      align-items: start;
+      color: var(--lv-fg-default) !important;
+    }
+
+    .filter-scope-option span {
+      display: grid;
+      gap: var(--base-size-2);
+      font: var(--lv-type-body-compact);
+    }
+
+    .filter-scope-option small {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
     }
 
     .filter-card {
@@ -1540,6 +1621,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       white-space: nowrap;
     }
 
+    .filter-component lv-slicer {
+      display: block;
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+    }
+
     .visual-empty {
       display: grid;
       place-items: center;
@@ -1821,6 +1909,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectPendingAddedVisual(builder)
     this.selectPendingAddedFilter(builder)
     this.selectPendingAddedFilterComponent(builder)
+    this.reconcileBuilderFilterController()
     this.syncGridStack(builder, builder ? this.selectedPage(builder) : undefined)
   }
 
@@ -1942,6 +2031,74 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     )
   }
 
+  private get builderFilterContract(): DashboardFilterContract {
+    const value = this.signal<DashboardFilterContract>('builderFilterContract', { applicationMode: 'immediate', definitions: {}, bindings: {} })
+    return { applicationMode: value.applicationMode || 'immediate', definitions: value.definitions ?? {}, bindings: value.bindings ?? {} }
+  }
+
+  private get builderFilterState(): DashboardFilterState {
+    const value = this.signal<DashboardFilterState>('builderFilterState', { revision: 0, appliedControls: {}, draftControls: {}, dirtyBindings: [], defaultsRevision: '' })
+    return { ...value, appliedControls: value.appliedControls ?? {}, draftControls: value.draftControls ?? {}, dirtyBindings: value.dirtyBindings ?? [] }
+  }
+
+  private get rawBuilderFilterOptionPages(): Record<string, DashboardFilterOptionPage> {
+    return this.signal<Record<string, DashboardFilterOptionPage> | null>('builderFilterOptionPages', {}) ?? {}
+  }
+
+  private get builderFilterOptionPages(): Record<string, DashboardFilterOptionPage> {
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })
+    const servingStateID = runtime.servingStateId ?? ''
+    const state = this.builderFilterState
+    const builder = this.builder
+    const pageID = builder ? this.selectedPage(builder)?.id ?? '' : ''
+    this.resetBuilderFilterOptionCache(servingStateID)
+
+    const isCurrent = (key: string, page: DashboardFilterOptionPage): boolean => {
+      if (page.bindingKey !== key || page.servingStateID !== servingStateID || page.filterRevision !== state.revision) return false
+      const binding = this.builderFilterContract.bindings[key]
+      if (!binding) return false
+      const generation = this.filterOptionGenerations.get(key)
+      const requestContext = this.filterOptionRequestContexts.get(key)?.get(page.requestGeneration)
+      const currentContext = this.builderFilterOptionContext(binding, pageID)
+      // Bootstrap may contain an option page before the first leaf has had a
+      // chance to request it. Keep the same fail-closed revision/generation
+      // checks as the dashboard surface for that initial response, while all
+      // subsequent pages must match the exact request that is current.
+      const initialPage = generation === undefined
+        && page.requestGeneration > 0
+        && page.streamGeneration === this.status.generation
+      return (generation !== undefined && page.requestGeneration === generation && requestContext === currentContext)
+        || (initialPage && requestContext === undefined)
+    }
+
+    for (const [key, page] of Object.entries(this.rawBuilderFilterOptionPages)) {
+      if (!isCurrent(key, page)) continue
+      this.retainedFilterOptionPages.set(key, page)
+      const inFlight = this.filterOptionInFlight.get(key)
+      if (inFlight && page.requestGeneration >= inFlight.generation) this.filterOptionInFlight.delete(key)
+    }
+    // Do not continue to expose a page after its revision, generation, or
+    // dependency context has changed. The leaf will retain selected values
+    // while the replacement request is in flight.
+    for (const [key, page] of this.retainedFilterOptionPages) {
+      if (!isCurrent(key, page)) this.retainedFilterOptionPages.delete(key)
+    }
+    return Object.fromEntries(this.retainedFilterOptionPages)
+  }
+
+  private resetBuilderFilterOptionCache(servingStateID: string): void {
+    if (this.retainedFilterOptionServingStateID === servingStateID) return
+    this.retainedFilterOptionServingStateID = servingStateID
+    this.retainedFilterOptionPages.clear()
+    this.filterOptionGenerations.clear()
+    this.filterOptionRequestContexts.clear()
+    this.filterOptionInFlight.clear()
+  }
+
+  private get builderFilterValidation(): DashboardFilterValidationResult {
+    return this.signal<DashboardFilterValidationResult>('builderFilterValidation', { accepted: true, message: '', currentRevision: this.builderFilterState.revision, clientMutationID: '' })
+  }
+
   render() {
     const builder = this.builder
     if (!builder) {
@@ -2018,8 +2175,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {
-    if (!this.commandPending || !ownsBrowserCommandFetch(this, event)) return
+    if (!ownsBrowserCommandFetch(this, event)) return
     const detail = (event as CustomEvent<{ type?: string }>).detail
+    const transportFailure = browserCommandFailure(event, 'Dashboard filter update')
+    // Filter posts share the builder host with authoring commands, so a
+    // document-global terminal error cannot identify which request failed.
+    // Reset both transient filter paths conservatively; successful responses
+    // are reconciled from their canonical signal patches in updated().
+    const hasFilterPending = this.builderFilterController.pending
+    if (transportFailure && (this.builderFilterCommandInFlight || hasFilterPending || this.filterOptionInFlight.size > 0)) {
+      const action = this.builderFilterCommandInFlight || hasFilterPending ? 'Dashboard filter update' : 'Loading dashboard filter values'
+      this.builderFilterCommandInFlight = null
+      this.invalidateBuilderFilterOptionRequests()
+      this.builderFilterController.reconcile(this.builderFilterState)
+      this.builderFilterTransportError = browserCommandFailure(event, action)?.message ?? transportFailure.message
+      this.requestUpdate()
+    }
+
+    if (!this.commandPending) return
     if (detail?.type === 'finished') {
       this.commandPending = false
       this.pendingHistorySnapshot = null
@@ -2027,8 +2200,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.requestUpdate()
       return
     }
-    const failure = browserCommandFailure(event, 'Dashboard builder action')
-    if (!failure) return
+    const commandFailure = browserCommandFailure(event, 'Dashboard builder action')
+    if (!commandFailure) return
     this.commandPending = false
     if (this.pendingHistorySnapshot) {
       this.undoStack = this.pendingHistorySnapshot.undo
@@ -2037,8 +2210,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.visualTypeOverrides = {}
     this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
-    this.terminalFailure = failure
+    this.terminalFailure = commandFailure
     this.requestUpdate()
+  }
+
+  private invalidateBuilderFilterOptionRequests(): void {
+    for (const [key, inFlight] of this.filterOptionInFlight) {
+      const generation = this.filterOptionGenerations.get(key)
+      if (generation === inFlight.generation) this.filterOptionGenerations.set(key, generation + 1)
+    }
+    this.filterOptionInFlight.clear()
   }
 
   private readonly reloadAfterFailure = (): void => {
@@ -2118,17 +2299,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFiltersPane(builder: DashboardBuilderSignal) {
     const filter = this.selectedBuilderFilter(builder)
     const filters = builder.filters ?? []
+    const page = this.selectedPage(builder)
+    const visual = page ? this.selectedVisual(page, builder) : undefined
+    const grouped = this.groupFiltersByScope(filters, page, visual)
     const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => item.field.kind === 'dimension')
+    const filterError = this.builderFilterErrorMessage()
     return html`
       <aside class="pane filters-pane" aria-labelledby="builder-filters-heading">
         <div class="pane-header">
           <h2 id="builder-filters-heading" class="pane-title">Filters</h2>
           <p class="pane-hint">Report filters in dashboard code. Applied to every page unless targets narrow them.</p>
+          ${filterError ? html`<p class="filter-validation" role="alert" aria-live="assertive">${filterError}</p>` : nothing}
         </div>
         <div class="filter-pane-body">
-          <div class="filter-scope-heading"><span>Filters on all pages</span><span>${filters.length}</span></div>
           <div class="filter-drop-zone" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>
-            Drop a governed dimension here
+            Drop a governed dimension to create a report filter
           </div>
           <label>
             <span class="sr-only">Add report filter</span>
@@ -2137,16 +2322,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ${dimensions.map((item) => html`<option value=${item.field.id} ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id)}>${item.field.label}</option>`)}
             </select>
           </label>
-          <div class="filter-list" aria-label="Report filters">
-            ${filters.length === 0
-              ? html`<p class="pane-hint">No report filters yet. Add one from the semantic model.</p>`
-              : repeat(filters, (item) => item.id, (item) => html`
-                  <button type="button" class="filter-card" aria-pressed=${filter?.id === item.id} @click=${() => this.selectFilterDefinition(item.id)}>
-                    <span class="filter-card-title">${item.label}</span>
-                    <span class="filter-card-meta">${this.filterControlLabel(item.controlType)} · ${this.fieldLabel(item.dimension, item.dimension)}</span>
-                  </button>
-                `)}
-          </div>
+          ${this.renderFilterScopeGroup('Filters on this visual', grouped.visual, filter, visual ? visual.title : 'Select a visual to target it')}
+          ${this.renderFilterScopeGroup('Filters for page visuals', grouped.page, filter, page?.title ?? 'No page selected')}
+          ${this.renderFilterScopeGroup('Filters on all pages', grouped.report, filter, 'Every compatible visual')}
+          ${grouped.custom.length > 0 ? this.renderFilterScopeGroup('Custom targets', grouped.custom, filter, 'Target set authored in dashboard code') : nothing}
           ${filter ? this.renderFilterEditor(builder, filter) : nothing}
         </div>
       </aside>
@@ -2157,8 +2336,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const editable = builder.capabilities.canEdit && !this.commandPending
     const page = this.selectedPage(builder)
     const placedComponent = page?.filterComponents?.find((component) => component.filterId === filter.id)
+    const visual = page ? this.selectedVisual(page, builder) : undefined
+    const scope = this.filterScope(filter, page, visual)
+    const pageTargets = this.pageVisualTargets(page)
     return html`
       <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
+        <div class="filter-scope-options" role="radiogroup" aria-label="Filter scope">
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'report'} ?disabled=${!editable} @change=${() => this.setFilterTargets(filter, [])} /><span>All pages<small>Apply to every compatible visual.</small></span></label>
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'page'} ?disabled=${!editable || pageTargets.length === 0} @change=${() => this.setFilterTargets(filter, pageTargets)} /><span>Visuals on this page<small>${page ? `Target ${pageTargets.length} visual definition${pageTargets.length === 1 ? '' : 's'} used on ${page.title}; reused visuals stay linked.` : 'Select a page first.'}</small></span></label>
+          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'visual'} ?disabled=${!editable || !visual} @change=${() => visual && this.setFilterTargets(filter, [visual.visualId])} /><span>This visual<small>${visual ? `Only ${visual.title}.` : 'Select a visual first.'}</small></span></label>
+          ${scope === 'custom' ? html`<p class="filter-scope-empty">Custom targets are preserved from dashboard code until you choose another scope.</p>` : nothing}
+        </div>
         <label>Label
           <input type="text" maxlength="128" .value=${filter.label} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { label: (event.currentTarget as HTMLInputElement).value.trim() || filter.label })} />
         </label>
@@ -2179,6 +2367,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </button>
         ` : nothing}
         <button type="button" class="filter-remove" ?disabled=${!editable} @click=${() => this.removeFilter(filter)}>Remove filter</button>
+      </section>
+    `
+  }
+
+  private renderFilterScopeGroup(title: string, filters: DashboardBuilderFilterSignal[], selected: DashboardBuilderFilterSignal | undefined, empty: string) {
+    return html`
+      <section class="filter-scope-group" aria-label=${title}>
+        <div class="filter-scope-heading"><span>${title}</span><span>${filters.length}</span></div>
+        <div class="filter-list">
+          ${filters.length === 0
+            ? html`<p class="filter-scope-empty">${empty}</p>`
+            : repeat(filters, (item) => item.id, (item) => html`
+                <button type="button" class="filter-card" aria-pressed=${selected?.id === item.id} @click=${() => this.selectFilterDefinition(item.id)}>
+                  <span class="filter-card-title">${item.label}</span>
+                  <span class="filter-card-meta">${this.filterControlLabel(item.controlType)} · ${this.fieldLabel(item.dimension, item.dimension)}</span>
+                </button>
+              `)}
+        </div>
       </section>
     `
   }
@@ -2289,12 +2495,30 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const top = `${Math.max(0, component.placement.row - 1) * (page.grid.rowHeight || 40)}px`
     const width = `${Math.max(1, component.placement.colSpan) * (100 / columns)}%`
     const height = `${Math.max(1, component.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
+    const bindings = Object.values(this.builderFilterContract.bindings)
+    const binding = bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'report')
+      ?? bindings.find((candidate) => candidate.filter === component.filterId && candidate.scope === 'page' && candidate.pageID === page.id)
+    const definition = binding ? this.builderFilterContract.definitions[binding.filter] : undefined
+    const projectedState = this.builderFilterController.projected.revision > 0 ? this.builderFilterController.projected : this.builderFilterState
+    const expression = binding
+      ? projectedState.draftControls[binding.key] ?? projectedState.appliedControls[binding.key]?.expression ?? binding.default
+      : undefined
+    const validationMessage = this.builderFilterErrorMessage()
     return html`
       <div class="filter-component grid-stack-item" data-selected=${selected} gs-id=${component.id} gs-x=${Math.max(0, component.placement.col - 1)} gs-y=${Math.max(0, component.placement.row - 1)} gs-w=${Math.max(1, component.placement.colSpan)} gs-h=${Math.max(1, component.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${component.label}, selected dashboard slicer` : `${component.label}, dashboard slicer`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectFilterComponent(component) }} @keydown=${(event: KeyboardEvent) => this.selectFilterComponentOnKey(event, component)}>
         <div class="grid-stack-item-content">
           <span class="filter-drag-header component-drag-handle" title="Drag to move ${component.label}" @pointerdown=${() => this.selectFilterComponent(component)}>${component.label}</span>
-          ${this.renderFilterControlPreview(component)}
-          <span class="filter-runtime-note">${this.filterControlLabel(component.controlType)} · values load in Preview</span>
+          ${binding && definition && expression ? html`<lv-slicer
+            .definition=${definition}
+            .binding=${binding}
+            .expression=${expression}
+            .options=${this.builderFilterOptionPages[binding.key]}
+            .optionContext=${this.builderFilterOptionContext(binding, page.id)}
+            .optionRequestReady=${this.builderFilterOptionsReady}
+            .pending=${this.builderFilterController.pendingFor(binding.key)}
+            .stale=${false}
+          ></lv-slicer>` : this.renderFilterControlPreview(component)}
+          <span class="filter-runtime-note">${validationMessage || (binding ? 'Interactive draft preview' : `${this.filterControlLabel(component.controlType)} · preparing preview`)}</span>
         </div>
       </div>
     `
@@ -2306,6 +2530,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     const preview = component.controlType === 'relativePeriod' ? 'Last 30 days' : component.controlType === 'text' ? 'Search values' : 'All'
     return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${component.controlType === 'text' ? '⌕' : '⌄'}</span></div></div>`
+  }
+
+  private builderFilterErrorMessage(): string {
+    if (this.builderFilterTransportError) return this.builderFilterTransportError
+    const validation = this.builderFilterValidation
+    return validation.accepted ? '' : validation.message
   }
 
   private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
@@ -2920,14 +3150,119 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.draggedFieldID = ''
   }
 
+  private get builderFilterOptionsReady(): boolean {
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })
+    return Boolean(runtime.servingStateId) && this.builderFilterState.revision > 0
+  }
+
+  private builderFilterOptionContext(binding: DashboardCompiledFilterBinding, pageID: string): string {
+    const bindings = Object.values(this.builderFilterContract.bindings)
+    const dependencies = binding.optionDependencies.flatMap((reference) => {
+      const dependency = bindings.find((candidate) => candidate.scope === reference.scope
+        && candidate.id === reference.id
+        && (candidate.scope === 'report' || candidate.pageID === pageID))
+      if (!dependency) return []
+      const applied = this.builderFilterState.appliedControls[dependency.key]
+      if (!applied) return []
+      const expression = applied.resolvedExpression?.kind ? applied.resolvedExpression : applied.expression
+      return expression.kind === 'unfiltered' ? [] : [[dependency.key, expression] as const]
+    }).sort(([left], [right]) => left.localeCompare(right))
+    return JSON.stringify({ pageID, dependencies })
+  }
+
+  private handleBuilderFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
+    const detail = event.detail
+    if (!detail?.bindingKey || !detail.expression) return
+    const binding = this.builderFilterContract.bindings[detail.bindingKey]
+    if (!binding?.readerEditable) return
+    event.stopPropagation()
+    if (detail.expression.kind === 'unfiltered') this.builderFilterController.clear(detail.bindingKey)
+    else this.builderFilterController.mutate(detail.bindingKey, detail.expression)
+    this.requestUpdate()
+  }
+
+  private handleBuilderFilterOptionsNeeded = (event: CustomEvent<FilterOptionsNeededDetail>): void => {
+    const detail = event.detail
+    if (!detail?.bindingKey || !this.builderFilterContract.bindings[detail.bindingKey]) return
+    event.stopPropagation()
+    const runtime = this.signal<RouteRuntimeSignal>('runtime', { kind: 'dashboard_builder' })
+    this.resetBuilderFilterOptionCache(runtime.servingStateId ?? '')
+    const binding = this.builderFilterContract.bindings[detail.bindingKey]
+    const builder = this.builder
+    const pageID = builder ? this.selectedPage(builder)?.id ?? '' : ''
+    const context = this.builderFilterOptionContext(binding, pageID)
+    const inFlight = this.filterOptionInFlight.get(detail.bindingKey)
+    if (inFlight?.context === context && Date.now() - inFlight.startedAt < 250) return
+    const generation = (this.filterOptionGenerations.get(detail.bindingKey) ?? 0) + 1
+    this.filterOptionGenerations.set(detail.bindingKey, generation)
+    this.filterOptionInFlight.set(detail.bindingKey, { context, generation, startedAt: Date.now() })
+    const contexts = this.filterOptionRequestContexts.get(detail.bindingKey) ?? new Map<number, string>()
+    contexts.set(generation, context)
+    for (const existingGeneration of contexts.keys()) {
+      if (existingGeneration < generation - 4) contexts.delete(existingGeneration)
+    }
+    this.filterOptionRequestContexts.set(detail.bindingKey, contexts)
+    this.builderFilterTransportError = ''
+    this.dispatchEvent(new CustomEvent('lv-builder-filter-options-request', {
+      bubbles: true,
+      composed: true,
+      detail: {
+        ...detail,
+        servingStateID: runtime.servingStateId ?? '',
+        filterRevision: this.builderFilterState.revision,
+        requestGeneration: generation,
+      },
+    }))
+  }
+
+  private reconcileBuilderFilterController(): void {
+    const contract = this.builderFilterContract
+    const state = this.builderFilterState
+    this.builderFilterController.setApplicationMode(contract.applicationMode)
+    this.builderFilterController.setDefaults(Object.fromEntries(Object.values(contract.bindings).map((binding) => [binding.key, binding.default])))
+    const fingerprint = JSON.stringify(state)
+    if (fingerprint !== this.builderFilterStateFingerprint) {
+      this.builderFilterStateFingerprint = fingerprint
+      this.builderFilterController.reconcile(state)
+      this.builderFilterCommandInFlight = null
+      this.requestUpdate()
+    }
+    const validation = this.builderFilterValidation
+    if (!validation.accepted && validation.clientMutationID && validation.clientMutationID !== this.builderFilterValidationMutationID) {
+      this.builderFilterValidationMutationID = validation.clientMutationID
+      if (this.builderFilterController.reject(validation.clientMutationID, state)) {
+        this.builderFilterCommandInFlight = null
+        this.requestUpdate()
+      }
+    }
+  }
+
   private selectedBuilderFilter(builder: DashboardBuilderSignal): DashboardBuilderFilterSignal | undefined {
     return (builder.filters ?? []).find((filter) => filter.id === this.selectedFilterID)
+  }
+
+  private pageVisualTargets(page: DashboardBuilderPageSignal | undefined): string[] {
+    return [...new Set((page?.visuals ?? []).map((visual) => visual.visualId).filter(Boolean))].sort()
+  }
+
+  private filterScope(filter: DashboardBuilderFilterSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined): BuilderFilterScope {
+    const targets = [...new Set(filter.targets ?? [])].sort()
+    if (targets.length === 0) return 'report'
+    const pageTargets = this.pageVisualTargets(page)
+    if (pageTargets.length > 0 && targets.length === pageTargets.length && targets.every((target, index) => target === pageTargets[index])) return 'page'
+    if (visual && targets.length === 1 && targets[0] === visual.visualId) return 'visual'
+    return 'custom'
+  }
+
+  private groupFiltersByScope(filters: DashboardBuilderFilterSignal[], page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined): Record<BuilderFilterScope, DashboardBuilderFilterSignal[]> {
+    const grouped: Record<BuilderFilterScope, DashboardBuilderFilterSignal[]> = { report: [], page: [], visual: [], custom: [] }
+    for (const filter of filters) grouped[this.filterScope(filter, page, visual)].push(filter)
+    return grouped
   }
 
   private selectFilterDefinition(filterID: string): void {
     this.selectedFilterID = filterID
     this.selectedFilterComponentID = ''
-    this.localVisualID = ''
   }
 
   private readonly addFilterFromSelect = (event: Event): void => {
@@ -2980,6 +3315,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       readerEditable: next.readerEditable,
       urlParameter: next.urlParameter ?? '',
     })
+  }
+
+  private setFilterTargets(filter: DashboardBuilderFilterSignal, targets: string[]): void {
+    if (!this.builder?.capabilities.canEdit || this.commandPending) return
+    const next = [...new Set(targets.filter(Boolean))].sort()
+    this.visualActionMessage = next.length === 0
+      ? `Applying ${filter.label} to all compatible visuals.`
+      : `Saving ${filter.label} target scope.`
+    this.emitCommand('set_filter_targets', next.length === 0 ? { filterId: filter.id } : { filterId: filter.id, targets: next })
   }
 
   private removeFilter(filter: DashboardBuilderFilterSignal): void {

@@ -250,6 +250,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return addCanonicalFilter(value, *patch)
 	case *UpdateFilterPayload:
 		return updateCanonicalFilter(value, *patch)
+	case *SetFilterTargetsPayload:
+		return setCanonicalFilterTargets(value, *patch)
 	case *RemoveFilterPayload:
 		return removeCanonicalFilter(value, *patch)
 	case *AddFilterComponentPayload:
@@ -317,6 +319,29 @@ func updateCanonicalFilter(value *document.DashboardDocument, patch UpdateFilter
 		filter.Required = &patch.Required
 		filter.ReaderEditable = &patch.ReaderEditable
 		filter.URLParameter = optionalCanonicalString(patch.URLParameter)
+		return nil
+	}
+	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)
+}
+
+// setCanonicalFilterTargets updates only a filter's target policy. A nil
+// payload slice clears the authored policy (all semantically compatible
+// visuals); explicit targets are copied into the generated document so the
+// revision cannot alias transport memory. Canonical compiler validation later
+// resolves IDs to page/component consumer keys and checks semantic
+// compatibility.
+func setCanonicalFilterTargets(value *document.DashboardDocument, patch SetFilterTargetsPayload) error {
+	for index := range value.Spec.Filters {
+		filter := &value.Spec.Filters[index]
+		if filter.ID != patch.FilterID {
+			continue
+		}
+		if patch.Targets == nil {
+			filter.Targets = nil
+			return nil
+		}
+		targets := append([]string(nil), patch.Targets...)
+		filter.Targets = &targets
 		return nil
 	}
 	return fmt.Errorf("%w: filter %q", ErrNotFound, patch.FilterID)

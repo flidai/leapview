@@ -72,13 +72,15 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		providers = []webpage.Provider{h.Layout(r)}
 	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
-		BackHref:       "/dashboards/" + url.PathEscape(dashboardID),
-		ForkHref:       dashboardBuilderBasePath(dashboardID) + "/fork",
-		PreviewHref:    dashboardBuilderPreviewPath(dashboardID, builder),
-		ExportYAMLHref: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
-		PageBaseHref:   dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
-		CommandPath:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
-		CommandBinding: dashboardBuilderCommandBinding,
+		BackHref:          "/dashboards/" + url.PathEscape(dashboardID),
+		ForkHref:          dashboardBuilderBasePath(dashboardID) + "/fork",
+		PreviewHref:       dashboardBuilderPreviewPath(dashboardID, builder),
+		ExportYAMLHref:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
+		PageBaseHref:      dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
+		CommandPath:       dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/command"),
+		CommandBinding:    dashboardBuilderCommandBinding,
+		FilterCommandPath: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter"),
+		FilterOptionPath:  dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter-options"),
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
 	}
@@ -234,11 +236,22 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, authoring.ErrStaleRevision)
 		return
 	}
-	if _, ok := webtransport.RequireClientID(w, r); !ok {
+	clientID, ok := webtransport.RequireClientID(w, r)
+	if !ok {
 		return
 	}
+	streamInstanceID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
+	if streamInstanceID == "" {
+		streamInstanceID = clientID
+	}
+	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
+	envelope.Runtime.ClientID = uisignals.Optional(clientID)
+	envelope.Runtime.StreamInstanceID = uisignals.Optional(streamInstanceID)
+	envelope.Runtime.ProjectID = uisignals.Optional(project.String())
+	envelope.Runtime.DashboardID = uisignals.Optional(dashboardID)
+	envelope.Runtime.PageID = uisignals.Optional(firstBuilderPage(builder))
 	updates := pagestream.NewSignalStream(w, r)
-	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder))); err != nil {
+	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(envelope)); err != nil {
 		return
 	}
 	updates.Wait(r.Context())
@@ -259,6 +272,11 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	var signals struct {
 		BuilderCommand *dashboardBuilderCommandSignal `json:"builderCommand"`
+		// Datastar command posts normally include only builderCommand, but
+		// retain runtime when a caller sends the complete route envelope. The
+		// response below also reconstructs this identity from the request and
+		// server-bound route so command patches never clear stream metadata.
+		Runtime uisignals.RouteRuntimeSignal `json:"runtime"`
 	}
 	if err := pagestream.ReadSignals(r, &signals); err != nil || signals.BuilderCommand == nil {
 		nethttp.Error(w, "dashboard builder command payload is required", nethttp.StatusBadRequest)
@@ -309,11 +327,62 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		return
 	}
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
+	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-		"builder":        envelope.Builder,
-		"builderVisuals": envelope.BuilderVisuals,
-		"status":         uisignals.DashboardStatus{Loading: false},
+		"builder":                  envelope.Builder,
+		"builderVisuals":           envelope.BuilderVisuals,
+		"runtime":                  envelope.Runtime,
+		"builderFilterContract":    envelope.BuilderFilterContract,
+		"builderFilterState":       envelope.BuilderFilterState,
+		"builderFilterOptionPages": envelope.BuilderFilterOptionPages,
+		"builderFilterValidation":  envelope.BuilderFilterValidation,
+		"status":                   uisignals.DashboardStatus{Loading: false},
 	})
+}
+
+// builderCommandRuntime preserves the route identity needed by the canonical
+// page stream. Runtime project/dashboard/page values supplied by the browser
+// are never trusted; project and dashboard come from the bound request while
+// page falls back to the authoritative re-projected builder selection.
+func (h Handler) builderCommandRuntime(r *nethttp.Request, supplied, runtime uisignals.RouteRuntimeSignal, projectID, dashboardID, requestedPage string, builder uisignals.DashboardBuilderSignal) uisignals.RouteRuntimeSignal {
+	clientID := ""
+	if supplied.ClientID != nil {
+		clientID = webtransport.ClientIDFromRequest(r, *supplied.ClientID)
+	} else {
+		clientID = webtransport.ClientIDFromRequest(r, "")
+	}
+	streamID := ""
+	if supplied.StreamInstanceID != nil {
+		streamID = strings.TrimSpace(*supplied.StreamInstanceID)
+	}
+	if streamID == "" {
+		streamID = strings.TrimSpace(r.URL.Query().Get("streamInstance"))
+	}
+	if streamID == "" {
+		streamID = clientID
+	}
+	pageID := strings.TrimSpace(requestedPage)
+	if pageID == "" && supplied.PageID != nil {
+		pageID = strings.TrimSpace(*supplied.PageID)
+	}
+	if pageID == "" {
+		pageID = firstBuilderPage(builder)
+	}
+	runtime.Kind = uisignals.RouteKindDashboardBuilder
+	runtime.ClientID = optionalRuntimeString(clientID)
+	runtime.StreamInstanceID = optionalRuntimeString(streamID)
+	runtime.ProjectID = optionalRuntimeString(projectID)
+	runtime.DashboardID = optionalRuntimeString(dashboardID)
+	runtime.PageID = optionalRuntimeString(pageID)
+	return runtime
+}
+
+func optionalRuntimeString(value string) *string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 // DashboardBuilderPreview renders one exact draft revision as JSON. No
@@ -390,6 +459,7 @@ type dashboardBuilderCommandSignal struct {
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
 	FilterID                  string                            `json:"filterId"`
+	Targets                   []string                          `json:"targets"`
 	Dataset                   string                            `json:"dataset"`
 	ControlType               string                            `json:"controlType"`
 	Description               string                            `json:"description"`
@@ -503,6 +573,10 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
 	case "update_filter":
 		command.UpdateFilter = &authoring.UpdateFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Description: strings.TrimSpace(s.Description), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType), Required: s.Required, ReaderEditable: s.ReaderEditable, URLParameter: strings.TrimSpace(s.URLParameter)}
+	case "set_filter_targets":
+		// A nil Targets slice (JSON field omitted) is the canonical all-pages
+		// form; a non-nil list narrows the filter to visual definition IDs.
+		command.SetFilterTargets = &authoring.SetFilterTargetsPayload{FilterID: strings.TrimSpace(s.FilterID), Targets: s.Targets}
 	case "remove_filter":
 		command.RemoveFilter = &authoring.RemoveFilterPayload{FilterID: strings.TrimSpace(s.FilterID)}
 	case "add_filter_component":
@@ -577,10 +651,16 @@ func revisionFromQuery(values url.Values) (authoring.RevisionToken, error) {
 func dashboardBuilderEnvelope(builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
 	builder = dashboardBuilderWithPreviewHref(builder)
 	return uisignals.DashboardBuilderEnvelope{
-		Builder:        builder,
-		BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{},
-		Runtime:        uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, DashboardID: uisignals.Optional(builder.DashboardID)},
-		Status:         uisignals.DashboardStatus{Loading: false},
+		Builder:                  builder,
+		BuilderVisuals:           map[string]uisignals.DashboardVisualizationSignal{},
+		Runtime:                  uisignals.RouteRuntimeSignal{Kind: uisignals.RouteKindDashboardBuilder, DashboardID: uisignals.Optional(builder.DashboardID)},
+		Status:                   uisignals.DashboardStatus{Loading: false},
+		BuilderFilterOptionPages: map[string]uisignals.DashboardFilterOptionPage{},
+		BuilderFilterValidation:  uisignals.DashboardFilterValidationResult{Accepted: true},
+		BuilderFilterCommand: uisignals.DashboardFilterCommand{Value: &uisignals.DashboardFilterMutateCommand{
+			DashboardFilterCommandBase: uisignals.DashboardFilterCommandBase{Kind: "mutate", BaseRevision: 1},
+			Kind:                       "mutate", Operation: "clear",
+		}},
 	}
 }
 
@@ -609,6 +689,9 @@ func (h Handler) dashboardBuilderEnvelopeWithPreview(ctx context.Context, actorI
 
 func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Context, projectID projectgraph.ResourceID, actorID string, builder uisignals.DashboardBuilderSignal) uisignals.DashboardBuilderEnvelope {
 	envelope := dashboardBuilderEnvelope(builder)
+	if servingStateID := builderServingStateID(builder); servingStateID != "" {
+		envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
+	}
 	result, err := h.Authoring.Preview(h.analyticalContext(ctx), preview.PreviewRequest{
 		ProjectID: projectID, ActorID: strings.TrimSpace(actorID),
 		DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
@@ -618,6 +701,25 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		},
 		PageID: firstBuilderPage(builder),
 	})
+	if err == nil || result.Definition.ID != "" {
+		// The preview is compiled and queried under one active semantic serving
+		// lease. Include that generation in the synthetic draft identity so a
+		// runtime cutover cannot reuse ephemeral state from the prior runtime.
+		if generation := strings.TrimSpace(result.SemanticEvidence.Identity.GenerationID); generation != "" {
+			if servingStateID := builderServingStateIDForGeneration(builder, generation); servingStateID != "" {
+				envelope.Runtime.ServingStateID = uisignals.Optional(servingStateID)
+			}
+		}
+		envelope.BuilderFilterContract = uisignals.DashboardFilterContractFromDefinition(result.Definition)
+		filterState := result.PagePatch.Filters.CompiledState
+		if filterState == nil {
+			state := result.Definition.DefaultFilterState()
+			filterState = &state
+		}
+		envelope.BuilderFilterState = uisignals.DashboardFilterStateFromDomain(*filterState)
+		envelope.BuilderFilterOptionPages = map[string]uisignals.DashboardFilterOptionPage{}
+		envelope.BuilderFilterValidation = uisignals.DashboardFilterValidationResult{Accepted: true, CurrentRevision: int64(filterState.Revision)}
+	}
 	envelope.BuilderVisuals = dashboardBuilderPreviewVisuals(builder, result)
 	envelope.Builder.Preview.Loading = false
 	previewErr := err
@@ -641,6 +743,26 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 	// incomplete draft revision.
 	envelope.Builder.Preview.Error = uisignals.Pointer("")
 	return envelope
+}
+
+func builderServingStateID(builder uisignals.DashboardBuilderSignal) string {
+	if strings.TrimSpace(builder.DraftID) == "" || strings.TrimSpace(builder.Revision.ID) == "" || builder.Revision.Number <= 0 || strings.TrimSpace(builder.Revision.ContentHash) == "" {
+		return ""
+	}
+	return "builder:" + strings.TrimSpace(builder.DraftID) + ":" + strings.TrimSpace(builder.Revision.ID) + ":" + strings.TrimSpace(builder.Revision.ContentHash)
+}
+
+// builderServingStateIDForGeneration scopes the exact authored revision to
+// the active semantic runtime generation. The draft/revision/hash portion is
+// retained as the stable inner identity while the generation suffix ensures a
+// runtime cutover starts a fresh ephemeral filter session.
+func builderServingStateIDForGeneration(builder uisignals.DashboardBuilderSignal, generation string) string {
+	base := builderServingStateID(builder)
+	generation = strings.TrimSpace(generation)
+	if base == "" || generation == "" {
+		return base
+	}
+	return base + ":generation:" + generation
 }
 
 func maxInt64(value int64) int64 {

@@ -30,6 +30,12 @@ type DashboardBuilderActionBindings struct {
 
 	CommandPath    string
 	CommandBinding uicommand.Binding
+	// FilterCommandPath and FilterOptionPath are draft-preview-only signal
+	// endpoints. They intentionally use transient event posts (rather than
+	// authoring command bindings) because filter state is ephemeral and never
+	// writes the authored document.
+	FilterCommandPath string
+	FilterOptionPath  string
 }
 
 // DashboardBuilderPage renders the document shell for the draft dashboard
@@ -52,6 +58,8 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		g.Attr("dashboard-id", builder.DashboardID),
 		g.Attr("draft-id", builder.DraftID),
 		builderCommandAction(actions),
+		builderFilterCommandAction(actions),
+		builderFilterOptionsAction(actions),
 	}
 	for name, value := range map[string]string{
 		"back-href":        actions.BackHref,
@@ -141,10 +149,16 @@ func builderFocusLayout(provider webpage.Provider, context webpage.Context) webp
 // stable signal keys without serializing it into the document shell.
 func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelope) map[string]any {
 	return map[string]any{
-		"builder":        envelope.Builder,
-		"builderVisuals": envelope.BuilderVisuals,
-		"runtime":        envelope.Runtime,
-		"status":         envelope.Status,
+		"builder":                    envelope.Builder,
+		"builderVisuals":             envelope.BuilderVisuals,
+		"runtime":                    envelope.Runtime,
+		"status":                     envelope.Status,
+		"builderFilterContract":      envelope.BuilderFilterContract,
+		"builderFilterState":         envelope.BuilderFilterState,
+		"builderFilterOptionPages":   envelope.BuilderFilterOptionPages,
+		"builderFilterValidation":    envelope.BuilderFilterValidation,
+		"builderFilterCommand":       envelope.BuilderFilterCommand,
+		"builderFilterOptionRequest": envelope.BuilderFilterOptionRequest,
 	}
 }
 
@@ -166,7 +180,26 @@ func dashboardBuilderUpdatesURL(builder uisignals.DashboardBuilderSignal) string
 func builderCommandAction(actions DashboardBuilderActionBindings) g.Node {
 	value := "$builderCommand = evt.detail;"
 	if strings.TrimSpace(actions.CommandPath) != "" {
-		value += " " + uiactions.CommandPost(actions.CommandBinding, actions.CommandPath, "builderCommand")
+		// Include runtime identity with durable builder intents so the command
+		// response can preserve the same client/stream/page context in its
+		// replacement patch.
+		value += " " + uiactions.CommandPost(actions.CommandBinding, actions.CommandPath, "builderCommand", "runtime")
 	}
 	return g.Attr("data-on:lv-builder-command", value)
+}
+
+func builderFilterCommandAction(actions DashboardBuilderActionBindings) g.Node {
+	value := "$builderFilterCommand = evt.detail;"
+	if strings.TrimSpace(actions.FilterCommandPath) != "" {
+		value += " " + uiactions.EventPost(actions.FilterCommandPath, "builder", "runtime", "builderFilterCommand")
+	}
+	return g.Attr("data-on:lv-builder-filter-command", value)
+}
+
+func builderFilterOptionsAction(actions DashboardBuilderActionBindings) g.Node {
+	value := "$builderFilterOptionRequest = evt.detail;"
+	if strings.TrimSpace(actions.FilterOptionPath) != "" {
+		value += " " + uiactions.EventPost(actions.FilterOptionPath, "builder", "runtime", "builderFilterOptionRequest")
+	}
+	return g.Attr("data-on:lv-builder-filter-options-request", value)
 }

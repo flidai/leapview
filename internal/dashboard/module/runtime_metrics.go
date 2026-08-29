@@ -447,6 +447,22 @@ func (m runtimeMetrics) QueryVisualizationForDefinition(ctx context.Context, def
 	return port.QueryVisualizationForDefinition(ctx, definition, pageID, filters, visualID)
 }
 
+// QueryCompiledFilterOptionsForDefinition executes distinct options against a
+// caller-supplied immutable definition. Builder previews use this seam so a
+// draft filter can never fall back to the published dashboard resolver.
+func (m runtimeMetrics) QueryCompiledFilterOptionsForDefinition(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
+	runtime, release, err := m.active(ctx)
+	if err != nil {
+		return dashboardfilter.OptionResult{}, err
+	}
+	defer release()
+	port, ok := runtime.(definitionFilterRuntime)
+	if !ok {
+		return dashboardfilter.OptionResult{}, fmt.Errorf("active runtime does not provide compiled filter options")
+	}
+	return port.QueryCompiledFilterOptionsForDefinition(ctx, definition, query)
+}
+
 func (m runtimeMetrics) QueryVisualizationWindow(ctx context.Context, dashboardID, pageID string, filters dashboard.Filters, request visualizationir.VisualizationWindowRequest) (visualizationir.VisualizationEnvelope, error) {
 	runtime, release, resolved, err := m.activeResolvedForDashboardRefresh(ctx, dashboardID)
 	if err != nil {
