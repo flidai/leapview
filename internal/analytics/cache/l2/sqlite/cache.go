@@ -1,4 +1,4 @@
-// Package l2 implements the optional node-local result cache.
+// Package l2 implements the optional SQLite-indexed node-local result cache.
 //
 // The cache is deliberately disposable. Result bytes are immutable,
 // content-addressed files and SQLite contains only a rebuildable lookup index.

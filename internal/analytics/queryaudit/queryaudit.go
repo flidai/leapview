@@ -89,10 +89,16 @@ type Reader interface {
 	ListQueryEventFilterOptions(ctx context.Context, field, search string, limit int) ([]FilterOption, error)
 }
 
-type Repository interface {
+// Store is the capability contract shared by query-history readers and
+// recorders. Concrete persistence remains owned by analytics composition.
+type Store interface {
 	Recorder
 	Reader
 }
+
+// Repository is retained as a contract alias for callers that have not yet
+// adopted the storage-neutral name. Module configuration exposes Store.
+type Repository = Store
 
 func (input EventInput) Validate() error {
 	if input.ProjectID == "" {

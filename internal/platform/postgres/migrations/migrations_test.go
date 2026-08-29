@@ -62,26 +62,6 @@ func TestBaselineMetadata(t *testing.T) {
 	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS platform.operation") || strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS access") {
 		t.Fatal("foundation must not duplicate capability-owned DDL")
 	}
-	want := []string{"platform.operation", "platform.cursor_signing", "project", "access", "deployment", "event", "ducklake", "jobs", "lineage", "cache", "queryaudit"}
-	components := BaselineComponents()
-	if len(components) != len(want) {
-		t.Fatalf("assembled component count = %d, want %d", len(components), len(want))
-	}
-	for i, component := range components {
-		if component.Name != want[i] {
-			t.Errorf("component[%d] = %q, want %q", i, component.Name, want[i])
-		}
-		if component.SQL == "" {
-			t.Errorf("component[%q] has empty SQL", component.Name)
-		}
-	}
-	for _, missing := range []string{"refresh", "agent"} {
-		for _, component := range components {
-			if component.Name == missing {
-				t.Errorf("unimplemented capability %q unexpectedly assembled", missing)
-			}
-		}
-	}
 	if strings.Contains(sql, "-- +goose") {
 		t.Fatal("PostgreSQL baseline must use its own migration mechanism")
 	}
@@ -90,22 +70,43 @@ func TestBaselineMetadata(t *testing.T) {
 	}
 }
 
+func testPlan() Plan {
+	return Plan{
+		Components:    []Component{{Name: "test.capability", SQL: "SELECT 1"}},
+		RolePolicySQL: "SELECT 2",
+	}
+}
+
 func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
-	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: BaselineChecksum()}
-	if err := Apply(context.Background(), recorder); err != nil {
+	plan := testPlan()
+	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: plan.Checksum()}
+	if err := Apply(context.Background(), recorder, plan); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
 	if len(recorder.sqls) != 4 || recorder.sqls[2] != BaselineSQL() {
 		t.Fatal("Apply() did not acquire its lock and execute the authored foundation")
 	}
-	if err := Apply(context.Background(), nil); err == nil {
+	if err := Apply(context.Background(), nil, plan); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
 	}
 }
 
 func TestApplyRejectsRevisionChecksumMismatch(t *testing.T) {
 	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: strings.Repeat("f", 64)}
-	if err := Apply(context.Background(), recorder); err == nil {
+	if err := Apply(context.Background(), recorder, testPlan()); err == nil {
 		t.Fatal("Apply() accepted a mismatched recorded checksum")
+	}
+}
+
+func TestApplyRejectsIncompleteOrDuplicatePlan(t *testing.T) {
+	recorder := &recordingTx{queryErr: pgx.ErrNoRows}
+	for _, plan := range []Plan{
+		{},
+		{Components: []Component{{Name: "one", SQL: "SELECT 1"}}},
+		{Components: []Component{{Name: "one", SQL: "SELECT 1"}, {Name: "one", SQL: "SELECT 2"}}, RolePolicySQL: "SELECT 3"},
+	} {
+		if err := Apply(context.Background(), recorder, plan); err == nil {
+			t.Fatalf("Apply accepted invalid plan %#v", plan)
+		}
 	}
 }

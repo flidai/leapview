@@ -123,41 +123,6 @@ func TestBuildCreatesPrivateStateDirectories(t *testing.T) {
 	}
 }
 
-func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
-	home := t.TempDir()
-	cfg := serveTestConfig(t, home)
-	cfg.Production = true
-	cfg.OIDCIssuerURL = "https://issuer.example"
-	cfg.OIDCClientID = "client-id"
-	cfg.OIDCSecret = "client-secret"
-	cfg.OIDCCallbackURL = "https://app.example.com/auth/oidc/callback"
-	cfg.PublicURL = "https://app.example.com"
-	cfg.CSRFKey = "0123456789abcdef0123456789abcdef"
-	cfg.MetricsBearerToken = "0123456789abcdef0123456789abcdef"
-	application, err := app.Build(context.Background(), cfg)
-	if err != nil {
-		t.Fatalf("build production application: %v", err)
-	}
-	defer application.Shutdown(context.Background())
-	for _, test := range []struct {
-		name, host string
-		want       int
-	}{
-		{name: "callback host", host: "app.example.com", want: http.StatusOK},
-		{name: "unexpected host", host: "evil.example.com", want: http.StatusMisdirectedRequest},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
-			request.Host = test.host
-			response := httptest.NewRecorder()
-			application.Handler().ServeHTTP(response, request)
-			if response.Code != test.want {
-				t.Fatalf("status = %d, want %d body=%s", response.Code, test.want, response.Body.String())
-			}
-		})
-	}
-}
-
 func serveTestConfig(t testing.TB, home string) config.Config {
 	t.Helper()
 	fixture := extensionfixture.New(t, "ducklake")

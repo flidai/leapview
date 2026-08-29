@@ -32,10 +32,10 @@ const (
 
 type Config struct {
 	Database *sql.DB
-	// QueryAuditRepository is the explicit capability-owned query-audit
+	// QueryAuditStore is the explicit capability-owned query-audit
 	// authority. SQLite fixtures may wrap their database and pass that adapter;
 	// production wiring supplies the native PostgreSQL repository.
-	QueryAuditRepository queryaudit.Repository
+	QueryAuditStore queryaudit.Store
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
 	// consumed by connection-binding SQLite mutations.
 	AuditIntentRecorder   access.AuditIntentRecorder
@@ -75,15 +75,15 @@ func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.P
 // NewQueryAuditSurface constructs the analytics-owned control-plane adapter
 // without opening the analytical runtime. It is useful to compose API-only
 // surfaces and focused tests.
-func NewQueryAuditSurface(repository queryaudit.Repository) *Module {
+func NewQueryAuditSurface(repository queryaudit.Store) *Module {
 	return &Module{queryAudit: repository}
 }
 
 type QueryAuditSurface struct {
-	repository queryaudit.Repository
+	repository queryaudit.Store
 }
 
-func BuildQueryAuditSurface(repository queryaudit.Repository) *QueryAuditSurface {
+func BuildQueryAuditSurface(repository queryaudit.Store) *QueryAuditSurface {
 	return &QueryAuditSurface{repository: repository}
 }
 
@@ -106,7 +106,7 @@ func (s *QueryAuditSurface) Recorder() queryaudit.Recorder {
 type Module struct {
 	environment                  *analyticsducklake.Environment
 	cache                        *resultcache.Pool
-	queryAudit                   queryaudit.Repository
+	queryAudit                   queryaudit.Store
 	connectionBindings           connectionbinding.BindingCatalog
 	credentials                  analyticsduckdb.CredentialResolver
 	targetResolvers              connectionbinding.ResolverSet
@@ -165,7 +165,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		return nil, err
 	}
-	queryAudit := config.QueryAuditRepository
+	queryAudit := config.QueryAuditStore
 	var connectionBindings connectionbinding.BindingCatalog
 	if config.Database != nil {
 		if config.AuditIntentRecorder != nil {

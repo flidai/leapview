@@ -2,7 +2,6 @@ package postgres
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -390,7 +389,7 @@ func scanDeviceAuthorization(row interface{ Scan(...any) error }) (access.Device
 	var value access.DeviceAuthorization
 	var caps string
 	var status string
-	var principal sql.NullString
+	var principal *string
 	var expires, last, created, approved, denied, consumed *time.Time
 	var poll int
 	err := row.Scan(&value.ID, &value.ClientID, &value.DeviceCodeHash, &value.UserCodeHash, &value.Scope.TargetID, &value.Scope.ProjectID, &caps, &status, &principal, &expires, &poll, &last, &created, &approved, &denied, &consumed)
@@ -398,8 +397,8 @@ func scanDeviceAuthorization(row interface{ Scan(...any) error }) (access.Device
 		return value, err
 	}
 	value.Status = access.DeviceAuthorizationStatus(status)
-	if principal.Valid {
-		value.PrincipalID = principal.String
+	if principal != nil {
+		value.PrincipalID = *principal
 	}
 	var parseErr error
 	value.Scope.ProjectID, parseErr = graph.NewResourceID(value.Scope.ProjectID.String())

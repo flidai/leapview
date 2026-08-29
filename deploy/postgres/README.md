@@ -42,6 +42,6 @@ runtime roles cannot create schemas or assume owner roles. Test targets use a
 separate worktree-derived port range to avoid collisions between worktrees.
 
 The local defaults are disposable credentials, suitable only for an isolated
-developer machine. Override the `LEAPVIEW_POSTGRES_*_PASSWORD` variables for
-tests that need different credentials. The helper never prints passwords or
-connection URLs.
+developer machine. Override the specific password settings documented in the
+Compose file for tests that need different credentials. The helper never
+prints passwords or connection URLs.

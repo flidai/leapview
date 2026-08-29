@@ -12,18 +12,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
-	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
-	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
-	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
-	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
-	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
-	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
-	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -42,31 +32,6 @@ const AdvisoryLockKey int64 = 0x4c565f7067730001
 //go:embed 001_control_plane.sql
 var baselineSQL string
 
-// componentSpec is kept private so callers cannot mutate the authoritative
-// ordered list. Name and bytes both participate in the baseline checksum.
-type componentSpec struct {
-	name string
-	sql  func() string
-}
-
-// baselineComponents is an explicit dependency order. Access owns the shared
-// audit table shape used by deployment; deployment installs its delivery
-// authority over that table and its event ledger; events then replace the
-// event-log trigger with the durable fan-out implementation.
-var baselineComponents = [...]componentSpec{
-	{name: "platform.operation", sql: operationpostgres.SchemaSQL},
-	{name: "platform.cursor_signing", sql: cursorsigningpostgres.SchemaSQL},
-	{name: "project", sql: projectpostgres.SchemaSQL},
-	{name: "access", sql: accesspostgres.SchemaSQL},
-	{name: "deployment", sql: deploymentpostgres.SchemaSQL},
-	{name: "event", sql: eventspostgres.SchemaSQL},
-	{name: "ducklake", sql: ducklakepostgres.SchemaSQL},
-	{name: "jobs", sql: jobspostgres.SchemaSQL},
-	{name: "lineage", sql: lineagepostgres.SchemaSQL},
-	{name: "cache", sql: cachepostgres.SchemaSQL},
-	{name: "queryaudit", sql: queryauditpostgres.SchemaSQL},
-}
-
 // Component is a read-only snapshot of one assembled capability. It is useful
 // to diagnostics and tests without exposing the mutable internal registry.
 type Component struct {
@@ -74,75 +39,47 @@ type Component struct {
 	SQL  string
 }
 
-// BaselineComponents returns the deterministic capability list and exact SQL
-// bytes used by Apply. The returned slice can be modified by the caller.
-func BaselineComponents() []Component {
-	components := make([]Component, 0, len(baselineComponents))
-	for _, component := range baselineComponents {
-		components = append(components, Component{Name: component.name, SQL: component.sql()})
-	}
-	return components
+// Plan is the product-supplied ordered capability baseline. The generic
+// migration runner deliberately does not import product capabilities; the
+// application composition layer owns this list and its role policy.
+type Plan struct {
+	Components    []Component
+	RolePolicySQL string
 }
 
-// BaselineSQL returns the foundation SQL. Capability SQL is available through
-// BaselineComponents and is applied in order by Apply.
+// BaselineSQL returns the foundation SQL. Product composition supplies ordered
+// capability SQL through Plan when calling Apply.
 func BaselineSQL() string { return baselineSQL }
 
-// BaselineChecksum is the SHA-256 digest recorded with the schema revision.
+// Checksum is the SHA-256 digest recorded with the schema revision.
 // Length-prefix framing makes component names and bytes unambiguous while
 // keeping the digest independent of Go formatting or map iteration order.
-func BaselineChecksum() string {
+func (p Plan) Checksum() string {
 	h := sha256.New()
 	writeChecksumPart(h, "foundation", baselineSQL)
-	for _, component := range baselineComponents {
-		writeChecksumPart(h, component.name, component.sql())
+	for _, component := range p.Components {
+		writeChecksumPart(h, component.Name, component.SQL)
 	}
-	writeChecksumPart(h, "baseline.role_policy", rolePolicySQL)
+	writeChecksumPart(h, "baseline.role_policy", p.RolePolicySQL)
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-// rolePolicySQL fills the small privilege gaps in capability schemas that are
-// intentionally usable in isolation. It never grants readonly access to the
-// cursor-key base table; only the metadata view is exposed.
-const rolePolicySQL = `
-DO $$
-BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, ducklake, jobs, cache TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
-        GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO leapview_control_runtime;
-        GRANT SELECT ON ALL TABLES IN SCHEMA lineage TO leapview_control_runtime;
-        GRANT INSERT ON lineage.graphs, lineage.nodes, lineage.edges, lineage.bindings TO leapview_control_runtime;
-        REVOKE INSERT, UPDATE, DELETE ON lineage.revisions FROM leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION lineage.publish_revision(text, text, text) TO leapview_control_runtime;
-        REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime;
-        REVOKE UPDATE, DELETE ON audit.audit_event FROM leapview_control_runtime;
-        REVOKE UPDATE, DELETE ON ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_runtime;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_readonly;
-        GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache TO leapview_control_readonly;
-        -- Jobs payload/evidence is runtime-only; readonly receives the
-        -- bounded health projection instead of the queue's raw JSON.
-        GRANT SELECT ON jobs.job_observability TO leapview_control_readonly;
-        REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_readonly;
-        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache FROM leapview_control_readonly;
-        REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential FROM leapview_control_readonly;
-        GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
-        GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
-        REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
-    END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
-        GRANT USAGE ON SCHEMA project, access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_backup;
-        GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_backup;
-        GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
-        GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_keys TO leapview_control_backup;
-    END IF;
-END
-$$;`
+func (p Plan) validate() error {
+	if len(p.Components) == 0 || strings.TrimSpace(p.RolePolicySQL) == "" {
+		return errors.New("PostgreSQL migration plan is incomplete")
+	}
+	seen := make(map[string]struct{}, len(p.Components))
+	for _, component := range p.Components {
+		if strings.TrimSpace(component.Name) == "" || strings.TrimSpace(component.SQL) == "" {
+			return errors.New("PostgreSQL migration component is incomplete")
+		}
+		if _, exists := seen[component.Name]; exists {
+			return fmt.Errorf("duplicate PostgreSQL migration component %q", component.Name)
+		}
+		seen[component.Name] = struct{}{}
+	}
+	return nil
+}
 
 func writeChecksumPart(w io.Writer, name, sql string) {
 	var length [8]byte
@@ -167,9 +104,12 @@ type Tx interface {
 // share that transaction; callers decide commit/rollback. Existing matching
 // revisions are idempotent, while any checksum or migration-ID drift fails
 // closed before capability SQL is replayed.
-func Apply(ctx context.Context, tx Tx) error {
+func Apply(ctx context.Context, tx Tx, plan Plan) error {
 	if tx == nil {
 		return errors.New("postgres migration transaction is nil")
+	}
+	if err := plan.validate(); err != nil {
+		return err
 	}
 	if ctx == nil {
 		ctx = context.Background()
@@ -184,7 +124,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		return fmt.Errorf("apply PostgreSQL migration foundation: %w", err)
 	}
 
-	checksum := BaselineChecksum()
+	checksum := plan.Checksum()
 	var recordedRevision int64
 	var recordedID, recordedChecksum string
 	err := tx.QueryRow(ctx, `
@@ -198,7 +138,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		// Reapply the deny-by-default role policy even when DDL is already
 		// present. This repairs accidental ACL widening without replaying
 		// capability triggers that are not all CREATE OR REPLACE-safe.
-		if _, err := tx.Exec(ctx, rolePolicySQL); err != nil {
+		if _, err := tx.Exec(ctx, plan.RolePolicySQL); err != nil {
 			return fmt.Errorf("reapply PostgreSQL migration role policy: %w", err)
 		}
 		return nil
@@ -207,12 +147,12 @@ func Apply(ctx context.Context, tx Tx) error {
 		return fmt.Errorf("inspect PostgreSQL schema revision: %w", err)
 	}
 
-	for _, component := range baselineComponents {
-		if _, err := tx.Exec(ctx, component.sql()); err != nil {
-			return fmt.Errorf("apply PostgreSQL capability %s: %w", component.name, err)
+	for _, component := range plan.Components {
+		if _, err := tx.Exec(ctx, component.SQL); err != nil {
+			return fmt.Errorf("apply PostgreSQL capability %s: %w", component.Name, err)
 		}
 	}
-	if _, err := tx.Exec(ctx, rolePolicySQL); err != nil {
+	if _, err := tx.Exec(ctx, plan.RolePolicySQL); err != nil {
 		return fmt.Errorf("apply PostgreSQL migration role policy: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `

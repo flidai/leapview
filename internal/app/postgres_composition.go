@@ -7,8 +7,8 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
-	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
 
 // errPostgresProductionCompositionIncomplete is intentionally stable so the
@@ -113,7 +113,7 @@ func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platform
 			_ = tx.Rollback(context.Background())
 		}
 	}()
-	if err := migrations.Apply(ctx, tx); err != nil {
+	if err := postgresbaseline.Apply(ctx, tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -138,11 +138,11 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	if err := l.pools.Runtime.QueryRow(ctx, `
 		SELECT revision, migration_id, checksum
 		FROM platform.schema_revision
-		WHERE revision = $1`, migrations.BaselineRevision).
+		WHERE revision = $1`, postgresbaseline.BaselineRevision).
 		Scan(&revision, &migrationID, &checksum); err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
 	}
-	if revision != migrations.BaselineRevision || migrationID != migrations.BaselineMigrationID || checksum != migrations.BaselineChecksum() {
+	if revision != postgresbaseline.BaselineRevision || migrationID != postgresbaseline.BaselineMigrationID || checksum != postgresbaseline.Checksum() {
 		return fmt.Errorf("PostgreSQL control schema revision mismatch: got revision=%d migration=%q checksum=%q", revision, migrationID, checksum)
 	}
 	if l.pools.Readonly != nil {

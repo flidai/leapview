@@ -1,4 +1,4 @@
-package migrations
+package migrations_test
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -44,7 +45,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(ctx, tx); err != nil {
+	if err := postgresbaseline.Apply(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("apply baseline: %v", err)
 	}
@@ -57,7 +58,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := Apply(ctx, tx); err != nil {
+	if err := postgresbaseline.Apply(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("reapply baseline: %v", err)
 	}
@@ -98,11 +99,11 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 
 	var revision int64
-	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, BaselineMigrationID).Scan(&revision); err != nil {
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, postgresbaseline.BaselineMigrationID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if revision != BaselineRevision {
-		t.Fatalf("schema revision = %d, want %d", revision, BaselineRevision)
+	if revision != postgresbaseline.BaselineRevision {
+		t.Fatalf("schema revision = %d, want %d", revision, postgresbaseline.BaselineRevision)
 	}
 	var canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
 	var readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential bool
@@ -136,7 +137,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if canUpdateAudit || canUpdateRevision || !canReadRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateDuckLake || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential {
 		t.Fatalf("least-privilege grants leaked: audit update=%t revision update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t ducklake update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t", canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential)
 	}
-	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, BaselineRevision); err == nil {
+	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, postgresbaseline.BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")
 	}
 	if _, err := db.Exec(ctx, `

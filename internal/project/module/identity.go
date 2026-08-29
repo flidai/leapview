@@ -2,10 +2,12 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 
 	project "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectsqlite "github.com/flidai/leapview/internal/project/sqlite"
 )
 
 // ErrIdentityRepositoryUnavailable indicates that identity persistence was
@@ -22,4 +24,14 @@ func EnsureIdentity(ctx context.Context, repository project.IdentityRepository, 
 		return ErrIdentityRepositoryUnavailable
 	}
 	return repository.EnsureIdentity(ctx, id)
+}
+
+// NewSQLiteIdentityRepository keeps the development/test adapter behind the
+// project module boundary. Production composition injects the PostgreSQL
+// implementation and never selects this path.
+func NewSQLiteIdentityRepository(database *sql.DB) project.IdentityRepository {
+	if database == nil {
+		return nil
+	}
+	return projectsqlite.NewRepository(database)
 }
