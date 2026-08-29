@@ -81,6 +81,16 @@ func TestAccessCorePostgreSQL18PrincipalCredentialsAndRevocation(t *testing.T) {
 	if _, _, err := repo.VerifyLocalPassword(t.Context(), p.Principal.Email, "correct horse battery staple"); err != nil {
 		t.Fatal(err)
 	}
+	passwordSession, err := repo.CreateSession(t.Context(), p.Principal.ID, time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.ChangeLocalPassword(t.Context(), p.Principal.ID, "correct horse battery staple", "replacement password that is long enough"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.PrincipalForToken(t.Context(), passwordSession); !errors.Is(err, pgx.ErrNoRows) {
+		t.Fatalf("password change retained browser session = %v", err)
+	}
 
 	token, err := repo.CreateSession(t.Context(), p.Principal.ID, time.Hour)
 	if err != nil {

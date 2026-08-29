@@ -29,7 +29,7 @@ func (r *Repository) PrincipalIdentityManagement(ctx context.Context, id string)
 	var provider string
 	var kind string
 	var local bool
-	err = db.QueryRow(ctx, `SELECT COALESCE((SELECT provider FROM access.external_identity WHERE principal_id=p.id AND revoked_at IS NULL ORDER BY created_at LIMIT 1),''),p.principal_type,EXISTS(SELECT 1 FROM access.local_credential c WHERE c.principal_id=p.id) FROM access.principal p WHERE p.id=$1::uuid`, id).Scan(&provider, &kind, &local)
+	err = db.QueryRow(ctx, `SELECT COALESCE((SELECT provider FROM access.external_identity WHERE principal_id=p.id AND revoked_at IS NULL ORDER BY created_at LIMIT 1),''),p.principal_type,EXISTS(SELECT 1 FROM access.local_credential c WHERE c.principal_id=p.id AND c.revoked_at IS NULL) FROM access.principal p WHERE p.id=$1::uuid`, id).Scan(&provider, &kind, &local)
 	if err != nil {
 		return access.PrincipalIdentityManagement{}, err
 	}
@@ -46,11 +46,15 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 	if strings.TrimSpace(in.ExternalID) == "" && strings.TrimSpace(in.UserName) == "" {
 		return access.SCIMUser{}, fmt.Errorf("scim user requires external id or userName")
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.SCIMUser{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	subject := firstNonEmpty(strings.TrimSpace(in.ExternalID), strings.TrimSpace(in.UserName))
 	var pid string
 	err = tx.QueryRow(ctx, `SELECT principal_id::text FROM access.external_identity WHERE provider='scim' AND tenant_id='' AND subject=$1 AND revoked_at IS NULL FOR UPDATE`, subject).Scan(&pid)
@@ -83,10 +87,17 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 			return access.SCIMUser{}, err
 		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return access.SCIMUser{}, err
+	if ownTx {
+		if err = tx.Commit(ctx); err != nil {
+			return access.SCIMUser{}, err
+		}
 	}
-	p, err := r.PrincipalByID(ctx, pid)
+	var p access.Principal
+	if ownTx {
+		p, err = r.PrincipalByID(ctx, pid)
+	} else {
+		p, err = (&Repository{db: tx, fingerprintKey: r.fingerprintKey}).PrincipalByID(ctx, pid)
+	}
 	return access.SCIMUser{Principal: p, ExternalID: in.ExternalID}, err
 }
 
@@ -134,11 +145,15 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, id string) (access.SCI
 	if err != nil {
 		return access.SCIMUser{}, err
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.SCIMUser{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	var exists bool
 	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM access.external_identity WHERE principal_id=$1::uuid AND provider='scim' AND revoked_at IS NULL)`, id).Scan(&exists); err != nil {
 		return access.SCIMUser{}, err
@@ -161,10 +176,17 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, id string) (access.SCI
 	if _, err = tx.Exec(ctx, `UPDATE access.local_credential SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
 		return access.SCIMUser{}, err
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return access.SCIMUser{}, err
+	if ownTx {
+		if err = tx.Commit(ctx); err != nil {
+			return access.SCIMUser{}, err
+		}
 	}
-	p, err := r.PrincipalByID(ctx, id)
+	var p access.Principal
+	if ownTx {
+		p, err = r.PrincipalByID(ctx, id)
+	} else {
+		p, err = (&Repository{db: tx, fingerprintKey: r.fingerprintKey}).PrincipalByID(ctx, id)
+	}
 	return access.SCIMUser{Principal: p}, err
 }
 
@@ -185,11 +207,15 @@ func (r *Repository) UpsertSCIMGroup(ctx context.Context, in access.SCIMGroupInp
 		}
 		memberIDs = append(memberIDs, pid)
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.Group{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	id := strings.TrimSpace(in.ID)
 	if id == "" {
 		id, err = newUUID()
@@ -219,10 +245,15 @@ func (r *Repository) UpsertSCIMGroup(ctx context.Context, in access.SCIMGroupInp
 			return access.Group{}, err
 		}
 	}
-	if err = tx.Commit(ctx); err != nil {
-		return access.Group{}, err
+	if ownTx {
+		if err = tx.Commit(ctx); err != nil {
+			return access.Group{}, err
+		}
 	}
-	return r.groupByID(ctx, gid, "scim", external)
+	if ownTx {
+		return r.groupByID(ctx, gid, "scim", external)
+	}
+	return (&Repository{db: tx, fingerprintKey: r.fingerprintKey}).groupByID(ctx, gid, "scim", external)
 }
 
 func (r *Repository) ListSCIMGroups(ctx context.Context, f access.SCIMGroupFilter) ([]access.Group, error) {
