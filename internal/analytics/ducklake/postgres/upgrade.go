@@ -13,11 +13,22 @@ import (
 	"strings"
 	"time"
 
+	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type transactionBeginner interface {
 	Begin(context.Context) (pgx.Tx, error)
+}
+
+func upgradeUUID(value string) pgtype.UUID {
+	u, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: u, Valid: true}
 }
 
 func inRepositoryTransaction[T any](ctx context.Context, db DBTX, fn func(DBTX) (T, error)) (T, error) {
@@ -359,13 +370,11 @@ func AcquireMigrationFence(ctx context.Context, tx DBTX, in AcquireMigrationFenc
 	if err != nil {
 		return MigrationFence{}, err
 	}
-	var gotScope string
-	var got MigrationFence
-	err = tx.QueryRow(ctx, `SELECT scope,physical_pool_id,owner_id,fencing_epoch,lease_expires_at FROM ducklake.acquire_migration_fence($1,$2,$3,$4)`, scope, pool, in.OwnerID, lease).Scan(&gotScope, &got.PhysicalPoolID, &got.OwnerID, &got.FencingEpoch, &got.LeaseExpiresAt)
+	row, err := querygen(tx).AcquireMigrationFence(ctx, dbgen.AcquireMigrationFenceParams{Scope: string(scope), PhysicalPoolID: pool, OwnerID: in.OwnerID, LeaseExpiresAt: pgtype.Timestamptz{Time: lease, Valid: true}})
 	if err != nil {
 		return MigrationFence{}, mapAuthorityError(err)
 	}
-	got.Scope = MigrationFenceScope(gotScope)
+	got := MigrationFence{Scope: MigrationFenceScope(row.Scope), PhysicalPoolID: row.PhysicalPoolID, OwnerID: row.OwnerID, FencingEpoch: row.FencingEpoch, LeaseExpiresAt: row.LeaseExpiresAt.Time.UTC()}
 	return got, nil
 }
 
@@ -380,7 +389,7 @@ func ReleaseMigrationFence(ctx context.Context, tx DBTX, fence MigrationFence) e
 	if tx == nil || (fence.Scope != MigrationFenceGlobal && fence.Scope != MigrationFencePool) || (fence.Scope == MigrationFenceGlobal && fence.PhysicalPoolID != "") || (fence.Scope == MigrationFencePool && !validID(fence.PhysicalPoolID)) || !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
 		return ErrInvalid
 	}
-	if _, err := tx.Exec(ctx, `SELECT ducklake.release_migration_fence($1,$2,$3,$4)`, fence.Scope, fence.PhysicalPoolID, fence.OwnerID, fence.FencingEpoch); err != nil {
+	if err := querygen(tx).ReleaseMigrationFence(ctx, dbgen.ReleaseMigrationFenceParams{Scope: string(fence.Scope), PhysicalPoolID: fence.PhysicalPoolID, OwnerID: fence.OwnerID, FencingEpoch: fence.FencingEpoch}); err != nil {
 		return mapAuthorityError(err)
 	}
 	return nil
@@ -400,7 +409,7 @@ func RenewMigrationFence(ctx context.Context, tx DBTX, fence MigrationFence, exp
 	if tx == nil || (fence.Scope != MigrationFenceGlobal && fence.Scope != MigrationFencePool) || (fence.Scope == MigrationFenceGlobal && fence.PhysicalPoolID != "") || (fence.Scope == MigrationFencePool && !validID(fence.PhysicalPoolID)) || !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
 		return ErrInvalid
 	}
-	if _, err := tx.Exec(ctx, `SELECT ducklake.renew_migration_fence($1,$2,$3,$4,$5)`, fence.Scope, fence.PhysicalPoolID, fence.OwnerID, fence.FencingEpoch, expiresAt); err != nil {
+	if err := querygen(tx).RenewMigrationFence(ctx, dbgen.RenewMigrationFenceParams{Scope: string(fence.Scope), PhysicalPoolID: fence.PhysicalPoolID, OwnerID: fence.OwnerID, FencingEpoch: fence.FencingEpoch, LeaseExpiresAt: pgtype.Timestamptz{Time: expiresAt, Valid: true}}); err != nil {
 		return mapAuthorityError(err)
 	}
 	return nil
@@ -441,10 +450,9 @@ func ensureMigrationFence(ctx context.Context, tx DBTX, fence MigrationFence, po
 	if err != nil {
 		return time.Time{}, err
 	}
-	var owner *string
-	var epoch int64
-	var expiry *time.Time
-	if err := tx.QueryRow(ctx, `SELECT owner_id,fencing_epoch,lease_expires_at FROM ducklake.migration_fence WHERE scope='pool' AND physical_pool_id=$1`, poolID).Scan(&owner, &epoch, &expiry); errors.Is(err, pgx.ErrNoRows) {
+	row, err := querygen(tx).GetPoolMigrationFence(ctx, poolID)
+	owner, epoch, expiry := row.OwnerID, row.FencingEpoch, row.LeaseExpiresAt
+	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, ErrMigrationNotFound
 	} else if err != nil {
 		return time.Time{}, err
@@ -452,7 +460,7 @@ func ensureMigrationFence(ctx context.Context, tx DBTX, fence MigrationFence, po
 	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
 		return time.Time{}, ErrStaleFence
 	}
-	if expiry == nil || !expiry.After(now) {
+	if !expiry.Valid || !expiry.Time.After(now) {
 		return time.Time{}, ErrMigrationFenceExpired
 	}
 	return now, nil
@@ -466,10 +474,9 @@ func ensureGlobalMigrationFence(ctx context.Context, tx DBTX, fence MigrationFen
 	if err != nil {
 		return time.Time{}, err
 	}
-	var owner *string
-	var epoch int64
-	var expiry *time.Time
-	if err := tx.QueryRow(ctx, `SELECT owner_id,fencing_epoch,lease_expires_at FROM ducklake.migration_fence WHERE scope='global' AND physical_pool_id=''`).Scan(&owner, &epoch, &expiry); errors.Is(err, pgx.ErrNoRows) {
+	row, err := querygen(tx).GetGlobalMigrationFence(ctx)
+	owner, epoch, expiry := row.OwnerID, row.FencingEpoch, row.LeaseExpiresAt
+	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, ErrMigrationNotFound
 	} else if err != nil {
 		return time.Time{}, err
@@ -477,7 +484,7 @@ func ensureGlobalMigrationFence(ctx context.Context, tx DBTX, fence MigrationFen
 	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
 		return time.Time{}, ErrStaleFence
 	}
-	if expiry == nil || !expiry.After(now) {
+	if !expiry.Valid || !expiry.Time.After(now) {
 		return time.Time{}, ErrMigrationFenceExpired
 	}
 	return now, nil
@@ -508,7 +515,7 @@ func RegisterCatalogRuntimeCompatibility(ctx context.Context, tx DBTX, in Catalo
 	if _, err := ensureUpgradeFences(ctx, tx, globalFence, poolFence, in.PhysicalPoolID); err != nil {
 		return CatalogRuntimeCompatibility{}, err
 	}
-	if _, err := tx.Exec(ctx, `SELECT ducklake.register_catalog_runtime_compatibility($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, in.PhysicalPoolID, in.CatalogID, in.DuckDBRuntime, in.DuckLakeExtension, in.CatalogFormat, in.CompatibilityDigest, in.CatalogSchemaVersion, poolFence.OwnerID, poolFence.FencingEpoch, globalFence.FencingEpoch); err != nil {
+	if err := querygen(tx).RegisterCatalogRuntimeCompatibility(ctx, dbgen.RegisterCatalogRuntimeCompatibilityParams{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, DuckdbRuntime: in.DuckDBRuntime, DucklakeExtension: in.DuckLakeExtension, CatalogFormat: in.CatalogFormat, CompatibilityDigest: in.CompatibilityDigest, CatalogSchemaVersion: in.CatalogSchemaVersion, OwnerID: poolFence.OwnerID, PoolFencingEpoch: poolFence.FencingEpoch, GlobalFencingEpoch: globalFence.FencingEpoch}); err != nil {
 		return CatalogRuntimeCompatibility{}, mapAuthorityError(err)
 	}
 	got, err := LoadCatalogRuntimeCompatibility(ctx, tx, in.PhysicalPoolID)
@@ -534,17 +541,13 @@ func LoadCatalogRuntimeCompatibility(ctx context.Context, db DBTX, poolID string
 	if db == nil || !validID(poolID) {
 		return CatalogRuntimeCompatibility{}, ErrInvalid
 	}
-	var got CatalogRuntimeCompatibility
-	var currentMigrationID *string
-	err := db.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,duckdb_runtime,ducklake_extension,catalog_format,compatibility_digest,catalog_schema_version,current_migration_id::text,updated_at FROM ducklake.catalog_runtime_compatibility WHERE physical_pool_id=$1`, poolID).Scan(&got.PhysicalPoolID, &got.CatalogID, &got.DuckDBRuntime, &got.DuckLakeExtension, &got.CatalogFormat, &got.CompatibilityDigest, &got.CatalogSchemaVersion, &currentMigrationID, &got.UpdatedAt)
+	row, err := querygen(db).GetCatalogRuntimeCompatibility(ctx, poolID)
+	got := CatalogRuntimeCompatibility{PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, RuntimeCompatibility: RuntimeCompatibility{RuntimeTuple: RuntimeTuple{DuckDBRuntime: row.DuckdbRuntime, DuckLakeExtension: row.DucklakeExtension, CatalogFormat: row.CatalogFormat}, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion}, CurrentMigrationID: row.CurrentMigrationID, UpdatedAt: tsTime(row.UpdatedAt)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CatalogRuntimeCompatibility{}, ErrNotFound
 	}
 	if err != nil {
 		return CatalogRuntimeCompatibility{}, err
-	}
-	if currentMigrationID != nil {
-		got.CurrentMigrationID = *currentMigrationID
 	}
 	return got, nil
 }
@@ -587,7 +590,7 @@ func BeginCatalogMigration(ctx context.Context, tx DBTX, in BeginCatalogMigratio
 	if current.CatalogID != in.CatalogID || !sameRuntimeCompatibility(current.RuntimeCompatibility, in.Current) {
 		return CatalogMigration{}, fmt.Errorf("%w: current runtime tuple", ErrCompatibilityMismatch)
 	}
-	if _, err := tx.Exec(ctx, `SELECT ducklake.begin_catalog_migration($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb)`, in.MigrationID, in.PhysicalPoolID, in.CatalogID, poolFence.OwnerID, poolFence.FencingEpoch, globalFence.FencingEpoch, in.Current.DuckDBRuntime, in.Current.DuckLakeExtension, in.Current.CatalogFormat, in.Current.CompatibilityDigest, in.Current.CatalogSchemaVersion, in.Target.DuckDBRuntime, in.Target.DuckLakeExtension, in.Target.CatalogFormat, in.Target.CompatibilityDigest, in.Target.CatalogSchemaVersion, beginEvidence); err != nil {
+	if err := querygen(tx).BeginCatalogMigration(ctx, dbgen.BeginCatalogMigrationParams{MigrationID: upgradeUUID(in.MigrationID), PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, OwnerID: poolFence.OwnerID, PoolFencingEpoch: poolFence.FencingEpoch, GlobalFencingEpoch: globalFence.FencingEpoch, CurrentDuckdbRuntime: in.Current.DuckDBRuntime, CurrentDucklakeExtension: in.Current.DuckLakeExtension, CurrentCatalogFormat: in.Current.CatalogFormat, CurrentCompatibilityDigest: in.Current.CompatibilityDigest, CurrentCatalogSchemaVersion: in.Current.CatalogSchemaVersion, TargetDuckdbRuntime: in.Target.DuckDBRuntime, TargetDucklakeExtension: in.Target.DuckLakeExtension, TargetCatalogFormat: in.Target.CatalogFormat, TargetCompatibilityDigest: in.Target.CompatibilityDigest, TargetCatalogSchemaVersion: in.Target.CatalogSchemaVersion, BeginEvidence: []byte(beginEvidence)}); err != nil {
 		return CatalogMigration{}, mapAuthorityError(err)
 	}
 	got, err := LoadCatalogMigration(ctx, tx, in.MigrationID)
@@ -642,7 +645,7 @@ func CompleteCatalogMigration(ctx context.Context, tx DBTX, in CompleteCatalogMi
 	if migration.State != "running" {
 		return CatalogMigration{}, ErrMigrationTerminal
 	}
-	if _, err := tx.Exec(ctx, `SELECT ducklake.complete_catalog_migration($1,$2,$3,$4,$5::jsonb)`, in.MigrationID, globalFence.OwnerID, poolFence.FencingEpoch, globalFence.FencingEpoch, evidence); err != nil {
+	if err := querygen(tx).CompleteCatalogMigration(ctx, dbgen.CompleteCatalogMigrationParams{MigrationID: upgradeUUID(in.MigrationID), OwnerID: globalFence.OwnerID, PoolFencingEpoch: poolFence.FencingEpoch, GlobalFencingEpoch: globalFence.FencingEpoch, Evidence: []byte(evidence)}); err != nil {
 		return CatalogMigration{}, mapAuthorityError(err)
 	}
 	return LoadCatalogMigration(ctx, tx, in.MigrationID)
@@ -694,7 +697,7 @@ func FailCatalogMigration(ctx context.Context, tx DBTX, in FailCatalogMigrationI
 	// A successor fence may terminalize an interrupted migration. The original
 	// owner/epochs remain immutable evidence; only the current fence grants the
 	// authority to record a failure decision.
-	if _, err := tx.Exec(ctx, `SELECT ducklake.fail_catalog_migration($1,$2,$3,$4,$5::jsonb,$6,$7::jsonb)`, in.MigrationID, poolFence.OwnerID, poolFence.FencingEpoch, globalFence.FencingEpoch, failure, in.RecoveryDecision, decision); err != nil {
+	if err := querygen(tx).FailCatalogMigration(ctx, dbgen.FailCatalogMigrationParams{MigrationID: upgradeUUID(in.MigrationID), OwnerID: poolFence.OwnerID, PoolFencingEpoch: poolFence.FencingEpoch, GlobalFencingEpoch: globalFence.FencingEpoch, FailureEvidence: []byte(failure), RecoveryDecision: in.RecoveryDecision, DecisionEvidence: []byte(decision)}); err != nil {
 		return CatalogMigration{}, mapAuthorityError(err)
 	}
 	return LoadCatalogMigration(ctx, tx, in.MigrationID)
@@ -711,27 +714,17 @@ func LoadCatalogMigration(ctx context.Context, db DBTX, migrationID string) (Cat
 	if db == nil || !validUUID(migrationID) {
 		return CatalogMigration{}, ErrInvalid
 	}
-	var m CatalogMigration
-	var terminal *time.Time
-	var begin, completion, failure, decision []byte
-	var recoveryDecision *string
-	err := db.QueryRow(ctx, `SELECT migration_id::text,physical_pool_id,catalog_id,owner_id,fencing_epoch,global_fencing_epoch,current_duckdb_runtime,current_ducklake_extension,current_catalog_format,current_compatibility_digest,current_catalog_schema_version,target_duckdb_runtime,target_ducklake_extension,target_catalog_format,target_compatibility_digest,target_catalog_schema_version,state,started_at,terminal_at,begin_evidence,completion_evidence,failure_evidence,recovery_decision,decision_evidence FROM ducklake.catalog_migration WHERE migration_id=$1`, migrationID).Scan(&m.MigrationID, &m.PhysicalPoolID, &m.CatalogID, &m.OwnerID, &m.FencingEpoch, &m.GlobalFencingEpoch, &m.Current.DuckDBRuntime, &m.Current.DuckLakeExtension, &m.Current.CatalogFormat, &m.Current.CompatibilityDigest, &m.Current.CatalogSchemaVersion, &m.Target.DuckDBRuntime, &m.Target.DuckLakeExtension, &m.Target.CatalogFormat, &m.Target.CompatibilityDigest, &m.Target.CatalogSchemaVersion, &m.State, &m.StartedAt, &terminal, &begin, &completion, &failure, &recoveryDecision, &decision)
+	row, err := querygen(db).GetCatalogMigration(ctx, upgradeUUID(migrationID))
+	m := CatalogMigration{MigrationID: row.MigrationID, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, OwnerID: row.OwnerID, FencingEpoch: row.FencingEpoch, GlobalFencingEpoch: row.GlobalFencingEpoch, Current: RuntimeCompatibility{RuntimeTuple: RuntimeTuple{DuckDBRuntime: row.CurrentDuckdbRuntime, DuckLakeExtension: row.CurrentDucklakeExtension, CatalogFormat: row.CurrentCatalogFormat}, CompatibilityDigest: row.CurrentCompatibilityDigest, CatalogSchemaVersion: row.CurrentCatalogSchemaVersion}, Target: RuntimeCompatibility{RuntimeTuple: RuntimeTuple{DuckDBRuntime: row.TargetDuckdbRuntime, DuckLakeExtension: row.TargetDucklakeExtension, CatalogFormat: row.TargetCatalogFormat}, CompatibilityDigest: row.TargetCompatibilityDigest, CatalogSchemaVersion: row.TargetCatalogSchemaVersion}, State: row.State, StartedAt: tsTime(row.StartedAt), TerminalAt: tsTime(row.TerminalAt), BeginEvidence: append(json.RawMessage(nil), row.BeginEvidence...), CompletionEvidence: append(json.RawMessage(nil), row.CompletionEvidence...), FailureEvidence: append(json.RawMessage(nil), row.FailureEvidence...), DecisionEvidence: append(json.RawMessage(nil), row.DecisionEvidence...)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CatalogMigration{}, ErrMigrationNotFound
 	}
 	if err != nil {
 		return CatalogMigration{}, err
 	}
-	if terminal != nil {
-		m.TerminalAt = terminal.UTC()
+	if row.RecoveryDecision != nil {
+		m.RecoveryDecision = *row.RecoveryDecision
 	}
-	m.BeginEvidence = append(json.RawMessage(nil), begin...)
-	m.CompletionEvidence = append(json.RawMessage(nil), completion...)
-	m.FailureEvidence = append(json.RawMessage(nil), failure...)
-	if recoveryDecision != nil {
-		m.RecoveryDecision = *recoveryDecision
-	}
-	m.DecisionEvidence = append(json.RawMessage(nil), decision...)
 	return m, nil
 }
 
@@ -739,8 +732,7 @@ func lockCatalogMigration(ctx context.Context, db DBTX, migrationID string) (Cat
 	if db == nil || !validUUID(migrationID) {
 		return CatalogMigration{}, ErrInvalid
 	}
-	var id string
-	if err := db.QueryRow(ctx, `SELECT migration_id::text FROM ducklake.catalog_migration WHERE migration_id=$1`, migrationID).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+	if _, err := querygen(db).LockCatalogMigration(ctx, upgradeUUID(migrationID)); errors.Is(err, pgx.ErrNoRows) {
 		return CatalogMigration{}, ErrMigrationNotFound
 	} else if err != nil {
 		return CatalogMigration{}, err
@@ -801,7 +793,7 @@ func RequalifySnapshot(ctx context.Context, tx DBTX, in RequalifySnapshotInput) 
 	if migration.FencingEpoch != poolFence.FencingEpoch || migration.GlobalFencingEpoch != globalFence.FencingEpoch {
 		return SnapshotQualification{}, ErrStaleFence
 	}
-	_, err = tx.Exec(ctx, `SELECT ducklake.record_snapshot_requalification($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12::jsonb,$13,$14,$15,$16)`, in.QualificationID, in.PhysicalPoolID, in.CatalogID, in.SnapshotID, in.MigrationID, in.Compatibility.DuckDBRuntime, in.Compatibility.DuckLakeExtension, in.Compatibility.CatalogFormat, in.Compatibility.CompatibilityDigest, in.Compatibility.CatalogSchemaVersion, status, evidence, now, poolFence.OwnerID, poolFence.FencingEpoch, globalFence.FencingEpoch)
+	err = querygen(tx).RecordSnapshotRequalification(ctx, dbgen.RecordSnapshotRequalificationParams{QualificationID: upgradeUUID(in.QualificationID), PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, SnapshotID: in.SnapshotID, MigrationID: upgradeUUID(in.MigrationID), DuckdbRuntime: in.Compatibility.DuckDBRuntime, DucklakeExtension: in.Compatibility.DuckLakeExtension, CatalogFormat: in.Compatibility.CatalogFormat, CompatibilityDigest: in.Compatibility.CompatibilityDigest, CatalogSchemaVersion: in.Compatibility.CatalogSchemaVersion, Status: status, Evidence: []byte(evidence), QualifiedAt: pgtype.Timestamptz{Time: now, Valid: true}, OwnerID: poolFence.OwnerID, PoolFencingEpoch: poolFence.FencingEpoch, GlobalFencingEpoch: globalFence.FencingEpoch})
 	if err != nil {
 		return SnapshotQualification{}, mapAuthorityError(err)
 	}
@@ -826,16 +818,14 @@ func LoadSnapshotQualification(ctx context.Context, db DBTX, qualificationID str
 	if db == nil || !validUUID(qualificationID) {
 		return SnapshotQualification{}, ErrInvalid
 	}
-	var q SnapshotQualification
-	var evidence []byte
-	err := db.QueryRow(ctx, `SELECT qualification_id::text,physical_pool_id,catalog_id,snapshot_id,migration_id::text,duckdb_runtime,ducklake_extension,catalog_format,compatibility_digest,catalog_schema_version,status,evidence,qualified_at FROM ducklake.snapshot_requalification WHERE qualification_id=$1`, qualificationID).Scan(&q.QualificationID, &q.PhysicalPoolID, &q.CatalogID, &q.SnapshotID, &q.MigrationID, &q.DuckDBRuntime, &q.DuckLakeExtension, &q.CatalogFormat, &q.CompatibilityDigest, &q.CatalogSchemaVersion, &q.Status, &evidence, &q.QualifiedAt)
+	row, err := querygen(db).GetSnapshotRequalification(ctx, upgradeUUID(qualificationID))
+	q := SnapshotQualification{QualificationID: row.QualificationID, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, SnapshotID: row.SnapshotID, MigrationID: row.MigrationID, RuntimeCompatibility: RuntimeCompatibility{RuntimeTuple: RuntimeTuple{DuckDBRuntime: row.DuckdbRuntime, DuckLakeExtension: row.DucklakeExtension, CatalogFormat: row.CatalogFormat}, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion}, Status: row.Status, Evidence: append(json.RawMessage(nil), row.Evidence...), QualifiedAt: tsTime(row.QualifiedAt)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotQualification{}, ErrNotFound
 	}
 	if err != nil {
 		return SnapshotQualification{}, err
 	}
-	q.Evidence = append(json.RawMessage(nil), evidence...)
 	return q, nil
 }
 
@@ -872,22 +862,25 @@ func CheckRuntimeAttachEligibility(ctx context.Context, db DBTX, in RuntimeAttac
 	if err != nil {
 		return out, fmt.Errorf("%w: %v", ErrRuntimeAttachIneligible, err)
 	}
-	var activeMigration int
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM ducklake.catalog_migration WHERE physical_pool_id=$1 AND catalog_id=$2 AND state='running'`, in.PhysicalPoolID, in.CatalogID).Scan(&activeMigration); err != nil {
+	activeMigration64, err := querygen(db).CountRunningMigrations(ctx, dbgen.CountRunningMigrationsParams{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID})
+	activeMigration := int(activeMigration64)
+	if err != nil {
 		return out, fmt.Errorf("%w: %v", ErrRuntimeAttachIneligible, err)
 	}
 	if activeMigration != 0 {
 		return out, fmt.Errorf("%w: migration in progress", ErrRuntimeAttachIneligible)
 	}
-	var activeFence int
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM ducklake.migration_fence WHERE (scope='global' OR (scope='pool' AND physical_pool_id=$1)) AND owner_id IS NOT NULL AND lease_expires_at > $2`, in.PhysicalPoolID, now).Scan(&activeFence); err != nil {
+	activeFence64, err := querygen(db).CountActiveMigrationFences(ctx, dbgen.CountActiveMigrationFencesParams{PhysicalPoolID: in.PhysicalPoolID, LeaseExpiresAt: pgtype.Timestamptz{Time: now, Valid: true}})
+	activeFence := int(activeFence64)
+	if err != nil {
 		return out, fmt.Errorf("%w: %v", ErrRuntimeAttachIneligible, err)
 	}
 	if activeFence != 0 {
 		return out, fmt.Errorf("%w: migration fence held", ErrRuntimeAttachIneligible)
 	}
-	var missing int
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM ducklake.snapshot_retention r WHERE r.physical_pool_id=$1 AND r.catalog_id=$2 AND r.state IN ('live','retiring') AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_requalification q WHERE q.physical_pool_id=r.physical_pool_id AND q.catalog_id=r.catalog_id AND q.snapshot_id=r.snapshot_id AND q.migration_id=$3 AND q.status='qualified' AND q.compatibility_digest=$4 AND q.catalog_schema_version=$5 AND q.duckdb_runtime=$6 AND q.ducklake_extension=$7 AND q.catalog_format=$8 AND EXISTS (SELECT 1 FROM ducklake.catalog_migration m WHERE m.migration_id=q.migration_id AND m.state='completed' AND m.target_compatibility_digest=$4 AND m.target_catalog_schema_version=$5 AND m.target_duckdb_runtime=$6 AND m.target_ducklake_extension=$7 AND m.target_catalog_format=$8))`, in.PhysicalPoolID, in.CatalogID, current.CurrentMigrationID, in.Compatibility.CompatibilityDigest, in.Compatibility.CatalogSchemaVersion, in.Compatibility.DuckDBRuntime, in.Compatibility.DuckLakeExtension, in.Compatibility.CatalogFormat).Scan(&missing); err != nil {
+	missing64, err := querygen(db).CountMissingSnapshotQualifications(ctx, dbgen.CountMissingSnapshotQualificationsParams{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, MigrationID: upgradeUUID(current.CurrentMigrationID), CompatibilityDigest: in.Compatibility.CompatibilityDigest, CatalogSchemaVersion: in.Compatibility.CatalogSchemaVersion, DuckdbRuntime: in.Compatibility.DuckDBRuntime, DucklakeExtension: in.Compatibility.DuckLakeExtension, CatalogFormat: in.Compatibility.CatalogFormat})
+	missing := int(missing64)
+	if err != nil {
 		return out, fmt.Errorf("%w: %v", ErrRuntimeAttachIneligible, err)
 	}
 	if missing != 0 {

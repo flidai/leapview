@@ -65,10 +65,11 @@ func ReadDatabaseIdentity(ctx context.Context, db DBTX) (DatabaseIdentity, error
 	if db == nil {
 		return DatabaseIdentity{}, ErrInvalid
 	}
-	var identity DatabaseIdentity
-	if err := db.QueryRow(ctx, `SELECT current_database(), current_user, session_user`).Scan(&identity.Database, &identity.User, &identity.SessionUser); err != nil {
+	row, err := querygen(db).ReadDatabaseIdentity(ctx)
+	if err != nil {
 		return DatabaseIdentity{}, err
 	}
+	identity := DatabaseIdentity{Database: row.DatabaseName, User: row.UserName, SessionUser: row.SessionUserName}
 	return identity, nil
 }
 
@@ -206,14 +207,15 @@ func EnsureCatalogMetadataSchema(ctx context.Context, db DBTX, metadataSchema st
 	if db == nil || !isSQLIdentifier(metadataSchema) {
 		return ErrInvalid
 	}
+	// sqlc-exception:schema-ddl -- validated dynamic schema identifier.
 	if _, err := db.Exec(ctx, `CREATE SCHEMA IF NOT EXISTS `+quoteSQLIdentifier(metadataSchema)); err != nil {
 		return fmt.Errorf("create DuckLake metadata schema: %w", err)
 	}
-	var currentUser, owner string
-	if err := db.QueryRow(ctx, `SELECT current_user, r.rolname FROM pg_namespace n JOIN pg_roles r ON r.oid=n.nspowner WHERE n.nspname=$1`, metadataSchema).Scan(&currentUser, &owner); err != nil {
+	row, err := querygen(db).GetMetadataSchemaOwner(ctx, metadataSchema)
+	if err != nil {
 		return fmt.Errorf("verify DuckLake metadata schema owner: %w", err)
 	}
-	if strings.TrimSpace(currentUser) == "" || currentUser != owner {
+	if strings.TrimSpace(row.CurrentUser) == "" || row.CurrentUser != row.Owner {
 		return fmt.Errorf("%w: DuckLake metadata schema owner is not the catalog migrator", ErrWrongDatabaseCredential)
 	}
 	return nil
@@ -451,6 +453,7 @@ func ProvisionCatalogRuntimePrivileges(ctx context.Context, db DBTX, metadataSch
 		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", schema, role),
 		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %s", schema, role),
 	} {
+		// sqlc-exception:schema-ddl -- validated dynamic privilege identifiers.
 		if _, err := db.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("provision DuckLake runtime schema privileges: %w", err)
 		}
