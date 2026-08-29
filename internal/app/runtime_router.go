@@ -159,7 +159,6 @@ type httpPolicy struct {
 
 type persistenceInputs struct {
 	agentSettings    agentmodule.Settings
-	adminDatabase    *sql.DB
 	servingStateRepo servingStateRepository
 	accessRepo       access.Repository
 	auditRecorder    access.AuditIntentRecorder
@@ -627,7 +626,6 @@ func buildApplicationSurfaces(
 	runtime.persistenceConfigured = data.Database != nil
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
-	persistence.adminDatabase = data.AdminDatabase
 	if audit != nil {
 		persistence.auditRecorder = audit.recorder
 	}
@@ -1495,7 +1493,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AccessConfigured:             accessReader != nil,
 			Storage: adminmodule.StorageConfig{
 				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
-				Environment: policy.defaultEnvironment, ControlPlane: persistence.adminDatabase,
+				Environment: policy.defaultEnvironment, ControlPlane: persistence.product,
 				Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
 			},
 			Layout: func(r *http.Request) webpage.Provider {

@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"net/http"
 
 	"github.com/flidai/leapview/internal/access"
@@ -72,7 +71,7 @@ type StorageConfig struct {
 	CatalogPath  string
 	DataPath     string
 	Environment  string
-	ControlPlane *sql.DB
+	ControlPlane productsettings.Pinger
 	Analytics    interface {
 		resource.Provider
 		resource.SessionProvider

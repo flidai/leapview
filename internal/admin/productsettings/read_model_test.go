@@ -75,7 +75,7 @@ func TestReadModelMarksControlPlaneUnavailable(t *testing.T) {
 
 type ping struct{ err error }
 
-func (p ping) PingContext(context.Context) error { return p.err }
+func (p ping) Ping(context.Context) error { return p.err }
 
 type testBlobs struct{}
 
