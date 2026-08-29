@@ -279,6 +279,11 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Snapshot evidence is immutable: even an administrative writer cannot
+	// replace its digest after publication.
+	if _, err := db.admin.Exec(ctx, `UPDATE access.authorization_snapshot SET digest=$1 WHERE project_id=$2 AND environment=$3 AND generation_id=$4`, "sha256:"+strings.Repeat("a", 64), identity.ProjectID.String(), identity.Environment, identity.GenerationID); err == nil {
+		t.Fatal("authorization snapshot digest tamper unexpectedly succeeded")
+	}
 	// Reusing an immutable identity with a different digest is rejected.
 	conflictGrant, err := access.NewCanonicalGrant(project, subject, resource, access.CapabilityResourceEdit)
 	if err != nil {
@@ -319,8 +324,19 @@ func TestAccessExtendedPostgreSQL18SnapshotAndPublicationAdapters(t *testing.T) 
 	if principalKind != "dashboard_publication" {
 		t.Fatalf("publication principal type = %q", principalKind)
 	}
-	if err := ActivateDashboardPublicationPrincipalTx(ctx, db.runtime, project.ProjectID(), strings.Repeat("x", 513)); err == nil {
+	tx, err = db.runtime.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ActivateDashboardPublicationPrincipalTx(ctx, tx, project.ProjectID(), strings.Repeat("x", 513)); err == nil {
+		_ = tx.Rollback(ctx)
 		t.Fatal("oversized publication name accepted")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := any(db.runtime).(Tx); ok {
+		t.Fatal("pgx pool unexpectedly satisfied transaction-only Tx boundary")
 	}
 }
 

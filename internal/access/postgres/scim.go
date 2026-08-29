@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var _ access.PrincipalIdentityManagementRepository = (*Repository)(nil)
@@ -26,20 +27,21 @@ func (r *Repository) PrincipalIdentityManagement(ctx context.Context, id string)
 	if _, err = r.PrincipalByID(ctx, id); err != nil {
 		return access.PrincipalIdentityManagement{}, err
 	}
-	var provider string
-	var kind string
-	var local bool
-	err = db.QueryRow(ctx, `SELECT COALESCE((SELECT provider FROM access.external_identity WHERE principal_id=p.id AND revoked_at IS NULL ORDER BY created_at LIMIT 1),''),p.principal_type,EXISTS(SELECT 1 FROM access.local_credential c WHERE c.principal_id=p.id AND c.revoked_at IS NULL) FROM access.principal p WHERE p.id=$1::uuid`, id).Scan(&provider, &kind, &local)
+	parsedID, err := pgUUID(id)
 	if err != nil {
 		return access.PrincipalIdentityManagement{}, err
 	}
-	if provider != "" {
-		return access.PrincipalIdentityManagement{Source: access.IdentityManagementExternal, Provider: provider, HasLocalPassword: local}, nil
+	row, err := accessdb.New(db).GetPrincipalIdentityManagement(ctx, parsedID)
+	if err != nil {
+		return access.PrincipalIdentityManagement{}, err
 	}
-	if kind == "service" {
-		return access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem, HasLocalPassword: local}, nil
+	if row.Provider != "" {
+		return access.PrincipalIdentityManagement{Source: access.IdentityManagementExternal, Provider: row.Provider, HasLocalPassword: row.HasLocalPassword}, nil
 	}
-	return access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: local}, nil
+	if row.PrincipalType == "service" {
+		return access.PrincipalIdentityManagement{Source: access.IdentityManagementSystem, HasLocalPassword: row.HasLocalPassword}, nil
+	}
+	return access.PrincipalIdentityManagement{Source: access.IdentityManagementLocal, HasLocalPassword: row.HasLocalPassword}, nil
 }
 
 func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput) (access.SCIMUser, error) {
@@ -56,9 +58,15 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 		}
 	}()
 	subject := firstNonEmpty(strings.TrimSpace(in.ExternalID), strings.TrimSpace(in.UserName))
-	var pid string
-	err = tx.QueryRow(ctx, `SELECT principal_id::text FROM access.external_identity WHERE provider='scim' AND tenant_id='' AND subject=$1 AND revoked_at IS NULL FOR UPDATE`, subject).Scan(&pid)
-	if err == pgx.ErrNoRows {
+	if err = accessdb.New(tx).LockSCIMSubject(ctx, subject); err != nil {
+		return access.SCIMUser{}, err
+	}
+	var principalID pgtype.UUID
+	principalID, err = accessdb.New(tx).FindSCIMPrincipalBySubject(ctx, subject)
+	pid := ""
+	if err == nil {
+		pid = principalUUID(principalID)
+	} else if err == pgx.ErrNoRows {
 		if strings.TrimSpace(in.ID) != "" {
 			pid, err = uuidID("principal id", in.ID)
 		} else {
@@ -67,23 +75,36 @@ func (r *Repository) UpsertSCIMUser(ctx context.Context, in access.SCIMUserInput
 		if err != nil {
 			return access.SCIMUser{}, err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'user',$2,$3,$4) ON CONFLICT(id) DO UPDATE SET status=EXCLUDED.status,email=EXCLUDED.email,display_name=EXCLUDED.display_name,disabled_at=CASE WHEN EXCLUDED.status='disabled' THEN COALESCE(access.principal.disabled_at,clock_timestamp()) ELSE NULL END,updated_at=clock_timestamp()`, pid, scimStatus(in.Active), access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); err != nil {
+		principalID, err = pgUUID(pid)
+		if err != nil {
+			return access.SCIMUser{}, err
+		}
+		if err = accessdb.New(tx).InsertSCIMPrincipal(ctx, accessdb.InsertSCIMPrincipalParams{ID: principalID, Status: scimStatus(in.Active), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
 			return access.SCIMUser{}, err
 		}
 		identity, e := newUUID()
 		if e != nil {
 			return access.SCIMUser{}, e
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.external_identity(id,principal_id,provider,tenant_id,subject,user_name,external_id,email,display_name) VALUES($1,$2,'scim','',$3,$4,$5,$6,$7)`, identity, pid, subject, strings.TrimSpace(in.UserName), strings.TrimSpace(in.ExternalID), access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); err != nil {
+		identityID, parseErr := pgUUID(identity)
+		if parseErr != nil {
+			return access.SCIMUser{}, parseErr
+		}
+		if err = accessdb.New(tx).InsertSCIMExternalIdentity(ctx, accessdb.InsertSCIMExternalIdentityParams{ID: identityID, PrincipalID: principalID, Subject: subject, UserName: strings.TrimSpace(in.UserName), ExternalID: strings.TrimSpace(in.ExternalID), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
 			return access.SCIMUser{}, err
 		}
 	} else if err != nil {
 		return access.SCIMUser{}, err
 	} else {
-		if _, err = tx.Exec(ctx, `UPDATE access.external_identity SET user_name=$4,external_id=$5,email=$6,display_name=$7,updated_at=clock_timestamp() WHERE provider='scim' AND tenant_id='' AND subject=$1 AND revoked_at IS NULL`, subject, "", "", strings.TrimSpace(in.UserName), strings.TrimSpace(in.ExternalID), access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); err != nil {
+		if err = accessdb.New(tx).UpdateSCIMExternalIdentity(ctx, accessdb.UpdateSCIMExternalIdentityParams{UserName: strings.TrimSpace(in.UserName), ExternalID: strings.TrimSpace(in.ExternalID), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName), Subject: subject}); err != nil {
 			return access.SCIMUser{}, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE access.principal SET status=$2,email=CASE WHEN $3='' THEN email ELSE $3 END,display_name=CASE WHEN $4='' THEN display_name ELSE $4 END,disabled_at=CASE WHEN $2='disabled' THEN COALESCE(disabled_at,clock_timestamp()) ELSE NULL END,updated_at=clock_timestamp() WHERE id=$1::uuid`, pid, scimStatus(in.Active), access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); err != nil {
+		if err = accessdb.New(tx).UpdateSCIMPrincipal(ctx, accessdb.UpdateSCIMPrincipalParams{ID: principalID, Status: scimStatus(in.Active), Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); err != nil {
+			return access.SCIMUser{}, err
+		}
+	}
+	if !in.Active {
+		if err = revokeSCIMPrincipalCredentials(ctx, tx, principalID); err != nil {
 			return access.SCIMUser{}, err
 		}
 	}
@@ -108,36 +129,50 @@ func scimStatus(active bool) string {
 	return "disabled"
 }
 
+// revokeSCIMPrincipalCredentials applies the same durable deactivation
+// cascade whether SCIM disabled a user during reconciliation or through the
+// explicit disable endpoint. Each leaf is generated SQLC and runs on the
+// caller's transaction.
+func revokeSCIMPrincipalCredentials(ctx context.Context, db DBTX, principalID pgtype.UUID) error {
+	queries := accessdb.New(db)
+	if err := queries.RevokePrincipalSessions(ctx, principalID); err != nil {
+		return err
+	}
+	if err := queries.RevokePrincipalTokens(ctx, principalID); err != nil {
+		return err
+	}
+	if err := queries.RevokePrincipalSecrets(ctx, principalID); err != nil {
+		return err
+	}
+	if err := queries.RevokePrincipalLocalCredential(ctx, principalID); err != nil {
+		return err
+	}
+	return queries.RevokePrincipalAuthoringSessions(ctx, principalID)
+}
+
 func (r *Repository) ListSCIMUsers(ctx context.Context, f access.SCIMUserFilter) ([]access.SCIMUser, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT p.id::text,p.principal_type,p.status,COALESCE(p.email,''),p.display_name,p.disabled_at,p.blocked_at,p.last_seen_at,p.created_at,p.updated_at,ei.external_id FROM access.external_identity ei JOIN access.principal p ON p.id=ei.principal_id WHERE ei.provider='scim' AND ei.revoked_at IS NULL AND ($1='' OR p.id::text=$1) AND ($2='' OR ei.external_id=$2) AND ($3='' OR ei.user_name=$3) ORDER BY p.created_at LIMIT $4`, strings.TrimSpace(f.ID), strings.TrimSpace(f.ExternalID), strings.TrimSpace(f.UserName), maxPageSize)
+	rows, err := accessdb.New(db).ListSCIMUsers(ctx, accessdb.ListSCIMUsersParams{ID: strings.TrimSpace(f.ID), ExternalID: strings.TrimSpace(f.ExternalID), UserName: strings.TrimSpace(f.UserName), PageSize: maxPageSize})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []access.SCIMUser{}
-	for rows.Next() {
-		var p access.Principal
-		var kind, status, external string
-		var disabled, blocked, last, created, updated *time.Time
-		if err := rows.Scan(&p.ID, &kind, &status, &p.Email, &p.DisplayName, &disabled, &blocked, &last, &created, &updated, &external); err != nil {
-			return nil, err
-		}
-		p.Kind = access.PrincipalKind(kind)
-		if kind == "service" {
+	out := make([]access.SCIMUser, 0, len(rows))
+	for _, row := range rows {
+		p := access.Principal{ID: principalUUID(row.ID), Kind: access.PrincipalKind(row.PrincipalType), Email: row.Email, DisplayName: row.DisplayName}
+		if row.PrincipalType == "service" {
 			p.Kind = access.PrincipalKindServicePrincipal
 		}
-		p.DisabledAt = formatTimePtr(disabled)
-		p.BlockedAt = formatTimePtr(blocked)
-		p.LastSeenAt = formatTimePtr(last)
-		p.CreatedAt = formatTimePtr(created)
-		p.UpdatedAt = formatTimePtr(updated)
-		out = append(out, access.SCIMUser{Principal: p, ExternalID: external})
+		p.DisabledAt = principalTimestamp(row.DisabledAt)
+		p.BlockedAt = principalTimestamp(row.BlockedAt)
+		p.LastSeenAt = principalTimestamp(row.LastSeenAt)
+		p.CreatedAt = principalTimestamp(row.CreatedAt)
+		p.UpdatedAt = principalTimestamp(row.UpdatedAt)
+		out = append(out, access.SCIMUser{Principal: p, ExternalID: row.ExternalID})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) DisableSCIMUser(ctx context.Context, id string) (access.SCIMUser, error) {
@@ -154,26 +189,21 @@ func (r *Repository) DisableSCIMUser(ctx context.Context, id string) (access.SCI
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var exists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM access.external_identity WHERE principal_id=$1::uuid AND provider='scim' AND revoked_at IS NULL)`, id).Scan(&exists); err != nil {
+	principalID, err := pgUUID(id)
+	if err != nil {
+		return access.SCIMUser{}, err
+	}
+	exists, err := accessdb.New(tx).HasSCIMIdentity(ctx, principalID)
+	if err != nil {
 		return access.SCIMUser{}, err
 	}
 	if !exists {
 		return access.SCIMUser{}, pgx.ErrNoRows
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.principal SET status='disabled',disabled_at=COALESCE(disabled_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1::uuid`, id); err != nil {
+	if _, err = accessdb.New(tx).DisablePrincipal(ctx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
-		return access.SCIMUser{}, err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
-		return access.SCIMUser{}, err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE access.service_principal_secret SET revoked_at=clock_timestamp() WHERE service_principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
-		return access.SCIMUser{}, err
-	}
-	if _, err = tx.Exec(ctx, `UPDATE access.local_credential SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = revokeSCIMPrincipalCredentials(ctx, tx, principalID); err != nil {
 		return access.SCIMUser{}, err
 	}
 	if ownTx {
@@ -199,13 +229,17 @@ func (r *Repository) UpsertSCIMGroup(ctx context.Context, in access.SCIMGroupInp
 	if e != nil {
 		return access.Group{}, e
 	}
-	memberIDs := make([]string, 0, len(in.MemberIDs))
+	memberPGIDs := make([]pgtype.UUID, 0, len(in.MemberIDs))
 	for _, member := range in.MemberIDs {
 		pid, e := uuidID("principal id", member)
 		if e != nil {
 			return access.Group{}, e
 		}
-		memberIDs = append(memberIDs, pid)
+		parsed, parseErr := pgUUID(pid)
+		if parseErr != nil {
+			return access.Group{}, parseErr
+		}
+		memberPGIDs = append(memberPGIDs, parsed)
 	}
 	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
@@ -225,23 +259,36 @@ func (r *Repository) UpsertSCIMGroup(ctx context.Context, in access.SCIMGroupInp
 	if err != nil {
 		return access.Group{}, err
 	}
+	var groupID pgtype.UUID
 	var gid string
 	if external != "" {
-		_ = tx.QueryRow(ctx, `SELECT id::text FROM access.access_group WHERE provider='scim' AND external_id=$1 AND revoked_at IS NULL FOR UPDATE`, external).Scan(&gid)
+		if err = accessdb.New(tx).LockSCIMGroupExternal(ctx, external); err != nil {
+			return access.Group{}, err
+		}
+		groupID, err = accessdb.New(tx).FindSCIMGroupByExternal(ctx, external)
+		if err == nil {
+			gid = principalUUID(groupID)
+		} else if err != pgx.ErrNoRows {
+			return access.Group{}, err
+		}
 	}
 	if gid == "" {
 		gid = id
-		if _, err = tx.Exec(ctx, `INSERT INTO access.access_group(id,name,provider,external_id) VALUES($1,$2,'scim',$3)`, gid, name, external); err != nil {
+		groupID, err = pgUUID(gid)
+		if err != nil {
 			return access.Group{}, err
 		}
-	} else if _, err = tx.Exec(ctx, `UPDATE access.access_group SET name=$2 WHERE id=$1::uuid AND revoked_at IS NULL`, gid, name); err != nil {
+		if err = accessdb.New(tx).InsertSCIMGroup(ctx, accessdb.InsertSCIMGroupParams{ID: groupID, Name: name, ExternalID: external}); err != nil {
+			return access.Group{}, err
+		}
+	} else if err = accessdb.New(tx).UpdateSCIMGroup(ctx, accessdb.UpdateSCIMGroupParams{ID: groupID, Name: name}); err != nil {
 		return access.Group{}, err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.principal_group SET revoked_at=clock_timestamp() WHERE group_id=$1::uuid AND revoked_at IS NULL AND NOT (principal_id = ANY($2::uuid[]))`, gid, memberIDs); err != nil {
+	if err = accessdb.New(tx).RevokeSCIMGroupMembersExcept(ctx, accessdb.RevokeSCIMGroupMembersExceptParams{GroupID: groupID, MemberIds: memberPGIDs}); err != nil {
 		return access.Group{}, err
 	}
-	for _, pid := range memberIDs {
-		if _, err = tx.Exec(ctx, `INSERT INTO access.principal_group(group_id,principal_id) SELECT $1::uuid,$2::uuid WHERE NOT EXISTS(SELECT 1 FROM access.principal_group WHERE group_id=$1::uuid AND principal_id=$2::uuid AND revoked_at IS NULL) ON CONFLICT (principal_id,group_id) WHERE revoked_at IS NULL DO NOTHING`, gid, pid); err != nil {
+	for _, pid := range memberPGIDs {
+		if err = accessdb.New(tx).AddGroupMember(ctx, accessdb.AddGroupMemberParams{GroupID: groupID, PrincipalID: pid}); err != nil {
 			return access.Group{}, err
 		}
 	}
@@ -261,22 +308,15 @@ func (r *Repository) ListSCIMGroups(ctx context.Context, f access.SCIMGroupFilte
 	if e != nil {
 		return nil, e
 	}
-	rows, e := db.Query(ctx, `SELECT id::text,provider,external_id,name,created_at FROM access.access_group WHERE provider='scim' AND revoked_at IS NULL AND ($1='' OR id::text=$1) AND ($2='' OR external_id=$2) AND ($3='' OR name ILIKE '%'||$3||'%') ORDER BY name LIMIT $4`, strings.TrimSpace(f.ID), strings.TrimSpace(f.ExternalID), strings.TrimSpace(f.DisplayName), maxPageSize)
+	rows, e := accessdb.New(db).ListSCIMGroups(ctx, accessdb.ListSCIMGroupsParams{ID: strings.TrimSpace(f.ID), ExternalID: strings.TrimSpace(f.ExternalID), Name: strings.TrimSpace(f.DisplayName), PageSize: maxPageSize})
 	if e != nil {
 		return nil, e
 	}
-	defer rows.Close()
-	out := []access.Group{}
-	for rows.Next() {
-		var g access.Group
-		var t time.Time
-		if e := rows.Scan(&g.ID, &g.Provider, &g.ExternalID, &g.Name, &t); e != nil {
-			return nil, e
-		}
-		g.CreatedAt = formatTime(t)
-		out = append(out, g)
+	out := make([]access.Group, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, access.Group{ID: principalUUID(row.ID), Provider: row.Provider, ExternalID: row.ExternalID, Name: row.Name, CreatedAt: principalTimestamp(row.CreatedAt)})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) DeleteSCIMGroup(ctx context.Context, id string) error {
 	db, e := r.requireDB()
@@ -287,7 +327,11 @@ func (r *Repository) DeleteSCIMGroup(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	tag, e := db.Exec(ctx, `UPDATE access.access_group SET revoked_at=COALESCE(revoked_at,clock_timestamp()) WHERE id=$1::uuid AND provider='scim' AND revoked_at IS NULL`, id)
+	parsedID, parseErr := pgUUID(id)
+	if parseErr != nil {
+		return parseErr
+	}
+	tag, e := accessdb.New(db).RevokeSCIMGroup(ctx, parsedID)
 	if e == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -312,8 +356,12 @@ func (r *Repository) scimMember(ctx context.Context, gid, pid string, add bool) 
 	if e != nil {
 		return e
 	}
+	parsedGroupID, parseErr := pgUUID(gid)
+	if parseErr != nil {
+		return parseErr
+	}
 	var provider string
-	if e = db.QueryRow(ctx, `SELECT provider FROM access.access_group WHERE id=$1::uuid AND revoked_at IS NULL`, gid).Scan(&provider); e != nil {
+	if provider, e = accessdb.New(db).GetSCIMGroupProvider(ctx, parsedGroupID); e != nil {
 		return e
 	}
 	if provider != "scim" {
