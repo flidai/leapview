@@ -34,6 +34,7 @@ func newAuditDatabase(t *testing.T) auditDatabase {
 		Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true,
 	})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
 	h.GrantRole(t, owner, migrator)
 	database := h.NewDatabase(t, "")
 	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")

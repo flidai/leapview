@@ -44,6 +44,17 @@ func (r *Repository) beginTx(ctx context.Context) (pgx.Tx, error) {
 	return b.Begin(ctx)
 }
 
+// txOrBegin returns the caller-owned transaction when the repository was
+// composed inside RunAuditedMutation.  The bool reports whether this method
+// owns the transaction and therefore may commit it.
+func (r *Repository) txOrBegin(ctx context.Context) (pgx.Tx, bool, error) {
+	if tx, ok := r.db.(pgx.Tx); ok {
+		return tx, false, nil
+	}
+	tx, err := r.beginTx(ctx)
+	return tx, true, err
+}
+
 func newUUID() (string, error) { id, err := uuid.NewV7(); return id.String(), err }
 
 func uuidID(label, value string) (string, error) {
@@ -281,11 +292,15 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	if err != nil {
 		return access.Principal{}, err
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.Principal{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
 	p, err := txRepo.UpsertPrincipal(ctx, access.PrincipalInput{ID: input.PrincipalID, Email: input.Email, DisplayName: input.DisplayName, Kind: access.PrincipalKindUser})
 	if err != nil {
@@ -299,8 +314,13 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return access.Principal{}, err
+	if ownTx {
+		if err := tx.Commit(ctx); err != nil {
+			return access.Principal{}, err
+		}
+	}
+	if !ownTx {
+		return txRepo.PrincipalByID(ctx, p.ID)
 	}
 	return r.PrincipalByID(ctx, p.ID)
 }
@@ -356,11 +376,15 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	if err != nil {
 		return err
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	tag, err := tx.Exec(ctx, `UPDATE access.principal SET status='disabled',disabled_at=COALESCE(disabled_at,clock_timestamp()),revoked_at=COALESCE(revoked_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1::uuid AND principal_type='service' AND revoked_at IS NULL`, id)
 	if err != nil {
 		return err
@@ -377,7 +401,10 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 	if _, err = tx.Exec(ctx, `UPDATE access.service_principal_secret SET revoked_at=clock_timestamp() WHERE service_principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
 		return err
 	}
-	return tx.Commit(ctx)
+	if ownTx {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 func (r *Repository) UpsertGroup(ctx context.Context, input access.GroupInput) (access.Group, error) {
@@ -608,21 +635,31 @@ func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUser
 	if err != nil {
 		return access.LocalPasswordReset{}, err
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.LocalPasswordReset{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
 	if _, err = tx.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'user','active',$2,$3)`, id, email, firstNonEmpty(input.DisplayName, email)); err == nil {
 		_, err = tx.Exec(ctx, `INSERT INTO access.local_credential(principal_id,verifier,must_change,password_changed_at) VALUES($1,$2,$3,clock_timestamp())`, id, verifier, input.MustChange)
 	}
-	if err == nil {
+	if err == nil && ownTx {
 		err = tx.Commit(ctx)
 	}
 	if err != nil {
 		return access.LocalPasswordReset{}, err
 	}
-	p, err := r.PrincipalByID(ctx, id)
+	var p access.Principal
+	if ownTx {
+		p, err = r.PrincipalByID(ctx, id)
+	} else {
+		p, err = txRepo.PrincipalByID(ctx, id)
+	}
 	return access.LocalPasswordReset{Principal: p, Password: password}, err
 }
 func firstNonEmpty(values ...string) string {
@@ -711,15 +748,23 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 	if err = access.ValidateLocalPassword(newPassword); err != nil {
 		return access.LocalCredential{}, err
 	}
+	if current != "" && current == newPassword {
+		return access.LocalCredential{}, fmt.Errorf("%w: new password must differ from the current password", access.ErrLocalPasswordPolicy)
+	}
 	v, err := secretVerifier(newPassword)
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
-	tx, err := r.beginTx(ctx)
+	tx, ownTx, err := r.txOrBegin(ctx)
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
 	var old []byte
 	if err = tx.QueryRow(ctx, `SELECT verifier FROM access.local_credential WHERE principal_id=$1::uuid FOR UPDATE`, pid).Scan(&old); err != nil {
 		return access.LocalCredential{}, err
@@ -734,8 +779,16 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 	if tag.RowsAffected() == 0 {
 		return access.LocalCredential{}, pgx.ErrNoRows
 	}
-	if err = tx.Commit(ctx); err != nil {
+	if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, pid); err != nil {
 		return access.LocalCredential{}, err
+	}
+	if ownTx {
+		if err = tx.Commit(ctx); err != nil {
+			return access.LocalCredential{}, err
+		}
+	}
+	if !ownTx {
+		return txRepo.LocalCredential(ctx, pid)
 	}
 	return r.LocalCredential(ctx, pid)
 }
@@ -1277,11 +1330,15 @@ func (r *Repository) DesktopSessionForToken(ctx context.Context, tok string) (ac
 	return s, nil
 }
 func (r *Repository) RevokeDesktopSession(ctx context.Context, tok, instanceID, profileID string) error {
-	tx, e := r.beginTx(ctx)
+	tx, ownTx, e := r.txOrBegin(ctx)
 	if e != nil {
 		return e
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() {
+		if ownTx {
+			_ = tx.Rollback(ctx)
+		}
+	}()
 	var id string
 	var ver []byte
 	if e = tx.QueryRow(ctx, `SELECT s.id::text,s.verifier FROM access.session s JOIN access.principal p ON p.id=s.principal_id WHERE s.token_fingerprint=$1 AND s.kind='desktop' AND s.instance_id=$2 AND s.profile_id=$3 AND s.revoked_at IS NULL AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL FOR UPDATE`, r.secretFingerprint(tok), instanceID, profileID).Scan(&id, &ver); e != nil {
@@ -1297,7 +1354,10 @@ func (r *Repository) RevokeDesktopSession(ctx context.Context, tok, instanceID, 
 	if tag.RowsAffected() != 1 {
 		return pgx.ErrNoRows
 	}
-	return tx.Commit(ctx)
+	if ownTx {
+		return tx.Commit(ctx)
+	}
+	return nil
 }
 
 var _ access.PlatformAdminReader = (*Repository)(nil)
