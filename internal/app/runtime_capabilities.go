@@ -15,10 +15,14 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -42,8 +46,11 @@ type workloadCapabilityBundle struct {
 }
 
 type analyticsCapabilityConfig struct {
+	ConnectionBindings  connectionbinding.BindingCatalog
+	QueryAuditStore     queryaudit.Store
 	Database            *sql.DB
 	AuditIntentRecorder access.AuditIntentRecorder
+	Production          bool
 	CredentialMode      analyticsmodule.CredentialMode
 	CredentialTarget    string
 	CredentialProject   projectgraph.ResourceID
@@ -66,15 +73,16 @@ type analyticsCapabilityConfig struct {
 }
 
 func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig) (analyticsCapabilityBundle, error) {
-	if cfg.Database == nil {
-		return analyticsCapabilityBundle{}, errors.New("analytics database is required")
+	if cfg.Database == nil && cfg.ConnectionBindings == nil {
+		return analyticsCapabilityBundle{}, errors.New("analytics persistence is required")
 	}
 	if cfg.ExtensionSupply == nil {
 		return analyticsCapabilityBundle{}, errors.New("analytics extension supply is required")
 	}
 	module, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
+		ConnectionBindings: cfg.ConnectionBindings, QueryAuditStore: cfg.QueryAuditStore,
 		Database: cfg.Database, AuditIntentRecorder: cfg.AuditIntentRecorder, CredentialMode: cfg.CredentialMode,
-		LegacySQLite:       true,
+		LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
 		CredentialTargetID: cfg.CredentialTarget, CredentialProjectID: cfg.CredentialProject, CredentialEnvironment: cfg.Environment,
 		TargetCredentials: cfg.TargetCredentials,
 		RootDir:           cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,
@@ -92,7 +100,10 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 }
 
 type accessCapabilityConfig struct {
+	Persistence    *accessmodule.Persistence
+	Postgres       *accesspostgres.Repository
 	Database       *sql.DB
+	Production     bool
 	Auth           accessmodule.AuthConfig
 	Assets         staticasset.Resolver
 	AvatarBlobs    accessmodule.AvatarBlobStore
@@ -103,14 +114,16 @@ type accessCapabilityConfig struct {
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
-	if cfg.Database == nil {
-		return accessCapabilityBundle{}, errors.New("access database is required")
+	if cfg.Database == nil && cfg.Persistence == nil && cfg.Postgres == nil {
+		return accessCapabilityBundle{}, errors.New("access persistence is required")
 	}
 	if cfg.CurrentProject == nil {
 		return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
 	}
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: cfg.Database, LegacySQLite: true, Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
+		Persistence: cfg.Persistence, PostgresRepository: cfg.Postgres,
+		Database: cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID: cfg.CurrentProject,
 		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
@@ -130,15 +143,18 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 }
 
 type workloadCapabilityConfig struct {
+	Persistence  *jobsmodule.Persistence
+	Postgres     *jobspostgres.Repository
 	Workload     workloadmodule.Config
 	Database     *sql.DB
+	Production   bool
 	LeaseTimeout time.Duration
 	Logger       *slog.Logger
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
-	if cfg.Database == nil {
-		return workloadCapabilityBundle{}, errors.New("jobs database is required")
+	if cfg.Database == nil && cfg.Persistence == nil && cfg.Postgres == nil {
+		return workloadCapabilityBundle{}, errors.New("jobs persistence is required")
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -147,7 +163,11 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	if err != nil {
 		return workloadCapabilityBundle{}, fmt.Errorf("build workload capability: %w", err)
 	}
-	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{Database: cfg.Database, LegacySQLite: true, Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger})
+	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
+		Persistence: cfg.Persistence, PostgresRepository: cfg.Postgres,
+		Database: cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
+	})
 	if err != nil {
 		controller.Close()
 		return workloadCapabilityBundle{}, fmt.Errorf("build jobs capability: %w", err)
