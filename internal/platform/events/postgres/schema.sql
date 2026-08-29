@@ -5,6 +5,15 @@
 -- isolated conformance database.
 CREATE SCHEMA IF NOT EXISTS event;
 
+-- Capability schemas are deny-by-default.  The control-plane migration grants
+-- the narrowly scoped runtime/readonly privileges after applying this file;
+-- these revokes also protect isolated deployments that apply the capability
+-- schema directly.
+REVOKE ALL ON SCHEMA event FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA event FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA event FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA event FROM PUBLIC;
+
 -- These CREATE TABLE statements are intentionally IF NOT EXISTS: the clean
 -- control-plane baseline normally creates them first, while capability tests
 -- can apply this file on their own.
@@ -140,7 +149,9 @@ BEGIN
     WHERE singleton = true
     FOR UPDATE;
 
-    v_target := p_before;
+    -- Retention follows the authoritative database clock; a caller cannot
+    -- advance the floor into the future with a forged cutoff.
+    v_target := LEAST(p_before, clock_timestamp());
     SELECT min(replay_from) INTO v_oldest_root
     FROM event.event_retention_root
     WHERE state <> 'expired';
@@ -202,11 +213,33 @@ REVOKE ALL ON FUNCTION event.prune_event_log(timestamptz, integer) FROM PUBLIC;
 CREATE OR REPLACE FUNCTION event.reject_event_update()
 RETURNS trigger
 LANGUAGE plpgsql
+SET search_path = pg_catalog
 AS $$
 BEGIN
     RAISE EXCEPTION 'durable event log is immutable';
 END;
 $$;
+REVOKE ALL ON FUNCTION event.reject_event_update() FROM PUBLIC;
+
+-- occurred_at is authority-owned rather than caller supplied.  Keeping this
+-- invariant in the database protects direct INSERT paths (including a role
+-- whose INSERT privilege is intentionally narrow) as well as Repository.
+CREATE OR REPLACE FUNCTION event.set_event_occurred_at()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    NEW.occurred_at := clock_timestamp();
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION event.set_event_occurred_at() FROM PUBLIC;
+DROP TRIGGER IF EXISTS event_log_occurred_at_owned ON event.event_log;
+CREATE TRIGGER event_log_occurred_at_owned
+    BEFORE INSERT ON event.event_log
+    FOR EACH ROW EXECUTE FUNCTION event.set_event_occurred_at();
+
 DROP TRIGGER IF EXISTS event_log_immutable ON event.event_log;
 CREATE TRIGGER event_log_immutable
     BEFORE UPDATE ON event.event_log

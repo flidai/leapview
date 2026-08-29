@@ -127,6 +127,12 @@ func (l *Listener) listen(ctx context.Context, reconcile ReconcileFunc) error {
 		if err != nil {
 			return fmt.Errorf("wait for durable event wake hint: %w", err)
 		}
+		if notification == nil {
+			// pgx currently returns a non-nil notification on a nil error, but
+			// keep a defensive guard so a driver/pool implementation cannot
+			// turn a malformed wakeup into a panic in the listener loop.
+			return errors.New("wait for durable event wake hint: empty notification")
+		}
 		if notification.Channel != NotificationChannel {
 			continue
 		}

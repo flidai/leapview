@@ -54,7 +54,6 @@ type EventInput struct {
 	AggregateID   string
 	EventType     string
 	SchemaVersion int64
-	OccurredAt    time.Time
 	CorrelationID string
 	Payload       json.RawMessage
 }
@@ -234,13 +233,6 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 			return Event{}, err
 		}
 	}
-	occurredAt := in.OccurredAt
-	if occurredAt.IsZero() {
-		occurredAt = time.Now().UTC()
-	}
-	occurredAt = occurredAt.UTC()
-	explicitOccurredAt := !in.OccurredAt.IsZero()
-
 	// Serialize same-identity producers before the idempotency lookup. Without
 	// this lock two concurrent transactions can both miss the predecessor and
 	// one will consume an aggregate version before failing on the event PK.
@@ -289,9 +281,6 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 		if !bytes.Equal(existing.Payload, payload) {
 			return Event{}, &EventConflictError{EventID: eventID, Field: "payload"}
 		}
-		if explicitOccurredAt && !existing.OccurredAt.Equal(occurredAt) {
-			return Event{}, &EventConflictError{EventID: eventID, Field: "occurred_at"}
-		}
 		return existing, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -314,15 +303,22 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 		RETURNING next_version - 1`, scope, aggregateType, aggregateID).Scan(&version); err != nil {
 		return Event{}, fmt.Errorf("allocate aggregate version: %w", err)
 	}
-	if _, err := tx.Exec(ctx, `
+	// occurred_at is database-owned. The trigger and this statement both ensure
+	// the authoritative timestamp comes from PostgreSQL's clock. Returning the
+	// stored value also keeps the in-memory result identical to what a
+	// concurrent reader will observe.
+	var occurredAt time.Time
+	if err := tx.QueryRow(ctx, `
 		INSERT INTO event.event_log
 		    (event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
 		     event_type, schema_version, occurred_at, correlation_id, payload)
-		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, NULLIF($9, '')::uuid, $10::jsonb)`,
+		VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, clock_timestamp(), NULLIF($8, '')::uuid, $9::jsonb)
+		RETURNING occurred_at`,
 		eventID, scope, aggregateType, aggregateID, version, eventType, in.SchemaVersion,
-		occurredAt, correlationID, payload); err != nil {
+		correlationID, payload).Scan(&occurredAt); err != nil {
 		return Event{}, fmt.Errorf("insert durable event: %w", err)
 	}
+	occurredAt = occurredAt.UTC()
 
 	// This statement must complete before the consumer scan below.  Do not
 	// combine it with the scan in a CTE: READ COMMITTED command snapshots would
@@ -758,6 +754,7 @@ func (r *Repository) Claim(ctx context.Context, tx Tx, opts ClaimOptions) ([]Del
 	if lease > 24*time.Hour {
 		return nil, errors.New("claim lease exceeds 24 hours")
 	}
+	leaseMicros := durationMicros(lease)
 	var lifecycle string
 	if err := tx.QueryRow(ctx, `SELECT lifecycle FROM event.event_consumer WHERE consumer_id = $1::uuid FOR SHARE`, consumerID).Scan(&lifecycle); err != nil {
 		return nil, fmt.Errorf("read event consumer for claim: %w", err)
@@ -779,13 +776,13 @@ func (r *Repository) Claim(ctx context.Context, tx Tx, opts ClaimOptions) ([]Del
 		UPDATE event.event_delivery d
 		SET status = 'claimed', attempts = d.attempts + 1,
 		    claim_generation = d.claim_generation + 1,
-		    claimed_by = $2, claimed_until = clock_timestamp() + $4::interval,
+		    claimed_by = $2, claimed_until = clock_timestamp() + ($4::bigint * interval '1 microsecond'),
 		    terminal_at = NULL
 		FROM candidates c
 		WHERE d.consumer_id = c.consumer_id AND d.event_id = c.event_id
 		RETURNING d.event_id::text, d.status, d.attempts, d.claim_generation, d.available_at,
 		          d.claimed_by, d.claimed_until, d.terminal_at, d.evidence::text`,
-		consumerID, workerID, limit, fmt.Sprintf("%f seconds", lease.Seconds()))
+		consumerID, workerID, limit, leaseMicros)
 	if err != nil {
 		return nil, fmt.Errorf("claim event deliveries: %w", err)
 	}
@@ -805,6 +802,7 @@ func (r *Repository) Claim(ctx context.Context, tx Tx, opts ClaimOptions) ([]Del
 		if terminalAt.Valid {
 			d.TerminalAt = terminalAt.Time.UTC()
 		}
+		d.AvailableAt = d.AvailableAt.UTC()
 		d.ConsumerID = consumerID
 		d.Evidence = json.RawMessage(evidence)
 		claimed = append(claimed, d)
@@ -843,6 +841,11 @@ func (r *Repository) Complete(ctx context.Context, tx Tx, consumerID, eventID, w
 	evidenceJSON, err := canonicalObject(evidence, 32768)
 	if err != nil {
 		return fmt.Errorf("delivery evidence: %w", err)
+	}
+	if outcome == DeliveryWaived {
+		if _, err := nonEmptyObject(evidenceJSON); err != nil {
+			return fmt.Errorf("delivery waiver evidence: %w", err)
+		}
 	}
 	ct, err := tx.Exec(ctx, `
 		UPDATE event.event_delivery
@@ -928,6 +931,7 @@ func (r *Repository) Retry(ctx context.Context, tx Tx, opts RetryOptions) error 
 	if opts.Delay > 24*time.Hour {
 		return errors.New("retry delay exceeds 24 hours")
 	}
+	delayMicros := durationMicros(opts.Delay)
 	evidence, err := canonicalObject(opts.Evidence, 32768)
 	if err != nil {
 		return fmt.Errorf("retry evidence: %w", err)
@@ -935,13 +939,13 @@ func (r *Repository) Retry(ctx context.Context, tx Tx, opts RetryOptions) error 
 	ct, err := tx.Exec(ctx, `
 		UPDATE event.event_delivery
 		SET status = CASE WHEN attempts >= $6 THEN 'dead_letter' ELSE 'pending' END,
-		    available_at = CASE WHEN attempts >= $6 THEN available_at ELSE clock_timestamp() + $5::interval END,
+		    available_at = CASE WHEN attempts >= $6 THEN available_at ELSE clock_timestamp() + ($5::bigint * interval '1 microsecond') END,
 		    terminal_at = CASE WHEN attempts >= $6 THEN clock_timestamp() ELSE NULL END,
 		    claimed_by = NULL, claimed_until = NULL, evidence = $7::jsonb
 		WHERE consumer_id = $1::uuid AND event_id = $2::uuid
 		  AND status = 'claimed' AND claimed_by = $3 AND claim_generation = $4
 		  AND claimed_until > clock_timestamp()`, opts.ConsumerID, opts.EventID, opts.WorkerID,
-		opts.ClaimGeneration, fmt.Sprintf("%f seconds", opts.Delay.Seconds()), opts.MaxAttempts, evidence)
+		opts.ClaimGeneration, delayMicros, opts.MaxAttempts, evidence)
 	if err != nil {
 		return fmt.Errorf("retry event delivery: %w", err)
 	}
@@ -963,17 +967,13 @@ func (r *Repository) Prune(ctx context.Context, tx Tx, before time.Time) (int64,
 		return 0, errors.New("prune cutoff is required")
 	}
 	before = before.UTC()
+	// Keep each invocation bounded to one owner-function batch. Callers that
+	// need to drain more rows can commit and invoke Prune again; a single
+	// transaction must not turn a retention sweep into an unbounded delete.
 	const batch = 1000
 	var removed int64
-	for {
-		var count int64
-		if err := tx.QueryRow(ctx, `SELECT event.prune_event_log($1, $2)`, before, batch).Scan(&count); err != nil {
-			return removed, fmt.Errorf("prune durable events: %w", err)
-		}
-		removed += count
-		if count < batch {
-			break
-		}
+	if err := tx.QueryRow(ctx, `SELECT event.prune_event_log($1, $2)`, before, batch).Scan(&removed); err != nil {
+		return 0, fmt.Errorf("prune durable events: %w", err)
 	}
 	return removed, nil
 }
@@ -1027,6 +1027,7 @@ func (r *Repository) ListDeliveries(ctx context.Context, tx Tx, consumerID strin
 			return nil, fmt.Errorf("scan event delivery: %w", err)
 		}
 		d.ConsumerID = consumerID
+		d.AvailableAt = d.AvailableAt.UTC()
 		if claimedUntil.Valid {
 			d.ClaimedUntil = claimedUntil.Time.UTC()
 		}
@@ -1099,6 +1100,18 @@ func validateUUID(label, value string) error {
 		return fmt.Errorf("%s must be a UUID: %w", label, err)
 	}
 	return nil
+}
+
+// durationMicros rounds a positive duration up to PostgreSQL's finest
+// interval precision.  Passing the integer separately (rather than building
+// an interval string) avoids float truncation for sub-second leases and keeps
+// all caller values as typed SQL parameters.
+func durationMicros(value time.Duration) int64 {
+	if value <= 0 {
+		return 0
+	}
+	nanos := int64(value)
+	return (nanos + int64(time.Microsecond) - 1) / int64(time.Microsecond)
 }
 
 func canonicalObject(raw json.RawMessage, maxBytes int64) (json.RawMessage, error) {

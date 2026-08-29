@@ -59,6 +59,18 @@ func TestPostgreSQL18EventRollbackAndVersionAllocation(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var databaseTime time.Time
+	if err := db.QueryRow(ctx, `
+		INSERT INTO event.event_log
+		 (event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,payload)
+		VALUES ('01900000-0000-7000-8000-000000000099','guard','direct','1',1,'forged-time',1,
+		        '1970-01-01 00:00:00+00'::timestamptz,'{}'::jsonb)
+		RETURNING occurred_at`).Scan(&databaseTime); err != nil {
+		t.Fatal(err)
+	}
+	if databaseTime.Before(time.Now().Add(-time.Minute)) {
+		t.Fatalf("direct insert retained caller occurrence time: %s", databaseTime)
+	}
 }
 
 func TestPostgreSQL18ConcurrentSameEventIdentityIsIdempotent(t *testing.T) {
@@ -139,7 +151,7 @@ func TestPostgreSQL18ConcurrentEnrollmentProducerHistoricalEvent(t *testing.T) {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		_, appendErr := r.AppendEvent(ctx, producerTx, EventInput{ScopeID: "scope", AggregateType: "order", AggregateID: "historical", EventType: "changed", SchemaVersion: 1, OccurredAt: time.Unix(1, 0), Payload: []byte(`{"historical":true}`)})
+		_, appendErr := r.AppendEvent(ctx, producerTx, EventInput{ScopeID: "scope", AggregateType: "order", AggregateID: "historical", EventType: "changed", SchemaVersion: 1, Payload: []byte(`{"historical":true}`)})
 		if appendErr == nil {
 			appendErr = producerTx.Commit(ctx)
 		} else {
@@ -186,7 +198,7 @@ func TestPostgreSQL18DuplicateSafeBackfillAndPoisonRetention(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if _, err := r.AppendEvent(ctx, tx, EventInput{ScopeID: "scope", AggregateType: "batch", AggregateID: "1", EventType: "item", SchemaVersion: 1, OccurredAt: time.Unix(int64(i+1), 0), Payload: []byte(`{"item":1}`)}); err != nil {
+		if _, err := r.AppendEvent(ctx, tx, EventInput{ScopeID: "scope", AggregateType: "batch", AggregateID: "1", EventType: "item", SchemaVersion: 1, Payload: []byte(`{"item":1}`)}); err != nil {
 			t.Fatal(err)
 		}
 		if err := tx.Commit(ctx); err != nil {
