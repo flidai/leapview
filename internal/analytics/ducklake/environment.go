@@ -765,14 +765,65 @@ func newCommitAttemptID() (string, error) {
 	return hex.EncodeToString(value[:]), nil
 }
 
-func committedSnapshotForAttempt(ctx context.Context, queryer queryRower, attemptID string) (int64, error) {
-	var snapshot int64
-	pattern := "%\"refreshAttemptId\":\"" + attemptID + "\"%"
-	err := queryer.QueryRowContext(ctx, "SELECT snapshot_id FROM "+catalogAlias+".snapshots() WHERE CAST(commit_extra_info AS VARCHAR) LIKE ? ORDER BY snapshot_id DESC LIMIT 1", pattern).Scan(&snapshot)
-	if errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("DuckLake committed snapshot identity was not found")
+func committedSnapshotForAttempt(ctx context.Context, queryer SnapshotLookup, attemptID string) (int64, error) {
+	if queryer == nil {
+		return 0, errors.New("DuckLake snapshot lookup is nil")
 	}
-	return snapshot, err
+	pattern := "%\"refreshAttemptId\":\"" + attemptID + "\"%"
+	// The connection-local value is useful immediate evidence, but it must be
+	// checked against persistent commit metadata before being accepted.
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var last sql.NullInt64
+	lastErr := queryer.QueryRowContext(ctx, "SELECT id FROM "+catalogAlias+".last_committed_snapshot()").Scan(&last)
+	if lastErr != nil && !errors.Is(lastErr, sql.ErrNoRows) {
+		return 0, fmt.Errorf("read DuckLake last committed snapshot: %w", lastErr)
+	}
+	if lastErr == nil && last.Valid && last.Int64 > 0 {
+		var extra string
+		verifyErr := queryer.QueryRowContext(ctx, "SELECT CAST(commit_extra_info AS VARCHAR) FROM "+catalogAlias+".snapshots() WHERE snapshot_id = ?", last.Int64).Scan(&extra)
+		if verifyErr != nil && !errors.Is(verifyErr, sql.ErrNoRows) {
+			return 0, fmt.Errorf("verify DuckLake last committed snapshot: %w", verifyErr)
+		}
+		if verifyErr == nil && strings.Contains(extra, `"refreshAttemptId":"`+attemptID+`"`) {
+			return last.Int64, nil
+		}
+	}
+	// Restart reconciliation searches persistent markers without ordering by
+	// snapshot recency. A duplicate marker is ambiguous and fails closed.
+	rows, err := queryer.QueryContext(ctx, "SELECT snapshot_id, CAST(commit_extra_info AS VARCHAR) FROM "+catalogAlias+".snapshots() WHERE CAST(commit_extra_info AS VARCHAR) LIKE ?", pattern)
+	if err != nil {
+		return 0, fmt.Errorf("find DuckLake committed snapshot identity: %w", err)
+	}
+	defer rows.Close()
+	var snapshot int64
+	count := 0
+	for rows.Next() {
+		var id int64
+		var extra string
+		if err := rows.Scan(&id, &extra); err != nil {
+			return 0, err
+		}
+		if strings.Contains(extra, `"refreshAttemptId":"`+attemptID+`"`) {
+			snapshot = id
+			count++
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
+	}
+	switch count {
+	case 0:
+		return 0, fmt.Errorf("DuckLake committed snapshot identity was not found")
+	case 1:
+		if snapshot <= 0 {
+			return 0, fmt.Errorf("DuckLake committed snapshot identity is invalid")
+		}
+		return snapshot, nil
+	default:
+		return 0, fmt.Errorf("multiple DuckLake snapshots match commit attempt %q", attemptID)
+	}
 }
 
 func classifyCommitError(err error) error {
