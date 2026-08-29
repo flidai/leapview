@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 )
 
 var _ access.InstanceInitializer = (*Repository)(nil)
@@ -31,10 +32,11 @@ func (r *Repository) InitializeInstance(
 		if err != nil {
 			return nil, err
 		}
-		var initializedAt time.Time
-		if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&initializedAt); err != nil {
+		initializedEpoch, err := accessdb.New(db).DatabaseNow(ctx)
+		if err != nil {
 			return nil, err
 		}
+		initializedAt := dbEpochMicros(initializedEpoch)
 		inserted, err := postgresRepo.InsertPlatformSettingIfMissing(
 			ctx,
 			access.InstanceInitializedSetting,
@@ -64,10 +66,11 @@ func (r *Repository) InitializeInstance(
 
 		// Expiration is derived from PostgreSQL's clock so the bootstrap
 		// credential follows the same temporal authority as token validation.
-		var expires time.Time
-		if err := db.QueryRow(ctx, `SELECT clock_timestamp()+interval '24 hours'`).Scan(&expires); err != nil {
+		expiresEpoch, err := accessdb.New(db).DatabaseNowPlus24Hours(ctx)
+		if err != nil {
 			return nil, err
 		}
+		expires := dbEpochMicros(expiresEpoch)
 		expires = expires.UTC().Truncate(time.Second)
 		capabilities := access.InitialPublisherCapabilities()
 		if input.EvaluationDataIngest {
