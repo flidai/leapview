@@ -88,6 +88,43 @@ func TestPostgresCatalogServingRequiresExactReadOnlySnapshot(t *testing.T) {
 	}
 }
 
+func TestPostgresCatalogMigrationModeIsExplicitAndRuntimeCannotEnableIt(t *testing.T) {
+	migrate := validPostgresCatalogConfig(PostgresCatalogMigrate)
+	migrate.PhysicalPoolID = "pool-1"
+	migrate.MetadataSchema = MetadataSchemaForPool(migrate.PhysicalPoolID)
+	if _, err := migrate.AttachSQL(); err == nil {
+		t.Fatal("migration mode unexpectedly accepted by ordinary AttachSQL")
+	}
+	statements, err := migrate.MigrationStatements()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(statements) != 2 || !strings.Contains(statements[1], "AUTOMATIC_MIGRATION true") || !strings.Contains(statements[1], "CREATE_IF_NOT_EXISTS false") || !strings.Contains(statements[1], "METADATA_SCHEMA '"+MetadataSchemaForPool(migrate.PhysicalPoolID)+"'") {
+		t.Fatalf("migration statements = %#v", statements)
+	}
+	if _, err := validPostgresCatalogConfig(PostgresCatalogWriter).MigrationStatements(); err == nil {
+		t.Fatal("writer mode unexpectedly enabled migration statements")
+	}
+}
+
+func TestPostgresCatalogPoolNamespaceRejectsCrossDomainSchema(t *testing.T) {
+	c := validPostgresCatalogConfig(PostgresCatalogWriter)
+	c.PhysicalPoolID = "pool-a"
+	if err := c.Validate(); err == nil {
+		t.Fatal("writer accepted an unqualified metadata schema")
+	}
+	c.MetadataSchema = MetadataSchemaForPool(c.PhysicalPoolID)
+	if err := c.Validate(); err != nil {
+		t.Fatalf("qualified writer rejected: %v", err)
+	}
+	if MetadataSchemaForPool("pool-a") == MetadataSchemaForPool("pool-b") {
+		t.Fatal("pool metadata namespaces collided")
+	}
+	if len(MetadataSchemaForPool("pool-a")) != len("leapview_catalog_")+32 {
+		t.Fatalf("metadata namespace is not 128-bit qualified: %q", MetadataSchemaForPool("pool-a"))
+	}
+}
+
 func TestPostgresCatalogValidationRejectsUnsafeIdentifiersAndMissingSchema(t *testing.T) {
 	cases := []PostgresCatalogConfig{
 		func() PostgresCatalogConfig {

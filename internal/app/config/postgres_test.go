@@ -66,16 +66,18 @@ func TestPostgresRuntimeConfigMapsIndependentDatabasePolicies(t *testing.T) {
 
 func TestPostgresControlPlaneConfigUsesIndependentLeastPrivilegeRoles(t *testing.T) {
 	cfg := Config{
-		PostgresControlURL:          "postgres://runtime:secret@db/control?sslmode=verify-full",
-		PostgresControlMigratorURL:  "postgres://migrator:secret@db/control?sslmode=verify-full",
-		PostgresControlReadonlyURL:  "postgres://readonly:secret@db/control?sslmode=verify-full",
-		PostgresControlRuntimeRole:  "runtime_role",
-		PostgresControlMigratorRole: "migrator_role",
-		PostgresControlReadonlyRole: "readonly_role",
-		PostgresExpectedMajor:       18,
-		PostgresRequireTLS:          true,
-		PostgresControlPoolMinConns: 2,
-		PostgresControlPoolMaxConns: 8,
+		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:           "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full",
+		PostgresControlReadonlyURL:           "postgres://readonly:secret@db/control?sslmode=verify-full",
+		PostgresControlRuntimeRole:           "runtime_role",
+		PostgresControlMigratorRole:          "migrator_role",
+		PostgresControlReadonlyRole:          "readonly_role",
+		PostgresExpectedMajor:                18,
+		PostgresRequireTLS:                   true,
+		PostgresControlPoolMinConns:          2,
+		PostgresControlPoolMaxConns:          8,
 	}
 	got := cfg.PostgresControlPlaneConfig()
 	require.Equal(t, "migrator_role", got.Migrator.RuntimeRole)
@@ -87,6 +89,9 @@ func TestPostgresControlPlaneConfigUsesIndependentLeastPrivilegeRoles(t *testing
 	}
 	require.Equal(t, "readonly_role", got.Readonly.RuntimeRole)
 	require.Equal(t, platformpostgres.IntentReadOnly, got.Readonly.Intent)
+	if got.Migrator.URL == cfg.PostgresControlUpgradeCoordinatorURL || got.Runtime.URL == cfg.PostgresDuckLakeMigratorURL {
+		t.Fatal("serving control-plane config opened upgrade credentials")
+	}
 }
 
 func TestPostgresControlPlaneConfigAppliesReviewedRoleDefaults(t *testing.T) {
@@ -151,5 +156,20 @@ func TestValidatePostgresProductionRequiresTwoDatabasesAndDistinctRoles(t *testi
 	base.PostgresControlMigratorRole = "runtime_role"
 	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "migrator and runtime roles must be distinct") {
 		t.Fatalf("shared control role error = %v", err)
+	}
+}
+
+func TestValidatePostgresUpgradeRequiresIndependentOwnerCredentials(t *testing.T) {
+	base := Config{PostgresExpectedMajor: 18, PostgresRequireTLS: true,
+		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresDuckLakeURL:                  "postgres://duck:secret@db/ducklake?sslmode=require",
+		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=require",
+		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=require"}
+	if err := base.ValidatePostgresUpgrade(); err != nil {
+		t.Fatalf("valid independent upgrade credentials rejected: %v", err)
+	}
+	base.PostgresDuckLakeMigratorURL = base.PostgresDuckLakeURL
+	if err := base.ValidatePostgresUpgrade(); err == nil || !strings.Contains(err.Error(), "DuckLake migrator URL") {
+		t.Fatalf("shared catalog credentials accepted: %v", err)
 	}
 }

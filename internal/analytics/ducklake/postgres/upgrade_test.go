@@ -11,7 +11,7 @@ import (
 
 func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 	h := postgrestest.Start(t)
-	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_migrator", Password: "migrator-secret", Login: true})
+	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_upgrade_coordinator", Password: "migrator-secret", Login: true})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
 	db := h.NewDatabase(t, "ducklake_upgrade_authority_test")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())
@@ -159,7 +159,7 @@ func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 
 func TestPostgres18MigrationFenceConcurrencyAndGlobalExclusion(t *testing.T) {
 	h := postgrestest.Start(t)
-	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_migrator", Password: "migrator-secret", Login: true})
+	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_upgrade_coordinator", Password: "migrator-secret", Login: true})
 	db := h.NewDatabase(t, "ducklake_upgrade_fence_test")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -358,7 +358,7 @@ func TestPostgres18MigrationFenceConcurrencyAndGlobalExclusion(t *testing.T) {
 // mutate authority rows directly or fabricate qualification evidence.
 func TestPostgres18UpgradeAuthorityAdversarialSQLAndTupleCycle(t *testing.T) {
 	h := postgrestest.Start(t)
-	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_migrator", Password: "migrator-secret", Login: true})
+	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_upgrade_coordinator", Password: "migrator-secret", Login: true})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
 	db := h.NewDatabase(t, "ducklake_upgrade_adversarial_test")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())

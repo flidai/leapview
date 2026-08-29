@@ -1836,6 +1836,40 @@ func (r *Repository) LoadSnapshotRetention(ctx context.Context, ref SnapshotRef)
 	return loadSnapshotRetention(ctx, r.db, ref)
 }
 
+// ListRetainedSnapshots returns every snapshot that remains reachable for a
+// pool. Upgrade authority uses this exact relational set when requalifying a
+// catalog; callers cannot accidentally omit a retiring snapshot by supplying
+// a hand-maintained list.
+func ListRetainedSnapshots(ctx context.Context, db DBTX, physicalPoolID, catalogID string) ([]SnapshotRef, error) {
+	if db == nil || !validID(physicalPoolID) || !validID(catalogID) {
+		return nil, ErrInvalid
+	}
+	rows, err := db.Query(ctx, `SELECT snapshot_id FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND state IN ('live','retiring') ORDER BY snapshot_id`, physicalPoolID, catalogID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotRef
+	for rows.Next() {
+		var snapshotID int64
+		if err := rows.Scan(&snapshotID); err != nil {
+			return nil, err
+		}
+		out = append(out, SnapshotRef{PhysicalPoolID: physicalPoolID, CatalogID: catalogID, SnapshotID: snapshotID})
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *Repository) ListRetainedSnapshots(ctx context.Context, physicalPoolID, catalogID string) ([]SnapshotRef, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return ListRetainedSnapshots(ctx, r.db, physicalPoolID, catalogID)
+}
+
 func listSnapshotReaders(ctx context.Context, db DBTX, ref SnapshotRef, overdueOnly bool) ([]ReaderDrain, error) {
 	if db == nil || (ref != (SnapshotRef{}) && !validSnapshotRef(ref)) {
 		return nil, ErrInvalid

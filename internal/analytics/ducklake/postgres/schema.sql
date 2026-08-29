@@ -834,7 +834,7 @@ CREATE TRIGGER migration_fence_monotonic
     BEFORE UPDATE OR DELETE ON ducklake.migration_fence
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_migration_fence_change();
 
--- The migration role receives no direct DML on authority rows. These narrowly
+-- The control upgrade coordinator receives no direct DML on authority rows. These narrowly
 -- scoped SECURITY DEFINER functions are the database capability boundary: all
 -- fence claims, compatibility registration, lifecycle transitions, and
 -- requalification writes re-check the active owner/epoch under PostgreSQL's
@@ -1293,19 +1293,22 @@ BEGIN
             || 'ducklake.catalog_migration, ducklake.snapshot_requalification '
             || 'TO leapview_control_readonly';
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_ducklake_migrator') THEN
-        EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_ducklake_migrator';
-        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.catalog_runtime_compatibility, ducklake.catalog_migration, ducklake.snapshot_requalification, ducklake.migration_fence FROM leapview_ducklake_migrator';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_retention TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_migration_fence(text,text,text,timestamptz) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_migration_fence(text,text,text,bigint) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_migration_fence(text,text,text,bigint,timestamptz) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.register_catalog_runtime_compatibility(text,text,text,text,text,text,text,text,bigint,bigint) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.begin_catalog_migration(uuid,text,text,text,bigint,bigint,text,text,text,text,text,text,text,text,text,text,jsonb) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_catalog_migration(uuid,text,bigint,bigint,jsonb) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.fail_catalog_migration(uuid,text,bigint,bigint,jsonb,text,jsonb) TO leapview_ducklake_migrator';
-        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.record_snapshot_requalification(uuid,text,text,bigint,uuid,text,text,text,text,text,text,jsonb,timestamptz,text,bigint,bigint) TO leapview_ducklake_migrator';
+    -- The upgrade coordinator is a control-database capability.  It is
+    -- deliberately distinct from the DuckLake catalog migrator role (which
+    -- is owner-capable in the separate leapview_ducklake database and has no
+    -- control-database CONNECT privilege).
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_upgrade_coordinator') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_upgrade_coordinator';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.catalog_runtime_compatibility, ducklake.catalog_migration, ducklake.snapshot_requalification, ducklake.migration_fence FROM leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_retention, ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_migration_fence(text,text,text,timestamptz) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_migration_fence(text,text,text,bigint) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_migration_fence(text,text,text,bigint,timestamptz) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.register_catalog_runtime_compatibility(text,text,text,text,text,text,text,text,bigint,bigint) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.begin_catalog_migration(uuid,text,text,text,bigint,bigint,text,text,text,text,text,text,text,text,text,text,jsonb) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_catalog_migration(uuid,text,bigint,bigint,jsonb) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.fail_catalog_migration(uuid,text,bigint,bigint,jsonb,text,jsonb) TO leapview_control_upgrade_coordinator';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.record_snapshot_requalification(uuid,text,text,bigint,uuid,text,text,text,text,text,text,jsonb,timestamptz,text,bigint,bigint) TO leapview_control_upgrade_coordinator';
     END IF;
 END
 $$;

@@ -130,6 +130,80 @@ func (c Config) PostgresDuckLakeRuntimeConfig() platformpostgres.Config {
 	}
 }
 
+// PostgresDuckLakeUpgradeConfig returns the two explicitly independent pools
+// used by the catalog upgrade operation. They are intentionally not included
+// in PostgresRuntimeConfig: serving never opens owner-capable catalog
+// credentials or the guarded control coordinator pool.
+func (c Config) PostgresDuckLakeUpgradeConfig() (platformpostgres.Config, platformpostgres.Config) {
+	coordinatorRole := strings.TrimSpace(c.PostgresControlUpgradeCoordinatorRole)
+	if coordinatorRole == "" {
+		coordinatorRole = "leapview_control_upgrade_coordinator"
+	}
+	catalogRole := strings.TrimSpace(c.PostgresDuckLakeMigratorRole)
+	if catalogRole == "" {
+		catalogRole = "leapview_ducklake_migrator"
+	}
+	coordinator := platformpostgres.Config{
+		URL: c.PostgresControlUpgradeCoordinatorURL, ExpectedMajor: c.PostgresExpectedMajor,
+		RuntimeRole: coordinatorRole, Intent: platformpostgres.IntentReadWrite,
+		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
+		AcquireTimeout: c.PostgresControlAcquireTimeout, StatementTimeout: c.PostgresControlStatementTimeout,
+		LockTimeout: c.PostgresControlLockTimeout, IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
+	}
+	catalog := platformpostgres.Config{
+		URL: c.PostgresDuckLakeMigratorURL, ExpectedMajor: c.PostgresExpectedMajor,
+		RuntimeRole: catalogRole, Intent: platformpostgres.IntentReadWrite,
+		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
+		AcquireTimeout: c.PostgresDuckLakeAcquireTimeout, StatementTimeout: c.PostgresDuckLakeStatementTimeout,
+		LockTimeout: c.PostgresDuckLakeLockTimeout, IdleTransactionTimeout: c.PostgresDuckLakeIdleTransactionTimeout,
+	}
+	return coordinator, catalog
+}
+
+// PostgresControlMaintenanceConfig describes the separately authenticated
+// bounded maintenance pool. It is intentionally not part of the serving
+// runtime pool set; callers open it only around an explicit maintenance
+// operation and close it immediately afterwards.
+func (c Config) PostgresControlMaintenanceConfig() platformpostgres.Config {
+	role := strings.TrimSpace(c.PostgresControlMaintenanceRole)
+	if role == "" {
+		role = "leapview_control_maintenance"
+	}
+	return platformpostgres.Config{
+		URL: c.PostgresControlMaintenanceURL, ExpectedMajor: c.PostgresExpectedMajor,
+		RuntimeRole: role, Intent: platformpostgres.IntentReadWrite,
+		RequireTLS: c.PostgresRequireTLS, MinConns: 1, MaxConns: 1,
+		AcquireTimeout: c.PostgresControlAcquireTimeout, StatementTimeout: c.PostgresControlStatementTimeout,
+		LockTimeout: c.PostgresControlLockTimeout, IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
+	}
+}
+
+// ValidatePostgresUpgrade enforces the explicit two-credential operation
+// contract. It is called by an upgrade command, never by serving startup, so
+// an ordinary runtime process cannot accidentally open owner-capable pools.
+func (c Config) ValidatePostgresUpgrade() error {
+	coordinator, catalog := c.PostgresDuckLakeUpgradeConfig()
+	if err := coordinator.Validate(); err != nil {
+		return fmt.Errorf("invalid PostgreSQL upgrade coordinator configuration: %w", err)
+	}
+	if err := catalog.Validate(); err != nil {
+		return fmt.Errorf("invalid PostgreSQL DuckLake migrator configuration: %w", err)
+	}
+	if coordinator.RuntimeRole == catalog.RuntimeRole {
+		return errors.New("PostgreSQL upgrade coordinator and DuckLake migrator roles must be distinct")
+	}
+	if strings.TrimSpace(coordinator.URL) == strings.TrimSpace(c.PostgresControlURL) || strings.TrimSpace(coordinator.URL) == strings.TrimSpace(c.PostgresControlMigratorURL) || strings.TrimSpace(coordinator.URL) == strings.TrimSpace(c.PostgresDuckLakeURL) {
+		return errors.New("PostgreSQL upgrade coordinator URL must use distinct credentials")
+	}
+	if strings.TrimSpace(catalog.URL) == strings.TrimSpace(c.PostgresDuckLakeURL) || strings.TrimSpace(catalog.URL) == strings.TrimSpace(c.PostgresControlURL) || strings.TrimSpace(catalog.URL) == strings.TrimSpace(c.PostgresControlMigratorURL) {
+		return errors.New("PostgreSQL DuckLake migrator URL must use distinct credentials")
+	}
+	if c.Production && !c.PostgresRequireTLS {
+		return errors.New("production PostgreSQL upgrade requires TLS")
+	}
+	return nil
+}
+
 // ValidatePostgresProduction enforces the clean-slate production startup
 // contract.  Production must have separate migrator and runtime credentials;
 // an optional readonly URL is validated when supplied.  This method is kept

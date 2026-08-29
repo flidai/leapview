@@ -8,18 +8,23 @@ control_runtime_password="${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview
 control_readonly_password="${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:-leapview-local-control-readonly}"
 ducklake_runtime_password="${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}"
 control_migrator_password="${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapview-local-control-migrator}"
+control_upgrade_coordinator_password="${LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD:-leapview-local-control-upgrade-coordinator}"
+control_maintenance_password="${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:-leapview-local-control-maintenance}"
 ducklake_migrator_password="${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}"
 
 psql_admin=(psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_STOP=1)
 
 # Roles are intentionally split by capability and privilege level. Owner
-# roles cannot log in; migration roles receive owner membership, while runtime
-# roles receive only the grants needed by their own database.
+# roles cannot log in; only the ordinary control/DuckLake migration roles
+# receive owner membership, while runtime, upgrade-coordinator, and bounded
+# maintenance roles receive only their own guarded capabilities.
 "${psql_admin[@]}" \
   --set=control_runtime_password="${control_runtime_password}" \
   --set=control_readonly_password="${control_readonly_password}" \
   --set=ducklake_runtime_password="${ducklake_runtime_password}" \
   --set=control_migrator_password="${control_migrator_password}" \
+  --set=control_upgrade_coordinator_password="${control_upgrade_coordinator_password}" \
+  --set=control_maintenance_password="${control_maintenance_password}" \
   --set=ducklake_migrator_password="${ducklake_migrator_password}" <<'SQL'
 DO $roles$
 BEGIN
@@ -41,6 +46,12 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         CREATE ROLE leapview_control_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_upgrade_coordinator') THEN
+        CREATE ROLE leapview_control_upgrade_coordinator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        CREATE ROLE leapview_control_maintenance LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+    END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         CREATE ROLE leapview_control_backup NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
@@ -54,10 +65,16 @@ ALTER ROLE leapview_control_runtime PASSWORD :'control_runtime_password';
 ALTER ROLE leapview_control_readonly LOGIN PASSWORD :'control_readonly_password';
 ALTER ROLE leapview_ducklake_runtime PASSWORD :'ducklake_runtime_password';
 ALTER ROLE leapview_control_migrator PASSWORD :'control_migrator_password';
+ALTER ROLE leapview_control_upgrade_coordinator PASSWORD :'control_upgrade_coordinator_password';
+ALTER ROLE leapview_control_maintenance PASSWORD :'control_maintenance_password';
 ALTER ROLE leapview_ducklake_migrator PASSWORD :'ducklake_migrator_password';
 
 GRANT leapview_control_owner TO leapview_control_migrator;
 GRANT leapview_ducklake_owner TO leapview_ducklake_migrator;
+-- The coordinator is intentionally not a member of either owner role.  Its
+-- only authority is the guarded ducklake-control function set granted by the
+-- control schema migration.
+REVOKE leapview_control_owner, leapview_ducklake_owner FROM leapview_control_upgrade_coordinator;
 
 -- Keep the bootstrap database private as well; runtime roles are admitted
 -- only to the capability database they serve.
@@ -92,17 +109,34 @@ REVOKE ALL ON DATABASE leapview_control FROM PUBLIC;
 GRANT CONNECT ON DATABASE leapview_control TO
     leapview_control_runtime,
     leapview_control_migrator,
+    leapview_control_upgrade_coordinator,
+    leapview_control_maintenance,
     leapview_control_readonly,
     leapview_control_backup;
+REVOKE CONNECT ON DATABASE leapview_control FROM leapview_ducklake_runtime, leapview_ducklake_migrator;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 SQL
 
 psql_db leapview_ducklake <<'SQL'
 REVOKE ALL ON DATABASE leapview_ducklake FROM PUBLIC;
 GRANT CONNECT ON DATABASE leapview_ducklake TO leapview_ducklake_runtime, leapview_ducklake_migrator;
+-- The dedicated catalog migrator may precreate one exact per-pool metadata
+-- schema during an explicit bootstrap. Runtime has no database CREATE.
+GRANT CREATE ON DATABASE leapview_ducklake TO leapview_ducklake_migrator;
+REVOKE CREATE ON DATABASE leapview_ducklake FROM leapview_ducklake_runtime;
+REVOKE CONNECT ON DATABASE leapview_ducklake FROM leapview_control_runtime, leapview_control_migrator, leapview_control_upgrade_coordinator, leapview_control_maintenance, leapview_control_readonly, leapview_control_backup;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 CREATE SCHEMA IF NOT EXISTS ducklake AUTHORIZATION leapview_ducklake_owner;
 REVOKE ALL ON SCHEMA ducklake FROM PUBLIC;
 GRANT USAGE ON SCHEMA ducklake TO leapview_ducklake_runtime;
 GRANT USAGE, CREATE ON SCHEMA ducklake TO leapview_ducklake_migrator;
+-- Runtime may perform the catalog's ordinary metadata DML but cannot create,
+-- alter, or drop objects.  Catalog schema changes require the owner-capable
+-- migrator credential and are never automatic for runtime attachments.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ducklake TO leapview_ducklake_runtime;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ducklake TO leapview_ducklake_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO leapview_ducklake_runtime;
+ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
+    GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO leapview_ducklake_runtime;
 SQL

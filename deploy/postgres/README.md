@@ -11,21 +11,33 @@ two databases in one local server:
 
 | Database | Owner | Runtime role | Migration role |
 | --- | --- | --- | --- |
-| `leapview_control` | `leapview_control_owner` | `leapview_control_runtime` (plus `leapview_control_readonly`) | `leapview_control_migrator` |
+| `leapview_control` | `leapview_control_owner` | `leapview_control_runtime` (plus `leapview_control_readonly`) | `leapview_control_migrator` (control migrations) and `leapview_control_upgrade_coordinator` (guarded DuckLake authority) |
 | `leapview_ducklake` | `leapview_ducklake_owner` | `leapview_ducklake_runtime` | `leapview_ducklake_migrator` |
 
 Owner roles cannot log in. Runtime roles can connect only to their own
-database, and migration roles receive owner membership for schema changes.
+database, and the catalog migration role receives owner membership only in
+the separate DuckLake database. The control upgrade coordinator has no owner
+membership and can invoke only the guarded DuckLake-control authority
+functions; it cannot connect to the DuckLake database. The control migrator
+retains owner membership for ordinary control-plane schema migrations.
+The separately authenticated `leapview_control_maintenance` login is bounded
+to maintenance grants and is opened only for explicit maintenance operations;
+it is never reused as a runtime or migration credential.
 The control readonly role has an independent login credential for its bounded
 pool. The backup role is a NOLOGIN group role with control database access;
 deployments attach a separately authenticated operator role to it rather than
 sharing runtime credentials.
 Migration processes must explicitly `SET ROLE` to their capability owner when
-performing owner-level DDL.
+performing owner-level DDL. Ordinary DuckLake runtime attachments always use
+`AUTOMATIC_MIGRATION=false`; catalog bootstrap and upgrades require the
+separate `leapview_ducklake_migrator` credential.
+That migrator alone has narrowly scoped `CREATE` on the DuckLake database so
+an explicit bootstrap can precreate the hash-qualified per-pool metadata
+schema; the runtime role has no database or schema `CREATE` capability.
 The initialization script revokes default `PUBLIC` database/schema access.
 Capability baseline migrations own control-plane schemas and their table
-grants; provisioning creates only the DuckLake catalog schema contract and
-leaves its internal tables to the DuckLake migration authority.
+grants; provisioning creates only the exact DuckLake catalog schema contract
+and leaves its internal tables to the DuckLake migration authority.
 
 Start the service with:
 

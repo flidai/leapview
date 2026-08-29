@@ -139,6 +139,14 @@ func canonicalDataPath(value string) (string, error) {
 	return canonicalLocalPath(value)
 }
 
+// CanonicalDataPath exposes the same storage-path normalization used by
+// physical-pool admission to operation packages that verify an attached
+// DuckLake catalog. Keeping one implementation prevents false mismatches for
+// URL host casing, trailing separators, and local relative paths.
+func CanonicalDataPath(value string) (string, error) {
+	return canonicalDataPath(value)
+}
+
 func canonicalLocalPath(value string) (string, error) {
 	absolute, err := filepath.Abs(value)
 	if err != nil {

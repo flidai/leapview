@@ -10,6 +10,7 @@ package ducklake
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
@@ -57,12 +58,21 @@ const (
 	PostgresCatalogWriter PostgresCatalogMode = "writer"
 	// PostgresCatalogServing attaches a qualified snapshot read-only.
 	PostgresCatalogServing PostgresCatalogMode = "serving"
+	// PostgresCatalogMigrate is reserved for the fenced catalog upgrade
+	// coordinator. It is never accepted by ordinary AttachSQL/Statements;
+	// callers must use MigrationStatements so AUTOMATIC_MIGRATION=true is an
+	// explicit, reviewable operation.
+	PostgresCatalogMigrate PostgresCatalogMode = "migrate"
 )
 
 // PostgresCatalogConfig describes one DuckLake PostgreSQL metadata attach.
 // PostgreSQL connection details are supplied by a separately provisioned
 // DuckDB postgres secret.  No DSN or password is accepted by this type.
 type PostgresCatalogConfig struct {
+	// PhysicalPoolID scopes the metadata schema to one admitted pool/security
+	// domain. It is required for fenced migration mode and, when supplied for
+	// runtime modes, must match MetadataSchema exactly.
+	PhysicalPoolID  string
 	DuckLakeSecret  string
 	PostgresSecret  string
 	MetadataSchema  string
@@ -73,6 +83,9 @@ type PostgresCatalogConfig struct {
 
 // Validate checks names, mode invariants, and required storage identity.
 func (c PostgresCatalogConfig) Validate() error {
+	if strings.TrimSpace(c.PhysicalPoolID) != "" && strings.TrimSpace(c.PhysicalPoolID) != c.PhysicalPoolID {
+		return errors.New("physical pool id is not normalized")
+	}
 	if err := validateCatalogIdentifier("DuckLake secret", c.DuckLakeSecret); err != nil {
 		return err
 	}
@@ -81,6 +94,9 @@ func (c PostgresCatalogConfig) Validate() error {
 	}
 	if err := validateCatalogIdentifier("metadata schema", c.MetadataSchema); err != nil {
 		return err
+	}
+	if c.PhysicalPoolID != "" && c.MetadataSchema != MetadataSchemaForPool(c.PhysicalPoolID) {
+		return fmt.Errorf("metadata schema %q is not admitted for physical pool %q", c.MetadataSchema, c.PhysicalPoolID)
 	}
 	if strings.TrimSpace(string(c.Mode)) == "" {
 		return errors.New("PostgreSQL DuckLake catalog mode is required")
@@ -107,10 +123,28 @@ func (c PostgresCatalogConfig) Validate() error {
 		if c.SnapshotVersion <= 0 {
 			return errors.New("serving PostgreSQL DuckLake attachment requires a positive SNAPSHOT_VERSION")
 		}
+	case PostgresCatalogMigrate:
+		if strings.TrimSpace(c.PhysicalPoolID) == "" {
+			return errors.New("physical pool id is required when migrating a PostgreSQL DuckLake catalog")
+		}
+		if strings.TrimSpace(c.DataPath) != "" {
+			return errors.New("DATA_PATH must be loaded from catalog metadata when migrating a PostgreSQL DuckLake catalog")
+		}
+		if c.SnapshotVersion != 0 {
+			return errors.New("SNAPSHOT_VERSION is not valid while migrating a PostgreSQL DuckLake catalog")
+		}
 	default:
 		return fmt.Errorf("unsupported PostgreSQL DuckLake catalog mode %q", c.Mode)
 	}
 	return nil
+}
+
+// MetadataSchemaForPool derives a stable, SQL-safe metadata namespace for one
+// physical pool. The digest avoids leaking arbitrary tenant identifiers while
+// preventing one catalog attach from reflecting another pool's tables.
+func MetadataSchemaForPool(physicalPoolID string) string {
+	digest := sha256.Sum256([]byte(physicalPoolID))
+	return "leapview_catalog_" + hex.EncodeToString(digest[:])[:32]
 }
 
 func validateCatalogIdentifier(label, value string) error {
@@ -147,6 +181,9 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 	if err := c.Validate(); err != nil {
 		return "", err
 	}
+	if c.Mode == PostgresCatalogMigrate {
+		return "", errors.New("PostgresCatalogMigrate requires the fenced MigrationStatements operation")
+	}
 	options := []string{
 		fmt.Sprintf("METADATA_SCHEMA '%s'", sqlLiteral(c.MetadataSchema)),
 		"AUTOMATIC_MIGRATION false",
@@ -163,6 +200,24 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 		options = append(options, "READ_ONLY", "CREATE_IF_NOT_EXISTS false", fmt.Sprintf("SNAPSHOT_VERSION %d", c.SnapshotVersion))
 	}
 	return fmt.Sprintf("ATTACH 'ducklake:%s' AS %s (%s)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), strings.Join(options, ", ")), nil
+}
+
+// MigrationStatements is the only SQL constructor that enables DuckLake's
+// automatic schema migration. It is intentionally separate from AttachSQL so
+// runtime composition cannot opt in by toggling a boolean.
+func (c PostgresCatalogConfig) MigrationStatements() ([]string, error) {
+	if c.Mode != PostgresCatalogMigrate {
+		return nil, errors.New("MigrationStatements requires PostgresCatalogMigrate mode")
+	}
+	if err := c.Validate(); err != nil {
+		return nil, err
+	}
+	secret, err := c.DuckLakeSecretSQL()
+	if err != nil {
+		return nil, err
+	}
+	attach := fmt.Sprintf("ATTACH 'ducklake:%s' AS %s (METADATA_SCHEMA '%s', AUTOMATIC_MIGRATION true, CREATE_IF_NOT_EXISTS false)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), sqlLiteral(c.MetadataSchema))
+	return []string{secret, attach}, nil
 }
 
 // Statements returns the secret creation and attachment statements in their
