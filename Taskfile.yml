@@ -875,6 +875,12 @@ tasks:
       - ./scripts/promtool.sh check rules deploy/observability/prometheus/leapview-alerts.yaml
       - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-alerts.test.yaml
 
+  observability:sli:check:
+    desc: Validate repository-owned Prometheus SLI recording rules and fixtures
+    cmds:
+      - ./scripts/promtool.sh check rules deploy/observability/prometheus/leapview-recording-rules.yaml
+      - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-recording-rules.test.yaml
+
   image:qualify:production:
     desc: Qualify an immutable LeapView production image
     requires:
