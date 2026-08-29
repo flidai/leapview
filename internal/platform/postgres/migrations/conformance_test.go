@@ -94,8 +94,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal("schema revision append-only trigger did not reject an update")
 	}
 	if _, err := db.Exec(ctx, `
-		INSERT INTO audit.audit_event (audit_id, action, outcome)
-		VALUES ('00000000-0000-0000-0000-000000000002', 'schema.test', 'success')`); err != nil {
+		INSERT INTO audit.audit_event
+		    (audit_id, source, operation, action, capability, outcome,
+		     aggregate_key, aggregate_sequence, intent_digest)
+		VALUES ('00000000-0000-0000-0000-000000000002', 'schema', 'test',
+		        'schema.test', '', 'success', 'schema:test', 0,
+		        'sha256:0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `UPDATE audit.audit_event SET action = 'tampered' WHERE audit_id = '00000000-0000-0000-0000-000000000002'`); err == nil {
@@ -113,8 +117,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := runtimeConn.Exec(ctx, `
-		INSERT INTO audit.audit_event (audit_id, action, outcome)
-		VALUES ('00000000-0000-0000-0000-000000000003', 'runtime.test', 'success')`); err != nil {
+		INSERT INTO audit.audit_event
+		    (audit_id, source, operation, action, capability, outcome,
+		     aggregate_key, aggregate_sequence, intent_digest)
+		VALUES ('00000000-0000-0000-0000-000000000003', 'runtime', 'test',
+		        'runtime.test', '', 'success', 'runtime:test', 0,
+		        'sha256:0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
 		t.Fatalf("runtime audit append: %v", err)
 	}
 
