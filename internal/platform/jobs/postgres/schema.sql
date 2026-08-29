@@ -10,6 +10,7 @@ CREATE TABLE IF NOT EXISTS jobs.job (
     workload_class          text NOT NULL CHECK (workload_class IN ('background', 'control')),
     principal_id            text NOT NULL CHECK (principal_id = btrim(principal_id) AND length(principal_id) BETWEEN 1 AND 256),
     group_ids               text[] NOT NULL DEFAULT '{}'::text[],
+    partition_key           text NOT NULL CHECK (partition_key = btrim(partition_key) AND length(partition_key) BETWEEN 1 AND 512),
     resource_kind           text NOT NULL,
     resource_id             text NOT NULL,
     estimated_memory_bytes  bigint NOT NULL CHECK (estimated_memory_bytes > 0),
@@ -40,7 +41,10 @@ CREATE TABLE IF NOT EXISTS jobs.job (
 CREATE INDEX IF NOT EXISTS job_claim_idx
     ON jobs.job (workload_class, status, available_at, created_at, id);
 CREATE INDEX IF NOT EXISTS job_principal_order_idx
-    ON jobs.job (workload_class, principal_id, created_at, id);
+    ON jobs.job (workload_class, partition_key, principal_id, created_at, id);
+CREATE INDEX IF NOT EXISTS job_refresh_recovery_idx
+    ON jobs.job (resource_kind, status, created_at, id)
+    WHERE resource_kind = 'refresh_run' AND status IN ('queued','running');
 
 CREATE OR REPLACE FUNCTION jobs.guard_job_insert()
 RETURNS trigger
@@ -232,6 +236,7 @@ BEGIN
        OR NEW.workload_class IS DISTINCT FROM OLD.workload_class
        OR NEW.principal_id IS DISTINCT FROM OLD.principal_id
        OR NEW.group_ids IS DISTINCT FROM OLD.group_ids
+       OR NEW.partition_key IS DISTINCT FROM OLD.partition_key
        OR NEW.resource_kind IS DISTINCT FROM OLD.resource_kind
        OR NEW.resource_id IS DISTINCT FROM OLD.resource_id
        OR NEW.estimated_memory_bytes IS DISTINCT FROM OLD.estimated_memory_bytes
@@ -247,7 +252,7 @@ BEGIN
             RAISE EXCEPTION 'terminal job is immutable';
         END IF;
     ELSIF OLD.status = 'queued' THEN
-        IF NEW.status NOT IN ('queued', 'running', 'cancelled') THEN
+		IF NEW.status NOT IN ('queued', 'running', 'succeeded', 'failed', 'cancelled') THEN
             RAISE EXCEPTION 'invalid queued job transition';
         END IF;
         IF NEW.status = 'queued' AND NEW IS DISTINCT FROM OLD THEN
@@ -269,15 +274,30 @@ BEGIN
         IF NEW.status = 'running' THEN
             NEW.started_at := COALESCE(OLD.started_at, clock_timestamp());
         END IF;
-        IF NEW.status = 'cancelled' AND (
+		IF NEW.status = 'cancelled' AND (
             NEW.available_at IS DISTINCT FROM OLD.available_at OR
             NEW.started_at IS DISTINCT FROM OLD.started_at OR
-            NEW.error IS DISTINCT FROM OLD.error OR
+            COALESCE(NEW.error->>'code','') NOT IN ('JOB_CANCELLED','REFRESH_POISON_PAYLOAD','REFRESH_RUN_TERMINAL','REFRESH_SUPERSEDED') OR
             NEW.attempt_count IS DISTINCT FROM OLD.attempt_count OR
             NEW.lease_generation IS DISTINCT FROM OLD.lease_generation OR
             NEW.finished_at IS NULL) THEN
             RAISE EXCEPTION 'queued cancellation changed immutable job fields';
         END IF;
+		IF NEW.status IN ('succeeded','failed') AND (
+			NEW.available_at IS DISTINCT FROM OLD.available_at OR
+			NEW.started_at IS DISTINCT FROM OLD.started_at OR
+			NEW.attempt_count IS DISTINCT FROM OLD.attempt_count OR
+			NEW.lease_generation IS DISTINCT FROM OLD.lease_generation OR
+			NEW.finished_at IS NULL OR
+			NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL) THEN
+			RAISE EXCEPTION 'queued terminal transition changed immutable job fields';
+		END IF;
+		IF NEW.status = 'succeeded' AND (NEW.error IS DISTINCT FROM '{}'::jsonb OR NEW.attempt_count = 0) THEN
+			RAISE EXCEPTION 'queued success requires empty error evidence';
+		END IF;
+		IF NEW.status = 'failed' AND COALESCE(NEW.error->>'code','') <> 'REFRESH_RUN_TERMINAL' THEN
+			RAISE EXCEPTION 'queued failure requires stable terminal evidence';
+		END IF;
         IF NEW.status = 'queued' AND (NEW.lease_owner <> '' OR NEW.lease_expires_at IS NOT NULL) THEN
             RAISE EXCEPTION 'queued job cannot retain a lease';
         END IF;
@@ -355,20 +375,53 @@ BEGIN
        OR NEW.started_at IS DISTINCT FROM OLD.started_at THEN
         RAISE EXCEPTION 'attempt identity is immutable';
     END IF;
-    IF OLD.outcome <> 'running' AND NEW IS DISTINCT FROM OLD THEN
+    IF OLD.outcome NOT IN ('running','retrying') AND NEW IS DISTINCT FROM OLD THEN
         RAISE EXCEPTION 'terminal attempt is immutable';
     END IF;
-    IF OLD.outcome = 'running' AND NEW.outcome NOT IN ('running', 'succeeded', 'failed', 'cancelled', 'expired', 'retrying') THEN
+    IF OLD.outcome = 'retrying' THEN
+        -- Retry evidence is already finished.  It may only be closed by a
+        -- terminal recovery/cancellation path; it can never be revived or
+        -- rewritten in place.
+        IF NEW.outcome NOT IN ('succeeded','failed','cancelled') THEN
+            RAISE EXCEPTION 'retrying attempt is terminally recoverable only';
+        END IF;
+        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at OR NEW.retry_at IS NOT NULL THEN
+            RAISE EXCEPTION 'retrying attempt changed immutable lease fields';
+        END IF;
+        IF NEW.outcome = 'succeeded' AND NEW.error IS DISTINCT FROM '{}'::jsonb THEN
+            RAISE EXCEPTION 'retrying success requires empty error evidence';
+        END IF;
+        IF NEW.outcome IN ('failed','cancelled') AND COALESCE(NEW.error->>'code','') NOT IN ('JOB_CANCELLED','REFRESH_POISON_PAYLOAD','REFRESH_RUN_TERMINAL','REFRESH_SUPERSEDED') THEN
+            RAISE EXCEPTION 'retrying terminal transition requires stable evidence';
+        END IF;
+        NEW.finished_at := clock_timestamp();
+        NEW.retry_at := NULL;
+        RETURN NEW;
+    END IF;
+    IF NEW.outcome NOT IN ('running', 'succeeded', 'failed', 'cancelled', 'expired', 'retrying') THEN
         RAISE EXCEPTION 'invalid attempt transition';
     END IF;
-    IF OLD.outcome = 'running' AND NEW.outcome = 'running' AND NEW.lease_expires_at < OLD.lease_expires_at THEN
-        RAISE EXCEPTION 'heartbeat cannot shorten an attempt lease';
+    IF OLD.outcome = 'running' AND NEW.outcome = 'running' THEN
+        IF NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.retry_at IS DISTINCT FROM OLD.retry_at OR NEW.error IS DISTINCT FROM OLD.error THEN
+            RAISE EXCEPTION 'heartbeat changed fields outside the lease';
+        END IF;
+        IF NEW.lease_expires_at < OLD.lease_expires_at THEN
+            RAISE EXCEPTION 'heartbeat cannot shorten an attempt lease';
+        END IF;
+        RETURN NEW;
+    END IF;
+    IF OLD.outcome = 'running' AND NEW.outcome = 'retrying' THEN
+        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at OR NEW.finished_at IS NULL OR NEW.retry_at IS NULL THEN
+            RAISE EXCEPTION 'retry transition changed fields outside retry evidence';
+        END IF;
+        RETURN NEW;
     END IF;
     IF OLD.outcome = 'running' AND NEW.outcome <> 'running' THEN
-        NEW.finished_at := clock_timestamp();
-        IF NEW.outcome <> 'retrying' THEN
-            NEW.retry_at := NULL;
+        IF NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+            RAISE EXCEPTION 'terminal transition changed immutable lease fields';
         END IF;
+        NEW.finished_at := clock_timestamp();
+        NEW.retry_at := NULL;
     END IF;
     RETURN NEW;
 END;

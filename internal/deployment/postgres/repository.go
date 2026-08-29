@@ -32,7 +32,13 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-type Tx = DBTX
+// Tx is the caller-owned native transaction surface. Pools and connections
+// intentionally do not satisfy it, preventing accidental split-brain writes.
+type Tx interface {
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -136,16 +142,16 @@ type TerminateAttemptInput struct {
 // SnapshotSeal is immutable qualification evidence.  Every field that can
 // affect execution or routing is relational, never hidden in evidence JSON.
 type SnapshotSeal struct {
-	SealID, AttemptID, CandidateID                                                                        string
-	PhysicalPoolID, TenantDomain, Region, EncryptionDomain, ObjectNamespace, CatalogDatabase, CatalogUUID string
-	CatalogVersion, DuckLakeSnapshotID                                                                    int64
-	RelationNamespace, ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                     string
-	RelationManifestDigest                                                                                string
-	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                                  string
-	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactDigest                                 string
-	DuckDBVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion                    string
-	QualificationEvidence                                                                                 json.RawMessage
-	QualifiedAt                                                                                           time.Time
+	SealID, AttemptID, CandidateID                                                                                   string
+	PhysicalPoolID, TenantDomain, Region, EncryptionDomain, ObjectNamespace, CatalogDatabase, CatalogID, CatalogUUID string
+	CatalogVersion, DuckLakeSnapshotID                                                                               int64
+	RelationNamespace, ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                                string
+	RelationManifestDigest                                                                                           string
+	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                                             string
+	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactDigest                                            string
+	DuckDBVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion                               string
+	QualificationEvidence                                                                                            json.RawMessage
+	QualifiedAt                                                                                                      time.Time
 }
 type SnapshotSealInput = SnapshotSeal
 type DeliverySnapshotSeal = SnapshotSeal
@@ -171,10 +177,10 @@ type GenerationInput = DeliveryGeneration
 type DeliveryGenerationInput = DeliveryGeneration
 
 type DeliveryPublication struct {
-	PublicationID, TargetID, GenerationID, CandidateID, SnapshotSealID string
-	ExpectedTargetRevision, ResultTargetRevision                       int64
-	ActorID, State, RequestDigest                                      string
-	CreatedAt, CommittedAt                                             time.Time
+	PublicationID, TargetID, GenerationID, ExpectedBaseGenerationID, CandidateID, SnapshotSealID string
+	ExpectedTargetRevision, ResultTargetRevision                                                 int64
+	ActorID, State, RequestDigest                                                                string
+	CreatedAt, CommittedAt                                                                       time.Time
 }
 type PublicationInput = DeliveryPublication
 type DeliveryPublicationInput = DeliveryPublication
@@ -606,6 +612,30 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	p.Evidence = append([]byte(nil), ev...)
 	return p, nil
 }
+
+// PlanTx reads immutable delivery-plan evidence through a caller-owned
+// transaction. It is used by refresh publication adapters that must verify
+// deployment state before committing their own authority transaction.
+func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan, error) {
+	if tx == nil {
+		return DeliveryPlan{}, ErrInvalid
+	}
+	id, err := uuidID(id, "plan id", false)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	var p DeliveryPlan
+	var ev []byte
+	err = tx.QueryRow(contextOrBackground(ctx), `SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence,created_at FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, id).Scan(&p.PlanID, &p.TargetID, &p.PlanRevision, &p.PlanDigest, &p.CompiledGraphDigest, &p.CompiledConfigDigest, &p.SecurityDomainFingerprint, &p.ArtifactDigest, &p.QualificationRequired, &ev, &p.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryPlan{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	p.Evidence = append([]byte(nil), ev...)
+	return p, nil
+}
 func (r *Repository) LoadPlan(ctx context.Context, id string) (DeliveryPlan, error) {
 	return r.Plan(ctx, id)
 }
@@ -717,6 +747,19 @@ func (r *Repository) BuildAttempt(ctx context.Context, id string) (DeliveryBuild
 		return DeliveryBuildAttempt{}, err
 	}
 	return loadAttempt(contextOrBackground(ctx), db, id)
+}
+
+// BuildAttemptTx reads immutable delivery build-attempt evidence through a
+// caller-owned transaction.
+func (r *Repository) BuildAttemptTx(ctx context.Context, tx Tx, id string) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	id, err := uuidID(id, "attempt id", false)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	return loadAttempt(contextOrBackground(ctx), tx, id)
 }
 func (r *Repository) LoadBuildAttempt(ctx context.Context, id string) (DeliveryBuildAttempt, error) {
 	return r.BuildAttempt(ctx, id)
@@ -888,7 +931,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	if in.PhysicalPoolID == "" || in.TenantDomain == "" || in.Region == "" || in.EncryptionDomain == "" || in.ObjectNamespace == "" || in.CatalogDatabase == "" || in.CatalogUUID == "" || in.RelationNamespace == "" || in.ObjectRoot == "" || in.ArtifactRoot == "" || in.ObjectRootDigest == "" || in.ArtifactRootDigest == "" {
+	if in.PhysicalPoolID == "" || in.TenantDomain == "" || in.Region == "" || in.EncryptionDomain == "" || in.ObjectNamespace == "" || in.CatalogDatabase == "" || in.CatalogID == "" || in.CatalogUUID == "" || in.RelationNamespace == "" || in.ObjectRoot == "" || in.ArtifactRoot == "" || in.ObjectRootDigest == "" || in.ArtifactRootDigest == "" {
 		return SnapshotSeal{}, ErrInvalid
 	}
 	canonicalCatalogUUID, err := uuidID(in.CatalogUUID, "catalog uuid", false)
@@ -896,7 +939,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 		return SnapshotSeal{}, err
 	}
 	in.CatalogUUID = canonicalCatalogUUID
-	for label, value := range map[string]string{"physical pool id": in.PhysicalPoolID, "catalog database": in.CatalogDatabase, "relation namespace": in.RelationNamespace, "object root": in.ObjectRoot, "artifact root": in.ArtifactRoot} {
+	for label, value := range map[string]string{"physical pool id": in.PhysicalPoolID, "catalog database": in.CatalogDatabase, "catalog id": in.CatalogID, "relation namespace": in.RelationNamespace, "object root": in.ObjectRoot, "artifact root": in.ArtifactRoot} {
 		if value == "" || value != strings.TrimSpace(value) || len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
 			return SnapshotSeal{}, fmt.Errorf("%w: %s", ErrInvalid, label)
 		}
@@ -957,7 +1000,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if planDigest != in.PlanDigest || planGraph != in.CompiledGraphDigest || planConfig != in.CompiledConfigDigest || planSecurity != in.SecurityDomainFingerprint || planArtifact != in.ServingArtifactDigest {
 		return SnapshotSeal{}, fmt.Errorf("%w: plan evidence differs", ErrNotQualified)
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30::jsonb) ON CONFLICT(seal_id) DO NOTHING`, id, attempt, candidate, in.PhysicalPoolID, in.TenantDomain, in.Region, in.EncryptionDomain, in.ObjectNamespace, in.CatalogDatabase, in.CatalogUUID, in.CatalogVersion, in.DuckLakeSnapshotID, in.RelationNamespace, in.RelationManifestDigest, in.ObjectRoot, in.ObjectRootDigest, in.ArtifactRoot, in.ArtifactRootDigest, in.CompiledGraphDigest, in.CompiledConfigDigest, in.SecurityDomainFingerprint, in.RequestDigest, in.PlanDigest, in.CompatibilityDigest, in.ServingArtifactDigest, in.DuckDBVersion, in.DuckLakeExtensionVersion, in.DuckLakeSpecVersion, in.CatalogSchemaVersion, evidence)
+	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb) ON CONFLICT(seal_id) DO NOTHING`, id, attempt, candidate, in.PhysicalPoolID, in.TenantDomain, in.Region, in.EncryptionDomain, in.ObjectNamespace, in.CatalogDatabase, in.CatalogID, in.CatalogUUID, in.CatalogVersion, in.DuckLakeSnapshotID, in.RelationNamespace, in.RelationManifestDigest, in.ObjectRoot, in.ObjectRootDigest, in.ArtifactRoot, in.ArtifactRootDigest, in.CompiledGraphDigest, in.CompiledConfigDigest, in.SecurityDomainFingerprint, in.RequestDigest, in.PlanDigest, in.CompatibilityDigest, in.ServingArtifactDigest, in.DuckDBVersion, in.DuckLakeExtensionVersion, in.DuckLakeSpecVersion, in.CatalogSchemaVersion, evidence)
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
@@ -971,7 +1014,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	return s, nil
 }
 func sameSealIdentity(a SnapshotSeal, b SnapshotSeal) bool {
-	return a.AttemptID == b.AttemptID && a.CandidateID == b.CandidateID && a.PhysicalPoolID == b.PhysicalPoolID && a.TenantDomain == b.TenantDomain && a.Region == b.Region && a.EncryptionDomain == b.EncryptionDomain && a.ObjectNamespace == b.ObjectNamespace && a.CatalogDatabase == b.CatalogDatabase && a.CatalogUUID == b.CatalogUUID && a.CatalogVersion == b.CatalogVersion && a.DuckLakeSnapshotID == b.DuckLakeSnapshotID && a.RelationNamespace == b.RelationNamespace && a.RelationManifestDigest == b.RelationManifestDigest && a.ObjectRoot == b.ObjectRoot && a.ObjectRootDigest == b.ObjectRootDigest && a.ArtifactRoot == b.ArtifactRoot && a.ArtifactRootDigest == b.ArtifactRootDigest && a.CompiledGraphDigest == b.CompiledGraphDigest && a.CompiledConfigDigest == b.CompiledConfigDigest && a.SecurityDomainFingerprint == b.SecurityDomainFingerprint && a.RequestDigest == b.RequestDigest && a.PlanDigest == b.PlanDigest && a.CompatibilityDigest == b.CompatibilityDigest && a.ServingArtifactDigest == b.ServingArtifactDigest && a.DuckDBVersion == b.DuckDBVersion && a.DuckLakeExtensionVersion == b.DuckLakeExtensionVersion && a.DuckLakeSpecVersion == b.DuckLakeSpecVersion && a.CatalogSchemaVersion == b.CatalogSchemaVersion && sameCanonical(a.QualificationEvidence, b.QualificationEvidence)
+	return a.AttemptID == b.AttemptID && a.CandidateID == b.CandidateID && a.PhysicalPoolID == b.PhysicalPoolID && a.TenantDomain == b.TenantDomain && a.Region == b.Region && a.EncryptionDomain == b.EncryptionDomain && a.ObjectNamespace == b.ObjectNamespace && a.CatalogDatabase == b.CatalogDatabase && a.CatalogID == b.CatalogID && a.CatalogUUID == b.CatalogUUID && a.CatalogVersion == b.CatalogVersion && a.DuckLakeSnapshotID == b.DuckLakeSnapshotID && a.RelationNamespace == b.RelationNamespace && a.RelationManifestDigest == b.RelationManifestDigest && a.ObjectRoot == b.ObjectRoot && a.ObjectRootDigest == b.ObjectRootDigest && a.ArtifactRoot == b.ArtifactRoot && a.ArtifactRootDigest == b.ArtifactRootDigest && a.CompiledGraphDigest == b.CompiledGraphDigest && a.CompiledConfigDigest == b.CompiledConfigDigest && a.SecurityDomainFingerprint == b.SecurityDomainFingerprint && a.RequestDigest == b.RequestDigest && a.PlanDigest == b.PlanDigest && a.CompatibilityDigest == b.CompatibilityDigest && a.ServingArtifactDigest == b.ServingArtifactDigest && a.DuckDBVersion == b.DuckDBVersion && a.DuckLakeExtensionVersion == b.DuckLakeExtensionVersion && a.DuckLakeSpecVersion == b.DuckLakeSpecVersion && a.CatalogSchemaVersion == b.CatalogSchemaVersion && sameCanonical(a.QualificationEvidence, b.QualificationEvidence)
 }
 
 func sameCanonical(a, b []byte) bool {
@@ -983,7 +1026,7 @@ func loadSeal(ctx context.Context, db DBTX, id string) (SnapshotSeal, error) {
 	var s SnapshotSeal
 	var aid, cid string
 	var evidence []byte
-	err := db.QueryRow(ctx, `SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,''),physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, id).Scan(&s.SealID, &aid, &cid, &s.PhysicalPoolID, &s.TenantDomain, &s.Region, &s.EncryptionDomain, &s.ObjectNamespace, &s.CatalogDatabase, &s.CatalogUUID, &s.CatalogVersion, &s.DuckLakeSnapshotID, &s.RelationNamespace, &s.RelationManifestDigest, &s.ObjectRoot, &s.ObjectRootDigest, &s.ArtifactRoot, &s.ArtifactRootDigest, &s.CompiledGraphDigest, &s.CompiledConfigDigest, &s.SecurityDomainFingerprint, &s.RequestDigest, &s.PlanDigest, &s.CompatibilityDigest, &s.ServingArtifactDigest, &s.DuckDBVersion, &s.DuckLakeExtensionVersion, &s.DuckLakeSpecVersion, &s.CatalogSchemaVersion, &evidence, &s.QualifiedAt)
+	err := db.QueryRow(ctx, `SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,''),physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, id).Scan(&s.SealID, &aid, &cid, &s.PhysicalPoolID, &s.TenantDomain, &s.Region, &s.EncryptionDomain, &s.ObjectNamespace, &s.CatalogDatabase, &s.CatalogID, &s.CatalogUUID, &s.CatalogVersion, &s.DuckLakeSnapshotID, &s.RelationNamespace, &s.RelationManifestDigest, &s.ObjectRoot, &s.ObjectRootDigest, &s.ArtifactRoot, &s.ArtifactRootDigest, &s.CompiledGraphDigest, &s.CompiledConfigDigest, &s.SecurityDomainFingerprint, &s.RequestDigest, &s.PlanDigest, &s.CompatibilityDigest, &s.ServingArtifactDigest, &s.DuckDBVersion, &s.DuckLakeExtensionVersion, &s.DuckLakeSpecVersion, &s.CatalogSchemaVersion, &evidence, &s.QualifiedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotSeal{}, ErrNotFound
 	}
@@ -1004,6 +1047,18 @@ func (r *Repository) SnapshotSeal(ctx context.Context, id string) (SnapshotSeal,
 		return SnapshotSeal{}, err
 	}
 	return loadSeal(contextOrBackground(ctx), db, id)
+}
+
+// SnapshotSealTx is the transaction-aware immutable seal projection.
+func (r *Repository) SnapshotSealTx(ctx context.Context, tx Tx, id string) (SnapshotSeal, error) {
+	if tx == nil {
+		return SnapshotSeal{}, ErrInvalid
+	}
+	id, err := uuidID(id, "seal id", false)
+	if err != nil {
+		return SnapshotSeal{}, err
+	}
+	return loadSeal(contextOrBackground(ctx), tx, id)
 }
 func (r *Repository) LoadSnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {
 	return r.SnapshotSeal(ctx, id)
@@ -1244,6 +1299,51 @@ func (r *Repository) Generation(ctx context.Context, id string) (DeliveryGenerat
 	}
 	return loadGeneration(contextOrBackground(ctx), db, id, GenerationInput{})
 }
+
+// GenerationTx reads immutable serving-generation evidence through a
+// caller-owned transaction.
+func (r *Repository) GenerationTx(ctx context.Context, tx Tx, id string) (DeliveryGeneration, error) {
+	if tx == nil {
+		return DeliveryGeneration{}, ErrInvalid
+	}
+	id, err := uuidID(id, "generation id", false)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	return loadGeneration(contextOrBackground(ctx), tx, id, GenerationInput{})
+}
+
+// TargetTx reads the immutable project/environment identity for a delivery
+// target through a caller-owned transaction.
+func (r *Repository) TargetTx(ctx context.Context, tx Tx, id string) (DeliveryTarget, error) {
+	if tx == nil {
+		return DeliveryTarget{}, ErrInvalid
+	}
+	id, err := textID(id, "target id")
+	if err != nil {
+		return DeliveryTarget{}, err
+	}
+	return loadTarget(contextOrBackground(ctx), tx, id)
+}
+
+// TargetForShareTx reads and share-locks the immutable delivery target row.
+// Activation acquires the same row FOR UPDATE, so a canonical refresh proof
+// that uses this projection cannot be overtaken before its transaction commits.
+func (r *Repository) TargetForShareTx(ctx context.Context, tx Tx, id string) (DeliveryTarget, error) {
+	if tx == nil {
+		return DeliveryTarget{}, ErrInvalid
+	}
+	id, err := textID(id, "target id")
+	if err != nil {
+		return DeliveryTarget{}, err
+	}
+	var target DeliveryTarget
+	err = tx.QueryRow(contextOrBackground(ctx), `SELECT t.target_id,t.project_id,t.environment,t.target_revision,COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=$1 FOR SHARE`, id).Scan(&target.TargetID, &target.ProjectID, &target.Environment, &target.TargetRevision, &target.ActiveGenerationID, &target.ActivePublicationID, &target.CreatedAt, &target.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryTarget{}, ErrNotFound
+	}
+	return target, err
+}
 func (r *Repository) LoadGeneration(ctx context.Context, id string) (DeliveryGeneration, error) {
 	return r.Generation(ctx, id)
 }
@@ -1281,12 +1381,35 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 	if in.ExpectedTargetRevision <= 0 {
 		return DeliveryPublication{}, ErrInvalid
 	}
+	baseGeneration := ""
+	if in.ExpectedBaseGenerationID != "" {
+		baseGeneration, err = uuidID(in.ExpectedBaseGenerationID, "expected base generation id", false)
+		if err != nil {
+			return DeliveryPublication{}, err
+		}
+	}
 	if _, err := digest(in.RequestDigest, "request digest"); err != nil {
 		return DeliveryPublication{}, err
 	}
 	actor, err := textID(in.ActorID, "actor id")
 	if err != nil {
 		return DeliveryPublication{}, err
+	}
+	// Idempotent replay is keyed by the caller-owned publication identity. Do
+	// this lookup before deriving the current active pointer: a committed
+	// publication may be retried after its generation became active, and must
+	// still return the original expected-base generation rather than conflict
+	// with the newer pointer.
+	if existing, lookupErr := loadPublication(ctx, db, id); lookupErr == nil {
+		if existing.TargetID != target || existing.GenerationID != generation || existing.CandidateID != candidate || existing.SnapshotSealID != seal || existing.ExpectedTargetRevision != in.ExpectedTargetRevision || existing.ActorID != actor || existing.RequestDigest != in.RequestDigest {
+			return DeliveryPublication{}, ErrConflict
+		}
+		if in.ExpectedBaseGenerationID != "" && existing.ExpectedBaseGenerationID != baseGeneration {
+			return DeliveryPublication{}, ErrConflict
+		}
+		return existing, nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return DeliveryPublication{}, lookupErr
 	}
 	var gt, gc, gs string
 	if err := db.QueryRow(ctx, `SELECT target_id,candidate_id::text,snapshot_seal_id::text FROM delivery.delivery_generation WHERE generation_id=$1::uuid`, generation).Scan(&gt, &gc, &gs); errors.Is(err, pgx.ErrNoRows) {
@@ -1306,7 +1429,18 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 	if (candidateStatus != "qualified" && candidateStatus != "ready" && candidateStatus != "admitted") || candidateTarget != target || candidateSeal != seal {
 		return DeliveryPublication{}, ErrNotQualified
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,target_id,generation_id,candidate_id,snapshot_seal_id,expected_target_revision,actor_id,state,request_digest) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,'pending',$8) ON CONFLICT(publication_id) DO NOTHING`, id, target, generation, candidate, seal, in.ExpectedTargetRevision, actor, in.RequestDigest)
+	var activeBase string
+	if err := db.QueryRow(ctx, `SELECT COALESCE(generation_id::text,'') FROM delivery.delivery_active_pointer WHERE target_id=$1`, target).Scan(&activeBase); errors.Is(err, pgx.ErrNoRows) {
+		activeBase = ""
+	} else if err != nil {
+		return DeliveryPublication{}, err
+	}
+	if baseGeneration == "" {
+		baseGeneration = activeBase
+	} else if baseGeneration != activeBase {
+		return DeliveryPublication{}, ErrCASConflict
+	}
+	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,target_id,generation_id,expected_base_generation_id,candidate_id,snapshot_seal_id,expected_target_revision,actor_id,state,request_digest) VALUES($1::uuid,$2,$3::uuid,NULLIF($4,'')::uuid,$5::uuid,$6::uuid,$7,$8,'pending',$9) ON CONFLICT(publication_id) DO NOTHING`, id, target, generation, baseGeneration, candidate, seal, in.ExpectedTargetRevision, actor, in.RequestDigest)
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
@@ -1314,7 +1448,7 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	if p.TargetID != target || p.GenerationID != generation || p.CandidateID != candidate || p.SnapshotSealID != seal || p.ExpectedTargetRevision != in.ExpectedTargetRevision || p.ActorID != actor || p.RequestDigest != in.RequestDigest {
+	if p.TargetID != target || p.GenerationID != generation || p.ExpectedBaseGenerationID != baseGeneration || p.CandidateID != candidate || p.SnapshotSealID != seal || p.ExpectedTargetRevision != in.ExpectedTargetRevision || p.ActorID != actor || p.RequestDigest != in.RequestDigest {
 		return DeliveryPublication{}, ErrConflict
 	}
 	return p, nil
@@ -1322,7 +1456,7 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 func loadPublication(ctx context.Context, db DBTX, id string) (DeliveryPublication, error) {
 	var p DeliveryPublication
 	var committed *time.Time
-	err := db.QueryRow(ctx, `SELECT publication_id::text,target_id,generation_id::text,candidate_id::text,snapshot_seal_id::text,expected_target_revision,COALESCE(result_target_revision,0),actor_id,state,request_digest,created_at,committed_at FROM delivery.delivery_publication WHERE publication_id=$1::uuid`, id).Scan(&p.PublicationID, &p.TargetID, &p.GenerationID, &p.CandidateID, &p.SnapshotSealID, &p.ExpectedTargetRevision, &p.ResultTargetRevision, &p.ActorID, &p.State, &p.RequestDigest, &p.CreatedAt, &committed)
+	err := db.QueryRow(ctx, `SELECT publication_id::text,target_id,generation_id::text,COALESCE(expected_base_generation_id::text,''),candidate_id::text,snapshot_seal_id::text,expected_target_revision,COALESCE(result_target_revision,0),actor_id,state,request_digest,created_at,committed_at FROM delivery.delivery_publication WHERE publication_id=$1::uuid`, id).Scan(&p.PublicationID, &p.TargetID, &p.GenerationID, &p.ExpectedBaseGenerationID, &p.CandidateID, &p.SnapshotSealID, &p.ExpectedTargetRevision, &p.ResultTargetRevision, &p.ActorID, &p.State, &p.RequestDigest, &p.CreatedAt, &committed)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	}
@@ -1341,6 +1475,27 @@ func (r *Repository) Publication(ctx context.Context, id string) (DeliveryPublic
 		return DeliveryPublication{}, err
 	}
 	return loadPublication(contextOrBackground(ctx), db, id)
+}
+
+// CommittedPublicationTx returns the committed deployment publication for a
+// generation through a caller-owned transaction. It is used by downstream
+// authorities that must prove the serving generation was actually activated,
+// not merely constructed.
+func (r *Repository) CommittedPublicationTx(ctx context.Context, tx Tx, generationID string) (DeliveryPublication, error) {
+	if tx == nil {
+		return DeliveryPublication{}, ErrInvalid
+	}
+	generation, err := uuidID(generationID, "generation id", false)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	var id string
+	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT p.publication_id::text FROM delivery.delivery_publication p JOIN delivery.delivery_active_pointer ap ON ap.target_id=p.target_id AND ap.generation_id=p.generation_id AND ap.publication_id=p.publication_id JOIN delivery.delivery_target t ON t.target_id=p.target_id WHERE p.generation_id=$1::uuid AND p.state='committed' AND p.result_target_revision=t.target_revision ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1`, generation).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryPublication{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryPublication{}, err
+	}
+	return loadPublication(contextOrBackground(ctx), tx, id)
 }
 func (r *Repository) LoadPublication(ctx context.Context, id string) (DeliveryPublication, error) {
 	return r.Publication(ctx, id)
@@ -1716,14 +1871,15 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	}
 	// Lock target and verify CAS revision.
 	var currentRev int64
-	err = tx.QueryRow(ctx, `SELECT target_revision FROM delivery.delivery_target WHERE target_id=$1 FOR UPDATE`, target).Scan(&currentRev)
+	var currentGeneration string
+	err = tx.QueryRow(ctx, `SELECT t.target_revision,COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),'') FROM delivery.delivery_target t WHERE t.target_id=$1 FOR UPDATE`, target).Scan(&currentRev, &currentGeneration)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if currentRev != in.ExpectedTargetRevision {
+	if currentRev != in.ExpectedTargetRevision || currentGeneration != p.ExpectedBaseGenerationID {
 		return ActivationResult{}, ErrCASConflict
 	}
 	var cstatus, ct, cs string

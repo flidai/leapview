@@ -1,0 +1,1662 @@
+package module
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/deployment"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+type integrationAuditWriter struct{ fail bool }
+
+func (w integrationAuditWriter) RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error {
+	if w.fail {
+		return errors.New("audit writer failure")
+	}
+	return nil
+}
+
+type integrationCanonicalVerifier struct {
+	physicalPoolID string
+	catalogID      string
+}
+
+type failingSupersedeQueue struct {
+	*PostgresJobsAdapter
+	err error
+}
+
+func (q failingSupersedeQueue) SupersedeJobsTx(context.Context, refreshpostgres.Tx, []string) error {
+	return q.err
+}
+
+type failingCancelClaimQueue struct {
+	*PostgresJobsAdapter
+	err error
+}
+
+func (q failingCancelClaimQueue) CancelClaimedJobTx(context.Context, refreshpostgres.Tx, refreshrun.JobRecord) error {
+	return q.err
+}
+
+func (v integrationCanonicalVerifier) VerifyCanonicalRefreshTx(_ context.Context, _ refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult) (refreshpostgres.PublicationInput, error) {
+	expected := job.TargetRevision
+	if expected == 0 {
+		expected = 1
+	}
+	return refreshpostgres.PublicationInput{RunID: job.RunID, BaseGenerationID: job.Identity.GenerationID, ResultGenerationID: result.ServingStateID, ExpectedTargetRevision: expected, ResultTargetRevision: expected + 1, PhysicalPoolID: v.physicalPoolID, CatalogID: v.catalogID}, nil
+}
+
+func modulePostgresTestDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "refresh_module_authority")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatalf("create concrete run: %v", err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := refreshpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return admin
+}
+
+func createTreeRoot(t *testing.T, runs refreshrun.RunTreeRepository, input refreshrun.RunInput, occurrence *refreshschedule.Occurrence) refreshrun.RunRecord {
+	t.Helper()
+	root, _, err := runs.CreateRunTree(t.Context(), refreshrun.RunTreeInput{Root: input, Occurrence: occurrence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return root
+}
+
+func createTreeRootE(ctx context.Context, runs refreshrun.RunTreeRepository, input refreshrun.RunInput, occurrence *refreshschedule.Occurrence) (refreshrun.RunRecord, error) {
+	root, _, err := runs.CreateRunTree(ctx, refreshrun.RunTreeInput{Root: input, Occurrence: occurrence})
+	return root, err
+}
+
+func concreteModulePostgresDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "refresh_module_concrete_authority")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := deploymentpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := refreshpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return admin
+}
+
+func accessOnlyPostgresDB(t *testing.T) *pgxpool.Pool {
+	t.Helper()
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "refresh_module_access_authority")
+	pool, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return pool
+}
+
+func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...projectpipelineplan.Plan) (deploymentpostgres.DeliveryPlan, string, string, string, string) {
+	t.Helper()
+	delivery := deploymentpostgres.New(db)
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	planID := "0198f2c0-7c7a-7f00-8a11-000000000101"
+	candidateID := "0198f2c0-7c7a-7f00-8a11-000000000102"
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000103"
+	sealID := "0198f2c0-7c7a-7f00-8a11-000000000104"
+	generationID := "0198f2c0-7c7a-7f00-8a11-000000000105"
+	targetID := "target_concrete_prod"
+	poolID, catalogDB, catalogUUID := "pool-concrete", "ducklake", "0198f2c0-7c7a-7f00-8a11-000000000108"
+	pipePlan := projectpipelineplan.Plan{}
+	if len(pipelinePlans) > 0 {
+		pipePlan = pipelinePlans[0]
+	}
+	planDigest, artifactDigest := digest('a'), digest('e')
+	compiledGraphDigest, compiledConfigDigest, securityDigest := digest('b'), digest('c'), digest('d')
+	if pipePlan.Digest != "" {
+		planDigest, artifactDigest = pipePlan.Digest, pipePlan.ArtifactDigest
+		compiledGraphDigest, compiledConfigDigest, securityDigest = pipePlan.ExecutionDigest, pipePlan.ProvenanceDigest, pipePlan.GovernanceDigest
+	}
+	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_concrete", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, Evidence: json.RawMessage(`{"source":"concrete"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateCandidate(t.Context(), deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-concrete", PhysicalPoolID: poolID, FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/concrete", SessionIdentity: "session-concrete", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	marker := json.RawMessage(`{"attempt_id":"` + attemptID + `","physical_pool_id":"` + poolID + `","request_digest":"` + digest('f') + `","plan_digest":"` + planDigest + `","fencing_epoch":1}`)
+	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-concrete", FencingEpoch: 1, SnapshotID: 777, CommitMarker: marker}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, digest('3')); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, GenerationRevision: 1}); err != nil {
+		t.Fatal(err)
+	}
+	return plan, generationID, poolID, catalogDB, catalogUUID
+}
+
+func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
+	db := concreteModulePostgresDB(t)
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	basePlan := projectpipelineplan.Plan{ID: "0198f2c0-7c7a-7f00-8a11-000000000101", PipelineID: "pipeline_concrete", ProjectID: "project_concrete", Environment: "prod", SemanticModelID: "semantic_concrete", ServingGenerationID: "0198f2c0-7c7a-7f00-8a11-000000000105", ArtifactDigest: digest('e'), SelectionDigest: digest('f'), MaterializationScope: []string{"model_concrete"}, ModelExecutionOrder: []string{"model_concrete"}, QualificationChecks: []string{"compatibility"}, InvocationSource: "manual"}
+	plan, err := projectpipelineplan.New(basePlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveryPlan, generationID, poolID, catalogDB, catalogUUID := seedConcreteDelivery(t, db, plan)
+	delivery := deploymentpostgres.New(db)
+	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
+	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseLease, err := delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: "0198f2c0-7c7a-7f00-8a11-000000000107", TargetID: "target_concrete_prod", OwnerID: "operator-concrete", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: basePublication.PublicationID, TargetID: basePublication.TargetID, GenerationID: generationID, ExpectedTargetRevision: 1, RequestDigest: basePublication.RequestDigest, ActorID: basePublication.ActorID, LeaseID: baseLease.LeaseID, OwnerID: baseLease.OwnerID, FencingEpoch: baseLease.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000110"}); err != nil {
+		t.Fatal(err)
+	}
+	resultGenerationID := "0198f2c0-7c7a-7f00-8a11-000000000111"
+	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: resultGenerationID, TargetID: "target_concrete_prod", CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", PlanID: deliveryPlan.PlanID, PlanDigest: deliveryPlan.PlanDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: deliveryPlan.ArtifactDigest, CompiledGraphDigest: deliveryPlan.CompiledGraphDigest, CompiledConfigDigest: deliveryPlan.CompiledConfigDigest, SecurityDomainFingerprint: deliveryPlan.SecurityDomainFingerprint, GenerationRevision: 2}); err != nil {
+		t.Fatal(err)
+	}
+	resultPublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000112", TargetID: "target_concrete_prod", GenerationID: resultGenerationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedBaseGenerationID: generationID, ExpectedTargetRevision: 2, ActorID: "operator-concrete-2", RequestDigest: digest('9')})
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultLease, err := delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: "0198f2c0-7c7a-7f00-8a11-000000000113", TargetID: "target_concrete_prod", OwnerID: "operator-concrete-2", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: resultPublication.PublicationID, TargetID: resultPublication.TargetID, GenerationID: resultGenerationID, ExpectedTargetRevision: 2, RequestDigest: resultPublication.RequestDigest, ActorID: resultPublication.ActorID, LeaseID: resultLease.LeaseID, OwnerID: resultLease.OwnerID, FencingEpoch: resultLease.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000114"}); err != nil {
+		t.Fatal(err)
+	}
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_concrete", Environment: "prod", GenerationID: generationID}
+	if plan.ID != deliveryPlan.PlanID || plan.ServingGenerationID != generationID {
+		t.Fatalf("pipeline plan identity does not match delivery evidence: %#v", plan)
+	}
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	verifier, err := NewPostgresCanonicalVerifierAdapter(deploymentpostgres.New(db), poolID, "catalog-concrete", catalogDB, catalogUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: poolID, CatalogID: "catalog-concrete", SchedulerOwner: "scheduler-concrete", Jobs: queue, CanonicalVerifier: verifier, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "concrete-refresh-run", Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: "manual", PrincipalID: "principal:concrete", EstimatedMemoryBytes: 1, TargetRevision: 2, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-concrete", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
+		t.Fatal(err)
+	}
+	wrongCatalogVerifier, err := NewPostgresCanonicalVerifierAdapter(deploymentpostgres.New(db), poolID, "catalog-wrong", catalogDB, catalogUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wrongTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := wrongCatalogVerifier.VerifyCanonicalRefreshTx(t.Context(), wrongTx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err == nil {
+		_ = wrongTx.Rollback(t.Context())
+		t.Fatal("cross-bound catalog verifier unexpectedly accepted mismatched catalog id")
+	}
+	if err := wrongTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	mismatchedPersistence := &postgresPublicationPersistence{repository: refreshRepo, physical: PostgresPersistenceConfig{PhysicalPoolID: poolID, CatalogID: "catalog-config-mismatch"}, canonicalVerifier: verifier, queueLifecycle: queue}
+	if err := mismatchedPersistence.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err == nil {
+		t.Fatal("canonical completion accepted verifier catalog identity different from persistence config")
+	}
+	publication, ok := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
+	if !ok {
+		t.Fatal("canonical publication unit missing")
+	}
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
+		t.Fatal(err)
+	}
+	// A constructed-but-unpublished generation is not canonical evidence.
+	uncommittedGenerationID := "0198f2c0-7c7a-7f00-8a11-000000000115"
+	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: uncommittedGenerationID, TargetID: "target_concrete_prod", CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", PlanID: deliveryPlan.PlanID, PlanDigest: deliveryPlan.PlanDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: deliveryPlan.ArtifactDigest, CompiledGraphDigest: deliveryPlan.CompiledGraphDigest, CompiledConfigDigest: deliveryPlan.CompiledConfigDigest, SecurityDomainFingerprint: deliveryPlan.SecurityDomainFingerprint, GenerationRevision: 3}); err != nil {
+		t.Fatal(err)
+	}
+	if tx, err := db.Begin(t.Context()); err != nil {
+		t.Fatal(err)
+	} else {
+		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: uncommittedGenerationID, SnapshotID: 777}); verifyErr == nil {
+			t.Fatal("uncommitted delivery generation unexpectedly verified")
+		}
+		_ = tx.Rollback(t.Context())
+	}
+	// Activate a successor, then prove the previous result is no longer current.
+	if _, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000116", TargetID: "target_concrete_prod", GenerationID: uncommittedGenerationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedBaseGenerationID: resultGenerationID, ExpectedTargetRevision: 3, ActorID: "operator-concrete-3", RequestDigest: digest('0')}); err != nil {
+		t.Fatal(err)
+	}
+	lease3, err := delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: "0198f2c0-7c7a-7f00-8a11-000000000117", TargetID: "target_concrete_prod", OwnerID: "operator-concrete-3", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000116", TargetID: "target_concrete_prod", GenerationID: uncommittedGenerationID, ExpectedTargetRevision: 3, RequestDigest: digest('0'), ActorID: "operator-concrete-3", LeaseID: lease3.LeaseID, OwnerID: lease3.OwnerID, FencingEpoch: lease3.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000118"}); err != nil {
+		t.Fatal(err)
+	}
+	if tx, err := db.Begin(t.Context()); err != nil {
+		t.Fatal(err)
+	} else {
+		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); verifyErr == nil {
+			t.Fatal("superseded/non-current delivery generation unexpectedly verified")
+		}
+		_ = tx.Rollback(t.Context())
+	}
+	// Completion is an exact replay once publication, data-version, run-tree,
+	// and queue evidence are committed.  It remains replayable even after a
+	// later deployment advances the active target pointer.
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
+		t.Fatalf("canonical completion replay after later activation: %v", err)
+	}
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 778}); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("snapshot-mismatched canonical replay error = %v, want conflict", err)
+	}
+	badPayload := claimed
+	badPlan := *claimed.PipelinePlan
+	badPlan.Digest = digest('z')
+	badPayload.PipelinePlan = &badPlan
+	if tx, err := db.Begin(t.Context()); err != nil {
+		t.Fatal(err)
+	} else {
+		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, badPayload, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: uncommittedGenerationID, SnapshotID: 777}); verifyErr == nil {
+			t.Fatal("payload-vs-run digest mismatch unexpectedly verified")
+		}
+		_ = tx.Rollback(t.Context())
+	}
+	finalRun, err := refreshRepo.LookupRun(t.Context(), run.ID)
+	if err != nil || finalRun.Status != refreshrun.RunStatusSucceeded {
+		t.Fatalf("final run=%#v err=%v", finalRun, err)
+	}
+	var resultRevision int64
+	if err := db.QueryRow(t.Context(), `SELECT target_revision FROM refresh.data_version WHERE project_id=$1 AND environment=$2 AND semantic_model_id=$3 AND generation_id=$4`, identity.ProjectID.String(), identity.Environment, plan.SemanticModelID, resultGenerationID).Scan(&resultRevision); err != nil {
+		t.Fatal(err)
+	}
+	if resultRevision != 3 {
+		t.Fatalf("data-version target revision=%d, want committed result revision 3", resultRevision)
+	}
+}
+
+func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
+	db := accessOnlyPostgresDB(t)
+	writer, err := NewPostgresCancelAuditWriterAdapter(accesspostgres.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := access.AuditIntent{EventID: "0198f2c0-7c7a-7f00-8a11-000000000109", Source: "refresh", Operation: "cancel", Action: "refresh.cancel", ResourceKind: "refresh_run", ResourceID: "run-audit-concrete", Capability: access.CapabilityResourceUse, Outcome: "failure", AggregateKey: "refresh_run:run-audit-concrete", AggregateSequence: 1, MetadataJSON: `{}`}
+	if err := writer.RecordRefreshCancelAuditTx(t.Context(), tx, intent); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var eventID string
+	if err := db.QueryRow(t.Context(), `SELECT audit_id::text FROM audit.audit_event WHERE audit_id=$1::uuid`, intent.EventID).Scan(&eventID); err != nil {
+		t.Fatal(err)
+	}
+	if eventID != intent.EventID {
+		t.Fatalf("stored audit id=%q", eventID)
+	}
+}
+
+func TestPostgresRefreshCandidatesPaginatePastOtherScopes(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-scope", CatalogID: "catalog-scope", SchedulerOwner: "scheduler-scope", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-scope", catalogID: "catalog-scope"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO jobs.job(id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest) SELECT 'other-scope-job-'||to_char(i,'FM000'), 'refresh_pipeline', 'background', 'principal-other-'||to_char(i,'FM000'), '{}'::text[], 'refresh:other:prod', 'refresh_run', 'other-scope-run-'||to_char(i,'FM000'), 1, '{}'::jsonb, 'sha256:'||repeat('a',64) FROM generate_series(0,$1) AS s(i)`, refreshpostgres.MaxPageSize+24); err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_scope_target", Environment: "prod", GenerationID: "generation_scope_target"}
+	plan := integrationPlan(t, identity, "daily")
+	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "target-scope-run", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal-target", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].RunID != created.ID {
+		t.Fatalf("scope candidates=%#v, want target run %q", candidates, created.ID)
+	}
+}
+
+func TestPostgresRefreshCandidatesPreservePrincipalFIFOAcrossScopePages(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-fifo", CatalogID: "catalog-fifo", SchedulerOwner: "scheduler-fifo", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-fifo", catalogID: "catalog-fifo"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldIdentity := projectgraph.ServingIdentity{ProjectID: "project_fifo_old", Environment: "prod", GenerationID: "generation_fifo_old"}
+	newIdentity := projectgraph.ServingIdentity{ProjectID: "project_fifo_target", Environment: "prod", GenerationID: "generation_fifo_target"}
+	oldPlan := integrationPlan(t, oldIdentity, "daily")
+	newPlan := integrationPlan(t, newIdentity, "daily")
+	oldRun, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "fifo-old-head", Identity: oldIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &oldPlan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:fifo-shared", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "fifo-target-later", Identity: newIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &newPlan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Add(time.Second).Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:fifo-shared", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil); err != nil {
+		t.Fatal(err)
+	}
+	oldStored, err := refreshRepo.LookupRun(t.Context(), oldRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetCandidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: newIdentity.ProjectID, Environment: newIdentity.Environment}, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targetCandidates) != 1 || targetCandidates[0].RunID != "fifo-target-later" {
+		t.Fatalf("scope-partitioned principal fairness candidates=%#v (old head job=%s)", targetCandidates, oldStored.JobID)
+	}
+}
+
+func TestPostgresPoisonPayloadTerminalizesRunAndJobAndUnblocksLaterJob(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project-poison", Environment: "prod", GenerationID: "generation-poison"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{ID: "pipeline_poison", PipelineID: "pipeline_poison", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: "semantic_poison", ServingGenerationID: identity.GenerationID, ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64), MaterializationScope: []string{"model_poison"}, InvocationSource: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := jobsRepo.Enqueue(t.Context(), jobs.EnqueueInput{ID: "poison-job", Kind: refreshrun.JobKindRefreshPipeline, WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "principal-poison", GroupIDs: []string{}, PartitionKey: "refresh:" + identity.ProjectID.String() + ":" + identity.Environment, ResourceKind: refreshJobResourceKind, ResourceID: "poison-run", EstimatedMemoryBytes: 1, Payload: []byte(`{"not":"a refresh envelope"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	poisonInput := refreshpostgres.RunInput{RunID: "poison-run", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetRefreshPipeline, TargetID: plan.PipelineID, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-poison", JobID: "poison-job"}
+	if _, err := refreshRepo.CreateRun(t.Context(), poisonInput); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-run", PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetModelTable, TargetID: "model_poison", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-poison"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 0 {
+		t.Fatalf("poison candidate returned as executable: %#v", first)
+	}
+	if replay, replayErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8); replayErr != nil || len(replay) != 0 {
+		t.Fatalf("poison quarantine replay candidates=%#v err=%v", replay, replayErr)
+	}
+	poisonJob, err := jobsRepo.Get(t.Context(), "poison-job")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poisonJob.Status != jobs.StatusCancelled || !strings.Contains(string(poisonJob.ErrorJSON), "REFRESH_POISON_PAYLOAD") {
+		t.Fatalf("poison job=%#v, want terminal poison evidence", poisonJob)
+	}
+	poisonRun, err := refreshRepo.LookupRun(t.Context(), "poison-run")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poisonRun.Status != refreshrun.RunStatusFailed || poisonRun.Error != "refresh job payload rejected" {
+		t.Fatalf("poison run=%#v, want failed safe evidence", poisonRun)
+	}
+	poisonChild, err := refreshRepo.LookupRun(t.Context(), "poison-child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if poisonChild.Status != refreshrun.RunStatusFailed || poisonChild.Error != "refresh job payload rejected" {
+		t.Fatalf("poison child=%#v, want failed safe evidence", poisonChild)
+	}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	validInput := refreshrun.RunInput{RunID: "valid-after-poison", Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: refreshrun.TriggerManual, PrincipalID: "principal-valid", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}
+	validJobID, err := queue.EnqueueRefreshTx(t.Context(), tx, validInput, validInput.RunID)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	_, err = refreshRepo.CreateRunTx(t.Context(), tx, refreshpostgres.RunInput{RunID: validInput.RunID, ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetRefreshPipeline, TargetID: plan.PipelineID, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-valid", JobID: validJobID})
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	laterCandidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
+	if err != nil || len(laterCandidates) != 1 || laterCandidates[0].ID != "refresh-job-valid-after-poison" {
+		t.Fatalf("later candidates=%#v err=%v", laterCandidates, err)
+	}
+}
+
+func TestPostgresPoisonReplayRejectsPartialOrTamperedRunTree(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project-poison-drift", Environment: "prod", GenerationID: "generation-poison-drift"}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := jobsRepo.Enqueue(t.Context(), jobs.EnqueueInput{ID: "poison-drift-job", Kind: refreshrun.JobKindRefreshPipeline, WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "principal-poison-drift", PartitionKey: "refresh:" + identity.ProjectID.String() + ":" + identity.Environment, ResourceKind: refreshJobResourceKind, ResourceID: "poison-drift-run", EstimatedMemoryBytes: 1, Payload: []byte(`{"bad":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-drift-run", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline", TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-poison-drift", JobID: "poison-drift-job"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-drift-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-drift-run", PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: refreshrun.TargetModelTable, TargetID: "model", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-poison-drift"}); err != nil {
+		t.Fatal(err)
+	}
+	// A partially terminalized tree must not replay as an already quarantined
+	// run. The child carries a tampered message while the root has the expected
+	// poison message.
+	if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='failed',error='tampered',finished_at=clock_timestamp() WHERE run_id='poison-drift-child'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='failed',error='refresh job payload rejected',finished_at=clock_timestamp() WHERE run_id='poison-drift-run'`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := refreshRepo.QuarantineQueuedRunTx(t.Context(), tx, "poison-drift-run", "poison-drift-job")
+	if !errors.Is(err, refreshpostgres.ErrConflict) || replayed {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("tampered poison tree replay=%v err=%v, want conflict", replayed, err)
+	}
+	_ = tx.Rollback(t.Context())
+}
+
+func TestPostgresStartupRecoveryReconcilesPairsWithoutKillingLiveWork(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery", CatalogID: "catalog-recovery", SchedulerOwner: "scheduler-recovery", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery", catalogID: "catalog-recovery"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(project, id string) refreshrun.RunRecord {
+		t.Helper()
+		identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(project), Environment: "prod", GenerationID: "generation-" + project}
+		plan := integrationPlan(t, identity, "daily")
+		plan.PipelineID = "pipeline_" + id
+		plan.ID = "plan_" + id
+		plan.ExecutionDigest, plan.ProvenanceDigest, plan.GovernanceDigest, plan.EvidenceDigest, plan.Digest = "", "", "", "", ""
+		plan, err = deployment.NewPipelinePlan(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		run, createErr := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: id, Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:" + id, EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return run
+	}
+	queued := create("recovery-queued", "recovery-queued-run")
+	live := create("recovery-live", "recovery-live-run")
+	prepared := create("recovery-prepared", "recovery-prepared-run")
+	expired := create("recovery-expired", "recovery-expired-run")
+	terminalJob := create("recovery-terminal-job", "recovery-terminal-job-run")
+	terminalRun := create("recovery-terminal-run", "recovery-terminal-run-run")
+	missing := create("recovery-missing", "recovery-missing-run")
+	claim := func(run refreshrun.RunRecord, owner string, lease time.Duration) refreshrun.JobRecord {
+		t.Helper()
+		candidates, listErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: run.Identity.ProjectID, Environment: run.Identity.Environment}, 1)
+		if listErr != nil || len(candidates) != 1 {
+			t.Fatalf("recovery candidates=%#v err=%v", candidates, listErr)
+		}
+		job, ok, claimErr := queue.ClaimExecutableJob(t.Context(), candidates[0], owner, lease)
+		if claimErr != nil || !ok {
+			t.Fatalf("claim ok=%v err=%v", ok, claimErr)
+		}
+		return job
+	}
+	liveJob := claim(live, "node-a", time.Minute)
+	preparedJob := claim(prepared, "node-a-prepared", time.Minute)
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), preparedJob); err != nil {
+		t.Fatal(err)
+	}
+	expiredJob := claim(expired, "node-a-expired", 10*time.Millisecond)
+	time.Sleep(30 * time.Millisecond)
+	terminalJobRecord := claim(terminalJob, "node-a-terminal", time.Minute)
+	if err := jobsRepo.Fail(t.Context(), terminalJobRecord.ID, jobs.Fence{Owner: terminalJobRecord.LeaseOwner, Generation: terminalJobRecord.LeaseRevision}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='failed',error='already terminal',finished_at=clock_timestamp() WHERE run_id=$1`, terminalRun.ID); err != nil {
+		t.Fatal(err)
+	}
+	// The FK intentionally prevents manufacturing a missing canonical job.
+	// Model the recoverable skew instead: the queue job is terminal while its
+	// linked refresh run is still queued.
+	missingCandidates, listErr := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: missing.Identity.ProjectID, Environment: missing.Identity.Environment}, 1)
+	if listErr != nil || len(missingCandidates) != 1 {
+		t.Fatalf("missing skew candidates=%#v err=%v", missingCandidates, listErr)
+	}
+	missingJob, ok, claimErr := jobsRepo.ClaimByID(t.Context(), missingCandidates[0].ID, jobpolicy.WorkloadClassBackground, "node-a-missing", time.Minute)
+	if claimErr != nil || !ok {
+		t.Fatalf("claim missing skew job ok=%v err=%v", ok, claimErr)
+	}
+	if err := jobsRepo.Fail(t.Context(), missingJob.ID, jobs.Fence{Owner: missingJob.LeaseOwner, Generation: missingJob.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
+		t.Fatal(err)
+	}
+	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
+	if !ok {
+		t.Fatal("postgres terminal recovery adapter missing")
+	}
+	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "refresh startup reconciliation"); err != nil {
+		t.Fatal(err)
+	}
+	assertRun := func(id string, want string) {
+		t.Helper()
+		got, getErr := refreshRepo.LookupRun(t.Context(), id)
+		if getErr != nil || got.Status != want {
+			t.Fatalf("run %s=%#v err=%v, want %s", id, got, getErr, want)
+		}
+	}
+	assertRun(queued.ID, refreshrun.RunStatusQueued)
+	assertRun(live.ID, refreshrun.RunStatusRunning)
+	assertRun(prepared.ID, refreshrun.RunStatusPrepared)
+	assertRun(expired.ID, refreshrun.RunStatusRunning)
+	assertRun(terminalJob.ID, refreshrun.RunStatusFailed)
+	assertRun(terminalRun.ID, refreshrun.RunStatusFailed)
+	assertRun(missing.ID, refreshrun.RunStatusFailed)
+	if got, err := jobsRepo.Get(t.Context(), liveJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != liveJob.LeaseOwner {
+		t.Fatalf("live job was not preserved: %#v err=%v", got, err)
+	}
+	if got, err := jobsRepo.Get(t.Context(), preparedJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != preparedJob.LeaseOwner {
+		t.Fatalf("prepared pair was not preserved: %#v err=%v", got, err)
+	}
+	if got, err := jobsRepo.Get(t.Context(), expiredJob.ID); err != nil || got.Status != jobs.StatusRunning || got.LeaseOwner != expiredJob.LeaseOwner {
+		t.Fatalf("expired exact-fence pair was not preserved: %#v err=%v", got, err)
+	}
+	terminalRunStored, err := refreshRepo.LookupRun(t.Context(), terminalRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := jobsRepo.Get(t.Context(), terminalRunStored.JobID); err != nil || got.Status != jobs.StatusFailed {
+		t.Fatalf("terminal run job was not reconciled: %#v err=%v", got, err)
+	}
+}
+
+func TestPostgresStartupRecoveryRejectsAmbiguousPairAndRollsBack(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery-ambiguous", CatalogID: "catalog-recovery-ambiguous", SchedulerOwner: "scheduler-recovery-ambiguous", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-ambiguous", catalogID: "catalog-recovery-ambiguous"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(id string) refreshrun.RunRecord {
+		identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID("recovery-ambiguous-" + id), Environment: "prod", GenerationID: "generation-recovery-" + id}
+		plan := integrationPlan(t, identity, "daily")
+		run, createErr := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: id, Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:" + id, EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return run
+	}
+	missing := create("recovery-ambiguous-missing")
+	ambiguousRun := create("recovery-ambiguous-running")
+	missingCandidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: missing.Identity.ProjectID, Environment: missing.Identity.Environment}, 1)
+	if err != nil || len(missingCandidates) != 1 {
+		t.Fatalf("missing skew candidates=%#v err=%v", missingCandidates, err)
+	}
+	missingJob, ok, err := jobsRepo.ClaimByID(t.Context(), missingCandidates[0].ID, jobpolicy.WorkloadClassBackground, "node-missing", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim missing skew job ok=%v err=%v", ok, err)
+	}
+	if err := jobsRepo.Fail(t.Context(), missingJob.ID, jobs.Fence{Owner: missingJob.LeaseOwner, Generation: missingJob.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
+		t.Fatal(err)
+	}
+	ambiguousIdentity := ambiguousRun.Identity
+	candidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: ambiguousIdentity.ProjectID, Environment: ambiguousIdentity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("ambiguous candidates=%#v err=%v", candidates, err)
+	}
+	if _, ok, err := jobsRepo.ClaimByID(t.Context(), candidates[0].ID, jobpolicy.WorkloadClassBackground, "node-b", time.Minute); err != nil || !ok {
+		t.Fatalf("claim ambiguous job ok=%v err=%v", ok, err)
+	}
+	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
+	if !ok {
+		t.Fatal("postgres terminal recovery adapter missing")
+	}
+	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "refresh startup reconciliation"); err == nil {
+		t.Fatal("ambiguous queued/running pair unexpectedly reconciled")
+	}
+	if got, err := refreshRepo.LookupRun(t.Context(), missing.ID); err != nil || got.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("earlier missing-job repair was not rolled back: %#v err=%v", got, err)
+	}
+}
+
+func TestPostgresStartupRecoveryPagesActiveRunsAndRollsBackLaterAmbiguity(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery-pages", CatalogID: "catalog-recovery-pages", SchedulerOwner: "scheduler-recovery-pages", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-pages", catalogID: "catalog-recovery-pages"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const rows = 201
+	if _, err := db.Exec(t.Context(), `INSERT INTO jobs.job (id,kind,workload_class,principal_id,group_ids,partition_key,resource_kind,resource_id,estimated_memory_bytes,payload,request_digest)
+SELECT 'page-job-'||lpad(i::text,3,'0'),'refresh_pipeline','background','page-principal-'||lpad(i::text,3,'0'),'{}'::text[],'refresh:project_page:prod','refresh_run','page-run-'||lpad(i::text,3,'0'),1,'{}'::jsonb,'sha256:'||repeat('a',64)
+FROM generate_series(1,$1) AS s(i)`, rows); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO refresh.run (run_id,project_id,environment,generation_id,pipeline_id,semantic_model_id,target_type,target_id,trigger_type,invocation_source,plan_digest,artifact_digest,principal_id,job_id)
+SELECT 'page-run-'||lpad(i::text,3,'0'),'project_page','prod','generation-page','pipeline_page_'||lpad(i::text,3,'0'),'semantic_page','refresh_pipeline','pipeline_page_'||lpad(i::text,3,'0'),'manual','manual','sha256:'||repeat('b',64),'sha256:'||repeat('c',64),'page-principal-'||lpad(i::text,3,'0'),'page-job-'||lpad(i::text,3,'0')
+FROM generate_series(1,$1) AS s(i)`, rows); err != nil {
+		t.Fatal(err)
+	}
+	pageOne, ok, err := jobsRepo.ClaimByID(t.Context(), "page-job-001", jobpolicy.WorkloadClassBackground, "node-a", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim first-page skew job ok=%v err=%v", ok, err)
+	}
+	if err := jobsRepo.Fail(t.Context(), pageOne.ID, jobs.Fence{Owner: pageOne.LeaseOwner, Generation: pageOne.LeaseGeneration}, []byte(`{"code":"REFRESH_FAILED"}`)); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := jobsRepo.ClaimByID(t.Context(), "page-job-201", jobpolicy.WorkloadClassBackground, "node-b", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim later-page ambiguity ok=%v err=%v", ok, err)
+	}
+	recovery, ok := persistence.TerminalRecovery.(*PostgresTerminalRecovery)
+	if !ok {
+		t.Fatal("postgres terminal recovery adapter missing")
+	}
+	if err := recovery.FailRunsForTerminalServingStates(t.Context(), "prod", "attacker-controlled detail"); err == nil {
+		t.Fatal("later-page ambiguous pair unexpectedly reconciled")
+	}
+	var status string
+	if err := db.QueryRow(t.Context(), `SELECT status FROM refresh.run WHERE run_id='page-run-001'`).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != refreshrun.RunStatusQueued {
+		t.Fatalf("earlier-page repair committed despite later ambiguity: %s", status)
+	}
+	if got, err := jobsRepo.Get(t.Context(), claimed.ID); err != nil || got.Status != jobs.StatusRunning {
+		t.Fatalf("later-page ambiguous job changed unexpectedly: %#v err=%v", got, err)
+	}
+}
+
+func TestPostgresLinkedLeaseRenewalRollsBackOnStaleRefreshFence(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_lease", Environment: "prod", GenerationID: "generation_lease"}
+	plan := integrationPlan(t, identity, "daily")
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-lease", CatalogID: "catalog-lease", SchedulerOwner: "scheduler-lease",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-lease", catalogID: "catalog-lease"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{
+		RunID: "stale-linked-renewal", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan,
+		InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid",
+		PrincipalID: "principal:lease", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stored, err := refreshRepo.LookupRun(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.JobID == "" {
+		t.Fatal("created run has no canonical job")
+	}
+	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("initial candidates=%#v err=%v", candidates, err)
+	}
+	first, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-one", 20*time.Millisecond)
+	if err != nil || !ok {
+		t.Fatalf("first claim ok=%v err=%v", ok, err)
+	}
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	reclaimedCandidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
+	if err != nil || len(reclaimedCandidates) != 1 {
+		t.Fatalf("reclaim candidates=%#v err=%v", reclaimedCandidates, err)
+	}
+	second, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), reclaimedCandidates[0], "worker-two", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("second claim ok=%v err=%v", ok, err)
+	}
+	if second.LeaseRevision <= first.LeaseRevision {
+		t.Fatalf("lease revision did not advance: first=%d second=%d", first.LeaseRevision, second.LeaseRevision)
+	}
+	var leaseBeforeRenewal time.Time
+	if err := db.QueryRow(t.Context(), `SELECT lease_expires_at FROM jobs.job WHERE id=$1`, stored.JobID).Scan(&leaseBeforeRenewal); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistence.Runs.RenewJobLease(t.Context(), first, 5*time.Minute); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("stale linked renewal error=%v, want %v", err, jobs.ErrConflict)
+	}
+	var jobOwner string
+	var jobFence int64
+	var jobExpiry time.Time
+	if err := db.QueryRow(t.Context(), `SELECT lease_owner,lease_generation,lease_expires_at FROM jobs.job WHERE id=$1`, stored.JobID).Scan(&jobOwner, &jobFence, &jobExpiry); err != nil {
+		t.Fatal(err)
+	}
+	if jobOwner != second.LeaseOwner || jobFence != second.LeaseRevision || !jobExpiry.Equal(leaseBeforeRenewal) {
+		t.Fatalf("job renewal was not rolled back: owner=%q fence=%d expiry=%s before=%s", jobOwner, jobFence, jobExpiry, leaseBeforeRenewal)
+	}
+	var runOwner string
+	var runFence int64
+	if err := db.QueryRow(t.Context(), `SELECT lease_owner,fence_generation FROM refresh.run WHERE run_id=$1`, created.ID).Scan(&runOwner, &runFence); err != nil {
+		t.Fatal(err)
+	}
+	if runOwner != second.LeaseOwner || runFence != second.LeaseRevision {
+		t.Fatalf("refresh run lease changed across stale renewal: owner=%q fence=%d", runOwner, runFence)
+	}
+}
+
+func TestPostgresRunTreeAdmissionRollsBackEveryAuthorityOnChildConflict(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_tree_atomic", Environment: "prod", GenerationID: "generation_tree_atomic"}
+	plan := integrationPlan(t, identity, "daily")
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-tree-atomic", CatalogID: "catalog-tree-atomic", SchedulerOwner: "scheduler-tree-atomic",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-tree-atomic", catalogID: "catalog-tree-atomic"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	treeCreator, ok := persistence.Runs.(refreshrun.RunTreeRepository)
+	if !ok {
+		t.Fatal("PostgreSQL persistence does not expose atomic tree creation")
+	}
+	dependency := projectgraph.ResourceID("model_orders")
+
+	assertRollback := func(t *testing.T, rootInput refreshrun.RunInput, occurrence *refreshschedule.Occurrence) {
+		t.Helper()
+		conflictID := deterministicChildRunID(rootInput.RunID, dependency.String())
+		existingParentID := "existing-parent-" + rootInput.RunID
+		existingParentJob := "existing-parent-job-" + rootInput.RunID
+		if _, err := jobsRepo.Enqueue(t.Context(), jobs.EnqueueInput{ID: existingParentJob, Kind: refreshrun.JobKindRefreshPipeline, WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "principal:existing", PartitionKey: "refresh:" + rootInput.Identity.ProjectID.String() + ":" + rootInput.Identity.Environment, ResourceKind: refreshJobResourceKind, ResourceID: existingParentID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: existingParentID, ProjectID: rootInput.Identity.ProjectID.String(), Environment: rootInput.Identity.Environment, GenerationID: rootInput.Identity.GenerationID, PipelineID: rootInput.PipelineID.String(), SemanticModelID: rootInput.SemanticModelID.String(), TargetType: refreshrun.TargetRefreshPipeline, TargetID: rootInput.PipelineID.String(), TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, PlanDigest: rootInput.PipelinePlan.Digest, ArtifactDigest: rootInput.PipelinePlan.ArtifactDigest, PrincipalID: "principal:existing", JobID: existingParentJob}); err != nil {
+			t.Fatal(err)
+		}
+		if err := jobsRepo.Cancel(t.Context(), existingParentJob); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Exec(t.Context(), `UPDATE refresh.run SET status='failed',error='existing parent',finished_at=clock_timestamp() WHERE run_id=$1`, existingParentID); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{
+			RunID: conflictID, ProjectID: rootInput.Identity.ProjectID.String(), Environment: rootInput.Identity.Environment, GenerationID: rootInput.Identity.GenerationID,
+			ParentRunID: existingParentID, PipelineID: rootInput.PipelineID.String(), SemanticModelID: rootInput.SemanticModelID.String(), TargetType: refreshrun.TargetModelTable, TargetID: dependency.String(),
+			TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: rootInput.PipelinePlan.Digest, ArtifactDigest: rootInput.PipelinePlan.ArtifactDigest, PrincipalID: "principal:existing",
+		}); err != nil {
+			t.Fatal(err)
+		}
+		_, _, err := treeCreator.CreateRunTree(t.Context(), refreshrun.RunTreeInput{Root: rootInput, DependencyTargets: []projectgraph.ResourceID{dependency}, Occurrence: occurrence})
+		if err == nil {
+			t.Fatal("tree admission unexpectedly succeeded with conflicting child")
+		}
+		if _, lookupErr := refreshRepo.LookupRun(t.Context(), rootInput.RunID); !errors.Is(lookupErr, refreshpostgres.ErrNotFound) {
+			t.Fatalf("root survived child conflict: err=%v", lookupErr)
+		}
+		if existing, lookupErr := refreshRepo.LookupRun(t.Context(), conflictID); lookupErr != nil || existing.ParentRunID != existingParentID {
+			t.Fatalf("conflicting child changed: %#v err=%v", existing, lookupErr)
+		}
+		if _, getErr := jobsRepo.Get(t.Context(), "refresh-job-"+rootInput.RunID); !errors.Is(getErr, jobs.ErrNotFound) {
+			t.Fatalf("canonical job survived child conflict: err=%v", getErr)
+		}
+		if occurrence != nil {
+			var status, runID, owner string
+			if scanErr := db.QueryRow(t.Context(), `SELECT status,COALESCE(run_id,''),lease_owner FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, occurrence.OccurrenceID).Scan(&status, &runID, &owner); scanErr != nil {
+				t.Fatal(scanErr)
+			}
+			if status != "claimed" || runID != "" || owner != occurrence.LeaseOwner {
+				t.Fatalf("occurrence claim changed across rollback: status=%q run=%q owner=%q", status, runID, owner)
+			}
+		}
+	}
+
+	manualPlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_module_manual", PipelineID: "pipeline_daily", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_sales", ServingGenerationID: identity.GenerationID, ArtifactDigest: plan.ArtifactDigest, SelectionDigest: plan.SelectionDigest,
+		MaterializationScope: []string{"model_orders"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRollback(t, refreshrun.RunInput{
+		RunID: "atomic-tree-manual", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &manualPlan,
+		InvocationSource: refreshrun.TriggerManual, PrincipalID: "principal:tree", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}, nil)
+
+	scheduledIdentity := projectgraph.ServingIdentity{ProjectID: "project_tree_atomic_sched", Environment: "prod", GenerationID: "generation_tree_atomic_sched"}
+	scheduledPlan := integrationPlan(t, scheduledIdentity, "daily")
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := refreshRepo.PutSchedule(t.Context(), refreshpostgres.ScheduleInput{
+		ProjectID: scheduledIdentity.ProjectID.String(), Environment: scheduledIdentity.Environment, PipelineID: "pipeline_daily", ScheduleID: "daily", SemanticModelID: "semantic_sales", GenerationID: scheduledIdentity.GenerationID,
+		ArtifactDigest: scheduledPlan.ArtifactDigest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour,
+		ScheduleDigest: "sha256:" + strings.Repeat("c", 64), NextRunAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	scheduled, err := (&postgresSchedulePersistence{repository: refreshRepo, physical: PostgresPersistenceConfig{SchedulerOwner: "scheduler-tree-atomic"}}).ClaimDue(t.Context(), scheduledIdentity, now)
+	if err != nil || len(scheduled) != 1 {
+		t.Fatalf("claim scheduled occurrence=%#v err=%v", scheduled, err)
+	}
+	rootInput := refreshrun.RunInput{
+		RunID: "atomic-tree-scheduled", Identity: scheduledIdentity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &scheduledPlan,
+		InvocationSource: refreshrun.TriggerSchedule, MatchingScheduleIDs: []string{"daily"}, NominalTime: scheduled[0].ScheduledAt.UTC().Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:tree", EstimatedMemoryBytes: 1,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}
+	assertRollback(t, rootInput, &scheduled[0])
+}
+
+func TestPostgresRunTreeSuccessTerminalizesChildOccurrenceAndJob(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_tree_success", Environment: "prod", GenerationID: "generation_tree_success"}
+	plan := integrationPlan(t, identity, "daily")
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-tree-success", CatalogID: "catalog-tree-success", SchedulerOwner: "scheduler-tree-success",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-tree-success", catalogID: "catalog-tree-success"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	if _, err := refreshRepo.PutSchedule(t.Context(), refreshpostgres.ScheduleInput{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, PipelineID: "pipeline_daily", ScheduleID: "daily", SemanticModelID: "semantic_sales", GenerationID: identity.GenerationID,
+		ArtifactDigest: plan.ArtifactDigest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour,
+		ScheduleDigest: "sha256:" + strings.Repeat("c", 64), NextRunAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := persistence.Schedules.ClaimDue(t.Context(), identity, now)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed occurrence=%#v err=%v", claimed, err)
+	}
+	rootInput := refreshrun.RunInput{
+		RunID: "tree-success-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan,
+		InvocationSource: refreshrun.TriggerSchedule, MatchingScheduleIDs: []string{"daily"}, NominalTime: claimed[0].ScheduledAt.UTC().Format(time.RFC3339Nano),
+		ConcurrencyPolicy: "Forbid", PrincipalID: "principal:tree-success", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule,
+		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}
+	root, children, err := persistence.Runs.CreateRunTree(t.Context(), refreshrun.RunTreeInput{Root: rootInput, DependencyTargets: []projectgraph.ResourceID{"model_orders"}, Occurrence: &claimed[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(children) != 1 || children[0].ParentRunID != root.ID || children[0].Status != refreshrun.RunStatusQueued {
+		t.Fatalf("admitted tree root=%#v children=%#v", root, children)
+	}
+	jobs, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("tree executable jobs=%#v err=%v", jobs, err)
+	}
+	claimedJob, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), jobs[0], "worker-tree-success", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("tree job claim ok=%v err=%v", ok, err)
+	}
+	finalRoot, err := persistence.Runs.MarkRunSucceededClaimed(t.Context(), claimedJob)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalRoot.Status != refreshrun.RunStatusSucceeded {
+		t.Fatalf("root status=%q, want succeeded", finalRoot.Status)
+	}
+	storedChild, err := refreshRepo.LookupRun(t.Context(), children[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if storedChild.Status != refreshrun.RunStatusSucceeded {
+		t.Fatalf("child status=%q, want succeeded", storedChild.Status)
+	}
+	var occurrenceStatus, occurrenceRun string
+	if err := db.QueryRow(t.Context(), `SELECT status,run_id FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, claimed[0].OccurrenceID).Scan(&occurrenceStatus, &occurrenceRun); err != nil {
+		t.Fatal(err)
+	}
+	if occurrenceStatus != "succeeded" || occurrenceRun != root.ID {
+		t.Fatalf("occurrence status=%q run=%q", occurrenceStatus, occurrenceRun)
+	}
+	job, err := jobsRepo.Get(t.Context(), claimedJob.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "succeeded" {
+		t.Fatalf("job status=%q, want succeeded", job.Status)
+	}
+}
+
+func TestPostgresRunPersistenceRejectsStandaloneAdmission(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_standalone_rejected", Environment: "prod", GenerationID: "generation_standalone_rejected"}
+	plan := integrationPlan(t, identity, "daily")
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-standalone-rejected", CatalogID: "catalog-standalone-rejected", SchedulerOwner: "scheduler-standalone-rejected",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-standalone-rejected", catalogID: "catalog-standalone-rejected"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := refreshrun.RunInput{RunID: "standalone-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "manual", PrincipalID: "principal:standalone", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}
+	if _, err := persistence.Runs.CreateRun(t.Context(), root); err == nil {
+		t.Fatal("standalone root admission unexpectedly succeeded")
+	}
+	child := root
+	child.RunID = "standalone-child"
+	child.ParentRunID = "standalone-parent"
+	child.TargetType = refreshrun.TargetModelTable
+	child.TargetID = "model_orders"
+	child.TriggerType = refreshrun.TriggerDependency
+	child.InvocationSource = refreshrun.TriggerDependency
+	child.JobKind = refreshrun.JobKindChildRun
+	if _, err := persistence.Runs.CreateRun(t.Context(), child); err == nil {
+		t.Fatal("standalone child admission unexpectedly succeeded")
+	}
+}
+
+func TestPostgresProducerFailureCancelsLinkedRootJob(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_producer_failure", Environment: "prod", GenerationID: "generation_producer_failure"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_producer_failure", PipelineID: "pipeline_failure", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_failure", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64), MaterializationScope: []string{"model_failure"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-producer-failure", CatalogID: "catalog-producer-failure", SchedulerOwner: "scheduler-producer-failure",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-producer-failure", catalogID: "catalog-producer-failure"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{
+		RunID: "producer-failure-root", Identity: identity, SemanticModelID: "semantic_failure", PipelineID: "pipeline_failure", PipelinePlan: &plan,
+		InvocationSource: "manual", PrincipalID: "principal:producer-failure", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_failure", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	producer, ok := persistence.Runs.(refreshrun.ProducerFailureRepository)
+	if !ok {
+		t.Fatal("postgres run persistence lacks producer failure capability")
+	}
+	if _, err := producer.MarkQueuedRunFailed(t.Context(), identity, created.ID, "dependency creation failed"); err != nil {
+		t.Fatal(err)
+	}
+	failed, err := refreshRepo.LookupRun(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if failed.Status != refreshrun.RunStatusFailed {
+		t.Fatalf("root status=%q, want failed", failed.Status)
+	}
+	job, err := jobsRepo.Get(t.Context(), failed.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "cancelled" {
+		t.Fatalf("linked job status=%q, want cancelled", job.Status)
+	}
+}
+
+func integrationPlan(t *testing.T, identity projectgraph.ServingIdentity, scheduleID string) deployment.PipelinePlan {
+	t.Helper()
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_module_integration", PipelineID: "pipeline_daily", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_sales", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64), MaterializationScope: []string{"model_orders"},
+		InvocationSource: "schedule", MatchingScheduleIDs: []string{scheduleID}, StartingDeadlineSeconds: 3600, ConcurrencyPolicy: "Forbid",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return plan
+}
+
+func TestPostgresScheduledClaimCreatesRunAndJobAtomically(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_module"}
+	now := time.Now().UTC().Truncate(time.Second)
+	schedule, err := refreshRepo.PutSchedule(t.Context(), refreshpostgres.ScheduleInput{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, PipelineID: "pipeline_daily", ScheduleID: "daily", SemanticModelID: "semantic_sales", GenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour,
+		ScheduleDigest: "sha256:" + strings.Repeat("c", 64), NextRunAt: now.Add(-time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = schedule
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-primary", CatalogID: "catalog-primary", SchedulerOwner: "scheduler-module-1",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-primary", catalogID: "catalog-primary"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := persistence.Schedules.ClaimDue(t.Context(), identity, now)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(claimed) != 1 || claimed[0].OccurrenceID == "" || claimed[0].LeaseOwner != "scheduler-module-1" || claimed[0].LeaseRevision <= 0 || claimed[0].LeaseExpiresAt.IsZero() {
+		t.Fatalf("claimed occurrence = %#v", claimed)
+	}
+	plan := integrationPlan(t, identity, "daily")
+	runInput := refreshrun.RunInput{
+		Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan,
+		InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: claimed[0].ScheduledAt.UTC().Format(time.RFC3339Nano),
+		ConcurrencyPolicy: "Forbid", PrincipalID: "principal:sales", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline,
+		PayloadJSON: string(mustJSON(t, map[string]any{"pipelinePlan": plan})),
+	}
+	created, _, err := persistence.Runs.CreateRunTree(t.Context(), refreshrun.RunTreeInput{Root: runInput, Occurrence: &claimed[0]})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("created run status = %q", created.Status)
+	}
+	stored, err := refreshRepo.LookupRun(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.JobID == "" {
+		t.Fatal("scheduled run did not link a canonical job")
+	}
+	job, err := jobsRepo.Get(t.Context(), stored.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.ResourceKind != refreshJobResourceKind || job.ResourceID != created.ID || job.Status != "queued" {
+		t.Fatalf("canonical job = %#v", job)
+	}
+	var occurrenceStatus, occurrenceRun string
+	if err := db.QueryRow(t.Context(), `SELECT status,run_id FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, claimed[0].OccurrenceID).Scan(&occurrenceStatus, &occurrenceRun); err != nil {
+		t.Fatal(err)
+	}
+	if occurrenceStatus != "queued" || occurrenceRun != created.ID {
+		t.Fatalf("occurrence status=%q run=%q", occurrenceStatus, occurrenceRun)
+	}
+	jobs, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(jobs) != 1 {
+		t.Fatalf("scheduled executable jobs=%#v err=%v", jobs, err)
+	}
+	claimedJob, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), jobs[0], "worker-scheduled", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("scheduled claim ok=%v err=%v", ok, err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT status FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, claimed[0].OccurrenceID).Scan(&occurrenceStatus); err != nil {
+		t.Fatal(err)
+	}
+	if occurrenceStatus != "running" {
+		t.Fatalf("occurrence claim status=%q, want running", occurrenceStatus)
+	}
+	if _, err := persistence.Runs.MarkRunSucceededClaimed(t.Context(), claimedJob); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT status FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, claimed[0].OccurrenceID).Scan(&occurrenceStatus); err != nil {
+		t.Fatal(err)
+	}
+	if occurrenceStatus != "succeeded" {
+		t.Fatalf("occurrence terminal status=%q, want succeeded", occurrenceStatus)
+	}
+}
+
+func TestPostgresScheduledReplaceTerminalizesOldRefreshTreeAndJob(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-replace", CatalogID: "catalog-replace", SchedulerOwner: "scheduler-replace",
+		Jobs: baseQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-replace", catalogID: "catalog-replace"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_replace", Environment: "prod", GenerationID: "generation_replace"}
+	plan := integrationPlan(t, identity, "daily")
+	input := refreshrun.RunInput{Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:replace", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}
+	input.RunID = "replace-old-run"
+	oldRun, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStored, err := refreshRepo.LookupRun(t.Context(), oldRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.RunID = "replace-new-run"
+	input.NominalTime = time.Now().UTC().Add(time.Second).Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	input.ConcurrencyPolicy = "Replace"
+	newRun, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldState, err := refreshRepo.LookupRun(t.Context(), oldRun.ID); err != nil || oldState.Status != refreshrun.RunStatusSuperseded {
+		t.Fatalf("old refresh state=%#v err=%v", oldState, err)
+	}
+	oldJob, err := jobsRepo.Get(t.Context(), oldStored.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldJob.Status != "cancelled" {
+		t.Fatalf("old job status=%q, want cancelled", oldJob.Status)
+	}
+	newStored, err := refreshRepo.LookupRun(t.Context(), newRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newJob, err := jobsRepo.Get(t.Context(), newStored.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if newJob.Status != "queued" {
+		t.Fatalf("new job status=%q, want queued", newJob.Status)
+	}
+}
+
+func TestPostgresScheduledReplaceRollbackKeepsRefreshAndJobLive(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	failingQueue := failingSupersedeQueue{PostgresJobsAdapter: baseQueue, err: errors.New("supersede queue unavailable")}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-replace-rollback", CatalogID: "catalog-replace-rollback", SchedulerOwner: "scheduler-replace-rollback",
+		Jobs: failingQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-replace-rollback", catalogID: "catalog-replace-rollback"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_replace_rollback", Environment: "prod", GenerationID: "generation_replace_rollback"}
+	plan := integrationPlan(t, identity, "daily")
+	input := refreshrun.RunInput{RunID: "replace-rollback-old", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:replace-rollback", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}
+	oldRun, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldStored, err := refreshRepo.LookupRun(t.Context(), oldRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input.RunID = "replace-rollback-new"
+	input.NominalTime = time.Now().UTC().Add(time.Second).Truncate(time.Microsecond).Format(time.RFC3339Nano)
+	input.ConcurrencyPolicy = "Replace"
+	if _, err := createTreeRootE(t.Context(), persistence.Runs, input, nil); err == nil {
+		t.Fatal("replace unexpectedly succeeded with failing jobs terminalization")
+	}
+	oldState, err := refreshRepo.LookupRun(t.Context(), oldRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldState.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("old refresh status=%q after rollback, want queued", oldState.Status)
+	}
+	oldJob, err := jobsRepo.Get(t.Context(), oldStored.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if oldJob.Status != "queued" {
+		t.Fatalf("old job status=%q after rollback, want queued", oldJob.Status)
+	}
+	if _, err := refreshRepo.LookupRun(t.Context(), "replace-rollback-new"); !errors.Is(err, refreshpostgres.ErrNotFound) {
+		t.Fatalf("replacement run lookup error=%v, want not found", err)
+	}
+}
+
+func TestPostgresWorkerSupersedeTerminalizesRefreshTreeAndJobAtomically(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-worker-supersede", CatalogID: "catalog-worker-supersede", SchedulerOwner: "scheduler-worker-supersede", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-supersede", catalogID: "catalog-worker-supersede"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_worker_supersede", Environment: "prod", GenerationID: "generation_worker_supersede"}
+	plan := integrationPlan(t, identity, "daily")
+	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "worker-supersede-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:worker-supersede", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-supersede", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
+		t.Fatal(err)
+	}
+	superseder, ok := persistence.Runs.(refreshrun.LeaseFencedSupersedeRepository)
+	if !ok {
+		t.Fatal("postgres run persistence lacks supersession capability")
+	}
+	if err := superseder.MarkRunTreeSupersededClaimed(t.Context(), claimed, "canonical delivery is stale"); err != nil {
+		t.Fatal(err)
+	}
+	state, err := refreshRepo.LookupRun(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != refreshrun.RunStatusSuperseded {
+		t.Fatalf("refresh status=%q, want superseded", state.Status)
+	}
+	job, err := jobsRepo.Get(t.Context(), claimed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "cancelled" {
+		t.Fatalf("job status=%q, want cancelled", job.Status)
+	}
+}
+
+func TestPostgresWorkerSupersedeRollbackKeepsRefreshAndJobLive(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	failingQueue := failingCancelClaimQueue{PostgresJobsAdapter: baseQueue, err: errors.New("supersede job cancellation unavailable")}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-worker-rollback", CatalogID: "catalog-worker-rollback", SchedulerOwner: "scheduler-worker-rollback", Jobs: failingQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-rollback", catalogID: "catalog-worker-rollback"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_worker_rollback", Environment: "prod", GenerationID: "generation_worker_rollback"}
+	plan := integrationPlan(t, identity, "daily")
+	created, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{RunID: "worker-rollback-root", Identity: identity, SemanticModelID: "semantic_sales", PipelineID: "pipeline_daily", PipelinePlan: &plan, InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, NominalTime: time.Now().UTC().Truncate(time.Microsecond).Format(time.RFC3339Nano), ConcurrencyPolicy: "Forbid", PrincipalID: "principal:worker-rollback", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_daily", TriggerType: refreshrun.TriggerSchedule, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-rollback", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
+		t.Fatal(err)
+	}
+	superseder, ok := persistence.Runs.(refreshrun.LeaseFencedSupersedeRepository)
+	if !ok {
+		t.Fatal("postgres run persistence lacks supersession capability")
+	}
+	if err := superseder.MarkRunTreeSupersededClaimed(t.Context(), claimed, "canonical delivery is stale"); err == nil {
+		t.Fatal("supersession unexpectedly succeeded with failing jobs capability")
+	}
+	state, err := refreshRepo.LookupRun(t.Context(), created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.Status != refreshrun.RunStatusPrepared {
+		t.Fatalf("refresh status=%q after rollback, want prepared", state.Status)
+	}
+	job, err := jobsRepo.Get(t.Context(), claimed.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "running" {
+		t.Fatalf("job status=%q after rollback, want running", job.Status)
+	}
+}
+
+func TestPostgresPrepareVerifiedPublicationDataVersionAndSuccess(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_publish", Environment: "prod", GenerationID: "generation_publish"}
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	physicalPoolID, catalogID := "pool-publish", "catalog-publish"
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: physicalPoolID, CatalogID: catalogID, SchedulerOwner: "scheduler-publish",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: physicalPoolID, catalogID: catalogID}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_publish", PipelineID: "pipeline_publish", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_publish", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("d", 64), SelectionDigest: "sha256:" + strings.Repeat("e", 64), MaterializationScope: []string{"model_publish"},
+		InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{
+		Identity: identity, SemanticModelID: "semantic_publish", PipelineID: "pipeline_publish", PipelinePlan: &plan,
+		InvocationSource: "manual", PrincipalID: "principal:publish", EstimatedMemoryBytes: 1, TargetRevision: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_publish", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+		PayloadJSON: string(mustJSON(t, map[string]any{"pipelinePlan": plan})),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope := refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}
+	candidates, err := persistence.Runs.ListExecutableJobs(t.Context(), scope, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := persistence.Runs.ClaimExecutableJob(t.Context(), candidates[0], "worker-publish", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("claim ok=%v err=%v", ok, err)
+	}
+	prepared, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Status != refreshrun.RunStatusPrepared {
+		t.Fatalf("prepared status=%q", prepared.Status)
+	}
+	publication, ok := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
+	if !ok {
+		t.Fatal("postgres publication does not implement canonical unit of work")
+	}
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: identity.GenerationID, SnapshotID: 901}); err != nil {
+		t.Fatal(err)
+	}
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: identity.GenerationID, SnapshotID: 901}); err != nil {
+		t.Fatalf("canonical completion replay = %v", err)
+	}
+	tamperedJob := claimed
+	tamperedJob.PayloadJSON = `{"tampered":true}`
+	if err := publication.CompleteCanonicalRefresh(t.Context(), tamperedJob, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: identity.GenerationID, SnapshotID: 901}); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("canonical completion payload mismatch = %v, want conflict", err)
+	}
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: identity.GenerationID, SnapshotID: 902}); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("canonical completion snapshot mismatch = %v, want conflict", err)
+	}
+	finalRun, err := refreshRepo.LookupRun(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if finalRun.Status != refreshrun.RunStatusSucceeded {
+		t.Fatalf("final run status=%q", finalRun.Status)
+	}
+	version, found, err := refreshRepo.DataVersion(t.Context(), identity.ProjectID.String(), identity.Environment, "semantic_publish", identity.GenerationID)
+	if err != nil || !found {
+		t.Fatalf("data version found=%v err=%v", found, err)
+	}
+	if version.SnapshotID != 901 || version.PhysicalPoolID != physicalPoolID || version.CatalogID != catalogID || version.RunID != run.ID {
+		t.Fatalf("data version=%#v", version)
+	}
+	job, err := jobsRepo.Get(t.Context(), finalRun.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != "succeeded" {
+		t.Fatalf("job status=%q", job.Status)
+	}
+}
+
+func TestPostgresCancellationAuditFailureRollsBackRun(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_cancel", Environment: "prod", GenerationID: "generation_cancel"}
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_cancel", PipelineID: "pipeline_cancel", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_cancel", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("f", 64), SelectionDigest: "sha256:" + strings.Repeat("0", 64), MaterializationScope: []string{"model_cancel"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-cancel", CatalogID: "catalog-cancel", SchedulerOwner: "scheduler-cancel",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-cancel", catalogID: "catalog-cancel"}, CancelAuditWriter: integrationAuditWriter{fail: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := createTreeRootE(t.Context(), persistence.Runs, refreshrun.RunInput{
+		Identity: identity, SemanticModelID: "semantic_cancel", PipelineID: "pipeline_cancel", PipelinePlan: &plan,
+		InvocationSource: "manual", PrincipalID: "principal:cancel", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_cancel", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline,
+		PayloadJSON: string(mustJSON(t, map[string]any{"pipelinePlan": plan})),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = persistence.Runs.CancelRunWithAudit(t.Context(), identity, run.ID, &access.AuditIntent{EventID: "event-cancel", Source: "refresh", Operation: "cancel", PrincipalID: "principal:cancel", Action: "refresh.cancel", ResourceKind: "refresh_run", ResourceID: run.ID, Outcome: "cancelled"})
+	if err == nil {
+		t.Fatal("cancellation unexpectedly succeeded with failing audit writer")
+	}
+	unchanged, err := refreshRepo.LookupRun(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("run status after audit rollback=%q", unchanged.Status)
+	}
+}
+
+func TestPostgresManualRunIdentityReplayAndDistinctCommands(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_identity", Environment: "prod", GenerationID: "generation_identity"}
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PhysicalPoolID: "pool-identity", CatalogID: "catalog-identity", SchedulerOwner: "scheduler-identity",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-identity", catalogID: "catalog-identity"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline_plan_identity", PipelineID: "pipeline_identity", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic_identity", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("1", 64), SelectionDigest: "sha256:" + strings.Repeat("2", 64), MaterializationScope: []string{"model_identity"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := refreshrun.RunInput{RunID: "command-identity-1", Identity: identity, SemanticModelID: "semantic_identity", PipelineID: "pipeline_identity", PipelinePlan: &plan, InvocationSource: "manual", PrincipalID: "principal:identity", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline_identity", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: string(mustJSON(t, map[string]any{"pipelinePlan": plan}))}
+	first, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.ID != first.ID {
+		t.Fatalf("replay id=%q first=%q", replay.ID, first.ID)
+	}
+	conflictingIdentity := input
+	conflictingIdentity.PrincipalID = "principal:other"
+	if _, err := createTreeRootE(t.Context(), persistence.Runs, conflictingIdentity, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("same run identity with changed canonical request error=%v, want conflict", err)
+	}
+	distinct := input
+	distinct.RunID = "command-identity-2"
+	if _, err := createTreeRootE(t.Context(), persistence.Runs, distinct, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("distinct active command error=%v, want conflict", err)
+	}
+	if _, err := persistence.Runs.CancelRun(t.Context(), identity, first.ID); err != nil {
+		t.Fatal(err)
+	}
+	second, err := createTreeRootE(t.Context(), persistence.Runs, distinct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.ID == first.ID {
+		t.Fatal("distinct manual command reused first run identity")
+	}
+}
+
+func TestPostgresAdvancedQueueReplayPreservesFencedRunAndJob(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_advanced_replay", Environment: "prod", GenerationID: "generation_advanced_replay"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{ID: "pipeline_plan_advanced_replay", PipelineID: "pipeline_advanced_replay", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, SemanticModelID: "semantic_advanced_replay", ServingGenerationID: identity.GenerationID, ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64), MaterializationScope: []string{"model_advanced_replay"}, InvocationSource: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-advanced-replay", CatalogID: "catalog-advanced-replay", SchedulerOwner: "scheduler-advanced-replay", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-advanced-replay", catalogID: "catalog-advanced-replay"}, CancelAuditWriter: integrationAuditWriter{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := refreshrun.RunInput{RunID: "advanced-replay-run", Identity: identity, SemanticModelID: projectgraph.ResourceID(plan.SemanticModelID), PipelineID: projectgraph.ResourceID(plan.PipelineID), PipelinePlan: &plan, InvocationSource: refreshrun.TriggerManual, PrincipalID: "principal:advanced-replay", EstimatedMemoryBytes: 1, TargetType: refreshrun.TargetRefreshPipeline, TargetID: projectgraph.ResourceID(plan.PipelineID), TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`}
+	first, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	candidates, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 1)
+	if err != nil || len(candidates) != 1 {
+		t.Fatalf("advanced replay candidates=%#v err=%v", candidates, err)
+	}
+	claimed, ok, err := queue.ClaimExecutableJob(t.Context(), candidates[0], "advanced-replay-worker", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("advanced replay claim ok=%v err=%v", ok, err)
+	}
+	replay, err := createTreeRootE(t.Context(), persistence.Runs, input, nil)
+	if err != nil || replay.ID != first.ID {
+		t.Fatalf("advanced exact replay=%#v err=%v", replay, err)
+	}
+	storedRun, err := refreshRepo.LookupRun(t.Context(), first.ID)
+	if err != nil || storedRun.Status != refreshrun.RunStatusRunning || storedRun.AttemptCount != 1 {
+		t.Fatalf("advanced replay run=%#v err=%v", storedRun, err)
+	}
+	storedJob, err := jobsRepo.Get(t.Context(), claimed.ID)
+	if err != nil || storedJob.Status != jobs.StatusRunning || storedJob.Attempts != 1 {
+		t.Fatalf("advanced replay job=%#v err=%v", storedJob, err)
+	}
+}
+
+func mustJSON(t *testing.T, value any) []byte {
+	t.Helper()
+	b, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return b
+}

@@ -3,11 +3,13 @@ package module
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -37,6 +39,23 @@ type generatedRefreshAPI interface {
 }
 
 var testRefreshWorkflow = jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil })
+
+func sqlitePersistence(t *testing.T, database *sql.DB) *Persistence {
+	t.Helper()
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database: database,
+		Workflow: testRefreshWorkflow,
+		Execution: RunWorkflowConfig{
+			ResourceKind: "refresh",
+			InitialEvent: "refresh.queued",
+			InitialState: refreshrun.RunStatusQueued,
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &persistence
+}
 
 func testAuthorization() AuthorizationConfig {
 	return AuthorizationConfig{AuthorizeObject: func(context.Context, string, access.Capability, access.ResourceRef) (bool, error) {
@@ -110,6 +129,21 @@ func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	}
 }
 
+func TestPersistenceValidateRequiresTerminalRecovery(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	persistence := sqlitePersistence(t, store.SQLDB())
+	persistence.TerminalRecovery = nil
+	if err := persistence.Validate(); err == nil {
+		t.Fatal("persistence validation accepted missing terminal recovery")
+	} else if !strings.Contains(err.Error(), "terminal recovery") {
+		t.Fatalf("unexpected validation error: %v", err)
+	}
+}
+
 func TestBuildRejectsInvalidRecoveryLifecycleConfiguration(t *testing.T) {
 	if _, err := Build(t.Context(), Config{
 		Authorization: testAuthorization(), RecoveryLifecycle: &RecoveryLifecycle{},
@@ -176,7 +210,7 @@ INSERT INTO refresh_job_runs (
 		t.Fatalf("seed model refresh state: %v", err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
 		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{
 			ID: "generation_a", ProjectID: "project_sales", Environment: "dev",
 		}}},
@@ -278,7 +312,7 @@ INSERT INTO refresh_job_runs (
 		t.Fatalf("seed refresh run: %v", err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
 		Service: refreshrun.Service{ServingStates: reconciliationStates{state: servingstate.State{ID: "generation_a", ProjectID: "project_sales", Environment: "dev"}}},
 	})
 	if err != nil {
@@ -315,7 +349,7 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	}
 	publisher := &versionPublisher{}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Workflow: testRefreshWorkflow,
+		Persistence:   sqlitePersistence(t, store.SQLDB()),
 		Authorization: testAuthorization(),
 		Service: refreshrun.Service{
 			ServingStates: states,
@@ -363,7 +397,7 @@ func TestReconcileRejectsMultipleActiveServingScopes(t *testing.T) {
 	}
 	defer store.Close()
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
 		Service: refreshrun.Service{
 			ServingStates: reconciliationStates{scopes: []servingstate.ActiveScope{{ProjectID: "sales", Environment: "prod"}, {ProjectID: "sales", Environment: "dev"}}},
 			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
@@ -397,7 +431,7 @@ INSERT INTO semantic_model_data_versions (
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
 		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) {
 			return projectgraph.ServingIdentity{ProjectID: "sales", Environment: "prod", GenerationID: "state-new"}, nil
 		},
@@ -467,6 +501,53 @@ func (p *versionPublisher) PublishSemanticModelVersion(_ context.Context, _ proj
 type dispatcherFunc func(context.Context)
 
 func (f dispatcherFunc) Run(ctx context.Context) { f(ctx) }
+
+type terminalRecoveryFunc func(context.Context, string, string) error
+
+func (f terminalRecoveryFunc) FailRunsForTerminalServingStates(ctx context.Context, environment, message string) error {
+	return f(ctx, environment, message)
+}
+
+func TestStartRunsTerminalRecoveryBeforeDispatch(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	persistence := sqlitePersistence(t, store.SQLDB())
+	var recovered atomic.Bool
+	dispatched := make(chan struct{}, 1)
+	persistence.TerminalRecovery = terminalRecoveryFunc(func(_ context.Context, environment, message string) error {
+		if environment != "dev" || message != "refresh did not complete" {
+			t.Fatalf("unexpected recovery scope environment=%q message=%q", environment, message)
+		}
+		recovered.Store(true)
+		return nil
+	})
+	module, err := Build(t.Context(), Config{
+		Persistence: persistence, Authorization: testAuthorization(), RecoveryEnvironment: "dev",
+		Dispatcher: dispatcherFunc(func(context.Context) {
+			if !recovered.Load() {
+				t.Error("dispatcher ran before terminal recovery")
+			}
+			dispatched <- struct{}{}
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-dispatched:
+	case <-time.After(time.Second):
+		t.Fatal("dispatcher did not run")
+	}
+	if err := module.Stop(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
 
 type schedulerFunc func(context.Context) error
 

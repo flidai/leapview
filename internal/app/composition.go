@@ -1073,7 +1073,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			return servingstate.ID(stateID), nil
 		}
 	}
-	if err := refreshmodule.Recover(ctx, store.SQLDB(), string(environment)); err != nil {
+	if err := refreshmodule.RecoverSQLite(ctx, store.SQLDB(), string(environment)); err != nil {
 		return fail(err)
 	}
 	// Production candidate synchronization is canonical-only. The concrete

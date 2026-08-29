@@ -31,8 +31,14 @@ type ReconcileInput struct {
 }
 
 type Occurrence struct {
-	Identity   projectgraph.ServingIdentity
-	PipelineID projectgraph.ResourceID
+	// Storage claim identity is opaque to scheduling policy but must round-trip
+	// unchanged so release/attach operations remain owner- and fence-bound.
+	OccurrenceID   string
+	LeaseOwner     string
+	LeaseRevision  int64
+	LeaseExpiresAt time.Time
+	Identity       projectgraph.ServingIdentity
+	PipelineID     projectgraph.ResourceID
 	// MatchingScheduleIDs is evidence only. It is sorted canonically and does
 	// not participate in occurrence uniqueness, so overlapping expressions and
 	// schedule renames cannot create duplicate executions.

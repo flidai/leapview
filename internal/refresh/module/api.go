@@ -114,7 +114,11 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 		if scopeErr != nil {
 			return
 		}
-		run, err := m.runs.GetRun(ctx, scope, job.RunID)
+		runs, readErr := m.readRuns()
+		if readErr != nil {
+			return
+		}
+		run, err := runs.GetRun(ctx, scope, job.RunID)
 		if err != nil {
 			return
 		}
@@ -161,7 +165,12 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
 	}
-	prior, err := m.runs.GetRun(r.Context(), scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
+		return
+	}
+	prior, err := runs.GetRun(r.Context(), scope, runID)
 	if err != nil || !scope.Matches(prior.Identity) {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("not_found", "Refresh run not found"))
 		return
@@ -193,7 +202,12 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		intent.EventID = ""
 		cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
 	}
-	row, err := m.runs.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+	cancel, cancelErr := m.cancelRuns()
+	if cancelErr != nil {
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
+		return
+	}
+	row, err := cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)
@@ -242,7 +256,12 @@ func (m *Module) ListRefreshRunEvents(w http.ResponseWriter, r *http.Request, pr
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return
 	}
-	run, err := m.runs.GetRun(r.Context(), scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "REFRESH_SERVICE_UNAVAILABLE", "Refresh service is unavailable", nil)
+		return
+	}
+	run, err := runs.GetRun(r.Context(), scope, runID)
 	if err != nil || !scope.Matches(run.Identity) {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "REFRESH_RUN_NOT_FOUND", "Refresh run not found", nil)
 		return

@@ -42,6 +42,7 @@ func (m *Module) beginFinalize(ctx context.Context, request control.UploadReques
 		Job: jobs.EnqueueInput{
 			ID: m.finalizeExecution.ResourceKind + ":" + request.UploadID + ":finalize", Kind: m.finalizeExecution.JobKind,
 			WorkloadClass: "control", PrincipalID: principal, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
+			PartitionKey: "manageddata:" + request.Project,
 			ResourceKind: m.finalizeExecution.ResourceKind, ResourceID: request.UploadID, Payload: payload,
 		},
 	}

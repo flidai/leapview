@@ -3,7 +3,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -16,8 +15,6 @@ import (
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
@@ -25,7 +22,6 @@ import (
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workload"
@@ -40,8 +36,10 @@ type Scheduler interface {
 }
 
 type Config struct {
-	Database            *sql.DB
-	ApplyAccessSnapshot func(context.Context, transaction.Transaction, string) error
+	// Persistence is the capability-owned refresh store.  Production callers
+	// inject a complete bundle. SQLite callers must construct
+	// NewSQLitePersistence explicitly.
+	Persistence         *Persistence
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
 	Service             refreshrun.Service
@@ -54,7 +52,6 @@ type Config struct {
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
-	Workflow            jobplatform.WorkflowRecorder
 	AuditIntentRecorder access.AuditIntentRecorder
 	Clock               refreshschedule.Clock
 	EnableDispatcher    bool
@@ -66,6 +63,10 @@ type Config struct {
 	Logger              *slog.Logger
 	RecoveryLifecycle   *RecoveryLifecycle
 	RecoveryInterval    time.Duration
+	// RecoveryEnvironment is the exact configured serving environment used by
+	// startup reconciliation. It is never inferred from a mutable active
+	// serving pointer.
+	RecoveryEnvironment string
 }
 
 type HTTPConfig struct {
@@ -90,23 +91,25 @@ type AuthorizationConfig struct {
 }
 
 type Module struct {
-	handler            materializehttp.Handler
-	runs               *refreshsqlite.SQLRunRepository
-	schedules          *refreshsqlite.Repository
-	service            refreshrun.Service
-	refreshClock       refreshschedule.Clock
-	dispatcher         Dispatcher
-	scheduler          Scheduler
-	reconcileSchedules func(context.Context) error
-	scheduleInterval   time.Duration
-	leaseTimeout       time.Duration
-	logger             *slog.Logger
-	events             EventStore
-	durableAudit       bool
-	refreshExecution   apigencommand.AsyncExecutionContract
-	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
-	recoveryLifecycle  *RecoveryLifecycle
-	recoveryInterval   time.Duration
+	handler             materializehttp.Handler
+	runs                RunPersistence
+	schedules           refreshschedule.Repository
+	service             refreshrun.Service
+	refreshClock        refreshschedule.Clock
+	dispatcher          Dispatcher
+	scheduler           Scheduler
+	reconcileSchedules  func(context.Context) error
+	scheduleInterval    time.Duration
+	leaseTimeout        time.Duration
+	logger              *slog.Logger
+	events              EventStore
+	durableAudit        bool
+	refreshExecution    apigencommand.AsyncExecutionContract
+	resolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
+	recoveryLifecycle   *RecoveryLifecycle
+	recoveryInterval    time.Duration
+	terminalRecovery    TerminalRunRecovery
+	recoveryEnvironment string
 
 	mu          sync.Mutex
 	background  context.Context
@@ -179,18 +182,21 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.AuditIntentRecorder != nil {
 		m.handler.BuildAuditIntent = buildRefreshAuditIntent
 	}
-	if config.Database == nil {
+	if config.Persistence == nil {
+		if config.EnableDispatcher || config.EnableScheduler || config.Service.Runs != nil || config.RecoveryLifecycle != nil {
+			return nil, errors.New("refresh persistence is required")
+		}
 		return m, nil
 	}
-	if config.Workflow == nil {
-		return nil, errors.New("refresh workflow recorder is required")
+	persistence := *config.Persistence
+	if err := persistence.Validate(); err != nil {
+		return nil, err
 	}
-	m.runs = refreshsqlite.NewSQLRunRepositoryWithWorkflowAndAudit(config.Database, config.Workflow, refreshsqlite.RunWorkflowConfig{
-		ResourceKind: refreshExecution.ResourceKind,
-		InitialEvent: refreshExecution.InitialEvent,
-		InitialState: refreshExecution.InitialState,
-	}, config.AuditIntentRecorder)
-	m.schedules = newSQLiteRepository(config.Database)
+	if config.RecoveryLifecycle != nil && persistence.Recovery == nil {
+		return nil, errors.New("refresh recovery persistence is required when recovery lifecycle is configured")
+	}
+	m.runs = persistence.Runs
+	m.schedules = persistence.Schedules
 	m.service = config.Service
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
@@ -202,7 +208,12 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.service.Runs = m.runs
 	m.service.DataVersions = m.schedules
-	m.service.Publication = refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot)
+	m.service.Publication = persistence.Publication
+	m.terminalRecovery = persistence.TerminalRecovery
+	m.recoveryEnvironment = strings.TrimSpace(config.RecoveryEnvironment)
+	if config.RecoveryLifecycle != nil && persistence.Recovery != nil {
+		config.RecoveryLifecycle.Repository = persistence.Recovery
+	}
 	if m.dispatcher == nil && config.EnableDispatcher {
 		if config.ResolveIdentity == nil {
 			return nil, errors.New("refresh dispatcher identity resolver is required")
@@ -267,13 +278,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	return m, nil
 }
 
-func Recover(ctx context.Context, database *sql.DB, environment string) error {
-	if database == nil || environment == "" {
-		return nil
-	}
-	return refreshsqlite.NewSQLRunRepository(database).FailRunsForTerminalServingStates(ctx, environment, "refresh did not complete")
-}
-
 func (m *Module) QueuePipelineRefresh(ctx context.Context, input refreshrun.QueuePipelineInput) (refreshrun.QueueAssetResult, error) {
 	if m == nil || m.runs == nil {
 		return refreshrun.QueueAssetResult{}, errors.New("refresh persistence is not configured")
@@ -336,7 +340,11 @@ func (m *Module) QueuePipelineRefreshForUI(ctx context.Context, identity project
 		if scopeErr != nil {
 			return scopeErr
 		}
-		prior, getErr := m.runs.GetRun(ctx, scope, retryOf)
+		runs, readErr := m.readRuns()
+		if readErr != nil {
+			return readErr
+		}
+		prior, getErr := runs.GetRun(ctx, scope, retryOf)
 		if getErr != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.PipelineID != pipeline || prior.Status == refreshrun.RunStatusQueued || prior.Status == refreshrun.RunStatusRunning {
 			return errors.New("refresh retry is invalid")
 		}
@@ -375,11 +383,19 @@ func (m *Module) CancelPipelineRefreshForUI(ctx context.Context, identity projec
 	if err != nil {
 		return err
 	}
-	prior, err := m.runs.GetRun(ctx, scope, runID)
+	runs, readErr := m.readRuns()
+	if readErr != nil {
+		return readErr
+	}
+	prior, err := runs.GetRun(ctx, scope, runID)
 	if err != nil || !scope.Matches(prior.Identity) || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.ParentRunID != "" || prior.PipelineID != pipeline || prior.TargetID != pipeline {
 		return errors.New("refresh run not found")
 	}
-	row, err := m.runs.CancelRun(ctx, prior.Identity, runID)
+	cancel, cancelErr := m.cancelRuns()
+	if cancelErr != nil {
+		return cancelErr
+	}
+	row, err := cancel.CancelRun(ctx, prior.Identity, runID)
 	if err != nil {
 		return err
 	}
@@ -450,11 +466,16 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListTargetRuns(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -465,7 +486,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID)
+	latest, ok, err := runStore.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetRefreshPipeline, pipelineID)
 	if err != nil {
 		return state, err
 	}
@@ -514,11 +535,16 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, modelID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, modelID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -529,7 +555,7 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModelTable, modelID)
+	latest, ok, err := runStore.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModelTable, modelID)
 	if err != nil {
 		return state, err
 	}
@@ -556,11 +582,16 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 		state.Unavailable = true
 		return state, nil
 	}
+	runStore, readErr := m.readRuns()
+	if readErr != nil {
+		state.Unavailable = true
+		return state, nil
+	}
 	scope := refreshrun.ReadScope{ProjectID: projectID, Environment: environment}
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
+	runs, err := runStore.ListSemanticModelRuns(ctx, scope, semanticModelID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -571,7 +602,7 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
+	latest, ok, err := runStore.LatestSuccessfulSemanticModelRun(ctx, scope, semanticModelID)
 	if err != nil {
 		return state, err
 	}
@@ -738,6 +769,12 @@ func (m *Module) Start(ctx context.Context) error {
 	if m.started {
 		m.mu.Unlock()
 		return nil
+	}
+	if m.terminalRecovery != nil {
+		if err := RecoverWithPersistence(ctx, m.terminalRecovery, m.recoveryEnvironment); err != nil {
+			m.mu.Unlock()
+			return fmt.Errorf("refresh startup recovery: %w", err)
+		}
 	}
 	m.background, m.cancel = context.WithCancel(ctx)
 	m.started = true

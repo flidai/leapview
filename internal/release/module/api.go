@@ -475,6 +475,7 @@ func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project
 					Job: jobs.EnqueueInput{
 						ID: "release:" + releaseID + ":finalize", Kind: execution.JobKind,
 						WorkloadClass: "control", PrincipalID: principal.ID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
+						PartitionKey: "release:" + project,
 						ResourceKind: execution.ResourceKind, ResourceID: releaseID, Payload: payload,
 					},
 				})

@@ -122,6 +122,10 @@ func (r *fakeQueueRepository) CreateRun(context.Context, RunInput) (RunRecord, e
 	return RunRecord{}, nil
 }
 
+func (r *fakeQueueRepository) CreateRunTree(context.Context, RunTreeInput) (RunRecord, []RunRecord, error) {
+	return RunRecord{}, nil, nil
+}
+
 func (r *fakeQueueRepository) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
 	return nil, nil
 }

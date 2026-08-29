@@ -67,7 +67,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-a", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), CompatibilityDigest: testDigest('2'), ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
+	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogID: "catalog-sales", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), CompatibilityDigest: testDigest('2'), ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
 	if _, err := r.CreateSnapshotSeal(ctx, sealInput); err != nil {
 		t.Fatal(err)
 	}
@@ -105,6 +105,10 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 	if first.Replay || first.Pointer.ActiveGenerationID != ids["generation"] || first.Publication.ResultTargetRevision != 2 {
 		t.Fatalf("unexpected activation result: %#v", first)
+	}
+	replayedPublication, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator", RequestDigest: testDigest('4')})
+	if err != nil || replayedPublication.PublicationID != ids["publication"] || replayedPublication.ExpectedBaseGenerationID != "" {
+		t.Fatalf("post-activation publication replay = %#v, %v", replayedPublication, err)
 	}
 	if root, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: ids["seal"], RootKind: "generation", State: "live"}); err != nil || root.RootID != ids["generation"] {
 		t.Fatalf("retention root replay = %#v, %v", root, err)
@@ -200,6 +204,57 @@ func TestPostgresLeaseCASRaceAndStaleFence(t *testing.T) {
 	}
 	if active != 1 {
 		t.Fatalf("active lease count = %d", active)
+	}
+}
+
+func TestPostgresCanonicalTargetProofSerializesActivation(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := context.Background()
+	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_canonical_lock", ProjectID: "project_canonical_lock", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	proofTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.TargetForShareTx(ctx, proofTx, "target_canonical_lock"); err != nil {
+		_ = proofTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	activationTx, err := p.Begin(ctx)
+	if err != nil {
+		_ = proofTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	activationDone := make(chan error, 1)
+	go func() {
+		var id string
+		activationDone <- activationTx.QueryRow(ctx, `SELECT target_id FROM delivery.delivery_target WHERE target_id=$1 FOR UPDATE`, "target_canonical_lock").Scan(&id)
+	}()
+	select {
+	case err := <-activationDone:
+		_ = activationTx.Rollback(ctx)
+		_ = proofTx.Rollback(ctx)
+		t.Fatalf("activation lock overtook canonical proof, err=%v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := proofTx.Commit(ctx); err != nil {
+		_ = activationTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	select {
+	case err := <-activationDone:
+		if err != nil {
+			_ = activationTx.Rollback(ctx)
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = activationTx.Rollback(ctx)
+		t.Fatal("activation lock did not proceed after canonical proof committed")
+	}
+	if err := activationTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

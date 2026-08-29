@@ -29,11 +29,15 @@ const (
 
 // EnqueueInput is the durable job request written by a producer.
 type EnqueueInput struct {
-	ID                   string
-	Kind                 string
-	WorkloadClass        string
-	PrincipalID          string
-	GroupIDs             []string
+	ID            string
+	Kind          string
+	WorkloadClass string
+	PrincipalID   string
+	GroupIDs      []string
+	// PartitionKey scopes principal FIFO/fairness. Refresh producers set this
+	// to their authoritative project/environment partition; every producer must
+	// provide its own stable capability/scope partition.
+	PartitionKey         string
 	ResourceKind         string
 	ResourceID           string
 	EstimatedMemoryBytes int64
@@ -42,16 +46,16 @@ type EnqueueInput struct {
 
 // Job is the durable representation returned by a Repository.
 type Job struct {
-	ID, Kind, WorkloadClass, PrincipalID, ResourceKind, ResourceID string
-	GroupIDs                                                       []string
-	EstimatedMemoryBytes                                           int64
-	Payload                                                        []byte
-	Status                                                         Status
-	Attempts                                                       int
-	LeaseGeneration                                                int64
-	LeaseOwner, LeaseExpiresAt                                     string
-	CreatedAt, StartedAt, FinishedAt                               string
-	ErrorJSON                                                      string
+	ID, Kind, WorkloadClass, PrincipalID, PartitionKey, ResourceKind, ResourceID string
+	GroupIDs                                                                     []string
+	EstimatedMemoryBytes                                                         int64
+	Payload                                                                      []byte
+	Status                                                                       Status
+	Attempts                                                                     int
+	LeaseGeneration                                                              int64
+	LeaseOwner, LeaseExpiresAt                                                   string
+	CreatedAt, StartedAt, FinishedAt                                             string
+	ErrorJSON                                                                    string
 }
 
 // CanonicalActor validates an actor identity and returns a stable sorted,

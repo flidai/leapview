@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -12,6 +13,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -271,8 +273,9 @@ func activationWorkflow(
 	actor deployment.ApprovalActor,
 	approval deployment.Approval,
 	idempotencyKey string,
+	environment string,
 ) jobs.WorkflowIntent {
-	workflow, _ := activationWorkflowForOperation(string(deploymentgen.GenOperationCreateDeployment), execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey)
+	workflow, _ := activationWorkflowForOperation(string(deploymentgen.GenOperationCreateDeployment), execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, environment)
 	return workflow
 }
 
@@ -286,8 +289,9 @@ func activationWorkflowForOperation(
 	actor deployment.ApprovalActor,
 	approval deployment.Approval,
 	idempotencyKey string,
+	environment string,
 ) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithBootstrap(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, false)
+	return activationWorkflowForOperationWithBootstrap(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, false, environment)
 }
 
 func activationWorkflowForOperationWithBootstrap(
@@ -301,8 +305,9 @@ func activationWorkflowForOperationWithBootstrap(
 	approval deployment.Approval,
 	idempotencyKey string,
 	bootstrap bool,
+	environment string,
 ) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithRollbackFence(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, bootstrap, "", 0, false)
+	return activationWorkflowForOperationWithRollbackFence(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, bootstrap, "", 0, false, environment)
 }
 
 func activationWorkflowForOperationWithRollbackFence(
@@ -319,7 +324,11 @@ func activationWorkflowForOperationWithRollbackFence(
 	expectedBaseGenerationID string,
 	expectedTargetRevision int64,
 	rollbackIntent bool,
+	environment string,
 ) (jobs.WorkflowIntent, error) {
+	if err := servingstate.ValidateEnvironment(servingstate.Environment(environment)); err != nil || strings.TrimSpace(environment) != environment {
+		return jobs.WorkflowIntent{}, fmt.Errorf("deployment environment is required")
+	}
 	payload, _ := json.Marshal(ActivateJob{
 		Project: project, Deployment: deploymentID,
 		Actor: actor.PrincipalID, Credential: actor,
@@ -365,6 +374,7 @@ func activationWorkflowForOperationWithRollbackFence(
 			ID:            execution.ResourceKind + ":" + deploymentID + ":activate",
 			Kind:          execution.JobKind,
 			WorkloadClass: "control", PrincipalID: actor.PrincipalID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
+			PartitionKey: "deployment:" + project + ":" + environment,
 			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
 			Payload: payload,
 		}

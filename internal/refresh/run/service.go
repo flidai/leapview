@@ -30,6 +30,7 @@ type ServingStateRepository interface {
 }
 
 type WorkflowRepository interface {
+	RunTreeRepository
 	CreateRun(context.Context, RunInput) (RunRecord, error)
 	ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error)
 	MarkRunRunning(context.Context, projectgraph.ServingIdentity, string) (RunRecord, error)
@@ -37,6 +38,13 @@ type WorkflowRepository interface {
 	MarkRunFailed(context.Context, projectgraph.ServingIdentity, string, string) (RunRecord, error)
 	MarkRunPrepared(context.Context, JobRecord) (RunRecord, error)
 	RunMayPublish(context.Context, JobRecord) (bool, error)
+}
+
+// ProducerFailureRepository is the narrow pre-lease failure capability. It
+// may only transition a queued root created by the producer; running work
+// must use LeaseFencedRunRepository with the exact worker fence.
+type ProducerFailureRepository interface {
+	MarkQueuedRunFailed(context.Context, projectgraph.ServingIdentity, string, string) (RunRecord, error)
 }
 
 type LoadedArtifact struct {
@@ -134,6 +142,9 @@ type QueueAssetResult struct {
 }
 
 type QueuePipelineInput struct {
+	// RunID carries the command/operation identity used for idempotent replay.
+	// Empty values are generated as fresh identities by the persistence adapter.
+	RunID                string
 	Identity             projectgraph.ServingIdentity
 	PrincipalID          string
 	GroupIDs             []string
@@ -276,19 +287,16 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.Occurrence != nil {
 		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
 	}
-	rootInput := RunInput{Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), AuditIntent: input.AuditIntent}
-	var root RunRecord
-	if input.Occurrence != nil {
-		creator, ok := s.Runs.(interface {
-			CreateScheduledRun(context.Context, RunInput, refreshschedule.Occurrence) (RunRecord, error)
-		})
-		if !ok {
-			return QueueAssetResult{}, fmt.Errorf("refresh run repository does not support atomic scheduled runs")
+	rootInput := RunInput{RunID: input.RunID, Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), AuditIntent: input.AuditIntent}
+	dependencyTargets := make([]projectgraph.ResourceID, 0, len(plan.DependencyTables))
+	for _, table := range plan.DependencyTables {
+		targetID, parseErr := projectgraph.NewResourceID(table)
+		if parseErr != nil {
+			return QueueAssetResult{}, parseErr
 		}
-		root, err = creator.CreateScheduledRun(ctx, rootInput, *input.Occurrence)
-	} else {
-		root, err = s.Runs.CreateRun(ctx, rootInput)
+		dependencyTargets = append(dependencyTargets, targetID)
 	}
+	root, children, err := s.Runs.CreateRunTree(ctx, RunTreeInput{Root: rootInput, DependencyTargets: dependencyTargets, Occurrence: input.Occurrence})
 	if err != nil {
 		if s.CanonicalExecutor == nil {
 			_ = s.MarkFailed(ctx, candidate, err)
@@ -297,22 +305,6 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	if root.Status == RunStatusSkipped {
 		return QueueAssetResult{Run: root, ServingStateID: candidate.State.ID}, nil
-	}
-	children := make([]RunRecord, 0, len(plan.DependencyTables))
-	for _, table := range plan.DependencyTables {
-		targetID, parseErr := projectgraph.NewResourceID(table)
-		if parseErr != nil {
-			return QueueAssetResult{}, parseErr
-		}
-		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
-		if childErr != nil {
-			_, _ = s.Runs.MarkRunFailed(ctx, root.Identity, root.ID, childErr.Error())
-			if s.CanonicalExecutor == nil {
-				_ = s.MarkFailed(ctx, candidate, childErr)
-			}
-			return QueueAssetResult{}, childErr
-		}
-		children = append(children, child)
 	}
 	s.publish(ctx, root.Identity, root.TargetType, root.TargetID)
 	return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: candidate.State.ID}, nil
@@ -391,7 +383,11 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		if err != nil {
 			if errors.Is(err, ErrRunStale) {
 				if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
-					_ = fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error())
+					if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
+						return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
+					}
+				} else {
+					return fmt.Errorf("supersede stale refresh tree: %w", ErrLeaseLost)
 				}
 				return err
 			}
@@ -452,9 +448,12 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	if err != nil {
 		return err
 	}
-	for _, child := range children {
-		_, _ = s.Runs.MarkRunRunning(ctx, job.Identity, child.ID)
-	}
+	// Child runs are queued records owned by the same root command. They do
+	// not have an independently inferred worker fence here: the root worker
+	// performs the governed materialization and the fenced tree terminal
+	// transition closes every child. Calling MarkRunRunning on a child would
+	// silently invent a lease owner/fence in PostgreSQL.
+	_ = children
 	candidate := ServingState{State: candidateState, Artifact: candidateArtifact}
 	snapshotID, err := s.Materializer.Materialize(ctx, MaterializeInput{Definition: loaded.Definition, Active: active.State, Candidate: candidate.State, Artifact: candidate.Artifact, Environment: candidateState.Environment, Plan: plan})
 	if err != nil {

@@ -1,14 +1,19 @@
 package postgres
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -29,6 +34,10 @@ func refreshTestDB(t *testing.T) (*postgrestest.Database, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -37,6 +46,13 @@ func refreshTestDB(t *testing.T) (*postgrestest.Database, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	return db, admin
+}
+
+func seedRefreshJob(t *testing.T, db *pgxpool.Pool, id, runID, project, environment, principal string) {
+	t.Helper()
+	if _, err := jobspostgres.New(db).Enqueue(t.Context(), jobs.EnqueueInput{ID: id, Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: principal, PartitionKey: "refresh:" + project + ":" + environment, ResourceKind: "refresh_run", ResourceID: runID, EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
@@ -57,6 +73,9 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		t.Fatal(err)
+	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +91,9 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	}
 	tx, err = admin.Begin(t.Context())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
 		t.Fatal(err)
 	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
@@ -142,7 +164,8 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 		t.Fatalf("concurrent claims = %d, want one", len(results[0])+len(results[1]))
 	}
 
-	_, err = r.CreateRun(t.Context(), RunInput{RunID: "run_1", ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_1", PipelineID: "pipeline_sales", SemanticModelID: "sales", TargetType: "refresh_pipeline", TargetID: "pipeline_sales", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("c", 64), ArtifactDigest: "sha256:" + strings.Repeat("a", 64), PrincipalID: "principal"})
+	seedRefreshJob(t, admin, "job-run-1", "run_1", "project_sales", "prod", "principal")
+	_, err = r.CreateRun(t.Context(), RunInput{RunID: "run_1", ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_1", PipelineID: "pipeline_sales", SemanticModelID: "sales", TargetType: "refresh_pipeline", TargetID: "pipeline_sales", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("c", 64), ArtifactDigest: "sha256:" + strings.Repeat("a", 64), PrincipalID: "principal", JobID: "job-run-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -162,6 +185,296 @@ func TestPostgresRefreshConcurrentOccurrenceClaimAndFence(t *testing.T) {
 	}
 	if err := r.CompleteAttempt(t.Context(), "run_1", "worker-a", first.FenceGeneration, nil); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale completion = %v", err)
+	}
+}
+
+func TestPostgresRefreshStandaloneRootRequiresCanonicalJob(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	input := RunInput{RunID: "standalone-root-authority", ProjectID: "standalone-project", Environment: "prod", GenerationID: "generation-1", PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: "refresh_pipeline", TargetID: "pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal"}
+	if _, err := r.CreateRun(ctx, input); err == nil {
+		t.Fatal("standalone root admission unexpectedly succeeded")
+	}
+	var count int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM refresh.run WHERE run_id=$1`, input.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("standalone root survived failed commit: count=%d", count)
+	}
+
+	input.RunID = "standalone-tree-root"
+	child := input
+	child.RunID = "standalone-tree-child"
+	child.ParentRunID = input.RunID
+	child.TargetType = "model_table"
+	child.TargetID = "model"
+	child.TriggerType = "dependency"
+	child.InvocationSource = "dependency"
+	if _, _, err := r.CreateRunTreeWithSupersedeHook(ctx, input, []RunInput{child}, "", "", 0, nil, nil); err == nil {
+		t.Fatal("standalone tree admission unexpectedly succeeded")
+	}
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM refresh.run WHERE run_id IN ($1,$2)`, input.RunID, child.RunID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("standalone tree survived failed commit: count=%d", count)
+	}
+}
+
+func TestPostgresRefreshRootJobPairingAndParentScopeGuards(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	base := RunInput{ProjectID: "pairing-project", Environment: "prod", GenerationID: "generation-pairing", PipelineID: "pipeline-pairing", SemanticModelID: "semantic-pairing", TargetType: "refresh_pipeline", TargetID: "pipeline-pairing", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "pairing-principal"}
+	cases := []struct {
+		name string
+		job  jobs.EnqueueInput
+	}{
+		{name: "kind", job: jobs.EnqueueInput{ID: "pairing-wrong-kind", Kind: "other", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: base.PrincipalID, PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "refresh_run", ResourceID: "pairing-wrong-kind", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+		{name: "workload", job: jobs.EnqueueInput{ID: "pairing-wrong-workload", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassControl, PrincipalID: base.PrincipalID, PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "refresh_run", ResourceID: "pairing-wrong-workload", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+		{name: "resource-kind", job: jobs.EnqueueInput{ID: "pairing-wrong-resource-kind", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: base.PrincipalID, PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "other", ResourceID: "pairing-wrong-resource-kind", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+		{name: "resource-id", job: jobs.EnqueueInput{ID: "pairing-wrong-resource-id", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: base.PrincipalID, PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "refresh_run", ResourceID: "different-run", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+		{name: "partition", job: jobs.EnqueueInput{ID: "pairing-wrong-partition", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: base.PrincipalID, PartitionKey: "refresh:other:prod", ResourceKind: "refresh_run", ResourceID: "pairing-wrong-partition", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+		{name: "principal", job: jobs.EnqueueInput{ID: "pairing-wrong-principal", Kind: "refresh_pipeline", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "other-principal", PartitionKey: "refresh:" + base.ProjectID + ":" + base.Environment, ResourceKind: "refresh_run", ResourceID: "pairing-wrong-principal", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}},
+	}
+	jobsRepo := jobspostgres.New(admin)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := jobsRepo.Enqueue(ctx, tc.job); err != nil {
+				t.Fatal(err)
+			}
+			input := base
+			input.RunID = "run-" + tc.name
+			input.JobID = tc.job.ID
+			if _, err := r.CreateRun(ctx, input); err == nil {
+				t.Fatal("run with mismatched canonical job unexpectedly committed")
+			}
+		})
+	}
+
+	parent := base
+	parent.RunID = "parent-scope-root"
+	parent.JobID = "parent-scope-job"
+	seedRefreshJob(t, admin, parent.JobID, parent.RunID, parent.ProjectID, parent.Environment, parent.PrincipalID)
+	if _, err := r.CreateRun(ctx, parent); err != nil {
+		t.Fatal(err)
+	}
+	child := base
+	child.RunID = "orphan-child"
+	child.ParentRunID = "missing-parent"
+	child.JobID = ""
+	child.TargetType = "model_table"
+	child.TargetID = "child"
+	child.TriggerType = "dependency"
+	child.InvocationSource = "dependency"
+	if _, err := r.CreateRun(ctx, child); err == nil {
+		t.Fatal("child with missing parent unexpectedly committed")
+	}
+	child.RunID = "cross-scope-child"
+	child.ParentRunID = parent.RunID
+	child.ProjectID = "other-project"
+	if _, err := r.CreateRun(ctx, child); err == nil {
+		t.Fatal("child with cross-scope parent unexpectedly committed")
+	}
+	child.RunID = "self-parent-child"
+	child.ParentRunID = child.RunID
+	child.ProjectID = parent.ProjectID
+	if _, err := r.CreateRun(ctx, child); err == nil {
+		t.Fatal("self-parented child unexpectedly committed")
+	}
+}
+
+func TestPostgresRefreshExactJobAttachmentReplayAfterQueueAdvance(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	jobsRepo := jobspostgres.New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, admin, "advanced-replay-job", "advanced-replay-run", "advanced-project", "prod", "advanced-principal")
+	input := RunInput{RunID: "advanced-replay-run", ProjectID: "advanced-project", Environment: "prod", GenerationID: "generation", PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: "refresh_pipeline", TargetID: "pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "advanced-principal", JobID: "advanced-replay-job"}
+	if _, err := r.CreateRun(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok, err := jobsRepo.ClaimByID(ctx, input.JobID, jobpolicy.WorkloadClassBackground, "advanced-replay-worker", time.Minute)
+	if err != nil || !ok {
+		t.Fatalf("advance canonical queue job: ok=%v err=%v", ok, err)
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.AttachJobTx(ctx, tx, input.RunID, input.JobID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("exact advanced attachment replay: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if claimed.Status != jobs.StatusRunning {
+		t.Fatalf("advanced queue status=%q, want running", claimed.Status)
+	}
+}
+
+func TestPostgresRefreshConcurrentAdmissionSerializesEmptyTargetSet(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	base := RunInput{
+		ProjectID: "project_admission", Environment: "prod", GenerationID: "generation_1",
+		PipelineID: "pipeline_admission", SemanticModelID: "semantic_admission",
+		TargetType: "refresh_pipeline", TargetID: "pipeline_admission",
+		TriggerType: "manual", InvocationSource: "manual",
+		PlanDigest: "sha256:" + strings.Repeat("a", 64), ArtifactDigest: "sha256:" + strings.Repeat("b", 64), PrincipalID: "principal", TargetRevision: 1,
+	}
+	start := make(chan struct{})
+	type result struct {
+		run Run
+		err error
+	}
+	results := make(chan result, 2)
+	for _, id := range []string{"run-admission-a", "run-admission-b"} {
+		id := id
+		seedRefreshJob(t, admin, "job-admission-"+id, id, base.ProjectID, base.Environment, base.PrincipalID)
+		go func() {
+			<-start
+			in := base
+			in.RunID = id
+			in.JobID = "job-admission-" + id
+			run, err := r.CreateRun(ctx, in)
+			results <- result{run: run, err: err}
+		}()
+	}
+	close(start)
+	var successes, conflicts int
+	for range 2 {
+		got := <-results
+		if got.err == nil {
+			successes++
+		} else if errors.Is(got.err, ErrConflict) {
+			conflicts++
+		} else {
+			t.Fatalf("concurrent admission error = %v", got.err)
+		}
+	}
+	if successes != 1 || conflicts != 1 {
+		t.Fatalf("concurrent admission successes=%d conflicts=%d, want one each", successes, conflicts)
+	}
+}
+
+func TestPostgresScheduledReplaceRequiresJobsSupersessionHook(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	first := RunInput{RunID: "replace-first", ProjectID: "replace-project", Environment: "prod", GenerationID: "generation-replace", PipelineID: "pipeline-replace", SemanticModelID: "semantic-replace", TargetType: "refresh_pipeline", TargetID: "pipeline-replace", TriggerType: "schedule", InvocationSource: "schedule", MatchingScheduleIDs: []string{"daily"}, ConcurrencyPolicy: "Replace", NominalTime: time.Now().UTC().Truncate(time.Microsecond), PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-replace", JobID: "job-replace-first"}
+	seedRefreshJob(t, admin, first.JobID, first.RunID, first.ProjectID, first.Environment, first.PrincipalID)
+	if _, err := r.CreateRun(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.RunID = "replace-second"
+	second.NominalTime = time.Now().UTC().Add(time.Minute).Truncate(time.Microsecond)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateRunTxWithSupersedeHook(t.Context(), tx, second, nil); err == nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal("scheduled replacement committed without jobs supersession hook")
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stored, err := r.LookupRun(t.Context(), first.RunID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Status != "queued" {
+		t.Fatalf("first run status=%q, supersession was not rolled back", stored.Status)
+	}
+}
+
+func TestPostgresOccurrenceTerminalReconcileRejectsContradiction(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := r.PutSchedule(ctx, ScheduleInput{ProjectID: "project_occurrence_reconcile", Environment: "prod", PipelineID: "pipeline_occurrence_reconcile", ScheduleID: "daily", SemanticModelID: "semantic_occurrence_reconcile", GenerationID: "generation_occurrence_reconcile", ArtifactDigest: digest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour, ScheduleDigest: "sha256:" + strings.Repeat("b", 64), NextRunAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := r.ClaimDue(ctx, Scope{ProjectID: "project_occurrence_reconcile", Environment: "prod", GenerationID: "generation_occurrence_reconcile"}, now, "scheduler-reconcile", time.Minute, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed occurrence=%#v err=%v", claimed, err)
+	}
+	o := claimed[0]
+	seedRefreshJob(t, admin, "job-occurrence-reconcile", "occurrence-reconcile-run", o.ProjectID, o.Environment, "principal:occurrence-reconcile")
+	root, _, err := r.CreateRunTreeWithSupersedeHook(ctx, RunInput{RunID: "occurrence-reconcile-run", ProjectID: o.ProjectID, Environment: o.Environment, GenerationID: o.GenerationID, PipelineID: o.PipelineID, SemanticModelID: o.SemanticModelID, TargetType: "refresh_pipeline", TargetID: o.PipelineID, TriggerType: "schedule", InvocationSource: "schedule", MatchingScheduleIDs: o.MatchingScheduleIDs, ScheduleRevisionID: o.ScheduleRevisionID, OccurrenceID: o.OccurrenceID, NominalTime: o.NominalTime, ConcurrencyPolicy: "Forbid", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal:occurrence-reconcile"}, nil, o.OccurrenceID, o.LeaseOwner, o.FenceGeneration, func(context.Context, Tx, Run) (string, error) { return "job-occurrence-reconcile", nil }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := r.ClaimAttempt(ctx, root.RunID, "worker-occurrence-reconcile", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CompleteAttempt(ctx, root.RunID, attempt.OwnerID, attempt.FenceGeneration, json.RawMessage(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReconcileOccurrenceTerminalTx(ctx, tx, root.RunID, "succeeded", json.RawMessage(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.ReconcileOccurrenceTerminalTx(ctx, tx, root.RunID, "failed", json.RawMessage(`{"error":"contradiction"}`))
+	_ = tx.Rollback(ctx)
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("mismatched terminal reconciliation error=%v, want conflict", err)
+	}
+}
+
+func TestPostgresOccurrenceGuardRejectsTamperedLifecycle(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	now := time.Now().UTC().Truncate(time.Second)
+	digest := "sha256:" + strings.Repeat("c", 64)
+	if _, err := r.PutSchedule(ctx, ScheduleInput{ProjectID: "project_occurrence_guard", Environment: "prod", PipelineID: "pipeline_occurrence_guard", ScheduleID: "daily", SemanticModelID: "semantic_occurrence_guard", GenerationID: "generation_occurrence_guard", ArtifactDigest: digest, Cron: "* * * * *", Timezone: "UTC", ConcurrencyPolicy: "Forbid", StartingDeadline: time.Hour, ScheduleDigest: "sha256:" + strings.Repeat("d", 64), NextRunAt: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := r.ClaimDue(ctx, Scope{ProjectID: "project_occurrence_guard", Environment: "prod", GenerationID: "generation_occurrence_guard"}, now, "scheduler-guard", time.Minute, 1)
+	if err != nil || len(claimed) != 1 {
+		t.Fatalf("claimed occurrence=%#v err=%v", claimed, err)
+	}
+	o := claimed[0]
+	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET finished_at=clock_timestamp() WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
+		t.Fatal("claimed occurrence accepted finished timestamp")
+	}
+	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='succeeded' WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
+		t.Fatal("claimed occurrence accepted terminal transition without run binding")
+	}
+	if err := r.ReleaseOccurrence(ctx, o); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='skipped' WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
+		t.Fatal("pending occurrence accepted terminal transition without evidence")
+	}
+	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='skipped',outcome='{"reason":"test"}'::jsonb,finished_at=clock_timestamp() WHERE occurrence_id=$1`, o.OccurrenceID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE refresh.schedule_occurrence SET outcome='{"reason":"tampered"}'::jsonb WHERE occurrence_id=$1`, o.OccurrenceID); err == nil {
+		t.Fatal("terminal occurrence accepted outcome mutation")
 	}
 }
 
@@ -196,7 +509,8 @@ func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 	}
 	// Data-version admission is tied to the exact committed physical
 	// publication and its current run fence.
-	pubRun, err := r.CreateRun(ctx, RunInput{RunID: "version-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("5", 64), ArtifactDigest: digestA, PrincipalID: "principal"})
+	seedRefreshJob(t, admin, "job-version-run", "version-run", "p", "prod", "principal")
+	pubRun, err := r.CreateRun(ctx, RunInput{RunID: "version-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("5", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-version-run"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +518,7 @@ func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	pubInput := PublicationInput{PublicationID: "version-publication", RunID: pubRun.RunID, GenerationID: "g1", PlanDigest: pubRun.PlanDigest, ArtifactDigest: digestA, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "publisher", FenceGeneration: pubAttempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
+	pubInput := PublicationInput{PublicationID: "version-publication", RunID: pubRun.RunID, BaseGenerationID: "g1", ResultGenerationID: "g1", ExpectedTargetRevision: 1, ResultTargetRevision: 2, PlanDigest: pubRun.PlanDigest, ArtifactDigest: digestA, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "publisher", FenceGeneration: pubAttempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
 	if _, err := r.LinkPublication(ctx, pubInput); err != nil {
 		t.Fatal(err)
 	}
@@ -226,7 +540,8 @@ func TestPostgresRefreshScheduleCatchupRetryAndDeadline(t *testing.T) {
 	if err := r.SaveDataVersion(ctx, v); err == nil {
 		t.Fatal("forged greater-fence data-version unexpectedly accepted")
 	}
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal"}); err != nil {
+	seedRefreshJob(t, admin, "job-recovery-run", "recovery-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-run", ProjectID: "p", Environment: "prod", GenerationID: "g1", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "recovery-pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: "sha256:" + strings.Repeat("4", 64), ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-recovery-run"}); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-run", "reconciler", 1, time.Minute); err != nil {
@@ -305,14 +620,15 @@ func TestPostgresRefreshPublicationPhysicalFence(t *testing.T) {
 	ctx := t.Context()
 	digestA := "sha256:" + strings.Repeat("a", 64)
 	digestP := "sha256:" + strings.Repeat("b", 64)
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "pub-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digestP, ArtifactDigest: digestA, PrincipalID: "principal"}); err != nil {
+	seedRefreshJob(t, admin, "job-pub-run", "pub-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "pub-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digestP, ArtifactDigest: digestA, PrincipalID: "principal", JobID: "job-pub-run"}); err != nil {
 		t.Fatal(err)
 	}
 	attempt, err := r.ClaimAttempt(ctx, "pub-run", "worker", 1, time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := PublicationInput{PublicationID: "publication-1", RunID: "pub-run", GenerationID: "g", PlanDigest: digestP, ArtifactDigest: digestA, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "worker", FenceGeneration: attempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
+	p := PublicationInput{PublicationID: "publication-1", RunID: "pub-run", BaseGenerationID: "g", ResultGenerationID: "g", ExpectedTargetRevision: 1, ResultTargetRevision: 2, PlanDigest: digestP, ArtifactDigest: digestA, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "worker", FenceGeneration: attempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
 	if _, err := r.LinkPublication(ctx, p); err != nil {
 		t.Fatal(err)
 	}
@@ -320,6 +636,69 @@ func TestPostgresRefreshPublicationPhysicalFence(t *testing.T) {
 		t.Fatalf("wrong physical tuple commit=%v", err)
 	}
 	if err := r.CommitPublication(ctx, p.PublicationID, p.RunID, p.OwnerID, p.FenceGeneration, 42, []byte(`{"ok":true}`), p.PhysicalPoolID, p.CatalogID); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgresRefreshConcurrentLinkReplayAfterCommit(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, admin, "job-concurrent-link", "concurrent-link-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "concurrent-link-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-concurrent-link"}); err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := r.ClaimAttempt(ctx, "concurrent-link-run", "worker", 1, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := PublicationInput{PublicationID: "concurrent-link-publication", RunID: "concurrent-link-run", BaseGenerationID: "g", ResultGenerationID: "result-g", ExpectedTargetRevision: 1, ResultTargetRevision: 2, PlanDigest: digest, ArtifactDigest: digest, PhysicalPoolID: "pool", CatalogID: "catalog", OwnerID: "worker", FenceGeneration: attempt.FenceGeneration, Evidence: []byte(`{"linked":true}`)}
+	tx1, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx1.Rollback(ctx)
+	if _, err := r.LinkPublicationTx(ctx, tx1, input); err != nil {
+		t.Fatal(err)
+	}
+	tx2, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx2.Rollback(ctx)
+	started := make(chan struct{})
+	result := make(chan struct {
+		publication Publication
+		err         error
+	}, 1)
+	go func() {
+		close(started)
+		publication, linkErr := r.LinkPublicationTx(ctx, tx2, input)
+		result <- struct {
+			publication Publication
+			err         error
+		}{publication, linkErr}
+	}()
+	<-started
+	// The second transaction has reached the insert path and is waiting on
+	// tx1's uncommitted deterministic publication row.  Commit tx1 as the
+	// canonical owner; tx2 must replay the now-committed row exactly.
+	time.Sleep(50 * time.Millisecond)
+	if err := r.CommitPublicationTx(ctx, tx1, input.PublicationID, input.RunID, input.OwnerID, input.FenceGeneration, 42, input.Evidence, input.PhysicalPoolID, input.CatalogID); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got := <-result
+	if got.err != nil {
+		t.Fatalf("concurrent exact link replay: %v", got.err)
+	}
+	if got.publication.State != "committed" || got.publication.SnapshotID != 42 {
+		t.Fatalf("concurrent replay publication = %#v", got.publication)
+	}
+	if err := tx2.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -334,7 +713,8 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	r := New(admin)
 	ctx := t.Context()
 	digest := "sha256:" + strings.Repeat("a", 64)
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "guard-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "guard-target", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal"}); err != nil {
+	seedRefreshJob(t, admin, "job-guard-run", "guard-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "guard-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "guard-target", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-guard-run"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := admin.Exec(ctx, `INSERT INTO refresh.attempt(run_id,attempt_number,fence_generation,owner_id,lease_expires_at,status,evidence) VALUES ('guard-run',1,1,'forged',clock_timestamp()+interval '1 minute','succeeded','{"forged":true}')`); err == nil {
@@ -349,7 +729,7 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	if _, err := admin.Exec(ctx, `UPDATE refresh.operation SET owner_id='forged' WHERE project_id='p' AND idempotency_key='guard-op'`); err == nil {
 		t.Fatal("same-fence operation owner mutation unexpectedly succeeded")
 	}
-	if _, err := admin.Exec(ctx, `INSERT INTO refresh.publication_link(publication_id,run_id,generation_id,plan_digest,artifact_digest,physical_pool_id,catalog_id,fence_generation,owner_id,evidence) VALUES ('forged-pub','guard-run','g', $1,$1,'pool','catalog',1,'owner','{"linked":true}')`, digest); err == nil {
+	if _, err := admin.Exec(ctx, `INSERT INTO refresh.publication_link(publication_id,run_id,base_generation_id,result_generation_id,plan_digest,artifact_digest,physical_pool_id,catalog_id,expected_target_revision,result_target_revision,fence_generation,owner_id,evidence) VALUES ('forged-pub','guard-run','g','g',$1,$1,'pool','catalog',1,2,1,'owner','{"linked":true}')`, digest); err == nil {
 		t.Fatal("fabricated publication INSERT unexpectedly succeeded")
 	}
 	if _, err := admin.Exec(ctx, `INSERT INTO refresh.recovery_state(run_id,state,reconciliation_fence,owner_id,evidence) VALUES ('guard-run','reconciled',1,'owner','{}')`); err == nil {
@@ -358,7 +738,8 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	if _, err := admin.Exec(ctx, `INSERT INTO refresh.data_version(project_id,environment,semantic_model_id,generation_id,snapshot_id,source,physical_pool_id,catalog_id,run_id,lease_owner,lease_revision) VALUES ('p','prod','m','g',1,'refresh','pool','catalog','guard-run','owner',1)`); err == nil {
 		t.Fatal("unpublished data-version INSERT unexpectedly succeeded")
 	}
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal"}); err != nil {
+	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-guard", "recovery-owner", 1, time.Minute); err != nil {
@@ -374,7 +755,8 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 	}
 
 	for _, id := range []string{"maintenance-a", "maintenance-b"} {
-		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal"}); err != nil {
+		seedRefreshJob(t, admin, "job-"+id, id, "p", "prod", "principal")
+		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := r.ClaimAttempt(ctx, id, "worker-"+id, 1, 100*time.Millisecond); err != nil {

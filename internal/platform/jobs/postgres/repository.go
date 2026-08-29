@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -34,15 +35,30 @@ type DBTX interface {
 }
 
 // Tx is the native transaction surface accepted by caller-owned workflow
-// methods.  It is an alias rather than a second persistence abstraction, so a
-// pgx transaction can carry the domain mutation, event and enqueue together.
-type Tx = DBTX
+// methods. Requiring commit/rollback prevents a pool or connection from being
+// passed accidentally and silently splitting an atomic workflow.
+type Tx interface {
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
 type Repository struct{ db DBTX }
+
+// Attempt is the immutable identity and terminal evidence for one canonical
+// job claim.  It is intentionally read through the jobs authority so callers
+// cannot infer completion from the parent job row alone.
+type Attempt struct {
+	JobID                            string
+	AttemptNumber, FencingGeneration int64
+	Owner, Outcome                   string
+	FinishedAt                       *time.Time
+	ErrorJSON                        []byte
+}
 
 var _ jobs.Repository = (*Repository)(nil)
 
@@ -76,12 +92,12 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	return err
 }
 
-const jobColumns = `id, kind, workload_class, principal_id, group_ids,
+const jobColumns = `id, kind, workload_class, principal_id, group_ids, partition_key,
  resource_kind, resource_id, estimated_memory_bytes, payload, status,
  attempt_count, lease_owner, lease_expires_at, lease_generation,
  created_at, started_at, finished_at, error`
 
-const jobColumnsQualified = `j.id, j.kind, j.workload_class, j.principal_id, j.group_ids,
+const jobColumnsQualified = `j.id, j.kind, j.workload_class, j.principal_id, j.group_ids, j.partition_key,
  j.resource_kind, j.resource_id, j.estimated_memory_bytes, j.payload, j.status,
  j.attempt_count, j.lease_owner, j.lease_expires_at, j.lease_generation,
  j.created_at, j.started_at, j.finished_at, j.error`
@@ -133,11 +149,11 @@ func (r *Repository) enqueueTx(ctx context.Context, db DBTX, input jobs.EnqueueI
 	input.GroupIDs = groups
 	digest := jobDigest(input, groups)
 	_, err = db.Exec(ctx, `
-INSERT INTO jobs.job (id, kind, workload_class, principal_id, group_ids,
+INSERT INTO jobs.job (id, kind, workload_class, principal_id, group_ids, partition_key,
  resource_kind, resource_id, estimated_memory_bytes, payload, request_digest)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
 ON CONFLICT (id) DO NOTHING`, input.ID, input.Kind, input.WorkloadClass, input.PrincipalID,
-		groups, input.ResourceKind, input.ResourceID, input.EstimatedMemoryBytes, input.Payload, digest)
+		groups, input.PartitionKey, input.ResourceKind, input.ResourceID, input.EstimatedMemoryBytes, input.Payload, digest)
 	if err != nil {
 		return jobs.Job{}, err
 	}
@@ -158,7 +174,7 @@ ON CONFLICT (id) DO NOTHING`, input.ID, input.Kind, input.WorkloadClass, input.P
 func validInput(input jobs.EnqueueInput, actorErr error) bool {
 	return canonicalLiteral(input.ID, 256) && canonicalLiteral(input.Kind, 128) &&
 		(input.WorkloadClass == jobpolicy.WorkloadClassBackground || input.WorkloadClass == jobpolicy.WorkloadClassControl) &&
-		canonicalLiteral(input.ResourceKind, 128) && canonicalLiteral(input.ResourceID, 256) &&
+		canonicalLiteral(input.PartitionKey, 512) && canonicalLiteral(input.ResourceKind, 128) && canonicalLiteral(input.ResourceID, 256) &&
 		input.EstimatedMemoryBytes > 0 && len(input.Payload) <= 1<<20 && json.Valid(input.Payload) && actorErr == nil
 }
 
@@ -166,7 +182,7 @@ func jobDigest(input jobs.EnqueueInput, groups []string) string {
 	groupJSON, _ := json.Marshal(groups)
 	// The field separators and decimal memory representation make the request
 	// identity unambiguous; payload bytes have already been canonicalized.
-	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.PrincipalID + "\x00" + string(groupJSON) + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + fmt.Sprint(input.EstimatedMemoryBytes) + "\x00" + string(input.Payload)))
+	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.PrincipalID + "\x00" + string(groupJSON) + "\x00" + input.PartitionKey + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + fmt.Sprint(input.EstimatedMemoryBytes) + "\x00" + string(input.Payload)))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
@@ -182,6 +198,73 @@ func (r *Repository) Get(ctx context.Context, id string) (jobs.Job, error) {
 	return job, err
 }
 
+// GetTx reads a job through a caller-owned transaction so startup
+// reconciliation can compare the canonical job row with its refresh link
+// without opening a second snapshot.
+func (r *Repository) GetTx(ctx context.Context, tx Tx, id string) (jobs.Job, error) {
+	if tx == nil || !canonicalLiteral(id, 256) {
+		return jobs.Job{}, fmt.Errorf("job transaction and id are required")
+	}
+	job, err := scanJob(tx.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs.job WHERE id = $1`, id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	return job, err
+}
+
+// LatestAttemptTx reads the exact attempt identified by the job's persisted
+// attempt count and lease generation.  A missing row is reported separately
+// so replay/recovery callers can distinguish an incomplete authority state
+// from an ordinary not-found error.
+func (r *Repository) LatestAttemptTx(ctx context.Context, tx Tx, id string, attemptNumber, fencingGeneration int64) (Attempt, bool, error) {
+	if tx == nil || !canonicalLiteral(id, 256) || attemptNumber < 1 || fencingGeneration < 1 {
+		return Attempt{}, false, fmt.Errorf("attempt transaction, job id and positive fence are required")
+	}
+	var out Attempt
+	err := tx.QueryRow(ctx, `SELECT job_id,attempt_number,fencing_generation,owner,outcome,finished_at,error FROM jobs.attempt WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3`, id, attemptNumber, fencingGeneration).Scan(&out.JobID, &out.AttemptNumber, &out.FencingGeneration, &out.Owner, &out.Outcome, &out.FinishedAt, &out.ErrorJSON)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Attempt{}, false, nil
+	}
+	if err != nil {
+		return Attempt{}, false, err
+	}
+	out.ErrorJSON = append([]byte(nil), out.ErrorJSON...)
+	return out, true, nil
+}
+
+// ActiveRefreshJobsTx returns only queued/running refresh jobs for startup
+// reconciliation. The resource-kind/status index bounds this projection to
+// live work; terminal history is never scanned.
+func (r *Repository) ActiveRefreshJobsTx(ctx context.Context, tx Tx, afterCreated time.Time, afterID string, limit int) ([]jobs.Job, error) {
+	if tx == nil || limit < 1 || limit > 200 || (afterID != "" && !canonicalLiteral(afterID, 256)) {
+		return nil, fmt.Errorf("active refresh job projection is invalid")
+	}
+	rows, err := tx.Query(ctx, `SELECT `+jobColumns+` FROM jobs.job j
+WHERE j.resource_kind=$1 AND j.status IN ('queued','running')
+  AND ($2::timestamptz='epoch'::timestamptz OR (j.created_at,j.id)>($2::timestamptz,$3))
+ORDER BY j.created_at,j.id LIMIT $4`, "refresh_run", nullableRecoveryTime(afterCreated), afterID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := make([]jobs.Job, 0, limit)
+	for rows.Next() {
+		job, scanErr := scanJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		out = append(out, job)
+	}
+	return out, rows.Err()
+}
+
+func nullableRecoveryTime(value time.Time) time.Time {
+	if value.IsZero() {
+		return time.Unix(0, 0).UTC()
+	}
+	return value.UTC()
+}
+
 func (r *Repository) Candidates(ctx context.Context, workloadClass string, limit int) ([]jobs.Job, error) {
 	if !validClass(workloadClass) || limit < 1 || limit > 200 {
 		return nil, fmt.Errorf("workload class and candidate limit are required")
@@ -192,12 +275,63 @@ WHERE j.workload_class = $1 AND j.available_at <= clock_timestamp()
   AND (j.status = 'queued' OR (j.status = 'running' AND j.lease_expires_at <= clock_timestamp()))
   AND j.id = (
     SELECT h.id FROM jobs.job h
-    WHERE h.principal_id = j.principal_id AND h.workload_class = $1
+    WHERE h.principal_id = j.principal_id AND h.partition_key = j.partition_key AND h.workload_class = $1
       AND h.available_at <= clock_timestamp()
       AND (h.status = 'queued' OR (h.status = 'running' AND h.lease_expires_at <= clock_timestamp()))
     ORDER BY h.created_at, h.id LIMIT 1
   )
 ORDER BY j.created_at, j.id LIMIT $2`, workloadClass, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]jobs.Job, 0, limit)
+	for rows.Next() {
+		job, scanErr := scanJob(rows)
+		if scanErr != nil {
+			return nil, scanErr
+		}
+		result = append(result, job)
+	}
+	return result, rows.Err()
+}
+
+// CandidatesByResourceKind is the bounded fairness projection for one
+// capability's queue. It prevents unrelated platform jobs from consuming the
+// candidate page and starving refresh work before the caller can inspect its
+// scope/resource identity.
+func (r *Repository) CandidatesByResourceKind(ctx context.Context, workloadClass, resourceKind string, limit int) ([]jobs.Job, error) {
+	return r.CandidatesByResourceKindAfter(ctx, workloadClass, resourceKind, limit, time.Time{}, "")
+}
+
+// CandidatesByResourceKindAfter returns one keyset page of canonical
+// candidates. Callers that apply a second capability-owned scope filter can
+// advance through every page without allowing another project to starve the
+// bounded result.
+func (r *Repository) CandidatesByResourceKindAfter(ctx context.Context, workloadClass, resourceKind string, limit int, afterCreated time.Time, afterID string) ([]jobs.Job, error) {
+	if !validClass(workloadClass) || !canonicalLiteral(resourceKind, 128) || limit < 1 || limit > 200 {
+		return nil, fmt.Errorf("workload class, resource kind and candidate limit are required")
+	}
+	if !afterCreated.IsZero() && !canonicalLiteral(afterID, 256) {
+		return nil, fmt.Errorf("candidate cursor id is required")
+	}
+	var afterArg any
+	if !afterCreated.IsZero() {
+		afterArg = afterCreated.UTC()
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT `+jobColumns+` FROM jobs.job j
+WHERE j.workload_class = $1 AND j.resource_kind = $2 AND j.available_at <= clock_timestamp()
+  AND (j.status = 'queued' OR (j.status = 'running' AND j.lease_expires_at <= clock_timestamp()))
+  AND ($3::timestamptz IS NULL OR (j.created_at,j.id) > ($3::timestamptz,$4))
+  AND j.id = (
+    SELECT h.id FROM jobs.job h
+    WHERE h.principal_id = j.principal_id AND h.partition_key = j.partition_key AND h.workload_class = $1 AND h.resource_kind = $2
+      AND h.available_at <= clock_timestamp()
+      AND (h.status = 'queued' OR (h.status = 'running' AND h.lease_expires_at <= clock_timestamp()))
+    ORDER BY h.created_at, h.id LIMIT 1
+  )
+ORDER BY j.created_at, j.id LIMIT $5`, workloadClass, resourceKind, afterArg, afterID, limit)
 	if err != nil {
 		return nil, err
 	}
@@ -220,7 +354,25 @@ func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner str
 	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease < time.Microsecond || lease > MaxLeaseDuration {
 		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
 	}
-	row := r.db.QueryRow(ctx, `
+	return r.claimByID(ctx, r.db, id, workloadClass, owner, lease)
+}
+
+// ClaimByIDTx applies the same fenced claim through a caller-owned
+// transaction. Refresh workers use this to claim the platform job and create
+// the linked refresh attempt atomically; if either side loses its fence the
+// entire claim rolls back and remains retryable.
+func (r *Repository) ClaimByIDTx(ctx context.Context, tx Tx, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
+	if tx == nil {
+		return jobs.Job{}, false, fmt.Errorf("job claim transaction is required")
+	}
+	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease < time.Microsecond || lease > MaxLeaseDuration {
+		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
+	}
+	return r.claimByID(ctx, tx, id, workloadClass, owner, lease)
+}
+
+func (r *Repository) claimByID(ctx context.Context, db DBTX, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
+	row := db.QueryRow(ctx, `
 WITH candidate AS (
     -- The row lock and SKIP LOCKED are part of the same statement as the
     -- state transition. A competing worker therefore observes either the
@@ -229,12 +381,24 @@ WITH candidate AS (
     FROM jobs.job j
     WHERE j.id = $1 AND j.workload_class = $2 AND j.available_at <= clock_timestamp()
       AND (j.status = 'queued' OR (j.status = 'running' AND j.lease_expires_at <= clock_timestamp()))
+      AND NOT EXISTS (
+          SELECT 1 FROM jobs.job h
+          WHERE h.principal_id = j.principal_id
+            AND h.partition_key = j.partition_key
+            AND h.workload_class = j.workload_class
+            AND h.available_at <= clock_timestamp()
+            AND (h.status = 'queued' OR (h.status = 'running' AND h.lease_expires_at <= clock_timestamp()))
+            AND (h.created_at,h.id) < (j.created_at,j.id)
+      )
     ORDER BY j.created_at, j.id
     LIMIT 1
     FOR UPDATE SKIP LOCKED
 ), expired_attempt AS (
     UPDATE jobs.attempt a
-    SET finished_at = clock_timestamp(), outcome = 'expired'
+    SET finished_at = clock_timestamp(),
+        outcome = CASE WHEN c.attempt_count >= (SELECT max_attempts FROM jobs.job WHERE id = c.id) THEN 'failed' ELSE 'expired' END,
+        error = CASE WHEN c.attempt_count >= (SELECT max_attempts FROM jobs.job WHERE id = c.id) THEN '{"code":"MAX_ATTEMPTS_EXCEEDED"}'::jsonb ELSE a.error END,
+        retry_at = NULL
     FROM candidate c
     WHERE c.status = 'running'
       AND a.job_id = c.id
@@ -255,6 +419,7 @@ WITH candidate AS (
         error = CASE WHEN j.attempt_count >= j.max_attempts THEN '{"code":"MAX_ATTEMPTS_EXCEEDED"}'::jsonb ELSE j.error END
     FROM candidate c
     WHERE j.id = c.id
+      AND (c.status = 'queued' OR EXISTS (SELECT 1 FROM expired_attempt e WHERE e.job_id = c.id))
     RETURNING `+jobColumnsQualified+`
 ), claimed AS (
     SELECT * FROM transitioned WHERE status = 'running'
@@ -275,7 +440,21 @@ func (r *Repository) Renew(ctx context.Context, id string, fence jobs.Fence, lea
 	if !validFence(id, fence) || lease < time.Microsecond || lease > MaxLeaseDuration {
 		return fmt.Errorf("invalid async job fence")
 	}
-	count, err := r.mutate(ctx, `
+	return r.renewTx(ctx, r.db, id, fence, lease)
+}
+
+// RenewTx renews a job lease through a caller-owned transaction so the
+// linked refresh attempt fence can be heartbeated atomically.
+func (r *Repository) RenewTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, lease time.Duration) error {
+	if tx == nil || !validFence(id, fence) || lease < time.Microsecond || lease > MaxLeaseDuration {
+		return fmt.Errorf("invalid async job fence")
+	}
+	return r.renewTx(ctx, tx, id, fence, lease)
+}
+
+func (r *Repository) renewTx(ctx context.Context, db DBTX, id string, fence jobs.Fence, lease time.Duration) error {
+	var count int64
+	err := db.QueryRow(ctx, `
 WITH changed AS (
     UPDATE jobs.job j
     SET lease_expires_at = GREATEST(j.lease_expires_at, clock_timestamp() + ($3::bigint * interval '1 microsecond'))
@@ -288,12 +467,22 @@ WITH changed AS (
     FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
-SELECT count(*) FROM attempt_changed`, id, fence.Owner, lease.Microseconds(), fence.Generation)
+	SELECT count(*) FROM attempt_changed`, id, fence.Owner, lease.Microseconds(), fence.Generation).Scan(&count)
 	return requireChanged(count, err)
 }
 
 func (r *Repository) Complete(ctx context.Context, id string, fence jobs.Fence) error {
 	return r.terminal(ctx, id, fence, "succeeded", nil)
+}
+
+// CompleteTx applies a successful terminal transition through a caller-owned
+// transaction.  Producers that also mutate another capability can therefore
+// commit the job outcome and that capability's state atomically.
+func (r *Repository) CompleteTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
+	if tx == nil {
+		return fmt.Errorf("job completion transaction is required")
+	}
+	return terminalTx(ctx, tx, id, fence, "succeeded", nil)
 }
 
 func (r *Repository) Fail(ctx context.Context, id string, fence jobs.Fence, problem []byte) error {
@@ -304,6 +493,18 @@ func (r *Repository) Fail(ctx context.Context, id string, fence jobs.Fence, prob
 	return r.terminal(ctx, id, fence, "failed", canonical)
 }
 
+// FailTx is the transaction-aware counterpart to Fail.
+func (r *Repository) FailTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, problem []byte) error {
+	if tx == nil {
+		return fmt.Errorf("job failure transaction is required")
+	}
+	canonical, err := canonicalJSON(problem, 65536)
+	if err != nil {
+		return fmt.Errorf("invalid async job failure JSON")
+	}
+	return terminalTx(ctx, tx, id, fence, "failed", canonical)
+}
+
 func (r *Repository) terminal(ctx context.Context, id string, fence jobs.Fence, outcome string, problem []byte) error {
 	if !validFence(id, fence) {
 		return fmt.Errorf("invalid async job fence")
@@ -312,7 +513,19 @@ func (r *Repository) terminal(ctx context.Context, id string, fence jobs.Fence, 
 	if problem != nil {
 		errorJSON = problem
 	}
-	count, err := r.mutate(ctx, `
+	return terminalTx(ctx, r.db, id, fence, outcome, errorJSON)
+}
+
+func terminalTx(ctx context.Context, db DBTX, id string, fence jobs.Fence, outcome string, problem []byte) error {
+	if !validFence(id, fence) {
+		return fmt.Errorf("invalid async job fence")
+	}
+	errorJSON := []byte(`{}`)
+	if problem != nil {
+		errorJSON = problem
+	}
+	var count int64
+	err := db.QueryRow(ctx, `
 WITH changed AS (
     UPDATE jobs.job j
     SET status = $3, finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL, error = $5::jsonb
@@ -325,7 +538,7 @@ WITH changed AS (
     FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
-SELECT count(*) FROM attempt_changed`, id, fence.Owner, outcome, fence.Generation, errorJSON)
+	SELECT count(*) FROM attempt_changed`, id, fence.Owner, outcome, fence.Generation, errorJSON).Scan(&count)
 	return requireChanged(count, err)
 }
 
@@ -354,30 +567,352 @@ WITH changed AS (
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) error {
-	if !canonicalLiteral(id, 256) {
+	if r == nil || r.db == nil || !canonicalLiteral(id, 256) {
 		return fmt.Errorf("invalid async job id")
 	}
-	result, err := r.db.Exec(ctx, `UPDATE jobs.job SET status = 'cancelled', finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL WHERE id = $1 AND status = 'queued'`, id)
+	// A standalone cancellation must own one transaction because a queued
+	// retry has two authoritative rows: the job projection and its latest
+	// retrying attempt.  Locking and closing both rows together prevents a
+	// replay from leaving a permanently retrying attempt behind.
+	if b, ok := r.db.(beginner); ok {
+		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
+			tx, err := b.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			if err := r.cancelTx(ctx, tx, id); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+	}
+	return r.cancelTx(ctx, r.db, id)
+}
+
+// CancelTx cancels a queued job through a caller-owned transaction. It is
+// used when a refresh run and its pending platform job must become terminal
+// together (for example, a user cancellation with audit intent).
+func (r *Repository) CancelTx(ctx context.Context, tx Tx, id string) error {
+	if tx == nil || !canonicalLiteral(id, 256) {
+		return fmt.Errorf("job cancellation transaction and id are required")
+	}
+	return r.cancelTx(ctx, tx, id)
+}
+
+// cancelTx closes a queued job and, when it has been retried, its exact
+// latest retrying attempt.  The caller owns the transaction and therefore
+// controls whether this state transition commits with a domain mutation.
+func (r *Repository) cancelTx(ctx context.Context, tx DBTX, id string) error {
+	var status string
+	var attemptCount, leaseGeneration int64
+	if err := tx.QueryRow(ctx, `SELECT status,attempt_count,lease_generation FROM jobs.job WHERE id=$1 FOR UPDATE`, id).Scan(&status, &attemptCount, &leaseGeneration); errors.Is(err, pgx.ErrNoRows) {
+		return jobs.ErrConflict
+	} else if err != nil {
+		return err
+	}
+	if status != string(jobs.StatusQueued) {
+		return jobs.ErrConflict
+	}
+
+	if attemptCount > 0 {
+		var outcome string
+		var finishedAt, retryAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT outcome,finished_at,retry_at FROM jobs.attempt WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 FOR UPDATE`, id, attemptCount, leaseGeneration).Scan(&outcome, &finishedAt, &retryAt); errors.Is(err, pgx.ErrNoRows) {
+			return jobs.ErrConflict
+		} else if err != nil {
+			return err
+		} else if outcome != "retrying" || finishedAt == nil || retryAt == nil {
+			return jobs.ErrConflict
+		}
+		result, err := tx.Exec(ctx, `UPDATE jobs.attempt SET finished_at=clock_timestamp(),outcome='cancelled',retry_at=NULL,error='{"code":"JOB_CANCELLED"}'::jsonb WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 AND outcome='retrying'`, id, attemptCount, leaseGeneration)
+		if err != nil {
+			return err
+		}
+		if err := requireChanged(result.RowsAffected(), nil); err != nil {
+			return err
+		}
+	}
+	result, err := tx.Exec(ctx, `UPDATE jobs.job SET status='cancelled',finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL,error='{"code":"JOB_CANCELLED"}'::jsonb WHERE id=$1 AND status='queued'`, id)
 	return requireChanged(result.RowsAffected(), err)
+}
+
+// ReconcileTerminalTx closes a job to the exact terminal outcome established
+// by the authoritative refresh run. Existing terminal rows and their latest
+// attempts must already agree; a contradiction is surfaced as ErrConflict
+// rather than silently rewritten during startup recovery.
+func (r *Repository) ReconcileTerminalTx(ctx context.Context, tx Tx, id string, desired jobs.Status) error {
+	if tx == nil || !canonicalLiteral(id, 256) || (desired != jobs.StatusSucceeded && desired != jobs.StatusFailed && desired != jobs.StatusCancelled) {
+		return fmt.Errorf("job reconciliation transaction, id and terminal status are required")
+	}
+	var current jobs.Status
+	var attemptCount, leaseGeneration int64
+	var leaseOwner string
+	var jobError []byte
+	if err := tx.QueryRow(ctx, `SELECT status,attempt_count,lease_generation,lease_owner,error FROM jobs.job WHERE id=$1 FOR UPDATE`, id).Scan(&current, &attemptCount, &leaseGeneration, &leaseOwner, &jobError); errors.Is(err, pgx.ErrNoRows) {
+		return jobs.ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	var attempt Attempt
+	var retryAt *time.Time
+	attemptErr := tx.QueryRow(ctx, `SELECT job_id,attempt_number,fencing_generation,owner,outcome,finished_at,retry_at,error FROM jobs.attempt WHERE job_id=$1 ORDER BY attempt_number DESC LIMIT 1 FOR UPDATE`, id).Scan(&attempt.JobID, &attempt.AttemptNumber, &attempt.FencingGeneration, &attempt.Owner, &attempt.Outcome, &attempt.FinishedAt, &retryAt, &attempt.ErrorJSON)
+	if attemptErr != nil && !errors.Is(attemptErr, pgx.ErrNoRows) {
+		return attemptErr
+	}
+	foundAttempt := attemptErr == nil
+	if attemptCount > 0 && (!foundAttempt || attempt.AttemptNumber != attemptCount || attempt.FencingGeneration != leaseGeneration) {
+		return jobs.ErrConflict
+	}
+	if foundAttempt && attempt.AttemptNumber > attemptCount {
+		return jobs.ErrConflict
+	}
+	if current == jobs.StatusSucceeded || current == jobs.StatusFailed || current == jobs.StatusCancelled {
+		if current != desired {
+			return jobs.ErrConflict
+		}
+		if desired == jobs.StatusSucceeded && !jsonEquivalent(jobError, []byte(`{}`)) {
+			return jobs.ErrConflict
+		}
+		if attemptCount > 0 {
+			if !foundAttempt || attempt.Outcome != string(desired) || attempt.FinishedAt == nil || retryAt != nil || !jsonEquivalent(attempt.ErrorJSON, jobError) {
+				return jobs.ErrConflict
+			}
+		}
+		return nil
+	}
+	if current != jobs.StatusQueued && current != jobs.StatusRunning {
+		return jobs.ErrConflict
+	}
+	terminalError := []byte(`{"code":"REFRESH_RUN_TERMINAL"}`)
+	if desired == jobs.StatusSucceeded {
+		// Successful reconciliation is a clean completion, not a recovery
+		// failure.  Keep the canonical empty error object expected by the jobs
+		// authority's terminal invariant.
+		terminalError = []byte(`{}`)
+	}
+	if current == jobs.StatusQueued {
+		if attemptCount > 0 && (attempt.Outcome != "retrying" || attempt.FinishedAt == nil || retryAt == nil || !jsonEquivalent(attempt.ErrorJSON, jobError)) {
+			return jobs.ErrConflict
+		}
+		// A run may be durably failed or cancelled before its queued job is
+		// claimed; a successful run, however, must always have an execution
+		// attempt that proves completion.
+		if attemptCount == 0 && desired == jobs.StatusSucceeded {
+			return jobs.ErrConflict
+		}
+		if attemptCount > 0 {
+			result, err := tx.Exec(ctx, `UPDATE jobs.attempt SET finished_at=clock_timestamp(),outcome=$2,retry_at=NULL,error=$5::jsonb WHERE job_id=$1 AND attempt_number=$3 AND fencing_generation=$4 AND outcome='retrying'`, id, desired, attemptCount, leaseGeneration, terminalError)
+			if err != nil {
+				return err
+			}
+			if err := requireChanged(result.RowsAffected(), nil); err != nil {
+				return err
+			}
+		}
+	}
+	if current == jobs.StatusRunning {
+		if !foundAttempt {
+			return jobs.ErrConflict
+		}
+		if attempt.Outcome != "running" && attempt.Outcome != string(desired) {
+			return jobs.ErrConflict
+		}
+		if attempt.Outcome == "running" {
+			if attempt.Owner != leaseOwner || attempt.FinishedAt != nil || retryAt != nil {
+				return jobs.ErrConflict
+			}
+			result, err := tx.Exec(ctx, `UPDATE jobs.attempt SET finished_at=clock_timestamp(),outcome=$2,error=$5::jsonb WHERE job_id=$1 AND attempt_number=$3 AND fencing_generation=$4 AND outcome='running'`, id, desired, attemptCount, leaseGeneration, terminalError)
+			if err != nil {
+				return err
+			}
+			if err := requireChanged(result.RowsAffected(), nil); err != nil {
+				return err
+			}
+		} else {
+			// A pre-terminalized attempt while the job still says running can
+			// only be replayed when both rows already carry the exact recovery
+			// evidence this reconciliation would write.  Otherwise accepting the
+			// row would hide an owner/fence/error split across the authorities.
+			if attempt.Owner != leaseOwner || attempt.FinishedAt == nil || retryAt != nil || !jsonEquivalent(attempt.ErrorJSON, terminalError) || !jsonEquivalent(jobError, terminalError) {
+				return jobs.ErrConflict
+			}
+		}
+	}
+	result, err := tx.Exec(ctx, `UPDATE jobs.job SET status=$2,finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL,error=$3::jsonb WHERE id=$1 AND status IN ('queued','running')`, id, desired, terminalError)
+	if err != nil {
+		return err
+	}
+	return requireChanged(result.RowsAffected(), nil)
+}
+
+// QuarantineQueuedTx closes one malformed queued job with durable poison
+// evidence. A concurrent claimant wins the row lock and returns false so the
+// caller can rely on that worker's fenced failure path instead.
+func (r *Repository) QuarantineQueuedTx(ctx context.Context, tx Tx, id string, problem []byte) (bool, error) {
+	if tx == nil || !canonicalLiteral(id, 256) {
+		return false, fmt.Errorf("invalid async poison job")
+	}
+	canonical, err := canonicalJSON(problem, 65536)
+	if err != nil {
+		return false, fmt.Errorf("invalid async poison evidence")
+	}
+	var status string
+	var attemptCount, leaseGeneration int64
+	var existing []byte
+	if err := tx.QueryRow(ctx, `SELECT status,attempt_count,lease_generation,error FROM jobs.job WHERE id=$1 FOR UPDATE`, id).Scan(&status, &attemptCount, &leaseGeneration, &existing); errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	} else if err != nil {
+		return false, err
+	}
+	if status != string(jobs.StatusQueued) {
+		// Terminal replay is valid only for the exact canonical poison
+		// evidence. Checking only the code would bless a tampered problem
+		// payload and hide drift between the queue and refresh authorities.
+		return status == string(jobs.StatusCancelled) && jsonEquivalent(existing, canonical), nil
+	}
+	if attemptCount > 0 {
+		var outcome string
+		var finishedAt, retryAt *time.Time
+		if err := tx.QueryRow(ctx, `SELECT outcome,finished_at,retry_at FROM jobs.attempt WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 FOR UPDATE`, id, attemptCount, leaseGeneration).Scan(&outcome, &finishedAt, &retryAt); errors.Is(err, pgx.ErrNoRows) {
+			return false, jobs.ErrConflict
+		} else if err != nil {
+			return false, err
+		} else if outcome != "retrying" || finishedAt == nil || retryAt == nil {
+			return false, jobs.ErrConflict
+		}
+		result, err := tx.Exec(ctx, `UPDATE jobs.attempt SET finished_at=clock_timestamp(),outcome='cancelled',retry_at=NULL,error=$4::jsonb WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 AND outcome='retrying'`, id, attemptCount, leaseGeneration, canonical)
+		if err != nil {
+			return false, err
+		}
+		if err := requireChanged(result.RowsAffected(), nil); err != nil {
+			return false, err
+		}
+	}
+	result, err := tx.Exec(ctx, `UPDATE jobs.job SET status='cancelled',finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL,error=$2::jsonb WHERE id=$1 AND status='queued'`, id, canonical)
+	if err != nil {
+		return false, err
+	}
+	if err := requireChanged(result.RowsAffected(), nil); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func (r *Repository) CancelClaimed(ctx context.Context, id string, fence jobs.Fence) error {
 	if !validFence(id, fence) {
 		return fmt.Errorf("invalid async job fence")
 	}
-	count, err := r.mutate(ctx, `
+	if b, ok := r.db.(beginner); ok {
+		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
+			tx, err := b.Begin(ctx)
+			if err != nil {
+				return err
+			}
+			if err := r.cancelClaimed(ctx, tx, id, fence); err != nil {
+				_ = tx.Rollback(ctx)
+				return err
+			}
+			return tx.Commit(ctx)
+		}
+	}
+	return r.cancelClaimed(ctx, r.db, id, fence)
+}
+
+// CancelClaimedTx terminalizes a running job and its current attempt through
+// a caller-owned transaction. Refresh supersession uses this to close the
+// canonical job atomically with its refresh run tree.
+func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
+	if tx == nil || !validFence(id, fence) {
+		return fmt.Errorf("invalid async job fence")
+	}
+	return r.cancelClaimed(ctx, tx, id, fence)
+}
+
+func (r *Repository) cancelClaimed(ctx context.Context, tx DBTX, id string, fence jobs.Fence) error {
+	var count int64
+	err := tx.QueryRow(ctx, `
 WITH changed AS (
-    UPDATE jobs.job j SET status = 'cancelled', finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL
+    UPDATE jobs.job j SET status = 'cancelled', finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL, error = '{"code":"JOB_CANCELLED"}'::jsonb
     WHERE j.id = $1 AND j.status = 'running' AND j.lease_owner = $2 AND j.lease_generation = $3 AND j.lease_expires_at > clock_timestamp()
       AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation AND a.owner = j.lease_owner AND a.outcome = 'running')
     RETURNING j.id, j.attempt_count, j.lease_generation
 ), attempt_changed AS (
-    UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = 'cancelled'
+    UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = 'cancelled', error = '{"code":"JOB_CANCELLED"}'::jsonb
     FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
-SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation)
+	SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation).Scan(&count)
 	return requireChanged(count, err)
+}
+
+// SupersedeTx terminalizes queued and running jobs selected by a refresh
+// authority. The jobs capability owns the state-machine SQL; callers provide
+// already-authorized job identities and this method performs no cross-schema
+// joins.
+func (r *Repository) SupersedeTx(ctx context.Context, tx Tx, ids []string) error {
+	if tx == nil || len(ids) == 0 {
+		return nil
+	}
+	ordered := append([]string(nil), ids...)
+	sort.Strings(ordered)
+	for i := 1; i < len(ordered); i++ {
+		if ordered[i] == ordered[i-1] {
+			return jobs.ErrConflict
+		}
+	}
+	for _, id := range ordered {
+		if !canonicalLiteral(id, 256) {
+			return fmt.Errorf("invalid async job id")
+		}
+	}
+	for _, id := range ordered {
+		var status jobs.Status
+		var attemptCount, leaseGeneration int64
+		var leaseOwner string
+		if err := tx.QueryRow(ctx, `SELECT status,attempt_count,lease_generation,lease_owner FROM jobs.job WHERE id=$1 FOR UPDATE`, id).Scan(&status, &attemptCount, &leaseGeneration, &leaseOwner); errors.Is(err, pgx.ErrNoRows) {
+			return jobs.ErrConflict
+		} else if err != nil {
+			return err
+		}
+		if status != jobs.StatusQueued && status != jobs.StatusRunning {
+			return jobs.ErrConflict
+		}
+		if attemptCount > 0 {
+			var attemptOutcome, attemptOwner string
+			var attemptFinished, retryAt *time.Time
+			attemptErr := tx.QueryRow(ctx, `SELECT owner,outcome,finished_at,retry_at FROM jobs.attempt WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 FOR UPDATE`, id, attemptCount, leaseGeneration).Scan(&attemptOwner, &attemptOutcome, &attemptFinished, &retryAt)
+			if errors.Is(attemptErr, pgx.ErrNoRows) {
+				return jobs.ErrConflict
+			}
+			if attemptErr != nil {
+				return attemptErr
+			}
+			if status == jobs.StatusRunning && (attemptOutcome != "running" || attemptOwner != leaseOwner || attemptFinished != nil || retryAt != nil) {
+				return jobs.ErrConflict
+			}
+			if status == jobs.StatusQueued && (attemptOutcome != "retrying" || attemptFinished == nil || retryAt == nil) {
+				return jobs.ErrConflict
+			}
+			if attemptOutcome == "running" || attemptOutcome == "retrying" {
+				result, updateErr := tx.Exec(ctx, `UPDATE jobs.attempt SET finished_at=clock_timestamp(),outcome='cancelled',retry_at=NULL,error='{"code":"REFRESH_SUPERSEDED"}'::jsonb WHERE job_id=$1 AND attempt_number=$2 AND fencing_generation=$3 AND outcome IN ('running','retrying')`, id, attemptCount, leaseGeneration)
+				if updateErr != nil {
+					return updateErr
+				}
+				if result.RowsAffected() != 1 {
+					return jobs.ErrConflict
+				}
+			}
+		}
+		result, err := tx.Exec(ctx, `UPDATE jobs.job SET status='cancelled',finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL,error='{"code":"REFRESH_SUPERSEDED"}'::jsonb WHERE id=$1 AND status IN ('queued','running')`, id)
+		if err != nil {
+			return err
+		}
+		if result.RowsAffected() != 1 {
+			return jobs.ErrConflict
+		}
+	}
+	return nil
 }
 
 func (r *Repository) AppendEvent(ctx context.Context, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
@@ -471,7 +1006,7 @@ LIMIT $2`, workloadClass, limit)
 // RecordWorkflow atomically appends the keyed event and optional follow-up
 // job using the caller's pgx transaction. The transaction remains owned by
 // the capability making the domain transition.
-func (r *Repository) RecordWorkflow(ctx context.Context, tx DBTX, intent jobs.WorkflowIntent) error {
+func (r *Repository) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
 	if tx == nil {
 		return fmt.Errorf("workflow transaction is required")
 	}
@@ -637,12 +1172,13 @@ func canonicalJSON(value []byte, maxBytes int) ([]byte, error) {
 func scanJob(row interface{ Scan(...any) error }) (jobs.Job, error) {
 	var job jobs.Job
 	var groups []string
+	var partitionKey string
 	var payload, errorJSON []byte
 	var leaseExpires, started, finished *time.Time
 	var created time.Time
 	var status string
 	var attempts int64
-	if err := row.Scan(&job.ID, &job.Kind, &job.WorkloadClass, &job.PrincipalID, &groups, &job.ResourceKind, &job.ResourceID, &job.EstimatedMemoryBytes, &payload, &status, &attempts, &job.LeaseOwner, &leaseExpires, &job.LeaseGeneration, &created, &started, &finished, &errorJSON); err != nil {
+	if err := row.Scan(&job.ID, &job.Kind, &job.WorkloadClass, &job.PrincipalID, &groups, &partitionKey, &job.ResourceKind, &job.ResourceID, &job.EstimatedMemoryBytes, &payload, &status, &attempts, &job.LeaseOwner, &leaseExpires, &job.LeaseGeneration, &created, &started, &finished, &errorJSON); err != nil {
 		return jobs.Job{}, err
 	}
 	canonicalGroups, err := jobs.CanonicalGroups(groups)
@@ -650,6 +1186,7 @@ func scanJob(row interface{ Scan(...any) error }) (jobs.Job, error) {
 		return jobs.Job{}, fmt.Errorf("invalid persisted async job groups")
 	}
 	job.GroupIDs = canonicalGroups
+	job.PartitionKey = partitionKey
 	job.Payload = append([]byte(nil), payload...)
 	job.Status = jobs.Status(status)
 	job.Attempts = int(attempts)
@@ -697,7 +1234,11 @@ func formatTimestamp(value time.Time) string {
 	if value.IsZero() {
 		return ""
 	}
-	return value.UTC().Format("2006-01-02 15:04:05")
+	// Preserve the database timestamp's full precision.  Cursor consumers use
+	// (created_at,id) keyset ordering; second-level formatting can repeat a
+	// cursor when a page contains rows created in the same second and cause an
+	// unbounded pagination loop.
+	return value.UTC().Format(time.RFC3339Nano)
 }
 func formatOptionalTimestamp(value *time.Time) string {
 	if value == nil {

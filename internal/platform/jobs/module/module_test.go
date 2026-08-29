@@ -131,6 +131,7 @@ func TestModulePostgreSQL18BuildRunnerAndNativeWorkflow(t *testing.T) {
 	const jobID = "module-pg18-job"
 	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
 		ID: jobID, Kind: "module.pg18", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		PartitionKey: "module:pg18",
 		ResourceKind: "module", ResourceID: jobID, Payload: []byte(`{"ok":true}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -139,7 +140,7 @@ func TestModulePostgreSQL18BuildRunnerAndNativeWorkflow(t *testing.T) {
 
 	workflow := jobs.WorkflowIntent{
 		Event: jobs.EventInput{Key: "module.pg18.commit", ResourceKind: "module", ResourceID: "workflow", EventType: "module.committed", Data: []byte(`{"status":"committed"}`)},
-		Job: jobs.EnqueueInput{ID: "module-pg18-workflow", Kind: "module.pg18", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		Job: jobs.EnqueueInput{ID: "module-pg18-workflow", Kind: "module.pg18", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, PartitionKey: "module:workflow", EstimatedMemoryBytes: 1,
 			ResourceKind: "module", ResourceID: "workflow", Payload: []byte(`{}`)},
 	}
 	if err := module.CommitWorkflow(t.Context(), workflow); err != nil {

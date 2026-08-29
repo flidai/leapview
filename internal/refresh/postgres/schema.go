@@ -23,9 +23,14 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Tx is deliberately the same native surface as DBTX.  The repository never
-// commits or rolls back a transaction supplied to a *Tx method.
-type Tx = DBTX
+// Tx is the caller-owned native transaction surface. Requiring commit and
+// rollback keeps pools/connections out of *Tx methods and preserves one atomic
+// boundary across refresh and jobs mutations.
+type Tx interface {
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)

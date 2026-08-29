@@ -232,6 +232,27 @@ func TestServiceExecuteClaimedJobSupersedesStaleCanonicalTree(t *testing.T) {
 	}
 }
 
+func TestServiceExecuteClaimedJobPropagatesSupersedeFailure(t *testing.T) {
+	repo := newFakeRepo()
+	repo.supersedeErr = errors.New("supersede persistence unavailable")
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, ErrRunStale
+		},
+	}
+	job := JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	}
+	err := service.ExecuteClaimedJob(t.Context(), job)
+	if err == nil || !strings.Contains(err.Error(), "supersede stale refresh tree") || !strings.Contains(err.Error(), "supersede persistence unavailable") {
+		t.Fatalf("ExecuteClaimedJob() error = %v, want supersede failure", err)
+	}
+}
+
 func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
@@ -532,6 +553,7 @@ type fakeRepo struct {
 	createdRuns                []RunInput
 	savedArtifact              servingstate.Artifact
 	savedValidation            servingstate.Validation
+	supersedeErr               error
 }
 
 func newFakeRepo() *fakeRepo {
@@ -636,6 +658,22 @@ func (r *fakeRepo) CreateRun(_ context.Context, input RunInput) (RunRecord, erro
 	return result, nil
 }
 
+func (r *fakeRepo) CreateRunTree(ctx context.Context, tree RunTreeInput) (RunRecord, []RunRecord, error) {
+	root, err := r.CreateRun(ctx, tree.Root)
+	if err != nil {
+		return RunRecord{}, nil, err
+	}
+	children := make([]RunRecord, 0, len(tree.DependencyTargets))
+	for _, targetID := range tree.DependencyTargets {
+		child, childErr := r.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: tree.Root.SemanticModelID, PipelineID: tree.Root.PipelineID, PipelinePlan: tree.Root.PipelinePlan, InvocationSource: tree.Root.InvocationSource, MatchingScheduleIDs: append([]string(nil), tree.Root.MatchingScheduleIDs...), TriggerID: tree.Root.TriggerID, NominalTime: tree.Root.NominalTime, PrincipalID: tree.Root.PrincipalID, GroupIDs: append([]string(nil), tree.Root.GroupIDs...), EstimatedMemoryBytes: tree.Root.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
+		if childErr != nil {
+			return RunRecord{}, nil, childErr
+		}
+		children = append(children, child)
+	}
+	return root, children, nil
+}
+
 func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
 	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
 }
@@ -666,6 +704,9 @@ func (r *fakeRepo) MarkRunTreeFailedClaimed(ctx context.Context, job JobRecord, 
 }
 
 func (r *fakeRepo) MarkRunTreeSupersededClaimed(_ context.Context, job JobRecord, _ string) error {
+	if r.supersedeErr != nil {
+		return r.supersedeErr
+	}
 	r.runStatuses[job.RunID] = RunStatusSuperseded
 	r.runStatuses["run_child"] = RunStatusSuperseded
 	return nil

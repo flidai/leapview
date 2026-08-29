@@ -51,6 +51,7 @@ func (m *Module) runWorkflow(input agent.PromptInput, runID string, dispatch age
 		Job: jobs.EnqueueInput{
 			ID: "agent:" + runID + ":run", Kind: execution.JobKind,
 			WorkloadClass: m.runWorkloadClass, PrincipalID: scope.PrincipalID, GroupIDs: append([]string(nil), scope.GroupIDs...),
+			PartitionKey: "agent:" + scope.ProjectID,
 			ResourceKind: execution.ResourceKind, ResourceID: runID, EstimatedMemoryBytes: 64 << 20, Payload: payload,
 		},
 	}

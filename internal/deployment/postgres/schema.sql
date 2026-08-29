@@ -112,6 +112,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     encryption_domain text NOT NULL CHECK (encryption_domain = btrim(encryption_domain) AND octet_length(encryption_domain) BETWEEN 1 AND 255),
     object_namespace text NOT NULL CHECK (object_namespace = btrim(object_namespace) AND octet_length(object_namespace) BETWEEN 1 AND 255),
     catalog_database text NOT NULL CHECK (catalog_database = btrim(catalog_database) AND octet_length(catalog_database) BETWEEN 1 AND 255),
+    catalog_id text NOT NULL CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
     catalog_uuid text NOT NULL CHECK (catalog_uuid = btrim(catalog_uuid) AND octet_length(catalog_uuid) BETWEEN 1 AND 255),
     catalog_version bigint NOT NULL CHECK (catalog_version > 0),
     ducklake_snapshot_id bigint NOT NULL CHECK (ducklake_snapshot_id > 0),
@@ -137,7 +138,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     qualified_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (attempt_id),
     UNIQUE (seal_id, candidate_id),
-    UNIQUE (physical_pool_id, catalog_database, catalog_uuid, ducklake_snapshot_id),
+    UNIQUE (physical_pool_id, catalog_id, catalog_database, catalog_uuid, ducklake_snapshot_id),
     FOREIGN KEY (attempt_id, candidate_id) REFERENCES delivery.delivery_build_attempt(attempt_id, candidate_id)
 );
 
@@ -183,6 +184,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_publication (
     publication_id uuid PRIMARY KEY,
     target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
     generation_id uuid NOT NULL,
+    expected_base_generation_id uuid,
     candidate_id uuid NOT NULL REFERENCES delivery.delivery_candidate(candidate_id),
     snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),
     expected_target_revision bigint NOT NULL CHECK (expected_target_revision > 0),
@@ -196,6 +198,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_publication (
         OR (state = 'committed' AND result_target_revision IS NOT NULL AND committed_at IS NOT NULL)
         OR (state IN ('rejected','indeterminate') AND result_target_revision IS NULL AND committed_at IS NULL)),
     FOREIGN KEY (generation_id) REFERENCES delivery.delivery_generation(generation_id),
+    FOREIGN KEY (expected_base_generation_id) REFERENCES delivery.delivery_generation(generation_id),
     FOREIGN KEY (generation_id, target_id, candidate_id, snapshot_seal_id) REFERENCES delivery.delivery_generation(generation_id, target_id, candidate_id, snapshot_seal_id),
     FOREIGN KEY (candidate_id, target_id, snapshot_seal_id) REFERENCES delivery.delivery_candidate(candidate_id, target_id, snapshot_seal_id),
     FOREIGN KEY (snapshot_seal_id, candidate_id) REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id),

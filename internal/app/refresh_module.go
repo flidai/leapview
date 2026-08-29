@@ -73,8 +73,19 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
 		recoveryLifecycle = refreshmodule.NewRecoveryLifecycle(database, *recoveryLifecycle)
 	}
+	var refreshPersistence *refreshmodule.Persistence
+	if database != nil {
+		built, buildErr := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
+			Database: database, Workflow: platform.jobModule,
+			Audit: persistence.auditRecorder,
+		})
+		if buildErr != nil {
+			return fmt.Errorf("configure refresh persistence: %w", buildErr)
+		}
+		refreshPersistence = &built
+	}
 	config := refreshmodule.Config{
-		Database: database, Service: service,
+		Persistence: refreshPersistence, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
 		Artifacts: appruntimefactory.NewRefreshArtifactLoader(),
 		HTTP: refreshmodule.HTTPConfig{
@@ -117,7 +128,13 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		EnableScheduler:   false,
 		RecoveryLifecycle: recoveryLifecycle,
 		RecoveryInterval:  workflow.recoveryInterval,
-		Logger:            platform.logger, Events: platform.asyncJobs, Workflow: platform.jobModule,
+		RecoveryEnvironment: func() string {
+			if runtime.runtimeHostModule == nil {
+				return ""
+			}
+			return string(runtime.runtimeHostModule.Environment())
+		}(),
+		Logger: platform.logger, Events: platform.asyncJobs,
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},

@@ -175,6 +175,7 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 			approvalActor,
 			deployment.Approval{},
 			idempotencyKey+":cutover", bootstrap, expectedRollbackBase, expectedRollbackRevision, rollbackIntent,
+			m.handlerEnvironment(),
 		)
 	}
 	if bootstrap {
@@ -618,6 +619,7 @@ func (m *Module) ActivateDeployment(
 		actor,
 		approval,
 		idempotencyKey,
+		row.Environment,
 	)
 	if err != nil {
 		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), err)
