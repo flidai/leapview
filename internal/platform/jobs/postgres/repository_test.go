@@ -77,6 +77,21 @@ func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
 	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM jobs.job`); err == nil {
 		t.Fatal("runtime direct jobs DELETE unexpectedly succeeded")
 	}
+	if _, err := runtimeDB.Exec(t.Context(), `
+		INSERT INTO jobs.event_sequence(resource_kind, resource_id, next_event_id)
+		VALUES ('refresh', 'append-only-proof', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `
+		INSERT INTO jobs.event(resource_kind, resource_id, event_id, event_type, data)
+		VALUES ('refresh', 'append-only-proof', 1, 'refresh.created', '{"ok":true}'::jsonb)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `
+		UPDATE jobs.event SET data='{"ok":false}'::jsonb
+		WHERE resource_kind='refresh' AND resource_id='append-only-proof' AND event_id=1`); err == nil {
+		t.Fatal("runtime mutated append-only job event")
+	}
 
 	readonlyDB, err := pgxpool.New(t.Context(), database.URL(readonly))
 	if err != nil {

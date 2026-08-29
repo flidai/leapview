@@ -201,6 +201,21 @@ CREATE TRIGGER event_insert_guard
     BEFORE INSERT ON jobs.event
     FOR EACH ROW EXECUTE FUNCTION jobs.guard_event_insert();
 
+CREATE OR REPLACE FUNCTION jobs.reject_event_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, jobs
+AS $$
+BEGIN
+    RAISE EXCEPTION 'job events are append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS event_append_only ON jobs.event;
+CREATE TRIGGER event_append_only
+    BEFORE UPDATE OR DELETE ON jobs.event
+    FOR EACH ROW EXECUTE FUNCTION jobs.reject_event_mutation();
+
 -- Durable job state is changed through the repository state machine.  The
 -- trigger is defense in depth for a role that accidentally receives a wider
 -- UPDATE grant: request identity, attempts, fences and terminal evidence may
