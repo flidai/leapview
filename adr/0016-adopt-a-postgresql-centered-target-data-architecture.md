@@ -190,6 +190,48 @@ Capability schemas own their tables and migration DDL. Cross-capability atomic
 work passes one PostgreSQL transaction to the participating capability
 repositories; it does not authorize ad hoc cross-schema SQL in handlers.
 
+#### Generated PostgreSQL query leaves
+
+`sqlc` with the PostgreSQL engine and `sql_package: pgx/v5` is the default
+authoring path for every static PostgreSQL DML or query leaf. A static leaf has
+fixed identifiers, predicates, and result shape known at compile time. Query
+files, schemas, and the pinned sqlc version are the sources of truth; generated
+Go is a deterministic build artifact and is never hand-edited. `sqlc` is a
+typed SQL compiler, not an ORM: it emits pgx methods and row types, but does
+not own domain entities, repositories, transaction boundaries, or lifecycle
+semantics.
+
+Repositories and domain services remain responsible for invariants,
+authorization, transaction ownership and commit/rollback, state machines,
+idempotency and retry policy, domain conversion, and error mapping. Generated
+methods run on the repository's caller-owned `pgx/v5` connection or
+transaction; generated code must not silently begin, commit, or roll back a
+domain transaction.
+
+Raw SQL is an exception and is limited to:
+
+- embedded schema or migration SQL, including DDL, guards, triggers, and
+  grants;
+- truly dynamic identifier or result-shape SQL, after identifiers and all
+  other inputs are validated; and
+- explicitly analyzer-incompatible statements, including PostgreSQL
+  session/protocol control such as `LISTEN` or `UNLISTEN`, when their reason
+  cannot be represented by a sqlc query.
+
+Every exception is classified adjacent to the call with a
+`sqlc-exception:<class>` marker or in a maintained capability-owned exception
+inventory. The classification records the rationale, owner, input-binding or
+identifier-safety proof, and focused verification. Convenience, awkward Go
+types, or a short static statement are not exceptions; static PostgreSQL
+DML/query leaves remain sqlc queries.
+
+LeapView does not use sqlc Cloud. Generation is local, deterministic, pinned to
+the repository's tool version, and requires no remote service or network. CI
+generates and compiles the query output, fails when generation leaves a diff,
+audits all raw-SQL exception markers and inventories, and runs database-backed
+prepare/vet checks plus PostgreSQL 18 integration suites wherever the query or
+locking contract requires them.
+
 Schema types follow these rules:
 
 - instants use `timestamptz` and durations use `interval`;
