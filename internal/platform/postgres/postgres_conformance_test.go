@@ -70,6 +70,27 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		}
 	})
 
+	t.Run("repository surface releases leases", func(t *testing.T) {
+		var one int
+		if err := p.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil || one != 1 {
+			t.Fatalf("QueryRow result=%d err=%v", one, err)
+		}
+		rows, err := p.Query(ctx, "SELECT value FROM generate_series(1, 3) AS value ORDER BY value")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !rows.Next() {
+			t.Fatalf("Query returned no first row: %v", rows.Err())
+		}
+		if err := rows.Scan(&one); err != nil || one != 1 {
+			t.Fatalf("Query first result=%d err=%v", one, err)
+		}
+		rows.Close()
+		if acquired := p.Stats().AcquiredConns(); acquired != 0 {
+			t.Fatalf("repository surface retained %d pool leases", acquired)
+		}
+	})
+
 	t.Run("rollback", func(t *testing.T) {
 		name := schema + ".postgres_conformance_rollback"
 		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
@@ -79,25 +100,18 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key)"); err != nil {
 			t.Fatal(err)
 		}
-		if err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-			tx, err := conn.Begin(ctx)
-			if err != nil {
-				return err
-			}
-			if _, err := tx.Exec(ctx, "INSERT INTO "+name+" VALUES (1)"); err != nil {
-				return err
-			}
-			if err := tx.Rollback(ctx); err != nil {
-				return err
-			}
-			return nil
-		}); err != nil {
+		tx, err := p.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO "+name+" VALUES (1)"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Rollback(ctx); err != nil {
 			t.Fatal(err)
 		}
 		var count int
-		if err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-			return conn.QueryRow(ctx, "SELECT count(*) FROM "+name).Scan(&count)
-		}); err != nil {
+		if err := p.QueryRow(ctx, "SELECT count(*) FROM "+name).Scan(&count); err != nil {
 			t.Fatal(err)
 		}
 		if count != 0 {

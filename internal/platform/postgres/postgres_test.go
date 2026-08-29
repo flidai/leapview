@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -46,6 +47,18 @@ func (r fakeRow) Scan(dest ...any) error {
 type fakeProbe struct{ row pgx.Row }
 
 func (p fakeProbe) QueryRow(context.Context, string, ...any) pgx.Row { return p.row }
+
+var (
+	_ interface {
+		Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+		Query(context.Context, string, ...any) (pgx.Rows, error)
+		QueryRow(context.Context, string, ...any) pgx.Row
+		Begin(context.Context) (pgx.Tx, error)
+	} = (*Pool)(nil)
+	_ pgx.Rows = (*leasedRows)(nil)
+	_ pgx.Row  = (*leasedRow)(nil)
+	_ pgx.Tx   = (*leasedTx)(nil)
+)
 
 func testConfig() Config {
 	return Config{URL: "postgres://leapview@localhost/leapview_control", RuntimeRole: "leapview_runtime"}
