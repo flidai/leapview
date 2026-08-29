@@ -154,6 +154,10 @@ const (
 // dispatcher rather than an event×consumer table.
 const MaxDurableConsumers = 32
 
+// NotificationChannel carries only opaque event identities. Notifications are
+// commit-time wake hints; durable event and delivery rows remain authoritative.
+const NotificationChannel = "leapview_event"
+
 // RetireOptions controls the retirement fence.  Without Waive all existing
 // pending, claimed, and dead-letter rows must already be terminal.  A waiver
 // marks those rows waived with the supplied audited evidence.
@@ -361,6 +365,9 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 			ON CONFLICT (consumer_id, event_id) DO NOTHING`, consumerID, eventID); err != nil {
 			return Event{}, fmt.Errorf("insert event delivery: %w", err)
 		}
+	}
+	if _, err := tx.Exec(ctx, `SELECT pg_notify($1, $2)`, NotificationChannel, eventID); err != nil {
+		return Event{}, fmt.Errorf("publish durable event wake hint: %w", err)
 	}
 	return Event{EventID: eventID, ScopeID: scope, AggregateType: aggregateType,
 		AggregateID: aggregateID, AggregateVersion: version, EventType: eventType,
