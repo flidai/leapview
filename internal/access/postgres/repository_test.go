@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -21,8 +20,9 @@ const (
 )
 
 type auditDatabase struct {
-	admin   *pgxpool.Pool
-	runtime *pgxpool.Pool
+	admin    *pgxpool.Pool
+	runtime  *pgxpool.Pool
+	readonly *pgxpool.Pool
 }
 
 func newAuditDatabase(t *testing.T) auditDatabase {
@@ -59,7 +59,7 @@ func newAuditDatabase(t *testing.T) auditDatabase {
 		conn.Release()
 		t.Fatal(err)
 	}
-	if err := migrations.Apply(ctx, tx); err != nil {
+	if err := ApplySchema(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		conn.Release()
 		t.Fatalf("apply baseline: %v", err)
@@ -199,9 +199,15 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 		if len(list) > maxAuditReadRows {
 			t.Fatalf("bounded export returned %d rows", len(list))
 		}
-		// Historical actor evidence survives principal deletion; the audit row
-		// is not rewritten by an FK action.
-		if _, err := db.admin.Exec(ctx, `DELETE FROM access.principal WHERE id = $1::uuid`, auditActorID); err != nil {
+		// Historical actor evidence survives the principal's monotonic
+		// revocation; access identities are themselves append-only.
+		if _, err := db.admin.Exec(ctx, `
+			UPDATE access.principal
+			SET status = 'disabled',
+				disabled_at = clock_timestamp(),
+				revoked_at = clock_timestamp(),
+				updated_at = clock_timestamp()
+			WHERE id = $1::uuid`, auditActorID); err != nil {
 			t.Fatal(err)
 		}
 		var preserved string
@@ -209,7 +215,7 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 			t.Fatal(err)
 		}
 		if preserved != auditActorID {
-			t.Fatalf("actor evidence changed after principal deletion: %q", preserved)
+			t.Fatalf("actor evidence changed after principal revocation: %q", preserved)
 		}
 	})
 
