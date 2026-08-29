@@ -13,6 +13,12 @@ tests:
         values: '0+5x20'
       - series: 'leapview_duckdb_fatal_health{job="leapview",instance="app:8080",pod="leapview-healthy"}'
         values: '0x20'
+      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080"}'
+        values: '0x20'
+      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080"}'
+        values: '0x20'
+      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed"}'
+        values: '0x20'
     alert_rule_test:
       - eval_time: 15m
         alertname: LeapViewTargetUnavailable
@@ -22,6 +28,15 @@ tests:
         exp_alerts: []
       - eval_time: 15m
         alertname: LeapViewDuckDBFatalHealth
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationOverdue
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
         exp_alerts: []
 
   - name: unavailable target fires after two minutes
@@ -100,4 +115,94 @@ tests:
               runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
       - eval_time: 5m
         alertname: LeapViewDuckDBFatalHealth
+        exp_alerts: []
+
+  - name: recovery ledger scrape failure fires and recovers
+    interval: 1m
+    input_series:
+      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080",operation="restore",state="failed",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '1x7 0x4'
+    alert_rule_test:
+      - eval_time: 6m
+        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView recovery qualification ledger on app:8080 is unavailable"
+              description: "LeapView has been unable to collect recovery qualification ledger status on app:8080 for more than 5 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
+      - eval_time: 9m
+        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
+        exp_alerts: []
+
+  - name: policy overdue qualification fires and recovers
+    interval: 1m
+    input_series:
+      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080",operation="backup",state="overdue",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '1x12 0x4'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: LeapViewRecoveryQualificationOverdue
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView recovery qualification on app:8080 is overdue"
+              description: "At least one recovery qualification on app:8080 has remained past its policy-defined stale deadline for more than 10 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
+      - eval_time: 14m
+        alertname: LeapViewRecoveryQualificationOverdue
+        exp_alerts: []
+
+  - name: delayed reconciliation remains healthy before the policy deadline
+    interval: 1m
+    input_series:
+      - series: 'leapview_recovery_qualification_missing{job="leapview",instance="app:8080",schedule="schedule-forbidden"}'
+        values: '1x20'
+      - series: 'leapview_recovery_qualification_due{job="leapview",instance="app:8080",occurrence="occurrence-forbidden"}'
+        values: '1x20'
+      - series: 'leapview_recovery_qualification_overdue{job="leapview",instance="app:8080"}'
+        values: '0x20'
+      - series: 'leapview_recovery_qualification_scrape_error{job="leapview",instance="app:8080"}'
+        values: '0x20'
+      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed"}'
+        values: '0x20'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationLedgerScrapeFailure
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationOverdue
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
+        exp_alerts: []
+
+  - name: evidence publication failure fires and recovers
+    interval: 1m
+    input_series:
+      - series: 'leapview_recovery_qualification_evidence{job="leapview",instance="app:8080",state="failed",operation="restore",occurrence="occurrence-forbidden",schedule="schedule-forbidden",artifact="artifact-forbidden",target="target-forbidden",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '1x17 0x4'
+    alert_rule_test:
+      - eval_time: 16m
+        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: warning
+            exp_annotations:
+              summary: "LeapView recovery evidence publication on app:8080 is failing"
+              description: "At least one recovery qualification on app:8080 has remained in failed evidence publication state for more than 15 minutes."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
+      - eval_time: 19m
+        alertname: LeapViewRecoveryQualificationEvidencePublicationFailure
         exp_alerts: []

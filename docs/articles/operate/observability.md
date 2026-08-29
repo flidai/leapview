@@ -24,7 +24,7 @@ Monitor at least process resource use, request rate and latency, error status, r
 
 ### Baseline health alerts
 
-The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, and fatal process-owned DuckDB health. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Request routes, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
+The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, fatal process-owned DuckDB health, and recovery qualification freshness. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Operation, publication state, occurrence, schedule, artifact, target, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
 
 Validate the syntax, PromQL behavior, firing delay, labels, and annotations with the pinned Prometheus toolchain:
 
@@ -41,7 +41,11 @@ rule_files:
   - /etc/prometheus/rules/leapview-alerts.yaml
 ```
 
-Reload Prometheus only after validation succeeds. The target-unavailable rule relies on Prometheus's standard `up` metric and therefore requires the target to remain present in Prometheus service discovery; a target omitted from the scrape configuration cannot alert. The 5xx rule uses `leapview_http_requests_total`, aggregates method, route, and status dimensions down to `job` and `instance`, and requires a positive five-minute error rate continuously for ten minutes. `leapview_duckdb_fatal_health` is present only when LeapView owns a process-local DuckDB environment. Every alert links to [Operational troubleshooting](/docs/guides/operate/troubleshooting); configure routing and receivers in the operator-owned Alertmanager deployment.
+Reload Prometheus only after validation succeeds. The target-unavailable rule relies on Prometheus's standard `up` metric and therefore requires the target to remain present in Prometheus service discovery; a target omitted from the scrape configuration cannot alert. The 5xx rule uses `leapview_http_requests_total`, aggregates method, route, and status dimensions down to `job` and `instance`, and requires a positive five-minute error rate continuously for ten minutes. `leapview_duckdb_fatal_health` is present only when LeapView owns a process-local DuckDB environment.
+
+Recovery alerts use current-state ledger projections. `leapview_recovery_qualification_scrape_error` clears after a successful ledger collection. `leapview_recovery_qualification_overdue` is recalculated from each active schedule's staleness policy and current occurrences, so ordinary missing or due work does not alert before its policy deadline. `leapview_recovery_qualification_evidence{state="failed"}` represents unresolved publication failures, remains retryable with persisted backoff, and clears after publication succeeds. The retained terminal-history gauge `leapview_recovery_qualification_failed` is deliberately not used for alerting because a later successful qualification does not remove old failures. Hold windows of five, ten, and fifteen minutes respectively absorb transient collection, reconciliation, and publication retry conditions.
+
+Every alert links to [Operational troubleshooting](/docs/guides/operate/troubleshooting); recovery alerts link directly to the [recovery qualification response](/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire). Configure routing and receivers in the operator-owned Alertmanager deployment.
 
 ## Structured logs
 
