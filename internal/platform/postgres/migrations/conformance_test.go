@@ -70,11 +70,11 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	var schemaCount int
 	if err := db.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.schemata
-		WHERE schema_name = ANY($1::text[])`, []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent", "ducklake"}).Scan(&schemaCount); err != nil {
+		WHERE schema_name = ANY($1::text[])`, []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent", "ducklake", "physical_pool"}).Scan(&schemaCount); err != nil {
 		t.Fatal(err)
 	}
-	if schemaCount != 8 {
-		t.Fatalf("capability schema count = %d, want 8", schemaCount)
+	if schemaCount != 9 {
+		t.Fatalf("capability schema count = %d, want 9", schemaCount)
 	}
 	var schemaOwner, tableOwner, capabilityOwner string
 	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'platform'`).Scan(&schemaOwner); err != nil {
@@ -106,6 +106,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatalf("schema revision = %d, want %d", revision, postgresbaseline.BaselineRevision)
 	}
 	var canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
+	var physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite bool
 	var readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
@@ -130,12 +131,23 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		       has_table_privilege('leapview_control_readonly', 'access.service_principal_secret', 'SELECT'),
 		       has_table_privilege('leapview_control_readonly', 'access.desktop_authorization_code', 'SELECT'),
 		       has_table_privilege('leapview_control_readonly', 'access.device_authorization', 'SELECT'),
-		       has_table_privilege('leapview_control_readonly', 'access.authoring_credential', 'SELECT')`).
-		Scan(&canUpdateAudit, &canUpdateRevision, &canReadRevision, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canInsertLineageRevision, &canPublishLineage, &canUpdateDuckLake, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential); err != nil {
+	       has_table_privilege('leapview_control_readonly', 'access.authoring_credential', 'SELECT'),
+	       has_table_privilege('leapview_control_runtime', 'physical_pool.physical_pools', 'SELECT'),
+	       has_table_privilege('leapview_control_runtime', 'physical_pool.physical_pools', 'INSERT'),
+	       has_table_privilege('leapview_control_runtime', 'physical_pool.physical_pool_admissions', 'UPDATE'),
+	       has_table_privilege('leapview_control_runtime', 'physical_pool.namespace_deletion_leases', 'DELETE'),
+	       has_table_privilege('leapview_control_readonly', 'physical_pool.physical_pools', 'SELECT'),
+	       has_table_privilege('leapview_control_readonly', 'physical_pool.physical_pools', 'INSERT'),
+	       has_table_privilege('leapview_control_backup', 'physical_pool.physical_pool_admissions', 'SELECT'),
+	       has_table_privilege('leapview_control_backup', 'physical_pool.physical_pool_admissions', 'INSERT'),
+	       has_table_privilege('leapview_control_maintenance', 'physical_pool.physical_pools', 'SELECT'),
+	       has_table_privilege('leapview_control_maintenance', 'physical_pool.namespace_deletion_leases', 'UPDATE'),
+	       has_table_privilege('leapview_control_maintenance', 'physical_pool.physical_pool_admissions', 'INSERT')`).
+		Scan(&canUpdateAudit, &canUpdateRevision, &canReadRevision, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canInsertLineageRevision, &canPublishLineage, &canUpdateDuckLake, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential, &physicalRuntimeSelect, &physicalRuntimeInsert, &physicalRuntimeUpdate, &physicalRuntimeDelete, &physicalReadonlySelect, &physicalReadonlyInsert, &physicalBackupSelect, &physicalBackupInsert, &physicalMaintenanceSelect, &physicalMaintenanceLeaseWrite, &physicalMaintenanceAdmissionWrite); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision || !canReadRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateDuckLake || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential {
-		t.Fatalf("least-privilege grants leaked: audit update=%t revision update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t ducklake update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t", canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential)
+	if canUpdateAudit || canUpdateRevision || !canReadRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateDuckLake || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential || !physicalRuntimeSelect || physicalRuntimeInsert || physicalRuntimeUpdate || physicalRuntimeDelete || !physicalReadonlySelect || physicalReadonlyInsert || !physicalBackupSelect || physicalBackupInsert || !physicalMaintenanceSelect || !physicalMaintenanceLeaseWrite || physicalMaintenanceAdmissionWrite {
+		t.Fatalf("least-privilege grants leaked: audit update=%t revision update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t ducklake update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t physical runtime select/write=%t/%t/%t/%t readonly select/insert=%t/%t backup select/insert=%t/%t maintenance select/lease-write/admission-write=%t/%t/%t", canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential, physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite)
 	}
 	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, postgresbaseline.BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")

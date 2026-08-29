@@ -6,7 +6,7 @@ import (
 )
 
 func TestProductBaselineComponentOrder(t *testing.T) {
-	want := []string{"platform.operation", "platform.cursor_signing", "project", "access", "managed_data", "deployment", "event", "ducklake", "jobs", "refresh", "lineage", "cache", "queryaudit"}
+	want := []string{"platform.operation", "platform.cursor_signing", "project", "access", "managed_data", "physical_pool", "deployment", "event", "ducklake", "jobs", "refresh", "lineage", "cache", "queryaudit"}
 	components := Components()
 	if len(components) != len(want) {
 		t.Fatalf("component count = %d, want %d", len(components), len(want))

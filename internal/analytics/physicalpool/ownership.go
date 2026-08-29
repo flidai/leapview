@@ -48,3 +48,11 @@ type NamespaceDeletionLease interface {
 	VerifyNamespaceDeletionLease(context.Context, string, string) error
 	ReleaseNamespaceDeletionLease(context.Context, string, string) error
 }
+
+// NamespaceDeletionLeaseRepository is implemented by a control-plane
+// authority that persists the short-lived namespace deletion fence. The
+// physical object-store marker remains the proof of namespace ownership;
+// this repository only serializes deletion across metadata writers.
+type NamespaceDeletionLeaseRepository interface {
+	NamespaceDeletionLease
+}
