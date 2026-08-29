@@ -403,16 +403,9 @@ func ensureNamespaceTx(ctx context.Context, tx Tx, n Namespace) (int64, error) {
 	if err := validateNamespace(n); err != nil {
 		return 0, err
 	}
-	key := n.Key()
-	_, err := tx.Exec(ctx, `INSERT INTO cache.cache_namespace_epoch (namespace_key,partition_kind,project_id,environment,candidate_id,epoch) VALUES ($1,$2,$3,$4,$5,1) ON CONFLICT (namespace_key) DO NOTHING`, key, n.PartitionKind, n.ProjectID, n.Environment, candidateArg(n.CandidateID))
-	if err != nil {
-		return 0, err
-	}
 	var epoch int64
-	if err := tx.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1 FOR UPDATE`, key).Scan(&epoch); err != nil {
-		return 0, err
-	}
-	return epoch, nil
+	err := tx.QueryRow(ctx, `SELECT cache.ensure_namespace($1,$2,$3,$4,$5)`, n.Key(), n.PartitionKind, n.ProjectID, n.Environment, candidateArg(n.CandidateID)).Scan(&epoch)
+	return epoch, err
 }
 
 // CurrentEpoch returns the durable invalidation epoch for an exact namespace.
@@ -433,55 +426,6 @@ func (r *Repository) CurrentEpoch(ctx context.Context, n Namespace) (int64, erro
 		return 1, nil
 	}
 	return epoch, err
-}
-
-// BumpNamespaceEpochTx advances the DB-owned epoch under a row lock. An
-// optional expected value makes retries and compare-and-swap callers explicit.
-func (r *Repository) BumpNamespaceEpochTx(ctx context.Context, tx Tx, n Namespace, expected int64) (int64, error) {
-	if tx == nil {
-		return 0, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	current, err := ensureNamespaceTx(ctx, tx, n)
-	if err != nil {
-		return 0, err
-	}
-	if expected > 0 && current != expected {
-		return 0, ErrEpoch
-	}
-	var next int64
-	if err := tx.QueryRow(ctx, `UPDATE cache.cache_namespace_epoch SET epoch=epoch+1,updated_at=clock_timestamp() WHERE namespace_key=$1 RETURNING epoch`, n.Key()).Scan(&next); err != nil {
-		return 0, err
-	}
-	return next, nil
-}
-
-func (r *Repository) BumpNamespaceEpoch(ctx context.Context, n Namespace, expected int64) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	b, ok := r.db.(beginner)
-	if !ok {
-		return 0, fmt.Errorf("%w: repository requires transaction-capable DB", ErrInvalid)
-	}
-	tx, err := b.Begin(ctx)
-	if err != nil {
-		return 0, err
-	}
-	next, err := r.BumpNamespaceEpochTx(ctx, tx, n, expected)
-	if err != nil {
-		_ = tx.Rollback(ctx)
-		return 0, err
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, err
-	}
-	return next, nil
 }
 
 func validateKey(k ManifestKey) error {
@@ -701,70 +645,27 @@ func (r *Repository) InvalidateNamespaceTx(ctx context.Context, tx Tx, in Namesp
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	previous, err := ensureNamespaceTx(ctx, tx, in.Namespace)
-	if err != nil {
-		return InvalidationResult{}, err
-	}
-	// The namespace row lock serializes concurrent retries. Recheck the scoped
-	// idempotency key after acquiring it so a lost commit acknowledgement or a
-	// simultaneous retry cannot advance the epoch twice.
-	var prior InvalidationResult
-	var priorKind string
-	var priorID, priorReason string
-	var priorDigest *string
-	var priorEvidence []byte
-	rowErr := tx.QueryRow(ctx, `SELECT invalidation_id,event_id,dependency_kind,dependency_id,dependency_digest,namespace_epoch,retired_manifests,reason,evidence,created_at FROM cache.cache_invalidation WHERE namespace_key=$1 AND idempotency_key=$2`, in.Namespace.Key(), in.IdempotencyKey).Scan(&prior.InvalidationID, &prior.EventID, &priorKind, &priorID, &priorDigest, &prior.NamespaceEpoch, &prior.RetiredManifests, &priorReason, &priorEvidence, &prior.CreatedAt)
-	if rowErr == nil {
-		priorDigestValue := ""
-		if priorDigest != nil {
-			priorDigestValue = *priorDigest
-		}
-		if priorKind != string(in.Kind) || priorID != in.DependencyID || priorDigestValue != in.DependencyDigest || priorReason != reason || !sameLifecycleEvidence(priorEvidence, canonicalEvidence) {
-			return InvalidationResult{}, ErrConflict
-		}
-		prior.Namespace = in.Namespace
-		prior.CreatedAt = prior.CreatedAt.UTC()
-		return prior, nil
-	}
-	if !errors.Is(rowErr, pgx.ErrNoRows) {
-		return InvalidationResult{}, rowErr
-	}
-	if in.ExpectedEpoch > 0 && previous != in.ExpectedEpoch {
-		return InvalidationResult{}, ErrEpoch
-	}
-	var epoch int64
-	if err := tx.QueryRow(ctx, `UPDATE cache.cache_namespace_epoch SET epoch=epoch+1,updated_at=clock_timestamp() WHERE namespace_key=$1 RETURNING epoch`, in.Namespace.Key()).Scan(&epoch); err != nil {
-		return InvalidationResult{}, err
-	}
-	where := `partition_kind=$1 AND project_id=$2 AND environment=$3 AND candidate_id IS NOT DISTINCT FROM $4 AND partition_format_version=$5 AND state='admitted'`
-	args := []any{in.Namespace.PartitionKind, in.Namespace.ProjectID, in.Namespace.Environment, candidateArg(in.Namespace.CandidateID), resultidentity.PartitionVersion}
-	if in.DependencyDigest != "" {
-		where += ` AND dependency_digest=$6`
-		args = append(args, in.DependencyDigest)
-	}
-	tag, err := tx.Exec(ctx, `UPDATE cache.cache_manifest SET state='retiring',retired_at=clock_timestamp(),retire_evidence=$`+fmt.Sprint(len(args)+1)+`::jsonb WHERE `+where, append(args, canonicalEvidence)...)
-	if err != nil {
+	if _, err := ensureNamespaceTx(ctx, tx, in.Namespace); err != nil {
 		return InvalidationResult{}, err
 	}
 	id, err := uuid.NewV7()
 	if err != nil {
 		return InvalidationResult{}, err
 	}
-	var eventID int64
-	var created time.Time
-	_, err = tx.Exec(ctx, `INSERT INTO cache.cache_invalidation (invalidation_id,namespace_key,dependency_kind,dependency_id,dependency_digest,namespace_epoch,retired_manifests,idempotency_key,reason,evidence) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, id, in.Namespace.Key(), in.Kind, in.DependencyID, nullableDigest(in.DependencyDigest), epoch, tag.RowsAffected(), in.IdempotencyKey, reason, canonicalEvidence)
+	var out InvalidationResult
+	err = tx.QueryRow(ctx, `SELECT invalidation_id,event_id,namespace_epoch,retired_manifests,created_at FROM cache.invalidate_namespace($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, id, in.Namespace.Key(), in.Kind, in.DependencyID, nullableDigest(in.DependencyDigest), in.ExpectedEpoch, in.IdempotencyKey, reason, canonicalEvidence).Scan(&out.InvalidationID, &out.EventID, &out.NamespaceEpoch, &out.RetiredManifests, &out.CreatedAt)
 	if err != nil {
-		// A concurrent retry can win the idempotency key. Surface a stable
-		// conflict so callers can re-read and replay through the normal path.
-		if isUniqueViolation(err) {
+		if strings.Contains(err.Error(), "epoch conflict") {
+			return InvalidationResult{}, ErrEpoch
+		}
+		if strings.Contains(err.Error(), "invalidation conflict") {
 			return InvalidationResult{}, ErrConflict
 		}
 		return InvalidationResult{}, err
 	}
-	if err := tx.QueryRow(ctx, `SELECT event_id,created_at FROM cache.cache_invalidation WHERE invalidation_id=$1`, id).Scan(&eventID, &created); err != nil {
-		return InvalidationResult{}, err
-	}
-	return InvalidationResult{InvalidationID: id, EventID: eventID, Namespace: in.Namespace, NamespaceEpoch: epoch, RetiredManifests: tag.RowsAffected(), CreatedAt: created.UTC()}, nil
+	out.Namespace = in.Namespace
+	out.CreatedAt = out.CreatedAt.UTC()
+	return out, nil
 }
 
 func isUniqueViolation(err error) bool {
@@ -827,50 +728,34 @@ func (r *Repository) RecordDependencyRevisionTx(ctx context.Context, tx Tx, in D
 		return DependencyRevision{}, err
 	}
 	var revision int64
-	var digest string
-	var oldDigest string
+	var digest, oldDigest string
 	var updated time.Time
-	rowErr := tx.QueryRow(ctx, `SELECT revision,revision_digest,updated_at FROM cache.cache_dependency_revision WHERE namespace_key=$1 AND dependency_kind=$2 AND dependency_id=$3 FOR UPDATE`, in.Namespace.Key(), in.Kind, in.DependencyID).Scan(&revision, &digest, &updated)
-	if rowErr == nil {
-		if in.ExpectedRevision > 0 && revision != in.ExpectedRevision {
+	var changed bool
+	var revisionEvidence any
+	if len(in.Evidence) > 0 {
+		canonicalEvidence, evidenceErr := lifecycleEvidence(in.Evidence)
+		if evidenceErr != nil {
+			return DependencyRevision{}, evidenceErr
+		}
+		revisionEvidence = canonicalEvidence
+	}
+	key := in.IdempotencyKey
+	if key == "" {
+		key = generatedRevisionIdempotencyKey(in.Namespace, in.Kind, in.DependencyID, in.RevisionDigest)
+	}
+	invID, err := uuid.NewV7()
+	if err != nil {
+		return DependencyRevision{}, err
+	}
+	err = tx.QueryRow(ctx, `SELECT revision,revision_digest,updated_at,changed,coalesce(old_digest,'') FROM cache.record_dependency_revision($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb)`, in.Namespace.Key(), in.Kind, in.DependencyID, in.RevisionDigest, in.ExpectedRevision, invID, key, "dependency revision changed", revisionEvidence).Scan(&revision, &digest, &updated, &changed, &oldDigest)
+	if err != nil {
+		if strings.Contains(err.Error(), "revision conflict") {
 			return DependencyRevision{}, ErrConflict
 		}
-		if digest == in.RevisionDigest {
-			return DependencyRevision{Namespace: in.Namespace, Kind: in.Kind, DependencyID: in.DependencyID, Revision: revision, RevisionDigest: digest, UpdatedAt: updated.UTC()}, nil
-		}
-		oldDigest = digest
-		if len(in.Evidence) == 0 {
+		if strings.Contains(err.Error(), "revision change evidence") {
 			return DependencyRevision{}, fmt.Errorf("%w: revision change evidence is required", ErrInvalid)
 		}
-		revision++
-		if err := tx.QueryRow(ctx, `UPDATE cache.cache_dependency_revision SET revision=$4,revision_digest=$5,updated_at=clock_timestamp() WHERE namespace_key=$1 AND dependency_kind=$2 AND dependency_id=$3 RETURNING updated_at`, in.Namespace.Key(), in.Kind, in.DependencyID, revision, in.RevisionDigest).Scan(&updated); err != nil {
-			return DependencyRevision{}, err
-		}
-	} else if errors.Is(rowErr, pgx.ErrNoRows) {
-		if in.ExpectedRevision > 0 {
-			return DependencyRevision{}, ErrConflict
-		}
-		revision = 1
-		if err := tx.QueryRow(ctx, `INSERT INTO cache.cache_dependency_revision (namespace_key,dependency_kind,dependency_id,revision,revision_digest) VALUES ($1,$2,$3,$4,$5) RETURNING updated_at`, in.Namespace.Key(), in.Kind, in.DependencyID, revision, in.RevisionDigest).Scan(&updated); err != nil {
-			return DependencyRevision{}, err
-		}
-		digest = in.RevisionDigest
-	} else {
-		return DependencyRevision{}, rowErr
-	}
-	if revision > 1 {
-		evidence := in.Evidence
-		key := in.IdempotencyKey
-		if key == "" {
-			key = generatedRevisionIdempotencyKey(in.Namespace, in.Kind, in.DependencyID, in.RevisionDigest)
-		}
-		if _, err := r.InvalidateNamespaceTx(ctx, tx, NamespaceInvalidationInput{Namespace: in.Namespace, Kind: in.Kind, DependencyID: in.DependencyID, DependencyDigest: oldDigest, IdempotencyKey: key, Reason: "dependency revision changed"}, evidence); err != nil {
-			return DependencyRevision{}, err
-		}
-		digest = in.RevisionDigest
-	}
-	if revision == 1 && digest == "" {
-		digest = in.RevisionDigest
+		return DependencyRevision{}, err
 	}
 	if updated.IsZero() {
 		if err := tx.QueryRow(ctx, `SELECT updated_at FROM cache.cache_dependency_revision WHERE namespace_key=$1 AND dependency_kind=$2 AND dependency_id=$3`, in.Namespace.Key(), in.Kind, in.DependencyID).Scan(&updated); err != nil {
@@ -1107,13 +992,7 @@ func (r *Repository) AcquireFill(ctx context.Context, in AcquireFillInput) (Fill
 		return FillLease{}, err
 	}
 	var out FillLease
-	err = tx.QueryRow(ctx, `WITH claim_time AS (SELECT clock_timestamp() AS now)
-INSERT INTO cache.cache_fill_lease (lease_id,cache_key,namespace_key,namespace_epoch,owner_id,fencing_epoch,expires_at,acquired_at)
-SELECT $1,$2,$3,$4,$5,1,claim_time.now+($6::bigint*interval '1 microsecond'),claim_time.now
-FROM claim_time
-ON CONFLICT (cache_key) DO UPDATE SET lease_id=EXCLUDED.lease_id,manifest_id=NULL,namespace_key=EXCLUDED.namespace_key,namespace_epoch=EXCLUDED.namespace_epoch,owner_id=EXCLUDED.owner_id,fencing_epoch=cache.cache_fill_lease.fencing_epoch+1,expires_at=EXCLUDED.expires_at,acquired_at=EXCLUDED.acquired_at
-WHERE cache.cache_fill_lease.expires_at <= (SELECT now FROM claim_time)
-RETURNING lease_id,cache_key,namespace_epoch,owner_id,fencing_epoch,expires_at,acquired_at`, id, in.CacheKey, in.Namespace.Key(), namespaceEpoch, in.OwnerID, lease.Microseconds()).Scan(&out.LeaseID, &out.CacheKey, &out.NamespaceEpoch, &out.OwnerID, &out.FencingEpoch, &out.ExpiresAt, &out.AcquiredAt)
+	err = tx.QueryRow(ctx, `SELECT lease_id,cache_key,namespace_epoch,owner_id,fencing_epoch,expires_at,acquired_at FROM cache.acquire_fill($1,$2,$3,$4,$5,$6::bigint * interval '1 microsecond')`, id, in.CacheKey, in.Namespace.Key(), namespaceEpoch, in.OwnerID, lease.Microseconds()).Scan(&out.LeaseID, &out.CacheKey, &out.NamespaceEpoch, &out.OwnerID, &out.FencingEpoch, &out.ExpiresAt, &out.AcquiredAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		_ = tx.Rollback(ctx)
 		return FillLease{}, ErrBusy
@@ -1135,11 +1014,11 @@ func (r *Repository) RenewFill(ctx context.Context, lease FillLease, duration ti
 	if err := validLease(lease); err != nil || duration <= 0 || duration > maxLeaseDuration {
 		return ErrInvalid
 	}
-	tag, err := r.db.Exec(ctx, `UPDATE cache.cache_fill_lease SET expires_at=GREATEST(expires_at, clock_timestamp()+($5::bigint*interval '1 microsecond')) WHERE lease_id=$1 AND cache_key=$2 AND owner_id=$3 AND fencing_epoch=$4 AND expires_at>clock_timestamp()`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch, duration.Microseconds())
-	if err != nil {
+	var ok bool
+	if err := r.db.QueryRow(ctx, `SELECT cache.renew_fill($1,$2,$3,$4,$5::bigint * interval '1 microsecond')`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch, duration.Microseconds()).Scan(&ok); err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if !ok {
 		return ErrStaleFence
 	}
 	return nil
@@ -1151,11 +1030,11 @@ func (r *Repository) ReleaseFill(ctx context.Context, lease FillLease) error {
 	// Retain the row as an expired fence so the next owner receives a strictly
 	// higher epoch. A maintenance reconciler may remove old rows only after its
 	// configured grace period.
-	tag, err := r.db.Exec(ctx, `UPDATE cache.cache_fill_lease SET expires_at=clock_timestamp() WHERE lease_id=$1 AND cache_key=$2 AND owner_id=$3 AND fencing_epoch=$4`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch)
-	if err != nil {
+	var ok bool
+	if err := r.db.QueryRow(ctx, `SELECT cache.release_fill($1,$2,$3,$4)`, lease.LeaseID, lease.CacheKey, lease.OwnerID, lease.FencingEpoch).Scan(&ok); err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if !ok {
 		return ErrStaleFence
 	}
 	return nil
@@ -1214,6 +1093,12 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	var namespaceKey string
 	var fenceManifest *uuid.UUID
 	var fenceActive bool
+	var lockedNamespaceEpoch int64
+	if err := tx.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1 FOR UPDATE`, in.Lease.Namespace.Key()).Scan(&lockedNamespaceEpoch); errors.Is(err, pgx.ErrNoRows) {
+		return Manifest{}, ErrStaleFence
+	} else if err != nil {
+		return Manifest{}, err
+	}
 	if err := tx.QueryRow(ctx, `SELECT lease_id,fencing_epoch,namespace_key,namespace_epoch,manifest_id,(expires_at > clock_timestamp()) FROM cache.cache_fill_lease WHERE cache_key=$1 AND owner_id=$2 AND fencing_epoch=$3 AND lease_id=$4 FOR UPDATE`, in.Lease.CacheKey, in.Lease.OwnerID, in.Lease.FencingEpoch, in.Lease.LeaseID).Scan(&fenceID, &epoch, &namespaceKey, &namespaceEpoch, &fenceManifest, &fenceActive); errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, ErrStaleFence
 	} else if err != nil {
@@ -1239,7 +1124,11 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 		if scanErr != nil {
 			return Manifest{}, scanErr
 		}
-		if !publishManifestEqual(m, in, metadata, expiresAt) {
+		var admittedLive bool
+		if err := tx.QueryRow(ctx, `SELECT state='admitted' AND (expires_at IS NULL OR expires_at > clock_timestamp()) FROM cache.cache_manifest WHERE manifest_id=$1`, m.ManifestID).Scan(&admittedLive); err != nil {
+			return Manifest{}, err
+		}
+		if !admittedLive || !publishManifestEqual(m, in, metadata, expiresAt) {
 			return Manifest{}, ErrConflict
 		}
 		return m, nil
@@ -1251,7 +1140,14 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if err != nil {
 		return Manifest{}, err
 	}
-	if _, err := tx.Exec(ctx, `INSERT INTO cache.cache_manifest (manifest_id,partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version,storage_security_domain,object_digest,object_key,byte_size,metadata,state,expires_at) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb,'admitted',$16) ON CONFLICT (partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version) DO NOTHING`, id, in.Key.PartitionKind, in.Key.ProjectID, in.Key.Environment, candidateArg(in.Key.CandidateID), in.Key.PartitionFormatVersion, in.Key.DependencyDigest, in.Key.PolicyFingerprint, in.Key.CanonicalQueryDigest, in.Key.KeyFormatVersion, in.StorageSecurityDomain, in.ObjectDigest, in.ObjectKey, in.ByteSize, metadata, expiresAt); err != nil {
+	var admittedID uuid.UUID
+	if err := tx.QueryRow(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)`, id, in.Lease.LeaseID, in.Lease.CacheKey, in.Lease.OwnerID, in.Lease.FencingEpoch, in.Lease.Namespace.Key(), in.Lease.NamespaceEpoch, in.Key.PartitionKind, in.Key.ProjectID, in.Key.Environment, candidateArg(in.Key.CandidateID), in.Key.PartitionFormatVersion, in.Key.DependencyDigest, in.Key.PolicyFingerprint, in.Key.CanonicalQueryDigest, in.Key.KeyFormatVersion, in.StorageSecurityDomain, in.ObjectDigest, in.ObjectKey, in.ByteSize, metadata, expiresAt).Scan(&admittedID); err != nil {
+		if strings.Contains(err.Error(), "stale fill fence") {
+			return Manifest{}, ErrStaleFence
+		}
+		if strings.Contains(err.Error(), "manifest conflict") {
+			return Manifest{}, ErrConflict
+		}
 		return Manifest{}, err
 	}
 	m, found, err := lookupTx(ctx, tx, in.Key)
@@ -1261,11 +1157,11 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if !found {
 		return Manifest{}, ErrConflict
 	}
-	if !publishManifestEqual(m, in, metadata, expiresAt) {
+	if m.ManifestID != admittedID {
 		return Manifest{}, ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE cache.cache_fill_lease SET manifest_id=$1, expires_at=clock_timestamp() WHERE lease_id=$2 AND cache_key=$3 AND owner_id=$4 AND fencing_epoch=$5`, m.ManifestID, in.Lease.LeaseID, in.Lease.CacheKey, in.Lease.OwnerID, epoch); err != nil {
-		return Manifest{}, err
+	if !publishManifestEqual(m, in, metadata, expiresAt) {
+		return Manifest{}, ErrConflict
 	}
 	return m, nil
 }
@@ -1329,11 +1225,11 @@ func (r *Repository) AddRetentionRoot(ctx context.Context, rootID uuid.UUID, man
 	if !errors.Is(rootErr, pgx.ErrNoRows) {
 		return rootErr
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO cache.cache_retention_root (root_id,manifest_id,state,reason) VALUES ($1,$2,'live',$3) ON CONFLICT (root_id) DO NOTHING`, rootID, manifestID, reason)
-	if err != nil {
+	var inserted bool
+	if err := tx.QueryRow(ctx, `SELECT cache.add_retention_root($1,$2,$3)`, rootID, manifestID, reason).Scan(&inserted); err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if !inserted {
 		return ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -1387,8 +1283,12 @@ func (r *Repository) RetireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 	if state != "live" {
 		return ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE cache.cache_retention_root SET state='retiring', retired_at=clock_timestamp(), retire_evidence=$2::jsonb WHERE root_id=$1`, rootID, canonicalEvidence); err != nil {
+	var updated bool
+	if err := tx.QueryRow(ctx, `SELECT cache.retire_retention_root($1,$2::jsonb)`, rootID, canonicalEvidence).Scan(&updated); err != nil {
 		return err
+	}
+	if !updated {
+		return ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -1444,8 +1344,12 @@ func (r *Repository) ExpireRetentionRoot(ctx context.Context, rootID uuid.UUID, 
 	if state != "retiring" {
 		return ErrConflict
 	}
-	if _, err := tx.Exec(ctx, `UPDATE cache.cache_retention_root SET state='expired', expired_at=clock_timestamp(), expire_evidence=$2::jsonb WHERE root_id=$1`, rootID, canonicalEvidence); err != nil {
+	var updated bool
+	if err := tx.QueryRow(ctx, `SELECT cache.expire_retention_root($1,$2::jsonb)`, rootID, canonicalEvidence).Scan(&updated); err != nil {
 		return err
+	}
+	if !updated {
+		return ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err
@@ -1505,11 +1409,11 @@ func (r *Repository) ExpireManifest(ctx context.Context, manifestID uuid.UUID, e
 	if rootsLive {
 		return ErrConflict
 	}
-	tag, err := tx.Exec(ctx, `UPDATE cache.cache_manifest SET state='expired', expired_at=clock_timestamp(), expire_evidence=$2::jsonb WHERE manifest_id=$1 AND state='retiring'`, manifestID, canonicalEvidence)
-	if err != nil {
+	var updated bool
+	if err := tx.QueryRow(ctx, `SELECT cache.expire_manifest($1,$2::jsonb)`, manifestID, canonicalEvidence).Scan(&updated); err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if !updated {
 		return ErrConflict
 	}
 	if err := tx.Commit(ctx); err != nil {

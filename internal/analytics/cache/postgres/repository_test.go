@@ -95,6 +95,46 @@ func TestManifestKeyIdentityConvergesWithL1CacheKey(t *testing.T) {
 	}
 }
 
+func TestDatabaseNamespaceKeyMatchesCanonicalJSONEscaping(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	ns := Namespace{PartitionKind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: `candidate"\\quoted`}
+	var got string
+	if err := p.QueryRow(t.Context(), `SELECT cache.namespace_key($1,$2,$3,$4)`, ns.PartitionKind, ns.ProjectID, ns.Environment, ns.CandidateID).Scan(&got); err != nil {
+		t.Fatal(err)
+	}
+	if got != ns.Key() {
+		t.Fatalf("database namespace key = %q, want Go canonical %q", got, ns.Key())
+	}
+}
+
+func TestSchemaRerunRemovesLegacyManifestKeyConstraint(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	ctx := t.Context()
+	if _, err := p.Exec(ctx, `ALTER TABLE cache.cache_manifest ADD CONSTRAINT cache_manifest_legacy_key UNIQUE NULLS NOT DISTINCT (partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version)`); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var legacy int
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='cache.cache_manifest'::regclass AND conname='cache_manifest_legacy_key'`).Scan(&legacy); err != nil {
+		t.Fatal(err)
+	}
+	if legacy != 0 {
+		t.Fatal("legacy full-key manifest constraint survived schema rerun")
+	}
+}
+
 func cacheTestKey() ManifestKey {
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
@@ -163,6 +203,221 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	}
 	if _, found, err := repo.Lookup(ctx, key); err != nil || found {
 		t.Fatalf("invalidated manifest lookup = found %v, err %v", found, err)
+	}
+}
+
+func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "history-a", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/history-1", ByteSize: 1, Lease: firstLease})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InvalidateNamespace(ctx, NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "history", DependencyDigest: key.DependencyDigest, IdempotencyKey: "history-invalidate", Reason: "history refresh"}, cacheTestEvidence("history-refresh")); err != nil {
+		t.Fatal(err)
+	}
+	secondLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "history-b", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('f'), ObjectKey: "cache/history-2", ByteSize: 2, Lease: secondLease})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ManifestID == second.ManifestID {
+		t.Fatalf("republish reused retired manifest %s", first.ManifestID)
+	}
+	var admitted, retiring int
+	if err := p.QueryRow(ctx, `SELECT count(*) FILTER (WHERE state='admitted'),count(*) FILTER (WHERE state='retiring') FROM cache.cache_manifest WHERE partition_kind=$1 AND project_id=$2 AND environment=$3 AND candidate_id IS NULL AND dependency_digest=$4`, key.PartitionKind, key.ProjectID, key.Environment, key.DependencyDigest).Scan(&admitted, &retiring); err != nil {
+		t.Fatal(err)
+	}
+	if admitted != 1 || retiring != 1 {
+		t.Fatalf("manifest history admitted=%d retiring=%d, want 1/1", admitted, retiring)
+	}
+}
+
+func TestAdmitManifestRejectsChangedObjectBeforeBindingLease(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "admit-a", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/admit", ByteSize: 1, Lease: firstLease}); err != nil {
+		t.Fatal(err)
+	}
+	secondLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "admit-b", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = p.Exec(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)`, manifestID, secondLease.LeaseID, secondLease.CacheKey, secondLease.OwnerID, secondLease.FencingEpoch, secondLease.Namespace.Key(), secondLease.NamespaceEpoch, key.PartitionKind, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion, cacheTestDigest('d'), cacheTestDigest('f'), "cache/admit-other", 1, `{}`, nil)
+	if err == nil || !strings.Contains(err.Error(), "cache manifest conflict") {
+		t.Fatalf("changed direct admission error = %v, want manifest conflict", err)
+	}
+	var bound bool
+	if err := p.QueryRow(ctx, `SELECT manifest_id IS NOT NULL FROM cache.cache_fill_lease WHERE lease_id=$1`, secondLease.LeaseID).Scan(&bound); err != nil {
+		t.Fatal(err)
+	}
+	if bound {
+		t.Fatal("conflicting admission bound the fill lease")
+	}
+}
+
+func TestExpireManifestCapabilityHonorsRetentionRoots(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "expire-guard", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/expire-guard", ByteSize: 1, Lease: lease})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.AddRetentionRoot(ctx, rootID, manifest.ManifestID, "guard"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InvalidateNamespace(ctx, NamespaceInvalidationInput{Namespace: cacheTestNamespace(), Kind: DependencyCustom, DependencyID: "guard", DependencyDigest: key.DependencyDigest, IdempotencyKey: "guard-invalidate", Reason: "guard"}, cacheTestEvidence("guard")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `SELECT cache.expire_manifest($1,$2::jsonb)`, manifest.ManifestID, cacheTestEvidence("bypass")); err == nil {
+		t.Fatal("direct manifest expiry bypassed live retention root")
+	}
+	var state string
+	if err := p.QueryRow(ctx, `SELECT state FROM cache.cache_manifest WHERE manifest_id=$1`, manifest.ManifestID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != StateRetiring {
+		t.Fatalf("manifest state after rejected expiry = %q, want retiring", state)
+	}
+}
+
+func TestRepositoryPruneUsesOneTotalBudget(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	ns := cacheTestNamespace()
+	if _, err := repo.InvalidateNamespace(ctx, NamespaceInvalidationInput{Namespace: ns, Kind: DependencyCustom, DependencyID: "prune", IdempotencyKey: "prune-event", Reason: "prune test"}, cacheTestEvidence("prune-event")); err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: ns, CacheKey: cacheTestDigest('8'), OwnerID: "prune-owner", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `UPDATE cache.cache_fill_lease SET acquired_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE lease_id=$1`, lease.LeaseID); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := repo.Prune(ctx, PruneOptions{Before: time.Now().Add(time.Hour), Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Invalidations+stats.ExpiredLeases != 1 {
+		t.Fatalf("prune consumed %d rows with limit 1: %#v", stats.Invalidations+stats.ExpiredLeases, stats)
+	}
+}
+
+func TestPublishAdmissionRechecksNamespaceAfterConcurrentInvalidation(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "race-publish", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(ctx)
+	var epoch int64
+	if err := lockTx.QueryRow(ctx, `SELECT epoch FROM cache.cache_namespace_epoch WHERE namespace_key=$1 FOR UPDATE`, cacheTestNamespace().Key()).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
+	pubTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race-publish", ByteSize: 1, Lease: lease})
+		result <- publishErr
+	}()
+	pid := pubTx.Conn().PgConn().PID()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		var blocked int
+		if err := p.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids($1))`, pid).Scan(&blocked); err == nil && blocked > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if time.Now().After(deadline) {
+		t.Fatal("publish admission did not block on namespace lock")
+	}
+	invalidID, err := uuid.NewV7()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var invalidEpoch int64
+	if err := lockTx.QueryRow(ctx, `SELECT namespace_epoch FROM cache.invalidate_namespace($1,$2,'custom','concurrent','',1,'concurrent-race','concurrent race',$3::jsonb)`, invalidID, cacheTestNamespace().Key(), cacheTestEvidence("concurrent-race")).Scan(&invalidEpoch); err != nil {
+		t.Fatal(err)
+	}
+	if invalidEpoch != epoch+1 {
+		t.Fatalf("concurrent invalidation epoch=%d, want %d", invalidEpoch, epoch+1)
+	}
+	if err := lockTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("publish after concurrent invalidation = %v, want stale fence", err)
+	}
+	_ = pubTx.Rollback(ctx)
+	var manifests int
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM cache.cache_manifest`).Scan(&manifests); err != nil {
+		t.Fatal(err)
+	}
+	if manifests != 0 {
+		t.Fatalf("stale concurrent publish admitted %d manifests", manifests)
 	}
 }
 
@@ -502,6 +757,9 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 		if state != StateAdmitted {
 			t.Fatalf("initial manifest state = %q", state)
 		}
+		if _, err := rootTx.Exec(t.Context(), `SELECT set_config('cache.capability','retention_root',true)`); err != nil {
+			t.Fatal(err)
+		}
 		expireTx, err := p.Begin(t.Context())
 		if err != nil {
 			t.Fatal(err)
@@ -611,6 +869,13 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if err != nil || first.Revision != 1 {
 		t.Fatalf("initial dependency revision = %#v, %v", first, err)
 	}
+	initialReplay, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestA, ExpectedRevision: 0})
+	if err != nil || initialReplay.Revision != first.Revision {
+		t.Fatalf("initial dependency revision replay = %#v, %v", initialReplay, err)
+	}
+	if _, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestA, ExpectedRevision: 99}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("same-digest wrong expected revision = %v, want conflict", err)
+	}
 	key := cacheTestKey()
 	cacheKey, err := key.CacheKeyDigest()
 	if err != nil {
@@ -626,6 +891,13 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	second, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, Evidence: cacheTestEvidence("source-refresh")})
 	if err != nil || second.Revision != 2 || second.RevisionDigest != digestB {
 		t.Fatalf("changed dependency revision = %#v, %v", second, err)
+	}
+	replay, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, Evidence: cacheTestEvidence("source-refresh")})
+	if err != nil || replay.Revision != second.Revision || replay.RevisionDigest != second.RevisionDigest {
+		t.Fatalf("dependency revision lost-ACK replay = %#v, %v", replay, err)
+	}
+	if _, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, IdempotencyKey: "different-retry", Evidence: cacheTestEvidence("source-refresh")}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("different dependency revision retry = %v, want conflict", err)
 	}
 	if got, err := repo.CurrentEpoch(t.Context(), ns); err != nil || got != 2 {
 		t.Fatalf("changed epoch = %d, %v; want 2", got, err)
@@ -650,7 +922,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.BumpNamespaceEpoch(t.Context(), ns, 2); err != nil {
+	if _, err := repo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: ns, Kind: DependencyCustom, DependencyID: "stale-fence", IdempotencyKey: "stale-fence-epoch", Reason: "stale fence"}, cacheTestEvidence("stale-fence")); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.Publish(t.Context(), PublishInput{Key: staleKey, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
@@ -665,6 +937,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 func TestCacheRoleConformance(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
+	maintenanceRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-secret", Login: true})
 	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "readonly-secret", Login: true})
 	database := h.NewDatabase(t, "cache_roles")
 	admin, err := pgxpool.New(t.Context(), database.AdminURL())
@@ -683,12 +956,12 @@ func TestCacheRoleConformance(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var runtimeSchema, runtimeDelete, runtimePrune, readonlyInsert bool
-	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT')`, runtimeRole.Name, readonlyRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &readonlyInsert); err != nil {
+	var runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, readonlyInsert, maintenancePrune bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($1,'cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT'),has_function_privilege($3,'cache.prune_coordination(timestamptz,integer)','EXECUTE')`, runtimeRole.Name, readonlyRole.Name, maintenanceRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &runtimeInvalidate, &readonlyInsert, &maintenancePrune); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeSchema || runtimeDelete || !runtimePrune || readonlyInsert {
-		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, readonlyInsert)
+	if !runtimeSchema || runtimeDelete || runtimePrune || !runtimeInvalidate || readonlyInsert || !maintenancePrune {
+		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v runtime_invalidate=%v maintenance_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, maintenancePrune, readonlyInsert)
 	}
 	runtime, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
 	if err != nil {
@@ -698,7 +971,31 @@ func TestCacheRoleConformance(t *testing.T) {
 	if _, err := runtime.Exec(t.Context(), `DELETE FROM cache.cache_invalidation`); err == nil {
 		t.Fatal("runtime DELETE on durable invalidation history succeeded")
 	}
-	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err != nil {
-		t.Fatalf("runtime bounded prune function failed: %v", err)
+	if _, err := runtime.Exec(t.Context(), `UPDATE cache.cache_invalidation SET reason='forged'`); err == nil {
+		t.Fatal("runtime UPDATE on durable invalidation history succeeded")
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err == nil {
+		t.Fatal("runtime prune capability unexpectedly granted")
+	}
+	if _, err := runtime.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,project_id,environment,epoch) VALUES ('forged','production','project_sales','prod',1)`); err == nil {
+		t.Fatal("runtime direct namespace fabrication succeeded")
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT cache.advance_dependency_revision('forged','custom','orders',$1,0,NULL::jsonb,NULL)`, cacheTestDigest('a')); err == nil {
+		t.Fatal("runtime intermediate dependency revision capability unexpectedly granted")
+	}
+	runtimeRepo := New(runtime)
+	if _, err := runtimeRepo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: Namespace{PartitionKind: PartitionProduction, ProjectID: "runtime_project", Environment: "prod"}, Kind: DependencyCustom, DependencyID: "runtime", IdempotencyKey: "runtime-invalidate", Reason: "runtime test"}, cacheTestEvidence("runtime")); err != nil {
+		t.Fatalf("runtime invalidation capability failed: %v", err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,project_id,environment,epoch) VALUES ('forged','production','project_sales','prod',1)`); err == nil {
+		t.Fatal("forged namespace identity unexpectedly accepted by database guard")
+	}
+	maintenance, err := pgxpool.New(t.Context(), database.URL(maintenanceRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer maintenance.Close()
+	if _, err := maintenance.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err != nil {
+		t.Fatalf("maintenance bounded prune function failed: %v", err)
 	}
 }
