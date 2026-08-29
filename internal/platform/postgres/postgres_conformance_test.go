@@ -3,49 +3,23 @@ package postgres
 import (
 	"context"
 	"errors"
-	"fmt"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/log"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
-const postgres18ConformanceImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
-
 func TestPostgreSQL18PoolConformance(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	h := postgrestest.Start(t)
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_runtime", Password: "leapview-conformance-secret", Login: true})
+	db := h.NewDatabase(t, "leapview_control")
+	schema := db.CreateSchema(t, "conformance", runtime)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-
-	if !postgresConformanceRequired() {
-		testcontainers.SkipIfProviderIsNotHealthy(t)
-	}
-	container, err := tcpostgres.Run(ctx, postgres18ConformanceImage,
-		tcpostgres.WithDatabase("leapview_control"),
-		tcpostgres.WithUsername("leapview_runtime"),
-		tcpostgres.WithPassword("leapview-conformance-secret"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)),
-		testcontainers.WithLogger(log.TestLogger(t)),
-	)
-	if err != nil {
-		if postgresConformanceRequired() {
-			t.Fatalf("required PostgreSQL conformance container: %v", err)
-		}
-		t.Skipf("PostgreSQL conformance container unavailable: %v", err)
-	}
-	testcontainers.CleanupContainer(t, container)
-
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
+	url := db.URL(runtime)
 	p, err := Open(ctx, Config{
 		URL:                    url,
 		ExpectedMajor:          18,
@@ -97,12 +71,12 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 	})
 
 	t.Run("rollback", func(t *testing.T) {
-		name := "postgres_conformance_rollback"
-		if _, err := p.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", name)); err != nil {
+		name := schema + ".postgres_conformance_rollback"
+		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
 			t.Fatal(err)
 		}
-		defer p.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", name))
-		if _, err := p.Exec(ctx, fmt.Sprintf("CREATE TABLE %s (id integer primary key)", name)); err != nil {
+		defer p.Exec(context.Background(), "DROP TABLE IF EXISTS "+name)
+		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key)"); err != nil {
 			t.Fatal(err)
 		}
 		if err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
@@ -110,7 +84,7 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 			if err != nil {
 				return err
 			}
-			if _, err := tx.Exec(ctx, fmt.Sprintf("INSERT INTO %s VALUES (1)", name)); err != nil {
+			if _, err := tx.Exec(ctx, "INSERT INTO "+name+" VALUES (1)"); err != nil {
 				return err
 			}
 			if err := tx.Rollback(ctx); err != nil {
@@ -122,7 +96,7 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		}
 		var count int
 		if err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
-			return conn.QueryRow(ctx, fmt.Sprintf("SELECT count(*) FROM %s", name)).Scan(&count)
+			return conn.QueryRow(ctx, "SELECT count(*) FROM "+name).Scan(&count)
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -132,15 +106,15 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 	})
 
 	t.Run("lock timeout", func(t *testing.T) {
-		name := "postgres_conformance_lock"
-		if _, err := p.Exec(ctx, fmt.Sprintf("DROP TABLE IF EXISTS %s", name)); err != nil {
+		name := schema + ".postgres_conformance_lock"
+		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
 			t.Fatal(err)
 		}
-		defer p.Exec(context.Background(), fmt.Sprintf("DROP TABLE IF EXISTS %s", name))
-		if _, err := p.Exec(ctx, fmt.Sprintf("CREATE TABLE %s (id integer primary key, value text)", name)); err != nil {
+		defer p.Exec(context.Background(), "DROP TABLE IF EXISTS "+name)
+		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key, value text)"); err != nil {
 			t.Fatal(err)
 		}
-		if _, err := p.Exec(ctx, fmt.Sprintf("INSERT INTO %s VALUES (1, 'held')", name)); err != nil {
+		if _, err := p.Exec(ctx, "INSERT INTO "+name+" VALUES (1, 'held')"); err != nil {
 			t.Fatal(err)
 		}
 		holder, err := p.Acquire(ctx)
@@ -158,22 +132,112 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer holderTx.Rollback(context.Background())
-		if _, err := holderTx.Exec(ctx, fmt.Sprintf("SELECT id FROM %s WHERE id = 1 FOR UPDATE", name)); err != nil {
+		if _, err := holderTx.Exec(ctx, "SELECT id FROM "+name+" WHERE id = 1 FOR UPDATE"); err != nil {
 			t.Fatal(err)
 		}
-		_, err = waiter.Exec(ctx, fmt.Sprintf("UPDATE %s SET value = 'blocked' WHERE id = 1", name))
+		_, err = waiter.Exec(ctx, "UPDATE "+name+" SET value = 'blocked' WHERE id = 1")
 		var pgErr *pgconn.PgError
 		if !errors.As(err, &pgErr) || pgErr.Code != "55P03" {
 			t.Fatalf("lock wait error = %v, want PostgreSQL lock_not_available (55P03)", err)
 		}
 	})
-}
 
-func postgresConformanceRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
-	case "1", "true", "t", "yes", "on":
-		return true
-	default:
-		return false
-	}
+	t.Run("connection cancellation", func(t *testing.T) {
+		conn, err := p.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer conn.Release()
+		queryCtx, cancel := context.WithTimeout(ctx, 100*time.Millisecond)
+		defer cancel()
+		_, err = conn.Exec(queryCtx, "SELECT pg_sleep(5)")
+		if err == nil {
+			t.Fatal("cancellable query unexpectedly completed")
+		}
+		var pgErr *pgconn.PgError
+		if !errors.Is(err, context.DeadlineExceeded) && !errors.Is(err, context.Canceled) && (!errors.As(err, &pgErr) || pgErr.Code != "57014") {
+			t.Fatalf("cancellable query error = %v, want context cancellation", err)
+		}
+		replacement, err := p.Acquire(ctx)
+		if err != nil {
+			t.Fatalf("acquire replacement connection after cancellation: %v", err)
+		}
+		defer replacement.Release()
+		var one int
+		if err := replacement.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
+			t.Fatalf("connection unusable after cancellation: %v", err)
+		}
+	})
+
+	t.Run("deadlock SQLSTATE", func(t *testing.T) {
+		name := schema + ".postgres_conformance_deadlock"
+		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
+			t.Fatal(err)
+		}
+		defer p.Exec(context.Background(), "DROP TABLE IF EXISTS "+name)
+		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Exec(ctx, "INSERT INTO "+name+" VALUES (1), (2)"); err != nil {
+			t.Fatal(err)
+		}
+		first, err := p.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer first.Release()
+		second, err := p.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer second.Release()
+		firstTx, err := first.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer firstTx.Rollback(context.Background())
+		secondTx, err := second.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer secondTx.Rollback(context.Background())
+		for _, tx := range []interface {
+			Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+		}{firstTx, secondTx} {
+			if _, err := tx.Exec(ctx, "SET LOCAL lock_timeout = 0"); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := firstTx.Exec(ctx, "SELECT id FROM "+name+" WHERE id = 1 FOR UPDATE"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := secondTx.Exec(ctx, "SELECT id FROM "+name+" WHERE id = 2 FOR UPDATE"); err != nil {
+			t.Fatal(err)
+		}
+		type result struct{ err error }
+		results := make(chan result, 2)
+		go func() {
+			_, err := firstTx.Exec(ctx, "SELECT id FROM "+name+" WHERE id = 2 FOR UPDATE")
+			results <- result{err: err}
+		}()
+		go func() {
+			_, err := secondTx.Exec(ctx, "SELECT id FROM "+name+" WHERE id = 1 FOR UPDATE")
+			results <- result{err: err}
+		}()
+		var deadlock bool
+		for range 2 {
+			select {
+			case got := <-results:
+				var pgErr *pgconn.PgError
+				if errors.As(got.err, &pgErr) && pgErr.Code == "40P01" {
+					deadlock = true
+				}
+			case <-time.After(10 * time.Second):
+				t.Fatal("deadlock resolution exceeded timeout")
+			}
+		}
+		if !deadlock {
+			t.Fatal("two-transaction cycle did not produce PostgreSQL deadlock_detected (40P01)")
+		}
+	})
 }

@@ -2,66 +2,34 @@ package migrations
 
 import (
 	"context"
-	"os"
 	"strings"
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/log"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-const postgres18BaselineImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
 
 // TestBaselinePostgreSQL18 applies the clean baseline to a real PostgreSQL 18
 // server.  CI can make container availability mandatory with
 // LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1; local runs skip when Docker is not
 // available, matching the existing platform PostgreSQL conformance tests.
 func TestBaselinePostgreSQL18(t *testing.T) {
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "leapview_control")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
-	if !postgresBaselineConformanceRequired() {
-		testcontainers.SkipIfProviderIsNotHealthy(t)
-	}
-	container, err := tcpostgres.Run(ctx, postgres18BaselineImage,
-		tcpostgres.WithDatabase("leapview_control"),
-		tcpostgres.WithUsername("postgres"),
-		tcpostgres.WithPassword("leapview-baseline-secret"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)),
-		testcontainers.WithLogger(log.TestLogger(t)),
-	)
-	if err != nil {
-		if postgresBaselineConformanceRequired() {
-			t.Fatalf("required PostgreSQL 18 baseline container: %v", err)
-		}
-		t.Skipf("PostgreSQL 18 baseline container unavailable: %v", err)
-	}
-	testcontainers.CleanupContainer(t, container)
-
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	db, err := pgxpool.New(ctx, url)
+	db, err := pgxpool.New(ctx, database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	for _, role := range []string{"leapview_control_owner", "leapview_control_migrator", "leapview_control_runtime", "leapview_control_readonly"} {
-		if _, err := db.Exec(ctx, `CREATE ROLE `+role+` NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT`); err != nil {
-			t.Fatalf("provision %s: %v", role, err)
-		}
-	}
-	if _, err := db.Exec(ctx, `GRANT leapview_control_owner TO leapview_control_migrator`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, `GRANT CREATE ON DATABASE leapview_control TO leapview_control_migrator`); err != nil {
-		t.Fatal(err)
-	}
-
 	conn, err := db.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -156,14 +124,5 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'active', $1::jsonb)`, `{"oversized":"`+strings.Repeat("x", 20000)+`"}`)
 	if err == nil {
 		t.Fatal("oversized principal attributes unexpectedly accepted")
-	}
-}
-
-func postgresBaselineConformanceRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
-	case "1", "true", "t", "yes", "on":
-		return true
-	default:
-		return false
 	}
 }
