@@ -16,30 +16,38 @@ const (
 	ConnectorSupportExperimental ConnectorSupportStatus = "experimental"
 )
 
+type SourceDataIdentityCapability string
+
+const (
+	SourceDataIdentityUnavailable     SourceDataIdentityCapability = "unavailable"
+	SourceDataIdentityContentRevision SourceDataIdentityCapability = "content_revision"
+)
+
 type ConnectorProfile struct {
-	Key                  string
-	SchemaName           string
-	ActivationMode       ConnectorActivationMode
-	LocationCapabilities []string
-	ApprovedExtensions   []string
-	SecretType           string
-	SupportStatus        ConnectorSupportStatus
-	AdapterKey           string
-	AllowPublicAccess    bool
+	Key                          string
+	SchemaName                   string
+	ActivationMode               ConnectorActivationMode
+	LocationCapabilities         []string
+	ApprovedExtensions           []string
+	SecretType                   string
+	SupportStatus                ConnectorSupportStatus
+	AdapterKey                   string
+	SourceDataIdentityCapability SourceDataIdentityCapability
+	AllowPublicAccess            bool
 }
 
 var ConnectorRegistry = []ConnectorProfile{
-	{Key: "azure_blob", SchemaName: "AzureBlobConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"azure"}, SecretType: "azure", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "azure_blob", AllowPublicAccess: true},
-	{Key: "ducklake", SchemaName: "DuckLakeConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"ducklake"}, SecretType: "ducklake", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "ducklake", AllowPublicAccess: false},
-	{Key: "gcs", SchemaName: "GCSConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "gcs", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "gcs", AllowPublicAccess: true},
-	{Key: "http", SchemaName: "HTTPConnection", ActivationMode: ConnectorActivationMode("authored"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "http", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "http", AllowPublicAccess: true},
-	{Key: "managed", SchemaName: "ManagedConnection", ActivationMode: ConnectorActivationMode("managed"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{}, SecretType: "none", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "managed", AllowPublicAccess: true},
-	{Key: "mysql", SchemaName: "MySQLConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"mysql"}, SecretType: "mysql", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "mysql", AllowPublicAccess: false},
-	{Key: "postgres", SchemaName: "PostgresConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"postgres"}, SecretType: "postgres", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "postgres", AllowPublicAccess: false},
-	{Key: "quack", SchemaName: "QuackConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"httpfs", "quack"}, SecretType: "quack", SupportStatus: ConnectorSupportStatus("experimental"), AdapterKey: "quack", AllowPublicAccess: false},
-	{Key: "r2", SchemaName: "R2Connection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "r2", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "r2", AllowPublicAccess: true},
-	{Key: "s3", SchemaName: "S3Connection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "s3", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "s3", AllowPublicAccess: true},
-	{Key: "sqlite", SchemaName: "SQLiteConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"sqlite"}, SecretType: "sqlite", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "sqlite", AllowPublicAccess: false},
+	{Key: "azure_blob", SchemaName: "AzureBlobConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"azure"}, SecretType: "azure", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "azure_blob", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: true},
+	{Key: "ducklake", SchemaName: "DuckLakeConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"ducklake"}, SecretType: "ducklake", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "ducklake", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: false},
+	{Key: "gcs", SchemaName: "GCSConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "gcs", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "gcs", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: true},
+	{Key: "http", SchemaName: "HTTPConnection", ActivationMode: ConnectorActivationMode("authored"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "http", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "http", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: true},
+	{Key: "managed", SchemaName: "ManagedConnection", ActivationMode: ConnectorActivationMode("managed"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{}, SecretType: "none", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "managed", SourceDataIdentityCapability: SourceDataIdentityCapability("content_revision"), AllowPublicAccess: true},
+	{Key: "mysql", SchemaName: "MySQLConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"mysql"}, SecretType: "mysql", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "mysql", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: false},
+	{Key: "postgres", SchemaName: "PostgresConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"postgres"}, SecretType: "postgres", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "postgres", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: false},
+	{Key: "quack", SchemaName: "QuackConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"httpfs", "quack"}, SecretType: "quack", SupportStatus: ConnectorSupportStatus("experimental"), AdapterKey: "quack", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: false},
+	{Key: "r2", SchemaName: "R2Connection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "r2", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "r2", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: true},
+	{Key: "s3", SchemaName: "S3Connection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"path"}, ApprovedExtensions: []string{"httpfs"}, SecretType: "s3", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "s3", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: true},
+	{Key: "sqlite", SchemaName: "SQLiteConnection", ActivationMode: ConnectorActivationMode("target_binding"), LocationCapabilities: []string{"relation"}, ApprovedExtensions: []string{"sqlite"}, SecretType: "sqlite", SupportStatus: ConnectorSupportStatus("stable"), AdapterKey: "sqlite", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), AllowPublicAccess: false},
 }
 
 func LookupConnector(key string) (ConnectorProfile, bool) {

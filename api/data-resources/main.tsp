@@ -28,7 +28,7 @@ enum PublicAccess {
   public: "public";
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "csv", extensions: #[".csv", ".csv.gz"], scanKind: "table_function", scanFunction: "read_csv", defaults: #{ header: false, delimiter: ",", quote: "\"", escape: "\"" } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "csv", extensions: #[".csv", ".csv.gz"], scanKind: "table_function", scanFunction: "read_csv", sourceDataIdentityCapability: "unavailable", defaults: #{ header: false, delimiter: ",", quote: "\"", escape: "\"" } } })
 model CSVReaderOptions {
   header?: boolean;
   delimiter?: string;
@@ -37,47 +37,47 @@ model CSVReaderOptions {
   nullString?: string;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "json", extensions: #[".json", ".jsonl", ".ndjson"], scanKind: "table_function", scanFunction: "read_json", defaults: #{ format: "auto" } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "json", extensions: #[".json", ".jsonl", ".ndjson"], scanKind: "table_function", scanFunction: "read_json", sourceDataIdentityCapability: "unavailable", defaults: #{ format: "auto" } } })
 model JSONReaderOptions {
   format?: "auto" | "array" | "newline_delimited";
   maximumDepth?: int32;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "parquet", extensions: #[".parquet"], scanKind: "table_function", scanFunction: "read_parquet", defaults: #{ hivePartitioning: false, unionByName: false } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "parquet", extensions: #[".parquet"], scanKind: "table_function", scanFunction: "read_parquet", sourceDataIdentityCapability: "unavailable", defaults: #{ hivePartitioning: false, unionByName: false } } })
 model ParquetReaderOptions {
   hivePartitioning?: boolean;
   unionByName?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "excel", extensions: #[".xlsx"], scanKind: "table_function", scanFunction: "read_xlsx", requiredExtension: "excel", defaults: #{ header: true } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "excel", extensions: #[".xlsx"], scanKind: "table_function", scanFunction: "read_xlsx", requiredExtension: "excel", sourceDataIdentityCapability: "unavailable", defaults: #{ header: true } } })
 model ExcelReaderOptions {
   sheet?: string;
   header?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "text", extensions: #[".txt"], scanKind: "table_function", scanFunction: "read_text", sourceDataIdentityCapability: "unavailable", defaults: #{ delimiter: "\t", quote: "\"", header: false } } })
 model TextReaderOptions {
   delimiter?: string;
   quote?: string;
   header?: boolean;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", defaults: #{ compression: "auto" } } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "blob", extensions: #[".blob"], scanKind: "table_function", scanFunction: "read_blob", sourceDataIdentityCapability: "unavailable", defaults: #{ compression: "auto" } } })
 model BlobReaderOptions {
   compression?: "auto" | "none" | "gzip" | "zstd";
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", defaults: #{} } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "vortex", extensions: #[".vortex"], scanKind: "table_function", scanFunction: "read_vortex", requiredExtension: "vortex", sourceDataIdentityCapability: "unavailable", defaults: #{} } })
 model VortexReaderOptions {
   version?: string;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", tableLike: true, defaults: #{} } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "delta", extensions: #[], scanKind: "table_function", scanFunction: "delta_scan", requiredExtension: "delta", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model DeltaReaderOptions {
   version?: string;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", tableLike: true, defaults: #{} } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "iceberg", extensions: #[], scanKind: "table_function", scanFunction: "iceberg_scan", requiredExtension: "iceberg", sourceDataIdentityCapability: "unavailable", tableLike: true, defaults: #{} } })
 model IcebergReaderOptions {
   snapshot?: string;
 }
@@ -108,6 +108,7 @@ model ConnectionSpec {
   secretType: "none",
   supportStatus: "stable",
   adapterKey: "managed",
+  sourceDataIdentityCapability: "content_revision",
 } })
 model ManagedConnection extends ConnectionSpec {
   type: "managed";
@@ -123,6 +124,7 @@ model ManagedConnection extends ConnectionSpec {
   secretType: "s3",
   supportStatus: "stable",
   adapterKey: "s3",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model S3Connection extends ConnectionSpec {
   type: "s3";
@@ -138,6 +140,7 @@ model S3Connection extends ConnectionSpec {
   secretType: "r2",
   supportStatus: "stable",
   adapterKey: "r2",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model R2Connection extends ConnectionSpec {
   type: "r2";
@@ -153,6 +156,7 @@ model R2Connection extends ConnectionSpec {
   secretType: "gcs",
   supportStatus: "stable",
   adapterKey: "gcs",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model GCSConnection extends ConnectionSpec {
   type: "gcs";
@@ -168,6 +172,7 @@ model GCSConnection extends ConnectionSpec {
   secretType: "http",
   supportStatus: "stable",
   adapterKey: "http",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model HTTPConnection extends ConnectionSpec {
   type: "http";
@@ -183,6 +188,7 @@ model HTTPConnection extends ConnectionSpec {
   secretType: "azure",
   supportStatus: "stable",
   adapterKey: "azure_blob",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model AzureBlobConnection extends ConnectionSpec {
   type: "azure_blob";
@@ -198,6 +204,7 @@ model AzureBlobConnection extends ConnectionSpec {
   secretType: "postgres",
   supportStatus: "stable",
   adapterKey: "postgres",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model PostgresConnection extends ConnectionSpec {
   type: "postgres";
@@ -211,6 +218,7 @@ model PostgresConnection extends ConnectionSpec {
   secretType: "mysql",
   supportStatus: "stable",
   adapterKey: "mysql",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model MySQLConnection extends ConnectionSpec {
   type: "mysql";
@@ -224,6 +232,7 @@ model MySQLConnection extends ConnectionSpec {
   secretType: "sqlite",
   supportStatus: "stable",
   adapterKey: "sqlite",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model SQLiteConnection extends ConnectionSpec {
   type: "sqlite";
@@ -237,6 +246,7 @@ model SQLiteConnection extends ConnectionSpec {
   secretType: "ducklake",
   supportStatus: "stable",
   adapterKey: "ducklake",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model DuckLakeConnection extends ConnectionSpec {
   type: "ducklake";
@@ -250,6 +260,7 @@ model DuckLakeConnection extends ConnectionSpec {
   secretType: "quack",
   supportStatus: "experimental",
   adapterKey: "quack",
+  sourceDataIdentityCapability: "unavailable",
 } })
 model QuackConnection extends ConnectionSpec {
   type: "quack";
@@ -373,7 +384,7 @@ model IcebergPathSourceLocation extends PathSourceLocation {
   options?: IcebergReaderOptions;
 }
 
-@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", tableLike: true, allowsOptions: false, defaults: #{} } })
+@apigen.metadata(#{ `x-leapview-format`: #{ name: "lance", extensions: #[".lance"], scanKind: "replacement", requiredExtension: "lance", sourceSecretType: "lance", sourceDataIdentityCapability: "unavailable", tableLike: true, allowsOptions: false, defaults: #{} } })
 model LancePathSourceLocation extends PathSourceLocation {
   format: "lance";
 }
