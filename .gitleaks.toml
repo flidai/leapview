@@ -16,3 +16,11 @@ description = "S3 garbage-collection marker constant comparison"
 targetRules = ["generic-api-key"]
 regexTarget = "line"
 regexes = ['''key == s3OwnershipMarkerKey \|\| key == s3DeletionLeaseKey''']
+
+[[allowlists]]
+description = "Deterministic MinIO KMS fixture in candidate-history test revisions"
+targetRules = ["generic-api-key"]
+condition = "AND"
+regexTarget = "line"
+regexes = ['''(?:l3MinIOKMS|targetL3KMS)\s*=\s*"leapview-sse-key:''']
+paths = ['''^internal/analytics/cache/l3/(s3_store_minio_test|target_cache_minio_test)\.go$''']
