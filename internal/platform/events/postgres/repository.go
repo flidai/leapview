@@ -963,81 +963,15 @@ func (r *Repository) Prune(ctx context.Context, tx Tx, before time.Time) (int64,
 		return 0, errors.New("prune cutoff is required")
 	}
 	before = before.UTC()
-	var floor time.Time
-	if err := tx.QueryRow(ctx, `
-		SELECT floor_at FROM event.event_retention_floor
-		WHERE singleton = true FOR UPDATE`).Scan(&floor); err != nil {
-		return 0, fmt.Errorf("lock event retention floor: %w", err)
-	}
-	var oldestRoot pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-		SELECT min(replay_from) FROM event.event_retention_root
-		WHERE state <> 'expired'`).Scan(&oldestRoot); err != nil {
-		return 0, fmt.Errorf("read live event retention roots: %w", err)
-	}
-	target := before
-	if oldestRoot.Valid && oldestRoot.Time.Before(target) {
-		target = oldestRoot.Time.UTC()
-	}
-	// An unresolved delivery is itself a retention root. Keep the floor at its
-	// timestamp so a newly enrolled consumer can still replay that event while
-	// poison handling is visible and being resolved.
-	var blocked pgtype.Timestamptz
-	if err := tx.QueryRow(ctx, `
-		SELECT min(e.occurred_at)
-		FROM event.event_log e
-		WHERE e.occurred_at < $1
-		  AND NOT EXISTS (
-			SELECT 1 FROM event.event_retention_root r
-			WHERE r.state <> 'expired'
-			  AND e.occurred_at >= r.replay_from
-			  AND (r.replay_until IS NULL OR e.occurred_at <= r.replay_until)
-		  )
-		  AND EXISTS (
-			SELECT 1 FROM event.event_delivery d
-			WHERE d.event_id = e.event_id
-			  AND d.status IN ('pending', 'claimed', 'dead_letter')
-		  )`, target).Scan(&blocked); err != nil {
-		return 0, fmt.Errorf("read unresolved event retention blockers: %w", err)
-	}
-	if blocked.Valid && blocked.Time.Before(target) {
-		target = blocked.Time.UTC()
-	}
-	if target.After(floor) {
-		if _, err := tx.Exec(ctx, `
-			UPDATE event.event_retention_floor SET floor_at = $1, updated_at = clock_timestamp()
-			WHERE singleton = true`, target); err != nil {
-			return 0, fmt.Errorf("advance event retention floor: %w", err)
-		}
-	}
 	const batch = 1000
 	var removed int64
 	for {
-		ct, err := tx.Exec(ctx, `
-			WITH doomed AS (
-				SELECT e.event_id FROM event.event_log e
-				WHERE e.occurred_at < $1
-				  AND NOT EXISTS (
-				  SELECT 1 FROM event.event_retention_root r
-				  WHERE r.state <> 'expired'
-				    AND e.occurred_at >= r.replay_from
-				    AND (r.replay_until IS NULL OR e.occurred_at <= r.replay_until)
-				  )
-				  AND NOT EXISTS (
-				  SELECT 1 FROM event.event_delivery d
-				  WHERE d.event_id = e.event_id
-				    AND d.status IN ('pending', 'claimed', 'dead_letter')
-				  )
-				ORDER BY e.occurred_at, e.event_id
-				LIMIT $2
-			)
-			DELETE FROM event.event_log e USING doomed
-			WHERE e.event_id = doomed.event_id`, target, batch)
-		if err != nil {
+		var count int64
+		if err := tx.QueryRow(ctx, `SELECT event.prune_event_log($1, $2)`, before, batch).Scan(&count); err != nil {
 			return removed, fmt.Errorf("prune durable events: %w", err)
 		}
-		removed += ct.RowsAffected()
-		if ct.RowsAffected() < batch {
+		removed += count
+		if count < batch {
 			break
 		}
 	}

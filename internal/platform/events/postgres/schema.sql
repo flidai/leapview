@@ -108,6 +108,97 @@ CREATE TABLE IF NOT EXISTS event.event_retention_floor (
 INSERT INTO event.event_retention_floor (singleton) VALUES (true)
 ON CONFLICT (singleton) DO NOTHING;
 
+-- Event rows are immutable to the application runtime but remain eligible for
+-- bounded retention.  This owner-executed function is the only delete surface:
+-- it advances the durable floor and checks replay roots plus unresolved
+-- deliveries in the same transaction before deleting one bounded batch.
+CREATE OR REPLACE FUNCTION event.prune_event_log(
+    p_before timestamptz,
+    p_batch_limit integer
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, event
+AS $$
+DECLARE
+    v_floor timestamptz;
+    v_target timestamptz;
+    v_oldest_root timestamptz;
+    v_blocked timestamptz;
+    v_removed bigint;
+BEGIN
+    IF p_before IS NULL THEN
+        RAISE EXCEPTION 'event prune cutoff is required';
+    END IF;
+    IF p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'event prune batch limit must be between 1 and 1000';
+    END IF;
+
+    SELECT floor_at INTO STRICT v_floor
+    FROM event.event_retention_floor
+    WHERE singleton = true
+    FOR UPDATE;
+
+    v_target := p_before;
+    SELECT min(replay_from) INTO v_oldest_root
+    FROM event.event_retention_root
+    WHERE state <> 'expired';
+    IF v_oldest_root IS NOT NULL AND v_oldest_root < v_target THEN
+        v_target := v_oldest_root;
+    END IF;
+
+    SELECT min(e.occurred_at) INTO v_blocked
+    FROM event.event_log e
+    WHERE e.occurred_at < v_target
+      AND NOT EXISTS (
+          SELECT 1 FROM event.event_retention_root r
+          WHERE r.state <> 'expired'
+            AND e.occurred_at >= r.replay_from
+            AND (r.replay_until IS NULL OR e.occurred_at <= r.replay_until)
+      )
+      AND EXISTS (
+          SELECT 1 FROM event.event_delivery d
+          WHERE d.event_id = e.event_id
+            AND d.status IN ('pending', 'claimed', 'dead_letter')
+      );
+    IF v_blocked IS NOT NULL AND v_blocked < v_target THEN
+        v_target := v_blocked;
+    END IF;
+
+    IF v_target > v_floor THEN
+        UPDATE event.event_retention_floor
+        SET floor_at = v_target, updated_at = clock_timestamp()
+        WHERE singleton = true;
+    END IF;
+
+    WITH doomed AS (
+        SELECT e.event_id
+        FROM event.event_log e
+        WHERE e.occurred_at < v_target
+          AND NOT EXISTS (
+              SELECT 1 FROM event.event_retention_root r
+              WHERE r.state <> 'expired'
+                AND e.occurred_at >= r.replay_from
+                AND (r.replay_until IS NULL OR e.occurred_at <= r.replay_until)
+          )
+          AND NOT EXISTS (
+              SELECT 1 FROM event.event_delivery d
+              WHERE d.event_id = e.event_id
+                AND d.status IN ('pending', 'claimed', 'dead_letter')
+          )
+        ORDER BY e.occurred_at, e.event_id
+        LIMIT p_batch_limit
+    )
+    DELETE FROM event.event_log e
+    USING doomed
+    WHERE e.event_id = doomed.event_id;
+    GET DIAGNOSTICS v_removed = ROW_COUNT;
+    RETURN v_removed;
+END;
+$$;
+REVOKE ALL ON FUNCTION event.prune_event_log(timestamptz, integer) FROM PUBLIC;
+
 CREATE OR REPLACE FUNCTION event.reject_event_update()
 RETURNS trigger
 LANGUAGE plpgsql
