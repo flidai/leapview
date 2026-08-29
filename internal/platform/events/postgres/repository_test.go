@@ -223,6 +223,92 @@ func TestPostgreSQL18ConcurrentEnrollmentProducerHistoricalEvent(t *testing.T) {
 	}
 }
 
+func TestPostgreSQL18RetirementFenceClosesProducerFanoutRace(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	enrollTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "retiring-sink", ReplayFrom: time.Unix(0, 0)})
+	if err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := r.Backfill(ctx, enrollTx, consumer.ConsumerID, 100); err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enrollTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the registry fence before the producer starts.  AppendEvent writes
+	// its event row, then waits on this key-share boundary; retirement commits
+	// first and the producer must therefore observe lifecycle=retired and skip
+	// fan-out for the post-retirement event.
+	retireTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var registry bool
+	if err := retireTx.QueryRow(ctx, `
+		SELECT registry_id FROM event.event_fanout_registry
+		WHERE registry_id = true FOR UPDATE`).Scan(&registry); err != nil {
+		_ = retireTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if !registry {
+		_ = retireTx.Rollback(ctx)
+		t.Fatal("event fan-out registry row is invalid")
+	}
+	producerTx, err := db.Begin(ctx)
+	if err != nil {
+		_ = retireTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	producerDone := make(chan error, 1)
+	go func() {
+		_, appendErr := r.AppendEvent(ctx, producerTx, EventInput{
+			ScopeID: "scope", AggregateType: "retirement", AggregateID: "one",
+			EventType: "retirement.changed", SchemaVersion: 1, Payload: []byte(`{"after":true}`),
+		})
+		if appendErr == nil {
+			appendErr = producerTx.Commit(ctx)
+		} else {
+			_ = producerTx.Rollback(ctx)
+		}
+		producerDone <- appendErr
+	}()
+	select {
+	case appendErr := <-producerDone:
+		_ = retireTx.Rollback(ctx)
+		t.Fatalf("producer crossed retirement fence before retirement: %v", appendErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := r.RetireConsumer(ctx, retireTx, RetireOptions{ConsumerID: consumer.ConsumerID}); err != nil {
+		_ = retireTx.Rollback(ctx)
+		_ = producerTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := retireTx.Commit(ctx); err != nil {
+		_ = producerTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := <-producerDone; err != nil {
+		t.Fatal(err)
+	}
+	var deliveries int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*) FROM event.event_delivery WHERE consumer_id = $1::uuid`, consumer.ConsumerID).Scan(&deliveries); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 0 {
+		t.Fatalf("post-retirement producer created %d deliveries, want 0", deliveries)
+	}
+}
+
 func TestPostgreSQL18DuplicateSafeBackfillAndPoisonRetention(t *testing.T) {
 	db := eventTestDB(t)
 	ctx := t.Context()
@@ -403,6 +489,69 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	if err := claimTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The runtime role has table UPDATE privileges for delivery processing, but
+	// the persistence edge must still fence stale workers that attempt to
+	// rewind or reuse a claim generation directly.
+	guardTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guardTx.Exec(ctx, `
+		UPDATE event.event_delivery
+		SET claim_generation = claim_generation - 1
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err == nil {
+		_ = guardTx.Rollback(ctx)
+		t.Fatal("delivery claim-generation rewind unexpectedly succeeded")
+	}
+	_ = guardTx.Rollback(ctx)
+	guardTx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guardTx.Exec(ctx, `
+		UPDATE event.event_delivery
+		SET claim_generation = claim_generation + 2
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err == nil {
+		_ = guardTx.Rollback(ctx)
+		t.Fatal("delivery claim-generation skip unexpectedly succeeded")
+	}
+	_ = guardTx.Rollback(ctx)
+	guardTx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guardTx.Exec(ctx, `
+		UPDATE event.event_delivery
+		SET claimed_by = 'stale-owner'
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err == nil {
+		_ = guardTx.Rollback(ctx)
+		t.Fatal("delivery owner reuse unexpectedly succeeded")
+	}
+	_ = guardTx.Rollback(ctx)
+	guardTx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guardTx.Exec(ctx, `
+		UPDATE event.event_delivery
+		SET consumer_id = '00000000-0000-0000-0000-000000000099'::uuid
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err == nil {
+		_ = guardTx.Rollback(ctx)
+		t.Fatal("delivery consumer identity mutation unexpectedly succeeded")
+	}
+	_ = guardTx.Rollback(ctx)
+	guardTx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := guardTx.Exec(ctx, `
+		UPDATE event.event_delivery
+		SET event_id = '00000000-0000-0000-0000-000000000098'::uuid
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err == nil {
+		_ = guardTx.Rollback(ctx)
+		t.Fatal("delivery event identity mutation unexpectedly succeeded")
+	}
+	_ = guardTx.Rollback(ctx)
 	if _, err := db.Exec(ctx, `UPDATE event.event_delivery SET claimed_until = clock_timestamp() - interval '1 second' WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID); err != nil {
 		t.Fatal(err)
 	}
@@ -490,6 +639,63 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	}
 	if poisonStatus != "dead_letter" {
 		t.Fatalf("exhausted delivery status = %q, want dead_letter", poisonStatus)
+	}
+	// An explicit replay races retention in a separate transaction.  The
+	// maintenance function must serialize on the delivery table lock and then
+	// observe the pending state, leaving the event available for replay.
+	replayTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Replay(ctx, replayTx, consumer.ConsumerID, eventID); err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	pruneTx, err := db.Begin(ctx)
+	if err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	type pruneResult struct {
+		removed int64
+		err     error
+	}
+	pruneDone := make(chan pruneResult, 1)
+	go func() {
+		removed, pruneErr := r.Prune(ctx, pruneTx, time.Now().Add(time.Hour))
+		pruneDone <- pruneResult{removed: removed, err: pruneErr}
+	}()
+	select {
+	case result := <-pruneDone:
+		_ = replayTx.Rollback(ctx)
+		_ = pruneTx.Rollback(ctx)
+		t.Fatalf("prune completed before replay commit: %#v", result)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := replayTx.Commit(ctx); err != nil {
+		_ = pruneTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	result := <-pruneDone
+	if result.err != nil {
+		_ = pruneTx.Rollback(ctx)
+		t.Fatal(result.err)
+	}
+	if result.removed != 0 {
+		_ = pruneTx.Rollback(ctx)
+		t.Fatalf("replayed event was pruned: removed=%d", result.removed)
+	}
+	if err := pruneTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var replayStatus string
+	if err := db.QueryRow(ctx, `
+		SELECT status FROM event.event_delivery
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID).Scan(&replayStatus); err != nil {
+		t.Fatal(err)
+	}
+	if replayStatus != "pending" {
+		t.Fatalf("replayed delivery status = %q, want pending after prune race", replayStatus)
 	}
 	var liveClaim Delivery
 	for _, delivery := range resumed {

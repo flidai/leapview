@@ -103,6 +103,11 @@ CREATE INDEX IF NOT EXISTS event_log_replay_order_idx
     ON event.event_log (occurred_at, event_id);
 CREATE INDEX IF NOT EXISTS event_delivery_claim_idx
     ON event.event_delivery (consumer_id, status, available_at, event_id);
+-- Retention and operational reconciliation look deliveries up by event
+-- identity.  Keep that path bounded even when a consumer has a large queue;
+-- the claim-oriented index above intentionally starts with consumer_id.
+CREATE INDEX IF NOT EXISTS event_delivery_event_idx
+    ON event.event_delivery (event_id, status);
 CREATE INDEX IF NOT EXISTS event_retention_root_live_idx
     ON event.event_retention_root (replay_from, replay_until)
     WHERE state <> 'expired';
@@ -143,6 +148,13 @@ BEGIN
     IF p_batch_limit < 1 OR p_batch_limit > 1000 THEN
         RAISE EXCEPTION 'event prune batch limit must be between 1 and 1000';
     END IF;
+
+    -- Delivery state can move from terminal to pending during an explicit
+    -- replay.  Serialize the bounded retention decision with those updates
+    -- (and with fan-out inserts) so a READ COMMITTED snapshot can never deem
+    -- a row terminal, then delete its event after replay commits.  The lock is
+    -- held only for this bounded maintenance batch; readers remain concurrent.
+    LOCK TABLE event.event_delivery IN SHARE MODE;
 
     SELECT floor_at INTO STRICT v_floor
     FROM event.event_retention_floor
@@ -220,6 +232,63 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION event.reject_event_update() FROM PUBLIC;
+
+-- Claim generations are the delivery fencing token.  Repository operations
+-- advance the token and attempt count exactly once when a pending row is
+-- claimed or an expired claim is taken over; all other state transitions
+-- retain both counters.
+-- Runtime has a broad UPDATE grant over the event schema, so enforce the
+-- monotonic fence at the persistence edge as defence in depth.  This guard is
+-- deliberately narrow: lease-expiry tests and operational reconciliation may
+-- still adjust other delivery fields, while a stale worker can never rewind
+-- or skip a successor generation.
+CREATE OR REPLACE FUNCTION event.guard_delivery_claim_generation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, event
+AS $$
+BEGIN
+    IF NEW.consumer_id IS DISTINCT FROM OLD.consumer_id
+       OR NEW.event_id IS DISTINCT FROM OLD.event_id THEN
+        RAISE EXCEPTION 'event delivery identity is immutable';
+    END IF;
+    IF NEW.claim_generation < OLD.claim_generation THEN
+        RAISE EXCEPTION 'event delivery claim generation cannot decrease';
+    END IF;
+    IF NEW.attempts < OLD.attempts THEN
+        RAISE EXCEPTION 'event delivery attempts cannot decrease';
+    END IF;
+    IF NEW.attempts > OLD.attempts
+       AND NEW.claim_generation = OLD.claim_generation THEN
+        RAISE EXCEPTION 'event delivery attempts require a new claim generation';
+    END IF;
+    IF NEW.claim_generation > OLD.claim_generation THEN
+        IF NEW.claim_generation <> OLD.claim_generation + 1
+           OR NEW.status <> 'claimed'
+           OR OLD.status NOT IN ('pending', 'claimed')
+           OR NEW.attempts <> OLD.attempts + 1 THEN
+            RAISE EXCEPTION 'event delivery claim generation must advance one claim at a time';
+        END IF;
+        -- A successor claimant is valid only after the previous lease expired.
+        -- Pending rows have no previous lease; an expired claimed row must be
+        -- demonstrably reclaimable at this statement's database clock.
+        IF OLD.status = 'claimed'
+           AND (OLD.claimed_until IS NULL OR OLD.claimed_until > clock_timestamp()) THEN
+            RAISE EXCEPTION 'event delivery takeover requires an expired lease';
+        END IF;
+    ELSIF OLD.status = 'claimed'
+          AND NEW.status = 'claimed'
+          AND NEW.claimed_by IS DISTINCT FROM OLD.claimed_by THEN
+        RAISE EXCEPTION 'event delivery owner change requires a new claim generation';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+REVOKE ALL ON FUNCTION event.guard_delivery_claim_generation() FROM PUBLIC;
+DROP TRIGGER IF EXISTS event_delivery_claim_generation_guard ON event.event_delivery;
+CREATE TRIGGER event_delivery_claim_generation_guard
+    BEFORE UPDATE ON event.event_delivery
+    FOR EACH ROW EXECUTE FUNCTION event.guard_delivery_claim_generation();
 
 -- occurred_at is authority-owned rather than caller supplied.  Keeping this
 -- invariant in the database protects direct INSERT paths (including a role
