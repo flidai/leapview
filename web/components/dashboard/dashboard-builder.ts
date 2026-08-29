@@ -457,8 +457,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .filter-pane-body {
       display: grid;
-      gap: var(--base-size-12);
-      padding: var(--base-size-12);
+      align-content: start;
+      gap: var(--base-size-8);
+      padding: var(--base-size-8) var(--base-size-12) var(--base-size-16);
     }
 
     .filter-validation {
@@ -473,8 +474,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       justify-content: space-between;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .filter-drop-zone {
@@ -516,13 +516,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .filter-scope-group {
       display: grid;
-      gap: var(--base-size-6);
-      padding-bottom: var(--base-size-8);
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .filter-scope-group:last-of-type {
-      border-bottom: 0;
+      gap: var(--base-size-4);
     }
 
     .filter-scope-empty {
@@ -533,47 +527,71 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .filter-scope-options {
       display: grid;
-      gap: var(--base-size-6);
-      padding: var(--base-size-8);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-panel-muted);
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--base-size-4);
     }
 
     .filter-scope-option {
-      display: grid;
-      grid-template-columns: auto 1fr;
-      gap: var(--base-size-8);
-      align-items: start;
+      position: relative;
+      display: flex !important;
+      min-height: var(--control-small-size);
+      align-items: center;
+      justify-content: center;
+      box-sizing: border-box;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      padding: 0 var(--base-size-6);
       color: var(--lv-fg-default) !important;
+      background: var(--lv-bg-panel);
+      cursor: pointer;
+    }
+
+    .filter-scope-option:has(input:checked) {
+      border-color: var(--lv-line-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      font-weight: var(--base-text-weight-semibold);
+    }
+
+    .filter-scope-option:has(input:disabled) {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    .filter-scope-option input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+    }
+
+    .filter-scope-option:has(input:focus-visible) {
+      outline: 2px solid var(--lv-fg-accent);
+      outline-offset: 2px;
     }
 
     .filter-scope-option span {
-      display: grid;
-      gap: var(--base-size-2);
-      font: var(--lv-type-body-compact);
-    }
-
-    .filter-scope-option small {
-      color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
+      text-align: center;
     }
 
     .filter-card {
       display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
       width: 100%;
-      gap: var(--base-size-2);
-      padding: var(--base-size-8);
-      border: var(--lv-border-default);
-      border-radius: var(--lv-radius-default);
+      min-height: var(--control-medium-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      padding: var(--base-size-6) var(--base-size-8);
+      border: 1px solid transparent;
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
       color: var(--lv-fg-default);
-      background: var(--lv-bg-panel);
+      background: transparent;
       text-align: left;
     }
 
     .filter-card[aria-pressed='true'] {
-      border-color: var(--lv-fg-accent);
-      box-shadow: inset 3px 0 0 var(--lv-fg-accent);
+      border-color: var(--lv-line-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
     }
 
     .filter-card-title {
@@ -594,7 +612,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-editor {
       display: grid;
       gap: var(--base-size-8);
-      padding-top: var(--base-size-8);
+      margin-top: var(--base-size-4);
+      padding-top: var(--base-size-12);
       border-top: var(--lv-border-muted);
     }
 
@@ -611,6 +630,36 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       justify-content: space-between;
     }
 
+    .filter-settings {
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      background: var(--lv-bg-panel);
+    }
+
+    .filter-settings summary {
+      padding: var(--base-size-8);
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+      cursor: pointer;
+    }
+
+    .filter-settings-body {
+      display: grid;
+      gap: var(--base-size-8);
+      padding: 0 var(--base-size-8) var(--base-size-8);
+    }
+
+    .filter-editor-actions {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--base-size-6);
+    }
+
+    .filter-editor-actions button {
+      min-height: var(--control-small-size);
+      padding-inline: var(--base-size-8);
+    }
+
     .filter-remove {
       color: var(--lv-fg-danger, var(--lv-fg-default));
     }
@@ -619,10 +668,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-data-2);
     }
 
-    .filter-placement-note {
-      margin: 0;
+    .filter-pane-empty {
+      margin: var(--base-size-8) 0;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
+      text-align: center;
+    }
+
+    .filter-count {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-normal);
     }
 
     .page-bar {
@@ -2475,29 +2531,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <div class="pane-title-group">
               <span class="pane-title-icon">${lucideIcon(ListFilter, { size: 16, strokeWidth: 2 })}</span>
               <h2 id="builder-filters-heading" class="pane-title">Filters</h2>
+              <span class="filter-count">${filters.length}</span>
             </div>
             ${this.renderPaneToggle('filters', 'Filters pane', 'builder-filters-content')}
           </div>
           <div class="pane-header-details" ?hidden=${collapsed}>
-            <p class="pane-hint">Report filters in dashboard code. Applied to every page unless targets narrow them.</p>
             ${filterError ? html`<p class="filter-validation" role="alert" aria-live="assertive">${filterError}</p>` : nothing}
           </div>
         </div>
         <div id="builder-filters-content" class="filter-pane-body pane-content" ?hidden=${collapsed}>
-          <div class="filter-drop-zone" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>
-            Drop a governed dimension to create a report filter
-          </div>
+          ${this.draggedFieldID ? html`<div class="filter-drop-zone" data-field-dragging="true" @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>Drop to add filter</div>` : nothing}
           <label>
-            <span class="sr-only">Add report filter</span>
-            <select class="filter-add-select" aria-label="Add report filter" ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.addFilterFromSelect}>
-              <option value="">+ Add a data field</option>
+            <span class="sr-only">Add filter</span>
+            <select class="filter-add-select" aria-label="Add filter" ?disabled=${!builder.capabilities.canEdit || this.commandPending} @change=${this.addFilterFromSelect}>
+              <option value="">+ Add filter</option>
               ${dimensions.map((item) => html`<option value=${item.field.id} ?disabled=${filters.some((candidate) => candidate.dimension === item.field.id)}>${item.field.label}</option>`)}
             </select>
           </label>
-          ${this.renderFilterScopeGroup('Filters on this visual', grouped.visual, filter, visual ? visual.title : 'Select a visual to target it')}
-          ${this.renderFilterScopeGroup('Filters for page visuals', grouped.page, filter, page?.title ?? 'No page selected')}
-          ${this.renderFilterScopeGroup('Filters on all pages', grouped.report, filter, 'Every compatible visual')}
-          ${grouped.custom.length > 0 ? this.renderFilterScopeGroup('Custom targets', grouped.custom, filter, 'Target set authored in dashboard code') : nothing}
+          ${filters.length === 0 ? html`<p class="filter-pane-empty">No filters yet</p>` : nothing}
+          ${grouped.visual.length > 0 ? this.renderFilterScopeGroup('This visual', grouped.visual, filter) : nothing}
+          ${grouped.page.length > 0 ? this.renderFilterScopeGroup('This page', grouped.page, filter) : nothing}
+          ${grouped.report.length > 0 ? this.renderFilterScopeGroup('All pages', grouped.report, filter) : nothing}
+          ${grouped.custom.length > 0 ? this.renderFilterScopeGroup('Custom', grouped.custom, filter) : nothing}
           ${filter ? this.renderFilterEditor(builder, filter) : nothing}
         </div>
       </aside>
@@ -2513,46 +2568,50 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <section class="filter-editor" aria-label=${`Configure ${filter.label} filter`}>
         <div class="filter-scope-options" role="radiogroup" aria-label="Filter scope">
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'report'} ?disabled=${!editable} @change=${() => this.setFilterScope(filter, 'report')} /><span>All pages<small>One report binding applies to every compatible visual.</small></span></label>
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'page'} ?disabled=${!editable || !page} @change=${() => page && this.setFilterScope(filter, 'page', page)} /><span>This page<small>${page ? `Create a page-scoped binding for ${page.title}.` : 'Select a page first.'}</small></span></label>
-          <label class="filter-scope-option"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'visual'} ?disabled=${!editable || !visual || !page} @change=${() => page && visual && this.setFilterScope(filter, 'page', page, [visual.id])} /><span>This visual<small>${visual ? `Only ${visual.title}.` : 'Select a visual first.'}</small></span></label>
-          ${scope === 'custom' ? html`<p class="filter-scope-empty">Custom targets are preserved from dashboard code until you choose another scope.</p>` : nothing}
+          <label class="filter-scope-option" title="Apply on all pages"><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'report'} ?disabled=${!editable} @change=${() => this.setFilterScope(filter, 'report')} /><span>All pages</span></label>
+          <label class="filter-scope-option" title=${page ? `Apply on ${page.title}` : 'Select a page first'}><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'page'} ?disabled=${!editable || !page} @change=${() => page && this.setFilterScope(filter, 'page', page)} /><span>This page</span></label>
+          <label class="filter-scope-option" title=${visual ? `Apply only to ${visual.title}` : 'Select a visual first'}><input type="radio" name=${`filter-scope-${filter.id}`} .checked=${scope === 'visual'} ?disabled=${!editable || !visual || !page} @change=${() => page && visual && this.setFilterScope(filter, 'page', page, [visual.id])} /><span>Visual</span></label>
         </div>
-        <label>Label
-          <input type="text" maxlength="128" .value=${filter.label} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { label: (event.currentTarget as HTMLInputElement).value.trim() || filter.label })} />
-        </label>
-        <label>Control
-          <select .value=${filter.controlType} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { controlType: (event.currentTarget as HTMLSelectElement).value as BuilderFilterControl })}>
-            ${this.filterControlChoices(filter).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
-          </select>
-        </label>
-        <label>URL parameter
-          <input type="text" maxlength="64" placeholder="Optional" .value=${filter.urlParameter ?? ''} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { urlParameter: (event.currentTarget as HTMLInputElement).value.trim() })} />
-        </label>
-        <label class="filter-toggle"><span>Readers can edit</span><input type="checkbox" .checked=${filter.readerEditable} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { readerEditable: (event.currentTarget as HTMLInputElement).checked })} /></label>
-        <label class="filter-toggle"><span>Required</span><input type="checkbox" .checked=${filter.required} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { required: (event.currentTarget as HTMLInputElement).checked })} /></label>
-        <p class="filter-placement-note">${placedComponent ? `Slicer placed on ${page?.title}. Its position is stored in dashboard code.` : `Not shown as a slicer on ${page?.title ?? 'this page'}.`}</p>
-        ${page ? html`
-          <button type="button" class="filter-placement-action" ?disabled=${!editable} @click=${() => placedComponent ? this.removeFilterComponent(page, placedComponent) : this.addFilterComponent(page, filter)}>
-            ${placedComponent ? 'Remove slicer from this page' : 'Add slicer to this page'}
-          </button>
-        ` : nothing}
-        <button type="button" class="filter-remove" ?disabled=${!editable} @click=${() => this.removeFilter(filter)}>Remove filter</button>
+        ${scope === 'custom' ? html`<p class="filter-scope-empty">Custom targeting from dashboard code</p>` : nothing}
+        <details class="filter-settings">
+          <summary>Settings</summary>
+          <div class="filter-settings-body">
+            <label>Label
+              <input type="text" maxlength="128" .value=${filter.label} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { label: (event.currentTarget as HTMLInputElement).value.trim() || filter.label })} />
+            </label>
+            <label>Control
+              <select .value=${filter.controlType} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { controlType: (event.currentTarget as HTMLSelectElement).value as BuilderFilterControl })}>
+                ${this.filterControlChoices(filter).map(([value, label]) => html`<option value=${value}>${label}</option>`)}
+              </select>
+            </label>
+            <label>URL parameter
+              <input type="text" maxlength="64" placeholder="Optional" .value=${filter.urlParameter ?? ''} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { urlParameter: (event.currentTarget as HTMLInputElement).value.trim() })} />
+            </label>
+            <label class="filter-toggle"><span>Readers can edit</span><input type="checkbox" .checked=${filter.readerEditable} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { readerEditable: (event.currentTarget as HTMLInputElement).checked })} /></label>
+            <label class="filter-toggle"><span>Required</span><input type="checkbox" .checked=${filter.required} ?disabled=${!editable} @change=${(event: Event) => this.updateFilter(filter, { required: (event.currentTarget as HTMLInputElement).checked })} /></label>
+          </div>
+        </details>
+        <div class="filter-editor-actions">
+          ${page ? html`
+            <button type="button" class="filter-placement-action" ?disabled=${!editable} @click=${() => placedComponent ? this.removeFilterComponent(page, placedComponent) : this.addFilterComponent(page, filter)}>
+              ${placedComponent ? 'Remove from canvas' : 'Add to canvas'}
+            </button>
+          ` : html`<span></span>`}
+          <button type="button" class="filter-remove" ?disabled=${!editable} @click=${() => this.removeFilter(filter)}>Delete</button>
+        </div>
       </section>
     `
   }
 
-  private renderFilterScopeGroup(title: string, filters: DashboardBuilderFilterSignal[], selected: DashboardBuilderFilterSignal | undefined, empty: string) {
+  private renderFilterScopeGroup(title: string, filters: DashboardBuilderFilterSignal[], selected: DashboardBuilderFilterSignal | undefined) {
     return html`
       <section class="filter-scope-group" aria-label=${title}>
         <div class="filter-scope-heading"><span>${title}</span><span>${filters.length}</span></div>
         <div class="filter-list">
-          ${filters.length === 0
-            ? html`<p class="filter-scope-empty">${empty}</p>`
-            : repeat(filters, (item) => item.id, (item) => html`
+          ${repeat(filters, (item) => item.id, (item) => html`
                 <button type="button" class="filter-card" aria-pressed=${selected?.id === item.id} @click=${() => this.selectFilterDefinition(item.id)}>
                   <span class="filter-card-title">${item.label}</span>
-                  <span class="filter-card-meta">${this.filterControlLabel(item.controlType)} · ${this.fieldLabel(item.dimension, item.dimension)}</span>
+                  <span class="filter-card-meta">${this.filterControlLabel(item.controlType)}</span>
                 </button>
               `)}
         </div>

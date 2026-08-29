@@ -1507,16 +1507,29 @@ test('dashboard builder authors report filters from governed fields through focu
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
+      const filterPane = root.querySelector('.filters-pane') as HTMLElement
+      const filterSettings = root.querySelector('.filter-settings') as HTMLDetailsElement
+      const filterActions = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor-actions button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim())
       ;(root.querySelector('.filter-remove') as HTMLButtonElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
         panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.classList.contains('filters-pane') ? 'filters' : pane.classList.contains('visual-builder') ? 'visual' : 'data'),
         scopes: Array.from(root.querySelectorAll('.filter-scope-heading')).map((heading: Element) => heading.textContent?.replace(/\s+/g, ' ').trim()),
+        hasIntroCopy: Boolean(filterPane.querySelector('.pane-hint')),
+        hasIdleDropZone: Boolean(filterPane.querySelector('.filter-drop-zone')),
+        scopeOptionHelpCount: filterPane.querySelectorAll('.filter-scope-option small').length,
+        settingsOpen: filterSettings.open,
+        filterActions,
         commands,
       }
     })
     expect(state.panes).toEqual(['filters', 'visual', 'data'])
-    expect(state.scopes).toEqual(['Filters on this visual0', 'Filters for page visuals0', 'Filters on all pages1'])
+    expect(state.scopes).toEqual(['All pages1'])
+    expect(state.hasIntroCopy).toBe(false)
+    expect(state.hasIdleDropZone).toBe(false)
+    expect(state.scopeOptionHelpCount).toBe(0)
+    expect(state.settingsOpen).toBe(false)
+    expect(state.filterActions).toEqual(['Add to canvas', 'Delete'])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
     expect(state.commands[1]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview' })
     expect(state.commands[2]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'report' })
