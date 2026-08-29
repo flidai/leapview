@@ -17,9 +17,11 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 var ErrAuthorizationSnapshotIdentityConflict = errors.New("authorization snapshot identity already installed with a different digest")
@@ -29,7 +31,7 @@ func (r *Repository) InsertPlatformSettingIfMissing(ctx context.Context, key, va
 	if err != nil {
 		return false, err
 	}
-	tag, err := db.Exec(ctx, `INSERT INTO access.platform_setting(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING`, strings.TrimSpace(key), value)
+	tag, err := accessdb.New(db).InsertPlatformSetting(ctx, accessdb.InsertPlatformSettingParams{Key: strings.TrimSpace(key), Value: value})
 	return tag.RowsAffected() == 1, err
 }
 
@@ -47,23 +49,27 @@ func (r *Repository) DeletePrincipal(ctx context.Context, id string) error {
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	tag, err := tx.Exec(ctx, `UPDATE access.principal SET status='disabled', disabled_at=COALESCE(disabled_at,clock_timestamp()), revoked_at=COALESCE(revoked_at,clock_timestamp()), updated_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+	principalID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(tx).RevokePrincipal(ctx, principalID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalSessions(ctx, principalID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalTokens(ctx, principalID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.service_principal_secret SET revoked_at=clock_timestamp() WHERE service_principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalSecrets(ctx, principalID); err != nil {
 		return err
 	}
-	_, _ = tx.Exec(ctx, `UPDATE access.principal_group SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id)
+	_ = accessdb.New(tx).RevokePrincipalGroups(ctx, principalID)
 	if ownTx {
 		return tx.Commit(ctx)
 	}
@@ -85,17 +91,21 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 		}
 	}()
 	var tag pgconnCommandTag
+	principalID, err := pgUUID(id)
+	if err != nil {
+		return access.Principal{}, err
+	}
 	if disabled {
 		// Provisioned and administrator disables have separate call sites but
 		// share the same durable state transition. A block is represented by
 		// blocked_at; an external lifecycle disable by disabled_at.
 		if provisioned {
-			tag, err = tx.Exec(ctx, `UPDATE access.principal SET status='disabled', disabled_at=COALESCE(disabled_at,clock_timestamp()), updated_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+			tag, err = accessdb.New(tx).DisablePrincipal(ctx, principalID)
 		} else {
-			tag, err = tx.Exec(ctx, `UPDATE access.principal SET status='disabled', blocked_at=COALESCE(blocked_at,clock_timestamp()), updated_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+			tag, err = accessdb.New(tx).BlockPrincipal(ctx, principalID)
 		}
 	} else {
-		tag, err = tx.Exec(ctx, `UPDATE access.principal SET status='active', disabled_at=NULL, blocked_at=NULL, updated_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+		tag, err = accessdb.New(tx).EnablePrincipal(ctx, principalID)
 	}
 	if err != nil {
 		return access.Principal{}, err
@@ -104,10 +114,10 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 		return access.Principal{}, pgx.ErrNoRows
 	}
 	if disabled {
-		if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+		if err = accessdb.New(tx).RevokePrincipalSessions(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
-		if _, err = tx.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+		if err = accessdb.New(tx).RevokePrincipalTokens(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
 	}
@@ -148,22 +158,21 @@ func (r *Repository) ListServicePrincipalSecrets(ctx context.Context, principalI
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT id::text,service_principal_id::text,name,expires_at,created_at,revoked_at FROM access.service_principal_secret WHERE service_principal_id=$1::uuid ORDER BY created_at DESC LIMIT $2`, principalID, maxPageSize)
+	parsedID, err := pgUUID(principalID)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]access.ServicePrincipalSecret, 0)
-	for rows.Next() {
-		var value access.ServicePrincipalSecret
-		var expires, created, revoked *time.Time
-		if err := rows.Scan(&value.ID, &value.ServicePrincipalID, &value.Name, &expires, &created, &revoked); err != nil {
-			return nil, err
-		}
-		value.ExpiresAt, value.CreatedAt, value.RevokedAt = formatTimePtr(expires), formatTimePtr(created), formatTimePtr(revoked)
+	rows, err := accessdb.New(db).ListServiceSecrets(ctx, accessdb.ListServiceSecretsParams{PrincipalID: parsedID, PageSize: maxPageSize})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.ServicePrincipalSecret, 0, len(rows))
+	for _, row := range rows {
+		value := access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
+			ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 		out = append(out, value)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) GetServicePrincipalSecret(ctx context.Context, principalID, secretID string) (access.ServicePrincipalSecret, error) {
@@ -179,11 +188,20 @@ func (r *Repository) GetServicePrincipalSecret(ctx context.Context, principalID,
 	if err != nil {
 		return access.ServicePrincipalSecret{}, err
 	}
-	var value access.ServicePrincipalSecret
-	var expires, created, revoked *time.Time
-	err = db.QueryRow(ctx, `SELECT id::text,service_principal_id::text,name,expires_at,created_at,revoked_at FROM access.service_principal_secret WHERE id=$1::uuid AND service_principal_id=$2::uuid`, secretID, principalID).Scan(&value.ID, &value.ServicePrincipalID, &value.Name, &expires, &created, &revoked)
-	value.ExpiresAt, value.CreatedAt, value.RevokedAt = formatTimePtr(expires), formatTimePtr(created), formatTimePtr(revoked)
-	return value, err
+	parsedSecretID, err := pgUUID(secretID)
+	if err != nil {
+		return access.ServicePrincipalSecret{}, err
+	}
+	parsedPrincipalID, err := pgUUID(principalID)
+	if err != nil {
+		return access.ServicePrincipalSecret{}, err
+	}
+	row, err := accessdb.New(db).GetServiceSecretForPrincipal(ctx, accessdb.GetServiceSecretForPrincipalParams{ID: parsedSecretID, PrincipalID: parsedPrincipalID})
+	if err != nil {
+		return access.ServicePrincipalSecret{}, err
+	}
+	return access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
 }
 
 func (r *Repository) PrincipalPreferences(ctx context.Context, principalID string) (access.PrincipalPreferences, error) {
@@ -195,17 +213,19 @@ func (r *Repository) PrincipalPreferences(ctx context.Context, principalID strin
 	if err != nil {
 		return access.PrincipalPreferences{}, err
 	}
-	var theme string
-	var updated time.Time
-	err = db.QueryRow(ctx, `SELECT theme,updated_at FROM access.principal_preferences WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id).Scan(&theme, &updated)
+	parsedID, err := pgUUID(id)
 	if err != nil {
 		return access.PrincipalPreferences{}, err
 	}
-	parsed, ok := access.ParseThemeMode(theme)
-	if !ok {
-		return access.PrincipalPreferences{}, fmt.Errorf("unsupported stored theme %q", theme)
+	row, err := accessdb.New(db).GetPrincipalPreferences(ctx, parsedID)
+	if err != nil {
+		return access.PrincipalPreferences{}, err
 	}
-	return access.PrincipalPreferences{PrincipalID: id, Theme: parsed, UpdatedAt: formatTime(updated)}, nil
+	parsed, ok := access.ParseThemeMode(row.Theme)
+	if !ok {
+		return access.PrincipalPreferences{}, fmt.Errorf("unsupported stored theme %q", row.Theme)
+	}
+	return access.PrincipalPreferences{PrincipalID: id, Theme: parsed, UpdatedAt: principalTimestamp(row.UpdatedAt)}, nil
 }
 
 func (r *Repository) SetPrincipalTheme(ctx context.Context, principalID string, theme access.ThemeMode) (access.PrincipalPreferences, error) {
@@ -223,10 +243,14 @@ func (r *Repository) SetPrincipalTheme(ctx context.Context, principalID string, 
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	// Preferences are versioned rows: a revoked row is never reactivated.
-	if _, err = tx.Exec(ctx, `UPDATE access.principal_preferences SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	parsedID, err := pgUUID(id)
+	if err != nil {
 		return access.PrincipalPreferences{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO access.principal_preferences(principal_id,theme) SELECT $1::uuid,$2 WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$1::uuid AND revoked_at IS NULL)`, id, string(theme)); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalPreferences(ctx, parsedID); err != nil {
+		return access.PrincipalPreferences{}, err
+	}
+	if _, err = accessdb.New(tx).InsertPrincipalPreferences(ctx, accessdb.InsertPrincipalPreferencesParams{PrincipalID: parsedID, Theme: string(theme)}); err != nil {
 		return access.PrincipalPreferences{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -249,10 +273,14 @@ func (r *Repository) SetPrincipalThemeAudited(ctx context.Context, principalID s
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `UPDATE access.principal_preferences SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	parsedID, err := pgUUID(id)
+	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(ctx, `INSERT INTO access.principal_preferences(principal_id,theme) SELECT $1::uuid,$2 WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$1::uuid AND revoked_at IS NULL)`, id, string(theme))
+	if err = accessdb.New(tx).RevokePrincipalPreferences(ctx, parsedID); err != nil {
+		return err
+	}
+	tag, err := accessdb.New(tx).InsertPrincipalPreferences(ctx, accessdb.InsertPrincipalPreferencesParams{PrincipalID: parsedID, Theme: string(theme)})
 	if err != nil {
 		return err
 	}
@@ -276,13 +304,16 @@ func (r *Repository) Avatar(ctx context.Context, principalID string) (avatar.Met
 	if err != nil {
 		return avatar.Metadata{}, err
 	}
-	var value avatar.Metadata
-	var updated time.Time
-	err = db.QueryRow(ctx, `SELECT principal_id::text,sha256,media_type,size_bytes,width,height,updated_at FROM access.principal_avatar WHERE principal_id=$1::uuid AND revoked_at IS NULL ORDER BY updated_at DESC LIMIT 1`, id).Scan(&value.PrincipalID, &value.SHA256, &value.MediaType, &value.SizeBytes, &value.Width, &value.Height, &updated)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return avatar.Metadata{}, err
+	}
+	row, err := accessdb.New(db).GetAvatar(ctx, parsedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return avatar.Metadata{}, avatar.ErrNotFound
 	}
-	value.UpdatedAt = formatTime(updated)
+	value := avatar.Metadata{PrincipalID: principalUUID(row.PrincipalID), SHA256: row.Sha256, MediaType: row.MediaType,
+		SizeBytes: row.SizeBytes, Width: int(row.Width), Height: int(row.Height), UpdatedAt: principalTimestamp(row.UpdatedAt)}
 	return value, err
 }
 
@@ -303,31 +334,34 @@ func (r *Repository) UpsertAvatar(ctx context.Context, value avatar.Metadata) (a
 		return avatar.Metadata{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var principalExists bool
-	if err = tx.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM access.principal WHERE id=$1::uuid AND revoked_at IS NULL)`, id).Scan(&principalExists); err != nil {
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return avatar.Metadata{}, err
+	}
+	principalExists, err := accessdb.New(tx).AvatarPrincipalExists(ctx, parsedID)
+	if err != nil {
 		return avatar.Metadata{}, err
 	}
 	if !principalExists {
 		return avatar.Metadata{}, pgx.ErrNoRows
 	}
-	objectTag, err := tx.Exec(ctx, `INSERT INTO access.avatar_object(sha256,object_key,media_type,size_bytes) VALUES($1,'avatars/'||$1,'image/png',$2) ON CONFLICT(sha256) DO NOTHING`, sha, value.SizeBytes)
+	objectTag, err := accessdb.New(tx).InsertAvatarObject(ctx, accessdb.InsertAvatarObjectParams{Sha256: sha, SizeBytes: value.SizeBytes})
 	if err != nil {
 		return avatar.Metadata{}, err
 	}
 	if objectTag.RowsAffected() == 0 {
-		var objectKey, mediaType string
-		var objectSize int64
-		if err = tx.QueryRow(ctx, `SELECT object_key,media_type,size_bytes FROM access.avatar_object WHERE sha256=$1`, sha).Scan(&objectKey, &mediaType, &objectSize); err != nil {
-			return avatar.Metadata{}, err
+		object, getErr := accessdb.New(tx).GetAvatarObject(ctx, sha)
+		if getErr != nil {
+			return avatar.Metadata{}, getErr
 		}
-		if objectKey != "avatars/"+sha || mediaType != "image/png" || objectSize != value.SizeBytes {
+		if object.ObjectKey != "avatars/"+sha || object.MediaType != "image/png" || object.SizeBytes != value.SizeBytes {
 			return avatar.Metadata{}, fmt.Errorf("avatar object metadata conflicts with digest %s", sha)
 		}
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.principal_avatar SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if _, err = accessdb.New(tx).RevokePrincipalAvatar(ctx, parsedID); err != nil {
 		return avatar.Metadata{}, err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO access.principal_avatar(principal_id,sha256,media_type,size_bytes,width,height) SELECT $1::uuid,$2,'image/png',$3,256,256 WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$1::uuid AND revoked_at IS NULL)`, id, sha, value.SizeBytes); err != nil {
+	if err = accessdb.New(tx).InsertPrincipalAvatar(ctx, accessdb.InsertPrincipalAvatarParams{PrincipalID: parsedID, Sha256: sha, SizeBytes: value.SizeBytes}); err != nil {
 		return avatar.Metadata{}, err
 	}
 	if err = tx.Commit(ctx); err != nil {
@@ -345,7 +379,11 @@ func (r *Repository) DeleteAvatar(ctx context.Context, principalID string) error
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.principal_avatar SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).RevokePrincipalAvatar(ctx, parsedID)
 	if err == nil && tag.RowsAffected() == 0 {
 		return avatar.ErrNotFound
 	}
@@ -367,14 +405,14 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 	defer func() { _ = tx.Rollback(ctx) }()
 	identity := snapshot.Identity()
 	projectID, environment, generation := identity.ProjectID.String(), identity.Environment, identity.GenerationID
-	tag, err := tx.Exec(ctx, `INSERT INTO access.authorization_snapshot(project_id,environment,generation_id,digest) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,environment,generation_id) DO NOTHING`, projectID, environment, generation, digest)
+	tag, err := accessdb.New(tx).InsertAuthorizationSnapshot(ctx, accessdb.InsertAuthorizationSnapshotParams{ProjectID: projectID, Environment: environment, GenerationID: generation, Digest: digest})
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		var installed string
-		if err = tx.QueryRow(ctx, `SELECT digest FROM access.authorization_snapshot WHERE project_id=$1 AND environment=$2 AND generation_id=$3`, projectID, environment, generation).Scan(&installed); err != nil {
-			return err
+		installed, getErr := accessdb.New(tx).GetAuthorizationSnapshotDigest(ctx, accessdb.GetAuthorizationSnapshotDigestParams{ProjectID: projectID, Environment: environment, GenerationID: generation})
+		if getErr != nil {
+			return getErr
 		}
 		if installed != digest {
 			return fmt.Errorf("%w: project=%s environment=%s generation=%s", ErrAuthorizationSnapshotIdentityConflict, projectID, environment, generation)
@@ -386,25 +424,44 @@ func (r *Repository) InstallAuthorizationSnapshot(ctx context.Context, snapshot 
 		if marshalErr != nil {
 			return marshalErr
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_role_binding(id,project_id,environment,generation_id,subject_kind,subject_id,role,capabilities,name) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`, binding.ID, projectID, environment, generation, binding.Subject.Kind, binding.Subject.ID, binding.Role, caps, binding.Name); err != nil {
+		bindingID, parseErr := pgUUID(binding.ID)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err = accessdb.New(tx).InsertAuthorizationRoleBinding(ctx, accessdb.InsertAuthorizationRoleBindingParams{ID: bindingID, ProjectID: projectID,
+			Environment: environment, GenerationID: generation, SubjectKind: string(binding.Subject.Kind), SubjectID: binding.Subject.ID,
+			Role: string(binding.Role), Capabilities: caps, Name: binding.Name}); err != nil {
 			return err
 		}
 	}
 	for _, grant := range snapshot.Grants() {
 		canonical := grant.Canonical
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_grant(id,project_id,environment,generation_id,subject_kind,subject_id,resource_id,resource_kind,capability,name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, grant.ID, projectID, environment, generation, canonical.Subject().Kind, canonical.Subject().ID, canonical.Resource().ID().String(), canonical.Resource().Kind(), canonical.Capability(), grant.Name); err != nil {
+		grantID, parseErr := pgUUID(grant.ID)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err = accessdb.New(tx).InsertAuthorizationGrant(ctx, accessdb.InsertAuthorizationGrantParams{ID: grantID, ProjectID: projectID,
+			Environment: environment, GenerationID: generation, SubjectKind: string(canonical.Subject().Kind), SubjectID: canonical.Subject().ID,
+			ResourceID: canonical.Resource().ID().String(), ResourceKind: string(canonical.Resource().Kind()), Capability: canonical.Capability().String(), Name: grant.Name}); err != nil {
 			return err
 		}
 	}
 	for _, policy := range snapshot.DataPolicies() {
-		var subjectKind, subjectID any
+		var subjectKind, subjectID *string
 		if policy.Subject != nil {
-			subjectKind, subjectID = policy.Subject.Kind, policy.Subject.ID
+			kind, value := string(policy.Subject.Kind), policy.Subject.ID
+			subjectKind, subjectID = &kind, &value
 		}
 		if !json.Valid([]byte(policy.ExpressionJSON)) {
 			return fmt.Errorf("data policy %q expression is invalid JSON", policy.ID)
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_data_policy(id,project_id,environment,generation_id,resource_id,resource_kind,subject_kind,subject_id,policy_type,expression) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, policy.ID, projectID, environment, generation, policy.Resource.ID().String(), policy.Resource.Kind(), subjectKind, subjectID, policy.PolicyType, policy.ExpressionJSON); err != nil {
+		policyID, parseErr := pgUUID(policy.ID)
+		if parseErr != nil {
+			return parseErr
+		}
+		if err = accessdb.New(tx).InsertAuthorizationDataPolicy(ctx, accessdb.InsertAuthorizationDataPolicyParams{ID: policyID, ProjectID: projectID,
+			Environment: environment, GenerationID: generation, ResourceID: policy.Resource.ID().String(), ResourceKind: string(policy.Resource.Kind()),
+			SubjectKind: subjectKind, SubjectID: subjectID, PolicyType: policy.PolicyType, Expression: []byte(policy.ExpressionJSON)}); err != nil {
 			return err
 		}
 	}
@@ -448,7 +505,27 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(ctx, `INSERT INTO audit.audit_event(audit_id,principal_id,source,operation,action,resource_kind,resource_id,project_id,environment,generation_id,capability,outcome,request_id,correlation_id,aggregate_key,aggregate_sequence,intent_digest,metadata) VALUES($1::uuid,$2::uuid,'access','authorization',$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,'')::uuid,NULLIF($12,'')::uuid,$13,0,$14,$15::jsonb)`, id, principalID, event.Action, event.Resource.Kind(), event.Resource.ID().String(), event.Identity.ProjectID.String(), event.Identity.Environment, event.Identity.GenerationID, event.Capability.String(), outcome, requestID, correlationID, event.Resource.ID().String(), intentDigest, metadata)
+	parsedPrincipalID, err := pgUUID(principalID)
+	if err != nil {
+		return err
+	}
+	parsedRequestID, err := optionalPGUUID("audit request id", requestID)
+	if err != nil {
+		return err
+	}
+	parsedCorrelationID, err := optionalPGUUID("audit correlation id", correlationID)
+	if err != nil {
+		return err
+	}
+	resourceKind := string(event.Resource.Kind())
+	resourceID := event.Resource.ID().String()
+	projectID := event.Identity.ProjectID.String()
+	environment := event.Identity.Environment
+	generationID := event.Identity.GenerationID
+	err = accessdb.New(db).RecordCanonicalAudit(ctx, accessdb.RecordCanonicalAuditParams{AuditID: pgtype.UUID{Bytes: id, Valid: true}, PrincipalID: parsedPrincipalID,
+		Action: event.Action, ResourceKind: &resourceKind, ResourceID: &resourceID, ProjectID: &projectID, Environment: &environment,
+		GenerationID: &generationID, Capability: event.Capability.String(), Outcome: outcome, RequestID: parsedRequestID,
+		CorrelationID: parsedCorrelationID, AggregateKey: resourceID, IntentDigest: intentDigest, Metadata: []byte(metadata)})
 	return err
 }
 
@@ -457,6 +534,13 @@ func optionalUUID(label, value string) (string, error) {
 		return "", nil
 	}
 	return uuidID(label, value)
+}
+
+func optionalPGUUID(label, value string) (pgtype.UUID, error) {
+	if strings.TrimSpace(value) == "" {
+		return pgtype.UUID{}, nil
+	}
+	return pgUUID(value)
 }
 
 func canonicalAuditDigest(event access.CanonicalAuditEvent, metadata string) string {
@@ -487,7 +571,13 @@ func (r *Repository) StoreAuthorizationCode(ctx context.Context, code desktopaut
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `WITH db_now AS (SELECT clock_timestamp() AS ts) INSERT INTO access.desktop_authorization_code(code_hash,principal_id,client_id,instance_id,profile_id,redirect_uri,code_challenge,return_path,expires_at,created_at) SELECT $1,$2::uuid,$3,$4,$5,$6,$7,$8,db_now.ts+$9::interval,db_now.ts FROM db_now WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL)`, code.CodeHash[:], id, code.ClientID, code.InstanceID, code.ProfileID, code.RedirectURI, code.CodeChallenge, code.ReturnPath, ttl.String())
+	principalID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).CreateDesktopAuthorizationCode(ctx, accessdb.CreateDesktopAuthorizationCodeParams{CodeHash: code.CodeHash[:], PrincipalID: principalID,
+		ClientID: code.ClientID, InstanceID: code.InstanceID, ProfileID: code.ProfileID, RedirectUri: code.RedirectURI,
+		CodeChallenge: code.CodeChallenge, ReturnPath: code.ReturnPath, Ttl: pgInterval(ttl)})
 	if err != nil {
 		return err
 	}
@@ -521,9 +611,7 @@ func (r *Repository) ConsumeAuthorizationCode(ctx context.Context, hash [32]byte
 
 func consumeDesktopCode(ctx context.Context, tx pgx.Tx, hash [32]byte, now time.Time, validate func(desktopauth.AuthorizationCode) bool) (string, error) {
 	var grant desktopauth.AuthorizationCode
-	var expires, created, consumed *time.Time
-	var principalID, clientID, instanceID, profileID, redirectURI, challenge, returnPath string
-	err := tx.QueryRow(ctx, `SELECT principal_id::text,client_id,instance_id,profile_id,redirect_uri,code_challenge,return_path,expires_at,created_at,consumed_at FROM access.desktop_authorization_code WHERE code_hash=$1 AND expires_at>clock_timestamp() FOR UPDATE`, hash[:]).Scan(&principalID, &clientID, &instanceID, &profileID, &redirectURI, &challenge, &returnPath, &expires, &created, &consumed)
+	row, err := accessdb.New(tx).FindAuthorizationCode(ctx, hash[:])
 	if errors.Is(err, pgx.ErrNoRows) {
 		return "", desktopauth.ErrInvalidGrant
 	}
@@ -531,21 +619,21 @@ func consumeDesktopCode(ctx context.Context, tx pgx.Tx, hash [32]byte, now time.
 		return "", err
 	}
 	grant.CodeHash = hash
-	grant.PrincipalID, grant.ClientID, grant.InstanceID, grant.ProfileID = principalID, clientID, instanceID, profileID
-	grant.RedirectURI, grant.CodeChallenge, grant.ReturnPath = redirectURI, challenge, returnPath
-	grant.ExpiresAt, grant.CreatedAt = expires.UTC(), created.UTC()
-	grant.Consumed = consumed != nil
+	grant.PrincipalID, grant.ClientID, grant.InstanceID, grant.ProfileID = principalUUID(row.PrincipalID), row.ClientID, row.InstanceID, row.ProfileID
+	grant.RedirectURI, grant.CodeChallenge, grant.ReturnPath = row.RedirectUri, row.CodeChallenge, row.ReturnPath
+	grant.ExpiresAt, grant.CreatedAt = row.ExpiresAt.Time.UTC(), row.CreatedAt.Time.UTC()
+	grant.Consumed = row.ConsumedAt.Valid
 	if !validate(grant) || grant.Consumed {
 		return "", desktopauth.ErrInvalidGrant
 	}
-	tag, err := tx.Exec(ctx, `UPDATE access.desktop_authorization_code SET consumed_at=clock_timestamp() WHERE code_hash=$1 AND consumed_at IS NULL AND expires_at>clock_timestamp()`, hash[:])
+	tag, err := accessdb.New(tx).ConsumeAuthorizationCode(ctx, hash[:])
 	if err != nil || tag.RowsAffected() != 1 {
 		if err != nil {
 			return "", err
 		}
 		return "", desktopauth.ErrInvalidGrant
 	}
-	return principalID, nil
+	return grant.PrincipalID, nil
 }
 
 var _ access.Repository = (*Repository)(nil)
