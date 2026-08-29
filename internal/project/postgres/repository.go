@@ -15,6 +15,7 @@ import (
 
 	project "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectdb "github.com/flidai/leapview/internal/project/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -89,6 +90,10 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL, functions,
+	// triggers, and grants consumed by migration runners. It is intentionally
+	// kept as caller-owned schema execution rather than generated queries so
+	// migration transaction boundaries remain explicit.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -161,29 +166,17 @@ func (r *Repository) List(ctx context.Context) ([]Record, error) {
 	if r == nil || r.db == nil {
 		return nil, ErrInvalid
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `
-		SELECT project_id, title, description, created_at, updated_at
-		FROM project.project_identity
-		ORDER BY created_at, project_id`)
+	rows, err := projectdb.New(r.db).ListProjectIdentities(contextOrBackground(ctx))
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]Record, 0)
-	for rows.Next() {
-		var row Record
-		var rawID string
-		if err := rows.Scan(&rawID, &row.Title, &row.Description, &row.CreatedAt, &row.UpdatedAt); err != nil {
-			return nil, err
-		}
-		row.ID, err = projectgraph.NewResourceID(rawID)
-		if err != nil {
-			return nil, fmt.Errorf("stored project id: %w", err)
+	out := make([]Record, 0, len(rows))
+	for _, stored := range rows {
+		row, mapErr := recordFromModel(stored)
+		if mapErr != nil {
+			return nil, mapErr
 		}
 		out = append(out, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return out, nil
 }
@@ -197,10 +190,10 @@ func ensure(ctx context.Context, db DBTX, input EnsureInput) (Record, error) {
 	// serializes concurrent inserts on the primary key; the subsequent read
 	// observes the winner and exact comparison turns divergent metadata into a
 	// deterministic hard conflict.
-	if _, err := db.Exec(ctx, `
-		INSERT INTO project.project_identity(project_id, title, description)
-		VALUES ($1, $2, $3)
-		ON CONFLICT (project_id) DO NOTHING`, id.String(), title, description); err != nil {
+	queries := projectdb.New(db)
+	if err := queries.InsertProjectIdentity(ctx, projectdb.InsertProjectIdentityParams{
+		ProjectID: id.String(), Title: title, Description: description,
+	}); err != nil {
 		return Record{}, err
 	}
 	record, err := load(ctx, db, id)
@@ -218,31 +211,32 @@ func ensureIdentity(ctx context.Context, db DBTX, raw projectgraph.ResourceID) e
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(ctx, `
-		INSERT INTO project.project_identity(project_id, title, description)
-		VALUES ($1, $1, '')
-		ON CONFLICT (project_id) DO NOTHING`, id.String())
-	return err
+	return projectdb.New(db).InsertDefaultProjectIdentity(ctx, id.String())
 }
 
 func load(ctx context.Context, db DBTX, id projectgraph.ResourceID) (Record, error) {
-	var row Record
-	var rawID string
-	err := db.QueryRow(ctx, `
-		SELECT project_id, title, description, created_at, updated_at
-		FROM project.project_identity WHERE project_id = $1`, id.String()).
-		Scan(&rawID, &row.Title, &row.Description, &row.CreatedAt, &row.UpdatedAt)
+	stored, err := projectdb.New(db).GetProjectIdentity(ctx, id.String())
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Record{}, ErrNotFound
 	}
 	if err != nil {
 		return Record{}, err
 	}
-	row.ID, err = projectgraph.NewResourceID(rawID)
+	return recordFromModel(stored)
+}
+
+func recordFromModel(stored projectdb.ProjectProjectIdentity) (Record, error) {
+	id, err := projectgraph.NewResourceID(stored.ProjectID)
 	if err != nil {
 		return Record{}, fmt.Errorf("stored project id: %w", err)
 	}
-	return row, nil
+	if !stored.CreatedAt.Valid || !stored.UpdatedAt.Valid {
+		return Record{}, errors.New("stored project timestamps are invalid")
+	}
+	return Record{
+		ID: id, Title: stored.Title, Description: stored.Description,
+		CreatedAt: stored.CreatedAt.Time, UpdatedAt: stored.UpdatedAt.Time,
+	}, nil
 }
 
 func normalizeInput(input EnsureInput) (projectgraph.ResourceID, string, string, error) {

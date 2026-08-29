@@ -569,7 +569,7 @@ tasks:
       - go run ./internal/app/tools/agenttooldocgen
 
   db:generate:
-    desc: Generate SQLite adapter code from the checked-in schema and queries
+    desc: Generate SQLite and PostgreSQL adapter code from checked-in schemas and queries
     method: checksum
     sources:
       - Taskfile.yml
@@ -580,6 +580,7 @@ tasks:
       - internal/platform/db/models.go
       - internal/platform/db/*.sql.go
       - internal/*/internal/db/*.go
+      - internal/project/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
     cmds:
       - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
