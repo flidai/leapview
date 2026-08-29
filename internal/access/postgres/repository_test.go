@@ -267,6 +267,35 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 		}
 	})
 
+	t.Run("domain event identity cannot link two audit rows", func(t *testing.T) {
+		const domainEventID = "60000000-0000-0000-0000-000000000001"
+		first := auditIntent("20000000-0000-0000-0000-000000000010", "principal.updated")
+		first.DomainEventID = domainEventID
+		tx, err := db.runtime.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RecordAuditEvent(ctx, tx, first); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+
+		second := auditIntent("20000000-0000-0000-0000-000000000011", "principal.updated")
+		second.DomainEventID = domainEventID
+		tx, err = db.runtime.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RecordAuditEvent(ctx, tx, second); !errors.Is(err, access.ErrAuditIntentConflict) {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("duplicate domain event link = %v, want conflict", err)
+		}
+		_ = tx.Rollback(ctx)
+	})
+
 	t.Run("invalid metadata and required audit failure are fail closed", func(t *testing.T) {
 		for name, metadata := range map[string]string{
 			"oversized": `{"value":"` + strings.Repeat("x", maxAuditMetadataBytes) + `"}`,

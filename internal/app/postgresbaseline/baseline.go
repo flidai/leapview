@@ -8,6 +8,7 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
+	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
@@ -38,11 +39,12 @@ var plan = platformmigrations.Plan{
 		{Name: "platform.cursor_signing", SQL: cursorsigningpostgres.SchemaSQL()},
 		{Name: "project", SQL: projectpostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
+		{Name: "connection_binding", SQL: connectionbindingpostgres.SchemaSQL()},
+		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "managed_data", SQL: manageddatapostgres.SchemaSQL()},
 		{Name: "physical_pool", SQL: physicalpoolpostgres.SchemaSQL()},
 		{Name: "deployment", SQL: deploymentpostgres.SchemaSQL()},
 		{Name: "serving_state", SQL: servingstatepostgres.SchemaSQL()},
-		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "release", SQL: releasepostgres.SchemaSQL()},
 		{Name: "ducklake", SQL: ducklakepostgres.SchemaSQL()},
 		{Name: "jobs", SQL: jobspostgres.SchemaSQL()},

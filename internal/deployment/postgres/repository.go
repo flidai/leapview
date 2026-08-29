@@ -18,6 +18,7 @@ import (
 	"time"
 
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -310,6 +311,40 @@ type AuditEvent struct {
 	OccurredAt                                                                    time.Time
 }
 
+// ActivationAuditInput is the deployment-owned projection of the canonical
+// activation audit identity. The audit adapter receives the caller-owned
+// transaction and must append/read the access-owned row without taking
+// transaction ownership itself. EventID is also the audit retry identity.
+//
+// Outcome is expressed in deployment terms ("accepted"); the composition
+// adapter maps it to the access canonical outcome ("success") and maps it
+// back on read. Keeping this input here prevents deployment persistence from
+// depending on the access package's intent shape.
+type ActivationAuditInput struct {
+	EventID, DomainEventID, ScopeID, ActorID   string
+	Action, ResourceKind, ResourceID, Outcome  string
+	RequestDigest, CorrelationID, AggregateKey string
+	AggregateSequence                          int64
+	Metadata                                   json.RawMessage
+}
+
+// ActivationAuditPort is the narrow composition seam for activation audit
+// evidence. Both methods use the transaction supplied by deployment; they
+// must never begin, commit, or roll back it. Implementations must return
+// ErrConflict for an existing identity whose canonical fields differ or for
+// missing/tampered replay evidence.
+type ActivationAuditPort interface {
+	AppendActivationAudit(context.Context, Tx, ActivationAuditInput) (AuditEvent, error)
+	GetActivationAudit(context.Context, Tx, ActivationAuditInput) (AuditEvent, error)
+}
+
+// Options wires deployment's transactional side effects. The audit port is
+// required by activation; other delivery operations remain usable without
+// one for isolated persistence tests.
+type Options struct {
+	ActivationAudit ActivationAuditPort
+}
+
 // ActivationInput is the complete fence and compare-and-swap proof for one
 // publication.  LeaseID/OwnerID/FencingEpoch are mandatory: an expired lease
 // or stale owner can never advance the active pointer.
@@ -330,7 +365,10 @@ type ActivationResult struct {
 	Replay      bool
 }
 
-type Repository struct{ db DBTX }
+type Repository struct {
+	db    DBTX
+	audit ActivationAuditPort
+}
 
 //go:embed schema.sql
 var schemaSQL string
@@ -351,6 +389,18 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 }
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
+
+// NewWithOptions constructs a delivery repository with its composition-owned
+// activation audit adapter. A nil adapter is allowed for read/build-only
+// repository use, but Activate/ActivateTx fail closed when it is absent.
+func NewWithOptions(db DBTX, options Options) *Repository {
+	return &Repository{db: db, audit: options.ActivationAudit}
+}
+
+// NewWithActivationAudit is a concise constructor for composition packages.
+func NewWithActivationAudit(db DBTX, audit ActivationAuditPort) *Repository {
+	return &Repository{db: db, audit: audit}
+}
 
 func dbUUID(value string) pgtype.UUID {
 	u, err := uuid.Parse(value)
@@ -1752,6 +1802,9 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 // the original worker's lease has since expired: the prior transition itself
 // is the proof of outcome.
 func (r *Repository) Activate(ctx context.Context, in ActivationInput) (ActivationResult, error) {
+	if r == nil || r.audit == nil {
+		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
+	}
 	tx, err := r.begin(ctx)
 	if err != nil {
 		return ActivationResult{}, err
@@ -1789,6 +1842,9 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 	return result, nil
 }
 func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) (ActivationResult, error) {
+	if r == nil || r.audit == nil {
+		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
+	}
 	if tx == nil {
 		return ActivationResult{}, ErrInvalid
 	}
@@ -1859,7 +1915,7 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 		if err != nil {
 			return ActivationResult{}, err
 		}
-		event, audit, err := loadActivationEvidence(ctx, tx, pid)
+		event, audit, err := r.loadActivationEvidence(ctx, tx, p, actor, in.CorrelationID, pid)
 		if err != nil {
 			return ActivationResult{}, err
 		}
@@ -1986,7 +2042,7 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	audit, err := appendAudit(ctx, tx, p, event, actor)
+	audit, err := r.appendAudit(ctx, tx, p, event, actor)
 	if err != nil {
 		return ActivationResult{}, err
 	}
@@ -2031,70 +2087,64 @@ func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, tar
 }
 
 func appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in ActivationInput, revision int64, actor string) (Event, error) {
-	var version int64
-	if err := depdb.New(tx).EnsureEventAggregate(ctx, in.TargetID); err != nil {
-		return Event{}, err
-	}
-	version, err := depdb.New(tx).NextEventVersion(ctx, in.TargetID)
-	if err != nil {
-		return Event{}, err
-	}
-	if version == 0 {
-		version = 1
-	}
 	payload := activationPayload(p, revision)
-	eventID := p.PublicationID
-	if err := depdb.New(tx).InsertActivationEvent(ctx, depdb.InsertActivationEventParams{EventID: dbUUID(eventID), ScopeID: in.TargetID, Version: version, CorrelationID: dbUUID(in.CorrelationID), Payload: payload}); err != nil {
-		return Event{}, err
-	}
-	var e Event
-	erow, err := depdb.New(tx).GetEvent(ctx, dbUUID(eventID))
+	e, err := eventspostgres.New().AppendEvent(ctx, tx, eventspostgres.EventInput{EventID: p.PublicationID, ScopeID: in.TargetID, AggregateType: "delivery_target", AggregateID: in.TargetID, EventType: "activation_committed", SchemaVersion: 1, CorrelationID: in.CorrelationID, Payload: payload})
 	if err != nil {
 		return Event{}, err
 	}
-	e.EventID, e.ScopeID, e.AggregateType, e.AggregateID, e.AggregateVersion, e.EventType, e.SchemaVersion, e.OccurredAt, e.CorrelationID, e.Payload = erow.EventID, erow.ScopeID, erow.AggregateType, erow.AggregateID, erow.AggregateVersion, erow.EventType, erow.SchemaVersion, dbTime(erow.OccurredAt), erow.CorrelationID, append([]byte(nil), erow.Payload...)
-	_ = actor
-	if e.EventID != p.PublicationID || e.ScopeID != in.TargetID || e.AggregateType != "delivery_target" || e.AggregateID != in.TargetID || e.AggregateVersion != version || e.EventType != "activation_committed" || e.SchemaVersion != 1 || e.CorrelationID != in.CorrelationID || !sameCanonical(e.Payload, payload) {
+	if e.EventID != p.PublicationID || e.ScopeID != in.TargetID || e.AggregateType != "delivery_target" || e.AggregateID != in.TargetID || e.AggregateVersion <= 0 || e.EventType != "activation_committed" || e.SchemaVersion != 1 || e.CorrelationID != in.CorrelationID || !sameCanonical(e.Payload, payload) {
 		return Event{}, fmt.Errorf("%w: activation event identity differs", ErrConflict)
 	}
-	return e, nil
+	return Event{EventID: e.EventID, ScopeID: e.ScopeID, AggregateType: e.AggregateType, AggregateID: e.AggregateID, AggregateVersion: e.AggregateVersion, EventType: e.EventType, SchemaVersion: e.SchemaVersion, OccurredAt: e.OccurredAt, CorrelationID: e.CorrelationID, Payload: append([]byte(nil), e.Payload...)}, nil
 }
-func appendAudit(ctx context.Context, tx Tx, p DeliveryPublication, e Event, actor string) (AuditEvent, error) {
+func (r *Repository) appendAudit(ctx context.Context, tx Tx, p DeliveryPublication, e Event, actor string) (AuditEvent, error) {
 	metadata := activationMetadata(p)
-	if err := depdb.New(tx).InsertAuditEvent(ctx, depdb.InsertAuditEventParams{AuditID: dbUUID(p.PublicationID), EventID: dbUUID(e.EventID), ScopeID: e.ScopeID, ActorID: actor, ResourceID: p.GenerationID, RequestDigest: pgText(&p.RequestDigest), Metadata: metadata}); err != nil {
-		return AuditEvent{}, err
-	}
-	var a AuditEvent
-	arow, err := depdb.New(tx).GetAuditEvent(ctx, dbUUID(p.PublicationID))
-	a.AuditID, a.EventID, a.ScopeID, a.ActorID, a.Action, a.ResourceKind, a.ResourceID, a.Outcome, a.RequestDigest, a.Metadata, a.OccurredAt = arow.AuditID, arow.EventID, arow.ScopeID, arow.ActorID, arow.Action, arow.ResourceKind, arow.ResourceID, arow.Outcome, arow.RequestDigest, append([]byte(nil), arow.Metadata...), dbTime(arow.OccurredAt)
+	input := ActivationAuditInput{EventID: p.PublicationID, DomainEventID: e.EventID, ScopeID: e.ScopeID, ActorID: actor, Action: "activate", ResourceKind: "generation", ResourceID: p.GenerationID, Outcome: "accepted", RequestDigest: p.RequestDigest, CorrelationID: e.CorrelationID, AggregateKey: e.AggregateID, AggregateSequence: e.AggregateVersion, Metadata: metadata}
+	a, err := r.audit.AppendActivationAudit(ctx, tx, input)
 	if err != nil {
-		return AuditEvent{}, err
+		return AuditEvent{}, normalizeActivationAuditError(err, "append")
 	}
-	if a.AuditID != p.PublicationID || a.EventID != e.EventID || a.ScopeID != e.ScopeID || a.ActorID != actor || a.Action != "activate" || a.ResourceKind != "generation" || a.ResourceID != p.GenerationID || a.Outcome != "accepted" || a.RequestDigest != p.RequestDigest || !sameCanonical(a.Metadata, metadata) {
+	if !sameActivationAudit(a, input) {
 		return AuditEvent{}, fmt.Errorf("%w: activation audit identity differs", ErrConflict)
 	}
 	return a, nil
 }
-func loadActivationEvidence(ctx context.Context, tx Tx, publicationID string) (Event, AuditEvent, error) {
-	var e Event
-	erow, err := depdb.New(tx).GetEvent(ctx, dbUUID(publicationID))
+
+func (r *Repository) loadActivationEvidence(ctx context.Context, tx Tx, p DeliveryPublication, actor, correlationID, publicationID string) (Event, AuditEvent, error) {
+	event, err := eventspostgres.New().GetEvent(ctx, tx, publicationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation event evidence missing", ErrConflict)
 	}
 	if err != nil {
 		return Event{}, AuditEvent{}, err
 	}
-	e.EventID, e.ScopeID, e.AggregateType, e.AggregateID, e.AggregateVersion, e.EventType, e.SchemaVersion, e.OccurredAt, e.CorrelationID, e.Payload = erow.EventID, erow.ScopeID, erow.AggregateType, erow.AggregateID, erow.AggregateVersion, erow.EventType, erow.SchemaVersion, dbTime(erow.OccurredAt), erow.CorrelationID, append([]byte(nil), erow.Payload...)
-	var a AuditEvent
-	arow, err := depdb.New(tx).GetAuditEvent(ctx, dbUUID(publicationID))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation audit evidence missing", ErrConflict)
-	}
+	e := Event{EventID: event.EventID, ScopeID: event.ScopeID, AggregateType: event.AggregateType, AggregateID: event.AggregateID, AggregateVersion: event.AggregateVersion, EventType: event.EventType, SchemaVersion: event.SchemaVersion, OccurredAt: event.OccurredAt, CorrelationID: event.CorrelationID, Payload: append([]byte(nil), event.Payload...)}
+	input := ActivationAuditInput{EventID: p.PublicationID, DomainEventID: event.EventID, ScopeID: event.ScopeID, ActorID: actor, Action: "activate", ResourceKind: "generation", ResourceID: p.GenerationID, Outcome: "accepted", RequestDigest: p.RequestDigest, CorrelationID: correlationID, AggregateKey: event.AggregateID, AggregateSequence: event.AggregateVersion, Metadata: activationMetadata(p)}
+	a, err := r.audit.GetActivationAudit(ctx, tx, input)
 	if err != nil {
-		return Event{}, AuditEvent{}, err
+		return Event{}, AuditEvent{}, normalizeActivationAuditError(err, "read")
 	}
-	a.AuditID, a.EventID, a.ScopeID, a.ActorID, a.Action, a.ResourceKind, a.ResourceID, a.Outcome, a.RequestDigest, a.Metadata, a.OccurredAt = arow.AuditID, arow.EventID, arow.ScopeID, arow.ActorID, arow.Action, arow.ResourceKind, arow.ResourceID, arow.Outcome, arow.RequestDigest, append([]byte(nil), arow.Metadata...), dbTime(arow.OccurredAt)
-	return e, a, err
+	if !sameActivationAudit(a, input) {
+		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation audit canonical identity differs", ErrConflict)
+	}
+	return e, a, nil
+}
+
+func sameActivationAudit(a AuditEvent, in ActivationAuditInput) bool {
+	return a.AuditID == in.EventID && a.EventID == in.DomainEventID && a.ScopeID == in.ScopeID && a.ActorID == in.ActorID && a.Action == in.Action && a.ResourceKind == in.ResourceKind && a.ResourceID == in.ResourceID && a.Outcome == in.Outcome && a.RequestDigest == in.RequestDigest && sameCanonical(a.Metadata, in.Metadata)
+}
+
+func normalizeActivationAuditError(err error, operation string) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, ErrConflict) {
+		return err
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: activation audit evidence missing during %s", ErrConflict, operation)
+	}
+	return err
 }
 
 // Retention roots are reachability records, not seal identity.  Seals remain

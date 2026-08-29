@@ -5,8 +5,6 @@
 -- The package is applied as one clean baseline by the delivery capability.
 
 CREATE SCHEMA IF NOT EXISTS delivery;
-CREATE SCHEMA IF NOT EXISTS event;
-CREATE SCHEMA IF NOT EXISTS audit;
 
 CREATE TABLE IF NOT EXISTS delivery.delivery_target (
     target_id text PRIMARY KEY,
@@ -261,42 +259,6 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_retention_root (
     CHECK ((root_kind = 'candidate' AND candidate_id IS NOT NULL)
         OR (root_kind = 'generation' AND generation_id IS NOT NULL)
         OR (root_kind NOT IN ('candidate','generation')))
-);
-
-CREATE TABLE IF NOT EXISTS event.event_log (
-    event_id uuid PRIMARY KEY,
-    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
-    aggregate_type text NOT NULL CHECK (aggregate_type = btrim(aggregate_type) AND octet_length(aggregate_type) BETWEEN 1 AND 128),
-    aggregate_id text NOT NULL CHECK (aggregate_id = btrim(aggregate_id) AND octet_length(aggregate_id) BETWEEN 1 AND 255),
-    aggregate_version bigint NOT NULL CHECK (aggregate_version > 0),
-    event_type text NOT NULL CHECK (event_type = btrim(event_type) AND octet_length(event_type) BETWEEN 1 AND 128),
-    schema_version bigint NOT NULL CHECK (schema_version > 0),
-    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    correlation_id uuid,
-    payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object' AND octet_length(payload::text) <= 65536),
-    UNIQUE (scope_id, aggregate_type, aggregate_id, aggregate_version)
-);
-CREATE TABLE IF NOT EXISTS event.event_aggregate (
-    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
-    aggregate_type text NOT NULL CHECK (aggregate_type = btrim(aggregate_type) AND octet_length(aggregate_type) BETWEEN 1 AND 128),
-    aggregate_id text NOT NULL CHECK (aggregate_id = btrim(aggregate_id) AND octet_length(aggregate_id) BETWEEN 1 AND 255),
-    next_version bigint NOT NULL DEFAULT 1 CHECK (next_version > 0),
-    PRIMARY KEY (scope_id, aggregate_type, aggregate_id)
-);
-
-CREATE TABLE IF NOT EXISTS audit.audit_event (
-    audit_id uuid PRIMARY KEY,
-    event_id uuid UNIQUE,
-    scope_id text NOT NULL CHECK (scope_id = btrim(scope_id) AND octet_length(scope_id) BETWEEN 1 AND 255),
-    actor_id text NOT NULL CHECK (actor_id = btrim(actor_id) AND octet_length(actor_id) BETWEEN 1 AND 255),
-    action text NOT NULL CHECK (action = btrim(action) AND octet_length(action) BETWEEN 1 AND 128),
-    resource_kind text NOT NULL CHECK (resource_kind = btrim(resource_kind) AND octet_length(resource_kind) BETWEEN 1 AND 128),
-    resource_id text NOT NULL CHECK (resource_id = btrim(resource_id) AND octet_length(resource_id) BETWEEN 1 AND 255),
-    outcome text NOT NULL CHECK (outcome = btrim(outcome) AND octet_length(outcome) BETWEEN 1 AND 32 AND outcome IN ('accepted','rejected','failed','indeterminate','observed')),
-    request_digest text CHECK (request_digest IS NULL OR request_digest ~ '^sha256:[0-9a-f]{64}$'),
-    metadata jsonb NOT NULL DEFAULT '{}'::jsonb
-        CHECK (jsonb_typeof(metadata) = 'object' AND octet_length(metadata::text) <= 32768),
-    occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 
 CREATE OR REPLACE FUNCTION delivery.reject_authority_history_mutation()
@@ -555,13 +517,6 @@ CREATE TRIGGER delivery_approval_immutable BEFORE UPDATE OR DELETE ON delivery.d
 DROP TRIGGER IF EXISTS delivery_active_pointer_consistency ON delivery.delivery_active_pointer;
 CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UPDATE ON delivery.delivery_active_pointer
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION delivery.check_active_pointer_consistency();
-DROP TRIGGER IF EXISTS event_log_immutable ON event.event_log;
-CREATE TRIGGER event_log_immutable BEFORE UPDATE OR DELETE ON event.event_log
-    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
-DROP TRIGGER IF EXISTS audit_event_immutable ON audit.audit_event;
-CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON audit.audit_event
-    FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
-
 CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(target_id, state, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
@@ -572,9 +527,9 @@ CREATE INDEX IF NOT EXISTS delivery_root_snapshot_idx ON delivery.delivery_reten
 -- applying role remains the owner and therefore retains full control; deploy
 -- roles must be granted the minimum required privileges explicitly by the
 -- surrounding migration.
-REVOKE ALL ON SCHEMA delivery, event, audit FROM PUBLIC;
-REVOKE ALL ON ALL TABLES IN SCHEMA delivery, event, audit FROM PUBLIC;
-REVOKE ALL ON ALL SEQUENCES IN SCHEMA delivery, event, audit FROM PUBLIC;
-GRANT USAGE ON SCHEMA delivery, event, audit TO CURRENT_USER;
-GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, event, audit TO CURRENT_USER;
-GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA delivery, event, audit TO CURRENT_USER;
+REVOKE ALL ON SCHEMA delivery FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA delivery FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA delivery FROM PUBLIC;
+GRANT USAGE ON SCHEMA delivery TO CURRENT_USER;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery TO CURRENT_USER;
+GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA delivery TO CURRENT_USER;

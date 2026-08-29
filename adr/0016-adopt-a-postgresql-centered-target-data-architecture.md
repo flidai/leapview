@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-08-28
 
-Implementation: pending (clean-slate target architecture)
+Implementation: in progress (clean-slate target architecture; draft PR #386)
 
 Deciders: LeapView maintainers
 

@@ -327,6 +327,19 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
+    queries: "internal/analytics/connectionbinding/postgres/queries"
+    schema: "internal/analytics/connectionbinding/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/connectionbinding/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
     queries: "internal/analytics/ducklake/postgres/queries"
     schema:
       - "internal/analytics/ducklake/postgres/schema.sql"

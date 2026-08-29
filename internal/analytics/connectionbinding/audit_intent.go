@@ -3,12 +3,12 @@ package connectionbinding
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/google/uuid"
 )
 
 // AdministrationAuditInvocation carries transport identity into a
@@ -85,6 +85,13 @@ func BuildConnectionAdministrationAuditIntent(
 	aggregateKey := "connection_binding:" + event.BindingID.String()
 	identity := strings.Join([]string{aggregateKey, operation, fmt.Sprintf("%d", event.Revision)}, "\x00")
 	digest := sha256.Sum256([]byte(identity))
+	// Access's PostgreSQL audit authority stores audit_id as uuid. Derive a
+	// replay-stable RFC 9562 version-8 UUID from the aggregate identity;
+	// retaining the aggregate/revision fields keeps the canonical payload
+	// independently inspectable while retries map to one audit row.
+	eventID := uuid.UUID(digest[:16])
+	eventID[6] = (eventID[6] & 0x0f) | 0x80 // version 8 (custom)
+	eventID[8] = (eventID[8] & 0x3f) | 0x80 // RFC 9562 variant
 	metadata, err := connectionAdministrationAuditMetadata(event)
 	if err != nil {
 		return access.AuditIntent{}, err
@@ -94,7 +101,7 @@ func BuildConnectionAdministrationAuditIntent(
 		principal = strings.TrimSpace(event.Actor)
 	}
 	return access.AuditIntent{
-		EventID:           "connection-binding:" + hex.EncodeToString(digest[:16]),
+		EventID:           eventID.String(),
 		Source:            "analytics.connectionbinding",
 		Operation:         operation,
 		PrincipalID:       principal,

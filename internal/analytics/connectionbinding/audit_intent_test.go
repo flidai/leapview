@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/google/uuid"
 )
 
 func TestBuildConnectionAdministrationAuditIntentIsStableAndRedacted(t *testing.T) {
@@ -32,6 +33,10 @@ func TestBuildConnectionAdministrationAuditIntentIsStableAndRedacted(t *testing.
 	if first.EventID != second.EventID || first.AggregateKey != second.AggregateKey ||
 		first.AggregateSequence != event.Revision {
 		t.Fatalf("intent identity changed across retries: first=%#v second=%#v", first, second)
+	}
+	parsedID, err := uuid.Parse(first.EventID)
+	if err != nil || parsedID.Version() != uuid.Version(8) || parsedID.Variant() != uuid.RFC4122 {
+		t.Fatalf("event id = %q, want deterministic RFC 9562 version-8 UUID", first.EventID)
 	}
 	if first.ResourceKind != "connection" || first.ResourceID != binding.ConnectionID.String() ||
 		first.Capability != access.CapabilityResourceManage || first.Action != string(AuditBindingUpdated) {

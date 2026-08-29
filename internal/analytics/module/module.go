@@ -31,7 +31,16 @@ const (
 )
 
 type Config struct {
-	Database *sql.DB
+	// ConnectionBindings is the preferred capability-owned binding authority.
+	// Production composition injects this interface (normally backed by the
+	// native PostgreSQL repository) so analytics does not own a database handle.
+	ConnectionBindings connectionbinding.BindingCatalog
+	Database           *sql.DB
+	// LegacySQLite explicitly opts into the development/test SQLite adapter.
+	// A production build always rejects Database and requires a binding
+	// authority injected through ConnectionBindings.
+	LegacySQLite bool
+	Production   bool
 	// QueryAuditStore is the explicit capability-owned query-audit
 	// authority. SQLite fixtures may wrap their database and pass that adapter;
 	// production wiring supplies the native PostgreSQL repository.
@@ -66,6 +75,12 @@ type Config struct {
 type Resources interface {
 	resource.Provider
 	resource.SessionProvider
+}
+
+type postgresConnectionBindingAuthority interface {
+	connectionbinding.BindingCatalog
+	PostgreSQLAuthority()
+	AuditCapable() bool
 }
 
 func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.Pool) *Module {
@@ -121,6 +136,29 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Production {
+		if config.Database != nil {
+			return nil, errors.New("production analytics build rejects SQLite database injection; use PostgreSQL connection binding authority")
+		}
+		if config.ConnectionBindings == nil {
+			return nil, errors.New("production analytics build requires PostgreSQL connection binding authority")
+		}
+		if config.CredentialMode == CredentialModeDevelopmentEnvironment {
+			return nil, errors.New("production analytics build rejects process-environment credential resolution")
+		}
+		if config.ConnectionBindings != nil {
+			authority, ok := config.ConnectionBindings.(postgresConnectionBindingAuthority)
+			if !ok {
+				return nil, errors.New("production analytics build requires the native PostgreSQL connection binding authority")
+			}
+			if !authority.AuditCapable() {
+				return nil, errors.New("production analytics build requires an audit-capable PostgreSQL connection binding authority")
+			}
+		}
+	}
+	if config.Database != nil && config.ConnectionBindings == nil && !config.LegacySQLite {
+		return nil, errors.New("SQLite analytics build requires LegacySQLite=true; inject PostgreSQL connection binding authority")
+	}
 	credentials, err := buildCredentialResolver(config)
 	if err != nil {
 		return nil, err
@@ -166,8 +204,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	queryAudit := config.QueryAuditStore
-	var connectionBindings connectionbinding.BindingCatalog
-	if config.Database != nil {
+	var connectionBindings connectionbinding.BindingCatalog = config.ConnectionBindings
+	if connectionBindings == nil && config.Database != nil {
 		if config.AuditIntentRecorder != nil {
 			connectionBindings = analyticssqlite.NewConnectionBindingRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 		} else {
@@ -231,6 +269,9 @@ func (m *Module) NewConnectionAdministration(
 		}
 	} else if err := requireConnectionBindingAuditSinks(config.Audit, config.AdministrationAudit); err != nil {
 		return nil, err
+	}
+	if config.Authorize == nil {
+		return nil, fmt.Errorf("%w: connection administration authorizer is required", connectionbinding.ErrInvalidBinding)
 	}
 	if config.RequireAuditIntent && config.AuditIntentRecorder == nil {
 		return nil, fmt.Errorf(

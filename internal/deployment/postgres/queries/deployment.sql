@@ -214,34 +214,6 @@ FROM delivery.delivery_retention_root WHERE root_id=sqlc.arg(root_id)::uuid FOR 
 INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state)
 VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.arg(candidate_id)::uuid,sqlc.arg(generation_id)::uuid,sqlc.arg(snapshot_seal_id)::uuid,'generation','live');
 
--- name: EnsureEventAggregate :exec
-INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version)
-VALUES(sqlc.arg(scope_id),'delivery_target',sqlc.arg(scope_id),1)
-ON CONFLICT(scope_id,aggregate_type,aggregate_id) DO NOTHING;
-
--- name: NextEventVersion :one
-UPDATE event.event_aggregate SET next_version=next_version+1
-WHERE scope_id=sqlc.arg(scope_id) AND aggregate_type='delivery_target' AND aggregate_id=sqlc.arg(scope_id)
-RETURNING (next_version-1)::bigint;
-
--- name: InsertActivationEvent :exec
-INSERT INTO event.event_log(event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,correlation_id,payload)
-VALUES(sqlc.arg(event_id)::uuid,sqlc.arg(scope_id),'delivery_target',sqlc.arg(scope_id),sqlc.arg(version),'activation_committed',1,clock_timestamp(),sqlc.narg(correlation_id)::uuid,sqlc.arg(payload)::jsonb)
-ON CONFLICT(event_id) DO NOTHING;
-
--- name: GetEvent :one
-SELECT event_id::text,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,COALESCE(correlation_id::text,'')::text AS correlation_id,payload
-FROM event.event_log WHERE event_id=sqlc.arg(event_id)::uuid;
-
--- name: InsertAuditEvent :exec
-INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,action,resource_kind,resource_id,outcome,request_digest,metadata)
-VALUES(sqlc.arg(audit_id)::uuid,sqlc.arg(event_id)::uuid,sqlc.arg(scope_id),sqlc.arg(actor_id),'activate','generation',sqlc.arg(resource_id),'accepted',sqlc.arg(request_digest),sqlc.arg(metadata)::jsonb)
-ON CONFLICT(audit_id) DO NOTHING;
-
--- name: GetAuditEvent :one
-SELECT audit_id::text,COALESCE(event_id::text,'')::text AS event_id,scope_id,actor_id,action,resource_kind,resource_id,outcome,COALESCE(request_digest,'')::text AS request_digest,metadata,occurred_at
-FROM audit.audit_event WHERE audit_id=sqlc.arg(audit_id)::uuid;
-
 -- name: InsertRetentionRoot :exec
 INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state,expires_at,evidence)
 VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.narg(candidate_id)::uuid,sqlc.narg(generation_id)::uuid,sqlc.narg(snapshot_seal_id)::uuid,sqlc.arg(root_kind),sqlc.arg(state),sqlc.narg(expires_at),sqlc.arg(evidence)::jsonb)

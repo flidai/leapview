@@ -111,7 +111,9 @@ func SchemaSQL() string { return schemaSQL }
 // field, including the fields added by this capability to the baseline table.
 type Event struct {
 	AuditID           string
+	DomainEventID     string
 	ScopeID           string
+	ActorID           string
 	PrincipalID       string
 	Source            string
 	Operation         string
@@ -121,6 +123,7 @@ type Event struct {
 	Capability        access.Capability
 	Outcome           string
 	RequestID         string
+	RequestDigest     string
 	CorrelationID     string
 	AggregateKey      string
 	AggregateSequence int64
@@ -165,6 +168,12 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 			return Event{}, err
 		}
 	}
+	if canonical.DomainEventID != "" {
+		canonical.DomainEventID, err = canonicalUUID("audit domain event id", canonical.DomainEventID)
+		if err != nil {
+			return Event{}, err
+		}
+	}
 	if canonical.RequestID != "" {
 		canonical.RequestID, err = canonicalUUID("audit request id", canonical.RequestID)
 		if err != nil {
@@ -198,11 +207,15 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 	if err != nil {
 		return Event{}, err
 	}
-	if err := accessdb.New(tx).InsertAuditIntent(ctx, accessdb.InsertAuditIntentParams{AuditID: eventID, ScopeID: "", PrincipalID: canonical.PrincipalID,
+	if err := accessdb.New(tx).InsertAuditIntent(ctx, accessdb.InsertAuditIntentParams{AuditID: eventID, DomainEventID: canonical.DomainEventID, ScopeID: canonical.ScopeID, ActorID: canonical.ActorID, PrincipalID: canonical.PrincipalID,
 		Source: canonical.Source, Operation: canonical.Operation, Action: canonical.Action, ResourceKind: canonical.ResourceKind,
 		ResourceID: canonical.ResourceID, Capability: canonical.Capability.String(), Outcome: canonical.Outcome,
 		RequestID: canonical.RequestID, CorrelationID: canonical.CorrelationID, AggregateKey: canonical.AggregateKey,
-		AggregateSequence: canonical.AggregateSequence, IntentDigest: digest, Metadata: []byte(metadata)}); err != nil {
+		AggregateSequence: canonical.AggregateSequence, IntentDigest: digest, RequestDigest: canonical.RequestDigest, Metadata: []byte(metadata)}); err != nil {
+		var databaseError *pgconn.PgError
+		if errors.As(err, &databaseError) && databaseError.Code == "23505" {
+			return Event{}, fmt.Errorf("%w: audit event identity is already linked", access.ErrAuditIntentConflict)
+		}
 		return Event{}, fmt.Errorf("insert audit event: %w", err)
 	}
 
@@ -214,14 +227,14 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 		return Event{}, fmt.Errorf("read audit event: %w", err)
 	}
 	stored := auditIntentEvent(row)
-	if stored.AuditID != canonical.EventID || stored.ScopeID != "" ||
+	if stored.AuditID != canonical.EventID || stored.DomainEventID != canonical.DomainEventID || stored.ScopeID != canonical.ScopeID || stored.ActorID != canonical.ActorID ||
 		stored.PrincipalID != canonical.PrincipalID || stored.Action != canonical.Action ||
 		stored.Source != canonical.Source || stored.Operation != canonical.Operation ||
 		stored.ResourceKind != canonical.ResourceKind || stored.ResourceID != canonical.ResourceID ||
 		stored.Capability != canonical.Capability || stored.Outcome != canonical.Outcome ||
 		stored.RequestID != canonical.RequestID || stored.CorrelationID != canonical.CorrelationID ||
 		stored.AggregateKey != canonical.AggregateKey || stored.AggregateSequence != canonical.AggregateSequence ||
-		stored.IntentDigest != digest || !row.MetadataEqual {
+		stored.IntentDigest != digest || stored.RequestDigest != canonical.RequestDigest || !row.MetadataEqual {
 		return Event{}, fmt.Errorf("%w: audit event %s canonical payload differs", access.ErrAuditIntentConflict, canonical.EventID)
 	}
 	return stored, nil
@@ -283,26 +296,26 @@ func (r *AuditRepository) ListAuditEvents(ctx context.Context, db DBTX, limit in
 }
 
 func auditIntentEvent(row accessdb.GetAuditIntentRow) Event {
-	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
 		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 
 func auditIntentEventByID(row accessdb.GetAuditIntentByIDRow) Event {
-	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
 		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 
 func auditIntentEventFromList(row accessdb.ListAuditIntentsRow) Event {
-	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
 		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 

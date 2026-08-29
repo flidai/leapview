@@ -74,6 +74,7 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 	}
 	module, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
 		Database: cfg.Database, AuditIntentRecorder: cfg.AuditIntentRecorder, CredentialMode: cfg.CredentialMode,
+		LegacySQLite:       true,
 		CredentialTargetID: cfg.CredentialTarget, CredentialProjectID: cfg.CredentialProject, CredentialEnvironment: cfg.Environment,
 		TargetCredentials: cfg.TargetCredentials,
 		RootDir:           cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,

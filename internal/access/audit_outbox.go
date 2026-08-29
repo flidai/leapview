@@ -13,6 +13,7 @@ import (
 	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/google/uuid"
 )
 
 const MaxAuditIntentMetadataBytes = 64 * 1024
@@ -31,7 +32,18 @@ var (
 // AuditIntent is the canonical, non-secret handoff committed by a source
 // capability in the same transaction as its security-relevant mutation.
 type AuditIntent struct {
-	EventID           string
+	EventID string
+	// ScopeID identifies the instance/project boundary for cross-capability
+	// records. It is optional for global identity audit events.
+	ScopeID string
+	// DomainEventID links a source mutation's audit row to its durable domain
+	// event without introducing an audit-intent outbox or a second event log.
+	DomainEventID string
+	// ActorID retains opaque operator/workload identities that are not access
+	// principal UUIDs. PrincipalID remains the typed identity when available.
+	ActorID string
+	// RequestDigest binds the audit row to the exact source request identity.
+	RequestDigest     string
 	Source            string
 	Operation         string
 	PrincipalID       string
@@ -168,6 +180,18 @@ func (intent AuditIntent) Canonicalize() (AuditIntent, error) {
 	if !canonicalAuditIntentEventID(intent.EventID) {
 		return AuditIntent{}, fmt.Errorf("audit intent event id is not canonical")
 	}
+	if !optionalCanonicalAuditIntentLiteral(intent.ScopeID, 255) {
+		return AuditIntent{}, fmt.Errorf("audit intent scope id is not canonical")
+	}
+	if intent.DomainEventID != "" && !canonicalAuditIntentUUID(intent.DomainEventID) {
+		return AuditIntent{}, fmt.Errorf("audit intent domain event id is not canonical")
+	}
+	if !optionalCanonicalAuditIntentLiteral(intent.ActorID, 255) {
+		return AuditIntent{}, fmt.Errorf("audit intent actor id is not canonical")
+	}
+	if intent.RequestDigest != "" && !canonicalAuditIntentDigest(intent.RequestDigest) {
+		return AuditIntent{}, fmt.Errorf("audit intent request digest is not canonical")
+	}
 	for name, value := range map[string]string{
 		"source": intent.Source, "operation": intent.Operation, "action": intent.Action,
 		"outcome": intent.Outcome, "aggregate key": intent.AggregateKey,
@@ -210,7 +234,23 @@ func (intent AuditIntent) PayloadDigest() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	encoded, err := json.Marshal(canonical)
+	// Marshal a wire projection rather than AuditIntent directly: Capability
+	// intentionally rejects the empty value at its TextMarshaler boundary,
+	// while global/system audit events are allowed to omit a capability.
+	encoded, err := json.Marshal(struct {
+		EventID, ScopeID, DomainEventID, ActorID, RequestDigest          string
+		Source, Operation, PrincipalID, Action, ResourceKind, ResourceID string
+		Capability, Outcome, RequestID, CorrelationID, AggregateKey      string
+		AggregateSequence                                                int64
+		MetadataJSON                                                     string
+	}{
+		EventID: canonical.EventID, ScopeID: canonical.ScopeID, DomainEventID: canonical.DomainEventID,
+		ActorID: canonical.ActorID, RequestDigest: canonical.RequestDigest, Source: canonical.Source,
+		Operation: canonical.Operation, PrincipalID: canonical.PrincipalID, Action: canonical.Action,
+		ResourceKind: canonical.ResourceKind, ResourceID: canonical.ResourceID, Capability: canonical.Capability.String(),
+		Outcome: canonical.Outcome, RequestID: canonical.RequestID, CorrelationID: canonical.CorrelationID,
+		AggregateKey: canonical.AggregateKey, AggregateSequence: canonical.AggregateSequence, MetadataJSON: canonical.MetadataJSON,
+	})
 	if err != nil {
 		return "", err
 	}
@@ -332,6 +372,26 @@ func canonicalAuditIntentEventID(value string) bool {
 			continue
 		}
 		return false
+	}
+	return true
+}
+
+func canonicalAuditIntentUUID(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) {
+		return false
+	}
+	parsed, err := uuid.Parse(value)
+	return err == nil && parsed.String() == strings.ToLower(value)
+}
+
+func canonicalAuditIntentDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	for _, char := range value[len("sha256:"):] {
+		if !((char >= '0' && char <= '9') || (char >= 'a' && char <= 'f')) {
+			return false
+		}
 	}
 	return true
 }

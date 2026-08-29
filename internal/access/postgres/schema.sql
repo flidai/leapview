@@ -11,7 +11,13 @@ CREATE TABLE IF NOT EXISTS access.platform_setting (
 
 CREATE TABLE IF NOT EXISTS audit.audit_event (
     audit_id uuid PRIMARY KEY,
-    scope_id text,
+    -- Delivery activation uses the same immutable identity for its durable
+    -- domain event and audit record.  Keep that relationship on the
+    -- access-owned audit authority rather than introducing a second audit
+    -- table in the deployment capability.
+    event_id uuid UNIQUE,
+    actor_id text CHECK (actor_id IS NULL OR (actor_id = btrim(actor_id) AND length(actor_id) BETWEEN 1 AND 255)),
+    scope_id text CHECK (scope_id IS NULL OR (scope_id = btrim(scope_id) AND length(scope_id) BETWEEN 1 AND 255)),
     principal_id uuid,
     source text NOT NULL CHECK (length(source)<=128),
     operation text NOT NULL CHECK (length(operation)<=255),
@@ -23,6 +29,7 @@ CREATE TABLE IF NOT EXISTS audit.audit_event (
     generation_id text CHECK (generation_id IS NULL OR (generation_id = btrim(generation_id) AND length(generation_id) BETWEEN 1 AND 255)),
     capability text NOT NULL DEFAULT '',
     outcome text NOT NULL DEFAULT 'success',
+    request_digest text CHECK (request_digest IS NULL OR request_digest ~ '^sha256:[0-9a-f]{64}$'),
     request_id uuid,
     correlation_id uuid,
     aggregate_key text NOT NULL DEFAULT '',
