@@ -172,6 +172,9 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 		if err := repo.Complete(ctx, first.ID, first.Fence()); !errors.Is(err, jobs.ErrConflict) {
 			t.Fatalf("stale completion = %v", err)
 		}
+		if err := repo.Complete(ctx, second.ID, jobs.Fence{Owner: second.LeaseOwner}); err == nil {
+			t.Fatal("completion accepted a zero fencing generation")
+		}
 		if err := repo.Retry(ctx, second.ID, second.Fence(), MaxRetryDelay+time.Second, []byte(`{"retry":true}`)); err == nil {
 			t.Fatal("retry accepted an unbounded delay")
 		}

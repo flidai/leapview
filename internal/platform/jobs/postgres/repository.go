@@ -411,7 +411,7 @@ func (r *Repository) appendEvent(ctx context.Context, db DBTX, kind, id, eventTy
 				return event, nil
 			}
 		}
-		if _, lockErr := db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1 || '|' || $2, 0))`, kind, id); lockErr != nil {
+		if _, lockErr := db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, kind, id); lockErr != nil {
 			return jobs.Event{}, lockErr
 		}
 	}
@@ -511,7 +511,7 @@ func scanEvent(row interface{ Scan(...any) error }) (jobs.Event, error) {
 }
 
 func validFence(id string, fence jobs.Fence) bool {
-	return canonicalLiteral(id, 256) && canonicalLiteral(fence.Owner, 256) && fence.Generation >= 0
+	return canonicalLiteral(id, 256) && canonicalLiteral(fence.Owner, 256) && fence.Generation > 0
 }
 func validClass(class string) bool {
 	return class == jobpolicy.WorkloadClassBackground || class == jobpolicy.WorkloadClassControl
