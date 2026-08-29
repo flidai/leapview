@@ -22,6 +22,50 @@ type DocumentResult struct {
 	Definition definition.Definition
 }
 
+// CompileDocumentFilterContract compiles only the immutable filter, page and
+// layout state needed by draft filter sessions and option loading. Visual
+// definitions are intentionally not lowered: a partially edited visual query
+// is unrelated to this contract and must not block filter options.
+func CompileDocumentFilterContract(doc document.DashboardDocument, models map[string]*semanticmodel.Model) (DocumentResult, error) {
+	if doc.Kind != document.DashboardResourceKindDashboard {
+		return DocumentResult{}, fmt.Errorf("dashboard document kind %q is invalid", doc.Kind)
+	}
+	id := strings.TrimSpace(doc.Metadata.ID)
+	if id == "" {
+		return DocumentResult{}, fmt.Errorf("dashboard metadata.id is required")
+	}
+	modelID := strings.TrimSpace(doc.Spec.SemanticModel)
+	model := models[modelID]
+	if model == nil {
+		for key, candidate := range models {
+			if candidate != nil && (key == modelID || candidate.Name == modelID) {
+				modelID, model = key, candidate
+				break
+			}
+		}
+	}
+	if model == nil {
+		return DocumentResult{}, fmt.Errorf("dashboard semantic model %q is unavailable", modelID)
+	}
+	filters, err := CompileCanonicalDashboardFilterContract(doc, model)
+	if err != nil {
+		return DocumentResult{}, fmt.Errorf("compile dashboard filters: %w", err)
+	}
+	layout, err := CompileDashboardLayout(doc.Spec)
+	if err != nil {
+		return DocumentResult{}, fmt.Errorf("compile dashboard layout: %w", err)
+	}
+	compiled, err := definition.New(id, valueOrString(doc.Metadata.DisplayName, doc.Metadata.Name), valueOrString(doc.Metadata.Description, ""), modelID, layout.Pages, nil)
+	if err != nil {
+		return DocumentResult{}, err
+	}
+	compiled.Layout = &definition.Layout{Defaults: layout.Defaults, NarrowView: layout.NarrowView}
+	if err := filters.ApplyToDefinition(&compiled); err != nil {
+		return DocumentResult{}, err
+	}
+	return DocumentResult{Normalized: doc, Definition: compiled}, nil
+}
+
 // CompileDocument compiles a generated dashboard document without projecting
 // through the legacy dashboard authoring package.
 func CompileDocument(doc document.DashboardDocument, models map[string]*semanticmodel.Model) (DocumentResult, error) {

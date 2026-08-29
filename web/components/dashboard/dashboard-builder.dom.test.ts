@@ -1483,15 +1483,22 @@ test('dashboard builder authors report filters from governed fields through focu
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [] }] } })
+      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'filter_1', scope: 'report', targets: [] }] }] } })
       await element.updateComplete
       ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
       await element.updateComplete
-      ;(root.querySelectorAll('.filter-scope-option input')[2] as HTMLInputElement).click()
+      ;(root.querySelectorAll('.filter-scope-option input')[1] as HTMLInputElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
       ;(root.querySelectorAll('.filter-scope-option input')[0] as HTMLInputElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      ;(root.querySelector('.visual[gs-id="sales-chart"]') as HTMLElement).click()
+      await element.updateComplete
+      ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelectorAll('.filter-scope-option input')[2] as HTMLInputElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       const control = root.querySelector('.filter-editor select') as HTMLSelectElement
@@ -1511,11 +1518,12 @@ test('dashboard builder authors report filters from governed fields through focu
     expect(state.panes).toEqual(['filters', 'visual', 'data'])
     expect(state.scopes).toEqual(['Filters on this visual0', 'Filters for page visuals0', 'Filters on all pages1'])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
-    expect(state.commands[1]).toMatchObject({ action: 'set_filter_targets', filterId: 'filter_1', targets: ['sales-chart'] })
-    expect(state.commands[2]).toMatchObject({ action: 'set_filter_targets', filterId: 'filter_1' })
+    expect(state.commands[1]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview' })
+    expect(state.commands[2]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'report' })
     expect(state.commands[2]).not.toHaveProperty('targets')
-    expect(state.commands[3]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
-    expect(state.commands[4]).toMatchObject({ action: 'remove_filter', filterId: 'filter_1' })
+    expect(state.commands[3]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview', targets: ['sales-chart'] })
+    expect(state.commands[4]).toMatchObject({ action: 'update_filter', filterId: 'filter_1', controlType: 'singleSelect', readerEditable: true, required: false })
+    expect(state.commands[5]).toMatchObject({ action: 'remove_filter', filterId: 'filter_1' })
   } finally {
     await page.close()
   }
@@ -1534,7 +1542,7 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       element.addEventListener('lv-builder-filter-command', (event: CustomEvent) => { filterCommands.push(event.detail) })
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [] }] } })
+      mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'filter_1', scope: 'report', targets: [] }] }] } })
       await element.updateComplete
       ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
       await element.updateComplete

@@ -157,6 +157,18 @@ func (m auditedMetrics) QueryCompiledFilterOptionsForDefinition(ctx context.Cont
 	return provider.QueryCompiledFilterOptionsForDefinition(m.auditContext(ctx), definition, query)
 }
 
+// QueryCompiledFilterOptionsForDefinitionAtGeneration preserves the active
+// generation guard through the query-audit decorator.
+func (m auditedMetrics) QueryCompiledFilterOptionsForDefinitionAtGeneration(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery, expectedGeneration string) (dashboardfilter.OptionResult, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryCompiledFilterOptionsForDefinitionAtGeneration(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery, string) (dashboardfilter.OptionResult, error)
+	})
+	if !ok {
+		return dashboardfilter.OptionResult{}, errors.New("generation-bound compiled filter options are not supported by this runtime")
+	}
+	return provider.QueryCompiledFilterOptionsForDefinitionAtGeneration(m.auditContext(ctx), definition, query, expectedGeneration)
+}
+
 // DefaultFiltersForDefinition forwards authored defaults through the audit
 // decorator so canonical visual queries execute with the same filter state as
 // dashboard pages.

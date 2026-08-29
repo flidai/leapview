@@ -100,8 +100,24 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {
 		t.Fatalf("projected format options = %#v", signal.Pages)
 	}
-	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable {
+	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable || len(signal.Filters[0].Bindings) != 1 || signal.Filters[0].Bindings[0].Scope != "report" {
 		t.Fatalf("projected filters = %#v", signal.Filters)
+	}
+}
+
+func TestProjectFiltersExposesAuthoredPageBindings(t *testing.T) {
+	bindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status"}}
+	authored := document.DashboardDocument{Spec: document.DashboardSpec{
+		Filters: []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: "multiSelect"}}}},
+		Pages:   []document.DashboardPage{{ID: "overview", FilterBindings: &bindings}},
+	}}
+	projected := projectFilters(authored)
+	if len(projected) != 1 || len(projected[0].Bindings) != 1 {
+		t.Fatalf("projected filters = %#v", projected)
+	}
+	binding := projected[0].Bindings[0]
+	if binding.ID != "page_status" || binding.Scope != "page" || binding.PageID == nil || *binding.PageID != "overview" {
+		t.Fatalf("projected page binding = %#v", binding)
 	}
 }
 

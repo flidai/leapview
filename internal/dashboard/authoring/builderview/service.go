@@ -247,7 +247,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
 		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
-		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document.Spec.Filters), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
+		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
 		Save:    uisignals.DashboardBuilderSaveStateSignal{State: saveState(dirty), LastSavedAt: optionalTime(revision.CreatedAt)},
 	}
@@ -260,7 +260,22 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	return signal, nil
 }
 
-func projectFilters(filters []dashboarddocument.DashboardFilter) []uisignals.DashboardBuilderFilterSignal {
+func projectFilters(authored dashboarddocument.DashboardDocument) []uisignals.DashboardBuilderFilterSignal {
+	filters := authored.Spec.Filters
+	bindingsByFilter := make(map[string][]uisignals.DashboardBuilderFilterBindingSignal, len(filters))
+	for _, page := range authored.Spec.Pages {
+		if page.FilterBindings == nil {
+			continue
+		}
+		for _, binding := range *page.FilterBindings {
+			pageID := page.ID
+			projected := uisignals.DashboardBuilderFilterBindingSignal{ID: binding.ID, Scope: "page", PageID: &pageID, Targets: []string{}}
+			if binding.Targets != nil {
+				projected.Targets = append(projected.Targets, (*binding.Targets)...)
+			}
+			bindingsByFilter[binding.Filter] = append(bindingsByFilter[binding.Filter], projected)
+		}
+	}
 	result := make([]uisignals.DashboardBuilderFilterSignal, 0, len(filters))
 	for _, filter := range filters {
 		controlType := ""
@@ -272,7 +287,28 @@ func projectFilters(filters []dashboarddocument.DashboardFilter) []uisignals.Das
 			Required:       filter.Required != nil && *filter.Required,
 			ReaderEditable: filter.ReaderEditable == nil || *filter.ReaderEditable,
 			Targets:        []string{},
+			Bindings:       append([]uisignals.DashboardBuilderFilterBindingSignal(nil), bindingsByFilter[filter.ID]...),
 		}
+		if len(projected.Bindings) == 0 {
+			reportTargets := []string{}
+			if filter.Targets != nil {
+				reportTargets = append(reportTargets, (*filter.Targets)...)
+			}
+			projected.Bindings = []uisignals.DashboardBuilderFilterBindingSignal{{ID: filter.ID, Scope: "report", Targets: reportTargets}}
+		}
+		sort.SliceStable(projected.Bindings, func(i, j int) bool {
+			leftPage, rightPage := "", ""
+			if projected.Bindings[i].PageID != nil {
+				leftPage = *projected.Bindings[i].PageID
+			}
+			if projected.Bindings[j].PageID != nil {
+				rightPage = *projected.Bindings[j].PageID
+			}
+			if leftPage == rightPage {
+				return projected.Bindings[i].ID < projected.Bindings[j].ID
+			}
+			return leftPage < rightPage
+		})
 		if filter.Description != nil {
 			projected.Description = filter.Description
 		}

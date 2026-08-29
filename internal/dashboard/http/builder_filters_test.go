@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -18,6 +19,16 @@ import (
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
+
+type generationBoundOptionMetrics struct {
+	fakeMetrics
+	generation string
+}
+
+func (m *generationBoundOptionMetrics) QueryCompiledFilterOptionsForDefinitionAtGeneration(_ context.Context, _ dashboarddefinition.Definition, _ dashboardfilter.OptionQuery, generation string) (dashboardfilter.OptionResult, error) {
+	m.generation = generation
+	return dashboardfilter.OptionResult{Items: []dashboardfilter.OptionItem{{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "open"}, Label: "Open", Available: true}}, Complete: true}, nil
+}
 
 func TestBuilderFilterRequestBindsExactRevisionAndBrowser(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("a", 64)
@@ -108,12 +119,78 @@ func TestBuilderFilterOptionsCreatesExactRevisionSession(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := response["builderFilterOptionPages"]; !ok || fake.previewCalls == 0 {
-		t.Fatalf("response=%v previewCalls=%d", response, fake.previewCalls)
+	if _, ok := response["builderFilterOptionPages"]; !ok || fake.compileCalls == 0 || fake.previewCalls != 0 {
+		t.Fatalf("response=%v compileCalls=%d previewCalls=%d", response, fake.compileCalls, fake.previewCalls)
 	}
 	key := dashboardsession.Key{ProjectID: "sales", DashboardID: "revenue", PrincipalOrClient: "actor-1:client_1", ServingStateID: "builder:draft-7:revision-3:" + hash, StreamInstanceID: "stream_1"}
 	if _, err := store.Load(context.Background(), key); err != nil {
 		t.Fatalf("exact revision session was not created: %v", err)
+	}
+}
+
+func TestBuilderFilterOptionsIgnoreUnrelatedVisualQueryFailure(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("c", 64)
+	definition, err := dashboarddefinition.New("revenue", "Revenue", "", "sales", []dashboard.Page{{ID: "overview"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.FilterDefinitions = map[string]dashboardfilter.Definition{
+		"status": {Label: "Status", Field: "status", ValueKind: dashboardfilter.ValueString, Options: dashboardfilter.OptionSource{Kind: dashboardfilter.OptionSourceStatic, Values: []dashboardfilter.Option{{Value: dashboardfilter.Value{Kind: dashboardfilter.ValueString, Value: "open"}, Label: "Open"}}}},
+	}
+	definition.FilterBindings = map[string]dashboardfilter.Binding{
+		"status": {Key: "status", ID: "status", Filter: "status", Scope: dashboardfilter.ScopeReport, Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}, Selection: dashboardfilter.SelectionPolicy{Mode: dashboardfilter.SelectionSingle}},
+	}
+	fake := &builderAuthoringFake{
+		compilation: preview.Compilation{Definition: definition},
+		previewErr:  errors.New("unrelated visual query failed"),
+	}
+	h := Handler{Authoring: fake, ProjectID: "sales", SessionStore: dashboardsession.NewMemoryStore(), CurrentPrincipalID: func(*http.Request) string { return "actor-1" }}
+	request := builderRequest(http.MethodPost, "/dashboards/revenue/draft/filter-options?draft=draft-7", map[string]any{
+		"builder":                    map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-7", "revision": map[string]any{"id": "revision-3", "number": 3, "contentHash": hash}, "pages": []map[string]any{{"id": "overview"}}},
+		"runtime":                    map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1"},
+		"builderFilterOptionRequest": map[string]any{"bindingKey": "status", "servingStateID": "builder:draft-7:revision-3:" + hash, "filterRevision": 1, "requestGeneration": 1},
+	})
+	recorder := httptest.NewRecorder()
+	h.DashboardBuilderFilterOptions(recorder, withBuilderURLParams(request, "sales", "revenue"))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Open") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if fake.compileCalls != 1 || fake.previewCalls != 0 {
+		t.Fatalf("compileCalls=%d previewCalls=%d", fake.compileCalls, fake.previewCalls)
+	}
+}
+
+func TestBuilderFilterOptionsBindDynamicQueryToCompiledGeneration(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("d", 64)
+	servingStateID := "builder:draft-7:revision-3:" + hash + ":generation:generation-11"
+	definition, err := dashboarddefinition.New("revenue", "Revenue", "", "sales", []dashboard.Page{{ID: "overview"}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	definition.FilterDefinitions = map[string]dashboardfilter.Definition{
+		"status": {Label: "Status", Field: "status", ValueKind: dashboardfilter.ValueString, Options: dashboardfilter.OptionSource{Kind: dashboardfilter.OptionSourceDistinct, Limit: 20}},
+	}
+	definition.FilterBindings = map[string]dashboardfilter.Binding{
+		"status": {Key: "status", ID: "status", Filter: "status", Scope: dashboardfilter.ScopeReport, Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered}, Selection: dashboardfilter.SelectionPolicy{Mode: dashboardfilter.SelectionSingle}},
+	}
+	metrics := &generationBoundOptionMetrics{}
+	fake := &builderAuthoringFake{compilation: preview.Compilation{
+		Definition:       definition,
+		SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-11"}},
+	}}
+	h := Handler{Authoring: fake, Metrics: metrics, ProjectID: "sales", SessionStore: dashboardsession.NewMemoryStore(), CurrentPrincipalID: func(*http.Request) string { return "actor-1" }}
+	request := builderRequest(http.MethodPost, "/dashboards/revenue/draft/filter-options?draft=draft-7", map[string]any{
+		"builder":                    map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-7", "revision": map[string]any{"id": "revision-3", "number": 3, "contentHash": hash}, "pages": []map[string]any{{"id": "overview"}}},
+		"runtime":                    map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1"},
+		"builderFilterOptionRequest": map[string]any{"bindingKey": "status", "servingStateID": servingStateID, "filterRevision": 1, "requestGeneration": 1},
+	})
+	recorder := httptest.NewRecorder()
+	h.DashboardBuilderFilterOptions(recorder, withBuilderURLParams(request, "sales", "revenue"))
+	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "Open") {
+		t.Fatalf("status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if metrics.generation != "generation-11" {
+		t.Fatalf("dynamic option query generation = %q", metrics.generation)
 	}
 }
 
