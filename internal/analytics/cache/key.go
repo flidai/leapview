@@ -99,12 +99,8 @@ func NewKeyFromDigests(partition resultidentity.Partition, dependencyDigest, pol
 	if err != nil {
 		return Key{}, fmt.Errorf("%w: serialize: %v", ErrInvalidKey, err)
 	}
-	preimage := make([]byte, 0, len(cacheKeyDomain)+1+len(canonical))
-	preimage = append(preimage, cacheKeyDomain...)
-	preimage = append(preimage, 0)
-	preimage = append(preimage, canonical...)
-	sum := sha256.Sum256(preimage)
-	return Key{partition: partition, dependencyDigest: dependencyDigest, policyFingerprint: policyFingerprint, queryDigest: canonicalQueryDigest, canonical: append([]byte(nil), canonical...), digest: "sha256:" + hex.EncodeToString(sum[:])}, nil
+	digest := domainSeparatedSHA256(cacheKeyDomain, canonical)
+	return Key{partition: partition, dependencyDigest: dependencyDigest, policyFingerprint: policyFingerprint, queryDigest: canonicalQueryDigest, canonical: append([]byte(nil), canonical...), digest: digest}, nil
 }
 
 func validateDigest(name, value string) error {
@@ -159,12 +155,18 @@ func CanonicalQueryDigest(query dataquery.Query) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("%w: serialize: %v", ErrInvalidQuery, err)
 	}
-	preimage := make([]byte, 0, len(queryDigestDomain)+1+len(canonical))
-	preimage = append(preimage, queryDigestDomain...)
-	preimage = append(preimage, 0)
-	preimage = append(preimage, canonical...)
-	sum := sha256.Sum256(preimage)
-	return "sha256:" + hex.EncodeToString(sum[:]), nil
+	return domainSeparatedSHA256(queryDigestDomain, canonical), nil
+}
+
+// domainSeparatedSHA256 streams the preimage into the hash. Besides avoiding a
+// second copy of potentially large canonical query bytes, this keeps capacity
+// arithmetic out of the allocation path.
+func domainSeparatedSHA256(domain string, canonical []byte) string {
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(domain))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(canonical)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
 }
 
 type queryWire struct {
