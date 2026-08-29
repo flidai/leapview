@@ -14,8 +14,10 @@ import (
 
 	"github.com/alexedwards/argon2id"
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 const (
@@ -133,6 +135,65 @@ func scanPrincipal(row pgx.Row) (access.Principal, error) {
 	p.UpdatedAt = formatTimePtr(updated)
 	return p, nil
 }
+func principalFromGenerated(row accessdb.GetPrincipalRow) access.Principal {
+	p := access.Principal{
+		ID:          principalUUID(row.ID),
+		Email:       row.Email,
+		DisplayName: row.DisplayName,
+		Kind:        access.PrincipalKind(row.PrincipalType),
+		DisabledAt:  principalTimestamp(row.DisabledAt),
+		BlockedAt:   principalTimestamp(row.BlockedAt),
+		LastSeenAt:  principalTimestamp(row.LastSeenAt),
+		CreatedAt:   principalTimestamp(row.CreatedAt),
+		UpdatedAt:   principalTimestamp(row.UpdatedAt),
+	}
+	if row.PrincipalType == "service" {
+		p.Kind = access.PrincipalKindServicePrincipal
+	} else if row.PrincipalType == "dashboard_publication" {
+		p.Kind = access.PrincipalKindDashboardPublication
+	}
+	return p
+}
+
+func principalUUID(value pgtype.UUID) string {
+	if !value.Valid {
+		return ""
+	}
+	return uuid.UUID(value.Bytes).String()
+}
+
+func principalTimestamp(value pgtype.Timestamptz) string {
+	if !value.Valid {
+		return ""
+	}
+	return formatTime(value.Time)
+}
+
+func pgUUID(value string) (pgtype.UUID, error) {
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}, err
+	}
+	return pgtype.UUID{Bytes: id, Valid: true}, nil
+}
+
+func pgTimestamp(value time.Time) pgtype.Timestamptz {
+	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
+}
+
+func pgInterval(value time.Duration) pgtype.Interval {
+	return pgtype.Interval{Microseconds: int64(value / time.Microsecond), Valid: true}
+}
+
+func principalFromListGenerated(row accessdb.ListPrincipalsRow) access.Principal {
+	return principalFromGenerated(accessdb.GetPrincipalRow{
+		ID: row.ID, PrincipalType: row.PrincipalType, Status: row.Status,
+		Email: row.Email, DisplayName: row.DisplayName, DisabledAt: row.DisabledAt,
+		BlockedAt: row.BlockedAt, LastSeenAt: row.LastSeenAt, CreatedAt: row.CreatedAt,
+		UpdatedAt: row.UpdatedAt,
+	})
+}
+
 func formatTimePtr(v *time.Time) string {
 	if v == nil {
 		return ""
@@ -210,33 +271,20 @@ func (r *Repository) SearchPrincipals(ctx context.Context, query string, limit i
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, principalSelect()+` WHERE revoked_at IS NULL AND (email ILIKE '%'||$1||'%' OR display_name ILIKE '%'||$1||'%') ORDER BY display_name LIMIT $2`, query, limit)
+	rows, err := accessdb.New(db).SearchPrincipals(ctx, accessdb.SearchPrincipalsParams{Query: query, PageSize: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []access.Principal{}
-	for rows.Next() {
-		var p access.Principal
-		var kind, status string
-		var disabled, blocked, last, created, updated *time.Time
-		if err := rows.Scan(&p.ID, &kind, &status, &p.Email, &p.DisplayName, &disabled, &blocked, &last, &created, &updated); err != nil {
-			return nil, err
-		}
-		p.Kind = access.PrincipalKind(kind)
-		if kind == "service" {
-			p.Kind = access.PrincipalKindServicePrincipal
-		} else if kind == "dashboard_publication" {
-			p.Kind = access.PrincipalKindDashboardPublication
-		}
-		p.DisabledAt = formatTimePtr(disabled)
-		p.BlockedAt = formatTimePtr(blocked)
-		p.LastSeenAt = formatTimePtr(last)
-		p.CreatedAt = formatTimePtr(created)
-		p.UpdatedAt = formatTimePtr(updated)
-		out = append(out, p)
+	out := make([]access.Principal, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, principalFromGenerated(accessdb.GetPrincipalRow{
+			ID: row.ID, PrincipalType: row.PrincipalType, Status: row.Status,
+			Email: row.Email, DisplayName: row.DisplayName, DisabledAt: row.DisabledAt,
+			BlockedAt: row.BlockedAt, LastSeenAt: row.LastSeenAt, CreatedAt: row.CreatedAt,
+			UpdatedAt: row.UpdatedAt,
+		}))
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) UpsertPrincipal(ctx context.Context, input access.PrincipalInput) (access.Principal, error) {
@@ -275,17 +323,20 @@ func (r *Repository) UpsertPrincipal(ctx context.Context, input access.Principal
 	if existing, lookupErr := r.PrincipalByID(ctx, id); lookupErr == nil && existing.Kind != kind {
 		return access.Principal{}, fmt.Errorf("principal kind is immutable")
 	}
-	tag, err := db.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1::uuid,$2,'active',$3,$4) ON CONFLICT(id) DO UPDATE SET email=EXCLUDED.email,display_name=EXCLUDED.display_name,updated_at=clock_timestamp() WHERE access.principal.principal_type=EXCLUDED.principal_type AND access.principal.revoked_at IS NULL`, id, sqlKind, email, display)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	tag, err := accessdb.New(db).UpsertPrincipal(ctx, accessdb.UpsertPrincipalParams{ID: parsedID, Kind: sqlKind, Email: email, DisplayName: display})
 	if err != nil {
 		return access.Principal{}, err
 	}
 	if tag.RowsAffected() == 0 {
-		var existingKind string
-		lookupErr := db.QueryRow(ctx, `SELECT principal_type FROM access.principal WHERE id=$1::uuid`, id).Scan(&existingKind)
+		existingType, lookupErr := accessdb.New(db).PrincipalKind(ctx, parsedID)
 		if lookupErr != nil {
 			return access.Principal{}, lookupErr
 		}
-		if existingKind != sqlKind {
+		if existingType != sqlKind {
 			return access.Principal{}, fmt.Errorf("principal kind is immutable")
 		}
 		return access.Principal{}, fmt.Errorf("principal is revoked")
@@ -316,7 +367,15 @@ func (r *Repository) SetPlatformRole(ctx context.Context, input access.PlatformR
 	if e != nil {
 		return access.Principal{}, e
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO access.platform_role_binding(id,principal_id,role) VALUES($1::uuid,$2::uuid,$3) ON CONFLICT (principal_id,role) WHERE revoked_at IS NULL DO NOTHING`, id, p.ID, string(role))
+	roleID, err := pgUUID(id)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	principalID, err := pgUUID(p.ID)
+	if err != nil {
+		return access.Principal{}, err
+	}
+	err = accessdb.New(tx).InsertPlatformRole(ctx, accessdb.InsertPlatformRoleParams{ID: roleID, PrincipalID: principalID, Role: string(role)})
 	if err != nil {
 		return access.Principal{}, err
 	}
@@ -340,9 +399,11 @@ func (r *Repository) IsPlatformAdmin(ctx context.Context, principalID string) (b
 	if e != nil {
 		return false, nil
 	}
-	var yes bool
-	err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM access.principal p JOIN access.platform_role_binding b ON b.principal_id=p.id WHERE p.id=$1::uuid AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL AND b.role='platform_admin' AND b.revoked_at IS NULL)`, id).Scan(&yes)
-	return yes, err
+	parsed, parseErr := pgUUID(id)
+	if parseErr != nil {
+		return false, nil
+	}
+	return accessdb.New(db).IsPlatformAdmin(ctx, parsed)
 }
 
 func (r *Repository) CreateServicePrincipal(ctx context.Context, input access.ServicePrincipalInput) (access.Principal, error) {
@@ -353,25 +414,21 @@ func (r *Repository) ListServicePrincipals(ctx context.Context) ([]access.Princi
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, principalSelect()+` WHERE principal_type='service' AND revoked_at IS NULL ORDER BY created_at DESC LIMIT $1`, maxPageSize)
+	rows, err := accessdb.New(db).ListServicePrincipals(ctx, maxPageSize)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]access.Principal, 0)
-	for rows.Next() {
-		var p access.Principal
-		var kind, status string
-		var disabled, blocked, last, created, updated *time.Time
-		if err := rows.Scan(&p.ID, &kind, &status, &p.Email, &p.DisplayName, &disabled, &blocked, &last, &created, &updated); err != nil {
-			return nil, err
-		}
-		p.Kind = access.PrincipalKindServicePrincipal
-		p.DisabledAt, p.BlockedAt = formatTimePtr(disabled), formatTimePtr(blocked)
-		p.LastSeenAt, p.CreatedAt, p.UpdatedAt = formatTimePtr(last), formatTimePtr(created), formatTimePtr(updated)
+	out := make([]access.Principal, 0, len(rows))
+	for _, row := range rows {
+		p := principalFromListGenerated(accessdb.ListPrincipalsRow{
+			ID: row.ID, PrincipalType: row.PrincipalType, Status: row.Status,
+			Email: row.Email, DisplayName: row.DisplayName, DisabledAt: row.DisabledAt,
+			BlockedAt: row.BlockedAt, LastSeenAt: row.LastSeenAt, CreatedAt: row.CreatedAt,
+			UpdatedAt: row.UpdatedAt,
+		})
 		out = append(out, p)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) UpdateServicePrincipal(ctx context.Context, id string, input access.ServicePrincipalInput) (access.Principal, error) {
 	input.ID = id
@@ -391,20 +448,24 @@ func (r *Repository) DeleteServicePrincipal(ctx context.Context, id string) erro
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	tag, err := tx.Exec(ctx, `UPDATE access.principal SET status='disabled',disabled_at=COALESCE(disabled_at,clock_timestamp()),revoked_at=COALESCE(revoked_at,clock_timestamp()),updated_at=clock_timestamp() WHERE id=$1::uuid AND principal_type='service' AND revoked_at IS NULL`, id)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(tx).DisableServicePrincipal(ctx, parsedID)
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalSessions(ctx, parsedID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalTokens(ctx, parsedID); err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.service_principal_secret SET revoked_at=clock_timestamp() WHERE service_principal_id=$1::uuid AND revoked_at IS NULL`, id); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalSecrets(ctx, parsedID); err != nil {
 		return err
 	}
 	if ownTx {
@@ -437,27 +498,38 @@ func (r *Repository) UpsertGroup(ctx context.Context, input access.GroupInput) (
 		return access.Group{}, fmt.Errorf("group identity exceeds bounds")
 	}
 	if external != "" {
-		var existing string
-		qerr := db.QueryRow(ctx, `SELECT id::text FROM access.access_group WHERE provider=$1 AND external_id=$2 AND revoked_at IS NULL`, provider, external).Scan(&existing)
+		gid, qerr := accessdb.New(db).FindGroupByExternal(ctx, accessdb.FindGroupByExternalParams{Provider: provider, ExternalID: external})
 		if qerr == nil {
-			id = existing
+			id = principalUUID(gid)
 		} else if !errors.Is(qerr, pgx.ErrNoRows) {
 			return access.Group{}, qerr
 		}
 	}
-	_, err = db.Exec(ctx, `INSERT INTO access.access_group(id,name,provider,external_id) VALUES($1::uuid,$2,$3,$4) ON CONFLICT(id) DO UPDATE SET name=EXCLUDED.name`, id, name, provider, external)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return access.Group{}, err
+	}
+	err = accessdb.New(db).UpsertGroup(ctx, accessdb.UpsertGroupParams{ID: parsedID, Name: name, Provider: provider, ExternalID: external})
 	if err != nil {
 		return access.Group{}, err
 	}
 	return r.groupByID(ctx, id, provider, external)
 }
 func (r *Repository) groupByID(ctx context.Context, id, provider, external string) (access.Group, error) {
-	db, _ := r.requireDB()
-	var g access.Group
-	var created time.Time
-	err := db.QueryRow(ctx, `SELECT id::text,provider,external_id,name,created_at FROM access.access_group WHERE revoked_at IS NULL AND (id=$1::uuid OR (provider=$2 AND external_id=$3))`, id, provider, external).Scan(&g.ID, &g.Provider, &g.ExternalID, &g.Name, &created)
-	g.CreatedAt = formatTime(created)
-	return g, err
+	db, err := r.requireDB()
+	if err != nil {
+		return access.Group{}, err
+	}
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return access.Group{}, err
+	}
+	row, err := accessdb.New(db).GetGroup(ctx, accessdb.GetGroupParams{ID: parsedID, Provider: provider, ExternalID: external})
+	if err != nil {
+		return access.Group{}, err
+	}
+	return access.Group{ID: principalUUID(row.ID), Provider: row.Provider, ExternalID: row.ExternalID,
+		Name: row.Name, CreatedAt: principalTimestamp(row.CreatedAt)}, nil
 }
 func (r *Repository) ListGroups(ctx context.Context) ([]access.Group, error) {
 	return r.listGroups(ctx, "", false, maxPageSize)
@@ -479,31 +551,27 @@ func (r *Repository) listGroups(ctx context.Context, q string, search bool, limi
 	if err != nil {
 		return nil, err
 	}
-	clause := ` WHERE revoked_at IS NULL`
+	var rows []accessdb.ListGroupsRow
 	if search {
-		clause += ` AND (name ILIKE '%'||$1||'%' OR external_id ILIKE '%'||$1||'%')`
-	}
-	args := []any{}
-	if search {
-		args = append(args, q)
-	}
-	args = append(args, limit)
-	rows, err := db.Query(ctx, `SELECT id::text,provider,external_id,name,created_at FROM access.access_group`+clause+` ORDER BY name LIMIT $`+fmt.Sprint(len(args)), args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []access.Group{}
-	for rows.Next() {
-		var g access.Group
-		var t time.Time
-		if err := rows.Scan(&g.ID, &g.Provider, &g.ExternalID, &g.Name, &t); err != nil {
+		found, qerr := accessdb.New(db).SearchGroups(ctx, accessdb.SearchGroupsParams{Query: q, PageSize: int32(limit)})
+		if qerr != nil {
+			return nil, qerr
+		}
+		for _, row := range found {
+			rows = append(rows, accessdb.ListGroupsRow{ID: row.ID, Provider: row.Provider, ExternalID: row.ExternalID, Name: row.Name, CreatedAt: row.CreatedAt})
+		}
+	} else {
+		rows, err = accessdb.New(db).ListGroups(ctx, int32(limit))
+		if err != nil {
 			return nil, err
 		}
-		g.CreatedAt = formatTime(t)
-		out = append(out, g)
 	}
-	return out, rows.Err()
+	out := make([]access.Group, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, access.Group{ID: principalUUID(row.ID), Provider: row.Provider, ExternalID: row.ExternalID,
+			Name: row.Name, CreatedAt: principalTimestamp(row.CreatedAt)})
+	}
+	return out, nil
 }
 func (r *Repository) DeleteGroup(ctx context.Context, id string) error {
 	db, err := r.requireDB()
@@ -514,7 +582,11 @@ func (r *Repository) DeleteGroup(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.access_group SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).RevokeGroup(ctx, parsedID)
 	if err != nil {
 		return err
 	}
@@ -542,11 +614,18 @@ func (r *Repository) groupMember(ctx context.Context, gid, pid string, add bool)
 	if err != nil {
 		return err
 	}
-	if add {
-		_, err = db.Exec(ctx, `INSERT INTO access.principal_group(group_id,principal_id) SELECT $1::uuid,$2::uuid WHERE EXISTS(SELECT 1 FROM access.access_group WHERE id=$1::uuid AND revoked_at IS NULL) AND EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND revoked_at IS NULL) AND NOT EXISTS(SELECT 1 FROM access.principal_group WHERE group_id=$1::uuid AND principal_id=$2::uuid AND revoked_at IS NULL) ON CONFLICT DO NOTHING`, gid, pid)
+	pgid, err := pgUUID(gid)
+	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.principal_group SET revoked_at=clock_timestamp() WHERE group_id=$1::uuid AND principal_id=$2::uuid AND revoked_at IS NULL`, gid, pid)
+	ppid, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	if add {
+		return accessdb.New(db).AddGroupMember(ctx, accessdb.AddGroupMemberParams{GroupID: pgid, PrincipalID: ppid})
+	}
+	tag, err := accessdb.New(db).RemoveGroupMember(ctx, accessdb.RemoveGroupMemberParams{GroupID: pgid, PrincipalID: ppid})
 	if err == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -567,27 +646,26 @@ func (r *Repository) listMembers(ctx context.Context, gid string) ([]access.Grou
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT g.id::text,p.id::text,p.principal_type,COALESCE(p.email,''),p.display_name,pg.created_at FROM access.principal_group pg JOIN access.access_group g ON g.id=pg.group_id JOIN access.principal p ON p.id=pg.principal_id WHERE g.id=$1::uuid AND pg.revoked_at IS NULL AND g.revoked_at IS NULL ORDER BY p.display_name`, gid)
+	groupID, err := pgUUID(gid)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []access.GroupMember{}
-	for rows.Next() {
+	rows, err := accessdb.New(db).ListGroupMembers(ctx, groupID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.GroupMember, 0, len(rows))
+	for _, row := range rows {
 		var m access.GroupMember
-		var kind string
-		var t time.Time
-		if err := rows.Scan(&m.GroupID, &m.PrincipalID, &kind, &m.Email, &m.DisplayName, &t); err != nil {
-			return nil, err
-		}
-		m.Kind = access.PrincipalKind(kind)
-		if kind == "service" {
+		m.GroupID, m.PrincipalID = principalUUID(row.ID), principalUUID(row.ID_2)
+		m.Email, m.DisplayName, m.Kind = row.Email, row.DisplayName, access.PrincipalKind(row.PrincipalType)
+		if row.PrincipalType == "service" {
 			m.Kind = access.PrincipalKindServicePrincipal
 		}
-		m.CreatedAt = formatTime(t)
+		m.CreatedAt = principalTimestamp(row.CreatedAt)
 		out = append(out, m)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) ListGroupIDsForPrincipal(ctx context.Context, pid string) ([]string, error) {
 	db, err := r.requireDB()
@@ -598,20 +676,19 @@ func (r *Repository) ListGroupIDsForPrincipal(ctx context.Context, pid string) (
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT pg.group_id::text FROM access.principal_group pg JOIN access.access_group g ON g.id=pg.group_id WHERE pg.principal_id=$1::uuid AND pg.revoked_at IS NULL AND g.revoked_at IS NULL ORDER BY pg.group_id`, pid)
+	principalID, err := pgUUID(pid)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []string{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		out = append(out, id)
+	rows, err := accessdb.New(db).ListGroupIDs(ctx, principalID)
+	if err != nil {
+		return nil, err
 	}
-	return out, rows.Err()
+	out := make([]string, 0, len(rows))
+	for _, id := range rows {
+		out = append(out, principalUUID(id))
+	}
+	return out, nil
 }
 
 func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUserInput) (access.LocalPasswordReset, error) {
@@ -651,8 +728,12 @@ func (r *Repository) CreateLocalUser(ctx context.Context, input access.LocalUser
 		}
 	}()
 	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
-	if _, err = tx.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'user','active',$2,$3)`, id, email, firstNonEmpty(input.DisplayName, email)); err == nil {
-		_, err = tx.Exec(ctx, `INSERT INTO access.local_credential(principal_id,verifier,must_change,password_changed_at) VALUES($1,$2,$3,clock_timestamp())`, id, verifier, input.MustChange)
+	parsedID, err := pgUUID(id)
+	if err == nil {
+		err = accessdb.New(tx).InsertPrincipal(ctx, accessdb.InsertPrincipalParams{ID: parsedID, Email: email, DisplayName: firstNonEmpty(input.DisplayName, email)})
+	}
+	if err == nil {
+		err = accessdb.New(tx).InsertLocalCredential(ctx, accessdb.InsertLocalCredentialParams{PrincipalID: parsedID, Verifier: verifier, MustChange: input.MustChange})
 	}
 	if err == nil && ownTx {
 		err = tx.Commit(ctx)
@@ -686,34 +767,31 @@ func (r *Repository) LocalCredential(ctx context.Context, pid string) (access.Lo
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
-	var c access.LocalCredential
-	var must bool
-	var created, updated, changed time.Time
-	err = db.QueryRow(ctx, `SELECT principal_id::text,must_change,created_at,updated_at,password_changed_at FROM access.local_credential WHERE principal_id=$1::uuid`, pid).Scan(&c.PrincipalID, &must, &created, &updated, &changed)
+	parsedID, err := pgUUID(pid)
 	if err != nil {
-		return c, err
+		return access.LocalCredential{}, err
 	}
-	c.MustChangePassword = must
-	c.CreatedAt = formatTime(created)
-	c.UpdatedAt = formatTime(updated)
-	c.PasswordChangedAt = formatTime(changed)
-	return c, nil
+	row, err := accessdb.New(db).GetLocalCredential(ctx, parsedID)
+	if err != nil {
+		return access.LocalCredential{}, err
+	}
+	return access.LocalCredential{PrincipalID: principalUUID(row.PrincipalID), MustChangePassword: row.MustChange,
+		CreatedAt: principalTimestamp(row.CreatedAt), UpdatedAt: principalTimestamp(row.UpdatedAt),
+		PasswordChangedAt: principalTimestamp(row.PasswordChangedAt)}, nil
 }
 func (r *Repository) VerifyLocalPassword(ctx context.Context, email, password string) (access.Principal, access.LocalCredential, error) {
 	db, err := r.requireDB()
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, err
 	}
-	var id string
-	var verifier []byte
-	var disabled, blocked *time.Time
-	err = db.QueryRow(ctx, `SELECT p.id::text,c.verifier,p.disabled_at,p.blocked_at FROM access.principal p JOIN access.local_credential c ON c.principal_id=p.id WHERE lower(p.email)=lower($1) AND p.status='active' AND p.revoked_at IS NULL AND c.revoked_at IS NULL`, access.NormalizeEmail(email)).Scan(&id, &verifier, &disabled, &blocked)
+	row, err := accessdb.New(db).FindLocalCredentialByEmail(ctx, access.NormalizeEmail(email))
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, err
 	}
-	if disabled != nil || blocked != nil || !verifySecret(password, verifier) {
+	if row.DisabledAt.Valid || row.BlockedAt.Valid || !verifySecret(password, row.Verifier) {
 		return access.Principal{}, access.LocalCredential{}, pgx.ErrNoRows
 	}
+	id := principalUUID(row.ID)
 	p, err := r.PrincipalByID(ctx, id)
 	if err != nil {
 		return access.Principal{}, access.LocalCredential{}, err
@@ -771,21 +849,25 @@ func (r *Repository) setPasswordCredential(ctx context.Context, pid, current, ne
 		}
 	}()
 	txRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
+	parsedID, err := pgUUID(pid)
+	if err != nil {
+		return access.LocalCredential{}, err
+	}
 	var old []byte
-	if err = tx.QueryRow(ctx, `SELECT verifier FROM access.local_credential WHERE principal_id=$1::uuid FOR UPDATE`, pid).Scan(&old); err != nil {
+	if old, err = accessdb.New(tx).LockLocalVerifier(ctx, parsedID); err != nil {
 		return access.LocalCredential{}, err
 	}
 	if current != "" && !verifySecret(current, old) {
 		return access.LocalCredential{}, pgx.ErrNoRows
 	}
-	tag, err := tx.Exec(ctx, `UPDATE access.local_credential SET verifier=$2,must_change=$3,updated_at=clock_timestamp(),password_changed_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, pid, v, must)
+	tag, err := accessdb.New(tx).UpdateLocalCredential(ctx, accessdb.UpdateLocalCredentialParams{PrincipalID: parsedID, Verifier: v, MustChange: must})
 	if err != nil {
 		return access.LocalCredential{}, err
 	}
 	if tag.RowsAffected() == 0 {
 		return access.LocalCredential{}, pgx.ErrNoRows
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE principal_id=$1::uuid AND revoked_at IS NULL`, pid); err != nil {
+	if err = accessdb.New(tx).RevokePrincipalSessions(ctx, parsedID); err != nil {
 		return access.LocalCredential{}, err
 	}
 	if ownTx {
@@ -823,7 +905,16 @@ func (r *Repository) CreateSession(ctx context.Context, pid string, ttl time.Dur
 	if err != nil {
 		return "", err
 	}
-	tag, err := db.Exec(ctx, `INSERT INTO access.session(id,principal_id,token_fingerprint,verifier,expires_at,kind) SELECT $1::uuid,$2::uuid,$3,$4,clock_timestamp()+$5::interval,'browser' WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND status='active' AND disabled_at IS NULL AND blocked_at IS NULL)`, id, pid, r.secretFingerprint(token), ver, ttl.String())
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return "", err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return "", err
+	}
+	tag, err := accessdb.New(db).CreateBrowserSession(ctx, accessdb.CreateBrowserSessionParams{ID: parsedID, PrincipalID: principalID,
+		TokenFingerprint: r.secretFingerprint(token), Verifier: ver, Ttl: pgInterval(ttl)})
 	if err != nil {
 		return "", err
 	}
@@ -837,24 +928,22 @@ func (r *Repository) PrincipalForToken(ctx context.Context, token string) (acces
 	if err != nil {
 		return access.Principal{}, err
 	}
-	var id string
-	var fp, ver []byte
-	err = db.QueryRow(ctx, `SELECT p.id::text,s.token_fingerprint,s.verifier FROM access.session s JOIN access.principal p ON p.id=s.principal_id WHERE s.token_fingerprint=$1 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL`, r.secretFingerprint(token)).Scan(&id, &fp, &ver)
+	row, err := accessdb.New(db).FindBrowserSession(ctx, r.secretFingerprint(token))
 	if err != nil {
 		return access.Principal{}, err
 	}
-	if !hmac.Equal(fp, r.secretFingerprint(token)) || !verifySecret(token, ver) {
+	if !hmac.Equal(row.TokenFingerprint, r.secretFingerprint(token)) || !verifySecret(token, row.Verifier) {
 		return access.Principal{}, pgx.ErrNoRows
 	}
-	_, _ = db.Exec(ctx, `UPDATE access.session SET last_seen_at=clock_timestamp() WHERE token_fingerprint=$1`, fp)
-	return r.PrincipalByID(ctx, id)
+	_ = accessdb.New(db).TouchBrowserSession(ctx, row.TokenFingerprint)
+	return r.PrincipalByID(ctx, principalUUID(row.ID))
 }
 func (r *Repository) DeleteSession(ctx context.Context, token string) error {
 	db, err := r.requireDB()
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE token_fingerprint=$1 AND revoked_at IS NULL`, r.secretFingerprint(token))
+	tag, err := accessdb.New(db).RevokeBrowserSession(ctx, r.secretFingerprint(token))
 	if err == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -869,29 +958,23 @@ func (r *Repository) ListSessions(ctx context.Context, pid string) ([]access.Ses
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT id::text,principal_id::text,kind,instance_id,profile_id,client_id,expires_at,absolute_expires_at,created_at,last_seen_at,revoked_at FROM access.session WHERE principal_id=$1::uuid ORDER BY created_at DESC LIMIT $2`, pid, maxPageSize)
+	principalID, err := pgUUID(pid)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []access.Session{}
-	for rows.Next() {
-		var s access.Session
-		var kind string
-		var abs, rev *time.Time
-		var exp, created, last time.Time
-		if err := rows.Scan(&s.ID, &s.PrincipalID, &kind, &s.InstanceID, &s.ProfileID, &s.ClientID, &exp, &abs, &created, &last, &rev); err != nil {
-			return nil, err
-		}
-		s.Kind = access.SessionKind(kind)
-		s.ExpiresAt = formatTime(exp)
-		s.AbsoluteExpiresAt = formatTimePtr(abs)
-		s.CreatedAt = formatTime(created)
-		s.LastSeenAt = formatTime(last)
-		s.RevokedAt = formatTimePtr(rev)
+	rows, err := accessdb.New(db).ListSessions(ctx, accessdb.ListSessionsParams{PrincipalID: principalID, PageSize: maxPageSize})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.Session, 0, len(rows))
+	for _, row := range rows {
+		s := access.Session{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Kind: access.SessionKind(row.Kind),
+			InstanceID: row.InstanceID, ProfileID: row.ProfileID, ClientID: row.ClientID,
+			ExpiresAt: principalTimestamp(row.ExpiresAt), AbsoluteExpiresAt: principalTimestamp(row.AbsoluteExpiresAt),
+			CreatedAt: principalTimestamp(row.CreatedAt), LastSeenAt: principalTimestamp(row.LastSeenAt), RevokedAt: principalTimestamp(row.RevokedAt)}
 		out = append(out, s)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	db, err := r.requireDB()
@@ -902,7 +985,11 @@ func (r *Repository) RevokeSession(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).RevokeSession(ctx, parsedID)
 	if err == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -921,7 +1008,15 @@ func (r *Repository) RevokeSessionForPrincipal(ctx context.Context, pid, id stri
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND principal_id=$2::uuid AND revoked_at IS NULL`, id, pid)
+	sessionID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).RevokeSessionForPrincipal(ctx, accessdb.RevokeSessionForPrincipalParams{ID: sessionID, PrincipalID: principalID})
 	if err == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -939,9 +1034,11 @@ func capabilitiesJSON(caps []access.Capability) ([]byte, error) {
 }
 
 func databaseExpiryValid(ctx context.Context, db DBTX, expiresAt time.Time) (bool, error) {
-	var valid bool
-	err := db.QueryRow(ctx, `SELECT $1::timestamptz > clock_timestamp() AND $1::timestamptz <= clock_timestamp()+interval '365 days'`, expiresAt.UTC()).Scan(&valid)
-	return valid, err
+	valid, err := accessdb.New(db).CheckExpiry(ctx, pgTimestamp(expiresAt))
+	if err != nil || valid == nil {
+		return false, err
+	}
+	return *valid, nil
 }
 
 func (r *Repository) CreateAPIToken(ctx context.Context, pid, name string) (string, error) {
@@ -977,7 +1074,16 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
-	tag, err := db.Exec(ctx, `INSERT INTO access.api_token(id,principal_id,name,token_fingerprint,verifier,capabilities,expires_at) SELECT $1::uuid,$2::uuid,$3,$4,$5,$6::jsonb,$7 WHERE $7 > clock_timestamp() AND $7 <= clock_timestamp()+interval '365 days' AND EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL)`, id, pid, name, r.secretFingerprint(tok), ver, caps, in.ExpiresAt.UTC())
+	tokenID, err := pgUUID(id)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	principalID, err := pgUUID(pid)
+	if err != nil {
+		return "", access.APIToken{}, err
+	}
+	tag, err := accessdb.New(db).CreateAPIToken(ctx, accessdb.CreateAPITokenParams{ID: tokenID, PrincipalID: principalID, Name: name,
+		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Capabilities: caps, ExpiresAt: pgTimestamp(in.ExpiresAt)})
 	if err != nil {
 		return "", access.APIToken{}, err
 	}
@@ -996,20 +1102,20 @@ func (r *Repository) CreateAPITokenWithMetadata(ctx context.Context, in access.A
 }
 func (r *Repository) apiToken(ctx context.Context, id string) (access.APIToken, error) {
 	db, _ := r.requireDB()
-	var t access.APIToken
-	var caps []byte
-	var exp, created, last, rev *time.Time
-	err := db.QueryRow(ctx, `SELECT id::text,principal_id::text,name,capabilities::text,expires_at,created_at,last_used_at,revoked_at FROM access.api_token WHERE id=$1::uuid`, id).Scan(&t.ID, &t.PrincipalID, &t.Name, &caps, &exp, &created, &last, &rev)
+	parsedID, err := pgUUID(id)
 	if err != nil {
-		return t, err
+		return access.APIToken{}, err
 	}
-	if string(caps) != "" && string(caps) != "null" {
-		_ = json.Unmarshal(caps, &t.Capabilities)
+	row, err := accessdb.New(db).GetAPIToken(ctx, parsedID)
+	if err != nil {
+		return access.APIToken{}, err
 	}
-	t.ExpiresAt = formatTimePtr(exp)
-	t.CreatedAt = formatTimePtr(created)
-	t.LastUsedAt = formatTimePtr(last)
-	t.RevokedAt = formatTimePtr(rev)
+	t := access.APIToken{ID: principalUUID(row.ID), PrincipalID: principalUUID(row.PrincipalID), Name: row.Name,
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt),
+		LastUsedAt: principalTimestamp(row.LastUsedAt), RevokedAt: principalTimestamp(row.RevokedAt)}
+	if len(row.Capabilities) > 0 && string(row.Capabilities) != "null" {
+		_ = json.Unmarshal(row.Capabilities, &t.Capabilities)
+	}
 	return t, nil
 }
 func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (access.APIToken, error) {
@@ -1017,17 +1123,15 @@ func (r *Repository) apiTokenForSecret(ctx context.Context, secret string) (acce
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	var id string
-	var verifier []byte
-	err = db.QueryRow(ctx, `SELECT t.id::text,t.verifier FROM access.api_token t JOIN access.principal p ON p.id=t.principal_id WHERE t.token_fingerprint=$1 AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp() AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL`, r.secretFingerprint(secret)).Scan(&id, &verifier)
+	row, err := accessdb.New(db).FindAPITokenByFingerprint(ctx, r.secretFingerprint(secret))
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	if !verifySecret(secret, verifier) {
+	if !verifySecret(secret, row.Verifier) {
 		return access.APIToken{}, pgx.ErrNoRows
 	}
-	_, _ = db.Exec(ctx, `UPDATE access.api_token SET last_used_at=clock_timestamp() WHERE id=$1::uuid`, id)
-	return r.apiToken(ctx, id)
+	_ = accessdb.New(db).TouchAPIToken(ctx, row.ID)
+	return r.apiToken(ctx, principalUUID(row.ID))
 }
 func (r *Repository) PrincipalForAPIToken(ctx context.Context, tok string) (access.Principal, error) {
 	c, e := r.CredentialForAPIToken(ctx, tok)
@@ -1053,24 +1157,23 @@ func (r *Repository) ListAPITokens(ctx context.Context, pid string) ([]access.AP
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT id::text FROM access.api_token WHERE principal_id=$1::uuid ORDER BY created_at DESC LIMIT $2`, pid, maxPageSize)
+	principalID, err := pgUUID(pid)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := []access.APIToken{}
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		t, e := r.apiToken(ctx, id)
+	rows, err := accessdb.New(db).ListAPITokenIDs(ctx, accessdb.ListAPITokenIDsParams{PrincipalID: principalID, PageSize: maxPageSize})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.APIToken, 0, len(rows))
+	for _, id := range rows {
+		t, e := r.apiToken(ctx, principalUUID(id))
 		if e != nil {
 			return nil, e
 		}
 		out = append(out, t)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) RevokeAPIToken(ctx context.Context, id string) error {
 	db, e := r.requireDB()
@@ -1081,7 +1184,11 @@ func (r *Repository) RevokeAPIToken(ctx context.Context, id string) error {
 	if e != nil {
 		return e
 	}
-	tag, e := db.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+	parsedID, e := pgUUID(id)
+	if e != nil {
+		return e
+	}
+	tag, e := accessdb.New(db).RevokeAPIToken(ctx, parsedID)
 	if e == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -1100,7 +1207,15 @@ func (r *Repository) RevokeAPITokenForPrincipal(ctx context.Context, pid, id str
 	if e != nil {
 		return e
 	}
-	tag, e := db.Exec(ctx, `UPDATE access.api_token SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND principal_id=$2::uuid AND revoked_at IS NULL`, id, pid)
+	tokenID, e := pgUUID(id)
+	if e != nil {
+		return e
+	}
+	principalID, e := pgUUID(pid)
+	if e != nil {
+		return e
+	}
+	tag, e := accessdb.New(db).RevokeAPITokenForPrincipal(ctx, accessdb.RevokeAPITokenForPrincipalParams{ID: tokenID, PrincipalID: principalID})
 	if e == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -1132,7 +1247,16 @@ func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid strin
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
 	}
-	tag, e := db.Exec(ctx, `INSERT INTO access.service_principal_secret(id,service_principal_id,name,secret_fingerprint,verifier,expires_at) SELECT $1::uuid,$2::uuid,$3,$4,$5,$6 WHERE $6 > clock_timestamp() AND $6 <= clock_timestamp()+interval '365 days' AND EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND principal_type='service' AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL)`, id, pid, name, r.secretFingerprint(secret), ver, in.ExpiresAt.UTC())
+	secretID, e := pgUUID(id)
+	if e != nil {
+		return "", access.ServicePrincipalSecret{}, e
+	}
+	principalID, e := pgUUID(pid)
+	if e != nil {
+		return "", access.ServicePrincipalSecret{}, e
+	}
+	tag, e := accessdb.New(db).CreateServiceSecret(ctx, accessdb.CreateServiceSecretParams{ID: secretID, PrincipalID: principalID, Name: name,
+		SecretFingerprint: r.secretFingerprint(secret), Verifier: ver, ExpiresAt: pgTimestamp(in.ExpiresAt)})
 	if e != nil {
 		return "", access.ServicePrincipalSecret{}, e
 	}
@@ -1151,13 +1275,16 @@ func (r *Repository) CreateServicePrincipalSecret(ctx context.Context, pid strin
 }
 func (r *Repository) serviceSecret(ctx context.Context, id string) (access.ServicePrincipalSecret, error) {
 	db, _ := r.requireDB()
-	var s access.ServicePrincipalSecret
-	var exp, created, rev *time.Time
-	err := db.QueryRow(ctx, `SELECT id::text,service_principal_id::text,name,expires_at,created_at,revoked_at FROM access.service_principal_secret WHERE id=$1::uuid`, id).Scan(&s.ID, &s.ServicePrincipalID, &s.Name, &exp, &created, &rev)
-	s.ExpiresAt = formatTimePtr(exp)
-	s.CreatedAt = formatTimePtr(created)
-	s.RevokedAt = formatTimePtr(rev)
-	return s, err
+	parsedID, err := pgUUID(id)
+	if err != nil {
+		return access.ServicePrincipalSecret{}, err
+	}
+	row, err := accessdb.New(db).GetServiceSecret(ctx, parsedID)
+	if err != nil {
+		return access.ServicePrincipalSecret{}, err
+	}
+	return access.ServicePrincipalSecret{ID: principalUUID(row.ID), ServicePrincipalID: principalUUID(row.ServicePrincipalID), Name: row.Name,
+		ExpiresAt: principalTimestamp(row.ExpiresAt), CreatedAt: principalTimestamp(row.CreatedAt), RevokedAt: principalTimestamp(row.RevokedAt)}, nil
 }
 func (r *Repository) RevokeServicePrincipalSecret(ctx context.Context, pid, sid string) error {
 	db, e := r.requireDB()
@@ -1172,7 +1299,15 @@ func (r *Repository) RevokeServicePrincipalSecret(ctx context.Context, pid, sid 
 	if e != nil {
 		return e
 	}
-	tag, e := db.Exec(ctx, `UPDATE access.service_principal_secret SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND service_principal_id=$2::uuid AND revoked_at IS NULL`, sid, pid)
+	secretID, e := pgUUID(sid)
+	if e != nil {
+		return e
+	}
+	principalID, e := pgUUID(pid)
+	if e != nil {
+		return e
+	}
+	tag, e := accessdb.New(db).RevokeServiceSecret(ctx, accessdb.RevokeServiceSecretParams{ID: secretID, PrincipalID: principalID})
 	if e == nil && tag.RowsAffected() == 0 {
 		return pgx.ErrNoRows
 	}
@@ -1187,16 +1322,18 @@ func (r *Repository) PrincipalForServicePrincipalSecret(ctx context.Context, pid
 	if e != nil {
 		return access.Principal{}, e
 	}
-	var id string
-	var ver []byte
-	e = db.QueryRow(ctx, `SELECT s.service_principal_id::text,s.verifier FROM access.service_principal_secret s JOIN access.principal p ON p.id=s.service_principal_id WHERE s.service_principal_id=$1::uuid AND s.secret_fingerprint=$2 AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL`, pid, r.secretFingerprint(secret)).Scan(&id, &ver)
+	principalID, e := pgUUID(pid)
 	if e != nil {
 		return access.Principal{}, e
 	}
-	if !verifySecret(secret, ver) {
+	row, e := accessdb.New(db).FindServiceSecretByFingerprint(ctx, accessdb.FindServiceSecretByFingerprintParams{PrincipalID: principalID, SecretFingerprint: r.secretFingerprint(secret)})
+	if e != nil {
+		return access.Principal{}, e
+	}
+	if !verifySecret(secret, row.Verifier) {
 		return access.Principal{}, pgx.ErrNoRows
 	}
-	p, e := r.PrincipalByID(ctx, id)
+	p, e := r.PrincipalByID(ctx, principalUUID(row.ServicePrincipalID))
 	if e != nil || p.AccessDisabled() {
 		return access.Principal{}, pgx.ErrNoRows
 	}
@@ -1212,9 +1349,12 @@ func (r *Repository) BootstrapAdmin(ctx context.Context, email string) error {
 		return err
 	}
 	var id string
-	err = db.QueryRow(ctx, `SELECT id::text FROM access.principal WHERE lower(email)=lower($1) AND revoked_at IS NULL ORDER BY created_at LIMIT 1`, email).Scan(&id)
+	rowID, lookupErr := accessdb.New(db).FindPrincipalByEmail(ctx, email)
+	err = lookupErr
 	if errors.Is(err, pgx.ErrNoRows) {
 		id, err = newUUID()
+	} else if err == nil {
+		id = principalUUID(rowID)
 	}
 	if err != nil {
 		return err
@@ -1241,29 +1381,47 @@ func (r *Repository) ResolveExternalPrincipal(ctx context.Context, in access.Ext
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var pid string
-	err := tx.QueryRow(ctx, `SELECT principal_id::text FROM access.external_identity WHERE provider=$1 AND tenant_id=$2 AND subject=$3 AND revoked_at IS NULL FOR UPDATE`, provider, tenant, subject).Scan(&pid)
+	identityRow, err := accessdb.New(tx).FindExternalIdentity(ctx, accessdb.FindExternalIdentityParams{Provider: provider, TenantID: tenant, Subject: subject})
+	if err == nil {
+		pid = principalUUID(identityRow)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		pid, e = newUUID()
 		if e != nil {
 			return access.Principal{}, e
 		}
-		if _, e = tx.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'user','active',$2,$3)`, pid, access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); e != nil {
+		principalID, parseErr := pgUUID(pid)
+		if parseErr != nil {
+			return access.Principal{}, parseErr
+		}
+		if e = accessdb.New(tx).InsertExternalPrincipal(ctx, accessdb.InsertExternalPrincipalParams{ID: principalID, Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); e != nil {
 			return access.Principal{}, e
 		}
 		identity, ie := newUUID()
 		if ie != nil {
 			return access.Principal{}, ie
 		}
-		if _, e = tx.Exec(ctx, `INSERT INTO access.external_identity(id,principal_id,provider,tenant_id,subject,user_name,external_id,email,display_name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)`, identity, pid, provider, tenant, subject, strings.TrimSpace(in.Email), "", access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); e != nil {
+		identityID, parseErr := pgUUID(identity)
+		if parseErr != nil {
+			return access.Principal{}, parseErr
+		}
+		if e = accessdb.New(tx).InsertExternalIdentity(ctx, accessdb.InsertExternalIdentityParams{ID: identityID, PrincipalID: principalID,
+			Provider: provider, TenantID: tenant, Subject: subject, UserName: strings.TrimSpace(in.Email), ExternalID: "",
+			Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); e != nil {
 			return access.Principal{}, e
 		}
 	} else if err != nil {
 		return access.Principal{}, err
 	} else {
-		if _, e = tx.Exec(ctx, `UPDATE access.external_identity SET email=$4,display_name=$5,updated_at=clock_timestamp() WHERE provider=$1 AND tenant_id=$2 AND subject=$3 AND revoked_at IS NULL`, provider, tenant, subject, access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); e != nil {
+		if e = accessdb.New(tx).UpdateExternalIdentity(ctx, accessdb.UpdateExternalIdentityParams{Provider: provider, TenantID: tenant,
+			Subject: subject, Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); e != nil {
 			return access.Principal{}, e
 		}
-		if _, e = tx.Exec(ctx, `UPDATE access.principal SET email=CASE WHEN $2='' THEN email ELSE $2 END,display_name=CASE WHEN $3='' THEN display_name ELSE $3 END,updated_at=clock_timestamp() WHERE id=$1::uuid`, pid, access.NormalizeEmail(in.Email), strings.TrimSpace(in.DisplayName)); e != nil {
+		principalID, parseErr := pgUUID(pid)
+		if parseErr != nil {
+			return access.Principal{}, parseErr
+		}
+		if e = accessdb.New(tx).UpdateExternalPrincipal(ctx, accessdb.UpdateExternalPrincipalParams{ID: principalID, Email: access.NormalizeEmail(in.Email), DisplayName: strings.TrimSpace(in.DisplayName)}); e != nil {
 			return access.Principal{}, e
 		}
 	}
@@ -1300,7 +1458,17 @@ func (r *Repository) CreateDesktopSession(ctx context.Context, pid, instanceID, 
 	if e != nil {
 		return "", e
 	}
-	tag, e := db.Exec(ctx, `INSERT INTO access.session(id,principal_id,token_fingerprint,verifier,expires_at,absolute_expires_at,kind,instance_id,profile_id,client_id) SELECT $1::uuid,$2::uuid,$3,$4,LEAST(clock_timestamp()+$5::interval,clock_timestamp()+$6::interval),clock_timestamp()+$6::interval,'desktop',$7,$8,'leapview-desktop' WHERE EXISTS(SELECT 1 FROM access.principal WHERE id=$2::uuid AND status='active' AND disabled_at IS NULL AND blocked_at IS NULL)`, id, pid, r.secretFingerprint(tok), ver, ttl.String(), access.DesktopSessionAbsoluteLifetime.String(), instanceID, profileID)
+	sessionID, e := pgUUID(id)
+	if e != nil {
+		return "", e
+	}
+	principalID, e := pgUUID(pid)
+	if e != nil {
+		return "", e
+	}
+	tag, e := accessdb.New(db).CreateDesktopSession(ctx, accessdb.CreateDesktopSessionParams{ID: sessionID, PrincipalID: principalID,
+		TokenFingerprint: r.secretFingerprint(tok), Verifier: ver, Ttl: pgInterval(ttl), AbsoluteTtl: pgInterval(access.DesktopSessionAbsoluteLifetime),
+		InstanceID: instanceID, ProfileID: profileID})
 	if e == nil && tag.RowsAffected() == 0 {
 		return "", pgx.ErrNoRows
 	}
@@ -1316,23 +1484,25 @@ func (r *Repository) DesktopSessionForToken(ctx context.Context, tok string) (ac
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var s access.DesktopSession
-	var ver []byte
-	if e = tx.QueryRow(ctx, `SELECT s.id::text,s.principal_id::text,s.instance_id,s.profile_id,s.client_id,s.verifier FROM access.session s JOIN access.principal p ON p.id=s.principal_id WHERE s.token_fingerprint=$1 AND s.kind='desktop' AND s.revoked_at IS NULL AND s.expires_at>clock_timestamp() AND s.last_seen_at>clock_timestamp()-$2::interval AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL FOR UPDATE`, r.secretFingerprint(tok), access.DesktopSessionIdleTimeout.String()).Scan(&s.SessionID, &s.PrincipalID, &s.InstanceID, &s.ProfileID, &s.ClientID, &ver); e != nil {
+	row, e := accessdb.New(tx).FindDesktopSession(ctx, accessdb.FindDesktopSessionParams{TokenFingerprint: r.secretFingerprint(tok), IdleTtl: pgInterval(access.DesktopSessionIdleTimeout)})
+	if e != nil {
 		return access.DesktopSession{}, e
 	}
-	if !verifySecret(tok, ver) {
+	s.SessionID, s.PrincipalID, s.InstanceID, s.ProfileID, s.ClientID = principalUUID(row.ID), principalUUID(row.PrincipalID), row.InstanceID, row.ProfileID, row.ClientID
+	if !verifySecret(tok, row.Verifier) {
 		return access.DesktopSession{}, pgx.ErrNoRows
 	}
-	var exp, abs, created time.Time
-	if e = tx.QueryRow(ctx, `UPDATE access.session SET last_seen_at=clock_timestamp(),expires_at=LEAST(absolute_expires_at,clock_timestamp()+$2::interval) WHERE id=$1::uuid AND token_fingerprint=$3 AND revoked_at IS NULL AND expires_at>clock_timestamp() AND last_seen_at>clock_timestamp()-$4::interval RETURNING expires_at,absolute_expires_at,created_at`, s.SessionID, access.DesktopSessionIdleTimeout.String(), r.secretFingerprint(tok), access.DesktopSessionIdleTimeout.String()).Scan(&exp, &abs, &created); e != nil {
+	touched, e := accessdb.New(tx).TouchDesktopSession(ctx, accessdb.TouchDesktopSessionParams{IdleTtl: pgInterval(access.DesktopSessionIdleTimeout), ID: row.ID,
+		TokenFingerprint: r.secretFingerprint(tok), IdleTtlCheck: pgInterval(access.DesktopSessionIdleTimeout)})
+	if e != nil {
 		return access.DesktopSession{}, e
 	}
 	if e = tx.Commit(ctx); e != nil {
 		return access.DesktopSession{}, e
 	}
-	s.ExpiresAt = formatTime(exp)
-	s.AbsoluteExpiresAt = formatTime(abs)
-	s.CreatedAt = formatTime(created)
+	s.ExpiresAt = principalTimestamp(touched.ExpiresAt)
+	s.AbsoluteExpiresAt = principalTimestamp(touched.AbsoluteExpiresAt)
+	s.CreatedAt = principalTimestamp(touched.CreatedAt)
 	return s, nil
 }
 func (r *Repository) RevokeDesktopSession(ctx context.Context, tok, instanceID, profileID string) error {
@@ -1345,15 +1515,14 @@ func (r *Repository) RevokeDesktopSession(ctx context.Context, tok, instanceID, 
 			_ = tx.Rollback(ctx)
 		}
 	}()
-	var id string
-	var ver []byte
-	if e = tx.QueryRow(ctx, `SELECT s.id::text,s.verifier FROM access.session s JOIN access.principal p ON p.id=s.principal_id WHERE s.token_fingerprint=$1 AND s.kind='desktop' AND s.instance_id=$2 AND s.profile_id=$3 AND s.revoked_at IS NULL AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL FOR UPDATE`, r.secretFingerprint(tok), instanceID, profileID).Scan(&id, &ver); e != nil {
+	row, e := accessdb.New(tx).FindDesktopSessionForRevoke(ctx, accessdb.FindDesktopSessionForRevokeParams{TokenFingerprint: r.secretFingerprint(tok), InstanceID: instanceID, ProfileID: profileID})
+	if e != nil {
 		return e
 	}
-	if !verifySecret(tok, ver) {
+	if !verifySecret(tok, row.Verifier) {
 		return pgx.ErrNoRows
 	}
-	tag, e := tx.Exec(ctx, `UPDATE access.session SET revoked_at=clock_timestamp() WHERE id=$1::uuid AND revoked_at IS NULL`, id)
+	tag, e := accessdb.New(tx).RevokeDesktopSession(ctx, row.ID)
 	if e != nil {
 		return e
 	}
