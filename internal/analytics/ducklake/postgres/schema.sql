@@ -87,19 +87,37 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_retention (
     physical_pool_id text NOT NULL,
     catalog_id       text NOT NULL,
     snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
-    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired')),
+    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired', 'quarantined', 'cleanup-complete')),
     protected_until  timestamptz,
     retired_at       timestamptz,
     expired_at       timestamptz,
+    cleanup_owner_id text,
+    cleanup_fencing_epoch bigint NOT NULL DEFAULT 0 CHECK (cleanup_fencing_epoch >= 0),
+    cleanup_lease_expires_at timestamptz,
+    quarantined_at  timestamptz,
+    cleanup_completed_at timestamptz,
+    quarantine_evidence jsonb,
+    cleanup_evidence jsonb,
     evidence         jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
     created_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (physical_pool_id, catalog_id, snapshot_id),
     FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
     CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
-    CHECK ((state = 'live' AND expired_at IS NULL) OR state <> 'live'),
+    CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL) OR state <> 'live'),
     CHECK ((state = 'retiring' AND retired_at IS NOT NULL AND expired_at IS NULL) OR state <> 'retiring'),
-    CHECK ((state = 'expired' AND expired_at IS NOT NULL) OR state <> 'expired')
+    CHECK ((state IN ('expired', 'quarantined', 'cleanup-complete') AND expired_at IS NOT NULL) OR state NOT IN ('expired', 'quarantined', 'cleanup-complete')),
+    CHECK (retired_at IS NULL OR retired_at >= created_at),
+    CHECK (expired_at IS NULL OR expired_at >= COALESCE(retired_at, created_at)),
+    CHECK ((cleanup_fencing_epoch = 0 AND cleanup_owner_id IS NULL AND cleanup_lease_expires_at IS NULL) OR (cleanup_fencing_epoch > 0 AND cleanup_owner_id IS NOT NULL AND cleanup_lease_expires_at IS NOT NULL)),
+    CHECK (cleanup_owner_id IS NULL OR (cleanup_owner_id = btrim(cleanup_owner_id) AND octet_length(cleanup_owner_id) BETWEEN 1 AND 255)),
+    CHECK (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at > created_at),
+    CHECK ((state IN ('quarantined', 'cleanup-complete') AND quarantined_at IS NOT NULL) OR state NOT IN ('quarantined', 'cleanup-complete')),
+    CHECK ((state = 'cleanup-complete' AND cleanup_completed_at IS NOT NULL) OR state <> 'cleanup-complete'),
+    CHECK (quarantine_evidence IS NULL OR (jsonb_typeof(quarantine_evidence) = 'object' AND octet_length(quarantine_evidence::text) <= 32768)),
+    CHECK (cleanup_evidence IS NULL OR (jsonb_typeof(cleanup_evidence) = 'object' AND octet_length(cleanup_evidence::text) <= 32768)),
+    CHECK (quarantined_at IS NULL OR quarantined_at >= COALESCE(expired_at, created_at)),
+    CHECK (cleanup_completed_at IS NULL OR cleanup_completed_at >= COALESCE(quarantined_at, created_at))
 );
 
 -- Query leases carry the exact generation binding and owner fence.  They are
@@ -113,18 +131,30 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_root (
     physical_pool_id text NOT NULL,
     catalog_id       text NOT NULL,
     snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
-    root_kind        text NOT NULL CHECK (root_kind IN ('candidate', 'generation', 'rollback', 'recovery')),
-    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired')),
+    root_kind        text NOT NULL CHECK (root_kind IN ('candidate', 'generation', 'rollback', 'recovery', 'active', 'cache', 'lineage', 'delivery')),
+    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired', 'quarantined', 'cleanup-complete')),
     created_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     retired_at       timestamptz,
     expired_at       timestamptz,
+    quarantined_at   timestamptz,
+    cleanup_completed_at timestamptz,
+    quarantine_evidence jsonb,
+    cleanup_evidence jsonb,
     evidence         jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
     FOREIGN KEY (physical_pool_id, catalog_id, snapshot_id)
         REFERENCES ducklake.snapshot_retention(physical_pool_id, catalog_id, snapshot_id),
     CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL) OR state <> 'live'),
     CHECK (state <> 'retiring' OR (retired_at IS NOT NULL AND expired_at IS NULL)),
-    CHECK (state <> 'expired' OR expired_at IS NOT NULL)
+    CHECK (state NOT IN ('expired', 'quarantined', 'cleanup-complete') OR expired_at IS NOT NULL),
+    CHECK (retired_at IS NULL OR retired_at >= created_at),
+    CHECK (expired_at IS NULL OR expired_at >= COALESCE(retired_at, created_at)),
+    CHECK ((state IN ('quarantined', 'cleanup-complete') AND quarantined_at IS NOT NULL) OR state NOT IN ('quarantined', 'cleanup-complete')),
+    CHECK ((state = 'cleanup-complete' AND cleanup_completed_at IS NOT NULL) OR state <> 'cleanup-complete'),
+    CHECK (quarantine_evidence IS NULL OR (jsonb_typeof(quarantine_evidence) = 'object' AND octet_length(quarantine_evidence::text) <= 32768)),
+    CHECK (cleanup_evidence IS NULL OR (jsonb_typeof(cleanup_evidence) = 'object' AND octet_length(cleanup_evidence::text) <= 32768)),
+    CHECK (quarantined_at IS NULL OR quarantined_at >= COALESCE(expired_at, created_at)),
+    CHECK (cleanup_completed_at IS NULL OR cleanup_completed_at >= COALESCE(quarantined_at, created_at))
 );
 
 CREATE INDEX IF NOT EXISTS ducklake_snapshot_root_active_idx
@@ -155,6 +185,44 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_lease (
 
 CREATE INDEX IF NOT EXISTS ducklake_snapshot_lease_active_idx
     ON ducklake.snapshot_lease (physical_pool_id, catalog_id, snapshot_id, state, expires_at);
+
+-- Orphan observations are immutable, bounded evidence for snapshots found in
+-- DuckLake metadata before a control retention row was established.  They are
+-- deliberately separate from retention: an orphan is not executable until a
+-- qualified root is created, and cleanup workers must reconcile it first.
+CREATE TABLE IF NOT EXISTS ducklake.snapshot_orphan (
+    orphan_id        uuid PRIMARY KEY,
+    physical_pool_id text NOT NULL,
+    catalog_id       text NOT NULL,
+    snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
+    state            text NOT NULL CHECK (state IN ('quarantined', 'cleanup-complete')),
+    cleanup_owner_id text,
+    cleanup_fencing_epoch bigint NOT NULL DEFAULT 0 CHECK (cleanup_fencing_epoch >= 0),
+    cleanup_lease_expires_at timestamptz,
+    evidence         jsonb NOT NULL CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    discovered_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+    resolved_at      timestamptz,
+    FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
+    UNIQUE (physical_pool_id, catalog_id, snapshot_id),
+    CHECK ((state = 'quarantined' AND resolved_at IS NULL) OR (state = 'cleanup-complete' AND resolved_at IS NOT NULL)),
+    CHECK ((cleanup_fencing_epoch = 0 AND cleanup_owner_id IS NULL AND cleanup_lease_expires_at IS NULL) OR (cleanup_fencing_epoch > 0 AND cleanup_owner_id IS NOT NULL AND cleanup_lease_expires_at IS NOT NULL)),
+    CHECK (cleanup_owner_id IS NULL OR (cleanup_owner_id = btrim(cleanup_owner_id) AND octet_length(cleanup_owner_id) BETWEEN 1 AND 255)),
+    CHECK (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at > discovered_at)
+);
+
+CREATE INDEX IF NOT EXISTS ducklake_snapshot_orphan_backlog_idx
+    ON ducklake.snapshot_orphan (physical_pool_id, catalog_id, state, discovered_at);
+
+-- Reader-drain observability is a view over the authoritative lease rows.  It
+-- intentionally exposes no payload or session secret, only bounded identity,
+-- age and deadline information useful to maintenance workers and metrics.
+CREATE OR REPLACE VIEW ducklake.snapshot_reader_drain AS
+SELECT lease_id, delivery_id, generation_id, physical_pool_id, catalog_id,
+       snapshot_id, owner_id, fencing_epoch, state, acquired_at, expires_at,
+       (state = 'active' AND expires_at <= clock_timestamp()) AS overdue,
+       (state = 'active' AND expires_at <= clock_timestamp()
+        AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
+  FROM ducklake.snapshot_lease;
 
 CREATE INDEX IF NOT EXISTS ducklake_attempt_evidence_identity_idx
     ON ducklake.attempt_evidence (physical_pool_id, catalog_id, request_digest, plan_digest);
@@ -232,13 +300,21 @@ BEGIN
        OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
         RAISE EXCEPTION 'DuckLake snapshot root evidence is immutable';
     END IF;
-    IF OLD.state = 'expired' THEN
+    IF OLD.state = 'cleanup-complete' THEN
         IF NEW.state <> OLD.state
            OR NEW.retired_at IS DISTINCT FROM OLD.retired_at
-           OR NEW.expired_at IS DISTINCT FROM OLD.expired_at THEN
-            RAISE EXCEPTION 'DuckLake expired snapshot root is immutable';
+           OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
+           OR NEW.quarantined_at IS DISTINCT FROM OLD.quarantined_at
+           OR NEW.cleanup_completed_at IS DISTINCT FROM OLD.cleanup_completed_at
+           OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence
+           OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence THEN
+            RAISE EXCEPTION 'DuckLake cleanup-complete snapshot root is immutable';
         END IF;
-    ELSIF OLD.state = 'retiring' AND NEW.state = 'live' THEN
+    ELSIF OLD.state IN ('expired', 'quarantined') AND NEW.state = 'live' THEN
+        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
+    ELSIF OLD.state = 'quarantined' AND NEW.state NOT IN ('quarantined', 'cleanup-complete') THEN
+        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
+    ELSIF OLD.state = 'expired' AND NEW.state NOT IN ('expired', 'quarantined', 'cleanup-complete') THEN
         RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
     ELSIF OLD.state = 'live' AND NEW.state = 'retiring'
           AND (NEW.retired_at IS NULL OR NEW.expired_at IS NOT NULL) THEN
@@ -246,9 +322,21 @@ BEGIN
     ELSIF OLD.state IN ('live', 'retiring') AND NEW.state = 'expired'
           AND NEW.expired_at IS NULL THEN
         RAISE EXCEPTION 'DuckLake expired snapshot root requires expired_at';
+    ELSIF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring', 'expired') THEN
+        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
+    ELSIF OLD.state = 'live' AND NEW.state NOT IN ('live', 'retiring', 'expired') THEN
+        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
+    ELSIF NEW.state = 'cleanup-complete' AND (OLD.state <> 'quarantined' OR NEW.cleanup_completed_at IS NULL OR NEW.cleanup_evidence IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake snapshot root must be quarantined before cleanup-complete';
+    ELSIF NEW.state = 'quarantined' AND (NEW.expired_at IS NULL OR NEW.quarantined_at IS NULL OR NEW.quarantine_evidence IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake quarantined snapshot root requires expired_at';
     ELSIF NEW.state = OLD.state
           AND (NEW.retired_at IS DISTINCT FROM OLD.retired_at
                OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
+               OR NEW.quarantined_at IS DISTINCT FROM OLD.quarantined_at
+               OR NEW.cleanup_completed_at IS DISTINCT FROM OLD.cleanup_completed_at
+               OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence
+               OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence
                ) THEN
         RAISE EXCEPTION 'DuckLake snapshot root evidence is immutable';
     END IF;
@@ -311,21 +399,49 @@ BEGIN
     IF NEW.created_at IS DISTINCT FROM OLD.created_at THEN
         RAISE EXCEPTION 'DuckLake snapshot retention created_at is immutable';
     END IF;
-    IF OLD.state = 'expired' AND NEW.state <> OLD.state THEN
+    IF OLD.state = 'cleanup-complete' AND NEW.state <> OLD.state THEN
+        RAISE EXCEPTION 'DuckLake cleanup-complete snapshot retention is immutable';
+    END IF;
+    IF OLD.state = 'quarantined' AND NEW.state NOT IN ('quarantined', 'cleanup-complete') THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
     END IF;
-    IF OLD.state = 'expired' AND (
+    IF OLD.state = 'expired' AND NEW.state NOT IN ('expired', 'quarantined', 'cleanup-complete') THEN
+        RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
+    END IF;
+    IF OLD.state IN ('expired', 'quarantined', 'cleanup-complete') AND NEW.state = OLD.state AND (
            NEW.protected_until IS DISTINCT FROM OLD.protected_until
         OR NEW.retired_at IS DISTINCT FROM OLD.retired_at
         OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
-        OR NEW.evidence IS DISTINCT FROM OLD.evidence) THEN
+        OR NEW.evidence IS DISTINCT FROM OLD.evidence
+        OR NEW.quarantined_at IS DISTINCT FROM OLD.quarantined_at
+        OR NEW.cleanup_completed_at IS DISTINCT FROM OLD.cleanup_completed_at
+        OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence
+        OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence
+        OR (NEW.cleanup_owner_id IS DISTINCT FROM OLD.cleanup_owner_id
+            OR NEW.cleanup_fencing_epoch IS DISTINCT FROM OLD.cleanup_fencing_epoch
+            OR NEW.cleanup_lease_expires_at IS DISTINCT FROM OLD.cleanup_lease_expires_at)
+           AND NOT (NEW.state IN ('expired','quarantined')
+                    AND NEW.cleanup_fencing_epoch > OLD.cleanup_fencing_epoch)) THEN
         RAISE EXCEPTION 'DuckLake expired snapshot retention is immutable';
+    END IF;
+    IF NEW.cleanup_fencing_epoch < OLD.cleanup_fencing_epoch THEN
+        RAISE EXCEPTION 'DuckLake cleanup fencing epoch cannot move backwards';
+    END IF;
+    IF NEW.cleanup_fencing_epoch > OLD.cleanup_fencing_epoch
+       AND (NEW.state NOT IN ('expired','quarantined') OR NEW.cleanup_owner_id IS NULL OR NEW.cleanup_lease_expires_at IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake cleanup claim requires an expiring snapshot';
     END IF;
     IF NEW.protected_until IS NOT NULL AND OLD.protected_until IS NOT NULL
        AND NEW.protected_until < OLD.protected_until THEN
         RAISE EXCEPTION 'DuckLake snapshot protection cannot move backwards';
     END IF;
-    IF OLD.state = 'retiring' AND NEW.state = 'live' THEN
+    IF OLD.state IN ('retiring', 'expired', 'quarantined', 'cleanup-complete') AND NEW.state = 'live' THEN
+        RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
+    END IF;
+    IF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring', 'expired') THEN
+        RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
+    END IF;
+    IF OLD.state = 'live' AND NEW.state NOT IN ('live', 'retiring') THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
     END IF;
     IF OLD.state = 'live' AND NEW.state = 'retiring'
@@ -346,7 +462,7 @@ BEGIN
         OR NEW.expired_at IS DISTINCT FROM OLD.expired_at) THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle timestamps are immutable';
     END IF;
-    IF OLD.state = 'live' AND NEW.state = 'expired' THEN
+    IF OLD.state = 'live' AND NEW.state IN ('expired', 'quarantined', 'cleanup-complete') THEN
         RAISE EXCEPTION 'DuckLake snapshot must retire before expiration';
     END IF;
     IF OLD.state = 'retiring' AND NEW.state = 'expired'
@@ -363,6 +479,53 @@ BEGIN
                   AND snapshot_id=OLD.snapshot_id
                   AND state IN ('live','retiring'))) THEN
         RAISE EXCEPTION 'DuckLake snapshot leases or roots remain';
+    END IF;
+    IF NEW.state = 'cleanup-complete' AND (OLD.state <> 'quarantined' OR NEW.cleanup_completed_at IS NULL OR NEW.cleanup_evidence IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake snapshot must be quarantined before cleanup-complete';
+    END IF;
+    IF NEW.state = 'quarantined' AND (NEW.expired_at IS NULL OR NEW.quarantined_at IS NULL OR NEW.quarantine_evidence IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake quarantined snapshot requires expired_at';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.reject_snapshot_orphan_identity_change()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.orphan_id <> OLD.orphan_id
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id
+       OR NEW.snapshot_id <> OLD.snapshot_id
+       OR NEW.discovered_at IS DISTINCT FROM OLD.discovered_at THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan identity is immutable';
+    END IF;
+    IF OLD.state = 'cleanup-complete' THEN
+        IF NEW.state <> OLD.state OR NEW.evidence IS DISTINCT FROM OLD.evidence
+           OR NEW.resolved_at IS DISTINCT FROM OLD.resolved_at
+           OR NEW.cleanup_owner_id IS DISTINCT FROM OLD.cleanup_owner_id
+           OR NEW.cleanup_fencing_epoch IS DISTINCT FROM OLD.cleanup_fencing_epoch
+           OR NEW.cleanup_lease_expires_at IS DISTINCT FROM OLD.cleanup_lease_expires_at THEN
+            RAISE EXCEPTION 'DuckLake cleanup-complete snapshot orphan is immutable';
+        END IF;
+    ELSIF OLD.state = 'quarantined' AND NEW.state NOT IN ('quarantined', 'cleanup-complete') THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan lifecycle is monotonic';
+    ELSIF OLD.state = 'quarantined' AND NEW.state = 'quarantined'
+          AND (NEW.evidence IS DISTINCT FROM OLD.evidence OR NEW.resolved_at IS DISTINCT FROM OLD.resolved_at
+               OR ((NEW.cleanup_owner_id IS DISTINCT FROM OLD.cleanup_owner_id
+                    OR NEW.cleanup_lease_expires_at IS DISTINCT FROM OLD.cleanup_lease_expires_at)
+                   AND NOT (NEW.cleanup_fencing_epoch > OLD.cleanup_fencing_epoch))) THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan evidence is immutable';
+    ELSIF NEW.state = 'cleanup-complete' AND NEW.resolved_at IS NULL THEN
+        RAISE EXCEPTION 'DuckLake cleanup-complete snapshot orphan requires resolved_at';
+    END IF;
+    IF NEW.cleanup_fencing_epoch < OLD.cleanup_fencing_epoch THEN
+        RAISE EXCEPTION 'DuckLake orphan cleanup fencing epoch cannot move backwards';
+    END IF;
+    IF NEW.cleanup_fencing_epoch > OLD.cleanup_fencing_epoch
+       AND (NEW.state <> 'quarantined' OR NEW.cleanup_owner_id IS NULL OR NEW.cleanup_lease_expires_at IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake orphan cleanup claim requires a quarantined orphan';
     END IF;
     RETURN NEW;
 END;
@@ -397,3 +560,39 @@ DROP TRIGGER IF EXISTS snapshot_retention_identity_immutable ON ducklake.snapsho
 CREATE TRIGGER snapshot_retention_identity_immutable
     BEFORE UPDATE OR DELETE ON ducklake.snapshot_retention
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_retention_identity_change();
+
+DROP TRIGGER IF EXISTS snapshot_orphan_identity_immutable ON ducklake.snapshot_orphan;
+CREATE TRIGGER snapshot_orphan_identity_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.snapshot_orphan
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_orphan_identity_change();
+
+-- DuckLake control state is capability-gated.  PUBLIC receives no schema,
+-- relation, sequence, or trigger-function privileges; application roles are
+-- granted only the exact lifecycle operations exposed by the repository.
+REVOKE ALL ON SCHEMA ducklake FROM PUBLIC;
+REVOKE ALL ON ALL TABLES IN SCHEMA ducklake FROM PUBLIC;
+REVOKE ALL ON ALL SEQUENCES IN SCHEMA ducklake FROM PUBLIC;
+REVOKE ALL ON ALL FUNCTIONS IN SCHEMA ducklake FROM PUBLIC;
+
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE '
+            || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
+            || 'ducklake.generation_binding, ducklake.snapshot_retention, '
+            || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
+            || 'ducklake.snapshot_orphan TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON TABLE '
+            || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
+            || 'ducklake.generation_binding, ducklake.snapshot_retention, '
+            || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
+            || 'ducklake.snapshot_orphan, ducklake.snapshot_reader_drain '
+            || 'TO leapview_control_readonly';
+    END IF;
+END
+$$;

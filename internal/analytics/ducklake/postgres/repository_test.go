@@ -300,3 +300,234 @@ func TestReconcileRequiresPositiveTerminationEvidence(t *testing.T) {
 		t.Fatalf("terminal stale owner error = %v", err)
 	}
 }
+
+func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_cleanup_claim_test")
+	p, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r := New(p)
+	const poolID, catalogID = "cleanup-pool", "cleanup-catalog"
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+		t.Fatal(err)
+	}
+	ref := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77}
+	if err := ensureSnapshotLive(t.Context(), p, ref); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ExpireSnapshot(t.Context(), ref, json.RawMessage(`{"expired":"verified"}`), time.Time{}); err != nil {
+		t.Fatal(err)
+	}
+	var dbNow time.Time
+	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+		t.Fatal(err)
+	}
+	fenceA, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-a", dbNow.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-a", dbNow.Add(time.Second)); err != nil || replay.FencingEpoch != fenceA.FencingEpoch {
+		t.Fatalf("same-owner claim replay=%#v err=%v", replay, err)
+	}
+	if _, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-b", dbNow.Add(time.Second)); !errors.Is(err, ErrCleanupBusy) {
+		t.Fatalf("active-owner contention err=%v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	fenceB, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-b", time.Now().Add(time.Second))
+	if err != nil || fenceB.FencingEpoch <= fenceA.FencingEpoch {
+		t.Fatalf("successor cleanup claim=%#v err=%v", fenceB, err)
+	}
+	if err := r.QuarantineSnapshot(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceA); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale quarantine err=%v", err)
+	}
+	if err := r.QuarantineSnapshot(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceB); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceA); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale completion err=%v", err)
+	}
+	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB); err != nil {
+		t.Fatalf("exact completion replay err=%v", err)
+	}
+	retained, err := r.LoadSnapshotRetention(t.Context(), ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.State != RetentionCleanupComplete || retained.QuarantinedAt.IsZero() || retained.CleanupCompletedAt.IsZero() {
+		t.Fatalf("retention=%#v", retained)
+	}
+	if !evidenceEqual(retained.Evidence, `{"expired":"verified"}`) || !evidenceEqual(retained.QuarantineEvidence, `{"worker":"b"}`) || !evidenceEqual(retained.CleanupEvidence, `{"worker":"b","deleted":true}`) {
+		t.Fatalf("phase evidence was not retained: expiration=%s (%v) quarantine=%s (%v) cleanup=%s (%v)", retained.Evidence, evidenceEqual(retained.Evidence, `{"expired":"verified"}`), retained.QuarantineEvidence, evidenceEqual(retained.QuarantineEvidence, `{"worker":"b"}`), retained.CleanupEvidence, evidenceEqual(retained.CleanupEvidence, `{"worker":"b","deleted":true}`))
+	}
+}
+
+func TestPostgres18OrphanCleanupClaimFencesStaleWorkers(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_orphan_cleanup_claim_test")
+	p, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r := New(p)
+	const poolID, catalogID = "orphan-cleanup-pool", "orphan-cleanup-catalog"
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+		t.Fatal(err)
+	}
+	const orphanID = "0198f2c0-7c7a-7f00-8a11-000000000077"
+	orphan, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{OrphanID: orphanID, PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 88, Evidence: json.RawMessage(`{"source":"scan"}`)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if orphan.State != "quarantined" || orphan.CleanupFencingEpoch != 0 {
+		t.Fatalf("orphan=%#v", orphan)
+	}
+	var dbNow time.Time
+	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+		t.Fatal(err)
+	}
+	fenceA, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-a", dbNow.Add(100*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-a", dbNow.Add(time.Second)); err != nil || replay.FencingEpoch != fenceA.FencingEpoch {
+		t.Fatalf("same-owner orphan claim replay=%#v err=%v", replay, err)
+	}
+	if _, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-b", dbNow.Add(time.Second)); !errors.Is(err, ErrCleanupBusy) {
+		t.Fatalf("active-owner orphan contention err=%v", err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+		t.Fatal(err)
+	}
+	fenceB, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-b", dbNow.Add(time.Second))
+	if err != nil || fenceB.FencingEpoch <= fenceA.FencingEpoch {
+		t.Fatalf("successor orphan cleanup claim=%#v err=%v", fenceB, err)
+	}
+	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceA); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale orphan completion err=%v", err)
+	}
+	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceB); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(1100 * time.Millisecond)
+	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceB); err != nil {
+		t.Fatalf("exact orphan completion replay err=%v", err)
+	}
+	orphans, err := r.ListSnapshotOrphans(t.Context(), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(orphans) != 1 || orphans[0].State != "cleanup-complete" || orphans[0].CleanupOwnerID != fenceB.OwnerID || orphans[0].CleanupFencingEpoch != fenceB.FencingEpoch || !evidenceEqual(orphans[0].Evidence, `{"worker":"b","deleted":true}`) {
+		t.Fatalf("orphans=%#v", orphans)
+	}
+}
+
+func TestPostgres18DuckLakeControlRoleGrants(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
+	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "readonly-secret", Login: true})
+	db := h.NewDatabase(t, "ducklake_control_role_test")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, readonlyInsert bool
+	if err := admin.QueryRow(t.Context(), `
+SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
+       has_table_privilege('public', 'ducklake.catalog_identity', 'SELECT'),
+       has_function_privilege('public', 'ducklake.reject_immutable_change()', 'EXECUTE'),
+       has_table_privilege('leapview_control_runtime', 'ducklake.catalog_identity', 'DELETE'),
+       has_function_privilege('leapview_control_runtime', 'ducklake.reject_immutable_change()', 'EXECUTE'),
+       has_table_privilege('leapview_control_readonly', 'ducklake.catalog_identity', 'INSERT')`).
+		Scan(&publicSchema, &publicTable, &publicFunction, &runtimeDelete, &runtimeFunction, &readonlyInsert); err != nil {
+		t.Fatal(err)
+	}
+	if publicSchema || publicTable || publicFunction || runtimeDelete || runtimeFunction || readonlyInsert {
+		t.Fatalf("DuckLake role grants leaked: public schema=%t table=%t function=%t runtime delete=%t function=%t readonly insert=%t", publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, readonlyInsert)
+	}
+	runtimeDB, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	runtime := New(runtimeDB)
+	const poolID, catalogID = "role-grant-pool", "role-grant-catalog"
+	if _, err := runtime.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+		t.Fatalf("runtime repository path: %v", err)
+	}
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000099"
+	if _, err := runtime.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: digest('b'), PlanDigest: digest('c'), PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-worker", FencingEpoch: 1, SessionIdentity: "role-test", LeaseExpiresAt: time.Now().UTC().Add(time.Minute)}); err != nil {
+		t.Fatalf("runtime begin attempt: %v", err)
+	}
+	if _, err := runtime.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "runtime-worker", FencingEpoch: 1, Evidence: json.RawMessage(`{"reason":"role-test"}`)}); err != nil {
+		t.Fatalf("runtime terminate attempt: %v", err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `UPDATE ducklake.catalog_identity SET catalog_id='tampered' WHERE physical_pool_id=$1`, poolID); err == nil {
+		t.Fatal("runtime immutable identity update unexpectedly succeeded")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM ducklake.catalog_identity WHERE physical_pool_id=$1`, poolID); err == nil {
+		t.Fatal("runtime catalog identity delete unexpectedly succeeded")
+	}
+	rows, err := runtimeDB.Query(t.Context(), `SELECT lease_id FROM ducklake.snapshot_reader_drain LIMIT 0`)
+	if err != nil {
+		t.Fatalf("runtime drain view select: %v", err)
+	}
+	rows.Close()
+	readonlyDB, err := pgxpool.New(t.Context(), db.URL(readonlyRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readonlyDB.Close)
+	readonly := New(readonlyDB)
+	if _, err := readonly.LoadCatalog(t.Context(), poolID); err != nil {
+		t.Fatalf("readonly catalog select: %v", err)
+	}
+	if _, err := readonlyDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_id,metadata_schema,compatibility_digest,catalog_schema_version) VALUES ('readonly-pool','readonly-catalog','lake',$1,'ducklake-v1')`, digest('d')); err == nil {
+		t.Fatal("readonly catalog insert unexpectedly succeeded")
+	}
+}

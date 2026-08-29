@@ -32,14 +32,18 @@ type DBTX interface {
 type Tx = DBTX
 
 var (
-	ErrInvalid       = errors.New("invalid DuckLake PostgreSQL identity")
-	ErrConflict      = errors.New("DuckLake PostgreSQL identity conflict")
-	ErrNotFound      = errors.New("DuckLake PostgreSQL identity not found")
-	ErrNotLive       = errors.New("DuckLake snapshot is not live")
-	ErrLeaseExpired  = errors.New("DuckLake snapshot lease is expired")
-	ErrStaleFence    = errors.New("DuckLake owner fencing epoch is stale")
-	ErrAttemptBusy   = errors.New("DuckLake build attempt is owned by another worker")
-	ErrIndeterminate = errors.New("DuckLake build attempt outcome is indeterminate")
+	ErrInvalid          = errors.New("invalid DuckLake PostgreSQL identity")
+	ErrConflict         = errors.New("DuckLake PostgreSQL identity conflict")
+	ErrNotFound         = errors.New("DuckLake PostgreSQL identity not found")
+	ErrNotLive          = errors.New("DuckLake snapshot is not live")
+	ErrLeaseExpired     = errors.New("DuckLake snapshot lease is expired")
+	ErrStaleFence       = errors.New("DuckLake owner fencing epoch is stale")
+	ErrAttemptBusy      = errors.New("DuckLake build attempt is owned by another worker")
+	ErrIndeterminate    = errors.New("DuckLake build attempt outcome is indeterminate")
+	ErrQuarantined      = errors.New("DuckLake snapshot is quarantined")
+	ErrCleanupPending   = errors.New("DuckLake snapshot cleanup is pending")
+	ErrCleanupBusy      = errors.New("DuckLake snapshot cleanup is owned by another worker")
+	ErrClockUnavailable = errors.New("DuckLake PostgreSQL clock unavailable")
 )
 
 const (
@@ -186,18 +190,29 @@ const (
 	RootGeneration SnapshotRootKind = "generation"
 	RootRollback   SnapshotRootKind = "rollback"
 	RootRecovery   SnapshotRootKind = "recovery"
+	// RootActive is the explicit active-serving reachability kind. Generation
+	// remains accepted for compatibility with earlier callers.
+	RootActive   SnapshotRootKind = "active"
+	RootCache    SnapshotRootKind = "cache"
+	RootLineage  SnapshotRootKind = "lineage"
+	RootDelivery SnapshotRootKind = "delivery"
 )
 
 type SnapshotRoot struct {
-	RootID         string
-	PhysicalPoolID string
-	CatalogID      string
-	SnapshotID     int64
-	Kind           SnapshotRootKind
-	State          string
-	CreatedAt      time.Time
-	RetiredAt      time.Time
-	ExpiredAt      time.Time
+	RootID             string
+	PhysicalPoolID     string
+	CatalogID          string
+	SnapshotID         int64
+	Kind               SnapshotRootKind
+	State              string
+	CreatedAt          time.Time
+	RetiredAt          time.Time
+	ExpiredAt          time.Time
+	QuarantinedAt      time.Time
+	CleanupCompletedAt time.Time
+	Evidence           json.RawMessage
+	QuarantineEvidence json.RawMessage
+	CleanupEvidence    json.RawMessage
 }
 
 type SnapshotRootInput struct {
@@ -207,6 +222,78 @@ type SnapshotRootInput struct {
 	SnapshotID     int64
 	Kind           SnapshotRootKind
 	CreatedAt      time.Time
+	// Evidence is immutable bounded metadata describing why this root exists.
+	// Identity remains relational (the fields above), never hidden in JSON.
+	Evidence json.RawMessage
+}
+
+type SnapshotRetentionState string
+
+const (
+	RetentionLive            SnapshotRetentionState = "live"
+	RetentionRetiring        SnapshotRetentionState = "retiring"
+	RetentionExpired         SnapshotRetentionState = "expired"
+	RetentionQuarantined     SnapshotRetentionState = "quarantined"
+	RetentionCleanupComplete SnapshotRetentionState = "cleanup-complete"
+)
+
+type SnapshotRetention struct {
+	PhysicalPoolID        string
+	CatalogID             string
+	SnapshotID            int64
+	State                 SnapshotRetentionState
+	ProtectedUntil        time.Time
+	RetiredAt             time.Time
+	ExpiredAt             time.Time
+	CleanupOwnerID        string
+	CleanupFencingEpoch   int64
+	CleanupLeaseExpiresAt time.Time
+	QuarantinedAt         time.Time
+	CleanupCompletedAt    time.Time
+	QuarantineEvidence    json.RawMessage
+	CleanupEvidence       json.RawMessage
+	Evidence              json.RawMessage
+	CreatedAt             time.Time
+}
+
+// ReaderDrain is deliberately small and safe for metrics/logging. It omits
+// session credentials and query payloads while retaining the exact lease
+// identity needed to investigate a stuck reader.
+type ReaderDrain struct {
+	LeaseID, DeliveryID, GenerationID string
+	PhysicalPoolID, CatalogID         string
+	SnapshotID                        int64
+	OwnerID                           string
+	FencingEpoch                      int64
+	State                             SnapshotLeaseState
+	AcquiredAt, ExpiresAt             time.Time
+	Overdue, NonDraining              bool
+}
+
+type RetentionBacklog struct {
+	CleanupPending     int64
+	Quarantined        int64
+	Orphans            int64
+	OverdueReaders     int64
+	NonDrainingReaders int64
+}
+
+type SnapshotOrphan struct {
+	OrphanID, PhysicalPoolID, CatalogID string
+	SnapshotID                          int64
+	State                               string
+	CleanupOwnerID                      string
+	CleanupFencingEpoch                 int64
+	CleanupLeaseExpiresAt               time.Time
+	Evidence                            json.RawMessage
+	DiscoveredAt, ResolvedAt            time.Time
+}
+
+type SnapshotOrphanInput struct {
+	OrphanID, PhysicalPoolID, CatalogID string
+	SnapshotID                          int64
+	Evidence                            json.RawMessage
+	DiscoveredAt                        time.Time
 }
 
 type LeaseFence struct {
@@ -215,9 +302,24 @@ type LeaseFence struct {
 	FencingEpoch int64
 }
 
+// CleanupFence is a persisted worker claim. A successor claim increments the
+// epoch, fencing every stale owner even when its process or connection was
+// restarted.
+type CleanupFence struct {
+	OwnerID        string
+	FencingEpoch   int64
+	LeaseExpiresAt time.Time
+}
+type SnapshotCleanupFence = CleanupFence
+
+type SnapshotLeaseClaim struct {
+	LeaseID      string
+	OwnerID      string
+	FencingEpoch int64
+}
+
 type Repository struct {
-	db  DBTX
-	now func() time.Time
+	db DBTX
 }
 
 //go:embed schema.sql
@@ -236,13 +338,27 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	return err
 }
 
-func New(db DBTX) *Repository { return &Repository{db: db, now: time.Now} }
+func New(db DBTX) *Repository { return &Repository{db: db} }
 
-func (r *Repository) clock() time.Time {
-	if r == nil || r.now == nil {
-		return time.Now().UTC()
+// databaseClock is authoritative for lease/retention decisions. A node's
+// wall clock can be skewed or deliberately forged; PostgreSQL's clock is the
+// shared ordering source for all workers. A failure to read it fails closed;
+// callers must never persist a node-local timestamp as a lifecycle decision.
+func databaseClock(ctx context.Context, db DBTX) (time.Time, error) {
+	if db == nil {
+		return time.Time{}, ErrClockUnavailable
 	}
-	return r.now().UTC()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var now time.Time
+	if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil || now.IsZero() {
+		if err != nil {
+			return time.Time{}, fmt.Errorf("%w: %v", ErrClockUnavailable, err)
+		}
+		return time.Time{}, ErrClockUnavailable
+	}
+	return now.UTC(), nil
 }
 
 func RegisterCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity) (CatalogIdentity, error) {
@@ -410,27 +526,37 @@ func createSnapshotRoot(ctx context.Context, tx DBTX, in SnapshotRootInput) erro
 	if tx == nil || !validUUID(in.RootID) || !validSnapshotRef(SnapshotRef{in.PhysicalPoolID, in.CatalogID, in.SnapshotID}) {
 		return ErrInvalid
 	}
-	if in.Kind != RootCandidate && in.Kind != RootGeneration && in.Kind != RootRollback && in.Kind != RootRecovery {
+	if !validRootKind(in.Kind) {
 		return ErrInvalid
 	}
 	created := in.CreatedAt.UTC()
 	if created.IsZero() {
 		created = time.Now().UTC()
 	}
+	if dbNow, err := databaseClock(ctx, tx); err != nil {
+		return err
+	} else {
+		created = dbNow
+	}
 	if err := requireSnapshotLive(ctx, tx, SnapshotRef{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, SnapshotID: in.SnapshotID}); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO ducklake.snapshot_root (root_id,physical_pool_id,catalog_id,snapshot_id,root_kind,state,created_at)
-VALUES ($1,$2,$3,$4,$5,'live',$6) ON CONFLICT (root_id) DO NOTHING`, in.RootID, in.PhysicalPoolID, in.CatalogID, in.SnapshotID, string(in.Kind), created)
+	evidence, err := canonicalOptionalEvidence(in.Evidence)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO ducklake.snapshot_root (root_id,physical_pool_id,catalog_id,snapshot_id,root_kind,state,created_at,evidence)
+VALUES ($1,$2,$3,$4,$5,'live',$6,$7::jsonb) ON CONFLICT (root_id) DO NOTHING`, in.RootID, in.PhysicalPoolID, in.CatalogID, in.SnapshotID, string(in.Kind), created, evidence)
 	if err != nil {
 		return err
 	}
 	var pool, catalog, kind, state string
 	var snapshot int64
-	if err := tx.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,snapshot_id,root_kind,state FROM ducklake.snapshot_root WHERE root_id=$1`, in.RootID).Scan(&pool, &catalog, &snapshot, &kind, &state); err != nil {
+	var persistedEvidence []byte
+	if err := tx.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,snapshot_id,root_kind,state,evidence FROM ducklake.snapshot_root WHERE root_id=$1`, in.RootID).Scan(&pool, &catalog, &snapshot, &kind, &state, &persistedEvidence); err != nil {
 		return err
 	}
-	if pool != in.PhysicalPoolID || catalog != in.CatalogID || snapshot != in.SnapshotID || kind != string(in.Kind) || state != "live" {
+	if pool != in.PhysicalPoolID || catalog != in.CatalogID || snapshot != in.SnapshotID || kind != string(in.Kind) || state != "live" || string(persistedEvidence) != evidence {
 		return fmt.Errorf("%w: snapshot root %q", ErrConflict, in.RootID)
 	}
 	return nil
@@ -452,6 +578,11 @@ func ReleaseSnapshotRoot(ctx context.Context, tx DBTX, rootID string, releasedAt
 	}
 	if releasedAt.IsZero() {
 		releasedAt = time.Now().UTC()
+	}
+	if dbNow, err := databaseClock(ctx, tx); err != nil {
+		return err
+	} else {
+		releasedAt = dbNow
 	}
 	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_root SET state='expired',expired_at=$2 WHERE root_id=$1 AND state IN ('live','retiring')`, rootID, releasedAt.UTC())
 	if err != nil {
@@ -477,6 +608,132 @@ func (r *Repository) ReleaseSnapshotRoot(ctx context.Context, rootID string, rel
 		return ErrInvalid
 	}
 	return ReleaseSnapshotRoot(ctx, r.db, rootID, releasedAt)
+}
+
+func QuarantineSnapshotRoot(ctx context.Context, tx DBTX, rootID string, evidence json.RawMessage) error {
+	if tx == nil || !validUUID(rootID) {
+		return ErrInvalid
+	}
+	canonical, err := canonicalEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("%w: quarantine evidence is required", ErrInvalid)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_root SET state='quarantined',quarantine_evidence=$2::jsonb,quarantined_at=$3 WHERE root_id=$1 AND state='expired'`, rootID, canonical, now)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+	var state string
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT state,quarantine_evidence FROM ducklake.snapshot_root WHERE root_id=$1`, rootID).Scan(&state, &raw); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if state == "quarantined" && evidenceEqual(raw, canonical) {
+		return nil
+	}
+	return ErrConflict
+}
+
+func (r *Repository) QuarantineSnapshotRoot(ctx context.Context, rootID string, evidence json.RawMessage) error {
+	if r == nil {
+		return ErrInvalid
+	}
+	return QuarantineSnapshotRoot(ctx, r.db, rootID, evidence)
+}
+
+func CompleteSnapshotRootCleanup(ctx context.Context, tx DBTX, rootID string, evidence json.RawMessage) error {
+	if tx == nil || !validUUID(rootID) {
+		return ErrInvalid
+	}
+	canonical, err := canonicalEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("%w: cleanup evidence is required", ErrInvalid)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_root SET state='cleanup-complete',cleanup_evidence=$2::jsonb,cleanup_completed_at=$3 WHERE root_id=$1 AND state='quarantined'`, rootID, canonical, now)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+	var state string
+	var raw []byte
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_evidence FROM ducklake.snapshot_root WHERE root_id=$1`, rootID).Scan(&state, &raw); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if state == "cleanup-complete" && evidenceEqual(raw, canonical) {
+		return nil
+	}
+	return ErrConflict
+}
+
+func (r *Repository) CompleteSnapshotRootCleanup(ctx context.Context, rootID string, evidence json.RawMessage) error {
+	if r == nil {
+		return ErrInvalid
+	}
+	return CompleteSnapshotRootCleanup(ctx, r.db, rootID, evidence)
+}
+
+func LoadSnapshotRoot(ctx context.Context, db DBTX, rootID string) (SnapshotRoot, error) {
+	if db == nil || !validUUID(rootID) {
+		return SnapshotRoot{}, ErrInvalid
+	}
+	var out SnapshotRoot
+	var kind, state string
+	var retired, expired, quarantined, cleanupCompleted *time.Time
+	var evidence []byte
+	var quarantineEvidence, cleanupEvidence []byte
+	err := db.QueryRow(ctx, `SELECT root_id::text,physical_pool_id,catalog_id,snapshot_id,root_kind,state,created_at,retired_at,expired_at,quarantined_at,cleanup_completed_at,evidence,quarantine_evidence,cleanup_evidence FROM ducklake.snapshot_root WHERE root_id=$1`, rootID).
+		Scan(&out.RootID, &out.PhysicalPoolID, &out.CatalogID, &out.SnapshotID, &kind, &state, &out.CreatedAt, &retired, &expired, &quarantined, &cleanupCompleted, &evidence, &quarantineEvidence, &cleanupEvidence)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SnapshotRoot{}, ErrNotFound
+	}
+	if err != nil {
+		return SnapshotRoot{}, err
+	}
+	out.Kind = SnapshotRootKind(kind)
+	out.State = state
+	out.Evidence = append(json.RawMessage(nil), evidence...)
+	if len(quarantineEvidence) != 0 {
+		out.QuarantineEvidence = append(json.RawMessage(nil), quarantineEvidence...)
+	}
+	if len(cleanupEvidence) != 0 {
+		out.CleanupEvidence = append(json.RawMessage(nil), cleanupEvidence...)
+	}
+	if retired != nil {
+		out.RetiredAt = retired.UTC()
+	}
+	if expired != nil {
+		out.ExpiredAt = expired.UTC()
+	}
+	if quarantined != nil {
+		out.QuarantinedAt = quarantined.UTC()
+	}
+	if cleanupCompleted != nil {
+		out.CleanupCompletedAt = cleanupCompleted.UTC()
+	}
+	return out, nil
+}
+
+func (r *Repository) LoadSnapshotRoot(ctx context.Context, rootID string) (SnapshotRoot, error) {
+	if r == nil {
+		return SnapshotRoot{}, ErrInvalid
+	}
+	return LoadSnapshotRoot(ctx, r.db, rootID)
 }
 
 func (r *Repository) BindGeneration(ctx context.Context, in GenerationBinding) (GenerationBinding, error) {
@@ -516,7 +773,11 @@ FROM ducklake.generation_binding WHERE delivery_id=$1 AND generation_id=$2`, del
 // BeginAttempt persists identity before any DuckLake mutation. Replay of the
 // exact identity returns the existing row; any identity drift is a conflict.
 func BeginAttempt(ctx context.Context, tx DBTX, in BeginAttemptInput) (AttemptEvidence, error) {
-	return beginAttemptAt(ctx, tx, in, time.Now().UTC())
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	return beginAttemptAt(ctx, tx, in, now)
 }
 
 func beginAttemptAt(ctx context.Context, tx DBTX, in BeginAttemptInput, now time.Time) (AttemptEvidence, error) {
@@ -548,7 +809,11 @@ func (r *Repository) BeginAttempt(ctx context.Context, in BeginAttemptInput) (At
 	if r == nil {
 		return AttemptEvidence{}, ErrInvalid
 	}
-	return beginAttemptAt(ctx, r.db, in, r.clock())
+	now, err := databaseClock(ctx, r.db)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	return beginAttemptAt(ctx, r.db, in, now)
 }
 
 func CommitAttempt(ctx context.Context, tx DBTX, in CommitAttemptInput) (AttemptEvidence, error) {
@@ -562,9 +827,9 @@ func CommitAttempt(ctx context.Context, tx DBTX, in CommitAttemptInput) (Attempt
 	if marker.AttemptID != in.AttemptID || marker.PhysicalPoolID != in.Snapshot.PhysicalPoolID || marker.LeaseEpoch != in.FencingEpoch {
 		return AttemptEvidence{}, fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
 	}
-	now := in.CommittedAt.UTC()
-	if now.IsZero() {
-		now = time.Now().UTC()
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return AttemptEvidence{}, err
 	}
 	canonical, _ := marker.CanonicalJSON()
 	existing, err := loadAttemptForUpdate(ctx, tx, in.AttemptID)
@@ -633,9 +898,9 @@ func TerminateAttempt(ctx context.Context, tx DBTX, in TerminateAttemptInput, st
 	if err != nil {
 		return AttemptEvidence{}, err
 	}
-	now := in.TerminatedAt.UTC()
-	if now.IsZero() {
-		now = time.Now().UTC()
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return AttemptEvidence{}, err
 	}
 	_, err = tx.Exec(ctx, `UPDATE ducklake.attempt_evidence SET state=$4,termination_evidence=$5::jsonb,updated_at=$6,terminal_at=$6
 WHERE attempt_id=$1 AND state='running' AND owner_id=$2 AND fencing_epoch=$3`, in.AttemptID, in.OwnerID, in.FencingEpoch, string(state), evidence, now)
@@ -731,6 +996,11 @@ func acquireSnapshotLeaseAt(ctx context.Context, tx DBTX, in AcquireLeaseInput, 
 	if now.IsZero() {
 		now = time.Now().UTC()
 	}
+	dbNow, err := databaseClock(ctx, tx)
+	if err != nil {
+		return SnapshotLease{}, err
+	}
+	now = dbNow
 	acquired := in.AcquiredAt.UTC()
 	if acquired.IsZero() {
 		acquired = now
@@ -752,7 +1022,7 @@ func acquireSnapshotLeaseAt(ctx context.Context, tx DBTX, in AcquireLeaseInput, 
 	}
 	var pool, catalog string
 	var snapshot, fence int64
-	err := tx.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,snapshot_id,fencing_epoch FROM ducklake.generation_binding WHERE delivery_id=$1 AND generation_id=$2`, in.DeliveryID, in.GenerationID).Scan(&pool, &catalog, &snapshot, &fence)
+	err = tx.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,snapshot_id,fencing_epoch FROM ducklake.generation_binding WHERE delivery_id=$1 AND generation_id=$2`, in.DeliveryID, in.GenerationID).Scan(&pool, &catalog, &snapshot, &fence)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotLease{}, ErrNotFound
 	}
@@ -792,7 +1062,53 @@ func (r *Repository) AcquireSnapshotLease(ctx context.Context, in AcquireLeaseIn
 	if r == nil {
 		return SnapshotLease{}, ErrInvalid
 	}
-	return acquireSnapshotLeaseAt(ctx, r.db, in, r.clock())
+	now, err := databaseClock(ctx, r.db)
+	if err != nil {
+		return SnapshotLease{}, err
+	}
+	return acquireSnapshotLeaseAt(ctx, r.db, in, now)
+}
+
+// ClaimSnapshotLease is a restart-safe fence check for a worker that already
+// has a persisted lease identity. It never transfers ownership or extends a
+// deadline: only the exact owner and epoch may claim an unexpired active row.
+func ClaimSnapshotLease(ctx context.Context, tx DBTX, claim SnapshotLeaseClaim) (SnapshotLease, error) {
+	if tx == nil || !validUUID(claim.LeaseID) || !validID(claim.OwnerID) || claim.FencingEpoch <= 0 {
+		return SnapshotLease{}, ErrInvalid
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return SnapshotLease{}, err
+	}
+	now = now.Truncate(time.Microsecond)
+	var state string
+	var owner string
+	var epoch int64
+	var expires time.Time
+	err = tx.QueryRow(ctx, `SELECT state,owner_id,fencing_epoch,expires_at FROM ducklake.snapshot_lease WHERE lease_id=$1 FOR UPDATE`, claim.LeaseID).Scan(&state, &owner, &epoch, &expires)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SnapshotLease{}, ErrNotFound
+	}
+	if err != nil {
+		return SnapshotLease{}, err
+	}
+	if owner != claim.OwnerID || epoch != claim.FencingEpoch {
+		return SnapshotLease{}, ErrStaleFence
+	}
+	if state != string(LeaseActive) || !expires.After(now) {
+		if state == string(LeaseActive) {
+			return SnapshotLease{}, ErrLeaseExpired
+		}
+		return SnapshotLease{}, ErrConflict
+	}
+	return LoadLease(ctx, tx, claim.LeaseID)
+}
+
+func (r *Repository) ClaimSnapshotLease(ctx context.Context, claim SnapshotLeaseClaim) (SnapshotLease, error) {
+	if r == nil {
+		return SnapshotLease{}, ErrInvalid
+	}
+	return ClaimSnapshotLease(ctx, r.db, claim)
 }
 
 func RenewSnapshotLease(ctx context.Context, tx DBTX, fence LeaseFence, expiresAt, now time.Time) error {
@@ -802,6 +1118,15 @@ func RenewSnapshotLease(ctx context.Context, tx DBTX, fence LeaseFence, expiresA
 	now = now.UTC()
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	dbNow, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if now.Before(dbNow) {
+		now = dbNow
+	} else {
+		now = now.UTC()
 	}
 	now = now.Truncate(time.Microsecond)
 	expiresAt = expiresAt.UTC().Truncate(time.Microsecond)
@@ -850,15 +1175,17 @@ func (r *Repository) RenewSnapshotLease(ctx context.Context, fence LeaseFence, e
 	if r == nil {
 		return ErrInvalid
 	}
-	return RenewSnapshotLease(ctx, r.db, fence, expiresAt, r.clock())
+	return RenewSnapshotLease(ctx, r.db, fence, expiresAt, time.Time{})
 }
 
 func ReleaseSnapshotLease(ctx context.Context, tx DBTX, fence LeaseFence, releasedAt time.Time) error {
 	if tx == nil || !validUUID(fence.LeaseID) || !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
 		return ErrInvalid
 	}
-	if releasedAt.IsZero() {
-		releasedAt = time.Now().UTC()
+	var clockErr error
+	releasedAt, clockErr = databaseClock(ctx, tx)
+	if clockErr != nil {
+		return clockErr
 	}
 	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_lease SET state='released',released_at=$4
 WHERE lease_id=$1 AND owner_id=$2 AND fencing_epoch=$3 AND state='active'`, fence.LeaseID, fence.OwnerID, fence.FencingEpoch, releasedAt.UTC())
@@ -885,7 +1212,7 @@ func (r *Repository) ReleaseSnapshotLease(ctx context.Context, fence LeaseFence)
 	if r == nil {
 		return ErrInvalid
 	}
-	return ReleaseSnapshotLease(ctx, r.db, fence, r.clock())
+	return ReleaseSnapshotLease(ctx, r.db, fence, time.Time{})
 }
 
 func ExpireSnapshotLeases(ctx context.Context, tx DBTX, now time.Time) error {
@@ -894,6 +1221,11 @@ func ExpireSnapshotLeases(ctx context.Context, tx DBTX, now time.Time) error {
 	}
 	if now.IsZero() {
 		now = time.Now().UTC()
+	}
+	var clockErr error
+	now, clockErr = databaseClock(ctx, tx)
+	if clockErr != nil {
+		return clockErr
 	}
 	_, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_lease SET state='expired',released_at=$1 WHERE state='active' AND expires_at <= $1`, now.UTC())
 	return err
@@ -913,6 +1245,11 @@ func RetireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, retiredAt tim
 	if retiredAt.IsZero() {
 		retiredAt = time.Now().UTC()
 	}
+	var clockErr error
+	retiredAt, clockErr = databaseClock(ctx, tx)
+	if clockErr != nil {
+		return clockErr
+	}
 	var state string
 	if err := tx.QueryRow(ctx, `SELECT state FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 FOR UPDATE`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID).Scan(&state); errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
@@ -920,6 +1257,10 @@ func RetireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, retiredAt tim
 		return err
 	} else if state == "expired" {
 		return ErrNotLive
+	} else if state == "quarantined" {
+		return ErrQuarantined
+	} else if state == "cleanup-complete" {
+		return ErrConflict
 	} else if state == "retiring" {
 		return nil
 	}
@@ -930,8 +1271,14 @@ func RetireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, retiredAt tim
 	if roots != 0 {
 		return fmt.Errorf("%w: durable snapshot roots remain", ErrConflict)
 	}
-	_, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='retiring',retired_at=$4 WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='live'`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, retiredAt.UTC())
-	return err
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='retiring',retired_at=$4 WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='live'`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, retiredAt.UTC())
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+	return ErrConflict
 }
 
 func (r *Repository) RetireSnapshot(ctx context.Context, ref SnapshotRef, retiredAt time.Time) error {
@@ -948,6 +1295,11 @@ func ExpireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json
 	if expiredAt.IsZero() {
 		expiredAt = time.Now().UTC()
 	}
+	var clockErr error
+	expiredAt, clockErr = databaseClock(ctx, tx)
+	if clockErr != nil {
+		return clockErr
+	}
 	canonical, err := canonicalEvidence(evidence)
 	if err != nil {
 		return fmt.Errorf("%w: expiration evidence is required", ErrInvalid)
@@ -957,8 +1309,15 @@ func ExpireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json
 		return ErrNotFound
 	} else if err != nil {
 		return err
-	} else if state == "expired" {
-		return nil
+	} else if state == "expired" || state == "quarantined" || state == "cleanup-complete" {
+		got, loadErr := loadSnapshotRetention(ctx, tx, ref)
+		if loadErr != nil {
+			return loadErr
+		}
+		if evidenceEqual(got.Evidence, canonical) {
+			return nil
+		}
+		return fmt.Errorf("%w: expiration evidence differs", ErrConflict)
 	} else if state != "retiring" {
 		return ErrConflict
 	}
@@ -976,8 +1335,14 @@ func ExpireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json
 	if roots != 0 {
 		return fmt.Errorf("%w: durable snapshot roots remain", ErrConflict)
 	}
-	_, err = tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='expired',expired_at=$4,evidence=$5::jsonb WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='retiring'`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, expiredAt.UTC(), canonical)
-	return err
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='expired',expired_at=$4,evidence=$5::jsonb WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='retiring'`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, expiredAt.UTC(), canonical)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+	return ErrConflict
 }
 
 func (r *Repository) ExpireSnapshot(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, expiredAt time.Time) error {
@@ -985,6 +1350,404 @@ func (r *Repository) ExpireSnapshot(ctx context.Context, ref SnapshotRef, eviden
 		return ErrInvalid
 	}
 	return ExpireSnapshot(ctx, r.db, ref, evidence, expiredAt)
+}
+
+// QuarantineSnapshot is the fail-closed handoff between retention expiry and
+// physical cleanup. It is intentionally separate from ExpireSnapshot so a
+// cleanup worker can never jump directly to a successful terminal state.
+func ClaimSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+	if tx == nil || !validSnapshotRef(ref) || !validID(ownerID) {
+		return CleanupFence{}, ErrInvalid
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return CleanupFence{}, err
+	}
+	var state string
+	var currentOwner *string
+	var currentEpoch int64
+	var currentExpiry *time.Time
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 FOR UPDATE`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID).Scan(&state, &currentOwner, &currentEpoch, &currentExpiry); errors.Is(err, pgx.ErrNoRows) {
+		return CleanupFence{}, ErrNotFound
+	} else if err != nil {
+		return CleanupFence{}, err
+	}
+	if state == string(RetentionCleanupComplete) {
+		return CleanupFence{}, ErrConflict
+	}
+	if state != string(RetentionExpired) && state != string(RetentionQuarantined) {
+		return CleanupFence{}, ErrCleanupPending
+	}
+	if currentOwner != nil && currentExpiry != nil && currentExpiry.After(now) {
+		if *currentOwner == ownerID {
+			return CleanupFence{OwnerID: ownerID, FencingEpoch: currentEpoch, LeaseExpiresAt: currentExpiry.UTC()}, nil
+		}
+		return CleanupFence{}, ErrCleanupBusy
+	}
+	if leaseExpiresAt.IsZero() {
+		leaseExpiresAt = now.Add(maxSnapshotLease)
+	}
+	leaseExpiresAt = leaseExpiresAt.UTC().Truncate(time.Microsecond)
+	if !leaseExpiresAt.After(now) || leaseExpiresAt.After(now.Add(maxSnapshotLease)) {
+		return CleanupFence{}, ErrInvalid
+	}
+	var epoch int64
+	err = tx.QueryRow(ctx, `UPDATE ducklake.snapshot_retention SET cleanup_owner_id=$4,cleanup_fencing_epoch=cleanup_fencing_epoch+1,cleanup_lease_expires_at=$5 WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state IN ('expired','quarantined') RETURNING cleanup_fencing_epoch`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, ownerID, leaseExpiresAt).Scan(&epoch)
+	if err != nil {
+		return CleanupFence{}, err
+	}
+	if epoch <= 0 {
+		return CleanupFence{}, ErrConflict
+	}
+	return CleanupFence{OwnerID: ownerID, FencingEpoch: epoch, LeaseExpiresAt: leaseExpiresAt}, nil
+}
+
+func (r *Repository) ClaimSnapshotCleanup(ctx context.Context, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+	if r == nil {
+		return CleanupFence{}, ErrInvalid
+	}
+	return ClaimSnapshotCleanup(ctx, r.db, ref, ownerID, leaseExpiresAt)
+}
+
+func QuarantineSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+	if tx == nil || !validSnapshotRef(ref) {
+		return ErrInvalid
+	}
+	if !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
+		return ErrInvalid
+	}
+	canonical, err := canonicalEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("%w: quarantine evidence is required", ErrInvalid)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var state string
+	var owner *string
+	var epoch int64
+	var leaseExpiry *time.Time
+	var existingEvidence []byte
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,quarantine_evidence FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 FOR UPDATE`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID).Scan(&state, &owner, &epoch, &leaseExpiry, &existingEvidence); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
+		return ErrStaleFence
+	}
+	if state == string(RetentionCleanupComplete) {
+		return ErrConflict
+	}
+	if state == string(RetentionQuarantined) {
+		if !evidenceEqual(existingEvidence, canonical) {
+			return fmt.Errorf("%w: quarantine evidence differs", ErrConflict)
+		}
+		return nil
+	}
+	if leaseExpiry == nil || !leaseExpiry.After(now) {
+		return ErrLeaseExpired
+	}
+	if state != string(RetentionExpired) {
+		return fmt.Errorf("%w: snapshot must be expired before quarantine", ErrConflict)
+	}
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='quarantined',quarantine_evidence=$4::jsonb,quarantined_at=$5 WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='expired' AND cleanup_owner_id=$6 AND cleanup_fencing_epoch=$7 AND cleanup_lease_expires_at > $5`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, canonical, now, fence.OwnerID, fence.FencingEpoch)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrStaleFence
+	}
+	return nil
+}
+
+func (r *Repository) QuarantineSnapshot(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+	if r == nil {
+		return ErrInvalid
+	}
+	return QuarantineSnapshot(ctx, r.db, ref, evidence, fence)
+}
+
+// CompleteSnapshotCleanup records a successful physical cleanup only after a
+// snapshot has passed through quarantine. The transition is idempotent for an
+// exact evidence replay and cannot reopen or rewrite a terminal row.
+func CompleteSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+	if tx == nil || !validSnapshotRef(ref) {
+		return ErrInvalid
+	}
+	if !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
+		return ErrInvalid
+	}
+	canonical, err := canonicalEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("%w: cleanup evidence is required", ErrInvalid)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var state string
+	var owner *string
+	var epoch int64
+	var leaseExpiry *time.Time
+	var existingEvidence []byte
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,cleanup_evidence FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 FOR UPDATE`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID).Scan(&state, &owner, &epoch, &leaseExpiry, &existingEvidence); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
+		return ErrStaleFence
+	}
+	if state == string(RetentionCleanupComplete) {
+		if !evidenceEqual(existingEvidence, canonical) {
+			return fmt.Errorf("%w: cleanup evidence differs", ErrConflict)
+		}
+		return nil
+	}
+	if state != string(RetentionQuarantined) {
+		return fmt.Errorf("%w: snapshot must be quarantined before cleanup-complete", ErrConflict)
+	}
+	if leaseExpiry == nil || !leaseExpiry.After(now) {
+		return ErrLeaseExpired
+	}
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_retention SET state='cleanup-complete',cleanup_evidence=$4::jsonb,cleanup_completed_at=$5 WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 AND state='quarantined' AND cleanup_owner_id=$6 AND cleanup_fencing_epoch=$7 AND cleanup_lease_expires_at > $5`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID, canonical, now, fence.OwnerID, fence.FencingEpoch)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() != 1 {
+		return ErrStaleFence
+	}
+	return nil
+}
+
+func (r *Repository) CompleteSnapshotCleanup(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+	if r == nil {
+		return ErrInvalid
+	}
+	return CompleteSnapshotCleanup(ctx, r.db, ref, evidence, fence)
+}
+
+// MarkCleanupComplete is a concise alias for maintenance workers.
+func (r *Repository) MarkCleanupComplete(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+	return r.CompleteSnapshotCleanup(ctx, ref, evidence, fence)
+}
+
+func RecordSnapshotOrphan(ctx context.Context, tx DBTX, in SnapshotOrphanInput) (SnapshotOrphan, error) {
+	if tx == nil || !validUUID(in.OrphanID) || !validSnapshotRef(SnapshotRef{in.PhysicalPoolID, in.CatalogID, in.SnapshotID}) {
+		return SnapshotOrphan{}, ErrInvalid
+	}
+	evidence, err := canonicalEvidence(in.Evidence)
+	if err != nil {
+		return SnapshotOrphan{}, fmt.Errorf("%w: orphan evidence is required", ErrInvalid)
+	}
+	discovered := in.DiscoveredAt.UTC()
+	discovered, err = databaseClock(ctx, tx)
+	if err != nil {
+		return SnapshotOrphan{}, err
+	}
+	_, err = tx.Exec(ctx, `INSERT INTO ducklake.snapshot_orphan(orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence,discovered_at)
+VALUES($1,$2,$3,$4,'quarantined',$5::jsonb,$6) ON CONFLICT(orphan_id) DO NOTHING`, in.OrphanID, in.PhysicalPoolID, in.CatalogID, in.SnapshotID, evidence, discovered)
+	if err != nil {
+		return SnapshotOrphan{}, err
+	}
+	var o SnapshotOrphan
+	var resolved *time.Time
+	var cleanupOwner *string
+	var cleanupLease *time.Time
+	var raw []byte
+	err = tx.QueryRow(ctx, `SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at FROM ducklake.snapshot_orphan WHERE orphan_id=$1`, in.OrphanID).Scan(&o.OrphanID, &o.PhysicalPoolID, &o.CatalogID, &o.SnapshotID, &o.State, &cleanupOwner, &o.CleanupFencingEpoch, &cleanupLease, &raw, &o.DiscoveredAt, &resolved)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SnapshotOrphan{}, ErrNotFound
+	}
+	if err != nil {
+		return SnapshotOrphan{}, err
+	}
+	o.Evidence = append(json.RawMessage(nil), raw...)
+	if cleanupOwner != nil {
+		o.CleanupOwnerID = *cleanupOwner
+	}
+	if cleanupLease != nil {
+		o.CleanupLeaseExpiresAt = cleanupLease.UTC()
+	}
+	if resolved != nil {
+		o.ResolvedAt = resolved.UTC()
+	}
+	if o.PhysicalPoolID != in.PhysicalPoolID || o.CatalogID != in.CatalogID || o.SnapshotID != in.SnapshotID || o.State != "quarantined" || !evidenceEqual(o.Evidence, evidence) {
+		return SnapshotOrphan{}, ErrConflict
+	}
+	return o, nil
+}
+
+func (r *Repository) RecordSnapshotOrphan(ctx context.Context, in SnapshotOrphanInput) (SnapshotOrphan, error) {
+	if r == nil {
+		return SnapshotOrphan{}, ErrInvalid
+	}
+	return RecordSnapshotOrphan(ctx, r.db, in)
+}
+
+// ClaimSnapshotOrphanCleanup acquires a restart-safe cleanup fence for an
+// orphan observation. A successor owner may take over only after the prior
+// lease expires; each takeover increments the persisted fencing epoch.
+func ClaimSnapshotOrphanCleanup(ctx context.Context, tx DBTX, orphanID, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+	if tx == nil || !validUUID(orphanID) || !validID(ownerID) {
+		return CleanupFence{}, ErrInvalid
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return CleanupFence{}, err
+	}
+	var state string
+	var currentOwner *string
+	var currentEpoch int64
+	var currentExpiry *time.Time
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at FROM ducklake.snapshot_orphan WHERE orphan_id=$1 FOR UPDATE`, orphanID).Scan(&state, &currentOwner, &currentEpoch, &currentExpiry); errors.Is(err, pgx.ErrNoRows) {
+		return CleanupFence{}, ErrNotFound
+	} else if err != nil {
+		return CleanupFence{}, err
+	}
+	if state == "cleanup-complete" {
+		return CleanupFence{}, ErrConflict
+	}
+	if state != "quarantined" {
+		return CleanupFence{}, ErrCleanupPending
+	}
+	if currentOwner != nil && currentExpiry != nil && currentExpiry.After(now) {
+		if *currentOwner == ownerID {
+			return CleanupFence{OwnerID: ownerID, FencingEpoch: currentEpoch, LeaseExpiresAt: currentExpiry.UTC()}, nil
+		}
+		return CleanupFence{}, ErrCleanupBusy
+	}
+	if leaseExpiresAt.IsZero() {
+		leaseExpiresAt = now.Add(maxSnapshotLease)
+	}
+	leaseExpiresAt = leaseExpiresAt.UTC().Truncate(time.Microsecond)
+	if !leaseExpiresAt.After(now) || leaseExpiresAt.After(now.Add(maxSnapshotLease)) {
+		return CleanupFence{}, ErrInvalid
+	}
+	var epoch int64
+	err = tx.QueryRow(ctx, `UPDATE ducklake.snapshot_orphan SET cleanup_owner_id=$2,cleanup_fencing_epoch=cleanup_fencing_epoch+1,cleanup_lease_expires_at=$3 WHERE orphan_id=$1 AND state='quarantined' RETURNING cleanup_fencing_epoch`, orphanID, ownerID, leaseExpiresAt).Scan(&epoch)
+	if err != nil {
+		return CleanupFence{}, err
+	}
+	if epoch <= 0 {
+		return CleanupFence{}, ErrConflict
+	}
+	return CleanupFence{OwnerID: ownerID, FencingEpoch: epoch, LeaseExpiresAt: leaseExpiresAt}, nil
+}
+
+func (r *Repository) ClaimSnapshotOrphanCleanup(ctx context.Context, orphanID, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+	if r == nil {
+		return CleanupFence{}, ErrInvalid
+	}
+	return ClaimSnapshotOrphanCleanup(ctx, r.db, orphanID, ownerID, leaseExpiresAt)
+}
+
+func CompleteSnapshotOrphanCleanup(ctx context.Context, tx DBTX, orphanID string, evidence json.RawMessage, resolvedAt time.Time, fence CleanupFence) error {
+	if tx == nil || !validUUID(orphanID) || !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
+		return ErrInvalid
+	}
+	canonical, err := canonicalEvidence(evidence)
+	if err != nil {
+		return fmt.Errorf("%w: cleanup evidence is required", ErrInvalid)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return err
+	}
+	var state string
+	var owner *string
+	var epoch int64
+	var leaseExpiry *time.Time
+	var existingEvidence []byte
+	if err := tx.QueryRow(ctx, `SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence FROM ducklake.snapshot_orphan WHERE orphan_id=$1 FOR UPDATE`, orphanID).Scan(&state, &owner, &epoch, &leaseExpiry, &existingEvidence); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
+		return ErrStaleFence
+	}
+	if state == "cleanup-complete" {
+		if evidenceEqual(existingEvidence, canonical) {
+			return nil
+		}
+		return fmt.Errorf("%w: cleanup evidence differs", ErrConflict)
+	}
+	if state != "quarantined" {
+		return fmt.Errorf("%w: orphan must be quarantined before cleanup-complete", ErrConflict)
+	}
+	if leaseExpiry == nil || !leaseExpiry.After(now) {
+		return ErrLeaseExpired
+	}
+	// resolvedAt remains a caller-visible compatibility seam, but all durable
+	// lifecycle timestamps use PostgreSQL's clock.
+	_ = resolvedAt
+	result, err := tx.Exec(ctx, `UPDATE ducklake.snapshot_orphan SET state='cleanup-complete',evidence=$2::jsonb,resolved_at=$3 WHERE orphan_id=$1 AND state='quarantined' AND cleanup_owner_id=$4 AND cleanup_fencing_epoch=$5 AND cleanup_lease_expires_at > $3`, orphanID, canonical, now, fence.OwnerID, fence.FencingEpoch)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 1 {
+		return nil
+	}
+	return ErrStaleFence
+}
+
+func (r *Repository) CompleteSnapshotOrphanCleanup(ctx context.Context, orphanID string, evidence json.RawMessage, resolvedAt time.Time, fence CleanupFence) error {
+	if r == nil {
+		return ErrInvalid
+	}
+	return CompleteSnapshotOrphanCleanup(ctx, r.db, orphanID, evidence, resolvedAt, fence)
+}
+
+func ListSnapshotOrphans(ctx context.Context, db DBTX, includeComplete bool) ([]SnapshotOrphan, error) {
+	if db == nil {
+		return nil, ErrInvalid
+	}
+	query := `SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at FROM ducklake.snapshot_orphan`
+	if !includeComplete {
+		query += ` WHERE state='quarantined'`
+	}
+	query += ` ORDER BY discovered_at,orphan_id`
+	rows, err := db.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotOrphan
+	for rows.Next() {
+		var o SnapshotOrphan
+		var raw []byte
+		var resolved *time.Time
+		var cleanupOwner *string
+		var cleanupLease *time.Time
+		if err := rows.Scan(&o.OrphanID, &o.PhysicalPoolID, &o.CatalogID, &o.SnapshotID, &o.State, &cleanupOwner, &o.CleanupFencingEpoch, &cleanupLease, &raw, &o.DiscoveredAt, &resolved); err != nil {
+			return nil, err
+		}
+		if cleanupOwner != nil {
+			o.CleanupOwnerID = *cleanupOwner
+		}
+		if cleanupLease != nil {
+			o.CleanupLeaseExpiresAt = cleanupLease.UTC()
+		}
+		o.Evidence = append(json.RawMessage(nil), raw...)
+		if resolved != nil {
+			o.ResolvedAt = resolved.UTC()
+		}
+		out = append(out, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (r *Repository) ListSnapshotOrphans(ctx context.Context, includeComplete bool) ([]SnapshotOrphan, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return ListSnapshotOrphans(ctx, r.db, includeComplete)
 }
 
 func LoadLease(ctx context.Context, db DBTX, id string) (SnapshotLease, error) {
@@ -1014,6 +1777,235 @@ func (r *Repository) LoadLease(ctx context.Context, id string) (SnapshotLease, e
 	return LoadLease(ctx, r.db, id)
 }
 
+func loadSnapshotRetention(ctx context.Context, db DBTX, ref SnapshotRef) (SnapshotRetention, error) {
+	if db == nil || !validSnapshotRef(ref) {
+		return SnapshotRetention{}, ErrInvalid
+	}
+	var out SnapshotRetention
+	var state string
+	var protected, retired, expired *time.Time
+	var evidence []byte
+	var cleanupLease, quarantined, cleanupCompleted *time.Time
+	var quarantineEvidence, cleanupEvidence []byte
+	var cleanupOwner *string
+	err := db.QueryRow(ctx, `SELECT physical_pool_id,catalog_id,snapshot_id,state,protected_until,retired_at,expired_at,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,quarantined_at,cleanup_completed_at,quarantine_evidence,cleanup_evidence,evidence,created_at
+FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`, ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID).
+		Scan(&out.PhysicalPoolID, &out.CatalogID, &out.SnapshotID, &state, &protected, &retired, &expired, &cleanupOwner, &out.CleanupFencingEpoch, &cleanupLease, &quarantined, &cleanupCompleted, &quarantineEvidence, &cleanupEvidence, &evidence, &out.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SnapshotRetention{}, ErrNotFound
+	}
+	if err != nil {
+		return SnapshotRetention{}, err
+	}
+	out.State = SnapshotRetentionState(state)
+	if cleanupOwner != nil {
+		out.CleanupOwnerID = *cleanupOwner
+	}
+	if protected != nil {
+		out.ProtectedUntil = protected.UTC()
+	}
+	if retired != nil {
+		out.RetiredAt = retired.UTC()
+	}
+	if expired != nil {
+		out.ExpiredAt = expired.UTC()
+	}
+	if cleanupLease != nil {
+		out.CleanupLeaseExpiresAt = cleanupLease.UTC()
+	}
+	if quarantined != nil {
+		out.QuarantinedAt = quarantined.UTC()
+	}
+	if cleanupCompleted != nil {
+		out.CleanupCompletedAt = cleanupCompleted.UTC()
+	}
+	out.Evidence = append(json.RawMessage(nil), evidence...)
+	out.QuarantineEvidence = append(json.RawMessage(nil), quarantineEvidence...)
+	out.CleanupEvidence = append(json.RawMessage(nil), cleanupEvidence...)
+	return out, nil
+}
+
+func LoadSnapshotRetention(ctx context.Context, db DBTX, ref SnapshotRef) (SnapshotRetention, error) {
+	return loadSnapshotRetention(ctx, db, ref)
+}
+
+func (r *Repository) LoadSnapshotRetention(ctx context.Context, ref SnapshotRef) (SnapshotRetention, error) {
+	if r == nil {
+		return SnapshotRetention{}, ErrInvalid
+	}
+	return loadSnapshotRetention(ctx, r.db, ref)
+}
+
+func listSnapshotReaders(ctx context.Context, db DBTX, ref SnapshotRef, overdueOnly bool) ([]ReaderDrain, error) {
+	if db == nil || (ref != (SnapshotRef{}) && !validSnapshotRef(ref)) {
+		return nil, ErrInvalid
+	}
+	query := `SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,acquired_at,expires_at,
+       (state='active' AND expires_at <= clock_timestamp()) AS overdue,
+       (state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
+FROM ducklake.snapshot_reader_drain WHERE state='active'`
+	args := []any{}
+	if ref != (SnapshotRef{}) {
+		query += ` AND physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`
+		args = []any{ref.PhysicalPoolID, ref.CatalogID, ref.SnapshotID}
+	}
+	if overdueOnly {
+		query += ` AND overdue`
+	}
+	query += ` ORDER BY expires_at,lease_id`
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ReaderDrain
+	for rows.Next() {
+		var d ReaderDrain
+		if err := rows.Scan(&d.LeaseID, &d.DeliveryID, &d.GenerationID, &d.PhysicalPoolID, &d.CatalogID, &d.SnapshotID, &d.OwnerID, &d.FencingEpoch, &d.State, &d.AcquiredAt, &d.ExpiresAt, &d.Overdue, &d.NonDraining); err != nil {
+			return nil, err
+		}
+		out = append(out, d)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func ListSnapshotReaders(ctx context.Context, db DBTX, ref SnapshotRef) ([]ReaderDrain, error) {
+	return listSnapshotReaders(ctx, db, ref, false)
+}
+
+func (r *Repository) ListSnapshotReaders(ctx context.Context, ref SnapshotRef) ([]ReaderDrain, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return listSnapshotReaders(ctx, r.db, ref, false)
+}
+
+func ListOverdueSnapshotReaders(ctx context.Context, db DBTX) ([]ReaderDrain, error) {
+	return listSnapshotReaders(ctx, db, SnapshotRef{}, true)
+}
+
+func (r *Repository) ListOverdueSnapshotReaders(ctx context.Context) ([]ReaderDrain, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return listSnapshotReaders(ctx, r.db, SnapshotRef{}, true)
+}
+
+func ReadRetentionBacklog(ctx context.Context, db DBTX) (RetentionBacklog, error) {
+	if db == nil {
+		return RetentionBacklog{}, ErrInvalid
+	}
+	var out RetentionBacklog
+	err := db.QueryRow(ctx, `SELECT
+		(SELECT count(*) FROM ducklake.snapshot_retention WHERE state IN ('expired','quarantined')),
+ (SELECT count(*) FROM ducklake.snapshot_retention WHERE state='quarantined'),
+ (SELECT count(*) FROM ducklake.snapshot_orphan WHERE state='quarantined'),
+ (SELECT count(*) FROM ducklake.snapshot_lease WHERE state='active' AND expires_at <= clock_timestamp()),
+ (SELECT count(*) FROM ducklake.snapshot_lease WHERE state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour')`).
+		Scan(&out.CleanupPending, &out.Quarantined, &out.Orphans, &out.OverdueReaders, &out.NonDrainingReaders)
+	return out, err
+}
+
+func (r *Repository) ReadRetentionBacklog(ctx context.Context) (RetentionBacklog, error) {
+	if r == nil {
+		return RetentionBacklog{}, ErrInvalid
+	}
+	return ReadRetentionBacklog(ctx, r.db)
+}
+
+func listRetentionByState(ctx context.Context, db DBTX, states ...SnapshotRetentionState) ([]SnapshotRetention, error) {
+	if db == nil || len(states) == 0 {
+		return nil, ErrInvalid
+	}
+	args := make([]any, len(states))
+	placeholders := make([]string, len(states))
+	for i, state := range states {
+		args[i] = string(state)
+		placeholders[i] = fmt.Sprintf("$%d", i+1)
+	}
+	query := `SELECT physical_pool_id,catalog_id,snapshot_id,state,protected_until,retired_at,expired_at,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,quarantined_at,cleanup_completed_at,quarantine_evidence,cleanup_evidence,evidence,created_at FROM ducklake.snapshot_retention WHERE state IN (` + strings.Join(placeholders, ",") + `) ORDER BY expired_at,physical_pool_id,catalog_id,snapshot_id`
+	rows, err := db.Query(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SnapshotRetention
+	for rows.Next() {
+		var item SnapshotRetention
+		var state string
+		var protected, retired, expired, cleanupLease, quarantined, cleanupCompleted *time.Time
+		var quarantineEvidence, cleanupEvidence []byte
+		var cleanupOwner *string
+		var raw []byte
+		if err := rows.Scan(&item.PhysicalPoolID, &item.CatalogID, &item.SnapshotID, &state, &protected, &retired, &expired, &cleanupOwner, &item.CleanupFencingEpoch, &cleanupLease, &quarantined, &cleanupCompleted, &quarantineEvidence, &cleanupEvidence, &raw, &item.CreatedAt); err != nil {
+			return nil, err
+		}
+		item.State = SnapshotRetentionState(state)
+		if cleanupOwner != nil {
+			item.CleanupOwnerID = *cleanupOwner
+		}
+		item.Evidence = append(json.RawMessage(nil), raw...)
+		item.QuarantineEvidence = append(json.RawMessage(nil), quarantineEvidence...)
+		item.CleanupEvidence = append(json.RawMessage(nil), cleanupEvidence...)
+		if protected != nil {
+			item.ProtectedUntil = protected.UTC()
+		}
+		if retired != nil {
+			item.RetiredAt = retired.UTC()
+		}
+		if expired != nil {
+			item.ExpiredAt = expired.UTC()
+		}
+		if cleanupLease != nil {
+			item.CleanupLeaseExpiresAt = cleanupLease.UTC()
+		}
+		if quarantined != nil {
+			item.QuarantinedAt = quarantined.UTC()
+		}
+		if cleanupCompleted != nil {
+			item.CleanupCompletedAt = cleanupCompleted.UTC()
+		}
+		out = append(out, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func ListQuarantineBacklog(ctx context.Context, db DBTX) ([]SnapshotRetention, error) {
+	return listRetentionByState(ctx, db, RetentionQuarantined)
+}
+
+func (r *Repository) ListQuarantineBacklog(ctx context.Context) ([]SnapshotRetention, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return ListQuarantineBacklog(ctx, r.db)
+}
+
+func ListCleanupBacklog(ctx context.Context, db DBTX) ([]SnapshotRetention, error) {
+	return listRetentionByState(ctx, db, RetentionExpired, RetentionQuarantined)
+}
+
+func (r *Repository) ListCleanupBacklog(ctx context.Context) ([]SnapshotRetention, error) {
+	if r == nil {
+		return nil, ErrInvalid
+	}
+	return ListCleanupBacklog(ctx, r.db)
+}
+
+// RetentionMetrics is an alias retained for metrics collectors that use the
+// conventional naming rather than backlog terminology.
+type RetentionMetrics = RetentionBacklog
+
+func RetentionMetricsSnapshot(ctx context.Context, db DBTX) (RetentionMetrics, error) {
+	return ReadRetentionBacklog(ctx, db)
+}
+
 func validateCatalog(c CatalogIdentity) error {
 	for _, value := range []string{c.PhysicalPoolID, c.CatalogID} {
 		if !validID(value) {
@@ -1028,6 +2020,16 @@ func validateCatalog(c CatalogIdentity) error {
 
 func validSnapshotRef(ref SnapshotRef) bool {
 	return validID(ref.PhysicalPoolID) && validID(ref.CatalogID) && ref.SnapshotID > 0
+}
+
+func validRootKind(kind SnapshotRootKind) bool {
+	switch kind {
+	case RootCandidate, RootGeneration, RootRollback, RootRecovery,
+		RootActive, RootCache, RootLineage, RootDelivery:
+		return true
+	default:
+		return false
+	}
 }
 
 func validateBinding(in GenerationBinding) error {
@@ -1126,6 +2128,13 @@ func canonicalEvidence(raw json.RawMessage) (string, error) {
 	return string(encoded), nil
 }
 
+func canonicalOptionalEvidence(raw json.RawMessage) (string, error) {
+	if len(raw) == 0 {
+		return "{}", nil
+	}
+	return canonicalEvidence(raw)
+}
+
 func sameCatalog(a, b CatalogIdentity) bool {
 	return a.PhysicalPoolID == b.PhysicalPoolID && a.CatalogID == b.CatalogID && a.MetadataSchema == b.MetadataSchema && a.CompatibilityDigest == b.CompatibilityDigest && a.CatalogSchemaVersion == b.CatalogSchemaVersion
 }
@@ -1159,5 +2168,9 @@ func markersEqual(a, b string) bool {
 
 func evidenceEqual(a json.RawMessage, b string) bool {
 	canonical, err := canonicalEvidence(a)
-	return err == nil && canonical == b
+	if err != nil {
+		return false
+	}
+	expected, err := canonicalEvidence([]byte(b))
+	return err == nil && canonical == expected
 }
