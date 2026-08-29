@@ -59,10 +59,12 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "refresh_runtime_password", Login: true})
 	backup := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup", Password: "refresh_backup_password", Login: true})
+	readonly := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "refresh_readonly_password", Login: true})
 	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "refresh_maintenance_password", Login: true})
 	db := h.NewDatabase(t, "refresh_schema_rollback_test")
 	h.GrantDatabase(t, db.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, db.Name, backup, "CONNECT")
+	h.GrantDatabase(t, db.Name, readonly, "CONNECT")
 	h.GrantDatabase(t, db.Name, maintenance, "CONNECT")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -113,6 +115,12 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	if _, err := user.Exec(t.Context(), `SELECT refresh.maintenance(1)`); err == nil {
 		t.Fatal("runtime role unexpectedly received maintenance EXECUTE")
 	}
+	if _, err := user.Exec(t.Context(), `SELECT refresh.fail_child_runs('missing-run','test')`); err != nil {
+		t.Fatalf("runtime role cannot execute guarded child transition: %v", err)
+	}
+	if _, err := user.Exec(t.Context(), `SELECT refresh.complete_child_runs('missing-run')`); err != nil {
+		t.Fatalf("runtime role cannot execute guarded child completion: %v", err)
+	}
 	maint, err := pgxpool.New(t.Context(), db.URL(maintenance))
 	if err != nil {
 		t.Fatal(err)
@@ -125,6 +133,9 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	if maintenanceCount != 0 {
 		t.Fatalf("empty maintenance count = %d, want zero", maintenanceCount)
 	}
+	if _, err := maint.Exec(t.Context(), `SELECT refresh.fail_child_runs('missing-run','test')`); err == nil {
+		t.Fatal("maintenance role unexpectedly received child transition EXECUTE")
+	}
 	reader, err := pgxpool.New(t.Context(), db.URL(backup))
 	if err != nil {
 		t.Fatal(err)
@@ -133,6 +144,17 @@ func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	var count int
 	if err := reader.QueryRow(t.Context(), `SELECT count(*) FROM refresh.run`).Scan(&count); err != nil {
 		t.Fatalf("backup SELECT grant: %v", err)
+	}
+	if _, err := reader.Exec(t.Context(), `SELECT refresh.complete_child_runs('missing-run')`); err == nil {
+		t.Fatal("backup role unexpectedly received child transition EXECUTE")
+	}
+	readOnlyConn, err := pgxpool.New(t.Context(), db.URL(readonly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readOnlyConn.Close)
+	if _, err := readOnlyConn.Exec(t.Context(), `SELECT refresh.fail_child_runs('missing-run','test')`); err == nil {
+		t.Fatal("readonly role unexpectedly received child transition EXECUTE")
 	}
 }
 
@@ -362,6 +384,63 @@ func TestPostgresRefreshConcurrentAdmissionSerializesEmptyTargetSet(t *testing.T
 	}
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("concurrent admission successes=%d conflicts=%d, want one each", successes, conflicts)
+	}
+}
+
+func TestPostgresRefreshChildTransitionFunctionSerializesConcurrentCallers(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("e", 64)
+	rootID, childID, jobID := "function-root", "function-child", "function-job"
+	seedRefreshJob(t, admin, jobID, rootID, "function-project", "prod", "function-principal")
+	root := RunInput{RunID: rootID, ProjectID: "function-project", Environment: "prod", GenerationID: "function-generation", PipelineID: "function-pipeline", SemanticModelID: "function-semantic", TargetType: "refresh_pipeline", TargetID: "function-pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "function-principal", JobID: jobID}
+	child := RunInput{RunID: childID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, SemanticModelID: root.SemanticModelID, TargetType: "model_table", TargetID: "function-model", TriggerType: "dependency", InvocationSource: "dependency", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: root.PrincipalID, ParentRunID: rootID}
+	if _, _, err := r.CreateRunTreeWithSupersedeHook(ctx, root, []RunInput{child}, "", "", 0, nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	type result struct {
+		affected int64
+		err      error
+	}
+	start := make(chan struct{})
+	results := make(chan result, 2)
+	for i := 0; i < 2; i++ {
+		go func() {
+			<-start
+			tx, err := admin.Begin(ctx)
+			if err != nil {
+				results <- result{err: err}
+				return
+			}
+			var affected int64
+			err = tx.QueryRow(ctx, `SELECT refresh.fail_child_runs($1,$2)`, rootID, "concurrent child failure").Scan(&affected)
+			if err == nil {
+				err = tx.Commit(ctx)
+			} else {
+				_ = tx.Rollback(ctx)
+			}
+			results <- result{affected: affected, err: err}
+		}()
+	}
+	close(start)
+	var affected []int64
+	for range 2 {
+		got := <-results
+		if got.err != nil {
+			t.Fatal(got.err)
+		}
+		affected = append(affected, got.affected)
+	}
+	if !((affected[0] == 1 && affected[1] == 0) || (affected[0] == 0 && affected[1] == 1)) {
+		t.Fatalf("concurrent child function counts=%v, want one update and one no-op", affected)
+	}
+	var status string
+	if err := admin.QueryRow(ctx, `SELECT status FROM refresh.run WHERE run_id=$1`, childID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "failed" {
+		t.Fatalf("child status=%q, want failed", status)
 	}
 }
 

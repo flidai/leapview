@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	lineagedb "github.com/flidai/leapview/internal/lineage/postgres/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
@@ -186,6 +187,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. Capability-owned schema DDL is applied as a
+	// single caller-owned migration transaction.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -533,9 +536,11 @@ func Persist(ctx context.Context, tx Tx, p Projection) error {
 	if err != nil {
 		return err
 	}
-	var inserted int64
-	err = tx.QueryRow(ctx, `INSERT INTO lineage.graphs (graph_digest, graph_version, project_id, node_count, edge_count)
-VALUES ($1,$2,$3,$4,$5) ON CONFLICT (graph_digest) DO NOTHING RETURNING 1`, p.Digest, p.Version, p.ProjectID, len(p.Nodes), len(p.Edges)).Scan(&inserted)
+	q := lineagedb.New(tx)
+	_, err = q.InsertGraph(ctx, lineagedb.InsertGraphParams{
+		GraphDigest: p.Digest, GraphVersion: int32(p.Version), ProjectID: p.ProjectID,
+		NodeCount: int32(len(p.Nodes)), EdgeCount: int32(len(p.Edges)),
+	})
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
@@ -549,12 +554,17 @@ VALUES ($1,$2,$3,$4,$5) ON CONFLICT (graph_digest) DO NOTHING RETURNING 1`, p.Di
 		return nil
 	}
 	for _, n := range p.Nodes {
-		if _, err := tx.Exec(ctx, `INSERT INTO lineage.nodes (graph_digest,project_id,node_id,resource_kind,identity_digest,properties) VALUES ($1,$2,$3,$4,$5,$6)`, p.Digest, p.ProjectID, n.ID, n.ResourceKind, n.IdentityDigest, n.Properties); err != nil {
+		if err := q.InsertNode(ctx, lineagedb.InsertNodeParams{
+			GraphDigest: p.Digest, ProjectID: p.ProjectID, NodeID: n.ID,
+			ResourceKind: n.ResourceKind, IdentityDigest: n.IdentityDigest, Properties: n.Properties,
+		}); err != nil {
 			return err
 		}
 	}
 	for _, e := range p.Edges {
-		if _, err := tx.Exec(ctx, `INSERT INTO lineage.edges (graph_digest,project_id,from_node_id,to_node_id,relation) VALUES ($1,$2,$3,$4,$5)`, p.Digest, p.ProjectID, e.From, e.To, e.Relation); err != nil {
+		if err := q.InsertEdge(ctx, lineagedb.InsertEdgeParams{
+			GraphDigest: p.Digest, ProjectID: p.ProjectID, FromNodeID: e.From, ToNodeID: e.To, Relation: e.Relation,
+		}); err != nil {
 			return err
 		}
 	}
@@ -609,20 +619,24 @@ func PersistBinding(ctx context.Context, tx Tx, b Binding) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	q := lineagedb.New(tx)
 	if b.ProjectID == "" {
-		if err := tx.QueryRow(ctx, `SELECT project_id FROM lineage.graphs WHERE graph_digest=$1`, b.GraphDigest).Scan(&b.ProjectID); err != nil {
+		projectID, err := q.GetGraphProjectID(ctx, b.GraphDigest)
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
 		}
+		b.ProjectID = projectID
 	}
 	if !validScope(b.ProjectID) {
 		return ErrInvalid
 	}
-	var inserted int
-	err := tx.QueryRow(ctx, `INSERT INTO lineage.bindings (delivery_id,generation_id,project_id,graph_digest) VALUES ($1,$2,$3,$4)
-ON CONFLICT (delivery_id,generation_id) DO NOTHING RETURNING 1`, b.DeliveryID, b.GenerationID, b.ProjectID, b.GraphDigest).Scan(&inserted)
+	_, err := q.InsertBinding(ctx, lineagedb.InsertBindingParams{
+		DeliveryID: b.DeliveryID, GenerationID: b.GenerationID,
+		ProjectID: b.ProjectID, GraphDigest: b.GraphDigest,
+	})
 	// The project ID is part of the binding identity.  Keep the conflict
 	// comparison below explicit so retries with a graph from another project
 	// cannot silently reuse a serving scope.
@@ -632,11 +646,11 @@ ON CONFLICT (delivery_id,generation_id) DO NOTHING RETURNING 1`, b.DeliveryID, b
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	var existingDigest, existingProject string
-	if err := tx.QueryRow(ctx, `SELECT graph_digest,project_id FROM lineage.bindings WHERE delivery_id=$1 AND generation_id=$2`, b.DeliveryID, b.GenerationID).Scan(&existingDigest, &existingProject); err != nil {
+	existing, err := q.GetBinding(ctx, lineagedb.GetBindingParams{DeliveryID: b.DeliveryID, GenerationID: b.GenerationID})
+	if err != nil {
 		return err
 	}
-	if existingDigest != b.GraphDigest || existingProject != b.ProjectID {
+	if existing.GraphDigest != b.GraphDigest || existing.ProjectID != b.ProjectID {
 		return fmt.Errorf("%w: binding (%s,%s)", ErrConflict, b.DeliveryID, b.GenerationID)
 	}
 	return nil
@@ -667,14 +681,18 @@ func PublishRevision(ctx context.Context, tx Tx, in RevisionInput) (Revision, er
 	if err := Persist(ctx, tx, p); err != nil {
 		return Revision{}, err
 	}
-	var out Revision
-	if err := tx.QueryRow(ctx, `SELECT project_id,scope_id,revision_id,graph_digest,valid_from,valid_to,created_at FROM lineage.publish_revision($1,$2,$3)`, in.ProjectID, in.ScopeID, p.Digest).Scan(&out.ProjectID, &out.ScopeID, &out.RevisionID, &out.GraphDigest, &out.ValidFrom, &out.ValidTo, &out.CreatedAt); err != nil {
+	q := lineagedb.New(tx)
+	row, err := q.PublishRevision(ctx, lineagedb.PublishRevisionParams{ProjectID: in.ProjectID, ScopeID: in.ScopeID, GraphDigest: p.Digest})
+	if err != nil {
 		if isUniqueViolation(err) {
 			return Revision{}, fmt.Errorf("%w: revision publication raced", ErrConflict)
 		}
 		return Revision{}, err
 	}
-	return out, nil
+	return revisionFromRow(lineagedb.LineageRevision{
+		ProjectID: row.ProjectID, ScopeID: row.ScopeID, RevisionID: row.RevisionID,
+		GraphDigest: row.GraphDigest, ValidFrom: row.ValidFrom, ValidTo: row.ValidTo, CreatedAt: row.CreatedAt,
+	})
 }
 
 // ReplaceRevision is the explicit replacement spelling retained for callers
@@ -714,15 +732,15 @@ func CurrentRevision(ctx context.Context, db DB, projectID, scopeID string) (Rev
 	if db == nil || !validScope(projectID) || !validScope(scopeID) {
 		return Revision{}, ErrInvalid
 	}
-	var out Revision
-	err := db.QueryRow(contextOrBackground(ctx), `SELECT project_id,scope_id,revision_id,graph_digest,valid_from,valid_to,created_at FROM lineage.revisions WHERE project_id=$1 AND scope_id=$2 AND valid_to IS NULL`, projectID, scopeID).Scan(&out.ProjectID, &out.ScopeID, &out.RevisionID, &out.GraphDigest, &out.ValidFrom, &out.ValidTo, &out.CreatedAt)
+	q := lineagedb.New(db)
+	row, err := q.GetCurrentRevision(contextOrBackground(ctx), lineagedb.GetCurrentRevisionParams{ProjectID: projectID, ScopeID: scopeID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, ErrNotFound
 	}
 	if err != nil {
 		return Revision{}, err
 	}
-	return out, nil
+	return revisionFromRow(row)
 }
 
 func (r *Repository) CurrentRevision(ctx context.Context, projectID, scopeID string) (Revision, error) {
@@ -737,15 +755,15 @@ func LoadRevision(ctx context.Context, db DB, projectID, scopeID string, revisio
 	if db == nil || !validScope(projectID) || !validScope(scopeID) || revisionID <= 0 {
 		return Revision{}, ErrInvalid
 	}
-	var out Revision
-	err := db.QueryRow(contextOrBackground(ctx), `SELECT project_id,scope_id,revision_id,graph_digest,valid_from,valid_to,created_at FROM lineage.revisions WHERE project_id=$1 AND scope_id=$2 AND revision_id=$3`, projectID, scopeID, revisionID).Scan(&out.ProjectID, &out.ScopeID, &out.RevisionID, &out.GraphDigest, &out.ValidFrom, &out.ValidTo, &out.CreatedAt)
+	q := lineagedb.New(db)
+	row, err := q.GetRevision(contextOrBackground(ctx), lineagedb.GetRevisionParams{ProjectID: projectID, ScopeID: scopeID, RevisionID: revisionID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Revision{}, ErrNotFound
 	}
 	if err != nil {
 		return Revision{}, err
 	}
-	return out, nil
+	return revisionFromRow(row)
 }
 
 func (r *Repository) LoadRevision(ctx context.Context, projectID, scopeID string, revisionID int64) (Revision, error) {
@@ -760,6 +778,21 @@ func contextOrBackground(ctx context.Context) context.Context {
 		return context.Background()
 	}
 	return ctx
+}
+
+func revisionFromRow(row lineagedb.LineageRevision) (Revision, error) {
+	if !row.ValidFrom.Valid || !row.CreatedAt.Valid {
+		return Revision{}, errors.New("lineage revision contains NULL timestamp")
+	}
+	out := Revision{
+		ProjectID: row.ProjectID, ScopeID: row.ScopeID, RevisionID: row.RevisionID,
+		GraphDigest: row.GraphDigest, ValidFrom: row.ValidFrom.Time, CreatedAt: row.CreatedAt.Time,
+	}
+	if row.ValidTo.Valid {
+		validTo := row.ValidTo.Time
+		out.ValidTo = &validTo
+	}
+	return out, nil
 }
 
 func isUniqueViolation(err error) bool {
@@ -801,65 +834,46 @@ func (r *Repository) Load(ctx context.Context, digest string) (Projection, error
 }
 
 func loadDigest(ctx context.Context, db DB, digest string) (Projection, error) {
-	var version, nodeCount, edgeCount int
-	var projectID string
-	if err := db.QueryRow(ctx, `SELECT graph_version,project_id,node_count,edge_count FROM lineage.graphs WHERE graph_digest=$1`, digest).Scan(&version, &projectID, &nodeCount, &edgeCount); err != nil {
+	q := lineagedb.New(db)
+	metadata, err := q.GetGraphMetadata(ctx, digest)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Projection{}, ErrNotFound
 		}
 		return Projection{}, err
 	}
+	version, projectID := int(metadata.GraphVersion), metadata.ProjectID
+	nodeCount, edgeCount := int(metadata.NodeCount), int(metadata.EdgeCount)
 	if version != CanonicalVersion || nodeCount < 1 || nodeCount > maxProjectionNodes || edgeCount < 0 || edgeCount > maxProjectionEdges {
 		return Projection{}, fmt.Errorf("%w: stored graph metadata exceeds bounds", ErrTampered)
 	}
 	nodes := make([]Node, 0, nodeCount)
-	rows, err := db.Query(ctx, `SELECT project_id,node_id,resource_kind,identity_digest,properties FROM lineage.nodes WHERE graph_digest=$1 ORDER BY node_id LIMIT $2`, digest, nodeCount+1)
+	nodeRows, err := q.ListNodes(ctx, lineagedb.ListNodesParams{GraphDigest: digest, RowLimit: int32(nodeCount + 1)})
 	if err != nil {
 		return Projection{}, err
 	}
-	for rows.Next() {
+	for _, row := range nodeRows {
 		var n Node
-		var rowProject string
-		var props []byte
-		if err := rows.Scan(&rowProject, &n.ID, &n.ResourceKind, &n.IdentityDigest, &props); err != nil {
-			rows.Close()
-			return Projection{}, err
-		}
-		if rowProject != projectID {
-			rows.Close()
+		n.ID, n.ResourceKind, n.IdentityDigest = row.NodeID, row.ResourceKind, row.IdentityDigest
+		if row.ProjectID != projectID {
 			return Projection{}, fmt.Errorf("%w: node project mismatch", ErrTampered)
 		}
-		n.Properties = append(json.RawMessage(nil), props...)
+		n.Properties = append(json.RawMessage(nil), row.Properties...)
 		nodes = append(nodes, n)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return Projection{}, err
-	}
-	rows.Close()
 	edges := make([]Edge, 0, edgeCount)
-	rows, err = db.Query(ctx, `SELECT project_id,from_node_id,to_node_id,relation FROM lineage.edges WHERE graph_digest=$1 ORDER BY from_node_id,to_node_id LIMIT $2`, digest, edgeCount+1)
+	edgeRows, err := q.ListEdges(ctx, lineagedb.ListEdgesParams{GraphDigest: digest, RowLimit: int32(edgeCount + 1)})
 	if err != nil {
 		return Projection{}, err
 	}
-	for rows.Next() {
+	for _, row := range edgeRows {
 		var e Edge
-		var rowProject string
-		if err := rows.Scan(&rowProject, &e.From, &e.To, &e.Relation); err != nil {
-			rows.Close()
-			return Projection{}, err
-		}
-		if rowProject != projectID {
-			rows.Close()
+		e.From, e.To, e.Relation = row.FromNodeID, row.ToNodeID, row.Relation
+		if row.ProjectID != projectID {
 			return Projection{}, fmt.Errorf("%w: edge project mismatch", ErrTampered)
 		}
 		edges = append(edges, e)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return Projection{}, err
-	}
-	rows.Close()
 	if len(nodes) != nodeCount || len(edges) != edgeCount {
 		return Projection{}, fmt.Errorf("%w: stored row count differs", ErrTampered)
 	}
@@ -887,18 +901,19 @@ func LoadBound(ctx context.Context, db DB, deliveryID, generationID string) (Pro
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	var digest, projectID string
-	if err := db.QueryRow(ctx, `SELECT graph_digest,project_id FROM lineage.bindings WHERE delivery_id=$1 AND generation_id=$2`, deliveryID, generationID).Scan(&digest, &projectID); err != nil {
+	q := lineagedb.New(db)
+	binding, err := q.GetBinding(ctx, lineagedb.GetBindingParams{DeliveryID: deliveryID, GenerationID: generationID})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Projection{}, ErrNotFound
 		}
 		return Projection{}, err
 	}
-	p, err := Load(ctx, db, digest)
+	p, err := Load(ctx, db, binding.GraphDigest)
 	if err != nil {
 		return Projection{}, err
 	}
-	if p.ProjectID != projectID {
+	if p.ProjectID != binding.ProjectID {
 		return Projection{}, ErrTampered
 	}
 	return p, nil
@@ -980,12 +995,15 @@ func Traverse(ctx context.Context, db DB, in TraversalInput) ([]TraversalNode, e
 	if !contains(allowed, in.RootID) {
 		return nil, ErrForbidden
 	}
+	q := lineagedb.New(db)
 	var digest string
 	if in.ScopeID != "" {
 		if !validScope(in.ScopeID) || in.DeliveryID != "" || in.GenerationID != "" {
 			return nil, ErrInvalid
 		}
-		if err := db.QueryRow(ctx, `SELECT graph_digest FROM lineage.revisions WHERE project_id=$1 AND scope_id=$2 AND valid_to IS NULL`, in.ProjectID, in.ScopeID).Scan(&digest); err != nil {
+		var err error
+		digest, err = q.GetRevisionDigest(ctx, lineagedb.GetRevisionDigestParams{ProjectID: in.ProjectID, ScopeID: in.ScopeID})
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, ErrNotFound
 			}
@@ -995,7 +1013,9 @@ func Traverse(ctx context.Context, db DB, in TraversalInput) ([]TraversalNode, e
 		if !validScope(in.DeliveryID) || !validScope(in.GenerationID) {
 			return nil, ErrInvalid
 		}
-		if err := db.QueryRow(ctx, `SELECT graph_digest FROM lineage.bindings WHERE project_id=$1 AND delivery_id=$2 AND generation_id=$3`, in.ProjectID, in.DeliveryID, in.GenerationID).Scan(&digest); err != nil {
+		var err error
+		digest, err = q.GetBindingDigestForProject(ctx, lineagedb.GetBindingDigestForProjectParams{ProjectID: in.ProjectID, DeliveryID: in.DeliveryID, GenerationID: in.GenerationID})
+		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return nil, ErrNotFound
 			}
@@ -1008,90 +1028,64 @@ func Traverse(ctx context.Context, db DB, in TraversalInput) ([]TraversalNode, e
 		return nil, err
 	}
 	// Validate the root exists in this generation before running the walk.
-	var exists bool
-	if err := db.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM lineage.nodes WHERE graph_digest=$1 AND node_id=$2)`, digest, in.RootID).Scan(&exists); err != nil {
+	exists, err := q.NodeExists(ctx, lineagedb.NodeExistsParams{GraphDigest: digest, NodeID: in.RootID})
+	if err != nil {
 		return nil, err
 	}
 	if !exists {
 		return nil, ErrNotFound
 	}
-	var query string
-	if in.Direction == DirectionUpstream {
-		query = `WITH RECURSIVE allowed(node_id) AS (SELECT unnest($3::text[])), walk(node_id,depth) AS (
-SELECT $2::text,0 UNION
-SELECT e.to_node_id,w.depth+1 FROM walk w
-JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$6 AND e.from_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.to_node_id
-WHERE w.depth < $4)
-SELECT node_id,resource_kind,identity_digest,properties,depth FROM (
-SELECT DISTINCT ON (n.node_id) n.node_id,n.resource_kind,n.identity_digest,n.properties,w.depth
-FROM walk w JOIN allowed a ON a.node_id=w.node_id
-JOIN lineage.nodes n ON n.graph_digest=$1 AND n.project_id=$6 AND n.node_id=w.node_id
-ORDER BY n.node_id,w.depth) unique_nodes
-		ORDER BY depth,node_id LIMIT $5`
-	} else {
-		query = `WITH RECURSIVE allowed(node_id) AS (SELECT unnest($3::text[])), walk(node_id,depth) AS (
-SELECT $2::text,0 UNION
-SELECT e.from_node_id,w.depth+1 FROM walk w
-JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$6 AND e.to_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.from_node_id
-		WHERE w.depth < $4)
-SELECT node_id,resource_kind,identity_digest,properties,depth FROM (
-SELECT DISTINCT ON (n.node_id) n.node_id,n.resource_kind,n.identity_digest,n.properties,w.depth
-FROM walk w JOIN allowed a ON a.node_id=w.node_id
-JOIN lineage.nodes n ON n.graph_digest=$1 AND n.project_id=$6 AND n.node_id=w.node_id
-ORDER BY n.node_id,w.depth) unique_nodes
-		ORDER BY depth,node_id LIMIT $5`
-	}
 	// This preflight counts every edge reachable by the same bounded,
 	// deduplicating walk. It is intentionally executed before materializing
 	// node payloads, so an explicit edge budget bounds recursive work.
-	edgeCountQuery := `WITH RECURSIVE allowed(node_id) AS (SELECT unnest($3::text[])), walk(node_id,depth) AS (
-SELECT $2::text,0 UNION
-SELECT e.to_node_id,w.depth+1 FROM walk w
-JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$5 AND e.from_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.to_node_id
-WHERE w.depth < $4)
-SELECT count(*) FROM walk w JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$5 AND e.from_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.to_node_id WHERE w.depth < $4`
-	if in.Direction == DirectionDownstream {
-		edgeCountQuery = `WITH RECURSIVE allowed(node_id) AS (SELECT unnest($3::text[])), walk(node_id,depth) AS (
-SELECT $2::text,0 UNION
-SELECT e.from_node_id,w.depth+1 FROM walk w
-JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$5 AND e.to_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.from_node_id
-WHERE w.depth < $4)
-SELECT count(*) FROM walk w JOIN lineage.edges e ON e.graph_digest=$1 AND e.project_id=$5 AND e.to_node_id=w.node_id
-JOIN allowed a ON a.node_id=e.from_node_id WHERE w.depth < $4`
-	}
 	var edgeCount int64
-	if err := db.QueryRow(ctx, edgeCountQuery, digest, in.RootID, allowed, in.MaxDepth, in.ProjectID).Scan(&edgeCount); err != nil {
+	countParams := lineagedb.CountUpstreamEdgesParams{
+		GraphDigest: digest, ProjectID: in.ProjectID, RootID: in.RootID,
+		Allowed: allowed, MaxDepth: int32(in.MaxDepth),
+	}
+	if in.Direction == DirectionUpstream {
+		edgeCount, err = q.CountUpstreamEdges(ctx, countParams)
+	} else {
+		edgeCount, err = q.CountDownstreamEdges(ctx, lineagedb.CountDownstreamEdgesParams{
+			GraphDigest: digest, ProjectID: in.ProjectID, RootID: in.RootID,
+			Allowed: allowed, MaxDepth: int32(in.MaxDepth),
+		})
+	}
+	if err != nil {
 		return nil, err
 	}
 	if edgeCount > int64(in.MaxEdges) {
 		return nil, fmt.Errorf("%w: traversal exceeds %d edges", ErrTraversalLimit, in.MaxEdges)
 	}
-	rows, err := db.Query(ctx, query, digest, in.RootID, allowed, in.MaxDepth, in.MaxNodes+1, in.ProjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := make([]TraversalNode, 0, in.MaxNodes)
-	for rows.Next() {
-		var n Node
-		var props []byte
-		var depth int
-		if err := rows.Scan(&n.ID, &n.ResourceKind, &n.IdentityDigest, &props, &depth); err != nil {
-			return nil, err
+	rowLimit := int32(in.MaxNodes + 1)
+	var out []TraversalNode
+	if in.Direction == DirectionUpstream {
+		rows, queryErr := q.TraverseUpstream(ctx, lineagedb.TraverseUpstreamParams{
+			GraphDigest: digest, ProjectID: in.ProjectID, RootID: in.RootID,
+			Allowed: allowed, MaxDepth: int32(in.MaxDepth), RowLimit: rowLimit,
+		})
+		if queryErr != nil {
+			return nil, queryErr
 		}
-		n.Properties = append(json.RawMessage(nil), props...)
-		out = append(out, TraversalNode{Node: n, Depth: depth})
-		if len(out) > in.MaxNodes {
-			return nil, fmt.Errorf("%w: traversal exceeds %d nodes", ErrTraversalLimit, in.MaxNodes)
+		out = make([]TraversalNode, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, TraversalNode{Node: Node{ID: row.NodeID, ResourceKind: row.ResourceKind, IdentityDigest: row.IdentityDigest, Properties: append(json.RawMessage(nil), row.Properties...)}, Depth: int(row.Depth)})
+		}
+	} else {
+		rows, queryErr := q.TraverseDownstream(ctx, lineagedb.TraverseDownstreamParams{
+			GraphDigest: digest, ProjectID: in.ProjectID, RootID: in.RootID,
+			Allowed: allowed, MaxDepth: int32(in.MaxDepth), RowLimit: rowLimit,
+		})
+		if queryErr != nil {
+			return nil, queryErr
+		}
+		out = make([]TraversalNode, 0, len(rows))
+		for _, row := range rows {
+			out = append(out, TraversalNode{Node: Node{ID: row.NodeID, ResourceKind: row.ResourceKind, IdentityDigest: row.IdentityDigest, Properties: append(json.RawMessage(nil), row.Properties...)}, Depth: int(row.Depth)})
 		}
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
+	if len(out) > in.MaxNodes {
+		return nil, fmt.Errorf("%w: traversal exceeds %d nodes", ErrTraversalLimit, in.MaxNodes)
 	}
 	return out, nil
 }

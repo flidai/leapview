@@ -72,6 +72,34 @@ END; $$;
 DROP TRIGGER IF EXISTS schedule_guard ON refresh.schedule_revision;
 CREATE TRIGGER schedule_guard BEFORE UPDATE ON refresh.schedule_revision FOR EACH ROW EXECUTE FUNCTION refresh.guard_schedule_update();
 
+CREATE OR REPLACE FUNCTION refresh.close_omitted_schedules(
+    p_project_id text,
+    p_environment text,
+    p_generation_id text,
+    p_pipelines text[],
+    p_schedule_ids text[]
+) RETURNS bigint
+LANGUAGE plpgsql
+SET search_path = pg_catalog, refresh AS $$
+DECLARE affected bigint;
+BEGIN
+    UPDATE refresh.schedule_revision s
+       SET closed_at=clock_timestamp(), enabled=false, updated_at=clock_timestamp()
+     WHERE s.project_id=p_project_id
+       AND s.environment=p_environment
+       AND s.generation_id=p_generation_id
+       AND s.closed_at IS NULL
+       AND s.enabled
+       AND NOT EXISTS (
+           SELECT 1
+             FROM unnest(p_pipelines, p_schedule_ids) AS omitted(pipeline_id, schedule_id)
+            WHERE omitted.pipeline_id=s.pipeline_id
+              AND omitted.schedule_id=s.schedule_id
+       );
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected;
+END; $$;
+
 CREATE TABLE IF NOT EXISTS refresh.operation (
     operation_id text PRIMARY KEY,
     project_id text NOT NULL,
@@ -311,6 +339,47 @@ BEGIN
 END; $$;
 DROP TRIGGER IF EXISTS attempt_insert_guard ON refresh.attempt;
 CREATE TRIGGER attempt_insert_guard BEFORE INSERT ON refresh.attempt FOR EACH ROW EXECUTE FUNCTION refresh.guard_attempt_insert();
+
+-- Tree terminalization is kept in capability-owned functions so the recursive
+-- transition remains one atomic PostgreSQL statement while sqlc exposes a
+-- typed scalar result (the exact number of rows changed).
+CREATE OR REPLACE FUNCTION refresh.fail_child_runs(p_run_id text, p_error text)
+RETURNS bigint
+LANGUAGE plpgsql
+SET search_path = pg_catalog, refresh AS $$
+DECLARE affected bigint;
+BEGIN
+    WITH RECURSIVE tree(run_id) AS (
+        SELECT r.run_id FROM refresh.run r WHERE r.run_id = p_run_id
+        UNION ALL
+        SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id = parent.run_id
+    )
+    UPDATE refresh.run
+       SET status='failed', error=p_error, finished_at=clock_timestamp(), lease_owner='', lease_expires_at=NULL
+     WHERE run_id IN (SELECT tree.run_id FROM tree WHERE tree.run_id <> p_run_id)
+       AND status IN ('queued','running','prepared');
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected;
+END; $$;
+
+CREATE OR REPLACE FUNCTION refresh.complete_child_runs(p_run_id text)
+RETURNS bigint
+LANGUAGE plpgsql
+SET search_path = pg_catalog, refresh AS $$
+DECLARE affected bigint;
+BEGIN
+    WITH RECURSIVE tree(run_id) AS (
+        SELECT r.run_id FROM refresh.run r WHERE r.run_id = p_run_id
+        UNION ALL
+        SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id = parent.run_id
+    )
+    UPDATE refresh.run
+       SET status='succeeded', finished_at=clock_timestamp(), lease_owner='', lease_expires_at=NULL
+     WHERE run_id IN (SELECT tree.run_id FROM tree WHERE tree.run_id <> p_run_id)
+       AND status IN ('queued','running','prepared');
+    GET DIAGNOSTICS affected = ROW_COUNT;
+    RETURN affected;
+END; $$;
 
 CREATE TABLE IF NOT EXISTS refresh.publication_link (
     publication_id text PRIMARY KEY,
@@ -675,6 +744,9 @@ BEGIN
 	REVOKE ALL ON ALL TABLES IN SCHEMA refresh FROM PUBLIC;
 	REVOKE ALL ON ALL SEQUENCES IN SCHEMA refresh FROM PUBLIC;
 	REVOKE ALL ON FUNCTION refresh.maintenance(integer) FROM PUBLIC;
+	REVOKE ALL ON FUNCTION refresh.fail_child_runs(text,text) FROM PUBLIC;
+	REVOKE ALL ON FUNCTION refresh.complete_child_runs(text) FROM PUBLIC;
+	REVOKE ALL ON FUNCTION refresh.close_omitted_schedules(text,text,text,text[],text[]) FROM PUBLIC;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_owner') THEN
         GRANT ALL ON ALL TABLES IN SCHEMA refresh TO leapview_control_owner;
         GRANT ALL ON ALL SEQUENCES IN SCHEMA refresh TO leapview_control_owner;
@@ -688,19 +760,23 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA refresh TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION refresh.maintenance(integer) TO leapview_control_maintenance;
+        REVOKE ALL ON FUNCTION refresh.fail_child_runs(text,text), refresh.complete_child_runs(text), refresh.close_omitted_schedules(text,text,text,text[],text[]) FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA refresh TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON refresh.schedule_revision, refresh.operation, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION refresh.fail_child_runs(text,text), refresh.complete_child_runs(text), refresh.close_omitted_schedules(text,text,text,text[],text[]) TO leapview_control_runtime;
         REVOKE DELETE ON refresh.schedule_revision, refresh.operation, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION refresh.maintenance(integer) FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA refresh TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA refresh TO leapview_control_readonly;
+        REVOKE ALL ON FUNCTION refresh.fail_child_runs(text,text), refresh.complete_child_runs(text), refresh.close_omitted_schedules(text,text,text,text[],text[]) FROM leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA refresh TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA refresh TO leapview_control_backup;
+        REVOKE ALL ON FUNCTION refresh.fail_child_runs(text,text), refresh.complete_child_runs(text), refresh.close_omitted_schedules(text,text,text,text[],text[]) FROM leapview_control_backup;
     END IF;
 END $$;

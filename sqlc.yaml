@@ -261,6 +261,48 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
+    queries: "internal/deployment/postgres/queries"
+    schema: "internal/deployment/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/deployment/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/lineage/postgres/queries"
+    schema: "internal/lineage/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/lineage/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/refresh/postgres/queries"
+    schema: "internal/refresh/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/refresh/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "pg_catalog.interval"
+            go_type: "time.Duration"
+
+  - engine: "postgresql"
     queries: "internal/analytics/physicalpool/postgres/queries"
     schema: "internal/analytics/physicalpool/postgres/schema.sql"
     gen:

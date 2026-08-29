@@ -13,6 +13,7 @@ import (
 	"time"
 	"unicode"
 
+	refreshdb "github.com/flidai/leapview/internal/refresh/postgres/internal/db"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
@@ -147,6 +148,9 @@ type DataVersion struct {
 }
 
 type Repository struct{ db DBTX }
+
+func stringPtr(v string) *string { return &v }
+func int64Ptr(v int64) *int64    { return &v }
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
@@ -401,30 +405,24 @@ func (r *Repository) PutScheduleTx(ctx context.Context, tx Tx, in ScheduleInput)
 	if in.ScheduleRevisionID == "" {
 		in.ScheduleRevisionID = digestJSON(struct{ P, E, Pi, S, G, D string }{in.ProjectID, in.Environment, in.PipelineID, in.ScheduleID, in.GenerationID, in.ScheduleDigest})
 	}
-	row := tx.QueryRow(ctx, `
-SELECT schedule_revision_id, project_id, environment, pipeline_id, schedule_id,
- semantic_model_id, generation_id, artifact_digest, cron, timezone,
- starting_deadline, concurrency_policy, schedule_digest, next_run_at,
- valid_from, COALESCE(closed_at,'epoch'::timestamptz), updated_at, enabled
-FROM refresh.schedule_revision
-WHERE project_id=$1 AND environment=$2 AND pipeline_id=$3 AND schedule_id=$4
-  AND generation_id=$5 AND closed_at IS NULL AND enabled FOR UPDATE`, in.ProjectID, in.Environment, in.PipelineID, in.ScheduleID, in.GenerationID)
 	var existing Schedule
-	err := scanSchedule(row, &existing)
+	var err error
+	row, queryErr := refreshdb.New(tx).GetScheduleRevisionForUpdate(ctx, refreshdb.GetScheduleRevisionForUpdateParams{ProjectID: in.ProjectID, Environment: in.Environment, PipelineID: in.PipelineID, ScheduleID: in.ScheduleID, GenerationID: in.GenerationID})
+	if queryErr == nil {
+		existing = scheduleForUpdate(row)
+	}
+	err = queryErr
 	if err == nil {
 		if existing.ScheduleDigest == in.ScheduleDigest && existing.GenerationID == in.GenerationID && existing.ArtifactDigest == in.ArtifactDigest && existing.Cron == in.Cron && existing.Timezone == in.Timezone && existing.SemanticModelID == in.SemanticModelID && existing.ConcurrencyPolicy == in.ConcurrencyPolicy {
 			return existing, nil
 		}
-		if _, err = tx.Exec(ctx, `UPDATE refresh.schedule_revision SET closed_at=clock_timestamp(), enabled=false, updated_at=clock_timestamp() WHERE schedule_revision_id=$1`, existing.ScheduleRevisionID); err != nil {
+		if _, err = refreshdb.New(tx).CloseScheduleRevision(ctx, existing.ScheduleRevisionID); err != nil {
 			return Schedule{}, err
 		}
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return Schedule{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO refresh.schedule_revision
- (schedule_revision_id,project_id,environment,pipeline_id,schedule_id,semantic_model_id,generation_id,artifact_digest,cron,timezone,starting_deadline,concurrency_policy,schedule_digest,next_run_at)
- VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
- ON CONFLICT (schedule_revision_id) DO NOTHING`, in.ScheduleRevisionID, in.ProjectID, in.Environment, in.PipelineID, in.ScheduleID, in.SemanticModelID, in.GenerationID, in.ArtifactDigest, in.Cron, in.Timezone, in.StartingDeadline, in.ConcurrencyPolicy, in.ScheduleDigest, in.NextRunAt)
+	_, err = refreshdb.New(tx).InsertScheduleRevision(ctx, refreshdb.InsertScheduleRevisionParams{ScheduleRevisionID: in.ScheduleRevisionID, ProjectID: in.ProjectID, Environment: in.Environment, PipelineID: in.PipelineID, ScheduleID: in.ScheduleID, SemanticModelID: in.SemanticModelID, GenerationID: in.GenerationID, ArtifactDigest: in.ArtifactDigest, Cron: in.Cron, Timezone: in.Timezone, StartingDeadline: in.StartingDeadline, ConcurrencyPolicy: in.ConcurrencyPolicy, ScheduleDigest: in.ScheduleDigest, NextRunAt: in.NextRunAt})
 	if err != nil {
 		return Schedule{}, err
 	}
@@ -439,21 +437,14 @@ WHERE project_id=$1 AND environment=$2 AND pipeline_id=$3 AND schedule_id=$4
 }
 
 func (r *Repository) scheduleByRevision(ctx context.Context, db DBTX, id string) (Schedule, error) {
-	var out Schedule
-	err := scanSchedule(db.QueryRow(ctx, `SELECT schedule_revision_id, project_id, environment, pipeline_id, schedule_id, semantic_model_id, generation_id, artifact_digest, cron, timezone, starting_deadline, concurrency_policy, schedule_digest, next_run_at, valid_from, COALESCE(closed_at,'epoch'::timestamptz), updated_at, enabled FROM refresh.schedule_revision WHERE schedule_revision_id=$1`, id), &out)
+	row, err := refreshdb.New(db).GetScheduleRevision(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Schedule{}, ErrNotFound
 	}
-	return out, err
-}
-
-func scanSchedule(row pgx.Row, out *Schedule) error {
-	var closed time.Time
-	err := row.Scan(&out.ScheduleRevisionID, &out.ProjectID, &out.Environment, &out.PipelineID, &out.ScheduleID, &out.SemanticModelID, &out.GenerationID, &out.ArtifactDigest, &out.Cron, &out.Timezone, &out.StartingDeadline, &out.ConcurrencyPolicy, &out.ScheduleDigest, &out.NextRunAt, &out.ValidFrom, &closed, &out.UpdatedAt, &out.Enabled)
-	if err == nil && !closed.Equal(time.Unix(0, 0).UTC()) {
-		out.ClosedAt = closed
+	if err != nil {
+		return Schedule{}, err
 	}
-	return err
+	return scheduleFrom(row), nil
 }
 
 func (r *Repository) PutSchedule(ctx context.Context, in ScheduleInput) (Schedule, error) {
@@ -492,8 +483,7 @@ func (r *Repository) NextRun(ctx context.Context, scope Scope, pipelineID string
 	if err := canonicalID("pipeline id", pipelineID, 255); err != nil {
 		return time.Time{}, false, err
 	}
-	var next time.Time
-	err := r.db.QueryRow(contextOrBackground(ctx), `SELECT next_run_at FROM refresh.schedule_revision WHERE project_id=$1 AND environment=$2 AND pipeline_id=$3 AND ($4='' OR generation_id=$4) AND enabled AND closed_at IS NULL ORDER BY next_run_at,schedule_revision_id LIMIT 1`, scope.ProjectID, scope.Environment, pipelineID, scope.GenerationID).Scan(&next)
+	next, err := refreshdb.New(r.db).GetNextScheduleRun(contextOrBackground(ctx), refreshdb.GetNextScheduleRunParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: pipelineID, GenerationID: scope.GenerationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return time.Time{}, false, nil
 	}
@@ -573,11 +563,11 @@ func (r *Repository) attachClaimedOccurrenceTx(ctx context.Context, tx Tx, occur
 	if root.OccurrenceID != occurrenceID || root.ProjectID == "" || root.Environment == "" || root.GenerationID == "" || root.PipelineID == "" || root.NominalTime.IsZero() {
 		return ErrConflict
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_occurrence SET status='queued',run_id=$2,lease_owner='',lease_expires_at=NULL WHERE occurrence_id=$1 AND project_id=$3 AND environment=$4 AND generation_id=$5 AND pipeline_id=$6 AND nominal_time=$7 AND status='claimed' AND lease_owner=$8 AND fence_generation=$9 AND lease_expires_at > clock_timestamp()`, occurrenceID, runID, root.ProjectID, root.Environment, root.GenerationID, root.PipelineID, root.NominalTime, owner, fence)
+	tag, err := refreshdb.New(tx).QueueClaimedOccurrence(contextOrBackground(ctx), refreshdb.QueueClaimedOccurrenceParams{RunID: stringPtr(runID), OccurrenceID: occurrenceID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, NominalTime: root.NominalTime, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	return nil
@@ -594,8 +584,8 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 	if status != "running" && status != "succeeded" && status != "failed" && status != "cancelled" && status != "superseded" {
 		return ErrInvalid
 	}
-	var occurrenceID string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT occurrence_id FROM refresh.run WHERE run_id=$1`, runID).Scan(&occurrenceID); err != nil {
+	occurrenceID, err := refreshdb.New(tx).GetRunOccurrence(contextOrBackground(ctx), runID)
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -612,11 +602,11 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 		}
 		ev = bounded
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_occurrence SET status=$2,finished_at=CASE WHEN $2 IN ('succeeded','failed','cancelled','superseded') THEN clock_timestamp() ELSE finished_at END,outcome=CASE WHEN $3::jsonb='{}'::jsonb THEN outcome ELSE $3::jsonb END WHERE occurrence_id=$1 AND run_id=$4 AND status IN ('queued','running')`, occurrenceID, status, ev, runID)
+	tag, err := refreshdb.New(tx).TransitionOccurrence(contextOrBackground(ctx), refreshdb.TransitionOccurrenceParams{Status: status, Outcome: ev, OccurrenceID: occurrenceID, RunID: stringPtr(runID)})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	return nil
@@ -628,8 +618,7 @@ func (r *Repository) transitionRunOccurrenceTx(ctx context.Context, tx Tx, runID
 func (r *Repository) ReconcileOccurrenceTerminalTx(ctx context.Context, tx Tx, runID, status string, outcome json.RawMessage) error {
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, status, outcome); err != nil {
 		if errors.Is(err, ErrStaleFence) {
-			var current string
-			if scanErr := tx.QueryRow(contextOrBackground(ctx), `SELECT o.status FROM refresh.schedule_occurrence o JOIN refresh.run r ON r.occurrence_id=o.occurrence_id WHERE r.run_id=$1`, runID).Scan(&current); scanErr == nil {
+			if current, scanErr := refreshdb.New(tx).GetOccurrenceStatus(contextOrBackground(ctx), runID); scanErr == nil {
 				if current == status {
 					return nil
 				}
@@ -666,7 +655,7 @@ func (r *Repository) ReconcileScopeTx(ctx context.Context, tx Tx, scope Scope, g
 		ids = append(ids, in.ScheduleID)
 		pipelines = append(pipelines, in.PipelineID)
 	}
-	_, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_revision s SET closed_at=clock_timestamp(),enabled=false,updated_at=clock_timestamp() WHERE s.project_id=$1 AND s.environment=$2 AND s.generation_id=$3 AND s.closed_at IS NULL AND s.enabled AND NOT EXISTS (SELECT 1 FROM unnest($4::text[],$5::text[]) AS desired(pipeline_id,schedule_id) WHERE desired.pipeline_id=s.pipeline_id AND desired.schedule_id=s.schedule_id)`, scope.ProjectID, scope.Environment, generation, pipelines, ids)
+	_, err := refreshdb.New(tx).CloseOmittedSchedules(contextOrBackground(ctx), refreshdb.CloseOmittedSchedulesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids})
 	return err
 }
 
@@ -707,7 +696,7 @@ func (r *Repository) ReconcileSchedulesTx(ctx context.Context, tx Tx, values []S
 			ids = append(ids, in.ScheduleID)
 			pipelines = append(pipelines, in.PipelineID)
 		}
-		if _, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_revision s SET closed_at=clock_timestamp(),enabled=false,updated_at=clock_timestamp() WHERE s.project_id=$1 AND s.environment=$2 AND s.generation_id=$3 AND s.closed_at IS NULL AND s.enabled AND NOT EXISTS (SELECT 1 FROM unnest($4::text[],$5::text[]) AS desired(pipeline_id,schedule_id) WHERE desired.pipeline_id=s.pipeline_id AND desired.schedule_id=s.schedule_id)`, project, environment, generation, pipelines, ids); err != nil {
+		if _, err := refreshdb.New(tx).CloseOmittedSchedules(contextOrBackground(ctx), refreshdb.CloseOmittedSchedulesParams{ProjectID: project, Environment: environment, GenerationID: generation, Pipelines: pipelines, ScheduleIds: ids}); err != nil {
 			return err
 		}
 	}
@@ -743,8 +732,8 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 		return nil, errors.New("claim lease or limit is outside bound")
 	}
 	ctx = contextOrBackground(ctx)
-	var dbNow time.Time
-	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+	dbNow, err := refreshdb.New(tx).DatabaseClock(ctx)
+	if err != nil {
 		return nil, err
 	}
 	if now.IsZero() || now.After(dbNow) {
@@ -752,14 +741,13 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 	}
 	// Recover only abandoned claims selected under row locks. This statement is
 	// bounded and safe when multiple schedulers run concurrently.
-	if _, err := tx.Exec(ctx, `WITH stale AS (SELECT occurrence_id FROM refresh.schedule_occurrence WHERE project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) AND status='claimed' AND lease_expires_at <= clock_timestamp() ORDER BY lease_expires_at,occurrence_id LIMIT $4 FOR UPDATE SKIP LOCKED) UPDATE refresh.schedule_occurrence o SET status='pending',lease_owner='',lease_expires_at=NULL WHERE o.occurrence_id IN (SELECT occurrence_id FROM stale)`, scope.ProjectID, scope.Environment, scope.GenerationID, limit); err != nil {
+	if _, err := refreshdb.New(tx).RecoverStaleOccurrences(ctx, refreshdb.RecoverStaleOccurrencesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, PageLimit: int32(limit)}); err != nil {
 		return nil, err
 	}
-	rows, err := tx.Query(ctx, `SELECT schedule_revision_id,project_id,environment,pipeline_id,schedule_id,semantic_model_id,generation_id,artifact_digest,cron,timezone,starting_deadline,concurrency_policy,schedule_digest,next_run_at,valid_from,COALESCE(closed_at,'epoch'::timestamptz),updated_at,enabled FROM refresh.schedule_revision WHERE project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) AND enabled AND closed_at IS NULL AND next_run_at <= $4 ORDER BY next_run_at,pipeline_id,schedule_id LIMIT $5 FOR UPDATE SKIP LOCKED`, scope.ProjectID, scope.Environment, scope.GenerationID, now, limit)
+	rows, err := refreshdb.New(tx).ListDueSchedules(ctx, refreshdb.ListDueSchedulesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, NextRunAt: now, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	type occurrenceGroup struct {
 		schedule       Schedule
 		ids, revisions []string
@@ -770,17 +758,9 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 	groups := make(map[string]*occurrenceGroup)
 	order := make([]string, 0, limit)
 	dueSchedules := make([]Schedule, 0, limit)
-	for rows.Next() {
-		var s Schedule
-		if err := scanSchedule(rows, &s); err != nil {
-			return nil, err
-		}
-		dueSchedules = append(dueSchedules, s)
+	for _, row := range rows {
+		dueSchedules = append(dueSchedules, scheduleFromDue(row))
 	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	rows.Close()
 	for _, s := range dueSchedules {
 		parsed, err := refreshschedule.ParseSchedule(s.Cron, s.Timezone)
 		if err != nil {
@@ -811,7 +791,7 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 		if next.IsZero() {
 			return nil, fmt.Errorf("schedule %q has no next occurrence", s.ScheduleID)
 		}
-		if _, err := tx.Exec(ctx, `UPDATE refresh.schedule_revision SET next_run_at=$2 WHERE schedule_revision_id=$1 AND generation_id=$3 AND closed_at IS NULL AND enabled`, s.ScheduleRevisionID, next, s.GenerationID); err != nil {
+		if _, err := refreshdb.New(tx).AdvanceScheduleCursor(ctx, refreshdb.AdvanceScheduleCursorParams{NextRunAt: next, ScheduleRevisionID: s.ScheduleRevisionID, GenerationID: s.GenerationID}); err != nil {
 			return nil, err
 		}
 		// Keep coalescing pipeline-wide within one captured generation. When a
@@ -857,19 +837,18 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 		occID := occurrenceID(scope, s.PipelineID, g.scheduledAt)
 		ids, _ := json.Marshal(g.ids)
 		if !g.retry && !withinDeadline(now, g.scheduledAt, g.deadline) {
-			if _, e := tx.Exec(ctx, `INSERT INTO refresh.schedule_occurrence(occurrence_id,project_id,environment,pipeline_id,nominal_time,schedule_revision_id,matching_schedule_ids,semantic_model_id,generation_id,artifact_digest) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10) ON CONFLICT DO NOTHING`, occID, scope.ProjectID, scope.Environment, s.PipelineID, g.scheduledAt, s.ScheduleRevisionID, ids, s.SemanticModelID, s.GenerationID, s.ArtifactDigest); e != nil {
+			if _, e := refreshdb.New(tx).InsertPendingOccurrence(ctx, refreshdb.InsertPendingOccurrenceParams{OccurrenceID: occID, ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: s.PipelineID, NominalTime: g.scheduledAt, ScheduleRevisionID: s.ScheduleRevisionID, MatchingScheduleIds: ids, SemanticModelID: s.SemanticModelID, GenerationID: s.GenerationID, ArtifactDigest: s.ArtifactDigest}); e != nil {
 				return nil, e
 			}
-			if _, e := tx.Exec(ctx, `UPDATE refresh.schedule_occurrence SET status='skipped',outcome='{"reason":"starting_deadline_exceeded"}'::jsonb,finished_at=clock_timestamp() WHERE occurrence_id=$1 AND status='pending'`, occID); e != nil {
+			if _, e := refreshdb.New(tx).SkipOccurrence(ctx, occID); e != nil {
 				return nil, e
 			}
 			continue
 		}
-		if _, e := tx.Exec(ctx, `INSERT INTO refresh.schedule_occurrence(occurrence_id,project_id,environment,pipeline_id,nominal_time,schedule_revision_id,matching_schedule_ids,semantic_model_id,generation_id,artifact_digest) VALUES($1,$2,$3,$4,$5,$6,$7::jsonb,$8,$9,$10) ON CONFLICT(project_id,environment,pipeline_id,nominal_time) DO NOTHING`, occID, scope.ProjectID, scope.Environment, s.PipelineID, g.scheduledAt, s.ScheduleRevisionID, ids, s.SemanticModelID, s.GenerationID, s.ArtifactDigest); e != nil {
+		if _, e := refreshdb.New(tx).InsertOccurrence(ctx, refreshdb.InsertOccurrenceParams{OccurrenceID: occID, ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: s.PipelineID, NominalTime: g.scheduledAt, ScheduleRevisionID: s.ScheduleRevisionID, MatchingScheduleIds: ids, SemanticModelID: s.SemanticModelID, GenerationID: s.GenerationID, ArtifactDigest: s.ArtifactDigest}); e != nil {
 			return nil, e
 		}
-		var claimed bool
-		e := tx.QueryRow(ctx, `UPDATE refresh.schedule_occurrence SET status='claimed',lease_owner=$2,lease_expires_at=clock_timestamp()+$3::interval,claimed_at=clock_timestamp(),fence_generation=fence_generation+1 WHERE occurrence_id=$1 AND generation_id=$4 AND status='pending' RETURNING true`, occID, owner, lease.String(), s.GenerationID).Scan(&claimed)
+		_, e := refreshdb.New(tx).ClaimOccurrence(ctx, refreshdb.ClaimOccurrenceParams{OccurrenceID: occID, LeaseOwner: owner, Lease: lease, GenerationID: s.GenerationID})
 		if errors.Is(e, pgx.ErrNoRows) {
 			continue
 		}
@@ -886,8 +865,7 @@ func (r *Repository) claimDueTx(ctx context.Context, tx Tx, scope Scope, now tim
 }
 
 func occurrenceByNominal(ctx context.Context, db DBTX, scope Scope, pipeline string, nominal time.Time) (Occurrence, error) {
-	id := ""
-	err := db.QueryRow(ctx, `SELECT occurrence_id FROM refresh.schedule_occurrence WHERE project_id=$1 AND environment=$2 AND pipeline_id=$3 AND nominal_time=$4`, scope.ProjectID, scope.Environment, pipeline, nominal).Scan(&id)
+	id, err := refreshdb.New(db).GetOccurrenceByNominal(ctx, refreshdb.GetOccurrenceByNominalParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PipelineID: pipeline, NominalTime: nominal})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Occurrence{}, ErrNotFound
 	}
@@ -931,19 +909,14 @@ func occurrenceID(scope Scope, pipeline string, nominal time.Time) string {
 }
 
 func occurrenceByID(ctx context.Context, db DBTX, id string) (Occurrence, error) {
-	var o Occurrence
-	var ids []byte
-	var outcome []byte
-	err := db.QueryRow(ctx, `SELECT occurrence_id,project_id,environment,pipeline_id,nominal_time,schedule_revision_id,matching_schedule_ids,semantic_model_id,generation_id,artifact_digest,status,COALESCE(run_id,''),fence_generation,lease_owner,COALESCE(lease_expires_at,'epoch'::timestamptz),COALESCE(claimed_at,'epoch'::timestamptz),COALESCE(finished_at,'epoch'::timestamptz),created_at,outcome FROM refresh.schedule_occurrence WHERE occurrence_id=$1`, id).Scan(&o.OccurrenceID, &o.ProjectID, &o.Environment, &o.PipelineID, &o.NominalTime, &o.ScheduleRevisionID, &ids, &o.SemanticModelID, &o.GenerationID, &o.ArtifactDigest, &o.Status, &o.RunID, &o.FenceGeneration, &o.LeaseOwner, &o.LeaseExpiresAt, &o.ClaimedAt, &o.FinishedAt, &o.CreatedAt, &outcome)
+	row, err := refreshdb.New(db).GetOccurrence(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Occurrence{}, ErrNotFound
 	}
 	if err != nil {
 		return Occurrence{}, err
 	}
-	_ = json.Unmarshal(ids, &o.MatchingScheduleIDs)
-	o.Outcome = append(json.RawMessage(nil), outcome...)
-	return o, nil
+	return occurrenceFrom(row), nil
 }
 
 func (r *Repository) Occurrence(ctx context.Context, id string) (Occurrence, error) {
@@ -972,16 +945,16 @@ func (r *Repository) ReleaseOccurrenceTx(ctx context.Context, tx Tx, o Occurrenc
 	if o.OccurrenceID == "" || o.LeaseOwner == "" || o.FenceGeneration <= 0 {
 		return ErrInvalid
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_occurrence SET status='pending', lease_owner='', lease_expires_at=NULL WHERE occurrence_id=$1 AND status='claimed' AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at > clock_timestamp()`, o.OccurrenceID, o.LeaseOwner, o.FenceGeneration)
+	tag, err := refreshdb.New(tx).ReleaseOccurrenceClaim(contextOrBackground(ctx), refreshdb.ReleaseOccurrenceClaimParams{OccurrenceID: o.OccurrenceID, LeaseOwner: o.LeaseOwner, FenceGeneration: o.FenceGeneration})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	// Requeue every schedule revision that contributed evidence so the next
 	// dispatcher tick retries this nominal instant before later catch-up work.
-	if _, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.schedule_revision SET next_run_at=LEAST(next_run_at,$2),updated_at=clock_timestamp() WHERE project_id=$1 AND environment=$3 AND pipeline_id=$4 AND schedule_revision_id = (SELECT schedule_revision_id FROM refresh.schedule_occurrence WHERE occurrence_id=$5) AND closed_at IS NULL AND enabled`, o.ProjectID, o.NominalTime, o.Environment, o.PipelineID, o.OccurrenceID); err != nil {
+	if _, err := refreshdb.New(tx).RequeueScheduleRevision(contextOrBackground(ctx), refreshdb.RequeueScheduleRevisionParams{NextRunAt: o.NominalTime, ProjectID: o.ProjectID, Environment: o.Environment, PipelineID: o.PipelineID, OccurrenceID: o.OccurrenceID}); err != nil {
 		return err
 	}
 	return nil
@@ -1017,24 +990,22 @@ func (r *Repository) ReserveOperationTx(ctx context.Context, tx Tx, in Operation
 		return Operation{}, false, err
 	}
 	in.OperationID = id
-	tag, err := tx.Exec(ctx, `INSERT INTO refresh.operation(operation_id,project_id,environment,idempotency_key,request_digest,operation_type,owner_id,lease_expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,clock_timestamp()+$8::interval) ON CONFLICT(project_id,environment,idempotency_key) DO NOTHING`, id, in.ProjectID, in.Environment, in.IdempotencyKey, in.RequestDigest, in.OperationType, in.OwnerID, in.Lease.String())
+	tag, err := refreshdb.New(tx).InsertOperation(ctx, refreshdb.InsertOperationParams{OperationID: id, ProjectID: in.ProjectID, Environment: in.Environment, IdempotencyKey: in.IdempotencyKey, RequestDigest: in.RequestDigest, OperationType: in.OperationType, OwnerID: in.OwnerID, Lease: in.Lease})
 	if err != nil {
 		return Operation{}, false, err
 	}
-	var o Operation
-	var outcome []byte
-	err = tx.QueryRow(ctx, `SELECT operation_id,project_id,environment,idempotency_key,request_digest,operation_type,state,owner_id,fence_generation,COALESCE(lease_expires_at,'epoch'::timestamptz),COALESCE(run_id,''),outcome,created_at,updated_at,COALESCE(terminal_at,'epoch'::timestamptz) FROM refresh.operation WHERE project_id=$1 AND environment=$2 AND idempotency_key=$3 FOR UPDATE`, in.ProjectID, in.Environment, in.IdempotencyKey).Scan(&o.OperationID, &o.ProjectID, &o.Environment, &o.IdempotencyKey, &o.RequestDigest, &o.OperationType, &o.State, &o.OwnerID, &o.FenceGeneration, &o.LeaseExpiresAt, &o.RunID, &outcome, &o.CreatedAt, &o.UpdatedAt, &o.TerminalAt)
+	row, err := refreshdb.New(tx).GetOperationForUpdate(ctx, refreshdb.GetOperationForUpdateParams{ProjectID: in.ProjectID, Environment: in.Environment, IdempotencyKey: in.IdempotencyKey})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, false, ErrNotFound
 	}
 	if err != nil {
 		return Operation{}, false, err
 	}
+	o := operationForUpdateFrom(row)
 	if o.RequestDigest != in.RequestDigest {
 		return Operation{}, false, ErrConflict
 	}
-	o.Outcome = append(json.RawMessage(nil), outcome...)
-	return o, tag.RowsAffected() == 0, nil
+	return o, tag == 0, nil
 }
 
 func (r *Repository) ReserveOperation(ctx context.Context, in OperationInput) (Operation, bool, error) {
@@ -1060,18 +1031,18 @@ func (r *Repository) SetOperationRunTx(ctx context.Context, tx Tx, operationID, 
 	if err := canonicalID("run id", runID, 256); err != nil {
 		return err
 	}
-	var exists bool
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT EXISTS (SELECT 1 FROM refresh.run WHERE run_id=$1)`, runID).Scan(&exists); err != nil {
+	exists, err := refreshdb.New(tx).RunExists(contextOrBackground(ctx), runID)
+	if err != nil {
 		return err
 	}
 	if !exists {
 		return ErrNotFound
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.operation SET run_id=$2 WHERE operation_id=$1 AND run_id IS NULL`, operationID, runID)
+	tag, err := refreshdb.New(tx).LinkOperationRun(contextOrBackground(ctx), refreshdb.LinkOperationRunParams{RunID: stringPtr(runID), OperationID: operationID})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrConflict
 	}
 	return nil
@@ -1088,11 +1059,11 @@ func (r *Repository) transitionOperationTx(ctx context.Context, tx Tx, operation
 	if err != nil {
 		return err
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.operation SET state=$4,outcome=$5::jsonb,terminal_at=CASE WHEN $4 IN ('succeeded','failed','cancelled') THEN clock_timestamp() ELSE NULL END,owner_id='',lease_expires_at=NULL WHERE operation_id=$1 AND owner_id=$2 AND fence_generation=$3 AND state IN ('pending','running','prepared') AND lease_expires_at > clock_timestamp()`, operationID, owner, fence, state, ev)
+	tag, err := refreshdb.New(tx).TransitionOperation(contextOrBackground(ctx), refreshdb.TransitionOperationParams{State: state, Outcome: ev, OperationID: operationID, OwnerID: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	return nil
@@ -1119,8 +1090,7 @@ func (r *Repository) TakeoverOperationTx(ctx context.Context, tx Tx, operationID
 	if err := canonicalID("owner id", owner, 256); err != nil {
 		return 0, err
 	}
-	var fence int64
-	err := tx.QueryRow(contextOrBackground(ctx), `UPDATE refresh.operation SET owner_id=$2,fence_generation=fence_generation+1,lease_expires_at=clock_timestamp()+$3::interval WHERE operation_id=$1 AND state IN ('pending','running','prepared') AND (lease_expires_at <= clock_timestamp() OR owner_id=$2) RETURNING fence_generation`, operationID, owner, lease.String()).Scan(&fence)
+	fence, err := refreshdb.New(tx).TakeoverOperation(contextOrBackground(ctx), refreshdb.TakeoverOperationParams{OwnerID: owner, Lease: lease, OperationID: operationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, ErrBusy
 	}
@@ -1134,17 +1104,14 @@ func (r *Repository) Operation(ctx context.Context, projectID, environment, idem
 	if err := validateScope(projectID, environment); err != nil {
 		return Operation{}, err
 	}
-	var o Operation
-	var ev []byte
-	err := r.db.QueryRow(contextOrBackground(ctx), `SELECT operation_id,project_id,environment,idempotency_key,request_digest,operation_type,state,owner_id,fence_generation,COALESCE(lease_expires_at,'epoch'::timestamptz),COALESCE(run_id,''),outcome,created_at,updated_at,COALESCE(terminal_at,'epoch'::timestamptz) FROM refresh.operation WHERE project_id=$1 AND environment=$2 AND idempotency_key=$3`, projectID, environment, idempotencyKey).Scan(&o.OperationID, &o.ProjectID, &o.Environment, &o.IdempotencyKey, &o.RequestDigest, &o.OperationType, &o.State, &o.OwnerID, &o.FenceGeneration, &o.LeaseExpiresAt, &o.RunID, &ev, &o.CreatedAt, &o.UpdatedAt, &o.TerminalAt)
+	row, err := refreshdb.New(r.db).GetOperation(contextOrBackground(ctx), refreshdb.GetOperationParams{ProjectID: projectID, Environment: environment, IdempotencyKey: idempotencyKey})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, ErrNotFound
 	}
 	if err != nil {
 		return Operation{}, err
 	}
-	o.Outcome = append(json.RawMessage(nil), ev...)
-	return o, nil
+	return operationFrom(row), nil
 }
 
 func (r *Repository) GetOperation(ctx context.Context, projectID, environment, idempotencyKey string) (Operation, error) {
@@ -1199,24 +1166,20 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 	// admissions for the immutable project/environment/target key so two
 	// concurrent inserts cannot both pass the overlap fence.
 	lockKey := fmt.Sprintf("%d:%s|%d:%s|%d:%s|%d:%s", len(in.ProjectID), in.ProjectID, len(in.Environment), in.Environment, len(in.TargetType), in.TargetType, len(in.TargetID), in.TargetID)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, lockKey); err != nil {
+	if _, err := refreshdb.New(tx).AdvisoryLock(ctx, lockKey); err != nil {
 		return Run{}, err
 	}
 	// Scheduled overlap policy is scoped strictly to scheduled invocations.
 	// Manual/backfill/dependency admission always conflicts with any active
 	// invocation and must never be superseded by Replace.
-	rows, err := tx.Query(ctx, `SELECT run_id,trigger_type,COALESCE(job_id,'') FROM refresh.run WHERE project_id=$1 AND environment=$2 AND target_type=$3 AND target_id=$4 AND status IN ('queued','running','prepared') AND run_id<>$5 ORDER BY created_at,run_id FOR UPDATE`, in.ProjectID, in.Environment, in.TargetType, in.TargetID, in.RunID)
+	rows, err := refreshdb.New(tx).ListActiveRuns(ctx, refreshdb.ListActiveRunsParams{ProjectID: in.ProjectID, Environment: in.Environment, TargetType: in.TargetType, TargetID: in.TargetID, RunID: in.RunID})
 	if err != nil {
 		return Run{}, err
 	}
 	var active, externalActive bool
 	supersededJobIDs := make([]string, 0)
-	for rows.Next() {
-		var activeID, activeTrigger, jobID string
-		if err := rows.Scan(&activeID, &activeTrigger, &jobID); err != nil {
-			rows.Close()
-			return Run{}, err
-		}
+	for _, row := range rows {
+		activeTrigger, jobID := row.TriggerType, row.JobID
 		active = true
 		if jobID != "" {
 			supersededJobIDs = append(supersededJobIDs, jobID)
@@ -1225,11 +1188,6 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 			externalActive = true
 		}
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return Run{}, err
-	}
-	rows.Close()
 	if active {
 		if in.TriggerType != "schedule" || in.ConcurrencyPolicy == "Forbid" || externalActive {
 			return Run{}, ErrConflict
@@ -1239,25 +1197,13 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 		}
 	}
 	if in.TriggerType == "schedule" && in.ConcurrencyPolicy == "Replace" {
-		if _, e := tx.Exec(ctx, `WITH RECURSIVE tree(run_id) AS (
-			SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND target_type=$3 AND target_id=$4 AND trigger_type='schedule' AND status IN ('queued','running','prepared') AND run_id<>$5
-			UNION ALL
-			SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-		) UPDATE refresh.attempt a SET status='failed',finished_at=clock_timestamp(),error='replaced by newer scheduled invocation',evidence='{"code":"REFRESH_SUPERSEDED","reason":"replace"}'::jsonb WHERE a.status='running' AND a.run_id IN (SELECT run_id FROM tree)`, in.ProjectID, in.Environment, in.TargetType, in.TargetID, in.RunID); e != nil {
+		if _, e := refreshdb.New(tx).FailSupersededAttempts(ctx, refreshdb.FailSupersededAttemptsParams{ProjectID: in.ProjectID, Environment: in.Environment, TargetType: in.TargetType, TargetID: in.TargetID, RunID: in.RunID}); e != nil {
 			return Run{}, e
 		}
-		if _, e := tx.Exec(ctx, `WITH RECURSIVE tree(run_id) AS (
-			SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND target_type=$3 AND target_id=$4 AND trigger_type='schedule' AND status IN ('queued','running','prepared') AND run_id<>$5
-			UNION ALL
-			SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-		) UPDATE refresh.run SET status='superseded',error='replaced by newer scheduled invocation',finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL WHERE run_id IN (SELECT run_id FROM tree) AND status IN ('queued','running','prepared')`, in.ProjectID, in.Environment, in.TargetType, in.TargetID, in.RunID); e != nil {
+		if _, e := refreshdb.New(tx).SupersedeRuns(ctx, refreshdb.SupersedeRunsParams{ProjectID: in.ProjectID, Environment: in.Environment, TargetType: in.TargetType, TargetID: in.TargetID, RunID: in.RunID}); e != nil {
 			return Run{}, e
 		}
-		if _, e := tx.Exec(ctx, `WITH RECURSIVE tree(run_id) AS (
-			SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND target_type=$3 AND target_id=$4 AND trigger_type='schedule' AND status='superseded' AND run_id<>$5
-			UNION ALL
-			SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-		) UPDATE refresh.schedule_occurrence SET status='superseded',finished_at=clock_timestamp(),outcome='{"code":"REFRESH_SUPERSEDED"}'::jsonb WHERE run_id IN (SELECT run_id FROM tree) AND status IN ('queued','running')`, in.ProjectID, in.Environment, in.TargetType, in.TargetID, in.RunID); e != nil {
+		if _, e := refreshdb.New(tx).SupersedeOccurrences(ctx, refreshdb.SupersedeOccurrencesParams{ProjectID: in.ProjectID, Environment: in.Environment, TargetType: in.TargetType, TargetID: in.TargetID, RunID: in.RunID}); e != nil {
 			return Run{}, e
 		}
 		if supersedeHook != nil {
@@ -1266,7 +1212,7 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 			}
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO refresh.run(run_id,operation_id,project_id,environment,generation_id,parent_run_id,pipeline_id,semantic_model_id,target_type,target_id,target_revision,trigger_type,invocation_source,trigger_id,concurrency_policy,schedule_revision_id,occurrence_id,nominal_time,plan_digest,artifact_digest,matching_schedule_ids,materialization_scope,principal_id,job_id) VALUES($1,NULLIF($2,''),$3,$4,$5,NULLIF($6,''),$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,NULLIF($18::timestamptz,'epoch'::timestamptz),$19,$20,$21::jsonb,$22::jsonb,$23,NULLIF($24,'')) ON CONFLICT(run_id) DO NOTHING`, in.RunID, in.OperationID, in.ProjectID, in.Environment, in.GenerationID, in.ParentRunID, in.PipelineID, in.SemanticModelID, in.TargetType, in.TargetID, in.TargetRevision, in.TriggerType, in.InvocationSource, in.TriggerID, in.ConcurrencyPolicy, in.ScheduleRevisionID, in.OccurrenceID, nullableTime(in.NominalTime), in.PlanDigest, in.ArtifactDigest, matching, material, in.PrincipalID, in.JobID)
+	_, err = refreshdb.New(tx).InsertRun(ctx, refreshdb.InsertRunParams{RunID: in.RunID, OperationID: in.OperationID, ProjectID: in.ProjectID, Environment: in.Environment, GenerationID: in.GenerationID, ParentRunID: in.ParentRunID, PipelineID: in.PipelineID, SemanticModelID: in.SemanticModelID, TargetType: in.TargetType, TargetID: in.TargetID, TargetRevision: in.TargetRevision, TriggerType: in.TriggerType, InvocationSource: in.InvocationSource, TriggerID: in.TriggerID, ConcurrencyPolicy: in.ConcurrencyPolicy, ScheduleRevisionID: in.ScheduleRevisionID, OccurrenceID: in.OccurrenceID, NominalTime: nullableTime(in.NominalTime), PlanDigest: in.PlanDigest, ArtifactDigest: in.ArtifactDigest, MatchingScheduleIds: matching, MaterializationScope: material, PrincipalID: in.PrincipalID, JobID: in.JobID})
 	if err != nil {
 		return Run{}, err
 	}
@@ -1359,8 +1305,8 @@ func (r *Repository) AttachJobTx(ctx context.Context, tx Tx, runID, jobID string
 	if err := canonicalID("job id", jobID, 256); err != nil {
 		return err
 	}
-	var existing string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT COALESCE(job_id,'') FROM refresh.run WHERE run_id=$1 FOR UPDATE`, runID).Scan(&existing); errors.Is(err, pgx.ErrNoRows) {
+	existing, err := refreshdb.New(tx).GetRunJobForUpdate(contextOrBackground(ctx), runID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	} else if err != nil {
 		return err
@@ -1373,35 +1319,25 @@ func (r *Repository) AttachJobTx(ctx context.Context, tx Tx, runID, jobID string
 	if existing != "" {
 		return ErrConflict
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET job_id=$2 WHERE run_id=$1 AND job_id IS NULL`, runID, jobID)
+	tag, err := refreshdb.New(tx).AttachRunJob(contextOrBackground(ctx), refreshdb.AttachRunJobParams{JobID: stringPtr(jobID), RunID: runID})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrConflict
 	}
 	return nil
 }
 
 func (r *Repository) runByID(ctx context.Context, db DBTX, id string) (Run, error) {
-	var out Run
-	var matching, material []byte
-	var nominal time.Time
-	err := db.QueryRow(ctx, `SELECT run_id,COALESCE(operation_id,''),project_id,environment,generation_id,COALESCE(parent_run_id,''),pipeline_id,semantic_model_id,target_type,target_id,target_revision,trigger_type,invocation_source,trigger_id,concurrency_policy,schedule_revision_id,occurrence_id,COALESCE(nominal_time,'epoch'::timestamptz),plan_digest,artifact_digest,matching_schedule_ids,materialization_scope,principal_id,COALESCE(job_id,''),status,attempt_count,fence_generation,lease_owner,COALESCE(lease_expires_at,'epoch'::timestamptz),created_at,updated_at,COALESCE(started_at,'epoch'::timestamptz),COALESCE(finished_at,'epoch'::timestamptz),error FROM refresh.run WHERE run_id=$1`, id).Scan(&out.RunID, &out.OperationID, &out.ProjectID, &out.Environment, &out.GenerationID, &out.ParentRunID, &out.PipelineID, &out.SemanticModelID, &out.TargetType, &out.TargetID, &out.TargetRevision, &out.TriggerType, &out.InvocationSource, &out.TriggerID, &out.ConcurrencyPolicy, &out.ScheduleRevisionID, &out.OccurrenceID, &nominal, &out.PlanDigest, &out.ArtifactDigest, &matching, &material, &out.PrincipalID, &out.JobID, &out.Status, &out.AttemptCount, &out.FenceGeneration, &out.LeaseOwner, &out.LeaseExpiresAt, &out.CreatedAt, &out.UpdatedAt, &out.StartedAt, &out.FinishedAt, &out.Error)
+	row, err := refreshdb.New(db).GetRun(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Run{}, ErrNotFound
 	}
 	if err != nil {
 		return Run{}, err
 	}
-	if nominal.Equal(time.Unix(0, 0).UTC()) {
-		out.NominalTime = time.Time{}
-	} else {
-		out.NominalTime = nominal
-	}
-	_ = json.Unmarshal(matching, &out.MatchingScheduleIDs)
-	_ = json.Unmarshal(material, &out.MaterializationScope)
-	return out, nil
+	return runFrom(row), nil
 }
 func (r *Repository) GetRun(ctx context.Context, scope Scope, id string) (Run, error) {
 	if err := r.requireDB(); err != nil {
@@ -1477,24 +1413,19 @@ func (r *Repository) ListRuns(ctx context.Context, scope Scope, limit int, after
 	if err := validateGeneration(scope.GenerationID); err != nil {
 		return nil, err
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) AND ($4='' OR (created_at,run_id) < (SELECT created_at,run_id FROM refresh.run WHERE run_id=$4 AND project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3))) ORDER BY created_at DESC,run_id DESC LIMIT $5`, scope.ProjectID, scope.Environment, scope.GenerationID, after, limit)
+	ids, err := refreshdb.New(r.db).ListRunsPage(contextOrBackground(ctx), refreshdb.ListRunsPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, After: after, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Run
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
+	for _, id := range ids {
 		v, e := r.runByID(contextOrBackground(ctx), r.db, id)
 		if e != nil {
 			return nil, e
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // ListRunsFiltered is the projection used by module adapters. Filters are
@@ -1528,24 +1459,19 @@ func (r *Repository) ListRunsFiltered(ctx context.Context, scope Scope, targetTy
 			return nil, err
 		}
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) AND ($4='' OR target_type=$4) AND ($5='' OR target_id=$5) AND ($6='' OR semantic_model_id=$6) AND ($7=false OR status='succeeded') AND ($8='' OR (created_at,run_id) < (SELECT created_at,run_id FROM refresh.run WHERE run_id=$8 AND project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) AND ($4='' OR target_type=$4) AND ($5='' OR target_id=$5) AND ($6='' OR semantic_model_id=$6) AND ($7=false OR status='succeeded'))) ORDER BY created_at DESC,run_id DESC LIMIT $9`, scope.ProjectID, scope.Environment, scope.GenerationID, targetType, targetID, semanticModelID, successful, after, limit)
+	ids, err := refreshdb.New(r.db).ListRunsFilteredPage(contextOrBackground(ctx), refreshdb.ListRunsFilteredPageParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, TargetType: targetType, TargetID: targetID, SemanticModelID: semanticModelID, Successful: successful, After: after, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := make([]Run, 0, limit)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
+	for _, id := range ids {
 		v, err := r.runByID(contextOrBackground(ctx), r.db, id)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, v)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) ListChildRuns(ctx context.Context, scope Scope, parentRunID string, limit int) ([]Run, error) {
@@ -1555,24 +1481,19 @@ func (r *Repository) ListChildRuns(ctx context.Context, scope Scope, parentRunID
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT run_id FROM refresh.run WHERE project_id=$1 AND environment=$2 AND parent_run_id=$3 ORDER BY created_at,run_id LIMIT $4`, scope.ProjectID, scope.Environment, parentRunID, limit)
+	ids, err := refreshdb.New(r.db).ListChildRuns(contextOrBackground(ctx), refreshdb.ListChildRunsParams{ProjectID: scope.ProjectID, Environment: scope.Environment, ParentRunID: stringPtr(parentRunID), PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := make([]Run, 0, limit)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
+	for _, id := range ids {
 		run, err := r.GetRun(ctx, Scope{ProjectID: scope.ProjectID, Environment: scope.Environment}, id)
 		if err != nil {
 			return nil, err
 		}
 		out = append(out, run)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 // SupersedeRunTree terminally fences a root and all of its dependency runs.
@@ -1594,41 +1515,28 @@ func (r *Repository) SupersedeRunTreeTx(ctx context.Context, tx Tx, runID, owner
 	if tx == nil || runID == "" || owner == "" || fence <= 0 {
 		return nil, ErrInvalid
 	}
-	var rootStatus string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT status FROM refresh.run WHERE run_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND status IN ('running','prepared') AND lease_expires_at > clock_timestamp() FOR UPDATE`, runID, owner, fence).Scan(&rootStatus); err != nil {
+	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, ErrStaleFence
 		}
 		return nil, err
 	}
-	rows, err := tx.Query(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	) SELECT DISTINCT job_id FROM refresh.run WHERE run_id IN (SELECT run_id FROM tree) AND job_id IS NOT NULL`, runID)
+	rows, err := refreshdb.New(tx).ListRunTreeJobs(contextOrBackground(ctx), runID)
 	if err != nil {
 		return nil, err
 	}
 	jobIDs := make([]string, 0, 1)
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			rows.Close()
-			return nil, err
+	for _, id := range rows {
+		if id != nil {
+			jobIDs = append(jobIDs, *id)
 		}
-		jobIDs = append(jobIDs, id)
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return nil, err
-	}
-	rows.Close()
 	// Attempt evidence must close while each run still carries its live owner
 	// and fence; the run guard then permits the terminal supersession.
-	if _, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.attempt a SET status='failed',finished_at=clock_timestamp(),error=$2::text,evidence=jsonb_build_object('code','REFRESH_SUPERSEDED','message',$2::text) WHERE a.status='running' AND a.run_id IN (WITH RECURSIVE tree(run_id) AS (SELECT run_id FROM refresh.run WHERE run_id=$1 UNION ALL SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id) SELECT run_id FROM tree)`, runID, message); err != nil {
+	if _, err := refreshdb.New(tx).FailSupersededTreeAttempts(contextOrBackground(ctx), refreshdb.FailSupersededTreeAttemptsParams{Message: message, RunID: runID}); err != nil {
 		return nil, err
 	}
-	if _, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status='superseded',error=$2::text,finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL WHERE run_id IN (WITH RECURSIVE tree(run_id) AS (SELECT run_id FROM refresh.run WHERE run_id=$1 UNION ALL SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id) SELECT run_id FROM tree) AND status IN ('queued','running','prepared')`, runID, message); err != nil {
+	if _, err := refreshdb.New(tx).SupersedeRunTree(contextOrBackground(ctx), refreshdb.SupersedeRunTreeParams{Message: message, RunID: runID}); err != nil {
 		return nil, err
 	}
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "superseded", json.RawMessage(`{"code":"REFRESH_SUPERSEDED"}`)); err != nil {
@@ -1662,8 +1570,7 @@ func (r *Repository) FailRunTreeTx(ctx context.Context, tx Tx, runID, owner stri
 		return err
 	}
 	{
-		var status string
-		if err := tx.QueryRow(contextOrBackground(ctx), `SELECT status FROM refresh.run WHERE run_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND status IN ('running','prepared') AND lease_expires_at > clock_timestamp() FOR UPDATE`, runID, owner, fence).Scan(&status); err != nil {
+		if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrStaleFence
 			}
@@ -1672,25 +1579,13 @@ func (r *Repository) FailRunTreeTx(ctx context.Context, tx Tx, runID, owner stri
 		if err := r.FailAttemptTx(ctx, tx, runID, owner, fence, message, ev); err != nil {
 			return err
 		}
-		if _, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-			SELECT run_id FROM refresh.run WHERE run_id=$1
-			UNION ALL
-			SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-		)
-		UPDATE refresh.attempt a SET status='failed',evidence=$2::jsonb,error=$3,finished_at=clock_timestamp()
-		FROM tree, refresh.run child
-		WHERE child.run_id=a.run_id AND child.run_id=tree.run_id AND child.run_id<>$1
-		  AND child.status IN ('running','prepared') AND a.status='running' AND child.lease_expires_at > clock_timestamp()`, runID, ev, message); err != nil {
+		if _, err := refreshdb.New(tx).FailChildAttempts(contextOrBackground(ctx), refreshdb.FailChildAttemptsParams{Evidence: ev, Error: message, RunID: runID}); err != nil {
 			return err
 		}
-		_, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-			SELECT run_id FROM refresh.run WHERE run_id=$1
-			UNION ALL
-			SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-		)
-		UPDATE refresh.run SET status='failed',error=$2,finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL
-		WHERE run_id IN (SELECT run_id FROM tree WHERE run_id<>$1) AND status IN ('queued','running','prepared')`, runID, message)
-		return err
+		if _, err := refreshdb.New(tx).FailChildRuns(contextOrBackground(ctx), refreshdb.FailChildRunsParams{RunID: runID, Error: message}); err != nil {
+			return err
+		}
+		return nil
 	}
 }
 
@@ -1706,8 +1601,7 @@ func (r *Repository) CompleteRunTreeTx(ctx context.Context, tx Tx, runID, owner 
 	if err != nil {
 		return err
 	}
-	var status string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT status FROM refresh.run WHERE run_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND status IN ('running','prepared') AND lease_expires_at > clock_timestamp() FOR UPDATE`, runID, owner, fence).Scan(&status); err != nil {
+	if _, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence}); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return ErrStaleFence
 		}
@@ -1716,24 +1610,13 @@ func (r *Repository) CompleteRunTreeTx(ctx context.Context, tx Tx, runID, owner 
 	if err := r.CompleteAttemptTx(ctx, tx, runID, owner, fence, ev); err != nil {
 		return err
 	}
-	if _, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	UPDATE refresh.attempt a SET status='succeeded',evidence=$2::jsonb,finished_at=clock_timestamp()
-	FROM tree, refresh.run child
-	WHERE child.run_id=a.run_id AND child.run_id=tree.run_id AND child.run_id<>$1 AND child.status IN ('running','prepared') AND a.status='running'`, runID, ev); err != nil {
+	if _, err := refreshdb.New(tx).CompleteChildAttempts(contextOrBackground(ctx), refreshdb.CompleteChildAttemptsParams{Evidence: ev, RunID: runID}); err != nil {
 		return err
 	}
-	_, err = tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	UPDATE refresh.run SET status='succeeded',finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL
-	WHERE run_id IN (SELECT run_id FROM tree WHERE run_id<>$1) AND status IN ('queued','running','prepared')`, runID)
-	return err
+	if _, err := refreshdb.New(tx).CompleteChildRuns(contextOrBackground(ctx), runID); err != nil {
+		return err
+	}
+	return nil
 }
 
 // QuarantineQueuedRunTx atomically terminalizes a malformed queued run tree.
@@ -1744,8 +1627,10 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 		return false, ErrInvalid
 	}
 	const message = "refresh job payload rejected"
+	poison, err := refreshdb.New(tx).GetRunPoisonState(contextOrBackground(ctx), runID)
 	var status, existingJob string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT status,COALESCE(job_id,'') FROM refresh.run WHERE run_id=$1 FOR UPDATE`, runID).Scan(&status, &existingJob); errors.Is(err, pgx.ErrNoRows) {
+	status, existingJob = poison.Status, poison.JobID
+	if errors.Is(err, pgx.ErrNoRows) {
 		return false, ErrNotFound
 	} else if err != nil {
 		return false, err
@@ -1754,21 +1639,14 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 		return false, ErrConflict
 	}
 	// A terminal replay is valid only when every row in the run tree carries
-	// the exact poison message.  Looking at the root alone would bless a
-	// partial or tampered child tree after a crash.
-	const treeState = `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	SELECT count(*)::bigint,
-	       count(*) FILTER (WHERE status='failed' AND finished_at IS NOT NULL AND error=$2)::bigint,
-	       count(*) FILTER (WHERE status='queued')::bigint
-	FROM refresh.run WHERE run_id IN (SELECT run_id FROM tree)`
-	var total, poisoned, queued int64
-	if err := tx.QueryRow(contextOrBackground(ctx), treeState, runID, message).Scan(&total, &poisoned, &queued); err != nil {
+	// the exact poison message. Looking at the root alone would bless a partial
+	// or tampered child tree after a crash.
+	counts, err := refreshdb.New(tx).GetRunTreePoisonCounts(contextOrBackground(ctx), refreshdb.GetRunTreePoisonCountsParams{RunID: runID, Error: message})
+	if err != nil {
 		return false, err
 	}
+	var total, poisoned, queued int64
+	total, poisoned, queued = counts.Total, counts.Poisoned, counts.Queued
 	if total == 0 {
 		return false, ErrNotFound
 	}
@@ -1786,17 +1664,11 @@ func (r *Repository) QuarantineQueuedRunTx(ctx context.Context, tx Tx, runID, jo
 	if queued != total {
 		return false, ErrConflict
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	UPDATE refresh.run SET status='failed',error=$2,finished_at=clock_timestamp()
-	WHERE run_id IN (SELECT run_id FROM tree) AND status='queued'`, runID, message)
+	tag, err := refreshdb.New(tx).FailQueuedTree(contextOrBackground(ctx), refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() != total {
+	if tag != total {
 		return false, ErrStaleFence
 	}
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "failed", json.RawMessage(`{"code":"REFRESH_POISON_PAYLOAD"}`)); err != nil {
@@ -1816,17 +1688,11 @@ func (r *Repository) FailQueuedRunTreeTx(ctx context.Context, tx Tx, runID, mess
 	if strings.TrimSpace(message) == "" || len(message) > 256 {
 		return ErrInvalid
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	UPDATE refresh.run SET status='failed',error=$2,finished_at=clock_timestamp()
-	WHERE run_id IN (SELECT run_id FROM tree) AND status='queued'`, runID, message)
+	tag, err := refreshdb.New(tx).FailQueuedTree(contextOrBackground(ctx), refreshdb.FailQueuedTreeParams{Error: message, RunID: runID})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() == 0 {
+	if tag == 0 {
 		return ErrStaleFence
 	}
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "failed", json.RawMessage(`{"code":"REFRESH_FAILED"}`)); err != nil {
@@ -1847,22 +1713,10 @@ func (r *Repository) FailRunTerminalEvidenceTx(ctx context.Context, tx Tx, runID
 	if err != nil {
 		return err
 	}
-	if _, err := tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-		UPDATE refresh.attempt a SET status=CASE WHEN a.lease_expires_at <= clock_timestamp() THEN 'expired' ELSE 'failed' END,error=$2,finished_at=clock_timestamp(),evidence=$3::jsonb
-	WHERE a.run_id IN (SELECT run_id FROM tree) AND a.status='running'`, runID, message, ev); err != nil {
+	if _, err := refreshdb.New(tx).FailTerminalTreeAttempts(contextOrBackground(ctx), refreshdb.FailTerminalTreeAttemptsParams{Error: message, Evidence: ev, RunID: runID}); err != nil {
 		return err
 	}
-	_, err = tx.Exec(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (
-		SELECT run_id FROM refresh.run WHERE run_id=$1
-		UNION ALL
-		SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id
-	)
-	UPDATE refresh.run SET status='failed',error=$2,finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL
-	WHERE run_id IN (SELECT run_id FROM tree) AND status IN ('queued','running','prepared')`, runID, message)
+	_, err = refreshdb.New(tx).FailTerminalTreeRuns(contextOrBackground(ctx), refreshdb.FailTerminalTreeRunsParams{Error: message, RunID: runID})
 	if err != nil {
 		return err
 	}
@@ -1881,8 +1735,7 @@ func (r *Repository) CheckInvocationAdmission(ctx context.Context, scope Scope, 
 	if err := canonicalID("pipeline id", pipelineID, 255); err != nil {
 		return err
 	}
-	var trigger string
-	err := r.db.QueryRow(contextOrBackground(ctx), `SELECT trigger_type FROM refresh.run WHERE project_id=$1 AND environment=$2 AND target_type='refresh_pipeline' AND target_id=$3 AND status IN ('queued','running','prepared') ORDER BY created_at,run_id LIMIT 1`, scope.ProjectID, scope.Environment, pipelineID).Scan(&trigger)
+	trigger, err := refreshdb.New(r.db).GetActiveInvocationTrigger(contextOrBackground(ctx), refreshdb.GetActiveInvocationTriggerParams{ProjectID: scope.ProjectID, Environment: scope.Environment, TargetID: pipelineID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil
 	}
@@ -1912,11 +1765,11 @@ func (r *Repository) PrepareRun(ctx context.Context, runID, owner string, fence 
 	if err := canonicalID("owner id", owner, 256); err != nil || fence <= 0 {
 		return Run{}, ErrInvalid
 	}
-	tag, err := r.db.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status='prepared' WHERE run_id=$1 AND status='running' AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at > clock_timestamp()`, runID, owner, fence)
+	tag, err := refreshdb.New(r.db).PrepareRun(contextOrBackground(ctx), refreshdb.PrepareRunParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return Run{}, err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return Run{}, ErrStaleFence
 	}
 	return r.runByID(contextOrBackground(ctx), r.db, runID)
@@ -1931,8 +1784,7 @@ func (r *Repository) RunMayPublish(ctx context.Context, runID, owner string, fen
 	if runID == "" || owner == "" || fence <= 0 {
 		return false, ErrInvalid
 	}
-	var ok bool
-	err := r.db.QueryRow(contextOrBackground(ctx), `SELECT EXISTS (SELECT 1 FROM refresh.run WHERE run_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND status IN ('running','prepared') AND lease_expires_at > clock_timestamp())`, runID, owner, fence).Scan(&ok)
+	ok, err := refreshdb.New(r.db).RunLeaseExists(contextOrBackground(ctx), refreshdb.RunLeaseExistsParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	return ok, err
 }
 
@@ -1950,11 +1802,11 @@ func (r *Repository) CancelRun(ctx context.Context, scope Scope, runID string) (
 	}
 	var out Run
 	err := r.InTx(ctx, func(tx Tx) error {
-		tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status='cancelled',finished_at=clock_timestamp() WHERE run_id=$1 AND project_id=$2 AND environment=$3 AND ($4='' OR generation_id=$4) AND status='queued'`, runID, scope.ProjectID, scope.Environment, scope.GenerationID)
+		tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if tag != 1 {
 			return ErrStaleFence
 		}
 		if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "cancelled", json.RawMessage(`{"code":"REFRESH_CANCELLED"}`)); err != nil {
@@ -1986,11 +1838,11 @@ func (r *Repository) FailQueuedRunWithHook(ctx context.Context, scope Scope, run
 	}
 	var out Run
 	err := r.InTx(ctx, func(tx Tx) error {
-		tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status='failed',error=$4,finished_at=clock_timestamp() WHERE run_id=$1 AND project_id=$2 AND environment=$3 AND status='queued'`, runID, scope.ProjectID, scope.Environment, message)
+		tag, err := refreshdb.New(tx).FailQueuedRun(contextOrBackground(ctx), refreshdb.FailQueuedRunParams{Error: message, RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment})
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if tag != 1 {
 			return ErrStaleFence
 		}
 		if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "failed", json.RawMessage(`{"code":"REFRESH_FAILED"}`)); err != nil {
@@ -2016,11 +1868,11 @@ func (r *Repository) CancelRunWithAudit(ctx context.Context, scope Scope, runID 
 		if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
 			return err
 		}
-		tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status='cancelled',finished_at=clock_timestamp() WHERE run_id=$1 AND project_id=$2 AND environment=$3 AND ($4='' OR generation_id=$4) AND status='queued'`, runID, scope.ProjectID, scope.Environment, scope.GenerationID)
+		tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
 		if err != nil {
 			return err
 		}
-		if tag.RowsAffected() != 1 {
+		if tag != 1 {
 			return ErrStaleFence
 		}
 		if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "cancelled", json.RawMessage(`{"code":"REFRESH_CANCELLED"}`)); err != nil {
@@ -2061,10 +1913,10 @@ func (r *Repository) ClaimAttemptTx(ctx context.Context, tx Tx, runID, owner str
 	// If its lease expired, close that abandoned attempt before admitting the
 	// higher-fence reclaim. This keeps exactly one live attempt per run while
 	// allowing an interrupted prepared worker to be re-executed safely.
-	if _, err := tx.Exec(ctx, `UPDATE refresh.attempt SET status='expired',finished_at=clock_timestamp(),error='lease expired' WHERE run_id=$1 AND status='running' AND lease_expires_at <= clock_timestamp()`, runID); err != nil {
+	if _, err := refreshdb.New(tx).ExpireAttempt(ctx, runID); err != nil {
 		return Attempt{}, err
 	}
-	err := tx.QueryRow(ctx, `UPDATE refresh.run SET status='running',attempt_count=attempt_count+1,fence_generation=$3,lease_owner=$2,lease_expires_at=clock_timestamp()+$4::interval,started_at=COALESCE(started_at,clock_timestamp()) WHERE run_id=$1 AND status IN ('queued','running','prepared') AND (status='queued' OR ((status='running' OR status='prepared') AND lease_expires_at <= clock_timestamp() AND $3 > fence_generation)) RETURNING attempt_count`, runID, owner, fence, lease.String()).Scan(&n)
+	n, err := refreshdb.New(tx).ClaimRunAttempt(ctx, refreshdb.ClaimRunAttemptParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence, Lease: lease})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Attempt{}, ErrBusy
 	}
@@ -2074,7 +1926,7 @@ func (r *Repository) ClaimAttemptTx(ctx context.Context, tx Tx, runID, owner str
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "running", nil); err != nil {
 		return Attempt{}, err
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO refresh.attempt(run_id,attempt_number,fence_generation,owner_id,lease_expires_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::interval)`, runID, n, fence, owner, lease.String())
+	_, err = refreshdb.New(tx).InsertAttempt(ctx, refreshdb.InsertAttemptParams{RunID: runID, AttemptNumber: n, FenceGeneration: fence, OwnerID: owner, Lease: lease})
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -2098,18 +1950,18 @@ func (r *Repository) HeartbeatAttemptTx(ctx context.Context, tx Tx, runID, owner
 	if lease <= 0 || lease > MaxLease {
 		return ErrInvalid
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET lease_expires_at=clock_timestamp()+$4::interval WHERE run_id=$1 AND status IN ('running','prepared') AND lease_owner=$2 AND fence_generation=$3 AND lease_expires_at > clock_timestamp()`, runID, owner, fence, lease.String())
+	tag, err := refreshdb.New(tx).HeartbeatRunLease(contextOrBackground(ctx), refreshdb.HeartbeatRunLeaseParams{Lease: lease, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
-	tag, err = tx.Exec(contextOrBackground(ctx), `UPDATE refresh.attempt SET lease_expires_at=clock_timestamp()+$4::interval WHERE run_id=$1 AND status='running' AND owner_id=$2 AND fence_generation=$3`, runID, owner, fence, lease.String())
+	tag, err = refreshdb.New(tx).HeartbeatAttemptLease(contextOrBackground(ctx), refreshdb.HeartbeatAttemptLeaseParams{Lease: lease, RunID: runID, OwnerID: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	return nil
@@ -2134,18 +1986,18 @@ func (r *Repository) finishAttemptTx(ctx context.Context, tx Tx, runID, owner st
 	if status == "indeterminate" {
 		runStatus = "failed"
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.attempt SET status=$4,evidence=$5::jsonb,error=$6,finished_at=clock_timestamp() WHERE run_id=$1 AND owner_id=$2 AND fence_generation=$3 AND status='running' AND lease_expires_at > clock_timestamp()`, runID, owner, fence, state, ev, message)
+	tag, err := refreshdb.New(tx).FinishAttempt(contextOrBackground(ctx), refreshdb.FinishAttemptParams{Status: state, Evidence: ev, Error: message, RunID: runID, OwnerID: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
-	tag, err = tx.Exec(contextOrBackground(ctx), `UPDATE refresh.run SET status=$4,error=$5,finished_at=clock_timestamp(),lease_owner='',lease_expires_at=NULL WHERE run_id=$1 AND lease_owner=$2 AND fence_generation=$3 AND status IN ('running','prepared')`, runID, owner, fence, runStatus, message)
+	tag, err = refreshdb.New(tx).FinishRun(contextOrBackground(ctx), refreshdb.FinishRunParams{Status: runStatus, Error: message, RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, runStatus, ev); err != nil {
@@ -2218,8 +2070,7 @@ func (r *Repository) LinkPublicationTx(ctx context.Context, tx Tx, in Publicatio
 	// Lock and inspect the deterministic link before requiring a live run
 	// fence. A committed link is durable completion evidence and must replay
 	// exactly even after the worker lease or delivery pointer has advanced.
-	var existingID string
-	if lockErr := tx.QueryRow(ctx, `SELECT publication_id FROM refresh.publication_link WHERE publication_id=$1 FOR UPDATE`, in.PublicationID).Scan(&existingID); lockErr == nil {
+	if _, lockErr := refreshdb.New(tx).GetPublicationForUpdate(ctx, in.PublicationID); lockErr == nil {
 		p, readErr := publicationByID(ctx, tx, in.PublicationID)
 		if readErr != nil {
 			return Publication{}, readErr
@@ -2239,17 +2090,15 @@ func (r *Repository) LinkPublicationTx(ctx context.Context, tx Tx, in Publicatio
 	} else if !errors.Is(lockErr, pgx.ErrNoRows) {
 		return Publication{}, lockErr
 	}
-	var runGeneration, runPlan, runArtifact, runOwner, runStatus string
-	var runFence int64
-	var runLive bool
-	if err := tx.QueryRow(ctx, `SELECT generation_id,plan_digest,artifact_digest,lease_owner,fence_generation,status,COALESCE(lease_expires_at,'epoch'::timestamptz) > clock_timestamp() FROM refresh.run WHERE run_id=$1`, in.RunID).Scan(&runGeneration, &runPlan, &runArtifact, &runOwner, &runFence, &runStatus, &runLive); errors.Is(err, pgx.ErrNoRows) {
+	runFenceRow, err := refreshdb.New(tx).GetRunPublicationFence(ctx, in.RunID)
+	if errors.Is(err, pgx.ErrNoRows) {
 		return Publication{}, ErrNotFound
 	} else if err != nil {
 		return Publication{}, err
-	} else if runGeneration != in.BaseGenerationID || runPlan != in.PlanDigest || runArtifact != in.ArtifactDigest || runOwner != in.OwnerID || runFence != in.FenceGeneration || (runStatus != "running" && runStatus != "prepared") || !runLive {
+	} else if runFenceRow.GenerationID != in.BaseGenerationID || runFenceRow.PlanDigest != in.PlanDigest || runFenceRow.ArtifactDigest != in.ArtifactDigest || runFenceRow.LeaseOwner != in.OwnerID || runFenceRow.FenceGeneration != in.FenceGeneration || (runFenceRow.Status != "running" && runFenceRow.Status != "prepared") || !runFenceRow.Live {
 		return Publication{}, ErrStaleFence
 	}
-	if e := tx.QueryRow(ctx, `SELECT publication_id FROM refresh.publication_link WHERE run_id=$1 AND state IN ('pending','committed')`, in.RunID).Scan(&existingID); e == nil && existingID != in.PublicationID {
+	if existing, e := refreshdb.New(tx).GetRunPublicationLink(ctx, in.RunID); e == nil && existing != in.PublicationID {
 		return Publication{}, ErrConflict
 	} else if e != nil && !errors.Is(e, pgx.ErrNoRows) {
 		return Publication{}, e
@@ -2263,7 +2112,7 @@ func (r *Repository) LinkPublicationTx(ctx context.Context, tx Tx, in Publicatio
 	if in.ExpectedTargetRevision <= 0 || in.ResultTargetRevision <= in.ExpectedTargetRevision {
 		return Publication{}, ErrInvalid
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO refresh.publication_link(publication_id,run_id,base_generation_id,result_generation_id,plan_digest,artifact_digest,physical_pool_id,catalog_id,expected_target_revision,result_target_revision,snapshot_id,fence_generation,owner_id,evidence) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,NULLIF($11,0),$12,$13,$14::jsonb) ON CONFLICT(publication_id) DO NOTHING`, in.PublicationID, in.RunID, in.BaseGenerationID, in.ResultGenerationID, in.PlanDigest, in.ArtifactDigest, in.PhysicalPoolID, in.CatalogID, in.ExpectedTargetRevision, in.ResultTargetRevision, in.SnapshotID, in.FenceGeneration, in.OwnerID, ev)
+	_, err = refreshdb.New(tx).InsertPublicationLink(ctx, refreshdb.InsertPublicationLinkParams{PublicationID: in.PublicationID, RunID: in.RunID, BaseGenerationID: in.BaseGenerationID, ResultGenerationID: in.ResultGenerationID, PlanDigest: in.PlanDigest, ArtifactDigest: in.ArtifactDigest, PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, ExpectedTargetRevision: in.ExpectedTargetRevision, ResultTargetRevision: in.ResultTargetRevision, SnapshotID: in.SnapshotID, FenceGeneration: in.FenceGeneration, OwnerID: in.OwnerID, Evidence: ev})
 	if err != nil {
 		return Publication{}, err
 	}
@@ -2285,20 +2134,14 @@ func (r *Repository) LinkPublicationTx(ctx context.Context, tx Tx, in Publicatio
 	return p, err
 }
 func publicationByID(ctx context.Context, db DBTX, id string) (Publication, error) {
-	var p Publication
-	var ev []byte
-	err := db.QueryRow(ctx, `SELECT publication_id,run_id,base_generation_id,result_generation_id,plan_digest,artifact_digest,physical_pool_id,catalog_id,expected_target_revision,result_target_revision,COALESCE(snapshot_id,0),fence_generation,owner_id,state,evidence,created_at,COALESCE(committed_at,'epoch'::timestamptz) FROM refresh.publication_link WHERE publication_id=$1`, id).Scan(&p.PublicationID, &p.RunID, &p.BaseGenerationID, &p.ResultGenerationID, &p.PlanDigest, &p.ArtifactDigest, &p.PhysicalPoolID, &p.CatalogID, &p.ExpectedTargetRevision, &p.ResultTargetRevision, &p.SnapshotID, &p.FenceGeneration, &p.OwnerID, &p.State, &ev, &p.CreatedAt, &p.CommittedAt)
+	r, err := refreshdb.New(db).GetPublication(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Publication{}, ErrNotFound
 	}
 	if err != nil {
 		return Publication{}, err
 	}
-	p.Evidence = append(json.RawMessage(nil), ev...)
-	if p.CommittedAt.Equal(time.Unix(0, 0).UTC()) {
-		p.CommittedAt = time.Time{}
-	}
-	return p, nil
+	return publicationFrom(r), nil
 }
 func (r *Repository) LinkPublication(ctx context.Context, in PublicationInput) (Publication, error) {
 	var p Publication
@@ -2354,11 +2197,11 @@ func (r *Repository) CommitPublicationTx(ctx context.Context, tx Tx, publication
 	if p.State != "pending" {
 		return ErrStaleFence
 	}
-	tag, err := tx.Exec(contextOrBackground(ctx), `UPDATE refresh.publication_link SET state='committed',snapshot_id=$5,evidence=$6::jsonb,committed_at=clock_timestamp() WHERE publication_id=$1 AND run_id=$2 AND owner_id=$3 AND fence_generation=$4 AND physical_pool_id=$7 AND catalog_id=$8 AND state='pending' AND EXISTS (SELECT 1 FROM refresh.run WHERE run_id=$2 AND fence_generation=$4 AND lease_owner=$3 AND status IN ('running','prepared'))`, publicationID, runID, owner, fence, snapshotID, ev, physicalPoolID, catalogID)
+	tag, err := refreshdb.New(tx).CommitPublication(contextOrBackground(ctx), refreshdb.CommitPublicationParams{SnapshotID: int64Ptr(snapshotID), Evidence: ev, PublicationID: publicationID, RunID: runID, OwnerID: owner, FenceGeneration: fence, PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
 	if err != nil {
 		return err
 	}
-	if tag.RowsAffected() != 1 {
+	if tag != 1 {
 		return ErrStaleFence
 	}
 	return nil
@@ -2393,11 +2236,8 @@ func (r *Repository) PublicationLinkMarkerTx(ctx context.Context, tx Tx, runID, 
 	if tx == nil || runID == "" || resultGenerationID == "" {
 		return false, ErrInvalid
 	}
-	var count int64
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT count(*) FROM refresh.publication_link WHERE run_id=$1 OR result_generation_id=$2`, runID, resultGenerationID).Scan(&count); err != nil {
-		return false, err
-	}
-	return count > 0, nil
+	count, err := refreshdb.New(tx).PublicationLinkMarker(contextOrBackground(ctx), refreshdb.PublicationLinkMarkerParams{RunID: runID, ResultGenerationID: resultGenerationID})
+	return count > 0, err
 }
 
 // RunTreeSucceededTx proves that a refresh root and every admitted dependency
@@ -2406,9 +2246,11 @@ func (r *Repository) RunTreeSucceededTx(ctx context.Context, tx Tx, runID string
 	if tx == nil || runID == "" {
 		return false, ErrInvalid
 	}
-	var ok bool
-	err := tx.QueryRow(contextOrBackground(ctx), `WITH RECURSIVE tree(run_id) AS (SELECT run_id FROM refresh.run WHERE run_id=$1 UNION ALL SELECT child.run_id FROM refresh.run child JOIN tree parent ON child.parent_run_id=parent.run_id) SELECT EXISTS (SELECT 1 FROM refresh.run root WHERE root.run_id=$1 AND root.status='succeeded') AND NOT EXISTS (SELECT 1 FROM refresh.run r WHERE r.run_id IN (SELECT run_id FROM tree) AND r.status <> 'succeeded')`, runID).Scan(&ok)
-	return ok, err
+	ok, err := refreshdb.New(tx).RunTreeSucceeded(contextOrBackground(ctx), runID)
+	if ok == nil {
+		return false, err
+	}
+	return *ok, err
 }
 
 func (r *Repository) RecordRecoveryTx(ctx context.Context, tx Tx, in RecoveryInput) (RecoveryState, error) {
@@ -2471,39 +2313,29 @@ func (r *Repository) RecordRecoveryTx(ctx context.Context, tx Tx, in RecoveryInp
 		if bytes.Equal(ev, []byte(`{}`)) {
 			return RecoveryState{}, errors.New("recovery evidence is required for a fenced record")
 		}
-		var runStatus string
-		if err := tx.QueryRow(ctx, `SELECT status FROM refresh.run WHERE run_id=$1`, in.RunID).Scan(&runStatus); err != nil {
+		runStatus, err := refreshdb.New(tx).GetRunStatus(ctx, in.RunID)
+		if err != nil {
 			return RecoveryState{}, err
 		}
 		if runStatus != "failed" && runStatus != "indeterminate" {
 			return RecoveryState{}, ErrConflict
 		}
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO refresh.recovery_state(run_id,state,reconciliation_fence,owner_id,lease_expires_at,exact_external_identity,last_error,evidence,next_reconcile_at) VALUES($1,$2,$3,$4,clock_timestamp()+$5::interval,$6,$7,$8::jsonb,NULLIF($9::timestamptz,'epoch'::timestamptz)) ON CONFLICT(run_id) DO UPDATE SET state=EXCLUDED.state,reconciliation_fence=EXCLUDED.reconciliation_fence,owner_id=EXCLUDED.owner_id,lease_expires_at=EXCLUDED.lease_expires_at,exact_external_identity=EXCLUDED.exact_external_identity,last_error=EXCLUDED.last_error,evidence=EXCLUDED.evidence,next_reconcile_at=EXCLUDED.next_reconcile_at WHERE refresh.recovery_state.reconciliation_fence < EXCLUDED.reconciliation_fence`, in.RunID, in.State, in.FenceGeneration, in.OwnerID, in.Lease.String(), in.ExactExternalIdentity, in.LastError, ev, nullableTime(in.NextReconcileAt))
+	_, err = refreshdb.New(tx).UpsertRecovery(ctx, refreshdb.UpsertRecoveryParams{RunID: in.RunID, State: in.State, ReconciliationFence: in.FenceGeneration, OwnerID: in.OwnerID, Lease: in.Lease, ExactExternalIdentity: in.ExactExternalIdentity, LastError: in.LastError, Evidence: ev, NextReconcileAt: nullableTime(in.NextReconcileAt)})
 	if err != nil {
 		return RecoveryState{}, err
 	}
 	return recoveryByRun(ctx, tx, in.RunID)
 }
 func recoveryByRun(ctx context.Context, db DBTX, id string) (RecoveryState, error) {
-	var out RecoveryState
-	var next, leaseExpires time.Time
-	var ev []byte
-	err := db.QueryRow(ctx, `SELECT run_id,state,reconciliation_fence,owner_id,COALESCE(lease_expires_at,'epoch'::timestamptz),exact_external_identity,last_error,evidence,COALESCE(next_reconcile_at,'epoch'::timestamptz),updated_at FROM refresh.recovery_state WHERE run_id=$1`, id).Scan(&out.RunID, &out.State, &out.FenceGeneration, &out.OwnerID, &leaseExpires, &out.ExactExternalIdentity, &out.LastError, &ev, &next, &out.UpdatedAt)
+	r, err := refreshdb.New(db).GetRecovery(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return RecoveryState{}, ErrNotFound
 	}
 	if err != nil {
 		return RecoveryState{}, err
 	}
-	out.Evidence = append(json.RawMessage(nil), ev...)
-	if !leaseExpires.Equal(time.Unix(0, 0).UTC()) {
-		out.LeaseExpiresAt = leaseExpires
-	}
-	if !next.Equal(time.Unix(0, 0).UTC()) {
-		out.NextReconcileAt = next
-	}
-	return out, nil
+	return recoveryFrom(r), nil
 }
 func (r *Repository) RecordRecovery(ctx context.Context, in RecoveryInput) (RecoveryState, error) {
 	var out RecoveryState
@@ -2546,8 +2378,8 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 			return err
 		}
 	}
-	var publicationExists bool
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT EXISTS (SELECT 1 FROM refresh.publication_link p JOIN refresh.run r ON r.run_id=p.run_id WHERE p.run_id=$1 AND p.state='committed' AND p.result_generation_id=$2 AND p.physical_pool_id=$3 AND p.catalog_id=$4 AND p.snapshot_id=$5 AND ( $9='publish' OR (p.fence_generation=$10 AND p.owner_id=$11) ) AND r.project_id=$6 AND r.environment=$7 AND r.semantic_model_id=$8)`, v.RunID, v.GenerationID, v.PhysicalPoolID, v.CatalogID, v.SnapshotID, v.ProjectID, v.Environment, v.SemanticModelID, v.Source, v.LeaseRevision, v.LeaseOwner).Scan(&publicationExists); err != nil {
+	publicationExists, err := refreshdb.New(tx).PublicationExistsForDataVersion(contextOrBackground(ctx), refreshdb.PublicationExistsForDataVersionParams{RunID: v.RunID, ResultGenerationID: v.GenerationID, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, SnapshotID: v.SnapshotID, Source: v.Source, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner, ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID})
+	if err != nil {
 		return err
 	}
 	if !publicationExists {
@@ -2557,16 +2389,16 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 		return ErrInvalid
 	}
 	if v.Source == "refresh" && v.LeaseRevision > 0 {
-		var runOK bool
-		if err := tx.QueryRow(contextOrBackground(ctx), `SELECT EXISTS (SELECT 1 FROM refresh.run r JOIN refresh.publication_link p ON p.run_id=r.run_id WHERE r.run_id=$1 AND r.project_id=$2 AND r.environment=$3 AND p.base_generation_id=r.generation_id AND p.result_generation_id=$4 AND p.state='committed' AND p.fence_generation=$5 AND p.owner_id=$6 AND r.status IN ('running','prepared','succeeded'))`, v.RunID, v.ProjectID, v.Environment, v.GenerationID, v.LeaseRevision, v.LeaseOwner).Scan(&runOK); err != nil {
+		runOK, err := refreshdb.New(tx).RefreshPublicationValid(contextOrBackground(ctx), refreshdb.RefreshPublicationValidParams{RunID: v.RunID, ProjectID: v.ProjectID, Environment: v.Environment, ResultGenerationID: v.GenerationID, FenceGeneration: v.LeaseRevision, OwnerID: v.LeaseOwner})
+		if err != nil {
 			return err
 		}
 		if !runOK {
 			return ErrConflict
 		}
 	}
-	var old DataVersion
-	err := tx.QueryRow(contextOrBackground(ctx), `SELECT project_id,environment,semantic_model_id,generation_id,snapshot_id,refreshed_at,source,pipeline_id,run_id,target_revision,lease_owner,lease_revision,physical_pool_id,catalog_id FROM refresh.data_version WHERE project_id=$1 AND environment=$2 AND semantic_model_id=$3 AND generation_id=$4 FOR UPDATE`, v.ProjectID, v.Environment, v.SemanticModelID, v.GenerationID).Scan(&old.ProjectID, &old.Environment, &old.SemanticModelID, &old.GenerationID, &old.SnapshotID, &old.RefreshedAt, &old.Source, &old.PipelineID, &old.RunID, &old.TargetRevision, &old.LeaseOwner, &old.LeaseRevision, &old.PhysicalPoolID, &old.CatalogID)
+	oldRow, err := refreshdb.New(tx).GetDataVersionForUpdate(contextOrBackground(ctx), refreshdb.GetDataVersionForUpdateParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID})
+	old := dataVersionFromUpdate(oldRow)
 	if err == nil {
 		if v.LeaseRevision < old.LeaseRevision {
 			return ErrStaleFence
@@ -2580,7 +2412,7 @@ func (r *Repository) SaveDataVersionTx(ctx context.Context, tx Tx, v DataVersion
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
-	_, err = tx.Exec(contextOrBackground(ctx), `INSERT INTO refresh.data_version(project_id,environment,semantic_model_id,generation_id,snapshot_id,source,physical_pool_id,catalog_id,pipeline_id,run_id,target_revision,lease_owner,lease_revision) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(project_id,environment,semantic_model_id,generation_id) DO UPDATE SET snapshot_id=EXCLUDED.snapshot_id,refreshed_at=clock_timestamp(),source=EXCLUDED.source,physical_pool_id=EXCLUDED.physical_pool_id,catalog_id=EXCLUDED.catalog_id,pipeline_id=EXCLUDED.pipeline_id,run_id=EXCLUDED.run_id,target_revision=EXCLUDED.target_revision,lease_owner=EXCLUDED.lease_owner,lease_revision=EXCLUDED.lease_revision WHERE refresh.data_version.lease_revision < EXCLUDED.lease_revision`, v.ProjectID, v.Environment, v.SemanticModelID, v.GenerationID, v.SnapshotID, v.Source, v.PhysicalPoolID, v.CatalogID, v.PipelineID, v.RunID, v.TargetRevision, v.LeaseOwner, v.LeaseRevision)
+	_, err = refreshdb.New(tx).UpsertDataVersion(contextOrBackground(ctx), refreshdb.UpsertDataVersionParams{ProjectID: v.ProjectID, Environment: v.Environment, SemanticModelID: v.SemanticModelID, GenerationID: v.GenerationID, SnapshotID: v.SnapshotID, Source: v.Source, PhysicalPoolID: v.PhysicalPoolID, CatalogID: v.CatalogID, PipelineID: v.PipelineID, RunID: v.RunID, TargetRevision: v.TargetRevision, LeaseOwner: v.LeaseOwner, LeaseRevision: v.LeaseRevision})
 	return err
 }
 func (r *Repository) SaveDataVersion(ctx context.Context, v DataVersion) error {
@@ -2604,12 +2436,11 @@ func (r *Repository) dataVersion(ctx context.Context, tx DBTX, projectID, enviro
 	if tx == nil {
 		return DataVersion{}, false, ErrInvalid
 	}
-	var v DataVersion
-	err := tx.QueryRow(contextOrBackground(ctx), `SELECT project_id,environment,semantic_model_id,generation_id,snapshot_id,refreshed_at,source,pipeline_id,run_id,target_revision,lease_owner,lease_revision,physical_pool_id,catalog_id FROM refresh.data_version WHERE project_id=$1 AND environment=$2 AND semantic_model_id=$3 AND generation_id=$4`, projectID, environment, semanticModelID, generationID).Scan(&v.ProjectID, &v.Environment, &v.SemanticModelID, &v.GenerationID, &v.SnapshotID, &v.RefreshedAt, &v.Source, &v.PipelineID, &v.RunID, &v.TargetRevision, &v.LeaseOwner, &v.LeaseRevision, &v.PhysicalPoolID, &v.CatalogID)
+	row, err := refreshdb.New(tx).GetDataVersion(contextOrBackground(ctx), refreshdb.GetDataVersionParams{ProjectID: projectID, Environment: environment, SemanticModelID: semanticModelID, GenerationID: generationID})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DataVersion{}, false, nil
 	}
-	return v, err == nil, err
+	return dataVersionFrom(row), err == nil, err
 }
 
 func (r *Repository) GetDataVersion(ctx context.Context, projectID, environment, semanticModelID, generationID string) (DataVersion, bool, error) {
@@ -2623,8 +2454,7 @@ func (r *Repository) Maintenance(ctx context.Context, limit int) (int64, error) 
 	if limit < 1 || limit > 1000 {
 		return 0, ErrInvalid
 	}
-	var n int64
-	err := r.db.QueryRow(contextOrBackground(ctx), `SELECT refresh.maintenance($1)`, limit).Scan(&n)
+	n, err := refreshdb.New(r.db).RunMaintenance(contextOrBackground(ctx), int32(limit))
 	return n, err
 }
 
@@ -2646,20 +2476,15 @@ func (r *Repository) RecoveryRunsTx(ctx context.Context, tx Tx, environment stri
 	if tx == nil || strings.TrimSpace(environment) == "" || limit < 1 || limit > MaxPageSize || (afterID != "" && afterCreated.IsZero()) {
 		return nil, ErrInvalid
 	}
-	rows, err := tx.Query(contextOrBackground(ctx), `SELECT run_id,COALESCE(job_id,''),status,fence_generation,lease_owner,COALESCE(lease_expires_at,'epoch'::timestamptz),environment,created_at FROM refresh.run WHERE environment=$1 AND job_id IS NOT NULL AND status IN ('queued','running','prepared') AND ($2::timestamptz='epoch'::timestamptz OR (created_at,run_id)>($2::timestamptz,$3)) ORDER BY created_at,run_id LIMIT $4`, environment, nullableTime(afterCreated), afterID, limit)
+	rows, err := refreshdb.New(tx).ListRecoveryRuns(contextOrBackground(ctx), refreshdb.ListRecoveryRunsParams{Environment: environment, AfterCreated: nullableTime(afterCreated), AfterID: afterID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := make([]RecoveryRun, 0)
-	for rows.Next() {
-		var item RecoveryRun
-		if err := rows.Scan(&item.RunID, &item.JobID, &item.Status, &item.Generation, &item.LeaseOwner, &item.LeaseExpiresAt, &item.Environment, &item.CreatedAt); err != nil {
-			return nil, err
-		}
-		out = append(out, item)
+	for _, row := range rows {
+		out = append(out, RecoveryRun{RunID: row.RunID, JobID: row.JobID, Status: row.Status, Generation: row.FenceGeneration, LeaseOwner: row.LeaseOwner, LeaseExpiresAt: ts(row.LeaseExpiresAt), Environment: row.Environment, CreatedAt: row.CreatedAt})
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) Attempts(ctx context.Context, runID string, limit int) ([]Attempt, error) {
@@ -2669,26 +2494,16 @@ func (r *Repository) Attempts(ctx context.Context, runID string, limit int) ([]A
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT run_id,attempt_number,fence_generation,owner_id,lease_expires_at,status,evidence,error,claimed_at,started_at,COALESCE(finished_at,'epoch'::timestamptz) FROM refresh.attempt WHERE run_id=$1 ORDER BY attempt_number DESC LIMIT $2`, runID, limit)
+	rows, err := refreshdb.New(r.db).ListAttempts(contextOrBackground(ctx), refreshdb.ListAttemptsParams{RunID: runID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Attempt
-	for rows.Next() {
-		var a Attempt
-		var ev []byte
-		var fin time.Time
-		if err := rows.Scan(&a.RunID, &a.AttemptNumber, &a.FenceGeneration, &a.OwnerID, &a.LeaseExpiresAt, &a.Status, &ev, &a.Error, &a.ClaimedAt, &a.StartedAt, &fin); err != nil {
-			return nil, err
-		}
-		a.Evidence = append(json.RawMessage(nil), ev...)
-		if !fin.Equal(time.Unix(0, 0).UTC()) {
-			a.FinishedAt = fin
-		}
+	for _, row := range rows {
+		a := Attempt{RunID: row.RunID, AttemptNumber: row.AttemptNumber, FenceGeneration: row.FenceGeneration, OwnerID: row.OwnerID, LeaseExpiresAt: row.LeaseExpiresAt, Status: row.Status, Evidence: append(json.RawMessage(nil), row.Evidence...), Error: row.Error, ClaimedAt: row.ClaimedAt, StartedAt: row.StartedAt, FinishedAt: ts(row.FinishedAt)}
 		out = append(out, a)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) ListOccurrences(ctx context.Context, scope Scope, limit int) ([]Occurrence, error) {
@@ -2704,24 +2519,19 @@ func (r *Repository) ListOccurrences(ctx context.Context, scope Scope, limit int
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT occurrence_id FROM refresh.schedule_occurrence WHERE project_id=$1 AND environment=$2 AND ($3='' OR generation_id=$3) ORDER BY nominal_time DESC,occurrence_id DESC LIMIT $4`, scope.ProjectID, scope.Environment, scope.GenerationID, limit)
+	rows, err := refreshdb.New(r.db).ListOccurrences(contextOrBackground(ctx), refreshdb.ListOccurrencesParams{ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Occurrence
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
+	for _, id := range rows {
 		o, e := occurrenceByID(contextOrBackground(ctx), r.db, id)
 		if e != nil {
 			return nil, e
 		}
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (r *Repository) ListOperations(ctx context.Context, scope Scope, limit int) ([]Operation, error) {
 	if err := r.requireDB(); err != nil {
@@ -2733,22 +2543,17 @@ func (r *Repository) ListOperations(ctx context.Context, scope Scope, limit int)
 	if limit < 1 || limit > MaxPageSize {
 		return nil, ErrInvalid
 	}
-	rows, err := r.db.Query(contextOrBackground(ctx), `SELECT idempotency_key FROM refresh.operation WHERE project_id=$1 AND environment=$2 ORDER BY created_at DESC,operation_id DESC LIMIT $3`, scope.ProjectID, scope.Environment, limit)
+	rows, err := refreshdb.New(r.db).ListOperations(contextOrBackground(ctx), refreshdb.ListOperationsParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PageLimit: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	var out []Operation
-	for rows.Next() {
-		var key string
-		if err := rows.Scan(&key); err != nil {
-			return nil, err
-		}
+	for _, key := range rows {
 		o, e := r.Operation(contextOrBackground(ctx), scope.ProjectID, scope.Environment, key)
 		if e != nil {
 			return nil, e
 		}
 		out = append(out, o)
 	}
-	return out, rows.Err()
+	return out, nil
 }

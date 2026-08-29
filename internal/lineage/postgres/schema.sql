@@ -193,6 +193,148 @@ CREATE TABLE IF NOT EXISTS lineage.edges (
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 256)
 );
 
+-- Traversal functions keep the two fixed recursive result shapes in the
+-- capability schema so sqlc can expose typed methods.  The caller still
+-- supplies the generation digest and access-authority allow-set; every
+-- recursive step joins that allow-set, preventing denied transit nodes.
+CREATE OR REPLACE FUNCTION lineage.traverse_upstream(
+    p_graph_digest TEXT,
+    p_project_id TEXT,
+    p_root_id TEXT,
+    p_allowed TEXT[],
+    p_max_depth INTEGER,
+    p_row_limit INTEGER
+)
+RETURNS TABLE(node_id TEXT, resource_kind TEXT, identity_digest TEXT, properties JSONB, depth INTEGER)
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, lineage
+AS $function$
+WITH RECURSIVE allowed(node_id) AS (SELECT unnest(p_allowed)), walk(node_id, depth) AS (
+    SELECT p_root_id, 0
+    UNION
+    SELECT e.to_node_id, w.depth + 1
+    FROM walk w
+    JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+        AND e.project_id = p_project_id
+        AND e.from_node_id = w.node_id
+    JOIN allowed a ON a.node_id = e.to_node_id
+    WHERE w.depth < p_max_depth
+)
+SELECT node_id, resource_kind, identity_digest, properties, depth
+FROM (
+    SELECT DISTINCT ON (n.node_id)
+        n.node_id, n.resource_kind, n.identity_digest, n.properties, w.depth
+    FROM walk w
+    JOIN allowed a ON a.node_id = w.node_id
+    JOIN lineage.nodes n ON n.graph_digest = p_graph_digest
+        AND n.project_id = p_project_id
+        AND n.node_id = w.node_id
+    ORDER BY n.node_id, w.depth
+) unique_nodes
+ORDER BY depth, node_id
+LIMIT p_row_limit
+$function$;
+
+CREATE OR REPLACE FUNCTION lineage.traverse_downstream(
+    p_graph_digest TEXT,
+    p_project_id TEXT,
+    p_root_id TEXT,
+    p_allowed TEXT[],
+    p_max_depth INTEGER,
+    p_row_limit INTEGER
+)
+RETURNS TABLE(node_id TEXT, resource_kind TEXT, identity_digest TEXT, properties JSONB, depth INTEGER)
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, lineage
+AS $function$
+WITH RECURSIVE allowed(node_id) AS (SELECT unnest(p_allowed)), walk(node_id, depth) AS (
+    SELECT p_root_id, 0
+    UNION
+    SELECT e.from_node_id, w.depth + 1
+    FROM walk w
+    JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+        AND e.project_id = p_project_id
+        AND e.to_node_id = w.node_id
+    JOIN allowed a ON a.node_id = e.from_node_id
+    WHERE w.depth < p_max_depth
+)
+SELECT node_id, resource_kind, identity_digest, properties, depth
+FROM (
+    SELECT DISTINCT ON (n.node_id)
+        n.node_id, n.resource_kind, n.identity_digest, n.properties, w.depth
+    FROM walk w
+    JOIN allowed a ON a.node_id = w.node_id
+    JOIN lineage.nodes n ON n.graph_digest = p_graph_digest
+        AND n.project_id = p_project_id
+        AND n.node_id = w.node_id
+    ORDER BY n.node_id, w.depth
+) unique_nodes
+ORDER BY depth, node_id
+LIMIT p_row_limit
+$function$;
+
+CREATE OR REPLACE FUNCTION lineage.count_upstream_edges(
+    p_graph_digest TEXT,
+    p_project_id TEXT,
+    p_root_id TEXT,
+    p_allowed TEXT[],
+    p_max_depth INTEGER
+)
+RETURNS BIGINT
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, lineage
+AS $function$
+WITH RECURSIVE allowed(node_id) AS (SELECT unnest(p_allowed)), walk(node_id, depth) AS (
+    SELECT p_root_id, 0
+    UNION
+    SELECT e.to_node_id, w.depth + 1
+    FROM walk w
+    JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+        AND e.project_id = p_project_id
+        AND e.from_node_id = w.node_id
+    JOIN allowed a ON a.node_id = e.to_node_id
+    WHERE w.depth < p_max_depth
+)
+SELECT count(*)
+FROM walk w
+JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+    AND e.project_id = p_project_id
+    AND e.from_node_id = w.node_id
+JOIN allowed a ON a.node_id = e.to_node_id
+WHERE w.depth < p_max_depth
+$function$;
+
+CREATE OR REPLACE FUNCTION lineage.count_downstream_edges(
+    p_graph_digest TEXT,
+    p_project_id TEXT,
+    p_root_id TEXT,
+    p_allowed TEXT[],
+    p_max_depth INTEGER
+)
+RETURNS BIGINT
+LANGUAGE SQL STABLE
+SET search_path = pg_catalog, lineage
+AS $function$
+WITH RECURSIVE allowed(node_id) AS (SELECT unnest(p_allowed)), walk(node_id, depth) AS (
+    SELECT p_root_id, 0
+    UNION
+    SELECT e.from_node_id, w.depth + 1
+    FROM walk w
+    JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+        AND e.project_id = p_project_id
+        AND e.to_node_id = w.node_id
+    JOIN allowed a ON a.node_id = e.from_node_id
+    WHERE w.depth < p_max_depth
+)
+SELECT count(*)
+FROM walk w
+JOIN lineage.edges e ON e.graph_digest = p_graph_digest
+    AND e.project_id = p_project_id
+    AND e.to_node_id = w.node_id
+JOIN allowed a ON a.node_id = e.from_node_id
+WHERE w.depth < p_max_depth
+$function$;
+
 -- A binding is the only serving-facing selector.  Delivery and generation
 -- are explicit, immutable identities; no environment or graph metadata is
 -- inferred by this capability.
@@ -261,9 +403,10 @@ REVOKE ALL ON ALL FUNCTIONS IN SCHEMA lineage FROM PUBLIC;
 DO $$
 DECLARE role_name TEXT;
 BEGIN
-    FOREACH role_name IN ARRAY ARRAY['leapview_control_owner','leapview_control_migrator','leapview_control_runtime','leapview_control_readonly'] LOOP
+    FOREACH role_name IN ARRAY ARRAY['leapview_control_owner','leapview_control_migrator','leapview_control_runtime','leapview_control_readonly','leapview_control_backup'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
             EXECUTE format('GRANT USAGE ON SCHEMA lineage TO %I', role_name);
+            EXECUTE format('GRANT EXECUTE ON FUNCTION lineage.traverse_upstream(text,text,text,text[],integer,integer), lineage.traverse_downstream(text,text,text,text[],integer,integer), lineage.count_upstream_edges(text,text,text,text[],integer), lineage.count_downstream_edges(text,text,text,text[],integer) TO %I', role_name);
             IF role_name IN ('leapview_control_owner','leapview_control_migrator') THEN
                 EXECUTE format('GRANT ALL ON ALL TABLES IN SCHEMA lineage TO %I', role_name);
                 EXECUTE format('GRANT ALL ON ALL SEQUENCES IN SCHEMA lineage TO %I', role_name);

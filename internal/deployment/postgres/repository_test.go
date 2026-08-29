@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -204,6 +205,21 @@ func TestPostgresLeaseCASRaceAndStaleFence(t *testing.T) {
 	}
 	if active != 1 {
 		t.Fatalf("active lease count = %d", active)
+	}
+}
+
+func TestPostgresEventVersionRetainsBigintWidth(t *testing.T) {
+	p := deliveryTestDB(t)
+	const scope = "target_event_version_width"
+	if _, err := p.Exec(t.Context(), `INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version) VALUES($1,'delivery_target',$1,2147483648)`, scope); err != nil {
+		t.Fatal(err)
+	}
+	version, err := depdb.New(p).NextEventVersion(t.Context(), scope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if version != 2147483648 {
+		t.Fatalf("event version = %d, want bigint boundary value", version)
 	}
 }
 

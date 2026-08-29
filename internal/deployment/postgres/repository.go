@@ -17,10 +17,12 @@ import (
 	"strings"
 	"time"
 
+	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // DBTX is implemented by pgx connections, transactions and pools.  A caller
@@ -207,19 +209,15 @@ type DeliveryApproval struct {
 }
 
 func loadApproval(ctx context.Context, db DBTX, id string) (DeliveryApproval, error) {
-	var a DeliveryApproval
-	var principal string
-	var evidence []byte
-	err := db.QueryRow(ctx, `SELECT approval_id::text,candidate_id::text,COALESCE(principal_id::text,''),decision,evidence,decided_at FROM delivery.delivery_approval WHERE approval_id=$1::uuid`, id).
-		Scan(&a.ApprovalID, &a.CandidateID, &principal, &a.Decision, &evidence, &a.DecidedAt)
+	a := DeliveryApproval{}
+	row, err := depdb.New(db).GetApproval(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryApproval{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryApproval{}, err
 	}
-	a.PrincipalID = principal
-	a.Evidence = append([]byte(nil), evidence...)
+	a.ApprovalID, a.CandidateID, a.PrincipalID, a.Decision, a.Evidence, a.DecidedAt = row.ApprovalID, row.CandidateID, row.PrincipalID, row.Decision, append([]byte(nil), row.Evidence...), dbTime(row.DecidedAt)
 	return a, nil
 }
 
@@ -246,15 +244,13 @@ func (r *Repository) ApproveCandidate(ctx context.Context, in DeliveryApproval) 
 		return DeliveryApproval{}, ErrInvalid
 	}
 	principalID := ""
-	var principal any
 	if strings.TrimSpace(in.PrincipalID) != "" {
 		principalID, err = uuidID(in.PrincipalID, "principal id", false)
 		if err != nil {
 			return DeliveryApproval{}, err
 		}
-		principal = principalID
 	}
-	_, err = db.Exec(contextOrBackground(ctx), `INSERT INTO delivery.delivery_approval(approval_id,candidate_id,principal_id,decision,evidence) VALUES($1::uuid,$2::uuid,NULLIF($3,'')::uuid,$4,$5::jsonb) ON CONFLICT(approval_id) DO NOTHING`, id, candidate, principal, in.Decision, evidence)
+	err = depdb.New(db).InsertApproval(contextOrBackground(ctx), depdb.InsertApprovalParams{ApprovalID: dbUUID(id), CandidateID: dbUUID(candidate), PrincipalID: dbUUID(principalID), Decision: in.Decision, Evidence: evidence})
 	if err != nil {
 		return DeliveryApproval{}, err
 	}
@@ -276,29 +272,24 @@ type DeliveryRetentionRoot struct {
 
 func loadRetentionRoot(ctx context.Context, db DBTX, id string) (DeliveryRetentionRoot, error) {
 	var r DeliveryRetentionRoot
-	var generation, seal string
-	var expires, retired, expired *time.Time
-	var evidence []byte
-	var candidate string
-	err := db.QueryRow(ctx, `SELECT root_id::text,target_id,COALESCE(candidate_id::text,''),COALESCE(generation_id::text,''),COALESCE(snapshot_seal_id::text,''),root_kind,state,expires_at,evidence,created_at,retired_at,expired_at FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, id).
-		Scan(&r.RootID, &r.TargetID, &candidate, &generation, &seal, &r.RootKind, &r.State, &expires, &evidence, &r.CreatedAt, &retired, &expired)
+	row, err := depdb.New(db).GetRetentionRoot(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryRetentionRoot{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	r.CandidateID, r.GenerationID, r.SnapshotSealID = candidate, generation, seal
-	if expires != nil {
-		r.ExpiresAt = expires.UTC()
+	r.RootID, r.TargetID, r.CandidateID, r.GenerationID, r.SnapshotSealID, r.RootKind, r.State = row.RootID, row.TargetID, row.CandidateID, row.GenerationID, row.SnapshotSealID, row.RootKind, row.State
+	if row.ExpiresAt.Valid {
+		r.ExpiresAt = row.ExpiresAt.Time.UTC()
 	}
-	if retired != nil {
-		r.RetiredAt = retired.UTC()
+	if row.RetiredAt.Valid {
+		r.RetiredAt = row.RetiredAt.Time.UTC()
 	}
-	if expired != nil {
-		r.ExpiredAt = expired.UTC()
+	if row.ExpiredAt.Valid {
+		r.ExpiredAt = row.ExpiredAt.Time.UTC()
 	}
-	r.Evidence = append([]byte(nil), evidence...)
+	r.CreatedAt, r.Evidence = dbTime(row.CreatedAt), append([]byte(nil), row.Evidence...)
 	return r, nil
 }
 
@@ -353,18 +344,61 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. Capability-owned schema DDL is applied as a
+	// single caller-owned migration transaction.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
+func dbUUID(value string) pgtype.UUID {
+	u, err := uuid.Parse(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return pgtype.UUID{Bytes: u, Valid: true}
+}
+
+// dbTime converts sqlc's pgx/v5 timestamptz representation into the
+// repository's time.Time surface. The canonical sqlc configuration maps all
+// PostgreSQL timestamptz columns to pgtype.Timestamptz, including non-null
+// columns; nullable values retain their Valid bit for callers that need to
+// distinguish an absent timestamp.
+func dbTime(value pgtype.Timestamptz) time.Time {
+	if !value.Valid {
+		return time.Time{}
+	}
+	return value.Time.UTC()
+}
+
+func pgTime(value time.Time) pgtype.Timestamptz {
+	if value.IsZero() {
+		return pgtype.Timestamptz{}
+	}
+	return pgtype.Timestamptz{Time: value.UTC(), Valid: true}
+}
+
+func pgText(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return pgtype.Text{String: *value, Valid: true}
+}
+
+func pgInt8(value *int64) pgtype.Int8 {
+	if value == nil {
+		return pgtype.Int8{}
+	}
+	return pgtype.Int8{Int64: *value, Valid: true}
+}
+
 func databaseNow(ctx context.Context, db DBTX) (time.Time, error) {
-	var now time.Time
-	if err := db.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+	now, err := depdb.New(db).DatabaseClock(ctx)
+	if err != nil {
 		return time.Time{}, err
 	}
-	return now.UTC(), nil
+	return dbTime(now), nil
 }
 
 func requireDB(r *Repository) (DBTX, error) {
@@ -487,12 +521,11 @@ func createTarget(ctx context.Context, db DBTX, in TargetInput) (DeliveryTarget,
 	if rev < 1 {
 		return DeliveryTarget{}, ErrInvalid
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_target(target_id,project_id,environment,target_revision)
-VALUES ($1,$2,$3,$4) ON CONFLICT (target_id) DO NOTHING`, id, project, env, rev)
+	err = depdb.New(db).InsertTarget(ctx, depdb.InsertTargetParams{TargetID: id, ProjectID: project, Environment: env, TargetRevision: rev})
 	if err != nil {
 		return DeliveryTarget{}, err
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO delivery.delivery_target_fence(target_id,next_fencing_epoch) VALUES($1,1) ON CONFLICT(target_id) DO NOTHING`, id); err != nil {
+	if err := depdb.New(db).InsertTargetFence(ctx, id); err != nil {
 		return DeliveryTarget{}, err
 	}
 	g, err := loadTarget(ctx, db, id)
@@ -522,19 +555,14 @@ func loadTarget(ctx context.Context, db DBTX, id string) (DeliveryTarget, error)
 		return DeliveryTarget{}, err
 	}
 	var out DeliveryTarget
-	var activeGen, activePub string
-	err = db.QueryRow(ctx, `SELECT t.target_id,t.project_id,t.environment,t.target_revision,
-COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),
-COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),
-t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=$1`, id).
-		Scan(&out.TargetID, &out.ProjectID, &out.Environment, &out.TargetRevision, &activeGen, &activePub, &out.CreatedAt, &out.UpdatedAt)
+	row, err := depdb.New(db).GetTarget(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryTarget{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryTarget{}, err
 	}
-	out.ActiveGenerationID, out.ActivePublicationID = activeGen, activePub
+	out.TargetID, out.ProjectID, out.Environment, out.TargetRevision, out.ActiveGenerationID, out.ActivePublicationID, out.CreatedAt, out.UpdatedAt = row.TargetID, row.ProjectID, row.Environment, row.TargetRevision, row.ActiveGenerationID, row.ActivePublicationID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
 	return out, nil
 }
 
@@ -567,8 +595,7 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 	if err != nil {
 		return DeliveryPlan{}, fmt.Errorf("%w: plan evidence", ErrInvalid)
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence)
-VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT (plan_id) DO NOTHING`, id, target, in.PlanRevision, in.PlanDigest, in.CompiledGraphDigest, in.CompiledConfigDigest, in.SecurityDomainFingerprint, in.ArtifactDigest, in.QualificationRequired, evidence)
+	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence})
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -576,15 +603,15 @@ VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) ON CONFLICT (plan_id) DO NO
 }
 func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (DeliveryPlan, error) {
 	var p DeliveryPlan
-	var evidence []byte
-	err := db.QueryRow(ctx, `SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence,created_at FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, id).Scan(&p.PlanID, &p.TargetID, &p.PlanRevision, &p.PlanDigest, &p.CompiledGraphDigest, &p.CompiledConfigDigest, &p.SecurityDomainFingerprint, &p.ArtifactDigest, &p.QualificationRequired, &evidence, &p.CreatedAt)
+	row, err := depdb.New(db).GetPlan(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p.Evidence = append([]byte(nil), evidence...)
+	p.PlanID, p.TargetID, p.PlanRevision, p.PlanDigest, p.CompiledGraphDigest, p.CompiledConfigDigest, p.SecurityDomainFingerprint, p.ArtifactDigest, p.QualificationRequired, p.CreatedAt = row.PlanID, row.TargetID, row.PlanRevision, row.PlanDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.ArtifactDigest, row.QualificationRequired, dbTime(row.CreatedAt)
+	p.Evidence = append([]byte(nil), row.Evidence...)
 	expectedEvidence, _ := canonicalObject(expected.Evidence, 65536, true)
 	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) {
 		return DeliveryPlan{}, ErrConflict
@@ -600,16 +627,14 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	var p DeliveryPlan
-	var ev []byte
-	err = db.QueryRow(contextOrBackground(ctx), `SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence,created_at FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, id).Scan(&p.PlanID, &p.TargetID, &p.PlanRevision, &p.PlanDigest, &p.CompiledGraphDigest, &p.CompiledConfigDigest, &p.SecurityDomainFingerprint, &p.ArtifactDigest, &p.QualificationRequired, &ev, &p.CreatedAt)
+	row, err := depdb.New(db).GetPlan(contextOrBackground(ctx), dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p.Evidence = append([]byte(nil), ev...)
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
 	return p, nil
 }
 
@@ -624,16 +649,14 @@ func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	var p DeliveryPlan
-	var ev []byte
-	err = tx.QueryRow(contextOrBackground(ctx), `SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence,created_at FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, id).Scan(&p.PlanID, &p.TargetID, &p.PlanRevision, &p.PlanDigest, &p.CompiledGraphDigest, &p.CompiledConfigDigest, &p.SecurityDomainFingerprint, &p.ArtifactDigest, &p.QualificationRequired, &ev, &p.CreatedAt)
+	row, err := depdb.New(tx).GetPlan(contextOrBackground(ctx), dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p.Evidence = append([]byte(nil), ev...)
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
 	return p, nil
 }
 func (r *Repository) LoadPlan(ctx context.Context, id string) (DeliveryPlan, error) {
@@ -694,7 +717,8 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 	}
 	if candidate != "" {
 		var candidatePlan string
-		if err := db.QueryRow(ctx, `SELECT plan_id::text FROM delivery.delivery_candidate WHERE candidate_id=$1::uuid`, candidate).Scan(&candidatePlan); errors.Is(err, pgx.ErrNoRows) {
+		candidatePlan, err = depdb.New(db).GetCandidatePlan(ctx, dbUUID(candidate))
+		if errors.Is(err, pgx.ErrNoRows) {
 			return DeliveryBuildAttempt{}, ErrNotFound
 		} else if err != nil {
 			return DeliveryBuildAttempt{}, err
@@ -702,7 +726,7 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 			return DeliveryBuildAttempt{}, ErrConflict
 		}
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity) VALUES($1::uuid,$2::uuid,NULLIF($3,'')::uuid,$4,$5,$6,$7,$8,'running',$9,$11,$10) ON CONFLICT(attempt_id) DO NOTHING`, id, plan, candidate, owner, in.PhysicalPoolID, in.FencingEpoch, in.RequestDigest, in.PlanDigest, in.Namespace, in.SessionIdentity, lease)
+	err = depdb.New(db).InsertBuildAttempt(ctx, depdb.InsertBuildAttemptParams{AttemptID: dbUUID(id), PlanID: dbUUID(plan), CandidateID: dbUUID(candidate), OwnerID: owner, PhysicalPoolID: in.PhysicalPoolID, FencingEpoch: in.FencingEpoch, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, Namespace: in.Namespace, LeaseExpiresAt: pgTime(lease), SessionIdentity: in.SessionIdentity})
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
@@ -717,23 +741,17 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 }
 func loadAttempt(ctx context.Context, db DBTX, id string) (DeliveryBuildAttempt, error) {
 	var a DeliveryBuildAttempt
-	var state string
-	var candidate string
-	var marker, term []byte
-	var finished *time.Time
-	err := db.QueryRow(ctx, `SELECT attempt_id::text,plan_id::text,COALESCE(candidate_id::text,''),owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity,COALESCE(snapshot_id,0),commit_marker,termination_evidence,created_at,updated_at,finished_at FROM delivery.delivery_build_attempt WHERE attempt_id=$1::uuid`, id).Scan(&a.AttemptID, &a.PlanID, &candidate, &a.OwnerID, &a.PhysicalPoolID, &a.FencingEpoch, &a.RequestDigest, &a.PlanDigest, &state, &a.Namespace, &a.LeaseExpiresAt, &a.SessionIdentity, &a.SnapshotID, &marker, &term, &a.CreatedAt, &a.UpdatedAt, &finished)
+	row, err := depdb.New(db).GetBuildAttempt(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryBuildAttempt{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	a.CandidateID = candidate
-	a.State = BuildAttemptState(state)
-	a.CommitMarker = append([]byte(nil), marker...)
-	a.TerminationEvidence = append([]byte(nil), term...)
-	if finished != nil {
-		a.FinishedAt = finished.UTC()
+	a.AttemptID, a.PlanID, a.CandidateID, a.OwnerID, a.PhysicalPoolID, a.FencingEpoch, a.RequestDigest, a.PlanDigest, a.State, a.Namespace, a.LeaseExpiresAt, a.SessionIdentity, a.SnapshotID, a.CreatedAt, a.UpdatedAt = row.AttemptID, row.PlanID, row.CandidateID, row.OwnerID, row.PhysicalPoolID, row.FencingEpoch, row.RequestDigest, row.PlanDigest, BuildAttemptState(row.State), row.Namespace, dbTime(row.LeaseExpiresAt), row.SessionIdentity, row.SnapshotID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
+	a.CommitMarker, a.TerminationEvidence = append([]byte(nil), row.CommitMarker...), append([]byte(nil), row.TerminationEvidence...)
+	if row.FinishedAt.Valid {
+		a.FinishedAt = row.FinishedAt.Time.UTC()
 	}
 	return a, nil
 }
@@ -825,8 +843,7 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 	// Lock the row through the whole read/validate/update sequence. Without
 	// this, two workers can both observe running and report the other's winner
 	// as their own successful transition.
-	var lockedID string
-	if err := db.QueryRow(ctx, `SELECT attempt_id::text FROM delivery.delivery_build_attempt WHERE attempt_id=$1::uuid FOR UPDATE`, id).Scan(&lockedID); errors.Is(err, pgx.ErrNoRows) {
+	if _, err := depdb.New(db).LockBuildAttempt(ctx, dbUUID(id)); errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryBuildAttempt{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryBuildAttempt{}, err
@@ -848,8 +865,8 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 		}
 		return DeliveryBuildAttempt{}, ErrConflict
 	}
-	var leaseActive bool
-	if err := db.QueryRow(ctx, `SELECT lease_expires_at > clock_timestamp() FROM delivery.delivery_build_attempt WHERE attempt_id=$1::uuid`, id).Scan(&leaseActive); err != nil {
+	leaseActive, err := depdb.New(db).BuildAttemptLeaseActive(ctx, dbUUID(id))
+	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
 	if !leaseActive {
@@ -866,11 +883,11 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 		if !markerMatches(marker, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, at.FencingEpoch) {
 			return DeliveryBuildAttempt{}, fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
 		}
-		res, err := db.Exec(ctx, `UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=$2,commit_marker=$3::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp() WHERE attempt_id=$1::uuid AND state='running' AND owner_id=$4 AND fencing_epoch=$5`, id, in.SnapshotID, marker, owner, in.FencingEpoch)
+		rows, err := depdb.New(db).CommitBuildAttempt(ctx, depdb.CommitBuildAttemptParams{AttemptID: dbUUID(id), SnapshotID: pgInt8(&in.SnapshotID), CommitMarker: marker, OwnerID: owner, FencingEpoch: in.FencingEpoch})
 		if err != nil {
 			return DeliveryBuildAttempt{}, err
 		}
-		if res.RowsAffected() != 1 {
+		if rows != 1 {
 			return DeliveryBuildAttempt{}, ErrConflict
 		}
 	} else {
@@ -878,11 +895,11 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 		if err != nil {
 			return DeliveryBuildAttempt{}, ErrInvalid
 		}
-		res, err := db.Exec(ctx, `UPDATE delivery.delivery_build_attempt SET state=$2,termination_evidence=$3::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp() WHERE attempt_id=$1::uuid AND state='running' AND owner_id=$4 AND fencing_epoch=$5`, id, string(state), evidence, owner, in.FencingEpoch)
+		rows, err := depdb.New(db).TerminateBuildAttempt(ctx, depdb.TerminateBuildAttemptParams{AttemptID: dbUUID(id), State: string(state), Evidence: evidence, OwnerID: owner, FencingEpoch: in.FencingEpoch})
 		if err != nil {
 			return DeliveryBuildAttempt{}, err
 		}
-		if res.RowsAffected() != 1 {
+		if rows != 1 {
 			return DeliveryBuildAttempt{}, ErrConflict
 		}
 	}
@@ -982,25 +999,25 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if !markerMatches(at.CommitMarker, attempt, at.PhysicalPoolID, in.RequestDigest, in.PlanDigest, at.FencingEpoch) {
 		return SnapshotSeal{}, fmt.Errorf("%w: commit marker is incomplete", ErrNotQualified)
 	}
-	var candidateTarget, candidatePlan, candidateStatus, candidateArtifact string
-	if err := db.QueryRow(ctx, `SELECT target_id,plan_id::text,status,artifact_digest FROM delivery.delivery_candidate WHERE candidate_id=$1::uuid`, candidate).Scan(&candidateTarget, &candidatePlan, &candidateStatus, &candidateArtifact); errors.Is(err, pgx.ErrNoRows) {
+	ci, err := depdb.New(db).GetCandidateIdentity(ctx, dbUUID(candidate))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotSeal{}, ErrNotFound
 	} else if err != nil {
 		return SnapshotSeal{}, err
 	}
-	if candidateStatus == "rejected" || candidateStatus == "retired" || candidatePlan != at.PlanID || candidateArtifact != in.ServingArtifactDigest {
+	if ci.Status == "rejected" || ci.Status == "retired" || ci.PlanID != at.PlanID || ci.ArtifactDigest != in.ServingArtifactDigest {
 		return SnapshotSeal{}, fmt.Errorf("%w: candidate evidence differs", ErrNotQualified)
 	}
-	var planGraph, planConfig, planSecurity, planArtifact, planDigest string
-	if err := db.QueryRow(ctx, `SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, at.PlanID).Scan(&planDigest, &planGraph, &planConfig, &planSecurity, &planArtifact); errors.Is(err, pgx.ErrNoRows) {
+	pi, err := depdb.New(db).GetPlanDigests(ctx, dbUUID(at.PlanID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotSeal{}, ErrNotFound
 	} else if err != nil {
 		return SnapshotSeal{}, err
 	}
-	if planDigest != in.PlanDigest || planGraph != in.CompiledGraphDigest || planConfig != in.CompiledConfigDigest || planSecurity != in.SecurityDomainFingerprint || planArtifact != in.ServingArtifactDigest {
+	if pi.PlanDigest != in.PlanDigest || pi.CompiledGraphDigest != in.CompiledGraphDigest || pi.CompiledConfigDigest != in.CompiledConfigDigest || pi.SecurityDomainFingerprint != in.SecurityDomainFingerprint || pi.ArtifactDigest != in.ServingArtifactDigest {
 		return SnapshotSeal{}, fmt.Errorf("%w: plan evidence differs", ErrNotQualified)
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence) VALUES($1::uuid,$2::uuid,$3::uuid,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28,$29,$30,$31::jsonb) ON CONFLICT(seal_id) DO NOTHING`, id, attempt, candidate, in.PhysicalPoolID, in.TenantDomain, in.Region, in.EncryptionDomain, in.ObjectNamespace, in.CatalogDatabase, in.CatalogID, in.CatalogUUID, in.CatalogVersion, in.DuckLakeSnapshotID, in.RelationNamespace, in.RelationManifestDigest, in.ObjectRoot, in.ObjectRootDigest, in.ArtifactRoot, in.ArtifactRootDigest, in.CompiledGraphDigest, in.CompiledConfigDigest, in.SecurityDomainFingerprint, in.RequestDigest, in.PlanDigest, in.CompatibilityDigest, in.ServingArtifactDigest, in.DuckDBVersion, in.DuckLakeExtensionVersion, in.DuckLakeSpecVersion, in.CatalogSchemaVersion, evidence)
+	err = depdb.New(db).InsertSnapshotSeal(ctx, depdb.InsertSnapshotSealParams{SealID: dbUUID(id), AttemptID: dbUUID(attempt), CandidateID: dbUUID(candidate), PhysicalPoolID: in.PhysicalPoolID, TenantDomain: in.TenantDomain, Region: in.Region, EncryptionDomain: in.EncryptionDomain, ObjectNamespace: in.ObjectNamespace, CatalogDatabase: in.CatalogDatabase, CatalogID: in.CatalogID, CatalogUuid: in.CatalogUUID, CatalogVersion: in.CatalogVersion, DucklakeSnapshotID: in.DuckLakeSnapshotID, RelationNamespace: in.RelationNamespace, RelationManifestDigest: in.RelationManifestDigest, ObjectRoot: in.ObjectRoot, ObjectRootDigest: in.ObjectRootDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, CompatibilityDigest: in.CompatibilityDigest, ServingArtifactDigest: in.ServingArtifactDigest, DuckdbVersion: in.DuckDBVersion, DucklakeExtensionVersion: in.DuckLakeExtensionVersion, DucklakeSpecVersion: in.DuckLakeSpecVersion, CatalogSchemaVersion: in.CatalogSchemaVersion, QualificationEvidence: evidence})
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
@@ -1024,17 +1041,14 @@ func sameCanonical(a, b []byte) bool {
 }
 func loadSeal(ctx context.Context, db DBTX, id string) (SnapshotSeal, error) {
 	var s SnapshotSeal
-	var aid, cid string
-	var evidence []byte
-	err := db.QueryRow(ctx, `SELECT seal_id::text,attempt_id::text,COALESCE(candidate_id::text,''),physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_digest,duckdb_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence,qualified_at FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, id).Scan(&s.SealID, &aid, &cid, &s.PhysicalPoolID, &s.TenantDomain, &s.Region, &s.EncryptionDomain, &s.ObjectNamespace, &s.CatalogDatabase, &s.CatalogID, &s.CatalogUUID, &s.CatalogVersion, &s.DuckLakeSnapshotID, &s.RelationNamespace, &s.RelationManifestDigest, &s.ObjectRoot, &s.ObjectRootDigest, &s.ArtifactRoot, &s.ArtifactRootDigest, &s.CompiledGraphDigest, &s.CompiledConfigDigest, &s.SecurityDomainFingerprint, &s.RequestDigest, &s.PlanDigest, &s.CompatibilityDigest, &s.ServingArtifactDigest, &s.DuckDBVersion, &s.DuckLakeExtensionVersion, &s.DuckLakeSpecVersion, &s.CatalogSchemaVersion, &evidence, &s.QualifiedAt)
+	row, err := depdb.New(db).GetSnapshotSeal(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotSeal{}, ErrNotFound
 	}
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	s.AttemptID, s.CandidateID = aid, cid
-	s.QualificationEvidence = append([]byte(nil), evidence...)
+	s.SealID, s.AttemptID, s.CandidateID, s.PhysicalPoolID, s.TenantDomain, s.Region, s.EncryptionDomain, s.ObjectNamespace, s.CatalogDatabase, s.CatalogID, s.CatalogUUID, s.CatalogVersion, s.DuckLakeSnapshotID, s.RelationNamespace, s.RelationManifestDigest, s.ObjectRoot, s.ObjectRootDigest, s.ArtifactRoot, s.ArtifactRootDigest, s.CompiledGraphDigest, s.CompiledConfigDigest, s.SecurityDomainFingerprint, s.RequestDigest, s.PlanDigest, s.CompatibilityDigest, s.ServingArtifactDigest, s.DuckDBVersion, s.DuckLakeExtensionVersion, s.DuckLakeSpecVersion, s.CatalogSchemaVersion, s.QualificationEvidence, s.QualifiedAt = row.SealID, row.AttemptID, row.CandidateID, row.PhysicalPoolID, row.TenantDomain, row.Region, row.EncryptionDomain, row.ObjectNamespace, row.CatalogDatabase, row.CatalogID, row.CatalogUuid, row.CatalogVersion, row.DucklakeSnapshotID, row.RelationNamespace, row.RelationManifestDigest, row.ObjectRoot, row.ObjectRootDigest, row.ArtifactRoot, row.ArtifactRootDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.RequestDigest, row.PlanDigest, row.CompatibilityDigest, row.ServingArtifactDigest, row.DuckdbVersion, row.DucklakeExtensionVersion, row.DucklakeSpecVersion, row.CatalogSchemaVersion, append([]byte(nil), row.QualificationEvidence...), dbTime(row.QualifiedAt)
 	return s, nil
 }
 func (r *Repository) SnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {
@@ -1097,8 +1111,8 @@ func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryC
 	if _, err := digest(in.ArtifactDigest, "artifact digest"); err != nil {
 		return DeliveryCandidate{}, err
 	}
-	var planTarget string
-	if err := db.QueryRow(ctx, `SELECT target_id FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, plan).Scan(&planTarget); errors.Is(err, pgx.ErrNoRows) {
+	planTarget, err := depdb.New(db).GetPlanTarget(ctx, dbUUID(plan))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryCandidate{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryCandidate{}, err
@@ -1112,7 +1126,11 @@ func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryC
 	if status != "building" {
 		return DeliveryCandidate{}, ErrInvalid
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,snapshot_seal_id,status,candidate_revision,artifact_digest,qualification_digest) VALUES($1::uuid,$2,$3::uuid,NULLIF($4,'')::uuid,$5,$6,$7,NULLIF($8,'')) ON CONFLICT(candidate_id) DO NOTHING`, id, target, plan, in.SnapshotSealID, status, in.CandidateRevision, in.ArtifactDigest, in.QualificationDigest)
+	var qualificationDigest *string
+	if in.QualificationDigest != "" {
+		qualificationDigest = &in.QualificationDigest
+	}
+	err = depdb.New(db).InsertCandidate(ctx, depdb.InsertCandidateParams{CandidateID: dbUUID(id), TargetID: target, PlanID: dbUUID(plan), SnapshotSealID: dbUUID(in.SnapshotSealID), Status: status, CandidateRevision: in.CandidateRevision, ArtifactDigest: in.ArtifactDigest, QualificationDigest: pgText(qualificationDigest)})
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
@@ -1120,23 +1138,19 @@ func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryC
 }
 func loadCandidate(ctx context.Context, db DBTX, id string, expected CandidateInput) (DeliveryCandidate, error) {
 	var c DeliveryCandidate
-	var aid, sid string
-	var q, ret *time.Time
-	err := db.QueryRow(ctx, `SELECT c.candidate_id::text,c.target_id,c.plan_id::text,
-COALESCE((SELECT s.attempt_id::text FROM delivery.delivery_snapshot_seal s WHERE s.seal_id=c.snapshot_seal_id),''),
-COALESCE(c.snapshot_seal_id::text,''),c.status,c.candidate_revision,c.artifact_digest,COALESCE(c.qualification_digest,''),c.created_at,c.qualified_at,c.retired_at FROM delivery.delivery_candidate c WHERE c.candidate_id=$1::uuid`, id).Scan(&c.CandidateID, &c.TargetID, &c.PlanID, &aid, &sid, &c.Status, &c.CandidateRevision, &c.ArtifactDigest, &c.QualificationDigest, &c.CreatedAt, &q, &ret)
+	row, err := depdb.New(db).GetCandidate(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryCandidate{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
-	c.AttemptID, c.SnapshotSealID = aid, sid
-	if q != nil {
-		c.QualifiedAt = q.UTC()
+	c.CandidateID, c.TargetID, c.PlanID, c.AttemptID, c.SnapshotSealID, c.Status, c.CandidateRevision, c.ArtifactDigest, c.QualificationDigest, c.CreatedAt = row.CandidateID, row.TargetID, row.PlanID, row.AttemptID, row.SnapshotSealID, row.Status, row.CandidateRevision, row.ArtifactDigest, row.QualificationDigest, dbTime(row.CreatedAt)
+	if row.QualifiedAt.Valid {
+		c.QualifiedAt = row.QualifiedAt.Time.UTC()
 	}
-	if ret != nil {
-		c.RetiredAt = ret.UTC()
+	if row.RetiredAt.Valid {
+		c.RetiredAt = row.RetiredAt.Time.UTC()
 	}
 	if expected.TargetID != "" && (c.TargetID != expected.TargetID || c.PlanID != expected.PlanID || c.CandidateRevision != expected.CandidateRevision || c.ArtifactDigest != expected.ArtifactDigest) {
 		return DeliveryCandidate{}, ErrConflict
@@ -1193,7 +1207,7 @@ func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, 
 		}
 		return DeliveryCandidate{}, ErrConflict
 	}
-	_, err = db.Exec(contextOrBackground(ctx), `UPDATE delivery.delivery_candidate SET status='qualified',snapshot_seal_id=$2::uuid,qualification_digest=$3,qualified_at=clock_timestamp() WHERE candidate_id=$1::uuid AND status IN ('building','ready')`, candidateID, sealID, qualificationDigest)
+	err = depdb.New(db).QualifyCandidate(contextOrBackground(ctx), depdb.QualifyCandidateParams{CandidateID: dbUUID(candidateID), SnapshotSealID: dbUUID(sealID), QualificationDigest: pgText(&qualificationDigest)})
 	if err != nil {
 		return DeliveryCandidate{}, err
 	}
@@ -1243,9 +1257,11 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	var cstatus string
-	var ct, cs, cp string
-	err = db.QueryRow(ctx, `SELECT status,target_id,plan_id::text,COALESCE(snapshot_seal_id::text,'') FROM delivery.delivery_candidate WHERE candidate_id=$1::uuid`, candidate).Scan(&cstatus, &ct, &cp, &cs)
+	cr, err := depdb.New(db).GetCandidateStatus(ctx, dbUUID(candidate))
+	cstatus, ct, cp, cs := cr.Status, cr.TargetID, cr.PlanID, cr.SnapshotSealID
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryGeneration{}, ErrNotFound
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryGeneration{}, ErrNotFound
 	}
@@ -1259,16 +1275,16 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	var planGraph, planConfig, planSecurity, planArtifact, storedPlanDigest string
-	if err := db.QueryRow(ctx, `SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest FROM delivery.delivery_plan WHERE plan_id=$1::uuid`, plan).Scan(&storedPlanDigest, &planGraph, &planConfig, &planSecurity, &planArtifact); errors.Is(err, pgx.ErrNoRows) {
+	pr, err := depdb.New(db).GetPlanDigests(ctx, dbUUID(plan))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryGeneration{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryGeneration{}, err
 	}
-	if snapshotSeal.ServingArtifactDigest != in.ServingArtifactDigest || snapshotSeal.ArtifactRoot != in.ArtifactRoot || snapshotSeal.ArtifactRootDigest != in.ArtifactRootDigest || snapshotSeal.CompiledGraphDigest != in.CompiledGraphDigest || snapshotSeal.CompiledConfigDigest != in.CompiledConfigDigest || snapshotSeal.SecurityDomainFingerprint != in.SecurityDomainFingerprint || snapshotSeal.PlanDigest != in.PlanDigest || storedPlanDigest != in.PlanDigest || planGraph != in.CompiledGraphDigest || planConfig != in.CompiledConfigDigest || planSecurity != in.SecurityDomainFingerprint || planArtifact != in.ServingArtifactDigest {
+	if snapshotSeal.ServingArtifactDigest != in.ServingArtifactDigest || snapshotSeal.ArtifactRoot != in.ArtifactRoot || snapshotSeal.ArtifactRootDigest != in.ArtifactRootDigest || snapshotSeal.CompiledGraphDigest != in.CompiledGraphDigest || snapshotSeal.CompiledConfigDigest != in.CompiledConfigDigest || snapshotSeal.SecurityDomainFingerprint != in.SecurityDomainFingerprint || snapshotSeal.PlanDigest != in.PlanDigest || pr.PlanDigest != in.PlanDigest || pr.CompiledGraphDigest != in.CompiledGraphDigest || pr.CompiledConfigDigest != in.CompiledConfigDigest || pr.SecurityDomainFingerprint != in.SecurityDomainFingerprint || pr.ArtifactDigest != in.ServingArtifactDigest {
 		return DeliveryGeneration{}, fmt.Errorf("%w: generation evidence differs from seal and plan", ErrConflict)
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_generation(generation_id,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT(generation_id) DO NOTHING`, id, target, candidate, seal, plan, in.PlanDigest, in.ArtifactRoot, in.ArtifactRootDigest, in.ServingArtifactDigest, in.CompiledGraphDigest, in.CompiledConfigDigest, in.SecurityDomainFingerprint, in.GenerationRevision)
+	err = depdb.New(db).InsertGeneration(ctx, depdb.InsertGenerationParams{GenerationID: dbUUID(id), TargetID: target, CandidateID: dbUUID(candidate), SnapshotSealID: dbUUID(seal), PlanID: dbUUID(plan), PlanDigest: in.PlanDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, ServingArtifactDigest: in.ServingArtifactDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, GenerationRevision: in.GenerationRevision})
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
@@ -1276,13 +1292,14 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 }
 func loadGeneration(ctx context.Context, db DBTX, id string, expected GenerationInput) (DeliveryGeneration, error) {
 	var g DeliveryGeneration
-	err := db.QueryRow(ctx, `SELECT generation_id::text,target_id,candidate_id::text,snapshot_seal_id::text,plan_id::text,plan_digest,artifact_root,artifact_root_digest,serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision,created_at FROM delivery.delivery_generation WHERE generation_id=$1::uuid`, id).Scan(&g.GenerationID, &g.TargetID, &g.CandidateID, &g.SnapshotSealID, &g.PlanID, &g.PlanDigest, &g.ArtifactRoot, &g.ArtifactRootDigest, &g.ServingArtifactDigest, &g.CompiledGraphDigest, &g.CompiledConfigDigest, &g.SecurityDomainFingerprint, &g.GenerationRevision, &g.CreatedAt)
+	row, err := depdb.New(db).GetGeneration(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryGeneration{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
+	g.GenerationID, g.TargetID, g.CandidateID, g.SnapshotSealID, g.PlanID, g.PlanDigest, g.ArtifactRoot, g.ArtifactRootDigest, g.ServingArtifactDigest, g.CompiledGraphDigest, g.CompiledConfigDigest, g.SecurityDomainFingerprint, g.GenerationRevision, g.CreatedAt = row.GenerationID, row.TargetID, row.CandidateID, row.SnapshotSealID, row.PlanID, row.PlanDigest, row.ArtifactRoot, row.ArtifactRootDigest, row.ServingArtifactDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.GenerationRevision, dbTime(row.CreatedAt)
 	if expected.TargetID != "" && (g.TargetID != expected.TargetID || g.CandidateID != expected.CandidateID || g.SnapshotSealID != expected.SnapshotSealID || g.PlanID != expected.PlanID || g.PlanDigest != expected.PlanDigest || g.ArtifactRoot != expected.ArtifactRoot || g.ArtifactRootDigest != expected.ArtifactRootDigest || g.ServingArtifactDigest != expected.ServingArtifactDigest || g.CompiledGraphDigest != expected.CompiledGraphDigest || g.CompiledConfigDigest != expected.CompiledConfigDigest || g.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || g.GenerationRevision != expected.GenerationRevision) {
 		return DeliveryGeneration{}, ErrConflict
 	}
@@ -1338,11 +1355,15 @@ func (r *Repository) TargetForShareTx(ctx context.Context, tx Tx, id string) (De
 		return DeliveryTarget{}, err
 	}
 	var target DeliveryTarget
-	err = tx.QueryRow(contextOrBackground(ctx), `SELECT t.target_id,t.project_id,t.environment,t.target_revision,COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),''),t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=$1 FOR SHARE`, id).Scan(&target.TargetID, &target.ProjectID, &target.Environment, &target.TargetRevision, &target.ActiveGenerationID, &target.ActivePublicationID, &target.CreatedAt, &target.UpdatedAt)
+	row, err := depdb.New(tx).LockTargetForShare(contextOrBackground(ctx), id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryTarget{}, ErrNotFound
 	}
-	return target, err
+	if err != nil {
+		return target, err
+	}
+	target.TargetID, target.ProjectID, target.Environment, target.TargetRevision, target.ActiveGenerationID, target.ActivePublicationID, target.CreatedAt, target.UpdatedAt = row.TargetID, row.ProjectID, row.Environment, row.TargetRevision, row.ActiveGenerationID, row.ActivePublicationID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
+	return target, nil
 }
 func (r *Repository) LoadGeneration(ctx context.Context, id string) (DeliveryGeneration, error) {
 	return r.Generation(ctx, id)
@@ -1411,26 +1432,26 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 	} else if !errors.Is(lookupErr, ErrNotFound) {
 		return DeliveryPublication{}, lookupErr
 	}
-	var gt, gc, gs string
-	if err := db.QueryRow(ctx, `SELECT target_id,candidate_id::text,snapshot_seal_id::text FROM delivery.delivery_generation WHERE generation_id=$1::uuid`, generation).Scan(&gt, &gc, &gs); errors.Is(err, pgx.ErrNoRows) {
+	gl, err := depdb.New(db).GetGenerationLinks(ctx, dbUUID(generation))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryPublication{}, err
 	}
-	if gt != target || gc != candidate || gs != seal {
+	if gl.TargetID != target || gl.CandidateID != candidate || gl.SnapshotSealID != seal {
 		return DeliveryPublication{}, fmt.Errorf("%w: publication generation identity differs", ErrConflict)
 	}
-	var candidateStatus, candidateTarget, candidateSeal string
-	if err := db.QueryRow(ctx, `SELECT status,target_id,COALESCE(snapshot_seal_id::text,'') FROM delivery.delivery_candidate WHERE candidate_id=$1::uuid`, candidate).Scan(&candidateStatus, &candidateTarget, &candidateSeal); errors.Is(err, pgx.ErrNoRows) {
+	cs, err := depdb.New(db).GetCandidateStatus(ctx, dbUUID(candidate))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryPublication{}, err
 	}
-	if (candidateStatus != "qualified" && candidateStatus != "ready" && candidateStatus != "admitted") || candidateTarget != target || candidateSeal != seal {
+	if (cs.Status != "qualified" && cs.Status != "ready" && cs.Status != "admitted") || cs.TargetID != target || cs.SnapshotSealID != seal {
 		return DeliveryPublication{}, ErrNotQualified
 	}
-	var activeBase string
-	if err := db.QueryRow(ctx, `SELECT COALESCE(generation_id::text,'') FROM delivery.delivery_active_pointer WHERE target_id=$1`, target).Scan(&activeBase); errors.Is(err, pgx.ErrNoRows) {
+	activeBase, err := depdb.New(db).GetActiveGeneration(ctx, target)
+	if errors.Is(err, pgx.ErrNoRows) {
 		activeBase = ""
 	} else if err != nil {
 		return DeliveryPublication{}, err
@@ -1440,7 +1461,7 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 	} else if baseGeneration != activeBase {
 		return DeliveryPublication{}, ErrCASConflict
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,target_id,generation_id,expected_base_generation_id,candidate_id,snapshot_seal_id,expected_target_revision,actor_id,state,request_digest) VALUES($1::uuid,$2,$3::uuid,NULLIF($4,'')::uuid,$5::uuid,$6::uuid,$7,$8,'pending',$9) ON CONFLICT(publication_id) DO NOTHING`, id, target, generation, baseGeneration, candidate, seal, in.ExpectedTargetRevision, actor, in.RequestDigest)
+	err = depdb.New(db).InsertPublication(ctx, depdb.InsertPublicationParams{PublicationID: dbUUID(id), TargetID: target, GenerationID: dbUUID(generation), ExpectedBaseGenerationID: dbUUID(baseGeneration), CandidateID: dbUUID(candidate), SnapshotSealID: dbUUID(seal), ExpectedTargetRevision: in.ExpectedTargetRevision, ActorID: actor, RequestDigest: in.RequestDigest})
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
@@ -1455,13 +1476,13 @@ func createPublication(ctx context.Context, db DBTX, in PublicationInput) (Deliv
 }
 func loadPublication(ctx context.Context, db DBTX, id string) (DeliveryPublication, error) {
 	var p DeliveryPublication
-	var committed *time.Time
-	err := db.QueryRow(ctx, `SELECT publication_id::text,target_id,generation_id::text,COALESCE(expected_base_generation_id::text,''),candidate_id::text,snapshot_seal_id::text,expected_target_revision,COALESCE(result_target_revision,0),actor_id,state,request_digest,created_at,committed_at FROM delivery.delivery_publication WHERE publication_id=$1::uuid`, id).Scan(&p.PublicationID, &p.TargetID, &p.GenerationID, &p.ExpectedBaseGenerationID, &p.CandidateID, &p.SnapshotSealID, &p.ExpectedTargetRevision, &p.ResultTargetRevision, &p.ActorID, &p.State, &p.RequestDigest, &p.CreatedAt, &committed)
+	row, err := depdb.New(db).GetPublication(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	}
-	if committed != nil {
-		p.CommittedAt = committed.UTC()
+	p.PublicationID, p.TargetID, p.GenerationID, p.ExpectedBaseGenerationID, p.CandidateID, p.SnapshotSealID, p.ExpectedTargetRevision, p.ResultTargetRevision, p.ActorID, p.State, p.RequestDigest, p.CreatedAt = row.PublicationID, row.TargetID, row.GenerationID, row.ExpectedBaseGenerationID, row.CandidateID, row.SnapshotSealID, row.ExpectedTargetRevision, row.ResultTargetRevision, row.ActorID, row.State, row.RequestDigest, dbTime(row.CreatedAt)
+	if row.CommittedAt.Valid {
+		p.CommittedAt = row.CommittedAt.Time.UTC()
 	}
 	return p, err
 }
@@ -1489,8 +1510,8 @@ func (r *Repository) CommittedPublicationTx(ctx context.Context, tx Tx, generati
 	if err != nil {
 		return DeliveryPublication{}, err
 	}
-	var id string
-	if err := tx.QueryRow(contextOrBackground(ctx), `SELECT p.publication_id::text FROM delivery.delivery_publication p JOIN delivery.delivery_active_pointer ap ON ap.target_id=p.target_id AND ap.generation_id=p.generation_id AND ap.publication_id=p.publication_id JOIN delivery.delivery_target t ON t.target_id=p.target_id WHERE p.generation_id=$1::uuid AND p.state='committed' AND p.result_target_revision=t.target_revision ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1`, generation).Scan(&id); errors.Is(err, pgx.ErrNoRows) {
+	id, err := depdb.New(tx).FindCommittedPublication(contextOrBackground(ctx), dbUUID(generation))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPublication{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryPublication{}, err
@@ -1550,10 +1571,10 @@ func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, e
 		return DeliveryLease{}, ErrInvalid
 	}
 	var epoch int64
-	if _, err := db.Exec(ctx, `INSERT INTO delivery.delivery_target_fence(target_id,next_fencing_epoch) SELECT target_id,1 FROM delivery.delivery_target WHERE target_id=$1 ON CONFLICT(target_id) DO NOTHING`, target); err != nil {
+	if err := depdb.New(db).EnsureTargetFence(ctx, target); err != nil {
 		return DeliveryLease{}, err
 	}
-	if err := db.QueryRow(ctx, `SELECT next_fencing_epoch FROM delivery.delivery_target_fence WHERE target_id=$1 FOR UPDATE`, target).Scan(&epoch); errors.Is(err, pgx.ErrNoRows) {
+	if epoch, err = depdb.New(db).LockTargetFence(ctx, target); errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryLease{}, ErrNotFound
 	} else if err != nil {
 		return DeliveryLease{}, err
@@ -1565,12 +1586,11 @@ func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, e
 	// holding its row lock before allocating a new epoch; otherwise a retry
 	// could expire the successful lease and accidentally return a conflict.
 	var existing DeliveryLease
-	var released *time.Time
-	err = db.QueryRow(ctx, `SELECT lease_id::text,target_id,owner_id,fencing_epoch,state,expires_at,acquired_at,released_at FROM delivery.delivery_lease WHERE lease_id=$1::uuid FOR UPDATE`, id).
-		Scan(&existing.LeaseID, &existing.TargetID, &existing.OwnerID, &existing.FencingEpoch, &existing.State, &existing.ExpiresAt, &existing.AcquiredAt, &released)
+	row, err := depdb.New(db).LockLease(ctx, dbUUID(id))
 	if err == nil {
-		if released != nil {
-			existing.ReleasedAt = released.UTC()
+		existing.LeaseID, existing.TargetID, existing.OwnerID, existing.FencingEpoch, existing.State, existing.ExpiresAt, existing.AcquiredAt = row.LeaseID, row.TargetID, row.OwnerID, row.FencingEpoch, row.State, dbTime(row.ExpiresAt), dbTime(row.AcquiredAt)
+		if row.ReleasedAt.Valid {
+			existing.ReleasedAt = row.ReleasedAt.Time.UTC()
 		}
 		if existing.TargetID != target || existing.OwnerID != owner || !existing.ExpiresAt.Equal(exp) {
 			return DeliveryLease{}, ErrConflict
@@ -1586,13 +1606,13 @@ func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, e
 	// The newly allocated epoch supersedes every previous owner, including the
 	// same owner. This update is inside the target-row lock and the partial
 	// unique index guarantees at most one active lease.
-	if _, err := db.Exec(ctx, `UPDATE delivery.delivery_lease SET state='expired',released_at=clock_timestamp() WHERE target_id=$1 AND state='active'`, target); err != nil {
+	if err := depdb.New(db).ExpireLeases(ctx, target); err != nil {
 		return DeliveryLease{}, err
 	}
-	if _, err := db.Exec(ctx, `UPDATE delivery.delivery_target_fence SET next_fencing_epoch=$2 WHERE target_id=$1`, target, epoch+1); err != nil {
+	if err := depdb.New(db).AdvanceTargetFence(ctx, depdb.AdvanceTargetFenceParams{TargetID: target, NextFencingEpoch: epoch + 1}); err != nil {
 		return DeliveryLease{}, err
 	}
-	_, err = db.Exec(ctx, `INSERT INTO delivery.delivery_lease(lease_id,target_id,owner_id,fencing_epoch,state,expires_at,acquired_at) VALUES($1::uuid,$2,$3,$4,'active',$5,$6) ON CONFLICT(lease_id) DO NOTHING`, id, target, owner, epoch, exp, acq)
+	err = depdb.New(db).InsertLease(ctx, depdb.InsertLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: epoch, ExpiresAt: pgTime(exp), AcquiredAt: pgTime(acq)})
 	if err != nil {
 		return DeliveryLease{}, err
 	}
@@ -1600,16 +1620,16 @@ func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, e
 }
 func loadLease(ctx context.Context, db DBTX, id string, in LeaseInput, epoch int64) (DeliveryLease, error) {
 	var l DeliveryLease
-	var rel *time.Time
-	err := db.QueryRow(ctx, `SELECT lease_id::text,target_id,owner_id,fencing_epoch,state,expires_at,acquired_at,released_at FROM delivery.delivery_lease WHERE lease_id=$1::uuid`, id).Scan(&l.LeaseID, &l.TargetID, &l.OwnerID, &l.FencingEpoch, &l.State, &l.ExpiresAt, &l.AcquiredAt, &rel)
+	row, err := depdb.New(db).GetLease(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryLease{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	if rel != nil {
-		l.ReleasedAt = rel.UTC()
+	l.LeaseID, l.TargetID, l.OwnerID, l.FencingEpoch, l.State, l.ExpiresAt, l.AcquiredAt = row.LeaseID, row.TargetID, row.OwnerID, row.FencingEpoch, row.State, dbTime(row.ExpiresAt), dbTime(row.AcquiredAt)
+	if row.ReleasedAt.Valid {
+		l.ReleasedAt = row.ReleasedAt.Time.UTC()
 	}
 	if l.TargetID != in.TargetID || l.OwnerID != in.OwnerID || l.FencingEpoch != epoch || l.State != "active" || !l.ExpiresAt.Equal(in.ExpiresAt.UTC().Truncate(time.Microsecond)) {
 		return DeliveryLease{}, ErrConflict
@@ -1629,16 +1649,16 @@ func (r *Repository) Lease(ctx context.Context, id string) (DeliveryLease, error
 }
 func loadLeaseSimple(ctx context.Context, db DBTX, id string) (DeliveryLease, error) {
 	var l DeliveryLease
-	var rel *time.Time
-	err := db.QueryRow(ctx, `SELECT lease_id::text,target_id,owner_id,fencing_epoch,state,expires_at,acquired_at,released_at FROM delivery.delivery_lease WHERE lease_id=$1::uuid`, id).Scan(&l.LeaseID, &l.TargetID, &l.OwnerID, &l.FencingEpoch, &l.State, &l.ExpiresAt, &l.AcquiredAt, &rel)
+	row, err := depdb.New(db).GetLease(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryLease{}, ErrNotFound
 	}
 	if err != nil {
 		return DeliveryLease{}, err
 	}
-	if rel != nil {
-		l.ReleasedAt = rel.UTC()
+	l.LeaseID, l.TargetID, l.OwnerID, l.FencingEpoch, l.State, l.ExpiresAt, l.AcquiredAt = row.LeaseID, row.TargetID, row.OwnerID, row.FencingEpoch, row.State, dbTime(row.ExpiresAt), dbTime(row.AcquiredAt)
+	if row.ReleasedAt.Valid {
+		l.ReleasedAt = row.ReleasedAt.Time.UTC()
 	}
 	return l, nil
 }
@@ -1659,11 +1679,14 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	if err != nil {
 		return err
 	}
-	res, err := db.Exec(contextOrBackground(ctx), `UPDATE delivery.delivery_lease SET state='released',released_at=clock_timestamp() WHERE lease_id=$1::uuid AND target_id=$2 AND owner_id=$3 AND fencing_epoch=$4 AND state='active' AND expires_at>clock_timestamp()`, id, target, owner, f.FencingEpoch)
+	updated, err := depdb.New(db).ReleaseLease(contextOrBackground(ctx), depdb.ReleaseLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch})
+	if errors.Is(err, pgx.ErrNoRows) {
+		updated, err = false, nil
+	}
 	if err != nil {
 		return err
 	}
-	if res.RowsAffected() == 1 {
+	if updated {
 		return nil
 	}
 	l, e := loadLeaseSimple(contextOrBackground(ctx), db, id)
@@ -1703,11 +1726,14 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 	if !exp.After(now) || exp.After(now.Add(maxLease)) {
 		return ErrInvalid
 	}
-	res, err := db.Exec(contextOrBackground(ctx), `UPDATE delivery.delivery_lease SET expires_at=$5 WHERE lease_id=$1::uuid AND target_id=$2 AND owner_id=$3 AND fencing_epoch=$4 AND state='active' AND expires_at>clock_timestamp()`, id, target, owner, f.FencingEpoch, exp)
+	updated, err := depdb.New(db).RenewLease(contextOrBackground(ctx), depdb.RenewLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch, ExpiresAt: pgTime(exp)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		updated, err = false, nil
+	}
 	if err != nil {
 		return err
 	}
-	if res.RowsAffected() == 1 {
+	if updated {
 		return nil
 	}
 	l, e := loadLeaseSimple(contextOrBackground(ctx), db, id)
@@ -1808,7 +1834,7 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	// exact committed row plus pointer/event/audit evidence is replayable.
 	var p DeliveryPublication
 	var pubErr error
-	_, pubErr = tx.Exec(ctx, `SELECT publication_id FROM delivery.delivery_publication WHERE publication_id=$1::uuid FOR UPDATE`, pid)
+	_, pubErr = depdb.New(tx).LockPublication(ctx, dbUUID(pid))
 	if pubErr != nil {
 		return ActivationResult{}, pubErr
 	}
@@ -1853,37 +1879,33 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if in.LeaseID == "" || in.OwnerID == "" || in.FencingEpoch <= 0 {
 		return ActivationResult{}, ErrStaleFence
 	}
-	var leaseOwner, leaseTarget, leaseState string
-	var leaseEpoch int64
-	var leaseActive bool
-	err = tx.QueryRow(ctx, `SELECT target_id,owner_id,fencing_epoch,state,expires_at > clock_timestamp() FROM delivery.delivery_lease WHERE lease_id=$1::uuid FOR UPDATE`, in.LeaseID).Scan(&leaseTarget, &leaseOwner, &leaseEpoch, &leaseState, &leaseActive)
+	leaseRow, err := depdb.New(tx).LockLeaseForActivation(ctx, dbUUID(in.LeaseID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrStaleFence
 	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if leaseTarget != target || leaseOwner != in.OwnerID || leaseEpoch != in.FencingEpoch || leaseState != "active" {
+	if leaseRow.TargetID != target || leaseRow.OwnerID != in.OwnerID || leaseRow.FencingEpoch != in.FencingEpoch || leaseRow.State != "active" {
 		return ActivationResult{}, ErrStaleFence
 	}
-	if !leaseActive {
+	if !leaseRow.LeaseActive {
 		return ActivationResult{}, ErrLeaseExpired
 	}
 	// Lock target and verify CAS revision.
-	var currentRev int64
-	var currentGeneration string
-	err = tx.QueryRow(ctx, `SELECT t.target_revision,COALESCE((SELECT generation_id::text FROM delivery.delivery_active_pointer p WHERE p.target_id=t.target_id),'') FROM delivery.delivery_target t WHERE t.target_id=$1 FOR UPDATE`, target).Scan(&currentRev, &currentGeneration)
+	tr, err := depdb.New(tx).LockTargetForUpdate(ctx, target)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
+	currentRev, currentGeneration := tr.TargetRevision, tr.ActiveGenerationID
 	if currentRev != in.ExpectedTargetRevision || currentGeneration != p.ExpectedBaseGenerationID {
 		return ActivationResult{}, ErrCASConflict
 	}
-	var cstatus, ct, cs string
-	err = tx.QueryRow(ctx, `SELECT status,target_id,COALESCE(snapshot_seal_id::text,'') FROM delivery.delivery_candidate WHERE candidate_id=$1::uuid`, p.CandidateID).Scan(&cstatus, &ct, &cs)
+	cr, err := depdb.New(tx).GetCandidateStatus(ctx, dbUUID(p.CandidateID))
+	cstatus, ct, cs := cr.Status, cr.TargetID, cr.SnapshotSealID
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	}
@@ -1893,17 +1915,16 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if cstatus != "qualified" && cstatus != "ready" && cstatus != "admitted" || ct != target || cs != p.SnapshotSealID {
 		return ActivationResult{}, ErrNotQualified
 	}
-	var sealAttempt, sealReq, sealPlan string
-	var snap int64
-	err = tx.QueryRow(ctx, `SELECT attempt_id::text,request_digest,plan_digest,ducklake_snapshot_id FROM delivery.delivery_snapshot_seal WHERE seal_id=$1::uuid`, p.SnapshotSealID).Scan(&sealAttempt, &sealReq, &sealPlan, &snap)
+	sealProof, err := depdb.New(tx).GetSnapshotSealProof(ctx, dbUUID(p.SnapshotSealID))
+	sealAttempt, sealReq, sealPlan, snap := sealProof.AttemptID, sealProof.RequestDigest, sealProof.PlanDigest, sealProof.DucklakeSnapshotID
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	var genTarget, genCand, genSeal string
-	err = tx.QueryRow(ctx, `SELECT target_id,candidate_id::text,snapshot_seal_id::text FROM delivery.delivery_generation WHERE generation_id=$1::uuid`, p.GenerationID).Scan(&genTarget, &genCand, &genSeal)
+	genLinks, err := depdb.New(tx).GetGenerationLinks(ctx, dbUUID(p.GenerationID))
+	genTarget, genCand, genSeal := genLinks.TargetID, genLinks.CandidateID, genLinks.SnapshotSealID
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	}
@@ -1913,15 +1934,15 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if genTarget != target || genCand != p.CandidateID || genSeal != p.SnapshotSealID {
 		return ActivationResult{}, fmt.Errorf("%w: generation identity differs", ErrConflict)
 	}
-	var requiresApproval bool
-	if err := tx.QueryRow(ctx, `SELECT qualification_required FROM delivery.delivery_plan WHERE plan_id=(SELECT plan_id FROM delivery.delivery_generation WHERE generation_id=$1::uuid)`, p.GenerationID).Scan(&requiresApproval); errors.Is(err, pgx.ErrNoRows) {
+	requiresApproval, err := depdb.New(tx).GetPlanQualification(ctx, dbUUID(p.GenerationID))
+	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	} else if err != nil {
 		return ActivationResult{}, err
 	}
 	if requiresApproval {
-		var approved bool
-		if err := tx.QueryRow(ctx, `SELECT COALESCE((SELECT decision='approved' FROM delivery.delivery_approval WHERE candidate_id=$1::uuid ORDER BY decided_at DESC, approval_id DESC LIMIT 1),false)`, p.CandidateID).Scan(&approved); err != nil {
+		approved, err := depdb.New(tx).CandidateApproved(ctx, dbUUID(p.CandidateID))
+		if err != nil {
 			return ActivationResult{}, err
 		}
 		if !approved {
@@ -1933,22 +1954,28 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	_ = sealPlan
 	_ = snap
 	newRev := currentRev + 1
-	targetUpdate, err := tx.Exec(ctx, `UPDATE delivery.delivery_target SET target_revision=$2,updated_at=clock_timestamp() WHERE target_id=$1 AND target_revision=$3`, target, newRev, currentRev)
+	targetUpdated, err := depdb.New(tx).UpdateTargetRevision(ctx, depdb.UpdateTargetRevisionParams{TargetID: target, NewRevision: newRev, ExpectedRevision: currentRev})
+	if errors.Is(err, pgx.ErrNoRows) {
+		targetUpdated, err = false, nil
+	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if targetUpdate.RowsAffected() != 1 {
+	if !targetUpdated {
 		return ActivationResult{}, ErrCASConflict
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO delivery.delivery_active_pointer(target_id,generation_id,publication_id) VALUES($1,$2::uuid,$3::uuid) ON CONFLICT(target_id) DO UPDATE SET generation_id=EXCLUDED.generation_id,publication_id=EXCLUDED.publication_id,changed_at=clock_timestamp()`, target, p.GenerationID, p.PublicationID)
+	err = depdb.New(tx).UpsertActivePointer(ctx, depdb.UpsertActivePointerParams{TargetID: target, GenerationID: dbUUID(p.GenerationID), PublicationID: dbUUID(p.PublicationID)})
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	publicationUpdate, err := tx.Exec(ctx, `UPDATE delivery.delivery_publication SET state='committed',result_target_revision=$2,committed_at=clock_timestamp() WHERE publication_id=$1::uuid AND state='pending'`, p.PublicationID, newRev)
+	publicationUpdated, err := depdb.New(tx).CommitPublication(ctx, depdb.CommitPublicationParams{PublicationID: dbUUID(p.PublicationID), ResultRevision: pgInt8(&newRev)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		publicationUpdated, err = false, nil
+	}
 	if err != nil {
 		return ActivationResult{}, err
 	}
-	if publicationUpdate.RowsAffected() != 1 {
+	if !publicationUpdated {
 		return ActivationResult{}, ErrConflict
 	}
 	p.ResultTargetRevision = newRev
@@ -1989,17 +2016,15 @@ func activationMetadata(p DeliveryPublication) json.RawMessage {
 }
 
 func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
-	var existingTarget, existingCandidate, existingGeneration, existingSeal, kind, state string
-	err := tx.QueryRow(ctx, `SELECT target_id,COALESCE(candidate_id::text,''),COALESCE(generation_id::text,''),COALESCE(snapshot_seal_id::text,''),root_kind,state FROM delivery.delivery_retention_root WHERE root_id=$1::uuid FOR UPDATE`, p.GenerationID).
-		Scan(&existingTarget, &existingCandidate, &existingGeneration, &existingSeal, &kind, &state)
+	row, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(p.GenerationID))
 	if errors.Is(err, pgx.ErrNoRows) {
-		_, err = tx.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,'generation','live')`, p.GenerationID, target, p.CandidateID, p.GenerationID, p.SnapshotSealID)
+		err = depdb.New(tx).InsertGenerationRoot(ctx, depdb.InsertGenerationRootParams{RootID: dbUUID(p.GenerationID), TargetID: target, CandidateID: dbUUID(p.CandidateID), GenerationID: dbUUID(p.GenerationID), SnapshotSealID: dbUUID(p.SnapshotSealID)})
 		return err
 	}
 	if err != nil {
 		return err
 	}
-	if existingTarget != target || existingCandidate != p.CandidateID || existingGeneration != p.GenerationID || existingSeal != p.SnapshotSealID || kind != "generation" || state != "live" {
+	if row.TargetID != target || row.CandidateID != p.CandidateID || row.GenerationID != p.GenerationID || row.SnapshotSealID != p.SnapshotSealID || row.RootKind != "generation" || row.State != "live" {
 		return fmt.Errorf("%w: activation retention root identity differs", ErrConflict)
 	}
 	return nil
@@ -2007,10 +2032,11 @@ func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, tar
 
 func appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in ActivationInput, revision int64, actor string) (Event, error) {
 	var version int64
-	if _, err := tx.Exec(ctx, `INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version) VALUES($1,'delivery_target',$1,1) ON CONFLICT(scope_id,aggregate_type,aggregate_id) DO NOTHING`, in.TargetID); err != nil {
+	if err := depdb.New(tx).EnsureEventAggregate(ctx, in.TargetID); err != nil {
 		return Event{}, err
 	}
-	if err := tx.QueryRow(ctx, `UPDATE event.event_aggregate SET next_version=next_version+1 WHERE scope_id=$1 AND aggregate_type='delivery_target' AND aggregate_id=$1 RETURNING next_version-1`, in.TargetID).Scan(&version); err != nil {
+	version, err := depdb.New(tx).NextEventVersion(ctx, in.TargetID)
+	if err != nil {
 		return Event{}, err
 	}
 	if version == 0 {
@@ -2018,18 +2044,15 @@ func appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in
 	}
 	payload := activationPayload(p, revision)
 	eventID := p.PublicationID
-	if _, err := tx.Exec(ctx, `INSERT INTO event.event_log(event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,correlation_id,payload) VALUES($1::uuid,$2,'delivery_target',$2,$3,'activation_committed',1,clock_timestamp(),NULLIF($4,'')::uuid,$5::jsonb) ON CONFLICT(event_id) DO NOTHING`, eventID, in.TargetID, version, in.CorrelationID, payload); err != nil {
+	if err := depdb.New(tx).InsertActivationEvent(ctx, depdb.InsertActivationEventParams{EventID: dbUUID(eventID), ScopeID: in.TargetID, Version: version, CorrelationID: dbUUID(in.CorrelationID), Payload: payload}); err != nil {
 		return Event{}, err
 	}
 	var e Event
-	var corr string
-	var pl []byte
-	err := tx.QueryRow(ctx, `SELECT event_id::text,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,COALESCE(correlation_id::text,''),payload FROM event.event_log WHERE event_id=$1::uuid`, eventID).Scan(&e.EventID, &e.ScopeID, &e.AggregateType, &e.AggregateID, &e.AggregateVersion, &e.EventType, &e.SchemaVersion, &e.OccurredAt, &corr, &pl)
+	erow, err := depdb.New(tx).GetEvent(ctx, dbUUID(eventID))
 	if err != nil {
 		return Event{}, err
 	}
-	e.CorrelationID = corr
-	e.Payload = append([]byte(nil), pl...)
+	e.EventID, e.ScopeID, e.AggregateType, e.AggregateID, e.AggregateVersion, e.EventType, e.SchemaVersion, e.OccurredAt, e.CorrelationID, e.Payload = erow.EventID, erow.ScopeID, erow.AggregateType, erow.AggregateID, erow.AggregateVersion, erow.EventType, erow.SchemaVersion, dbTime(erow.OccurredAt), erow.CorrelationID, append([]byte(nil), erow.Payload...)
 	_ = actor
 	if e.EventID != p.PublicationID || e.ScopeID != in.TargetID || e.AggregateType != "delivery_target" || e.AggregateID != in.TargetID || e.AggregateVersion != version || e.EventType != "activation_committed" || e.SchemaVersion != 1 || e.CorrelationID != in.CorrelationID || !sameCanonical(e.Payload, payload) {
 		return Event{}, fmt.Errorf("%w: activation event identity differs", ErrConflict)
@@ -2038,13 +2061,12 @@ func appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in
 }
 func appendAudit(ctx context.Context, tx Tx, p DeliveryPublication, e Event, actor string) (AuditEvent, error) {
 	metadata := activationMetadata(p)
-	if _, err := tx.Exec(ctx, `INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,action,resource_kind,resource_id,outcome,request_digest,metadata) VALUES($1::uuid,$2::uuid,$3,$4,'activate','generation',$5,'accepted',$6,$7::jsonb) ON CONFLICT(audit_id) DO NOTHING`, p.PublicationID, e.EventID, e.ScopeID, actor, p.GenerationID, p.RequestDigest, metadata); err != nil {
+	if err := depdb.New(tx).InsertAuditEvent(ctx, depdb.InsertAuditEventParams{AuditID: dbUUID(p.PublicationID), EventID: dbUUID(e.EventID), ScopeID: e.ScopeID, ActorID: actor, ResourceID: p.GenerationID, RequestDigest: pgText(&p.RequestDigest), Metadata: metadata}); err != nil {
 		return AuditEvent{}, err
 	}
 	var a AuditEvent
-	var md []byte
-	err := tx.QueryRow(ctx, `SELECT audit_id::text,COALESCE(event_id::text,''),scope_id,actor_id,action,resource_kind,resource_id,outcome,COALESCE(request_digest,''),metadata,occurred_at FROM audit.audit_event WHERE audit_id=$1::uuid`, p.PublicationID).Scan(&a.AuditID, &a.EventID, &a.ScopeID, &a.ActorID, &a.Action, &a.ResourceKind, &a.ResourceID, &a.Outcome, &a.RequestDigest, &md, &a.OccurredAt)
-	a.Metadata = append([]byte(nil), md...)
+	arow, err := depdb.New(tx).GetAuditEvent(ctx, dbUUID(p.PublicationID))
+	a.AuditID, a.EventID, a.ScopeID, a.ActorID, a.Action, a.ResourceKind, a.ResourceID, a.Outcome, a.RequestDigest, a.Metadata, a.OccurredAt = arow.AuditID, arow.EventID, arow.ScopeID, arow.ActorID, arow.Action, arow.ResourceKind, arow.ResourceID, arow.Outcome, arow.RequestDigest, append([]byte(nil), arow.Metadata...), dbTime(arow.OccurredAt)
 	if err != nil {
 		return AuditEvent{}, err
 	}
@@ -2055,24 +2077,23 @@ func appendAudit(ctx context.Context, tx Tx, p DeliveryPublication, e Event, act
 }
 func loadActivationEvidence(ctx context.Context, tx Tx, publicationID string) (Event, AuditEvent, error) {
 	var e Event
-	var corr string
-	var payload []byte
-	err := tx.QueryRow(ctx, `SELECT event_id::text,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,occurred_at,COALESCE(correlation_id::text,''),payload FROM event.event_log WHERE event_id=$1::uuid`, publicationID).Scan(&e.EventID, &e.ScopeID, &e.AggregateType, &e.AggregateID, &e.AggregateVersion, &e.EventType, &e.SchemaVersion, &e.OccurredAt, &corr, &payload)
+	erow, err := depdb.New(tx).GetEvent(ctx, dbUUID(publicationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation event evidence missing", ErrConflict)
 	}
 	if err != nil {
 		return Event{}, AuditEvent{}, err
 	}
-	e.CorrelationID = corr
-	e.Payload = append([]byte(nil), payload...)
+	e.EventID, e.ScopeID, e.AggregateType, e.AggregateID, e.AggregateVersion, e.EventType, e.SchemaVersion, e.OccurredAt, e.CorrelationID, e.Payload = erow.EventID, erow.ScopeID, erow.AggregateType, erow.AggregateID, erow.AggregateVersion, erow.EventType, erow.SchemaVersion, dbTime(erow.OccurredAt), erow.CorrelationID, append([]byte(nil), erow.Payload...)
 	var a AuditEvent
-	var md []byte
-	err = tx.QueryRow(ctx, `SELECT audit_id::text,COALESCE(event_id::text,''),scope_id,actor_id,action,resource_kind,resource_id,outcome,COALESCE(request_digest,''),metadata,occurred_at FROM audit.audit_event WHERE audit_id=$1::uuid`, publicationID).Scan(&a.AuditID, &a.EventID, &a.ScopeID, &a.ActorID, &a.Action, &a.ResourceKind, &a.ResourceID, &a.Outcome, &a.RequestDigest, &md, &a.OccurredAt)
+	arow, err := depdb.New(tx).GetAuditEvent(ctx, dbUUID(publicationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation audit evidence missing", ErrConflict)
 	}
-	a.Metadata = append([]byte(nil), md...)
+	if err != nil {
+		return Event{}, AuditEvent{}, err
+	}
+	a.AuditID, a.EventID, a.ScopeID, a.ActorID, a.Action, a.ResourceKind, a.ResourceID, a.Outcome, a.RequestDigest, a.Metadata, a.OccurredAt = arow.AuditID, arow.EventID, arow.ScopeID, arow.ActorID, arow.Action, arow.ResourceKind, arow.ResourceID, arow.Outcome, arow.RequestDigest, append([]byte(nil), arow.Metadata...), dbTime(arow.OccurredAt)
 	return e, a, err
 }
 
@@ -2128,7 +2149,7 @@ func (r *Repository) CreateRetentionRoot(ctx context.Context, root DeliveryReten
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	_, err = db.Exec(contextOrBackground(ctx), `INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state,expires_at,evidence) VALUES($1::uuid,$2,NULLIF($3,'')::uuid,NULLIF($4,'')::uuid,NULLIF($5,'')::uuid,$6,$7,$8,$9::jsonb) ON CONFLICT(root_id) DO NOTHING`, id, target, root.CandidateID, root.GenerationID, root.SnapshotSealID, root.RootKind, root.State, nullableTime(root.ExpiresAt), evidence)
+	err = depdb.New(db).InsertRetentionRoot(contextOrBackground(ctx), depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
@@ -2147,9 +2168,6 @@ func nullableTimesEqual(a, b time.Time) bool {
 	}
 	return a.Equal(b.UTC())
 }
-func nullableTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t.UTC()
+func nullablePgTime(t time.Time) pgtype.Timestamptz {
+	return pgTime(t)
 }
