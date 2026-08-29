@@ -2,9 +2,10 @@
 
 This scorecard defines the evidence required before changing LeapView's
 dashboard Arrow architecture. It covers the FAI-538 workload and scorecard,
-the reproducible microbenchmark foundation from FAI-539, and the current-path
-dashboard baseline from FAI-540. It does not authorize a production Arrow
-migration, a new cache representation, or a cache lifecycle change.
+the reproducible microbenchmark foundation from FAI-539, the current-path
+dashboard baseline from FAI-540, and the warm-cache qualification from
+FAI-542. It does not authorize a production Arrow migration, a new cache
+representation, or a cache lifecycle change.
 
 ## Decision boundary
 
@@ -38,7 +39,7 @@ needs randomness, it must publish and reuse one fixed seed.
 | Nulls | Deterministic nulls in every physical type | Detect null-to-empty or null-to-zero regressions |
 | Execution state | Cold execution, warm cache hit, and direct native execution | Prevent a serializer win from hiding an extra database query |
 | Response | Existing JSON/table response, existing dashboard string IPC, and native IPC reference | Separate response-format cost from query cost |
-| Concurrency | 1, 10, 20, and 100 clients in later end-to-end qualification | Detect connection pinning, queueing, and slow-consumer effects |
+| Concurrency | 1, 10, 20, and 100 simultaneous clients | Detect CPU saturation, allocation pressure, queueing, and slow-consumer risks |
 
 The FAI-539 package benchmarks intentionally isolate CPU and allocation stages;
 they do not simulate database latency, cache lookup, network backpressure, or
@@ -99,6 +100,17 @@ generated dashboard API packages:
 - `BenchmarkDashboardBaselineStages` separates a warm query and frame build,
   JSON serialization, string projection, and Arrow IPC generation and
   buffering without replacing any production implementation.
+- `BenchmarkWarmArrowCacheLookupLease` isolates public retained-result lookup
+  plus independent lease acquisition and release from decoding.
+- `BenchmarkDashboardWarmShapingStages` attributes allocations to datum maps,
+  normalization, ordered frames/windows, calculation cloning, and envelope
+  construction using the production shaping functions.
+- `BenchmarkDashboardWarmCacheConcurrency` executes exact simultaneous-user
+  batches through the governed warm path and requires cache hits with zero
+  physical queries for every measured request.
+- `BenchmarkDashboardWarmSerializationStages` compares production JSON and
+  all-string table IPC with a test-only native IPC reference over the same
+  deterministic physical values.
 
 The dashboard shaping and string-projection benchmarks are test-only mirrors,
 not alternate production implementations. The FAI-540 fixtures are also
@@ -209,6 +221,172 @@ go test ./internal/dashboard/http -run '^TestDashboardBaseline' \
   -memprofile .tmp/arrow-bench/dashboard-wide.mem.pprof
 ```
 
+## FAI-542 warm-cache qualification
+
+FAI-542 tests whether retained Arrow decoding, dashboard shaping, and response
+serialization are material warm-path costs. It does not implement a native
+dashboard response. Each real-path workload first executes an untimed cold
+request through the governed runtime and requires a miss plus physical work.
+The identical warm probe and every measured request must then report only hits
+and zero physical queries. Returning from the cold request is the retention
+completion boundary; the fixture does not inspect cache keys, generations, or
+lifecycle internals.
+
+The required real workloads are:
+
+- a one-row KPI serialized through the visualization JSON response;
+- four compatible charts executed by the real dashboard bundle optimizer and
+  materialized bundle path;
+- a 32-column, 1,000-row multi-measure chart serialized as visualization JSON;
+- a 32-column, 1,000-row table window serialized as JSON and through the
+  current all-string Arrow response.
+
+One benchmark operation is one simultaneous-user batch. Every user shares the
+same arrival timestamp, so reported request percentiles include scheduler and
+queueing delay from the batch boundary. Goroutine setup is outside the timer.
+The canonical run uses one logical CPU to keep runs comparable and expose
+CPU/allocation saturation; it is not a production capacity forecast.
+
+### Environment and commands
+
+Representative evidence below was collected on Linux 7.0 amd64 with Go
+1.25.14, 16 visible AMD EPYC-Rome virtual cores, and `-cpu=1`. Values are
+medians of three runs. The inputs use fixed arithmetic sequences and a null
+every 13 values. Allocated MiB is derived from Go `B/op`, not process RSS.
+
+```sh
+go test ./internal/analytics/resultcache -run '^$' \
+  -bench '^BenchmarkWarmArrowCacheLookupLease$' \
+  -benchmem -benchtime=100ms -count=3 -cpu=1
+
+go test ./internal/analytics/arrowdecode -run '^$' \
+  -bench '^BenchmarkArrowDecodeRows$/wide/rows_1000$' \
+  -benchmem -benchtime=100ms -count=3 -cpu=1
+
+go test ./internal/dashboard/runtime -run '^$' \
+  -bench '^BenchmarkDashboardWarmShapingStages$' \
+  -benchmem -benchtime=100ms -count=3 -cpu=1
+
+go test ./internal/dashboard/http -run '^TestDashboardWarm' \
+  -bench '^BenchmarkDashboardWarmCacheConcurrency$' \
+  -benchmem -benchtime=1x -count=3 -cpu=1
+
+go test ./internal/dashboard/http -run '^$' \
+  -bench '^BenchmarkDashboardWarmSerializationStages$' \
+  -benchmem -benchtime=100ms -count=3 -cpu=1
+
+mkdir -p .tmp/fai542-profile
+go test ./internal/dashboard/http -run '^$' \
+  -bench '^BenchmarkDashboardWarmCacheConcurrency$/wide_chart/users_1$' \
+  -benchmem -benchtime=2s -count=1 -cpu=1 \
+  -cpuprofile .tmp/fai542-profile/wide-chart.cpu.pprof \
+  -memprofile .tmp/fai542-profile/wide-chart.mem.pprof
+```
+
+`task bench:arrow:quick` provides the bounded smoke matrix. `task
+bench:arrow:full` runs every FAI-538/539/540/542 benchmark with the higher
+comparison-grade sample counts recorded in the Taskfile.
+
+### Warm concurrency results
+
+Every measured sample remained warm. KPI and wide-chart requests observed one
+hit each, bundle requests observed four hits, and table windows observed two
+hits. Misses, coalesced outcomes, physical-query observations, and database
+calls were all zero.
+
+| Workload | p95 @ 1 | p95 @ 10 | p95 @ 20 | p95 @ 100 | Requests/s @ 1 | Requests/s @ 100 | Bytes/request |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| KPI | 1.38 ms | 8.65 ms | 19.15 ms | 86.66 ms | 691 | 1,146 | 1,100 |
+| Four-chart bundle | 8.07 ms | 56.93 ms | 114.9 ms | 575.3 ms | 124 | 174 | 10,474 |
+| Wide chart | 74.32 ms | 740.1 ms | 1,491 ms | 7,632 ms | 13.45 | 13.10 | 317,001 |
+| Table window JSON | 50.36 ms | 523.5 ms | 1,014 ms | 5,075 ms | 19.85 | 19.68 | 324,281 |
+| Table window Arrow | 40.19 ms | 369.1 ms | 748.8 ms | 3,696 ms | 24.88 | 27.04 | 368,176 |
+
+Wide-chart and table throughput remains approximately flat while p95 grows
+almost linearly with simultaneous users on one CPU. Allocations per request
+also remain high and stable: about 24.2 MiB/444,827 allocations for the wide
+chart, 17.7 MiB/167,217 allocations for table JSON, and 16.5 MiB/115,276
+allocations for table Arrow at one user. This fixture is CPU/allocation bound,
+not database bound. KPI and bundle payloads are much lighter and do not by
+themselves justify an Arrow response change.
+
+### Stage attribution
+
+Stage benchmarks call production conversion functions but deliberately
+overlap: datum-map creation includes value normalization, and envelope
+construction includes calculation cloning and validation. Do not sum every
+row as if the stages were disjoint. They identify where CPU and allocations
+are created.
+
+| Warm stage | Representative shape | Latency | Allocated MiB/op | Allocs/op |
+| --- | --- | ---: | ---: | ---: |
+| Cache lookup and independent lease | 32 × 1,000 | 0.00027 ms | 0.00013 | 3 |
+| `DecodeRows` | 32 × 1,000 | 8.51 ms | 3.54 | 70,520 |
+| Chart datum maps | 32 × 1,000 | 8.33 ms | 4.27 | 9,001 |
+| Value normalization | 32 × 1,000 | 2.76 ms | 0.98 | 42,671 |
+| Ordered chart frame | 32 × 1,000 | 1.39 ms | 0.51 | 1,002 |
+| Calculation-free frame clone | 32 × 1,000 | 0.61 ms | 0.51 | 1,002 |
+| Visualization envelope | 32 × 1,000 | 2.62 ms | 0.58 | 1,075 |
+| Table datum maps | 32 × 1,000 | 11.89 ms | 4.92 | 51,667 |
+| Ordered table window | 32 × 1,000 | 1.65 ms | 0.59 | 1,077 |
+| Wide-chart JSON response | 32 × 1,000 | 16.25 ms | 3.98 | 67,709 |
+| Table JSON response | 32 × 1,000 | 17.74 ms | 4.21 | 61,631 |
+
+Cache lookup is effectively constant across 50/1,000 rows and 8/32 columns,
+at roughly 0.26 microseconds and 136 bytes per lookup. Decode, copied datum
+maps, normalization, and serialization dominate the large warm workloads.
+
+### Current string IPC versus native reference
+
+The native reference is test-only. It encodes an independently constructed
+lease containing the same deterministic physical values; it does not read the
+production result-cache entry and is not a response-compatible dashboard
+implementation.
+
+| Serialization stage | Latency | Allocated MiB/op | Allocs/op | IPC bytes |
+| --- | ---: | ---: | ---: | ---: |
+| Current string projection | 1.46 ms | 0.57 | 8,382 | — |
+| Current all-string IPC | 2.30 ms | 2.27 | 1,254 | 368,176 |
+| Native IPC reference | 0.59 ms | 1.04 | 304 | 267,008 |
+
+Against string projection plus current IPC, the reference reduces that
+isolated stage by about 84% in time, 63% in allocated bytes, and 97% in
+allocations. Its payload is 27.5% smaller. It also preserves native `int64`,
+`float64`, boolean, UTF-8, binary, timestamp, decimal128, date32, and dictionary
+types, schema/field metadata, and null bitmaps. The current response retains
+its documented all-UTF8 and null-to-empty behavior.
+
+Serializer replacement alone represents roughly 3.2 ms of a 40.2 ms warm
+table request on this host, below the 10% end-to-end performance gate. The
+larger opportunity is before serialization: decoding plus table datum-map
+creation accounts for about 20 ms and more than 8 MiB of allocations before
+ordered-window and response costs.
+
+### FAI-542 decision
+
+The evidence clears the threshold to proceed to an isolated,
+lease-bounded Arrow-to-ordered-frame prototype for eligible detail/table
+workloads. It does **not** clear the threshold for a production migration or a
+broad native response change:
+
+- the expensive decode/map boundary is material enough to prototype;
+- native IPC provides a strong stage-level allocation and fidelity signal;
+- the native reference is not dashboard-response equivalent and therefore
+  cannot satisfy the correctness gates by itself;
+- KPI and bundle results do not establish a broad dashboard benefit;
+- calculated tables, matrix, and pivot remain separate candidates.
+
+FAI-545 may test the bounded projection hypothesis without changing production
+behavior. Adoption remains prohibited until response compatibility, lease
+lifetime, cancellation, slow-consumer memory, and multi-CPU qualification pass.
+
+CPU and memory profiles were generated successfully for the wide-chart lane.
+The local stripped Go toolchain exposes `compile`, `link`, and related tools but
+does not include the `pprof` reader, so this environment could not produce an
+interactive/top report from those files. The `B/op`, allocation, latency, and
+throughput measurements above remain available; process RSS and profile-stack
+attribution remain environment limitations rather than inferred results.
+
 ## Required measurements
 
 Capture raw results rather than reporting a single percentage:
@@ -298,7 +476,10 @@ with raw evidence, confidence output, the tested commit, and rollback path.
 
 FAI-538 and FAI-539 establish the scorecard and microbenchmark foundation.
 FAI-540 establishes the reproducible current dashboard round-trip baseline;
-it does not qualify production data or concurrency. FAI-541 must lock the
-response contract, and FAI-542 must qualify warm cached projection and
-concurrency. Direct detail-table or lease-bounded projection prototypes remain
-prohibited until those issues provide evidence that clears this scorecard.
+it does not qualify production data. FAI-542 establishes that decode and
+datum-map costs are material on large warm workloads and authorizes only the
+isolated FAI-545 lease-bounded ordered-frame experiment. FAI-541 must still
+lock the response contract. Direct production detail-table delivery remains
+prohibited until response compatibility, lease lifetime, cancellation,
+slow-consumer memory, multi-CPU behavior, and the remaining correctness gates
+provide evidence that clears this scorecard.
