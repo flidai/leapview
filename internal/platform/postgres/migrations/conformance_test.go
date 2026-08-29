@@ -20,6 +20,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
 	h.GrantRole(t, owner, migrator)
@@ -72,8 +73,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		WHERE schema_name = ANY($1::text[])`, []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent", "ducklake"}).Scan(&schemaCount); err != nil {
 		t.Fatal(err)
 	}
-	if schemaCount != 7 {
-		t.Fatalf("capability schema count = %d, want 7", schemaCount)
+	if schemaCount != 8 {
+		t.Fatalf("capability schema count = %d, want 8", schemaCount)
 	}
 	var schemaOwner, tableOwner, capabilityOwner string
 	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'platform'`).Scan(&schemaOwner); err != nil {
@@ -88,14 +89,13 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if schemaOwner != owner.Name || tableOwner != owner.Name || capabilityOwner != owner.Name {
 		t.Fatalf("baseline ownership = schema %q/revision %q/capability %q, want %q", schemaOwner, tableOwner, capabilityOwner, owner.Name)
 	}
-	var refreshExists, agentExists bool
+	var agentExists bool
 	if err := db.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'refresh'),
-		       EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'agent')`).Scan(&refreshExists, &agentExists); err != nil {
+		SELECT EXISTS (SELECT 1 FROM information_schema.schemata WHERE schema_name = 'agent')`).Scan(&agentExists); err != nil {
 		t.Fatal(err)
 	}
-	if refreshExists || agentExists {
-		t.Fatalf("unimplemented capability namespaces unexpectedly exist: refresh=%t agent=%t", refreshExists, agentExists)
+	if agentExists {
+		t.Fatal("unimplemented agent capability namespace unexpectedly exists")
 	}
 
 	var revision int64
@@ -184,9 +184,20 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if _, err := runtimeConn.Exec(ctx, `DELETE FROM event.event_log WHERE event_id = '00000000-0000-0000-0000-000000000004'`); err == nil {
 		t.Fatal("runtime direct event delete unexpectedly succeeded")
 	}
+	if err := runtimeConn.QueryRow(ctx, `SELECT event.prune_event_log(clock_timestamp(), 10)`).Scan(new(int64)); err == nil {
+		t.Fatal("runtime event prune unexpectedly succeeded")
+	}
+	maintenanceConn, err := db.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer maintenanceConn.Release()
+	if _, err := maintenanceConn.Exec(ctx, `SET ROLE leapview_control_maintenance`); err != nil {
+		t.Fatal(err)
+	}
 	var pruned int64
-	if err := runtimeConn.QueryRow(ctx, `SELECT event.prune_event_log(clock_timestamp(), 10)`).Scan(&pruned); err != nil {
-		t.Fatalf("runtime event prune: %v", err)
+	if err := maintenanceConn.QueryRow(ctx, `SELECT event.prune_event_log(clock_timestamp(), 10)`).Scan(&pruned); err != nil {
+		t.Fatalf("maintenance event prune: %v", err)
 	}
 	if pruned != 1 {
 		t.Fatalf("runtime event prune removed %d rows, want 1", pruned)
