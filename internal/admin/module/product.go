@@ -35,8 +35,16 @@ const (
 
 var ErrProductLogoNotFound = product.ErrNotFound
 
-func NewProductService(database *sql.DB, blobs ProductBlobStore) (*ProductService, error) {
-	return product.New(database, blobs)
+func NewLegacySQLiteProductService(database *sql.DB, blobs ProductBlobStore) (*ProductService, error) {
+	return product.NewLegacySQLite(database, blobs)
+}
+
+// NewProductServiceWithStorage wires the module to a product-owned storage
+// abstraction. Production composition should pass the native PostgreSQL
+// repository here; SQLite remains available only through
+// NewLegacySQLiteProductService.
+func NewProductServiceWithStorage(storage product.Storage, blobs ProductBlobStore) (*ProductService, error) {
+	return product.NewWithStorage(storage, blobs)
 }
 
 func (m *Module) GetProductSettings(w http.ResponseWriter, r *http.Request) {

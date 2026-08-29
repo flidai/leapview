@@ -17,7 +17,7 @@ func TestProductAdministrationUsesGeneratedRouteDispatch(t *testing.T) {
 	ctx := context.Background()
 	principal := testPlatformPrincipal(t, ctx, store, "platform-admin@example.test", "Platform Admin")
 	token := testAPIToken(t, ctx, store, principal.ID, "platform-manage")
-	service, err := adminmodule.NewProductService(store.SQLDB(), productAuthorizationBlobs{})
+	service, err := adminmodule.NewLegacySQLiteProductService(store.SQLDB(), productAuthorizationBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}

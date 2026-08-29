@@ -7,6 +7,7 @@ import (
 	"context"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	adminproductpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
@@ -15,6 +16,7 @@ import (
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
@@ -35,10 +37,12 @@ const (
 // delivery, delivery installs its event ledger, and durable fan-out follows.
 var plan = platformmigrations.Plan{
 	Components: []platformmigrations.Component{
+		{Name: "platform.bootstrap", SQL: platformbootstrappostgres.SchemaSQL()},
 		{Name: "platform.operation", SQL: operationpostgres.SchemaSQL()},
 		{Name: "platform.cursor_signing", SQL: cursorsigningpostgres.SchemaSQL()},
 		{Name: "project", SQL: projectpostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
+		{Name: "admin.product", SQL: adminproductpostgres.SchemaSQL()},
 		{Name: "connection_binding", SQL: connectionbindingpostgres.SchemaSQL()},
 		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "managed_data", SQL: manageddatapostgres.SchemaSQL()},
@@ -74,8 +78,12 @@ func FoundationSQL() string { return platformmigrations.BaselineSQL() }
 const rolePolicySQL = `
 DO $$
 BEGIN
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_runtime;
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+		GRANT USAGE ON SCHEMA access, admin, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_runtime;
+		GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
+		GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
+		GRANT SELECT, INSERT ON platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_runtime;
+		GRANT SELECT, UPDATE ON admin.product_identity TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.release_record, release.release_connection
             FROM leapview_control_runtime;
@@ -123,8 +131,11 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON physical_pool.namespace_deletion_leases TO leapview_control_maintenance;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims FROM leapview_control_maintenance;
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_readonly;
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+		GRANT USAGE ON SCHEMA access, admin, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_readonly;
+		GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
+		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_readonly;
+		GRANT SELECT ON admin.product_identity TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA release TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
@@ -136,8 +147,11 @@ BEGIN
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
     END IF;
-    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
-        GRANT USAGE ON SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_backup;
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+		GRANT USAGE ON SCHEMA project, access, admin, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_backup;
+		GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
+		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_backup;
+		GRANT SELECT ON admin.product_identity TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;

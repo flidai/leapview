@@ -110,7 +110,7 @@ func testHandler(t *testing.T, status Status) *Handler {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	service, err := New(store.SQLDB(), &memoryBlobs{values: map[string][]byte{}})
+	service, err := NewLegacySQLite(store.SQLDB(), &memoryBlobs{values: map[string][]byte{}})
 	if err != nil {
 		t.Fatal(err)
 	}

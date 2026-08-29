@@ -6,7 +6,6 @@ package product
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
@@ -17,6 +16,7 @@ import (
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
+	"math"
 	"strings"
 	"unicode/utf8"
 
@@ -76,19 +76,32 @@ type CommandExecutor interface {
 }
 
 type Service struct {
-	db       *sql.DB
+	storage  Storage
 	blobs    BlobStore
 	commands CommandExecutor
 }
 
-func New(db *sql.DB, blobs BlobStore) (*Service, error) {
+// NewLegacySQLite is the explicit compatibility constructor for the
+// historical embedded SQLite product store. Production composition should use
+// NewWithStorage with the native PostgreSQL repository.
+func NewLegacySQLite(db *sql.DB, blobs BlobStore) (*Service, error) {
 	if db == nil {
 		return nil, fmt.Errorf("product identity database is required")
 	}
 	if blobs == nil {
 		return nil, fmt.Errorf("product logo blob store is required")
 	}
-	return &Service{db: db, blobs: blobs}, nil
+	return &Service{storage: newSQLiteStorage(db), blobs: blobs}, nil
+}
+
+func NewWithStorage(storage Storage, blobs BlobStore) (*Service, error) {
+	if storage == nil {
+		return nil, fmt.Errorf("product identity storage is required")
+	}
+	if blobs == nil {
+		return nil, fmt.Errorf("product logo blob store is required")
+	}
+	return &Service{storage: storage, blobs: blobs}, nil
 }
 
 func (s *Service) ConfigureCommandExecutor(executor CommandExecutor) {
@@ -98,9 +111,17 @@ func (s *Service) ConfigureCommandExecutor(executor CommandExecutor) {
 }
 
 func (s *Service) Get(ctx context.Context) (Identity, error) {
-	return scanIdentity(s.db.QueryRowContext(ctx, `
-SELECT display_name, logo_sha256, logo_media_type, logo_size_bytes, logo_width, logo_height, revision, updated_at
-FROM product_identity WHERE singleton = 1`))
+	if s == nil || s.storage == nil {
+		return Identity{}, ErrInvalid
+	}
+	return s.storage.Get(ctx)
+}
+
+func (s *Service) Ping(ctx context.Context) error {
+	if s == nil || s.storage == nil {
+		return ErrInvalid
+	}
+	return s.storage.Ping(ctx)
 }
 
 func (s *Service) SetDisplayName(ctx context.Context, expectedRevision int64, displayName string, mutation Mutation) (Identity, error) {
@@ -108,12 +129,7 @@ func (s *Service) SetDisplayName(ctx context.Context, expectedRevision int64, di
 	if displayName == "" || !utf8.ValidString(displayName) || utf8.RuneCountInString(displayName) > 120 {
 		return Identity{}, fmt.Errorf("%w: displayName must contain 1 to 120 characters", ErrInvalid)
 	}
-	return s.mutate(ctx, expectedRevision, mutation, "product.identity.updated", map[string]any{"fields": []string{"displayName"}}, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, `
-UPDATE product_identity
-SET display_name = ?, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
-WHERE singleton = 1 AND revision = ?`, displayName, expectedRevision)
-	})
+	return s.mutate(ctx, expectedRevision, mutation, "product.identity.updated", map[string]any{"fields": []string{"displayName"}}, MutationRequest{Kind: MutationDisplayName, DisplayName: displayName})
 }
 
 func (s *Service) UploadLogo(ctx context.Context, expectedRevision int64, contentType string, body io.Reader, mutation Mutation) (Identity, error) {
@@ -141,35 +157,17 @@ func (s *Service) UploadLogo(ctx context.Context, expectedRevision int64, conten
 	if _, err := s.blobs.Put(ctx, Blob{SHA256: logo.SHA256, Size: logo.SizeBytes}, bytes.NewReader(raw)); err != nil {
 		return Identity{}, fmt.Errorf("store product logo: %w", err)
 	}
-	return s.mutate(ctx, expectedRevision, mutation, "product.logo.updated", map[string]any{"sha256": logo.SHA256}, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, `
-UPDATE product_identity
-SET logo_sha256 = ?, logo_media_type = ?, logo_size_bytes = ?, logo_width = ?, logo_height = ?,
-    revision = revision + 1, updated_at = CURRENT_TIMESTAMP
-WHERE singleton = 1 AND revision = ?`, logo.SHA256, logo.MediaType, logo.SizeBytes, logo.Width, logo.Height, expectedRevision)
-	})
+	return s.mutate(ctx, expectedRevision, mutation, "product.logo.updated", map[string]any{"sha256": logo.SHA256}, MutationRequest{Kind: MutationLogo, Logo: &logo})
 }
 
 func (s *Service) DeleteLogo(ctx context.Context, expectedRevision int64, mutation Mutation) (Identity, error) {
-	return s.mutate(ctx, expectedRevision, mutation, "product.logo.deleted", map[string]any{"removed": true}, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, `
-UPDATE product_identity
-SET logo_sha256 = NULL, logo_media_type = NULL, logo_size_bytes = NULL, logo_width = NULL, logo_height = NULL,
-    revision = revision + 1, updated_at = CURRENT_TIMESTAMP
-WHERE singleton = 1 AND revision = ? AND logo_sha256 IS NOT NULL`, expectedRevision)
-	})
+	return s.mutate(ctx, expectedRevision, mutation, "product.logo.deleted", map[string]any{"removed": true}, MutationRequest{Kind: MutationDeleteLogo})
 }
 
 // ResetIdentity restores the community-edition identity in a single audited
 // revision so callers never observe a default name paired with a stale logo.
 func (s *Service) ResetIdentity(ctx context.Context, expectedRevision int64, mutation Mutation) (Identity, error) {
-	return s.mutate(ctx, expectedRevision, mutation, "product.identity.reset", map[string]any{"fields": []string{"displayName", "logo"}}, func(tx *sql.Tx) (sql.Result, error) {
-		return tx.ExecContext(ctx, `
-UPDATE product_identity
-SET display_name = ?, logo_sha256 = NULL, logo_media_type = NULL, logo_size_bytes = NULL,
-    logo_width = NULL, logo_height = NULL, revision = revision + 1, updated_at = CURRENT_TIMESTAMP
-WHERE singleton = 1 AND revision = ?`, DefaultDisplayName, expectedRevision)
-	})
+	return s.mutate(ctx, expectedRevision, mutation, "product.identity.reset", map[string]any{"fields": []string{"displayName", "logo"}}, MutationRequest{Kind: MutationReset})
 }
 
 func (s *Service) OpenLogo(ctx context.Context, digest string) (io.ReadCloser, Logo, error) {
@@ -191,18 +189,26 @@ func (s *Service) OpenLogo(ctx context.Context, digest string) (io.ReadCloser, L
 	return reader, *identity.Logo, nil
 }
 
-func (s *Service) mutate(ctx context.Context, expectedRevision int64, mutation Mutation, action string, metadata any, update func(*sql.Tx) (sql.Result, error)) (Identity, error) {
+func (s *Service) mutate(ctx context.Context, expectedRevision int64, mutation Mutation, action string, metadata any, request MutationRequest) (Identity, error) {
+	if s == nil || s.storage == nil {
+		return Identity{}, ErrInvalid
+	}
 	operationID, generatedCommand := apigencommand.OperationID(ctx)
 	if !generatedCommand {
 		metadataJSON, err := encodeProductAuditMetadata(metadata)
 		if err != nil {
 			return Identity{}, err
 		}
-		return s.mutateAtomic(ctx, expectedRevision, mutation, action, metadataJSON, nil, update)
+		request.ExpectedRevision, request.Mutation, request.Action, request.MetadataJSON = expectedRevision, mutation, action, metadataJSON
+		return s.storage.Mutate(ctx, request)
 	}
 	if s.commands == nil {
 		return Identity{}, fmt.Errorf("product command executor is unavailable")
 	}
+	// API command idempotency/replay is resolved by the command executor before
+	// this callback. The callback delegates to the configured storage boundary;
+	// a native PostgreSQL storage owns exactly one pgx transaction, so no
+	// legacy SQLite transaction can wrap a production mutation.
 	var identity Identity
 	err := s.commands.Execute(ctx, operationID, apigencommand.Execution{
 		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
@@ -213,66 +219,16 @@ func (s *Service) mutate(ctx context.Context, expectedRevision int64, mutation M
 			if encodeErr != nil {
 				return encodeErr
 			}
-			checkConcurrency := func(ctx context.Context, tx *sql.Tx) error {
-				var currentRevision int64
-				if err := tx.QueryRowContext(ctx, `SELECT revision FROM product_identity WHERE singleton = 1`).Scan(&currentRevision); err != nil {
-					return err
-				}
+			request.ExpectedRevision, request.Mutation, request.Action, request.MetadataJSON = expectedRevision, mutation, action, metadataJSON
+			request.CheckConcurrency = func(ctx context.Context, currentRevision int64) error {
 				return s.commands.CheckConcurrency(ctx, operationID, mutation.ConcurrencyToken, revisionETag(currentRevision))
 			}
 			var mutationErr error
-			identity, mutationErr = s.mutateAtomic(ctx, expectedRevision, mutation, action, metadataJSON, checkConcurrency, update)
+			identity, mutationErr = s.storage.Mutate(ctx, request)
 			return mutationErr
 		},
 	})
 	return identity, err
-}
-
-func (s *Service) mutateAtomic(
-	ctx context.Context,
-	expectedRevision int64,
-	mutation Mutation,
-	action, metadataJSON string,
-	checkConcurrency func(context.Context, *sql.Tx) error,
-	update func(*sql.Tx) (sql.Result, error),
-) (Identity, error) {
-	if expectedRevision <= 0 {
-		return Identity{}, ErrPrecondition
-	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return Identity{}, err
-	}
-	defer func() { _ = tx.Rollback() }()
-	if checkConcurrency != nil {
-		if err := checkConcurrency(ctx, tx); err != nil {
-			return Identity{}, err
-		}
-	}
-	result, err := update(tx)
-	if err != nil {
-		return Identity{}, err
-	}
-	rows, err := result.RowsAffected()
-	if err != nil {
-		return Identity{}, err
-	}
-	if rows != 1 {
-		return Identity{}, ErrPrecondition
-	}
-	if err := insertAudit(ctx, tx, mutation, action, metadataJSON); err != nil {
-		return Identity{}, fmt.Errorf("audit product mutation: %w", err)
-	}
-	identity, err := scanIdentity(tx.QueryRowContext(ctx, `
-SELECT display_name, logo_sha256, logo_media_type, logo_size_bytes, logo_width, logo_height, revision, updated_at
-FROM product_identity WHERE singleton = 1`))
-	if err != nil {
-		return Identity{}, err
-	}
-	if err := tx.Commit(); err != nil {
-		return Identity{}, err
-	}
-	return identity, nil
 }
 
 func encodeProductAuditMetadata(metadata any) (string, error) {
@@ -297,7 +253,7 @@ func inspectLogo(contentType string, raw []byte) (Logo, error) {
 	if !ok || mediaType != contentType {
 		return Logo{}, fmt.Errorf("%w: Content-Type must match a JPEG, PNG, or WebP image", ErrInvalid)
 	}
-	if config.Width <= 0 || config.Height <= 0 || config.Height > MaxLogoPixels || config.Width > MaxLogoPixels/config.Height {
+	if config.Width <= 0 || config.Height <= 0 || int64(config.Width) > math.MaxInt32 || int64(config.Height) > math.MaxInt32 || config.Height > MaxLogoPixels || config.Width > MaxLogoPixels/config.Height {
 		return Logo{}, fmt.Errorf("%w: logo exceeds %d pixels", ErrInvalid, MaxLogoPixels)
 	}
 	if _, decodedFormat, err := image.Decode(bytes.NewReader(raw)); err != nil || decodedFormat != format {
@@ -320,18 +276,4 @@ func scanIdentity(row scanner) (Identity, error) {
 		identity.Logo = &Logo{SHA256: digest.String, MediaType: mediaType.String, SizeBytes: size.Int64, Width: int(width.Int64), Height: int(height.Int64)}
 	}
 	return identity, nil
-}
-
-func insertAudit(ctx context.Context, tx *sql.Tx, mutation Mutation, action, metadataJSON string) error {
-	var idBytes [16]byte
-	if _, err := rand.Read(idBytes[:]); err != nil {
-		return err
-	}
-	_, err := tx.ExecContext(ctx, `
-INSERT INTO audit_events
-  (id, principal_id, action, resource_kind, resource_id, capability, status, request_id, correlation_id, metadata_json)
-VALUES (?, NULLIF(?, ''), ?, 'product', 'instance', 'RESOURCE_MANAGE', 'success', ?, ?, ?)`,
-		"audit_"+hex.EncodeToString(idBytes[:]), strings.TrimSpace(mutation.PrincipalID), action,
-		strings.TrimSpace(mutation.RequestID), strings.TrimSpace(mutation.CorrelationID), metadataJSON)
-	return err
 }

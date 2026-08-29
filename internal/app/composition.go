@@ -797,7 +797,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	productService, err := adminmodule.NewProductService(store.SQLDB(), productLogoBlobs)
+	productService, err := adminmodule.NewLegacySQLiteProductService(store.SQLDB(), productLogoBlobs)
 	if err != nil {
 		return fail(err)
 	}

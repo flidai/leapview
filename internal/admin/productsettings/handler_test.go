@@ -18,7 +18,7 @@ func TestHandlerBootstrapAndManagePlatformGuard(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	service, err := product.New(store.SQLDB(), emptyBlobs{})
+	service, err := product.NewLegacySQLite(store.SQLDB(), emptyBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}

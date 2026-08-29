@@ -25,7 +25,7 @@ func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := New(store.SQLDB(), blobs)
+	service, err := NewLegacySQLite(store.SQLDB(), blobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
 	}
 	defer store.Close()
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := New(store.SQLDB(), blobs)
+	service, err := NewLegacySQLite(store.SQLDB(), blobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -172,7 +172,7 @@ func TestServiceRejectsMalformedAndOversizedLogoWithoutPersistenceOrAudit(t *tes
 	}
 	defer store.Close()
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := New(store.SQLDB(), blobs)
+	service, err := NewLegacySQLite(store.SQLDB(), blobs)
 	if err != nil {
 		t.Fatal(err)
 	}

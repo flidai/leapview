@@ -19,7 +19,7 @@ func TestSignalProjectsIdentityAndRedactedStatus(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	service, err := product.New(store.SQLDB(), &testBlobs{})
+	service, err := product.NewLegacySQLite(store.SQLDB(), &testBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +60,7 @@ func TestReadModelMarksControlPlaneUnavailable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer store.Close()
-	service, err := product.New(store.SQLDB(), &testBlobs{})
+	service, err := product.NewLegacySQLite(store.SQLDB(), &testBlobs{})
 	if err != nil {
 		t.Fatal(err)
 	}
