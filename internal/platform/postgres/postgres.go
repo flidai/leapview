@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
@@ -148,6 +149,138 @@ func (p *Pool) Exec(ctx context.Context, sql string, args ...any) (pgconn.Comman
 		return err
 	})
 	return tag, err
+}
+
+// Query keeps the explicitly acquired connection leased until the returned
+// rows are closed or exhausted. Only acquisition uses AcquireTimeout; query
+// execution remains governed by the caller context and PostgreSQL's session
+// statement timeout.
+func (p *Pool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return &leasedRows{Rows: rows, conn: conn}, nil
+}
+
+// QueryRow leases one connection until Scan. Callers must call Scan exactly
+// as they would for pgxpool.QueryRow; Scan releases the pool connection even
+// when decoding fails.
+func (p *Pool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return errorRow{err: err}
+	}
+	return &leasedRow{Row: conn.QueryRow(ctx, sql, args...), conn: conn}
+}
+
+// Begin starts a caller-owned transaction on a connection obtained through
+// the bounded acquisition policy. Commit or Rollback releases the connection.
+func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) {
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return &leasedTx{Tx: tx, conn: conn}, nil
+}
+
+type leasedRows struct {
+	pgx.Rows
+	conn *pgxpool.Conn
+	once sync.Once
+}
+
+func (r *leasedRows) Next() bool {
+	if r == nil || r.Rows == nil {
+		return false
+	}
+	ok := r.Rows.Next()
+	if !ok {
+		r.release()
+	}
+	return ok
+}
+
+func (r *leasedRows) Close() {
+	if r == nil {
+		return
+	}
+	if r.Rows != nil {
+		r.Rows.Close()
+	}
+	r.release()
+}
+
+func (r *leasedRows) release() {
+	if r == nil {
+		return
+	}
+	r.once.Do(func() {
+		if r.conn != nil {
+			r.conn.Release()
+		}
+	})
+}
+
+type leasedRow struct {
+	pgx.Row
+	conn *pgxpool.Conn
+	once sync.Once
+}
+
+func (r *leasedRow) Scan(dest ...any) error {
+	if r == nil || r.Row == nil {
+		return errors.New("postgres query row is nil")
+	}
+	defer r.once.Do(func() { r.conn.Release() })
+	return r.Row.Scan(dest...)
+}
+
+type errorRow struct{ err error }
+
+func (r errorRow) Scan(...any) error { return r.err }
+
+type leasedTx struct {
+	pgx.Tx
+	conn *pgxpool.Conn
+	once sync.Once
+}
+
+func (tx *leasedTx) Commit(ctx context.Context) error {
+	if tx == nil || tx.Tx == nil {
+		return pgx.ErrTxClosed
+	}
+	defer tx.release()
+	return tx.Tx.Commit(ctx)
+}
+
+func (tx *leasedTx) Rollback(ctx context.Context) error {
+	if tx == nil || tx.Tx == nil {
+		return pgx.ErrTxClosed
+	}
+	defer tx.release()
+	return tx.Tx.Rollback(ctx)
+}
+
+func (tx *leasedTx) release() {
+	if tx == nil {
+		return
+	}
+	tx.once.Do(func() {
+		if tx.conn != nil {
+			tx.conn.Release()
+		}
+	})
 }
 
 // Ping checks pool reachability after startup validation.
