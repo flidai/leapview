@@ -46,6 +46,7 @@ var (
 type SealedServingRoot struct {
 	GenerationID          string
 	CandidateID           string
+	AttemptID             string
 	SealID                string
 	CatalogDigest         string
 	CatalogObjectKey      string
@@ -58,6 +59,40 @@ type SealedServingRoot struct {
 	ServingStateID        string
 	ServingArtifactID     string
 	ServingArtifactDigest string
+	// PostgreSQL-backed roots carry relational catalog identity instead of a
+	// serialized catalog object. These fields are optional for the legacy file
+	// root and are consumed by NewPostgresSealedFactory.
+	CatalogDatabase           string
+	CatalogID                 string
+	CatalogUUID               string
+	CatalogMetadataSchema     string
+	CatalogSnapshotID         int64
+	DataPath                  string
+	CatalogVersion            string
+	CatalogVersionNumber      int64
+	DuckDBVersion             string
+	DuckLakeExtensionVersion  string
+	DuckLakeSpecVersion       string
+	CatalogSchemaVersion      string
+	RelationNamespace         string
+	RelationManifestDigest    string
+	ObjectRoot                string
+	ObjectRootDigest          string
+	ArtifactRoot              string
+	ArtifactRootDigest        string
+	CompiledGraphDigest       string
+	CompiledConfigDigest      string
+	RequestDigest             string
+	PlanDigest                string
+	TenantDomain              string
+	Region                    string
+	EncryptionDomain          string
+	ObjectNamespace           string
+	DeliveryID                string
+	FencingEpoch              int64
+	CompatibilityDigest       string
+	RuntimeVersion            string
+	SecurityDomainFingerprint string
 }
 
 // SealedRootResolver resolves the active delivery generation (or a candidate

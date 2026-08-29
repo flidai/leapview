@@ -45,6 +45,16 @@ type Config struct {
 	RootDir     string
 	CatalogPath string
 	DataPath    string
+	// PostgresCatalog selects the target-owned PostgreSQL metadata catalog
+	// path. When set, CatalogPath is never opened or written; DuckDB attaches
+	// the catalog through a separately provisioned DuckLake/PostgreSQL secret.
+	// The legacy file-backed path remains the default when this is nil.
+	PostgresCatalog *PostgresCatalogConfig
+	// CommitMarker is durable attempt identity for a PostgreSQL writer. It is
+	// written as DuckLake commit_extra_info inside every commit transaction and
+	// used for exact lost-ACK reconciliation. File-backed callers retain the
+	// legacy serving-state commit metadata when this is nil.
+	CommitMarker *CommitMarker
 	// PhysicalPoolID marks this catalog as a member of a shared LeapView
 	// physical pool. Shared-pool catalogs may not invoke catalog-local cleanup.
 	PhysicalPoolID string
@@ -80,8 +90,21 @@ type Layout struct {
 }
 
 type Environment struct {
-	db                 *sql.DB
-	layout             Layout
+	db               *sql.DB
+	connector        driver.Connector
+	layout           Layout
+	catalogIdentity  string
+	catalogLock      string
+	postgresCatalog  bool
+	postgresMetadata string
+	postgresSnapshot int64
+	commitMarker     *CommitMarker
+	// commitMarkerUsed is an atomic one-shot gate for marker-mode writers. A
+	// marker identifies exactly one build attempt and therefore may qualify
+	// at most one DuckLake transaction/snapshot from this environment. The
+	// gate is consumed before opening a connection or invoking materialization
+	// so callers cannot replay a marker after an indeterminate or failed call.
+	commitMarkerUsed   atomic.Bool
 	physicalPoolID     string
 	sharedPool         bool
 	compatibility      CompatibilityTuple
@@ -108,6 +131,19 @@ type Environment struct {
 	closeErr           error
 }
 
+// borrowedConnector deliberately exposes only driver.Connector. Some concrete
+// connectors (including DuckDB's) also implement io.Closer, and database/sql
+// closes such a connector when its DB handle closes. A short-lived DB used for
+// commit reconciliation must close its physical session without closing the
+// environment-owned connector and the shared in-memory DuckDB instance.
+type borrowedConnector struct{ inner driver.Connector }
+
+func (c borrowedConnector) Connect(ctx context.Context) (driver.Conn, error) {
+	return c.inner.Connect(ctx)
+}
+
+func (c borrowedConnector) Driver() driver.Driver { return c.inner.Driver() }
+
 type extensionLoad struct {
 	done chan struct{}
 	err  error
@@ -126,6 +162,15 @@ var (
 	ErrConflictingLease    = errors.New("a different DuckDB environment is already leased")
 	ErrEnvironmentClosed   = errors.New("ducklake environment is closed")
 	ErrReadOnlyEnvironment = errors.New("ducklake environment is read-only")
+	// ErrCommitMarkerAlreadyUsed indicates that a marker-mode environment has
+	// already attempted its single qualified DuckLake commit. Callers must
+	// create a fresh environment/marker rather than replaying materialization.
+	ErrCommitMarkerAlreadyUsed = errors.New("DuckLake commit marker already used")
+	// ErrCommitReconciliationRequired means the database reported an
+	// indeterminate transaction outcome and no positive exact-marker evidence
+	// was available. Marker-mode writers must stop rather than replaying
+	// materialization and risking a duplicate snapshot.
+	ErrCommitReconciliationRequired = errors.New("DuckLake commit reconciliation required")
 )
 
 type TransientCommitError struct{ Err error }
@@ -253,6 +298,54 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	if !nativeArrowEnabled {
 		return nil, fmt.Errorf("LeapView analytical runtime requires the duckdb_arrow build tag")
 	}
+	postgresConfig := config.PostgresCatalog
+	postgresMode := postgresConfig != nil
+	var commitMarker *CommitMarker
+	if config.CommitMarker != nil {
+		normalized, err := config.CommitMarker.Normalize()
+		if err != nil {
+			return nil, fmt.Errorf("DuckLake commit marker: %w", err)
+		}
+		commitMarker = &normalized
+	}
+	if postgresMode {
+		if strings.TrimSpace(config.CatalogPath) != "" {
+			return nil, fmt.Errorf("PostgreSQL DuckLake runtime must not provide a file catalog path")
+		}
+		copy := *postgresConfig
+		postgresConfig = &copy
+		if err := postgresConfig.Validate(); err != nil {
+			return nil, fmt.Errorf("PostgreSQL DuckLake catalog: %w", err)
+		}
+		if postgresConfig.PhysicalPoolID == "" || config.PoolContract == nil {
+			return nil, fmt.Errorf("PostgreSQL DuckLake runtime requires admitted physical-pool contract")
+		}
+		if postgresConfig.Mode == PostgresCatalogWriter && commitMarker == nil {
+			return nil, fmt.Errorf("PostgreSQL DuckLake writer requires an attempt commit marker")
+		}
+		if commitMarker != nil && commitMarker.PhysicalPoolID != postgresConfig.PhysicalPoolID {
+			return nil, fmt.Errorf("DuckLake commit marker physical pool does not match PostgreSQL catalog")
+		}
+		if config.ReadOnly && postgresConfig.Mode != PostgresCatalogServing {
+			return nil, fmt.Errorf("PostgreSQL DuckLake read-only environment requires serving mode")
+		}
+		if postgresConfig.Mode == PostgresCatalogServing {
+			config.ReadOnly = true
+		}
+		if config.PhysicalPoolID != "" && config.PhysicalPoolID != postgresConfig.PhysicalPoolID {
+			return nil, fmt.Errorf("PostgreSQL DuckLake physical pool ID does not match environment admission")
+		}
+		config.PhysicalPoolID = postgresConfig.PhysicalPoolID
+		if config.PoolContract != nil {
+			if err := config.PoolContract.Validate(); err != nil {
+				return nil, fmt.Errorf("shared physical-pool admission: %w", err)
+			}
+			if config.PoolContract.Pool.ID.String() != postgresConfig.PhysicalPoolID {
+				return nil, fmt.Errorf("PostgreSQL DuckLake physical pool ID does not match admitted pool")
+			}
+			config.Compatibility = config.PoolContract.Tuple
+		}
+	}
 	sharedRequested := config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "" || config.PoolContract != nil
 	if sharedRequested {
 		if config.PoolContract == nil {
@@ -272,31 +365,46 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		config.Compatibility = config.PoolContract.Tuple
 		config.SharedPool = true
 	}
-	layout, err := config.layout()
-	if err != nil {
-		return nil, err
-	}
-	if sharedRequested {
-		if err := config.PoolContract.ValidateDataPathBinding(layout.DataPath); err != nil {
-			return nil, fmt.Errorf("shared physical-pool DATA_PATH binding: %w", err)
+	var layout Layout
+	var err error
+	if postgresMode {
+		// A PostgreSQL metadata catalog has no serialized catalog file. Keep a
+		// private root only for DuckDB's process-local temporary state.
+		layout = Layout{RootDir: strings.TrimSpace(config.RootDir), DataPath: postgresConfig.DataPath}
+		if layout.RootDir == "" {
+			layout.RootDir = "."
 		}
-	}
-	if config.ReadOnly {
-		if err := validateReadOnlyLayout(layout); err != nil {
-			return nil, err
-		}
-	} else if err := prepareLayout(layout); err != nil {
-		return nil, err
-	}
-	migrated := false
-	if !config.ReadOnly {
-		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
+	} else {
+		layout, err = config.layout()
 		if err != nil {
 			return nil, err
 		}
 	}
-	if migrated {
-		slog.InfoContext(ctx, "migrated legacy SQLite-backed DuckLake catalog", "catalog_path", layout.CatalogPath)
+	if sharedRequested && (!postgresMode || strings.TrimSpace(layout.DataPath) != "") {
+		if err := config.PoolContract.ValidateDataPathBinding(layout.DataPath); err != nil {
+			return nil, fmt.Errorf("shared physical-pool DATA_PATH binding: %w", err)
+		}
+	}
+	if !postgresMode && config.ReadOnly {
+		if err := validateReadOnlyLayout(layout); err != nil {
+			return nil, err
+		}
+	} else if !postgresMode {
+		if err := prepareLayout(layout); err != nil {
+			return nil, err
+		}
+	}
+	if !postgresMode && !config.ReadOnly {
+		migrated, err := migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
+		if err != nil {
+			return nil, err
+		}
+		if migrated {
+			slog.InfoContext(ctx, "migrated legacy SQLite-backed DuckLake catalog", "catalog_path", layout.CatalogPath)
+		}
+	}
+	if postgresMode && postgresConfig.Mode == PostgresCatalogInitialize && strings.TrimSpace(postgresConfig.DataPath) == "" {
+		return nil, fmt.Errorf("PostgreSQL DuckLake initialization requires DATA_PATH")
 	}
 	if strings.TrimSpace(config.TempDir) != "" {
 		if err := securefs.EnsurePrivateDir(config.TempDir); err != nil {
@@ -310,11 +418,24 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	// Keep both process and attach defaults explicit. DuckLake persisted
 	// global/schema/table options take precedence, so they are inspected by
 	// DataInliningPolicy before a catalog is sealed.
-	attachOptions := fmt.Sprintf("DATA_PATH '%s', DATA_INLINING_ROW_LIMIT 0", sqlLiteral(layout.DataPath))
-	if config.ReadOnly {
-		attachOptions += ", READ_ONLY, CREATE_IF_NOT_EXISTS false"
+	var attach string
+	var postgresSecretSQL string
+	if postgresMode {
+		statements, statementsErr := postgresConfig.Statements()
+		if statementsErr != nil {
+			return nil, statementsErr
+		}
+		postgresSecretSQL, attach = statements[0], statements[1]
+	} else {
+		attachOptions := fmt.Sprintf("DATA_PATH '%s', DATA_INLINING_ROW_LIMIT 0", sqlLiteral(layout.DataPath))
+		if config.ReadOnly {
+			attachOptions += ", READ_ONLY, CREATE_IF_NOT_EXISTS false"
+		}
+		attach = fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
 	}
-	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
+	if err != nil {
+		return nil, err
+	}
 	var initializeOnce sync.Once
 	var initializeErr error
 	admissionCtx := ctx
@@ -365,6 +486,11 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 				return fmt.Errorf("bootstrap DuckLake connector credentials: %w", err)
 			}
 		}
+		if postgresMode {
+			if _, err := execer.ExecContext(context.Background(), postgresSecretSQL, nil); err != nil {
+				return fmt.Errorf("create temporary DuckLake PostgreSQL secret: %w", err)
+			}
+		}
 		if _, err := execer.ExecContext(context.Background(), attach, nil); err != nil {
 			return err
 		}
@@ -387,9 +513,21 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	db := sql.OpenDB(dbConnector)
 	db.SetMaxOpenConns(connections)
 	db.SetMaxIdleConns(connections)
+	catalogIdentity := layout.CatalogPath
+	catalogLock := layout.CatalogPath
+	postgresMetadata := ""
+	postgresSnapshot := int64(0)
+	if postgresMode {
+		postgresMetadata = postgresConfig.MetadataSchema
+		postgresSnapshot = postgresConfig.SnapshotVersion
+		catalogIdentity = "postgres://" + postgresMetadata
+		catalogLock = "postgres:" + postgresMetadata
+	}
 	env := &Environment{
-		db: db, layout: layout, readConcurrency: connections,
-		physicalPoolID: strings.TrimSpace(config.PhysicalPoolID), sharedPool: config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "", compatibility: config.Compatibility, readOnly: config.ReadOnly,
+		db: db, connector: dbConnector, layout: layout, catalogIdentity: catalogIdentity, catalogLock: catalogLock,
+		postgresCatalog: postgresMode, postgresMetadata: postgresMetadata, postgresSnapshot: postgresSnapshot, commitMarker: commitMarker,
+		readConcurrency: connections,
+		physicalPoolID:  strings.TrimSpace(config.PhysicalPoolID), sharedPool: config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "", compatibility: config.Compatibility, readOnly: config.ReadOnly,
 		extensions: map[string]*extensionLoad{"ducklake": {done: closedSignal()}}, extensionAdmission: config.ExtensionAdmission, fatal: make(chan struct{}),
 		sourceTotals: map[string]map[string]uint64{}, scopeContention: map[string]uint64{},
 	}
@@ -405,9 +543,11 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("lock DuckDB configuration: %w", err)
 	}
-	if err := secureDuckDBCatalogFiles(layout.CatalogPath); err != nil {
-		_ = db.Close()
-		return nil, err
+	if !postgresMode {
+		if err := secureDuckDBCatalogFiles(layout.CatalogPath); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 	return env, nil
 }
@@ -691,13 +831,24 @@ func (e *Environment) Commit(ctx context.Context, servingStateID string, extra m
 	if fn == nil {
 		return 0, fmt.Errorf("commit function is required")
 	}
-	unlock := lockCatalogWrites(e.layout.CatalogPath)
+	if e.commitMarker != nil && !e.commitMarkerUsed.CompareAndSwap(false, true) {
+		return 0, ErrCommitMarkerAlreadyUsed
+	}
+	unlock := lockCatalogWrites(e.catalogLockKey())
 	defer unlock()
 	conn, release, err := e.queryConnection(ctx)
 	if err != nil {
 		return 0, err
 	}
-	defer release()
+	released := false
+	releaseConn := func() {
+		if released {
+			return
+		}
+		released = true
+		release()
+	}
+	defer releaseConn()
 	attemptID, err := newCommitAttemptID()
 	if err != nil {
 		return 0, err
@@ -711,18 +862,49 @@ func (e *Environment) Commit(ctx context.Context, servingStateID string, extra m
 	for attempt := 0; attempt < 3; attempt++ {
 		tx, beginErr := conn.BeginTx(ctx, nil)
 		if beginErr == nil {
-			if messageErr := setCommitMessage(ctx, tx, servingStateID, metadata); messageErr != nil {
+			var messageErr error
+			if e.commitMarker != nil {
+				messageErr = SetCommitMarker(ctx, tx, *e.commitMarker)
+			} else {
+				messageErr = setCommitMessage(ctx, tx, servingStateID, metadata)
+			}
+			if messageErr != nil {
 				beginErr = messageErr
 			} else if materializeErr := fn(tx); materializeErr != nil {
 				beginErr = materializeErr
 			} else {
-				beginErr = tx.Commit()
+				commitErr := tx.Commit()
+				if commitErr != nil && e.commitMarker != nil {
+					// PostgreSQL-backed DuckLake can acknowledge a commit as
+					// indeterminate after the server durably wrote the snapshot.
+					// Release the transaction's physical session before opening a
+					// fresh one for exact-marker reconciliation. This is required for
+					// MaxConnections=1 and avoids trusting a broken ACK session.
+					releaseConn()
+					if resolved, reconcileErr := e.resolveCommittedMarkerFresh(ctx, *e.commitMarker); reconcileErr == nil {
+						return resolved, nil
+					} else {
+						return 0, errors.Join(ErrCommitReconciliationRequired, commitErr, reconcileErr)
+					}
+				}
+				beginErr = commitErr
 			}
 			if beginErr != nil {
 				_ = tx.Rollback()
 			}
 		}
 		if beginErr == nil {
+			if e.commitMarker != nil {
+				// A successful ACK still needs persistent marker evidence. Use a
+				// fresh session after returning the transaction connection so a
+				// stale connection-local pointer cannot qualify the build.
+				releaseConn()
+				resolved, reconcileErr := e.resolveCommittedMarkerFresh(ctx, *e.commitMarker)
+				if reconcileErr != nil {
+					return 0, errors.Join(ErrCommitReconciliationRequired, reconcileErr)
+				}
+				return resolved, nil
+			}
 			return committedSnapshotForAttempt(ctx, conn, attemptID)
 		}
 		beginErr = classifyCommitError(beginErr)
@@ -744,6 +926,34 @@ func (e *Environment) Commit(ctx context.Context, servingStateID string, extra m
 		}
 	}
 	return 0, fmt.Errorf("DuckLake commit retry exhausted")
+}
+
+// resolveCommittedMarkerFresh opens a new physical DuckDB session for marker
+// reconciliation. The transaction session may be poisoned by an indeterminate
+// Commit ACK; never reuse it for identity evidence.
+func (e *Environment) resolveCommittedMarkerFresh(ctx context.Context, marker CommitMarker) (int64, error) {
+	if e == nil || e.db == nil {
+		return 0, fmt.Errorf("ducklake environment is not initialized")
+	}
+	// Open a short-lived DB handle from the original connector instead of
+	// borrowing e.db's pool. This guarantees a new physical DuckDB session
+	// even when e.db is configured with MaxConnections=1, while the caller has
+	// already released the transaction connection.
+	lookupDB := e.db
+	closeLookupDB := func() {}
+	if e.connector != nil {
+		lookupDB = sql.OpenDB(borrowedConnector{inner: e.connector})
+		lookupDB.SetMaxOpenConns(1)
+		lookupDB.SetMaxIdleConns(0)
+		closeLookupDB = func() { _ = lookupDB.Close() }
+	}
+	defer closeLookupDB()
+	conn, err := lookupDB.Conn(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer conn.Close()
+	return ResolveCommittedSnapshot(ctx, conn, marker)
 }
 
 // CommitTransaction exposes analytical publication through the narrow
@@ -879,6 +1089,9 @@ func (e *Environment) ValidateSnapshot(ctx context.Context, snapshotID int64) er
 	if snapshotID <= 0 {
 		return fmt.Errorf("snapshot id must be positive")
 	}
+	if e.postgresSnapshot > 0 && snapshotID != e.postgresSnapshot {
+		return fmt.Errorf("DuckLake snapshot %d is not the attached SNAPSHOT_VERSION %d", snapshotID, e.postgresSnapshot)
+	}
 	var present int
 	err := e.db.QueryRowContext(ctx, "SELECT 1 FROM "+catalogAlias+".snapshots() WHERE snapshot_id = ?", snapshotID).Scan(&present)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -915,7 +1128,7 @@ func (e *Environment) ExpireSnapshots(ctx context.Context, versions []int64, dry
 	if len(versions) == 0 {
 		return nil
 	}
-	unlock := lockCatalogWrites(e.layout.CatalogPath)
+	unlock := lockCatalogWrites(e.catalogLockKey())
 	defer unlock()
 	_, err := e.db.ExecContext(ctx, fmt.Sprintf("CALL ducklake_expire_snapshots(%s, versions => %s, dry_run => %t)", sqlStringLiteral(catalogAlias), snapshotListLiteral(versions), dryRun))
 	return err
@@ -931,7 +1144,7 @@ func (e *Environment) CleanupOldFiles(ctx context.Context, dryRun bool) error {
 	if e == nil || e.db == nil {
 		return fmt.Errorf("ducklake environment is not initialized")
 	}
-	unlock := lockCatalogWrites(e.layout.CatalogPath)
+	unlock := lockCatalogWrites(e.catalogLockKey())
 	defer unlock()
 	_, err := e.db.ExecContext(ctx, fmt.Sprintf("CALL ducklake_cleanup_old_files(%s, dry_run => %t)", sqlStringLiteral(catalogAlias), dryRun))
 	return err
@@ -947,7 +1160,7 @@ func (e *Environment) DeleteOrphanedFiles(ctx context.Context, dryRun bool) erro
 	if e == nil || e.db == nil {
 		return fmt.Errorf("ducklake environment is not initialized")
 	}
-	unlock := lockCatalogWrites(e.layout.CatalogPath)
+	unlock := lockCatalogWrites(e.catalogLockKey())
 	defer unlock()
 	_, err := e.db.ExecContext(ctx, fmt.Sprintf("CALL ducklake_delete_orphaned_files(%s, dry_run => %t)", sqlStringLiteral(catalogAlias), dryRun))
 	return err
@@ -1021,6 +1234,43 @@ func (e *Environment) ReadConcurrency() int {
 func (e *Environment) Path() string {
 	if e == nil {
 		return ""
+	}
+	if e.catalogIdentity != "" {
+		return e.catalogIdentity
+	}
+	return e.layout.CatalogPath
+}
+
+// IsPostgresCatalog reports whether this environment attaches DuckLake
+// metadata from PostgreSQL rather than a serialized local catalog file.
+func (e *Environment) IsPostgresCatalog() bool {
+	return e != nil && e.postgresCatalog
+}
+
+// PostgresMetadataSchema is the exact per-pool metadata namespace used by the
+// attached PostgreSQL catalog. It is empty for file-backed environments.
+func (e *Environment) PostgresMetadataSchema() string {
+	if e == nil {
+		return ""
+	}
+	return e.postgresMetadata
+}
+
+// PostgresSnapshotVersion returns the exact serving snapshot pinned at
+// attachment time, or zero when the environment is not PostgreSQL-backed.
+func (e *Environment) PostgresSnapshotVersion() int64 {
+	if e == nil {
+		return 0
+	}
+	return e.postgresSnapshot
+}
+
+func (e *Environment) catalogLockKey() string {
+	if e == nil {
+		return ""
+	}
+	if e.catalogLock != "" {
+		return e.catalogLock
 	}
 	return e.layout.CatalogPath
 }

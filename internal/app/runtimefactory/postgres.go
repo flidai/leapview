@@ -1,0 +1,367 @@
+package runtimefactory
+
+// PostgreSQL-backed serving runtime. This seam is intentionally parallel to
+// the legacy sealed object-catalog adapter: it opens a target-owned DuckDB
+// session attached directly to DuckLake PostgreSQL metadata and never stages,
+// hashes, uploads, or downloads a catalog file.
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/google/uuid"
+
+	"github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	"github.com/flidai/leapview/internal/extension"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	"github.com/flidai/leapview/internal/runtimehost"
+)
+
+var (
+	ErrPostgresLeaseRenewal     = errors.New("PostgreSQL DuckLake snapshot lease renewal failed")
+	postgresLeaseReleaseTimeout = 5 * time.Second
+)
+
+// PostgresSealedFactoryConfig supplies only target-owned capabilities. The
+// resolver must return the exact catalog identity and snapshot selected by
+// durable delivery state; it is not allowed to infer identity from process
+// configuration.
+type PostgresSealedFactoryConfig struct {
+	Base                      FactoryConfig
+	Resolve                   SealedRootResolver
+	BuildRuntime              SealedDashboardRuntimeBuilder
+	PoolContract              *ducklake.PoolContract
+	SnapshotLeases            PostgresSnapshotLeaseRepository
+	Authorize                 func(context.Context, PostgresServingAuthorizationInput) error
+	CatalogDatabase           string
+	CatalogID                 string
+	LeaseHolder               string
+	RuntimeVersion            string
+	SecurityDomainFingerprint string
+	CredentialBootstrap       ducklake.CredentialBootstrap
+	ExtensionAdmission        extension.Admission
+	DuckLakeSecret            string
+	PostgresSecret            string
+}
+
+type postgresSealedFactory struct {
+	base                servingStateRuntimeFactory
+	resolve             SealedRootResolver
+	buildRuntime        SealedDashboardRuntimeBuilder
+	poolContract        *ducklake.PoolContract
+	snapshotLeases      PostgresSnapshotLeaseRepository
+	authorize           func(context.Context, PostgresServingAuthorizationInput) error
+	catalogDatabase     string
+	catalogID           string
+	leaseHolder         string
+	runtimeVersion      string
+	securityFingerprint string
+	credentialBootstrap ducklake.CredentialBootstrap
+	extensionAdmission  extension.Admission
+	duckLakeSecret      string
+	postgresSecret      string
+}
+
+// PostgresSnapshotLeaseRepository is the target DuckLake retention seam. It
+// protects a live snapshot independently of deployment artifact/object roots.
+type PostgresSnapshotLeaseRepository interface {
+	AcquireSnapshotLease(context.Context, ducklakepostgres.AcquireLeaseInput) (ducklakepostgres.SnapshotLease, error)
+	RenewSnapshotLease(context.Context, ducklakepostgres.LeaseFence, time.Time) error
+	ReleaseSnapshotLease(context.Context, ducklakepostgres.LeaseFence) error
+}
+
+// PostgresServingAuthorizationInput carries the exact immutable root and
+// lease identity to the target authorization boundary. It contains no secret
+// names or credentials.
+type PostgresServingAuthorizationInput struct {
+	Root    SealedServingRoot
+	LeaseID string
+	OwnerID string
+	Fence   int64
+}
+
+// NewPostgresSealedFactory builds a serving runtime whose DuckLake catalog is
+// PostgreSQL-backed. Legacy NewSQLiteSealedFactory remains unchanged and is
+// selected explicitly by composition.
+func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
+	return postgresSealedFactory{
+		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence},
+		resolve: config.Resolve, buildRuntime: config.BuildRuntime, poolContract: config.PoolContract,
+		credentialBootstrap: config.CredentialBootstrap, extensionAdmission: config.ExtensionAdmission,
+		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
+		snapshotLeases: config.SnapshotLeases, authorize: config.Authorize,
+		catalogDatabase: config.CatalogDatabase, catalogID: config.CatalogID, leaseHolder: config.LeaseHolder,
+		runtimeVersion: config.RuntimeVersion, securityFingerprint: config.SecurityDomainFingerprint,
+	}
+}
+
+func (f postgresSealedFactory) Prepare(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
+	return nil, fmt.Errorf("PostgreSQL sealed serving factory cannot use legacy Prepare")
+}
+
+// PinnedSnapshotSealed marks this target as implementing exact
+// SNAPSHOT_VERSION-qualified serving. It is intentionally a zero-value
+// capability marker, so callers cannot accidentally opt out through a bool.
+func (f postgresSealedFactory) PinnedSnapshotSealed() {}
+
+func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
+	if f.resolve == nil || f.buildRuntime == nil || f.poolContract == nil || f.snapshotLeases == nil || f.authorize == nil || f.credentialBootstrap == nil || f.extensionAdmission == nil {
+		return nil, fmt.Errorf("PostgreSQL sealed serving resolver, pool admission, snapshot leases, authorization, credentials, extension admission, and dashboard builder are required")
+	}
+	if strings.TrimSpace(f.catalogDatabase) == "" || strings.TrimSpace(f.catalogID) == "" || strings.TrimSpace(f.runtimeVersion) == "" || strings.TrimSpace(f.securityFingerprint) == "" {
+		return nil, fmt.Errorf("PostgreSQL sealed serving catalog database, catalog ID, runtime version, and security fingerprint are required")
+	}
+	if err := f.poolContract.Validate(); err != nil {
+		return nil, fmt.Errorf("physical-pool admission: %w", err)
+	}
+	root, err := f.resolve(ctx, input)
+	if err != nil {
+		return nil, err
+	}
+	if root.ServingStateID != string(input.State.ID) || root.ServingArtifactID != input.Artifact.ID || root.ServingArtifactDigest != input.Artifact.Digest {
+		return nil, fmt.Errorf("%w: persisted root is not bound to requested serving artifact", ErrSealedRootMismatch)
+	}
+	if root.PhysicalPoolID == "" || root.PhysicalPoolID != f.poolContract.Pool.ID.String() {
+		return nil, fmt.Errorf("%w: PostgreSQL root physical-pool identity is incomplete", ErrSealedRootUnavailable)
+	}
+	if root.PoolContract == nil || root.PoolContract.Pool.ID.String() != root.PhysicalPoolID || root.Compatibility != f.poolContract.Tuple {
+		return nil, fmt.Errorf("%w: PostgreSQL root compatibility admission is not canonical", ErrSealedRootMismatch)
+	}
+	if root.CatalogDatabase == "" || root.CatalogDatabase != f.catalogDatabase || root.CatalogID == "" || root.CatalogID != f.catalogID || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
+		return nil, fmt.Errorf("%w: PostgreSQL catalog and generation identity is incomplete", ErrSealedRootUnavailable)
+	}
+	if _, err := uuid.Parse(root.CatalogUUID); err != nil {
+		return nil, fmt.Errorf("%w: PostgreSQL catalog UUID is invalid", ErrSealedRootMismatch)
+	}
+	catalogVersion, err := strconv.ParseInt(root.CatalogVersion, 10, 64)
+	if err != nil || catalogVersion != root.CatalogVersionNumber {
+		return nil, fmt.Errorf("%w: PostgreSQL catalog version evidence is inconsistent", ErrSealedRootMismatch)
+	}
+	if err := f.poolContract.ValidateDataPathBinding(root.DataPath); err != nil {
+		return nil, fmt.Errorf("%w: PostgreSQL DATA_PATH evidence differs: %v", ErrSealedRootMismatch, err)
+	}
+	if root.SealID == "" || root.QualificationDigest == "" || root.ClosureDigest == "" || root.CompatibilityDigest == "" || root.RuntimeVersion == "" || root.SecurityDomainFingerprint == "" || root.CatalogVersion == "" || root.CatalogVersionNumber <= 0 || root.DuckDBVersion == "" || root.DuckLakeExtensionVersion == "" || root.DuckLakeSpecVersion == "" || root.CatalogSchemaVersion == "" || root.RelationNamespace == "" || root.RelationManifestDigest == "" || root.ObjectRoot == "" || root.ObjectRootDigest == "" || root.ArtifactRoot == "" || root.ArtifactRootDigest == "" || root.CompiledGraphDigest == "" || root.CompiledConfigDigest == "" || root.RequestDigest == "" || root.PlanDigest == "" || root.TenantDomain == "" || root.Region == "" || root.EncryptionDomain == "" || root.ObjectNamespace == "" {
+		return nil, fmt.Errorf("%w: PostgreSQL qualification evidence is incomplete", ErrSealedRootUnavailable)
+	}
+	for name, value := range map[string]string{"qualification digest": root.QualificationDigest, "closure digest": root.ClosureDigest, "compatibility digest": root.CompatibilityDigest, "security fingerprint": root.SecurityDomainFingerprint, "serving artifact digest": root.ServingArtifactDigest, "relation manifest digest": root.RelationManifestDigest, "object root digest": root.ObjectRootDigest, "artifact root digest": root.ArtifactRootDigest, "compiled graph digest": root.CompiledGraphDigest, "compiled config digest": root.CompiledConfigDigest, "request digest": root.RequestDigest, "plan digest": root.PlanDigest} {
+		if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+			return nil, fmt.Errorf("%w: %s is invalid: %v", ErrSealedRootUnavailable, name, err)
+		}
+	}
+	for name, value := range map[string]string{"delivery ID": root.DeliveryID, "generation ID": root.GenerationID, "candidate ID": root.CandidateID, "attempt ID": root.AttemptID, "seal ID": root.SealID, "relation namespace": root.RelationNamespace, "object root": root.ObjectRoot, "artifact root": root.ArtifactRoot, "tenant domain": root.TenantDomain, "region": root.Region, "encryption domain": root.EncryptionDomain, "object namespace": root.ObjectNamespace, "catalog database": root.CatalogDatabase, "catalog ID": root.CatalogID, "catalog UUID": root.CatalogUUID, "catalog version": root.CatalogVersion, "DuckDB version": root.DuckDBVersion, "DuckLake extension version": root.DuckLakeExtensionVersion, "DuckLake spec version": root.DuckLakeSpecVersion, "catalog schema version": root.CatalogSchemaVersion, "runtime version": root.RuntimeVersion} {
+		if strings.TrimSpace(value) != value || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\x00\r\n") || len(value) > 512 {
+			return nil, fmt.Errorf("%w: PostgreSQL %s identity is not normalized", ErrSealedRootMismatch, name)
+		}
+	}
+	compatibilityDigest, err := f.poolContract.Tuple.Digest()
+	if err != nil {
+		return nil, err
+	}
+	if root.CompatibilityDigest != compatibilityDigest || root.RuntimeVersion != f.runtimeVersion || root.SecurityDomainFingerprint != f.securityFingerprint {
+		return nil, fmt.Errorf("%w: PostgreSQL runtime compatibility evidence differs", ErrSealedRootMismatch)
+	}
+	metadataSchema := strings.TrimSpace(root.CatalogMetadataSchema)
+	if metadataSchema == "" || metadataSchema != ducklake.MetadataSchemaForPool(root.PhysicalPoolID) {
+		return nil, fmt.Errorf("%w: PostgreSQL metadata schema is not bound to physical pool", ErrSealedRootMismatch)
+	}
+	// Secret names are capability-owned deployment configuration. Durable
+	// roots carry no secret references; only this process-owned factory config
+	// may select the temporary names used during connector bootstrap.
+	duckLakeSecret := strings.TrimSpace(f.duckLakeSecret)
+	postgresSecret := strings.TrimSpace(f.postgresSecret)
+	if duckLakeSecret == "" || postgresSecret == "" {
+		return nil, fmt.Errorf("%w: PostgreSQL DuckLake secret identities are required", ErrSealedRootUnavailable)
+	}
+	snapshotID := root.CatalogSnapshotID
+	if snapshotID <= 0 || input.State.DuckLakeSnapshotID <= 0 {
+		return nil, fmt.Errorf("%w: exact PostgreSQL DuckLake snapshot is required", ErrSealedRootUnavailable)
+	}
+	if snapshotID != input.State.DuckLakeSnapshotID {
+		return nil, fmt.Errorf("%w: PostgreSQL snapshot does not match serving state", ErrSealedRootMismatch)
+	}
+	leaseID := uuid.NewString()
+	ownerID := firstNonEmpty(f.leaseHolder, "runtimehost")
+	now := time.Now().UTC()
+	lease, err := f.snapshotLeases.AcquireSnapshotLease(ctx, ducklakepostgres.AcquireLeaseInput{
+		LeaseID: leaseID, DeliveryID: root.DeliveryID, GenerationID: root.GenerationID,
+		PhysicalPoolID: root.PhysicalPoolID, CatalogID: root.CatalogID, SnapshotID: snapshotID,
+		OwnerID: ownerID, FencingEpoch: root.FencingEpoch, ExpiresAt: now.Add(30 * time.Minute), AcquiredAt: now,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("acquire PostgreSQL DuckLake snapshot lease: %w", err)
+	}
+	leaseHandle := newPostgresLeaseHandle(f.snapshotLeases, lease, input.OnLeaseRenewalFailure)
+	if err := f.authorize(ctx, PostgresServingAuthorizationInput{Root: root, LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, Fence: lease.FencingEpoch}); err != nil {
+		_ = leaseHandle.Close()
+		return nil, err
+	}
+	catalog := ducklake.PostgresCatalogConfig{
+		PhysicalPoolID: root.PhysicalPoolID, DuckLakeSecret: duckLakeSecret, PostgresSecret: postgresSecret,
+		MetadataSchema: metadataSchema, Mode: ducklake.PostgresCatalogServing, SnapshotVersion: snapshotID,
+	}
+	env, err := ducklake.Open(ctx, ducklake.Config{
+		RootDir: input.RuntimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: f.poolContract,
+		Compatibility: f.poolContract.Tuple, PostgresCatalog: &catalog,
+		CredentialBootstrap: f.credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
+	})
+	if err != nil {
+		_ = leaseHandle.Close()
+		return nil, err
+	}
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env)
+	if err != nil {
+		_ = env.Close()
+		_ = leaseHandle.Close()
+		return nil, err
+	}
+	return &postgresPreparedRuntime{dashboardRuntimeWithGraph: runtime, environment: env, lease: leaseHandle}, nil
+}
+
+type postgresPreparedRuntime struct {
+	*dashboardRuntimeWithGraph
+	environment *ducklake.Environment
+	lease       *postgresLeaseHandle
+}
+
+func (r *postgresPreparedRuntime) Close() error {
+	if r == nil {
+		return nil
+	}
+	var runtimeErr, environmentErr, leaseErr error
+	if r.dashboardRuntimeWithGraph != nil {
+		runtimeErr = r.dashboardRuntimeWithGraph.Close()
+	}
+	if r.environment != nil {
+		environmentErr = r.environment.Close()
+	}
+	if r.lease != nil {
+		leaseErr = r.lease.Close()
+	}
+	return errors.Join(runtimeErr, environmentErr, leaseErr)
+}
+
+func (r *postgresPreparedRuntime) LeaseRenewalError() error {
+	if r == nil || r.lease == nil {
+		return nil
+	}
+	return r.lease.Err()
+}
+
+type postgresLeaseHandle struct {
+	repo        PostgresSnapshotLeaseRepository
+	fence       ducklakepostgres.LeaseFence
+	cancel      context.CancelFunc
+	done        chan struct{}
+	mu          sync.RWMutex
+	err         error
+	leaseExpiry time.Time
+	onFail      func(error)
+	close       sync.Once
+	releaseOnce sync.Once
+	releaseErr  error
+}
+
+func newPostgresLeaseHandle(repo PostgresSnapshotLeaseRepository, lease ducklakepostgres.SnapshotLease, onFail func(error)) *postgresLeaseHandle {
+	ctx, cancel := context.WithCancel(context.Background())
+	h := &postgresLeaseHandle{repo: repo, fence: ducklakepostgres.LeaseFence{LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}, cancel: cancel, done: make(chan struct{}), leaseExpiry: lease.ExpiresAt, onFail: onFail}
+	interval := time.Until(lease.ExpiresAt) / 3
+	if interval <= 0 || interval > 10*time.Minute {
+		interval = 10 * time.Minute
+	}
+	go h.heartbeat(ctx, interval)
+	return h
+}
+
+func (h *postgresLeaseHandle) heartbeat(ctx context.Context, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Millisecond
+	}
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+	defer close(h.done)
+	deadline := h.leaseExpiry
+	if deadline.IsZero() {
+		deadline = time.Now().UTC().Add(interval * 3)
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+			renewCtx, cancel := context.WithDeadline(ctx, deadline)
+			expires := time.Now().UTC().Add(30 * time.Minute)
+			err := h.repo.RenewSnapshotLease(renewCtx, h.fence, expires)
+			cancel()
+			if err == nil && !time.Now().UTC().Before(deadline) {
+				err = context.DeadlineExceeded
+			}
+			if err != nil {
+				// Retry transient provider failures while the last confirmed
+				// durable expiry remains in the future. The renewal call itself
+				// is bounded by that expiry, so a hung PostgreSQL request cannot
+				// outlive the lease or hide a lost root.
+				if time.Now().UTC().Before(deadline) {
+					retry := interval / 4
+					if retry <= 0 {
+						retry = time.Millisecond
+					}
+					if remaining := time.Until(deadline); remaining > 0 && retry > remaining {
+						retry = remaining
+					}
+					timer.Reset(retry)
+					continue
+				}
+				healthErr := fmt.Errorf("%w: %w", ErrPostgresLeaseRenewal, err)
+				h.mu.Lock()
+				h.err = healthErr
+				h.mu.Unlock()
+				if h.onFail != nil {
+					h.onFail(healthErr)
+				}
+				return
+			}
+			// Only a confirmed renewal advances the deadline. A successful
+			// callback is the sole evidence that the new durable expiry exists.
+			deadline = expires
+			h.mu.Lock()
+			h.leaseExpiry = deadline
+			h.err = nil
+			h.mu.Unlock()
+			if h.onFail != nil {
+				h.onFail(nil)
+			}
+			timer.Reset(interval)
+		}
+	}
+}
+
+func (h *postgresLeaseHandle) Err() error {
+	if h == nil {
+		return nil
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.err
+}
+
+func (h *postgresLeaseHandle) Close() error {
+	if h == nil {
+		return nil
+	}
+	h.close.Do(func() {
+		h.cancel()
+		<-h.done
+		h.releaseOnce.Do(func() {
+			releaseCtx, cancel := context.WithTimeout(context.Background(), postgresLeaseReleaseTimeout)
+			defer cancel()
+			h.releaseErr = h.repo.ReleaseSnapshotLease(releaseCtx, h.fence)
+		})
+	})
+	return h.releaseErr
+}

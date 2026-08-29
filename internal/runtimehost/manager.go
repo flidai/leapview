@@ -101,6 +101,18 @@ type SealedRuntimeFactory interface {
 	PrepareSealed(context.Context, RuntimeInput) (PreparedRuntime, error)
 }
 
+// PinnedSnapshotSealedFactory explicitly opts into a target whose sealed root
+// is qualified by an exact DuckLake SNAPSHOT_VERSION. Legacy object/file
+// factories intentionally do not implement this capability and continue to
+// reject state rows that still carry a mutable snapshot pointer.
+type PinnedSnapshotSealedFactory interface {
+	SealedRuntimeFactory
+	// PinnedSnapshotSealed is a marker method: a target either implements the
+	// exact SNAPSHOT_VERSION serving contract or it does not. There is no
+	// runtime boolean that callers could accidentally leave false.
+	PinnedSnapshotSealed()
+}
+
 type ManagedDataResolution struct {
 	RevisionID string
 	Roots      map[string]string
@@ -566,7 +578,12 @@ func (m *Manager) PrepareServingState(ctx context.Context, id string) (*Prepared
 
 func (m *Manager) validateGeneration(state servingstate.State, artifact servingstate.Artifact) error {
 	if m.requireSealedCatalog && state.DuckLakeSnapshotID > 0 {
-		return fmt.Errorf("sealed serving migration is incomplete: generation %s still pins DuckLake snapshot %d; rebuild and publish a verified catalog seal before startup", state.ID, state.DuckLakeSnapshotID)
+		if _, ok := m.factory.(PinnedSnapshotSealedFactory); ok {
+			// PostgreSQL-backed sealed roots pin SNAPSHOT_VERSION in the
+			// attachment and verify the same value against durable qualification.
+		} else {
+			return fmt.Errorf("sealed serving migration is incomplete: generation %s still pins DuckLake snapshot %d; rebuild and publish a verified catalog seal before startup", state.ID, state.DuckLakeSnapshotID)
+		}
 	}
 	boundProjectID := m.ProjectID()
 	if boundProjectID != "" && state.ProjectID != boundProjectID {

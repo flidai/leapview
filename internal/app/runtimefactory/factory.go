@@ -232,6 +232,13 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		SkipInitialRefresh: true,
 		Definition:         projectDefinition, DependencyEvidence: dependencyEvidence,
 	}
+	// PostgreSQL-backed serving environments pin an exact snapshot at ATTACH;
+	// propagate that identity into the dashboard runtime so it cannot fall back
+	// to the catalog's moving head. Legacy sealed file readers retain their
+	// existing state-driven behavior.
+	if environment.IsPostgresCatalog() {
+		runtimeInput.SnapshotID = environment.PostgresSnapshotVersion()
+	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID
 		runtimeInput.AuthorizationFingerprint = input.Candidate.AuthorizationFingerprint

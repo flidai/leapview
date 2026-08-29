@@ -199,7 +199,11 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 	case PostgresCatalogServing:
 		options = append(options, "READ_ONLY", "CREATE_IF_NOT_EXISTS false", fmt.Sprintf("SNAPSHOT_VERSION %d", c.SnapshotVersion))
 	}
-	return fmt.Sprintf("ATTACH 'ducklake:%s' AS %s (%s)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), strings.Join(options, ", ")), nil
+	// A pooled :memory: DuckDB database may invoke the connector initializer
+	// once per physical client while sharing the process-local attached
+	// catalog. IF NOT EXISTS makes these idempotent warm-up attaches without
+	// weakening CREATE_IF_NOT_EXISTS=false for the metadata catalog itself.
+	return fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), strings.Join(options, ", ")), nil
 }
 
 // MigrationStatements is the only SQL constructor that enables DuckLake's

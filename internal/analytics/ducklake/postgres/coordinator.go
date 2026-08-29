@@ -790,6 +790,8 @@ func classifyUpgradeFailure(err error) string {
 		return "qualification_missing"
 	case errors.Is(err, ErrQualificationRejected):
 		return "qualification_rejected"
+	case errors.Is(err, ErrCompatibilityMismatch):
+		return "compatibility_mismatch"
 	case errors.Is(err, ErrWrongDatabaseCredential):
 		return "credential_mismatch"
 	case errors.Is(err, ErrCatalogExecutor):
