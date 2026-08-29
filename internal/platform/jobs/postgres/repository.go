@@ -6,19 +6,20 @@
 package postgres
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"time"
 	"unicode"
 
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -31,6 +32,11 @@ type DBTX interface {
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
+
+// Tx is the native transaction surface accepted by caller-owned workflow
+// methods.  It is an alias rather than a second persistence abstraction, so a
+// pgx transaction can carry the domain mutation, event and enqueue together.
+type Tx = DBTX
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -49,11 +55,26 @@ const MaxAttempts int64 = 3
 // job indefinitely in the queue.
 const MaxRetryDelay = 24 * time.Hour
 
+// MaxLeaseDuration keeps abandoned claims observable and prevents a malformed
+// worker from reserving work for an effectively unbounded interval.
+const MaxLeaseDuration = 24 * time.Hour
+
 func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
 
 // New is a concise constructor alias for callers that keep one repository per
 // capability package.
 func New(db DBTX) *Repository { return NewRepository(db) }
+
+// ApplySchema applies the capability-owned DDL on a caller-owned transaction.
+// It is useful for clean conformance databases and deliberately performs no
+// implicit commit.
+func ApplySchema(ctx context.Context, tx Tx) error {
+	if tx == nil {
+		return fmt.Errorf("schema transaction is required")
+	}
+	_, err := tx.Exec(ctx, schemaSQL)
+	return err
+}
 
 const jobColumns = `id, kind, workload_class, principal_id, group_ids,
  resource_kind, resource_id, estimated_memory_bytes, payload, status,
@@ -66,12 +87,52 @@ const jobColumnsQualified = `j.id, j.kind, j.workload_class, j.principal_id, j.g
  j.created_at, j.started_at, j.finished_at, j.error`
 
 func (r *Repository) Enqueue(ctx context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
+	if r == nil || r.db == nil {
+		return jobs.Job{}, fmt.Errorf("postgres jobs database is required")
+	}
+	if b, ok := r.db.(beginner); ok {
+		if _, alreadyTx := r.db.(pgx.Tx); !alreadyTx {
+			tx, err := b.Begin(ctx)
+			if err != nil {
+				return jobs.Job{}, err
+			}
+			job, err := r.enqueueTx(ctx, tx, input)
+			if err != nil {
+				_ = tx.Rollback(ctx)
+				return jobs.Job{}, err
+			}
+			if err := tx.Commit(ctx); err != nil {
+				return jobs.Job{}, err
+			}
+			return job, nil
+		}
+	}
+	return r.enqueueTx(ctx, r.db, input)
+}
+
+// EnqueueTx writes one job to a caller-owned transaction.  The transaction is
+// deliberately not committed or rolled back by this method, allowing a
+// producer to commit its state mutation and durable work atomically.
+func (r *Repository) EnqueueTx(ctx context.Context, tx Tx, input jobs.EnqueueInput) (jobs.Job, error) {
+	if tx == nil {
+		return jobs.Job{}, fmt.Errorf("enqueue transaction is required")
+	}
+	return r.enqueueTx(ctx, tx, input)
+}
+
+func (r *Repository) enqueueTx(ctx context.Context, db DBTX, input jobs.EnqueueInput) (jobs.Job, error) {
 	groups, actorErr := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
 	if !validInput(input, actorErr) {
 		return jobs.Job{}, fmt.Errorf("invalid async job")
 	}
+	canonicalPayload, err := canonicalJSON(input.Payload, 1<<20)
+	if err != nil {
+		return jobs.Job{}, fmt.Errorf("invalid async job payload: %w", err)
+	}
+	input.Payload = canonicalPayload
+	input.GroupIDs = groups
 	digest := jobDigest(input, groups)
-	_, err := r.db.Exec(ctx, `
+	_, err = db.Exec(ctx, `
 INSERT INTO jobs.job (id, kind, workload_class, principal_id, group_ids,
  resource_kind, resource_id, estimated_memory_bytes, payload, request_digest)
 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
@@ -81,7 +142,7 @@ ON CONFLICT (id) DO NOTHING`, input.ID, input.Kind, input.WorkloadClass, input.P
 		return jobs.Job{}, err
 	}
 	var storedDigest string
-	err = r.db.QueryRow(ctx, `SELECT request_digest FROM jobs.job WHERE id = $1`, input.ID).Scan(&storedDigest)
+	err = db.QueryRow(ctx, `SELECT request_digest FROM jobs.job WHERE id = $1`, input.ID).Scan(&storedDigest)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return jobs.Job{}, jobs.ErrNotFound
 	}
@@ -91,7 +152,7 @@ ON CONFLICT (id) DO NOTHING`, input.ID, input.Kind, input.WorkloadClass, input.P
 	if storedDigest != digest {
 		return jobs.Job{}, jobs.ErrConflict
 	}
-	return r.Get(ctx, input.ID)
+	return scanJob(db.QueryRow(ctx, `SELECT `+jobColumns+` FROM jobs.job WHERE id = $1`, input.ID))
 }
 
 func validInput(input jobs.EnqueueInput, actorErr error) bool {
@@ -103,6 +164,8 @@ func validInput(input jobs.EnqueueInput, actorErr error) bool {
 
 func jobDigest(input jobs.EnqueueInput, groups []string) string {
 	groupJSON, _ := json.Marshal(groups)
+	// The field separators and decimal memory representation make the request
+	// identity unambiguous; payload bytes have already been canonicalized.
 	sum := sha256.Sum256([]byte(input.Kind + "\x00" + input.WorkloadClass + "\x00" + input.PrincipalID + "\x00" + string(groupJSON) + "\x00" + input.ResourceKind + "\x00" + input.ResourceID + "\x00" + fmt.Sprint(input.EstimatedMemoryBytes) + "\x00" + string(input.Payload)))
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
@@ -154,36 +217,51 @@ ORDER BY j.created_at, j.id LIMIT $2`, workloadClass, limit)
 // LOCKED makes concurrent workers fail closed instead of waiting behind a
 // lease owner that is still processing another claim.
 func (r *Repository) ClaimByID(ctx context.Context, id, workloadClass, owner string, lease time.Duration) (jobs.Job, bool, error) {
-	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease <= 0 {
+	if !canonicalLiteral(id, 256) || !validClass(workloadClass) || !canonicalLiteral(owner, 256) || lease < time.Microsecond || lease > MaxLeaseDuration {
 		return jobs.Job{}, false, fmt.Errorf("job id, workload class, worker owner, and positive lease are required")
 	}
 	row := r.db.QueryRow(ctx, `
 WITH candidate AS (
-    SELECT id, status, attempt_count, lease_generation FROM jobs.job
-    WHERE id = $1 AND workload_class = $2 AND available_at <= clock_timestamp()
-      AND (status = 'queued' OR (status = 'running' AND lease_expires_at <= clock_timestamp()))
-    ORDER BY created_at, id
+    -- The row lock and SKIP LOCKED are part of the same statement as the
+    -- state transition. A competing worker therefore observes either the
+    -- committed successor or no candidate, never a duplicate owner.
+    SELECT j.id, j.status, j.attempt_count, j.lease_generation
+    FROM jobs.job j
+    WHERE j.id = $1 AND j.workload_class = $2 AND j.available_at <= clock_timestamp()
+      AND (j.status = 'queued' OR (j.status = 'running' AND j.lease_expires_at <= clock_timestamp()))
+    ORDER BY j.created_at, j.id
+    LIMIT 1
     FOR UPDATE SKIP LOCKED
 ), expired_attempt AS (
-    UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = 'expired'
-    FROM candidate c WHERE c.status = 'running' AND a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.outcome = 'running'
-), exhausted AS (
-    UPDATE jobs.job j SET status = 'failed', finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL,
-        error = '{"code":"MAX_ATTEMPTS_EXCEEDED"}'::jsonb
-    FROM candidate c WHERE j.id = c.id AND j.attempt_count >= j.max_attempts
-    RETURNING j.id
-), claimed AS (
+    UPDATE jobs.attempt a
+    SET finished_at = clock_timestamp(), outcome = 'expired'
+    FROM candidate c
+    WHERE c.status = 'running'
+      AND a.job_id = c.id
+      AND a.attempt_number = c.attempt_count
+      AND a.fencing_generation = c.lease_generation
+      AND a.outcome = 'running'
+      AND a.owner = (SELECT j.lease_owner FROM jobs.job j WHERE j.id = c.id)
+    RETURNING a.job_id
+), transitioned AS (
     UPDATE jobs.job j
-    SET status = 'running', started_at = COALESCE(j.started_at, clock_timestamp()),
-        lease_owner = $3,
-        lease_expires_at = clock_timestamp() + ($4::bigint * interval '1 microsecond'),
-        attempt_count = j.attempt_count + 1,
-        lease_generation = j.lease_generation + 1
-    FROM candidate c WHERE j.id = c.id AND j.attempt_count < j.max_attempts
+    SET status = CASE WHEN j.attempt_count >= j.max_attempts THEN 'failed' ELSE 'running' END,
+        started_at = CASE WHEN j.attempt_count >= j.max_attempts THEN j.started_at ELSE COALESCE(j.started_at, clock_timestamp()) END,
+        finished_at = CASE WHEN j.attempt_count >= j.max_attempts THEN clock_timestamp() ELSE j.finished_at END,
+        lease_owner = CASE WHEN j.attempt_count >= j.max_attempts THEN '' ELSE $3 END,
+        lease_expires_at = CASE WHEN j.attempt_count >= j.max_attempts THEN NULL ELSE clock_timestamp() + ($4::bigint * interval '1 microsecond') END,
+        attempt_count = CASE WHEN j.attempt_count >= j.max_attempts THEN j.attempt_count ELSE j.attempt_count + 1 END,
+        lease_generation = CASE WHEN j.attempt_count >= j.max_attempts THEN j.lease_generation ELSE j.lease_generation + 1 END,
+        error = CASE WHEN j.attempt_count >= j.max_attempts THEN '{"code":"MAX_ATTEMPTS_EXCEEDED"}'::jsonb ELSE j.error END
+    FROM candidate c
+    WHERE j.id = c.id
     RETURNING `+jobColumnsQualified+`
+), claimed AS (
+    SELECT * FROM transitioned WHERE status = 'running'
 ), recorded AS (
     INSERT INTO jobs.attempt (job_id, attempt_number, fencing_generation, owner, lease_expires_at)
     SELECT id, attempt_count, lease_generation, lease_owner, lease_expires_at FROM claimed
+    RETURNING job_id
 )
 SELECT `+jobColumns+` FROM claimed`, id, workloadClass, owner, lease.Microseconds())
 	job, err := scanJob(row)
@@ -194,20 +272,20 @@ SELECT `+jobColumns+` FROM claimed`, id, workloadClass, owner, lease.Microsecond
 }
 
 func (r *Repository) Renew(ctx context.Context, id string, fence jobs.Fence, lease time.Duration) error {
-	if !validFence(id, fence) || lease <= 0 {
+	if !validFence(id, fence) || lease < time.Microsecond || lease > MaxLeaseDuration {
 		return fmt.Errorf("invalid async job fence")
 	}
 	count, err := r.mutate(ctx, `
 WITH changed AS (
     UPDATE jobs.job j
-    SET lease_expires_at = clock_timestamp() + ($3::bigint * interval '1 microsecond')
+    SET lease_expires_at = GREATEST(j.lease_expires_at, clock_timestamp() + ($3::bigint * interval '1 microsecond'))
     WHERE j.id = $1 AND j.status = 'running' AND j.lease_owner = $2
       AND j.lease_generation = $4 AND j.lease_expires_at > clock_timestamp()
-      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation)
+      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation AND a.owner = j.lease_owner AND a.outcome = 'running')
     RETURNING j.id, j.attempt_count, j.lease_generation, j.lease_expires_at
 ), attempt_changed AS (
     UPDATE jobs.attempt a SET lease_expires_at = c.lease_expires_at
-    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation
+    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
 SELECT count(*) FROM attempt_changed`, id, fence.Owner, lease.Microseconds(), fence.Generation)
@@ -219,10 +297,11 @@ func (r *Repository) Complete(ctx context.Context, id string, fence jobs.Fence) 
 }
 
 func (r *Repository) Fail(ctx context.Context, id string, fence jobs.Fence, problem []byte) error {
-	if len(problem) > 65536 || !json.Valid(problem) {
+	canonical, err := canonicalJSON(problem, 65536)
+	if err != nil {
 		return fmt.Errorf("invalid async job failure JSON")
 	}
-	return r.terminal(ctx, id, fence, "failed", problem)
+	return r.terminal(ctx, id, fence, "failed", canonical)
 }
 
 func (r *Repository) terminal(ctx context.Context, id string, fence jobs.Fence, outcome string, problem []byte) error {
@@ -239,11 +318,11 @@ WITH changed AS (
     SET status = $3, finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL, error = $5::jsonb
     WHERE j.id = $1 AND j.status = 'running' AND j.lease_owner = $2
       AND j.lease_generation = $4 AND j.lease_expires_at > clock_timestamp()
-      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation)
+      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation AND a.owner = j.lease_owner AND a.outcome = 'running')
     RETURNING j.id, j.attempt_count, j.lease_generation
 ), attempt_changed AS (
     UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = $3, error = $5::jsonb
-    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation
+    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
 SELECT count(*) FROM attempt_changed`, id, fence.Owner, outcome, fence.Generation, errorJSON)
@@ -254,7 +333,8 @@ SELECT count(*) FROM attempt_changed`, id, fence.Owner, outcome, fence.Generatio
 // extension of the public repository contract used by retrying workers; the
 // existing Fail method remains terminal for callers that do not opt in.
 func (r *Repository) Retry(ctx context.Context, id string, fence jobs.Fence, delay time.Duration, problem []byte) error {
-	if !validFence(id, fence) || delay < 0 || delay > MaxRetryDelay || len(problem) > 65536 || !json.Valid(problem) {
+	canonical, err := canonicalJSON(problem, 65536)
+	if !validFence(id, fence) || delay < 0 || delay > MaxRetryDelay || err != nil {
 		return fmt.Errorf("invalid async job retry")
 	}
 	count, err := r.mutate(ctx, `
@@ -262,14 +342,14 @@ WITH changed AS (
     UPDATE jobs.job j
     SET status = 'queued', available_at = clock_timestamp() + ($4::bigint * interval '1 microsecond'), lease_owner = '', lease_expires_at = NULL, error = $5::jsonb
     WHERE j.id = $1 AND j.status = 'running' AND j.lease_owner = $2 AND j.lease_generation = $3 AND j.lease_expires_at > clock_timestamp() AND j.attempt_count < j.max_attempts
-      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation)
+      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation AND a.owner = j.lease_owner AND a.outcome = 'running')
     RETURNING j.id, j.attempt_count, j.lease_generation
 ), attempt_changed AS (
     UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = 'retrying', retry_at = clock_timestamp() + ($4::bigint * interval '1 microsecond'), error = $5::jsonb
-    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation
-    RETURNING a.job_id
-)
-	SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation, delay.Microseconds(), problem)
+	    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
+	    RETURNING a.job_id
+	)
+	SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation, delay.Microseconds(), canonical)
 	return requireChanged(count, err)
 }
 
@@ -289,11 +369,11 @@ func (r *Repository) CancelClaimed(ctx context.Context, id string, fence jobs.Fe
 WITH changed AS (
     UPDATE jobs.job j SET status = 'cancelled', finished_at = clock_timestamp(), lease_owner = '', lease_expires_at = NULL
     WHERE j.id = $1 AND j.status = 'running' AND j.lease_owner = $2 AND j.lease_generation = $3 AND j.lease_expires_at > clock_timestamp()
-      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation)
+      AND EXISTS (SELECT 1 FROM jobs.attempt a WHERE a.job_id = j.id AND a.attempt_number = j.attempt_count AND a.fencing_generation = j.lease_generation AND a.owner = j.lease_owner AND a.outcome = 'running')
     RETURNING j.id, j.attempt_count, j.lease_generation
 ), attempt_changed AS (
     UPDATE jobs.attempt a SET finished_at = clock_timestamp(), outcome = 'cancelled'
-    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation
+    FROM changed c WHERE a.job_id = c.id AND a.attempt_number = c.attempt_count AND a.fencing_generation = c.lease_generation AND a.owner = $2 AND a.outcome = 'running'
     RETURNING a.job_id
 )
 SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation)
@@ -302,6 +382,16 @@ SELECT count(*) FROM attempt_changed`, id, fence.Owner, fence.Generation)
 
 func (r *Repository) AppendEvent(ctx context.Context, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
 	return r.appendEvent(ctx, r.db, resourceKind, resourceID, eventType, data, "")
+}
+
+// AppendEventTx appends an event inside a caller-owned transaction.  This is
+// the event-only counterpart to RecordWorkflow for domain transitions that do
+// not schedule a follow-up job.
+func (r *Repository) AppendEventTx(ctx context.Context, tx Tx, resourceKind, resourceID, eventType string, data []byte) (jobs.Event, error) {
+	if tx == nil {
+		return jobs.Event{}, fmt.Errorf("event transaction is required")
+	}
+	return r.appendEvent(ctx, tx, resourceKind, resourceID, eventType, data, "")
 }
 
 func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID string, after int64, limit int) ([]jobs.Event, error) {
@@ -324,6 +414,60 @@ func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID st
 	return result, rows.Err()
 }
 
+// Prune removes at most limit terminal jobs whose database completion time is
+// at or before before.  Deletion is performed by the SECURITY DEFINER
+// capability function, so runtime callers never receive table DELETE access.
+func (r *Repository) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
+	if before.IsZero() || limit < 1 || limit > 1000 {
+		return 0, fmt.Errorf("job prune cutoff and limit are required")
+	}
+	var removed int64
+	if err := r.db.QueryRow(ctx, `SELECT jobs.prune($1, $2)`, before.UTC(), limit).Scan(&removed); err != nil {
+		return 0, err
+	}
+	return removed, nil
+}
+
+// Observe returns bounded queue-health rows without exposing payloads. The
+// view is intentionally queryable by readonly roles for stuck/expired,
+// retrying and dead-letter operational dashboards.
+type Observation struct {
+	ID, Kind, WorkloadClass, PrincipalID, Status, Health string
+	Attempts, MaxAttempts, RetryCount, ExpiredCount      int64
+	LeaseOwner, LeaseExpiresAt, AvailableAt, LastRetryAt string
+}
+
+func (r *Repository) Observe(ctx context.Context, workloadClass string, limit int) ([]Observation, error) {
+	if !validClass(workloadClass) || limit < 1 || limit > 200 {
+		return nil, fmt.Errorf("workload class and observation limit are required")
+	}
+	rows, err := r.db.Query(ctx, `
+SELECT id, kind, workload_class, principal_id, status, health, attempt_count,
+       max_attempts, lease_owner, lease_expires_at, available_at, retry_count,
+       expired_count, last_retry_at
+FROM jobs.job_observability
+WHERE workload_class = $1
+ORDER BY available_at, id
+LIMIT $2`, workloadClass, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	result := make([]Observation, 0, limit)
+	for rows.Next() {
+		var o Observation
+		var leaseExpires, available, lastRetry *time.Time
+		if err := rows.Scan(&o.ID, &o.Kind, &o.WorkloadClass, &o.PrincipalID, &o.Status, &o.Health, &o.Attempts, &o.MaxAttempts, &o.LeaseOwner, &leaseExpires, &available, &o.RetryCount, &o.ExpiredCount, &lastRetry); err != nil {
+			return nil, err
+		}
+		o.LeaseExpiresAt = formatOptionalTimestamp(leaseExpires)
+		o.AvailableAt = formatOptionalTimestamp(available)
+		o.LastRetryAt = formatOptionalTimestamp(lastRetry)
+		result = append(result, o)
+	}
+	return result, rows.Err()
+}
+
 // RecordWorkflow atomically appends the keyed event and optional follow-up
 // job using the caller's pgx transaction. The transaction remains owned by
 // the capability making the domain transition.
@@ -341,23 +485,8 @@ func (r *Repository) RecordWorkflow(ctx context.Context, tx DBTX, intent jobs.Wo
 	if intent.Job.ID == "" {
 		return nil
 	}
-	groups, actorErr := jobs.CanonicalActor(intent.Job.PrincipalID, intent.Job.GroupIDs)
-	if !validInput(intent.Job, actorErr) {
-		return fmt.Errorf("invalid async job")
-	}
-	digest := jobDigest(intent.Job, groups)
-	_, err := tx.Exec(ctx, `INSERT INTO jobs.job (id, kind, workload_class, principal_id, group_ids, resource_kind, resource_id, estimated_memory_bytes, payload, request_digest) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9::jsonb,$10) ON CONFLICT (id) DO NOTHING`, intent.Job.ID, intent.Job.Kind, intent.Job.WorkloadClass, intent.Job.PrincipalID, groups, intent.Job.ResourceKind, intent.Job.ResourceID, intent.Job.EstimatedMemoryBytes, intent.Job.Payload, digest)
-	if err != nil {
-		return err
-	}
-	var stored string
-	if err := tx.QueryRow(ctx, `SELECT request_digest FROM jobs.job WHERE id = $1`, intent.Job.ID).Scan(&stored); err != nil {
-		return err
-	}
-	if stored != digest {
-		return jobs.ErrConflict
-	}
-	return nil
+	_, err := r.enqueueTx(ctx, tx, intent.Job)
+	return err
 }
 
 // CommitWorkflow is the standalone transaction convenience for callers that
@@ -388,43 +517,50 @@ func (r *Repository) appendEvent(ctx context.Context, db DBTX, kind, id, eventTy
 	if !canonicalLiteral(kind, 128) || !canonicalLiteral(id, 256) || !canonicalLiteral(eventType, 128) || len(data) > 1<<20 || !json.Valid(data) || len(key) > 256 || (key != "" && !canonicalLiteral(key, 256)) {
 		return jobs.Event{}, fmt.Errorf("invalid async event")
 	}
-	// Workflow keys are serialized per resource in a transaction. This closes
-	// the race where two replays both allocate an event-sequence number before
-	// one loses the partial unique-key insert.
-	if key != "" {
-		// pgx.Tx itself exposes Begin for pseudo-nested savepoints. Do not
-		// recurse through those when the caller already owns a transaction.
-		if b, ok := db.(beginner); ok {
-			if _, alreadyTx := db.(pgx.Tx); !alreadyTx {
-				tx, beginErr := b.Begin(ctx)
-				if beginErr != nil {
-					return jobs.Event{}, beginErr
-				}
-				event, appendErr := r.appendEvent(ctx, tx, kind, id, eventType, data, key)
-				if appendErr != nil {
-					_ = tx.Rollback(ctx)
-					return jobs.Event{}, appendErr
-				}
-				if commitErr := tx.Commit(ctx); commitErr != nil {
-					return jobs.Event{}, commitErr
-				}
-				return event, nil
+	canonicalData, err := canonicalJSON(data, 1<<20)
+	if err != nil {
+		return jobs.Event{}, fmt.Errorf("invalid async event data: %w", err)
+	}
+	// A standalone append owns a short transaction so sequence allocation and
+	// event insertion cannot be split across implicit autocommit statements.
+	if b, ok := db.(beginner); ok {
+		if _, alreadyTx := db.(pgx.Tx); !alreadyTx {
+			tx, beginErr := b.Begin(ctx)
+			if beginErr != nil {
+				return jobs.Event{}, beginErr
 			}
-		}
-		if _, lockErr := db.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext($1), hashtext($2))`, kind, id); lockErr != nil {
-			return jobs.Event{}, lockErr
+			event, appendErr := r.appendEvent(ctx, tx, kind, id, eventType, canonicalData, key)
+			if appendErr != nil {
+				_ = tx.Rollback(ctx)
+				return jobs.Event{}, appendErr
+			}
+			if commitErr := tx.Commit(ctx); commitErr != nil {
+				return jobs.Event{}, commitErr
+			}
+			return event, nil
 		}
 	}
-	// Avoid consuming an event-sequence number on the common idempotent
-	// workflow replay path. A concurrent replay can still race the allocator;
-	// the conflict path below converges on the already persisted row.
+
+	// Lock the per-resource sequence row before checking a keyed replay. This
+	// serializes keyed and ordinary events alike without advisory locks and
+	// guarantees contiguous IDs even when two replays race.
+	if _, err := db.Exec(ctx, `
+INSERT INTO jobs.event_sequence (resource_kind, resource_id, next_event_id)
+VALUES ($1, $2, 1)
+ON CONFLICT (resource_kind, resource_id) DO NOTHING`, kind, id); err != nil {
+		return jobs.Event{}, err
+	}
+	var nextID int64
+	if err := db.QueryRow(ctx, `SELECT next_event_id FROM jobs.event_sequence WHERE resource_kind = $1 AND resource_id = $2 FOR UPDATE`, kind, id).Scan(&nextID); err != nil {
+		return jobs.Event{}, err
+	}
 	if key != "" {
 		var existing jobs.Event
 		var existingData []byte
 		var existingCreated time.Time
 		lookupErr := db.QueryRow(ctx, `SELECT event_id, resource_kind, resource_id, event_type, data, created_at FROM jobs.event WHERE resource_kind = $1 AND resource_id = $2 AND event_key = $3`, kind, id, key).Scan(&existing.ID, &existing.ResourceKind, &existing.ResourceID, &existing.EventType, &existingData, &existingCreated)
 		if lookupErr == nil {
-			if existing.EventType != eventType || !jsonEquivalent(existingData, data) {
+			if existing.EventType != eventType || !jsonEquivalent(existingData, canonicalData) {
 				return jobs.Event{}, jobs.ErrConflict
 			}
 			existing.Data = append([]byte(nil), existingData...)
@@ -436,25 +572,21 @@ func (r *Repository) appendEvent(ctx context.Context, db DBTX, kind, id, eventTy
 		}
 	}
 	query := `
-WITH allocated AS (
-    INSERT INTO jobs.event_sequence (resource_kind, resource_id, next_event_id) VALUES ($1, $2, 2)
-    ON CONFLICT (resource_kind, resource_id) DO UPDATE SET next_event_id = jobs.event_sequence.next_event_id + 1
-    RETURNING next_event_id - 1 AS event_id
-)
-INSERT INTO jobs.event (resource_kind, resource_id, event_id, event_type, event_key, data)
-SELECT $1, $2, event_id, $3, $4, $5::jsonb FROM allocated
-ON CONFLICT (resource_kind, resource_id, event_key) WHERE event_key <> '' DO NOTHING
-RETURNING event_id, resource_kind, resource_id, event_type, data, created_at`
+UPDATE jobs.event_sequence
+SET next_event_id = next_event_id + 1
+WHERE resource_kind = $1 AND resource_id = $2
+RETURNING next_event_id - 1`
 	var event jobs.Event
 	var payload []byte
 	var created time.Time
-	err := db.QueryRow(ctx, query, kind, id, eventType, key, data).Scan(&event.ID, &event.ResourceKind, &event.ResourceID, &event.EventType, &payload, &created)
-	if errors.Is(err, pgx.ErrNoRows) && key != "" {
-		err = db.QueryRow(ctx, `SELECT event_id, resource_kind, resource_id, event_type, data, created_at FROM jobs.event WHERE resource_kind = $1 AND resource_id = $2 AND event_key = $3`, kind, id, key).Scan(&event.ID, &event.ResourceKind, &event.ResourceID, &event.EventType, &payload, &created)
-		if err == nil && (event.EventType != eventType || !jsonEquivalent(payload, data)) {
-			return jobs.Event{}, jobs.ErrConflict
-		}
+	err = db.QueryRow(ctx, query, kind, id).Scan(&event.ID)
+	if err != nil {
+		return jobs.Event{}, err
 	}
+	err = db.QueryRow(ctx, `
+INSERT INTO jobs.event (resource_kind, resource_id, event_id, event_type, event_key, data)
+VALUES ($1, $2, $3, $4, $5, $6::jsonb)
+RETURNING event_id, resource_kind, resource_id, event_type, data, created_at`, kind, id, event.ID, eventType, key, canonicalData).Scan(&event.ID, &event.ResourceKind, &event.ResourceID, &event.EventType, &payload, &created)
 	if err != nil {
 		return jobs.Event{}, err
 	}
@@ -464,11 +596,42 @@ RETURNING event_id, resource_kind, resource_id, event_type, data, created_at`
 }
 
 func jsonEquivalent(left, right []byte) bool {
-	var leftValue, rightValue any
-	if json.Unmarshal(left, &leftValue) != nil || json.Unmarshal(right, &rightValue) != nil {
+	leftCanonical, leftErr := canonicalJSON(left, 1<<20)
+	rightCanonical, rightErr := canonicalJSON(right, 1<<20)
+	if leftErr != nil || rightErr != nil {
 		return false
 	}
-	return reflect.DeepEqual(leftValue, rightValue)
+	return bytes.Equal(leftCanonical, rightCanonical)
+}
+
+// canonicalJSON validates exactly one bounded JSON value, rejects duplicate
+// object keys, and emits a stable representation for request identity and
+// replay comparisons. json.Number preserves authored integer/decimal spelling
+// instead of silently converting large values through float64.
+func canonicalJSON(value []byte, maxBytes int) ([]byte, error) {
+	if len(value) == 0 || len(value) > maxBytes {
+		return nil, fmt.Errorf("JSON payload exceeds %d bytes", maxBytes)
+	}
+	var validated json.RawMessage
+	if err := strictjson.DecodeWithOptions(value, &validated, strictjson.Options{
+		MaxBytes: int64(maxBytes), MaxDepth: 100, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: true,
+	}); err != nil {
+		return nil, err
+	}
+	var decoded any
+	dec := json.NewDecoder(bytes.NewReader(value))
+	dec.UseNumber()
+	if err := dec.Decode(&decoded); err != nil {
+		return nil, err
+	}
+	canonical, err := json.Marshal(decoded)
+	if err != nil {
+		return nil, err
+	}
+	if len(canonical) > maxBytes {
+		return nil, fmt.Errorf("canonical JSON payload exceeds %d bytes", maxBytes)
+	}
+	return canonical, nil
 }
 
 func scanJob(row interface{ Scan(...any) error }) (jobs.Job, error) {

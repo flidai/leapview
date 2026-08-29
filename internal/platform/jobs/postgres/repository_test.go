@@ -10,6 +10,7 @@ import (
 	"time"
 
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
@@ -20,6 +21,78 @@ import (
 func TestSchemaContainsNativeJobCoordinationTables(t *testing.T) {
 	if len(SchemaSQL()) == 0 {
 		t.Fatal("schema SQL is empty")
+	}
+}
+
+func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	readonly := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Login: true, Password: "readonly-secret"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "jobs_roles")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	conn, err := admin.Acquire(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(t.Context(), "SET ROLE leapview_control_migrator"); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin(t.Context())
+	if err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		conn.Release()
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	conn.Release()
+
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	var runtimeDelete bool
+	if err := runtimeDB.QueryRow(t.Context(), `SELECT has_table_privilege(current_user, 'jobs.job', 'DELETE')`).Scan(&runtimeDelete); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeDelete {
+		t.Fatal("runtime role has direct jobs DELETE privilege")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM jobs.job`); err == nil {
+		t.Fatal("runtime direct jobs DELETE unexpectedly succeeded")
+	}
+
+	readonlyDB, err := pgxpool.New(t.Context(), database.URL(readonly))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readonlyDB.Close)
+	var readonlyPayload bool
+	if err := readonlyDB.QueryRow(t.Context(), `SELECT has_table_privilege(current_user, 'jobs.job', 'SELECT')`).Scan(&readonlyPayload); err != nil {
+		t.Fatal(err)
+	}
+	if readonlyPayload {
+		t.Fatal("readonly role can select payload-bearing jobs table")
+	}
+	var observations int
+	if err := readonlyDB.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job_observability`).Scan(&observations); err != nil {
+		t.Fatalf("readonly observability view: %v", err)
 	}
 }
 
@@ -94,12 +167,63 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 	if claimCount != 1 || winner.ID == "" || winner.Attempts != 1 || winner.LeaseGeneration != 1 {
 		t.Fatalf("claim winner = %#v", winner)
 	}
+	t.Run("canonical enqueue replay", func(t *testing.T) {
+		input := jobs.EnqueueInput{ID: "canonical-job", Kind: "refresh.run", WorkloadClass: jobpolicy.WorkloadClassBackground, PrincipalID: "canonical-principal", ResourceKind: "refresh", ResourceID: "canonical", EstimatedMemoryBytes: 1, Payload: []byte(`{"b":2,"a":1}`)}
+		first, err := repo.Enqueue(ctx, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		input.Payload = []byte(` { "a": 1, "b": 2 } `)
+		second, err := repo.Enqueue(ctx, input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.ID != second.ID || !jsonEquivalent(second.Payload, []byte(`{"a":1,"b":2}`)) {
+			t.Fatalf("canonical replay first=%#v second=%#v", first, second)
+		}
+		if err := repo.Cancel(ctx, first.ID); err != nil {
+			t.Fatal(err)
+		}
+	})
 	if err := repo.Complete(ctx, winner.ID, winner.Fence()); err != nil {
 		t.Fatalf("complete winner: %v", err)
 	}
 	if err := repo.Complete(ctx, winner.ID, winner.Fence()); !errors.Is(err, jobs.ErrConflict) {
 		t.Fatalf("second completion = %v, want conflict", err)
 	}
+	if _, err := pool.Exec(ctx, `UPDATE jobs.job SET error = '{"tampered":true}'::jsonb WHERE id = $1`, winner.ID); err == nil {
+		t.Fatal("terminal job accepted a direct mutation")
+	}
+	if removed, err := repo.Prune(ctx, time.Now().UTC().Add(time.Second), 10); err != nil || removed < 1 {
+		t.Fatalf("bounded terminal prune removed=%d err=%v", removed, err)
+	}
+	if _, err := repo.Get(ctx, winner.ID); !errors.Is(err, jobs.ErrNotFound) {
+		t.Fatalf("pruned terminal job lookup = %v", err)
+	}
+	t.Run("direct sequence and evidence bounds", func(t *testing.T) {
+		if _, err := pool.Exec(ctx, `INSERT INTO jobs.event_sequence (resource_kind, resource_id, next_event_id) VALUES ('guard', 'bad-start', 2)`); err == nil {
+			t.Fatal("event sequence accepted a non-one starting value")
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO jobs.event_sequence (resource_kind, resource_id, next_event_id) VALUES ('guard', 'good', 1)`); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `UPDATE jobs.event_sequence SET next_event_id = next_event_id + 2 WHERE resource_kind = 'guard' AND resource_id = 'good'`); err == nil {
+			t.Fatal("event sequence accepted a non-unit advance")
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO jobs.event (resource_kind, resource_id, event_id, event_type, data) VALUES ('guard', 'bad-event', 1, 'guard.test', 'null'::jsonb)`); err == nil {
+			t.Fatal("event accepted a non-object payload")
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO jobs.event (resource_kind, resource_id, event_id, event_type, data, created_at) VALUES (' guard ', 'bad-identity', 1, 'guard.test', '{}'::jsonb, clock_timestamp() - interval '1 day')`); err == nil {
+			t.Fatal("event accepted a noncanonical identity")
+		}
+		claimInput := jobs.EnqueueInput{ID: "guard-lease-job", Kind: "refresh.run", WorkloadClass: jobpolicy.WorkloadClassControl, PrincipalID: "guard-lease-principal", ResourceKind: "refresh", ResourceID: "guard-lease", EstimatedMemoryBytes: 1, Payload: []byte(`{}`)}
+		if _, err := repo.Enqueue(ctx, claimInput); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, `INSERT INTO jobs.attempt (job_id, attempt_number, fencing_generation, owner, lease_expires_at) VALUES ($1, 1, 1, 'forged', clock_timestamp() + interval '25 hours')`, claimInput.ID); err == nil {
+			t.Fatal("attempt accepted a lease beyond the bounded window")
+		}
+	})
 
 	t.Run("ordered concurrent events", func(t *testing.T) {
 		const count = 20
@@ -144,12 +268,42 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 		if err := repo.CommitWorkflow(ctx, changed); !errors.Is(err, jobs.ErrConflict) {
 			t.Fatalf("workflow replay with changed payload = %v, want conflict", err)
 		}
+		large := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "refresh.large", ResourceKind: "refresh", ResourceID: "workflow-1", EventType: "refresh.large", Data: []byte(`{"value":9007199254740993}`)}}
+		if err := repo.CommitWorkflow(ctx, large); err != nil {
+			t.Fatal(err)
+		}
+		largeChanged := large
+		largeChanged.Event.Data = []byte(`{"value":9007199254740992}`)
+		if err := repo.CommitWorkflow(ctx, largeChanged); !errors.Is(err, jobs.ErrConflict) {
+			t.Fatalf("large-number workflow replay = %v, want conflict", err)
+		}
 		appended, err := repo.AppendEvent(ctx, "refresh", "workflow-1", "refresh.observed", []byte(`{"status":"observed"}`))
 		if err != nil {
 			t.Fatal(err)
 		}
-		if appended.ID != 2 {
-			t.Fatalf("event after replay id=%d, want 2", appended.ID)
+		if appended.ID != 3 {
+			t.Fatalf("event after replay id=%d, want 3", appended.ID)
+		}
+		const concurrent = 8
+		workflowErrs := make(chan error, concurrent)
+		var workflowWG sync.WaitGroup
+		for i := 0; i < concurrent; i++ {
+			workflowWG.Add(1)
+			go func() {
+				defer workflowWG.Done()
+				workflowErrs <- repo.CommitWorkflow(ctx, intent)
+			}()
+		}
+		workflowWG.Wait()
+		close(workflowErrs)
+		for workflowErr := range workflowErrs {
+			if workflowErr != nil {
+				t.Fatal(workflowErr)
+			}
+		}
+		events, err := repo.ListEvents(ctx, "refresh", "workflow-1", 0, 10)
+		if err != nil || len(events) != 3 || events[0].ID != 1 || events[1].ID != 2 || events[2].ID != 3 {
+			t.Fatalf("concurrent workflow events = %#v, err=%v", events, err)
 		}
 	})
 
@@ -158,14 +312,17 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		first, ok, err := repo.ClaimByID(ctx, job.ID, "background", "worker-a", time.Minute)
+		first, ok, err := repo.ClaimByID(ctx, job.ID, "background", "worker-a", 50*time.Millisecond)
 		if err != nil || !ok {
 			t.Fatalf("first claim = %#v, %v, %v", first, ok, err)
 		}
-		if _, err := pool.Exec(ctx, `UPDATE jobs.job SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1`, job.ID); err != nil {
+		if _, err := pool.Exec(ctx, `UPDATE jobs.job SET lease_expires_at = lease_expires_at - interval '1 second' WHERE id = $1`, job.ID); err == nil {
+			t.Fatal("heartbeat shortened a live lease")
+		}
+		if _, err := pool.Exec(ctx, `SELECT pg_sleep(0.1)`); err != nil {
 			t.Fatal(err)
 		}
-		second, ok, err := repo.ClaimByID(ctx, job.ID, "background", "worker-a", time.Minute)
+		second, ok, err := repo.ClaimByID(ctx, job.ID, "background", "worker-a", 50*time.Millisecond)
 		if err != nil || !ok || second.Attempts != 2 || second.LeaseGeneration != 2 {
 			t.Fatalf("reclaim = %#v, %v, %v", second, ok, err)
 		}
@@ -199,11 +356,11 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 			t.Fatal(err)
 		}
 		for attempt := int64(1); attempt <= MaxAttempts; attempt++ {
-			claimed, ok, claimErr := repo.ClaimByID(ctx, job.ID, "background", "ceiling-worker", time.Minute)
+			claimed, ok, claimErr := repo.ClaimByID(ctx, job.ID, "background", "ceiling-worker", 20*time.Millisecond)
 			if claimErr != nil || !ok || claimed.Attempts != int(attempt) {
 				t.Fatalf("claim %d = %#v, %v, %v", attempt, claimed, ok, claimErr)
 			}
-			if _, err := pool.Exec(ctx, `UPDATE jobs.job SET lease_expires_at = clock_timestamp() - interval '1 second' WHERE id = $1`, job.ID); err != nil {
+			if _, err := pool.Exec(ctx, `SELECT pg_sleep(0.05)`); err != nil {
 				t.Fatal(err)
 			}
 		}
