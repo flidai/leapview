@@ -405,6 +405,30 @@ func (RemoveFilterPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// AddFilterComponentPayload places one existing governed filter definition on
+// a page as a slicer component. The filter definition remains report-scoped;
+// this command only adds its page presentation and canonical grid placement.
+type AddFilterComponentPayload struct {
+	PageID      string `json:"pageId"`
+	FilterID    string `json:"filterId"`
+	ComponentID string `json:"componentId,omitempty"`
+}
+
+func (AddFilterComponentPayload) authoringPayload() {}
+func (AddFilterComponentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+type RemoveFilterComponentPayload struct {
+	PageID      string `json:"pageId"`
+	ComponentID string `json:"componentId"`
+}
+
+func (RemoveFilterComponentPayload) authoringPayload() {}
+func (RemoveFilterComponentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 type SetInteractionPayload struct {
 	PageID      string                         `json:"pageId,omitempty"`
 	VisualID    string                         `json:"visualId,omitempty"`
@@ -443,31 +467,33 @@ type Command struct {
 	ContentHash      string        `json:"contentHash,omitempty"`
 	Provenance       Provenance    `json:"provenance"`
 
-	Metadata           *MetadataPatch             `json:"metadata,omitempty"`
-	SetVisibility      *SetVisibilityPayload      `json:"setVisibility,omitempty"`
-	AddPage            *AddPagePayload            `json:"addPage,omitempty"`
-	AddVisual          *AddVisualPayload          `json:"addVisual,omitempty"`
-	SetPlacements      *SetPlacementsPayload      `json:"setPlacements,omitempty"`
-	AssignField        *AssignFieldPayload        `json:"assignField,omitempty"`
-	SetVisualType      *SetVisualTypePayload      `json:"setVisualType,omitempty"`
-	RenameVisual       *RenameVisualPayload       `json:"renameVisual,omitempty"`
-	DuplicateVisual    *DuplicateVisualPayload    `json:"duplicateVisual,omitempty"`
-	RestoreRevision    *RestoreRevisionPayload    `json:"restoreRevision,omitempty"`
-	UpdateVisualFormat *UpdateVisualFormatPayload `json:"updateVisualFormat,omitempty"`
-	RemoveField        *RemoveFieldPayload        `json:"removeField,omitempty"`
-	MoveField          *MoveFieldPayload          `json:"moveField,omitempty"`
-	UpsertPage         *UpsertPagePayload         `json:"upsertPage,omitempty"`
-	RemovePage         *RemovePagePayload         `json:"removePage,omitempty"`
-	UpsertVisual       *UpsertVisualPayload       `json:"upsertVisual,omitempty"`
-	RemoveVisual       *RemoveVisualPayload       `json:"removeVisual,omitempty"`
-	SetLayout          *SetLayoutPayload          `json:"setLayout,omitempty"`
-	SetFilters         *SetFiltersPayload         `json:"setFilters,omitempty"`
-	AddFilter          *AddFilterPayload          `json:"addFilter,omitempty"`
-	UpdateFilter       *UpdateFilterPayload       `json:"updateFilter,omitempty"`
-	RemoveFilter       *RemoveFilterPayload       `json:"removeFilter,omitempty"`
-	SetInteraction     *SetInteractionPayload     `json:"setInteraction,omitempty"`
-	Publish            *PublishPayload            `json:"publish,omitempty"`
-	Archive            *ArchivePayload            `json:"archive,omitempty"`
+	Metadata              *MetadataPatch                `json:"metadata,omitempty"`
+	SetVisibility         *SetVisibilityPayload         `json:"setVisibility,omitempty"`
+	AddPage               *AddPagePayload               `json:"addPage,omitempty"`
+	AddVisual             *AddVisualPayload             `json:"addVisual,omitempty"`
+	SetPlacements         *SetPlacementsPayload         `json:"setPlacements,omitempty"`
+	AssignField           *AssignFieldPayload           `json:"assignField,omitempty"`
+	SetVisualType         *SetVisualTypePayload         `json:"setVisualType,omitempty"`
+	RenameVisual          *RenameVisualPayload          `json:"renameVisual,omitempty"`
+	DuplicateVisual       *DuplicateVisualPayload       `json:"duplicateVisual,omitempty"`
+	RestoreRevision       *RestoreRevisionPayload       `json:"restoreRevision,omitempty"`
+	UpdateVisualFormat    *UpdateVisualFormatPayload    `json:"updateVisualFormat,omitempty"`
+	RemoveField           *RemoveFieldPayload           `json:"removeField,omitempty"`
+	MoveField             *MoveFieldPayload             `json:"moveField,omitempty"`
+	UpsertPage            *UpsertPagePayload            `json:"upsertPage,omitempty"`
+	RemovePage            *RemovePagePayload            `json:"removePage,omitempty"`
+	UpsertVisual          *UpsertVisualPayload          `json:"upsertVisual,omitempty"`
+	RemoveVisual          *RemoveVisualPayload          `json:"removeVisual,omitempty"`
+	SetLayout             *SetLayoutPayload             `json:"setLayout,omitempty"`
+	SetFilters            *SetFiltersPayload            `json:"setFilters,omitempty"`
+	AddFilter             *AddFilterPayload             `json:"addFilter,omitempty"`
+	UpdateFilter          *UpdateFilterPayload          `json:"updateFilter,omitempty"`
+	RemoveFilter          *RemoveFilterPayload          `json:"removeFilter,omitempty"`
+	AddFilterComponent    *AddFilterComponentPayload    `json:"addFilterComponent,omitempty"`
+	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
+	SetInteraction        *SetInteractionPayload        `json:"setInteraction,omitempty"`
+	Publish               *PublishPayload               `json:"publish,omitempty"`
+	Archive               *ArchivePayload               `json:"archive,omitempty"`
 }
 
 func (c Command) payloads() []authoringPayload {
@@ -538,6 +564,12 @@ func (c Command) payloads() []authoringPayload {
 	if c.RemoveFilter != nil {
 		payloads = append(payloads, c.RemoveFilter)
 	}
+	if c.AddFilterComponent != nil {
+		payloads = append(payloads, c.AddFilterComponent)
+	}
+	if c.RemoveFilterComponent != nil {
+		payloads = append(payloads, c.RemoveFilterComponent)
+	}
 	if c.SetInteraction != nil {
 		payloads = append(payloads, c.SetInteraction)
 	}
@@ -588,7 +620,7 @@ func (c Command) IsBuilderIntent() bool {
 	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
-		*AddFilterPayload, *UpdateFilterPayload, *RemoveFilterPayload:
+		*AddFilterPayload, *UpdateFilterPayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
 		return true
 	default:
 		return false
@@ -906,6 +938,25 @@ func validatePayload(payload authoringPayload) error {
 		}
 	case *RemoveFilterPayload:
 		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+	case *AddFilterComponentPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+			return err
+		}
+		if value.ComponentID != "" {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
+				return err
+			}
+		}
+	case *RemoveFilterComponentPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
 			return err
 		}
 	case *SetInteractionPayload:
