@@ -23,6 +23,13 @@ func TestNewCatalogObjectStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) 
 	}
 }
 
+func TestNewL3ObjectStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) {
+	contract := deliveryCredentialTestContract(t)
+	if _, err := NewL3ObjectStore(context.Background(), contract, gcadapter.S3Config{}); err == nil || !strings.Contains(err.Error(), "target-owned S3 access") {
+		t.Fatalf("missing L3 S3 credentials error = %v", err)
+	}
+}
+
 func TestBuildRequestFactoryS3RequiresCredentialBootstrapBeforeBuild(t *testing.T) {
 	factory := BuildRequestFactory(CandidateCatalogRunnerConfig{
 		PoolContract: deliveryCredentialTestContract(t),

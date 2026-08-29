@@ -956,12 +956,12 @@ func TestCacheRoleConformance(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, readonlyInsert, maintenancePrune bool
-	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($1,'cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT'),has_function_privilege($3,'cache.prune_coordination(timestamptz,integer)','EXECUTE')`, runtimeRole.Name, readonlyRole.Name, maintenanceRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &runtimeInvalidate, &readonlyInsert, &maintenancePrune); err != nil {
+	var runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, readonlyInsert, maintenancePrune bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($1,'cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb)','EXECUTE'),has_function_privilege($1,'cache.retire_manifest(uuid,jsonb)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT'),has_function_privilege($3,'cache.prune_coordination(timestamptz,integer)','EXECUTE')`, runtimeRole.Name, readonlyRole.Name, maintenanceRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &runtimeInvalidate, &runtimeRetire, &readonlyInsert, &maintenancePrune); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeSchema || runtimeDelete || runtimePrune || !runtimeInvalidate || readonlyInsert || !maintenancePrune {
-		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v runtime_invalidate=%v maintenance_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, maintenancePrune, readonlyInsert)
+	if !runtimeSchema || runtimeDelete || runtimePrune || !runtimeInvalidate || !runtimeRetire || readonlyInsert || !maintenancePrune {
+		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v runtime_invalidate=%v runtime_retire=%v maintenance_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, maintenancePrune, readonlyInsert)
 	}
 	runtime, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
 	if err != nil {

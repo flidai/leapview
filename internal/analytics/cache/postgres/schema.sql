@@ -732,6 +732,28 @@ BEGIN
 END;
 $$;
 
+-- Missing or corrupt L3 objects are reconciled against one exact manifest.
+-- This avoids invalidating unrelated queries that happen to share a
+-- dependency digest. Repeating the same evidence is idempotent.
+CREATE OR REPLACE FUNCTION cache.retire_manifest(p_manifest_id uuid, p_evidence jsonb)
+RETURNS boolean
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, cache
+AS $$
+DECLARE manifest_state text; previous_evidence jsonb;
+BEGIN
+    PERFORM set_config('cache.capability', 'manifest_lifecycle', true);
+    SELECT state,retire_evidence INTO manifest_state,previous_evidence FROM cache.cache_manifest WHERE manifest_id=p_manifest_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'cache manifest not found'; END IF;
+    IF manifest_state = 'retiring' THEN
+        IF previous_evidence IS DISTINCT FROM p_evidence THEN RAISE EXCEPTION 'cache manifest retirement conflict'; END IF;
+        RETURN true;
+    END IF;
+    IF manifest_state <> 'admitted' THEN RAISE EXCEPTION 'cache manifest retirement conflict'; END IF;
+    UPDATE cache.cache_manifest SET state='retiring',retired_at=clock_timestamp(),retire_evidence=p_evidence WHERE manifest_id=p_manifest_id;
+    RETURN FOUND;
+END;
+$$;
+
 -- Cache metadata is not public.  Runtime may coordinate and publish
 -- manifests, readonly/backup roles can inspect state, and only the owner or
 -- migrator can alter the capability DDL.  Role existence is conditional so
@@ -758,7 +780,7 @@ BEGIN
             cache.release_fill(uuid,text,text,bigint),
             cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,bigint,text,text,text,bigint,text,text,text,bigint,jsonb,timestamptz),
             cache.add_retention_root(uuid,uuid,text), cache.retire_retention_root(uuid,jsonb), cache.expire_retention_root(uuid,jsonb),
-            cache.expire_manifest(uuid,jsonb) TO leapview_control_runtime;
+            cache.expire_manifest(uuid,jsonb), cache.retire_manifest(uuid,jsonb) TO leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA cache TO leapview_control_readonly;

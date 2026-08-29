@@ -23,6 +23,11 @@ type S3Config struct {
 	Endpoint                                           string
 	PathStyle                                          bool
 	ExtensionAdmission                                 extension.Admission
+	// ResolveEncryptionKey maps the admitted opaque pool EncryptionKeyRef to
+	// the concrete provider key identity used by object-store APIs. It is
+	// target-owned and must be supplied when a pool declares KMS encryption;
+	// the opaque reference is never sent to S3 as a key ID.
+	ResolveEncryptionKey func(context.Context, string) (string, error)
 }
 
 // NewPoolStore selects a pool-scoped read/stat/list/delete adapter from the

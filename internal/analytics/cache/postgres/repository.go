@@ -582,6 +582,48 @@ func (r *Repository) ListByDependency(ctx context.Context, partitionKind Partiti
 	return result, rows.Err()
 }
 
+// ObjectReachable reports whether an object is still protected by the durable
+// cache authority. Admitted and retiring manifests remain reachable; an
+// expired manifest is also reachable while any live or retiring retention
+// root points at it. The check is deliberately scoped by namespace and
+// storage-security domain so an object from another isolation boundary can
+// never become a reason to retain or delete this namespace's object.
+func (r *Repository) ObjectReachable(ctx context.Context, n Namespace, securityDomain, objectKey string) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, ErrInvalid
+	}
+	if err := validateNamespace(n); err != nil {
+		return false, err
+	}
+	if platformdigest.ValidateSHA256Identity(securityDomain) != nil || !literal(objectKey, 2048) {
+		return false, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var reachable bool
+	err := r.db.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1
+			FROM cache.cache_manifest AS m
+			WHERE m.partition_kind=$1
+			  AND m.project_id=$2
+			  AND m.environment=$3
+			  AND m.candidate_id IS NOT DISTINCT FROM $4
+			  AND m.storage_security_domain=$5
+			  AND m.object_key=$6
+			  AND (
+				m.state IN ('admitted','retiring')
+				OR EXISTS (
+					SELECT 1 FROM cache.cache_retention_root AS rr
+					WHERE rr.manifest_id=m.manifest_id
+					  AND rr.state IN ('live','retiring')
+				)
+			  )
+		)`, n.PartitionKind, n.ProjectID, n.Environment, candidateArg(n.CandidateID), securityDomain, objectKey).Scan(&reachable)
+	return reachable, err
+}
+
 // InvalidateNamespace records a durable, idempotent invalidation and advances
 // the namespace epoch in the same PostgreSQL transaction that retires matching
 // manifests. A notification is emitted by the schema trigger only after the
@@ -1415,6 +1457,66 @@ func (r *Repository) ExpireManifest(ctx context.Context, manifestID uuid.UUID, e
 	}
 	if !updated {
 		return ErrConflict
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+// RetireManifest records durable lifecycle evidence for one exact manifest.
+// It is used by L3 object reconciliation so a missing result object cannot
+// invalidate unrelated manifests that share a dependency digest.
+func (r *Repository) RetireManifest(ctx context.Context, manifestID uuid.UUID, evidence json.RawMessage) error {
+	if r == nil || r.db == nil || manifestID == uuid.Nil {
+		return ErrInvalid
+	}
+	canonicalEvidence, err := requiredEvidence(evidence)
+	if err != nil {
+		return err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b, ok := r.db.(beginner)
+	if !ok {
+		return fmt.Errorf("%w: repository requires transaction-capable DB", ErrInvalid)
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	var state string
+	var previous []byte
+	if err := tx.QueryRow(ctx, `SELECT state,retire_evidence FROM cache.cache_manifest WHERE manifest_id=$1 FOR UPDATE`, manifestID).Scan(&state, &previous); errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	} else if err != nil {
+		return err
+	}
+	if state == StateRetiring {
+		if !sameLifecycleEvidence(previous, canonicalEvidence) {
+			return ErrConflict
+		}
+	} else if state != StateAdmitted {
+		return ErrConflict
+	} else {
+		var updated bool
+		if err := tx.QueryRow(ctx, `SELECT cache.retire_manifest($1,$2::jsonb)`, manifestID, canonicalEvidence).Scan(&updated); err != nil {
+			if strings.Contains(err.Error(), "retirement conflict") {
+				return ErrConflict
+			}
+			return err
+		}
+		if !updated {
+			return ErrConflict
+		}
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return err

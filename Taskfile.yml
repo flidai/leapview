@@ -1005,6 +1005,7 @@ tasks:
     desc: Run container-backed external-service integration tests serially
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
+      - go test -tags 'ducklake_minio' -count=1 -run '^Test(S3ObjectStore|TargetL3Cache)MinIO' -v ./internal/analytics/cache/l3
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
