@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"strings"
 
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // InstallAuthorizationSnapshotTx installs one immutable, graph-bound
@@ -28,13 +30,13 @@ func InstallAuthorizationSnapshotTx(ctx context.Context, tx Tx, snapshot accesss
 	}
 	identity := snapshot.Identity()
 	project, environment, generation := identity.ProjectID.String(), identity.Environment, identity.GenerationID
-	tag, err := tx.Exec(ctx, `INSERT INTO access.authorization_snapshot(project_id,environment,generation_id,digest) VALUES($1,$2,$3,$4) ON CONFLICT(project_id,environment,generation_id) DO NOTHING`, project, environment, generation, digest)
+	tag, err := accessdb.New(tx).InsertAuthorizationSnapshot(ctx, accessdb.InsertAuthorizationSnapshotParams{ProjectID: project, Environment: environment, GenerationID: generation, Digest: digest})
 	if err != nil {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		var installed string
-		if err := tx.QueryRow(ctx, `SELECT digest FROM access.authorization_snapshot WHERE project_id=$1 AND environment=$2 AND generation_id=$3`, project, environment, generation).Scan(&installed); err != nil {
+		installed, err := accessdb.New(tx).GetAuthorizationSnapshotDigest(ctx, accessdb.GetAuthorizationSnapshotDigestParams{ProjectID: project, Environment: environment, GenerationID: generation})
+		if err != nil {
 			return err
 		}
 		if installed != digest {
@@ -51,22 +53,23 @@ func InstallAuthorizationSnapshotTx(ctx context.Context, tx Tx, snapshot accesss
 		if err != nil {
 			return err
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_role_binding(id,project_id,environment,generation_id,subject_kind,subject_id,role,capabilities,name) VALUES($1,$2,$3,$4,$5,$6,$7,$8::jsonb,$9)`, item.ID, project, environment, generation, string(item.Subject.Kind), item.Subject.ID, string(item.Role), encoded, item.Name); err != nil {
+		if err = accessdb.New(tx).InsertAuthorizationRoleBinding(ctx, accessdb.InsertAuthorizationRoleBindingParams{ID: item.ID, ProjectID: project, Environment: environment, GenerationID: generation, SubjectKind: string(item.Subject.Kind), SubjectID: item.Subject.ID, Role: string(item.Role), Capabilities: encoded, Name: item.Name}); err != nil {
 			return err
 		}
 	}
 	for _, item := range snapshot.Grants() {
 		canonical := item.Canonical
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_grant(id,project_id,environment,generation_id,subject_kind,subject_id,resource_id,resource_kind,capability,name) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, item.ID, project, environment, generation, string(canonical.Subject().Kind), canonical.Subject().ID, canonical.Resource().ID().String(), string(canonical.Resource().Kind()), canonical.Capability().String(), item.Name); err != nil {
+		if err = accessdb.New(tx).InsertAuthorizationGrant(ctx, accessdb.InsertAuthorizationGrantParams{ID: item.ID, ProjectID: project, Environment: environment, GenerationID: generation, SubjectKind: string(canonical.Subject().Kind), SubjectID: canonical.Subject().ID, ResourceID: canonical.Resource().ID().String(), ResourceKind: string(canonical.Resource().Kind()), Capability: canonical.Capability().String(), Name: item.Name}); err != nil {
 			return err
 		}
 	}
 	for _, item := range snapshot.DataPolicies() {
-		var subjectKind, subjectID any
+		var subjectKind, subjectID *string
 		if item.Subject != nil {
-			subjectKind, subjectID = string(item.Subject.Kind), item.Subject.ID
+			kind, id := string(item.Subject.Kind), item.Subject.ID
+			subjectKind, subjectID = &kind, &id
 		}
-		if _, err = tx.Exec(ctx, `INSERT INTO access.authorization_data_policy(id,project_id,environment,generation_id,resource_id,resource_kind,subject_kind,subject_id,policy_type,expression) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`, item.ID, project, environment, generation, item.Resource.ID().String(), string(item.Resource.Kind()), subjectKind, subjectID, item.PolicyType, item.ExpressionJSON); err != nil {
+		if err = accessdb.New(tx).InsertAuthorizationDataPolicy(ctx, accessdb.InsertAuthorizationDataPolicyParams{ID: item.ID, ProjectID: project, Environment: environment, GenerationID: generation, ResourceID: item.Resource.ID().String(), ResourceKind: string(item.Resource.Kind()), SubjectKind: subjectKind, SubjectID: subjectID, PolicyType: item.PolicyType, Expression: []byte(item.ExpressionJSON)}); err != nil {
 			return err
 		}
 	}
@@ -90,7 +93,6 @@ func ActivateDashboardPublicationPrincipalTx(ctx context.Context, tx Tx, project
 	if len(name) > 512 {
 		return errors.New("dashboard publication principal name exceeds 512 bytes")
 	}
-	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+projectID.String()+"."+name)).String()
-	_, err := tx.Exec(ctx, `INSERT INTO access.principal(id,principal_type,status,email,display_name) VALUES($1,'dashboard_publication','active','',$2) ON CONFLICT(id) DO UPDATE SET display_name=EXCLUDED.display_name,updated_at=clock_timestamp()`, id, name)
-	return err
+	id := uuid.NewSHA1(uuid.NameSpaceURL, []byte("dashboard_publication:"+projectID.String()+"."+name))
+	return accessdb.New(tx).UpsertDashboardPublicationPrincipal(ctx, accessdb.UpsertDashboardPublicationPrincipalParams{ID: pgtype.UUID{Bytes: id, Valid: true}, Name: name})
 }

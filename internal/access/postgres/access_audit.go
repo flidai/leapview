@@ -12,8 +12,10 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEventInput) error {
@@ -44,9 +46,13 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 	if err != nil {
 		return err
 	}
-	_, err = db.Exec(ctx, `INSERT INTO audit.audit_event(audit_id,principal_id,source,operation,action,resource_kind,resource_id,capability,outcome,request_id,correlation_id,aggregate_key,aggregate_sequence,intent_digest,metadata) VALUES($1::uuid,NULLIF($2,'')::uuid,'access','repository',$3,$4,$5,$6,CASE WHEN $7='' THEN 'success' ELSE $7 END,NULLIF($8,'')::uuid,NULLIF($9,'')::uuid,$10,0,$11,$12::jsonb)`, uuid.New(), input.PrincipalID, input.Action, input.ResourceKind, input.ResourceID, input.Capability.String(), input.Status, input.RequestID, input.CorrelationID, aggregateKey, intentDigest, metadata)
-	return err
+	auditID := uuid.New()
+	return accessdb.New(db).InsertAccessAuditEvent(ctx, accessdb.InsertAccessAuditEventParams{AuditID: pgtype.UUID{Bytes: auditID, Valid: true}, PrincipalID: input.PrincipalID,
+		Action: input.Action, ResourceKind: auditText(input.ResourceKind), ResourceID: auditText(input.ResourceID), Capability: input.Capability.String(), Status: input.Status,
+		RequestID: input.RequestID, CorrelationID: input.CorrelationID, AggregateKey: aggregateKey, IntentDigest: intentDigest, Metadata: []byte(metadata)})
 }
+
+func auditText(value string) *string { return &value }
 
 func auditInputDigest(input access.AuditEventInput, metadata string) string {
 	payload, _ := json.Marshal(struct {
@@ -81,23 +87,25 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 			}
 		}
 	}
-	args := []any{filter.PrincipalID, filter.Action, filter.ResourceKind, filter.ResourceID, filter.Capability.String(), filter.From, filter.To, filter.CursorTime, filter.CursorID, limit}
-	rows, err := db.Query(ctx, `SELECT audit_id::text,COALESCE(principal_id::text,''),action,COALESCE(resource_kind,''),COALESCE(resource_id,''),capability,outcome,COALESCE(request_id::text,''),COALESCE(correlation_id::text,''),metadata::text,occurred_at FROM audit.audit_event WHERE ($1='' OR principal_id=$1::uuid) AND ($2='' OR action=$2) AND ($3='' OR resource_kind=$3) AND ($4='' OR resource_id=$4) AND ($5='' OR capability=$5) AND ($6='' OR occurred_at >= $6::timestamptz) AND ($7='' OR occurred_at < $7::timestamptz) AND ($8='' OR (occurred_at,audit_id) < ($8::timestamptz,$9::uuid)) ORDER BY occurred_at DESC,audit_id DESC LIMIT $10`, args...)
+	var cursorID pgtype.UUID
+	if strings.TrimSpace(filter.CursorID) != "" {
+		cursorID, err = pgUUID(filter.CursorID)
+		if err != nil {
+			return nil, err
+		}
+	}
+	rows, err := accessdb.New(db).ListAccessAuditEvents(ctx, accessdb.ListAccessAuditEventsParams{PrincipalID: filter.PrincipalID, Action: filter.Action, ResourceKind: filter.ResourceKind, ResourceID: filter.ResourceID,
+		Capability: filter.Capability.String(), FromTime: filter.From, ToTime: filter.To, CursorTime: filter.CursorTime, CursorID: cursorID, PageSize: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]access.AuditEvent, 0)
-	for rows.Next() {
-		var value access.AuditEvent
-		var created time.Time
-		if err := rows.Scan(&value.ID, &value.PrincipalID, &value.Action, &value.ResourceKind, &value.ResourceID, &value.Capability, &value.Status, &value.RequestID, &value.CorrelationID, &value.MetadataJSON, &created); err != nil {
-			return nil, err
-		}
-		value.CreatedAt = formatTime(created)
+	out := make([]access.AuditEvent, 0, len(rows))
+	for _, row := range rows {
+		value := access.AuditEvent{ID: row.AuditID, PrincipalID: principalUUID(row.PrincipalID), Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+			Capability: access.Capability(row.Capability), Status: row.Outcome, RequestID: principalUUID(row.RequestID), CorrelationID: principalUUID(row.CorrelationID), MetadataJSON: row.MetadataJson, CreatedAt: principalTimestamp(row.OccurredAt)}
 		out = append(out, value)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) RunAuditedMutation(ctx context.Context, mutation func(access.Repository) (access.AuditEventInput, error)) error {
@@ -151,8 +159,16 @@ func (r *Repository) BootstrapAPITokenEvidence(ctx context.Context, principalID,
 	if err != nil {
 		return access.APIToken{}, err
 	}
-	var exists bool
-	if err = db.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM access.api_token t JOIN access.principal p ON p.id=t.principal_id JOIN access.platform_role_binding b ON b.principal_id=p.id WHERE t.id=$1::uuid AND t.principal_id=$2::uuid AND t.revoked_at IS NULL AND t.expires_at>clock_timestamp() AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL AND b.role='platform_admin' AND b.revoked_at IS NULL)`, tid, pid).Scan(&exists); err != nil {
+	parsedPrincipalID, err := pgUUID(pid)
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	parsedTokenID, err := pgUUID(tid)
+	if err != nil {
+		return access.APIToken{}, err
+	}
+	exists, err := accessdb.New(db).HasBootstrapAPITokenEvidence(ctx, accessdb.HasBootstrapAPITokenEvidenceParams{TokenID: parsedTokenID, PrincipalID: parsedPrincipalID})
+	if err != nil {
 		return access.APIToken{}, err
 	}
 	if !exists {

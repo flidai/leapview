@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -23,13 +24,14 @@ import (
 //go:embed schema.sql
 var schemaSQL string
 
-// Tx is the native pgx transaction surface required by RecordAuditEvent.
-// pgx.Tx and pgxpool.Tx satisfy it.  Commit and Rollback are deliberately not
-// part of this interface: ownership remains with the source capability.
+// Tx is the native caller-owned transaction surface required by mutation
+// boundaries. Commit and Rollback are part of the shape so a pool cannot be
+// mistaken for a transaction by capability adapters; the methods are never
+// called by these adapters, preserving ownership with the source capability.
 type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
-	Query(context.Context, string, ...any) (pgx.Rows, error)
-	QueryRow(context.Context, string, ...any) pgx.Row
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
 }
 
 // DBTX is the native pgx surface accepted by access methods. It is deliberately
@@ -192,47 +194,26 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 	// intentionally database-owned; a replay therefore compares the complete
 	// canonical identity/payload without depending on a newly generated clock
 	// value.
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO audit.audit_event
-		    (audit_id, scope_id, principal_id, source, operation, action,
-		     resource_kind, resource_id, capability, outcome, request_id,
-		     correlation_id, aggregate_key, aggregate_sequence, intent_digest,
-		     metadata)
-		VALUES ($1::uuid, NULLIF($2, ''), NULLIF($3, '')::uuid, $4, $5, $6,
-		        NULLIF($7, ''), NULLIF($8, ''), $9, $10,
-		        NULLIF($11, '')::uuid, NULLIF($12, '')::uuid, $13, $14, $15,
-		        $16::jsonb)
-		ON CONFLICT (audit_id) DO NOTHING`, canonical.EventID, "", canonical.PrincipalID,
-		canonical.Source, canonical.Operation, canonical.Action, canonical.ResourceKind,
-		canonical.ResourceID, canonical.Capability.String(), canonical.Outcome,
-		canonical.RequestID, canonical.CorrelationID, canonical.AggregateKey,
-		canonical.AggregateSequence, digest, metadata); err != nil {
+	eventID, err := pgUUID(canonical.EventID)
+	if err != nil {
+		return Event{}, err
+	}
+	if err := accessdb.New(tx).InsertAuditIntent(ctx, accessdb.InsertAuditIntentParams{AuditID: eventID, ScopeID: "", PrincipalID: canonical.PrincipalID,
+		Source: canonical.Source, Operation: canonical.Operation, Action: canonical.Action, ResourceKind: canonical.ResourceKind,
+		ResourceID: canonical.ResourceID, Capability: canonical.Capability.String(), Outcome: canonical.Outcome,
+		RequestID: canonical.RequestID, CorrelationID: canonical.CorrelationID, AggregateKey: canonical.AggregateKey,
+		AggregateSequence: canonical.AggregateSequence, IntentDigest: digest, Metadata: []byte(metadata)}); err != nil {
 		return Event{}, fmt.Errorf("insert audit event: %w", err)
 	}
 
-	var stored Event
-	var storedMetadata string
-	var metadataEqual bool
-	if err := tx.QueryRow(ctx, `
-		SELECT audit_id::text, COALESCE(scope_id, ''), COALESCE(principal_id::text, ''),
-		       source, operation, action, COALESCE(resource_kind, ''),
-		       COALESCE(resource_id, ''), capability, outcome,
-		       COALESCE(request_id::text, ''), COALESCE(correlation_id::text, ''),
-		       aggregate_key, aggregate_sequence, intent_digest, metadata::text,
-		       metadata = $2::jsonb, occurred_at
-		FROM audit.audit_event WHERE audit_id = $1::uuid`, canonical.EventID, metadata).
-		Scan(&stored.AuditID, &stored.ScopeID, &stored.PrincipalID, &stored.Source,
-			&stored.Operation, &stored.Action, &stored.ResourceKind, &stored.ResourceID,
-			&stored.Capability, &stored.Outcome, &stored.RequestID, &stored.CorrelationID,
-			&stored.AggregateKey, &stored.AggregateSequence, &stored.IntentDigest,
-			&storedMetadata, &metadataEqual, &stored.OccurredAt); err != nil {
+	row, err := accessdb.New(tx).GetAuditIntent(ctx, accessdb.GetAuditIntentParams{AuditID: eventID, Metadata: []byte(metadata)})
+	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Event{}, fmt.Errorf("audit event %s disappeared: %w", canonical.EventID, err)
 		}
 		return Event{}, fmt.Errorf("read audit event: %w", err)
 	}
-	stored.OccurredAt = stored.OccurredAt.UTC()
-	stored.MetadataJSON = storedMetadata
+	stored := auditIntentEvent(row)
 	if stored.AuditID != canonical.EventID || stored.ScopeID != "" ||
 		stored.PrincipalID != canonical.PrincipalID || stored.Action != canonical.Action ||
 		stored.Source != canonical.Source || stored.Operation != canonical.Operation ||
@@ -240,22 +221,16 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 		stored.Capability != canonical.Capability || stored.Outcome != canonical.Outcome ||
 		stored.RequestID != canonical.RequestID || stored.CorrelationID != canonical.CorrelationID ||
 		stored.AggregateKey != canonical.AggregateKey || stored.AggregateSequence != canonical.AggregateSequence ||
-		stored.IntentDigest != digest || !metadataEqual {
+		stored.IntentDigest != digest || !row.MetadataEqual {
 		return Event{}, fmt.Errorf("%w: audit event %s canonical payload differs", access.ErrAuditIntentConflict, canonical.EventID)
 	}
 	return stored, nil
 }
 
-const auditEventColumns = `audit_id::text, COALESCE(scope_id, ''),
- COALESCE(principal_id::text, ''), source, operation, action, COALESCE(resource_kind, ''),
- COALESCE(resource_id, ''), capability, outcome, COALESCE(request_id::text, ''),
- COALESCE(correlation_id::text, ''), aggregate_key, aggregate_sequence,
- intent_digest, metadata::text, occurred_at`
-
 // GetAuditEvent reads one immutable audit row by retry identity.  The query is
 // bounded to one row and accepts the same native pgx surface as the append
 // method; a pool, connection, or caller-owned transaction may be supplied.
-func (r *AuditRepository) GetAuditEvent(ctx context.Context, db Tx, auditID string) (Event, error) {
+func (r *AuditRepository) GetAuditEvent(ctx context.Context, db DBTX, auditID string) (Event, error) {
 	if db == nil {
 		return Event{}, errors.New("audit PostgreSQL connection is nil")
 	}
@@ -266,17 +241,24 @@ func (r *AuditRepository) GetAuditEvent(ctx context.Context, db Tx, auditID stri
 	if err != nil {
 		return Event{}, err
 	}
-	event, err := scanAuditEvent(db.QueryRow(ctx, `SELECT `+auditEventColumns+` FROM audit.audit_event WHERE audit_id = $1::uuid`, canonicalID))
+	parsedID, err := pgUUID(canonicalID)
+	if err != nil {
+		return Event{}, err
+	}
+	row, err := accessdb.New(db).GetAuditIntentByID(ctx, parsedID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, fmt.Errorf("audit event %s not found: %w", canonicalID, err)
 	}
-	return event, err
+	if err != nil {
+		return Event{}, err
+	}
+	return auditIntentEventByID(row), nil
 }
 
 // ListAuditEvents returns at most limit rows in reverse occurrence order.
 // This is a deliberately bounded read/export surface; callers cannot turn it
 // into an unbounded audit dump.
-func (r *AuditRepository) ListAuditEvents(ctx context.Context, db Tx, limit int) ([]Event, error) {
+func (r *AuditRepository) ListAuditEvents(ctx context.Context, db DBTX, limit int) ([]Event, error) {
 	if db == nil {
 		return nil, errors.New("audit PostgreSQL connection is nil")
 	}
@@ -289,38 +271,39 @@ func (r *AuditRepository) ListAuditEvents(ctx context.Context, db Tx, limit int)
 	if limit > maxAuditReadRows {
 		limit = maxAuditReadRows
 	}
-	rows, err := db.Query(ctx, `SELECT `+auditEventColumns+` FROM audit.audit_event ORDER BY occurred_at DESC, audit_id DESC LIMIT $1`, limit)
+	rows, err := accessdb.New(db).ListAuditIntents(ctx, int32(limit))
 	if err != nil {
 		return nil, fmt.Errorf("list audit events: %w", err)
 	}
-	defer rows.Close()
 	events := make([]Event, 0, limit)
-	for rows.Next() {
-		event, scanErr := scanAuditEvent(rows)
-		if scanErr != nil {
-			return nil, fmt.Errorf("scan audit event: %w", scanErr)
-		}
-		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("list audit events: %w", err)
+	for _, row := range rows {
+		events = append(events, auditIntentEventFromList(row))
 	}
 	return events, nil
 }
 
-type rowScanner interface{ Scan(...any) error }
+func auditIntentEvent(row accessdb.GetAuditIntentRow) Event {
+	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
+		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
+}
 
-func scanAuditEvent(row rowScanner) (Event, error) {
-	var event Event
-	if err := row.Scan(&event.AuditID, &event.ScopeID, &event.PrincipalID,
-		&event.Source, &event.Operation, &event.Action, &event.ResourceKind,
-		&event.ResourceID, &event.Capability, &event.Outcome, &event.RequestID,
-		&event.CorrelationID, &event.AggregateKey, &event.AggregateSequence,
-		&event.IntentDigest, &event.MetadataJSON, &event.OccurredAt); err != nil {
-		return Event{}, err
-	}
-	event.OccurredAt = event.OccurredAt.UTC()
-	return event, nil
+func auditIntentEventByID(row accessdb.GetAuditIntentByIDRow) Event {
+	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
+		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
+}
+
+func auditIntentEventFromList(row accessdb.ListAuditIntentsRow) Event {
+	return Event{AuditID: row.AuditID, ScopeID: row.ScopeID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
+		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
+		CorrelationID: principalUUID(row.CorrelationID), AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 
 func validateOutcome(value string) error {
