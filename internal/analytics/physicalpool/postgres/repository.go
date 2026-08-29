@@ -14,10 +14,12 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicaldb "github.com/flidai/leapview/internal/analytics/physicalpool/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 //go:embed schema.sql
@@ -31,8 +33,13 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Tx is the transaction surface accepted by schema and atomic helpers.
-type Tx = DBTX
+// Tx is the strict caller-owned PostgreSQL transaction surface. A pool can
+// satisfy DBTX for standalone work, but cannot be passed as an atomic Tx.
+type Tx interface {
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
+}
 
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
@@ -56,6 +63,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL,
+	// triggers, and grants executed by migration runners.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -97,13 +106,11 @@ func createPhysicalPoolTx(ctx context.Context, tx DBTX, normalized physicalpool.
 	if err != nil {
 		return physicalpool.PhysicalPool{}, err
 	}
-	result, err := tx.Exec(ctx, `INSERT INTO physical_pool.physical_pools
- (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,region,tenant,isolation_boundary,encryption_key_ref,credential_reference,retention_authority,orphan_grace_period_seconds,reader_grace_period_seconds,build_grace_period_seconds,retention_policy)
- VALUES ($1,$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb) ON CONFLICT DO NOTHING`, string(normalized.ID), normalized.Identity.StorageLocation, normalized.Identity.StorageNamespace,
-		normalized.Identity.Compatibility.StorageImplementation, normalized.Identity.Compatibility.ObjectNamingContract, normalized.Identity.Region, normalized.Identity.Tenant,
-		normalized.Identity.IsolationBoundary, normalized.Identity.EncryptionKeyRef, normalized.Identity.CredentialReference, normalized.Identity.RetentionAuthority,
-		normalized.Identity.RetentionPolicy.OrphanGracePeriodSeconds, normalized.Identity.RetentionPolicy.ReaderGracePeriodSeconds, normalized.Identity.RetentionPolicy.BuildGracePeriodSeconds, retention)
-	if err == nil && result.RowsAffected() == 1 {
+	result, err := physicaldb.New(tx).InsertPhysicalPool(ctx, physicaldb.InsertPhysicalPoolParams{ID: string(normalized.ID), StorageLocation: normalized.Identity.StorageLocation, StorageNamespace: normalized.Identity.StorageNamespace,
+		StorageImplementation: normalized.Identity.Compatibility.StorageImplementation, ObjectNamingContract: normalized.Identity.Compatibility.ObjectNamingContract, Region: normalized.Identity.Region, Tenant: normalized.Identity.Tenant,
+		IsolationBoundary: normalized.Identity.IsolationBoundary, EncryptionKeyRef: normalized.Identity.EncryptionKeyRef, CredentialReference: normalized.Identity.CredentialReference, RetentionAuthority: normalized.Identity.RetentionAuthority,
+		OrphanGracePeriodSeconds: normalized.Identity.RetentionPolicy.OrphanGracePeriodSeconds, ReaderGracePeriodSeconds: normalized.Identity.RetentionPolicy.ReaderGracePeriodSeconds, BuildGracePeriodSeconds: normalized.Identity.RetentionPolicy.BuildGracePeriodSeconds, RetentionPolicy: []byte(retention)})
+	if err == nil && result == 1 {
 		return normalized, nil
 	}
 	if err != nil {
@@ -122,8 +129,8 @@ func createPhysicalPoolTx(ctx context.Context, tx DBTX, normalized physicalpool.
 	}
 	// Resolve namespace uniqueness separately from the pool-id uniqueness so
 	// callers never receive a provider constraint diagnostic.
-	var other string
-	if qErr := tx.QueryRow(ctx, `SELECT id FROM physical_pool.physical_pools WHERE storage_implementation=$1 AND storage_location=$2 AND storage_namespace=$3`, normalized.Identity.Compatibility.StorageImplementation, normalized.Identity.StorageLocation, normalized.Identity.StorageNamespace).Scan(&other); qErr == nil && other != string(normalized.ID) {
+	other, qErr := physicaldb.New(tx).GetPhysicalPoolByNamespace(ctx, physicaldb.GetPhysicalPoolByNamespaceParams{StorageImplementation: normalized.Identity.Compatibility.StorageImplementation, StorageLocation: normalized.Identity.StorageLocation, StorageNamespace: normalized.Identity.StorageNamespace})
+	if qErr == nil && other != string(normalized.ID) {
 		return physicalpool.PhysicalPool{}, safe(physicalpool.ErrPoolMismatch, physicalpool.DiagnosticPoolMismatch, "physical_pool_id")
 	}
 	return physicalpool.PhysicalPool{}, safe(physicalpool.ErrPoolMismatch, physicalpool.DiagnosticPoolMismatch, "physical_pool_id")
@@ -233,15 +240,16 @@ func recordOwnershipClaimTx(ctx context.Context, tx DBTX, claim physicalpool.Own
 	if err := claim.Validate(); err != nil {
 		return err
 	}
-	_, err := tx.Exec(ctx, `INSERT INTO physical_pool.namespace_ownership_claims(pool_id,compatibility_digest,evidence_digest,owner_id) VALUES($1,$2,$3,$4) ON CONFLICT(pool_id,evidence_digest) DO NOTHING`, string(claim.PoolID), claim.CompatibilityDigest, claim.EvidenceDigest, claim.OwnerID)
+	q := physicaldb.New(tx)
+	_, err := q.InsertOwnershipClaim(ctx, physicaldb.InsertOwnershipClaimParams{PoolID: string(claim.PoolID), CompatibilityDigest: claim.CompatibilityDigest, EvidenceDigest: claim.EvidenceDigest, OwnerID: claim.OwnerID})
 	if err != nil {
 		return repositoryError(err)
 	}
-	var owner, compatibility string
-	if err := tx.QueryRow(ctx, `SELECT owner_id,compatibility_digest FROM physical_pool.namespace_ownership_claims WHERE pool_id=$1 AND evidence_digest=$2`, string(claim.PoolID), claim.EvidenceDigest).Scan(&owner, &compatibility); err != nil {
+	stored, err := q.GetOwnershipClaim(ctx, physicaldb.GetOwnershipClaimParams{PoolID: string(claim.PoolID), EvidenceDigest: claim.EvidenceDigest})
+	if err != nil {
 		return repositoryError(err)
 	}
-	if owner != claim.OwnerID || compatibility != claim.CompatibilityDigest {
+	if stored.OwnerID != claim.OwnerID || stored.CompatibilityDigest != claim.CompatibilityDigest {
 		return physicalpool.ErrOwnershipConflict
 	}
 	return nil
@@ -300,7 +308,9 @@ func admitTx(ctx context.Context, tx DBTX, normalized physicalpool.PhysicalPool,
 		return physicalpool.PoolAdmission{}, safe(physicalpool.ErrPoolMismatch, physicalpool.DiagnosticPoolMismatch, "physical_pool_id")
 	}
 	var row compatibilityRow
-	qErr := tx.QueryRow(ctx, `SELECT compatibility_json,duckdb_runtime,ducklake_extension,catalog_format,storage_implementation,object_naming_contract,evidence_json,evidence_digest,compatibility_digest,conformance_version FROM physical_pool.physical_pool_admissions WHERE pool_id=$1 AND evidence_digest=$2`, string(normalized.ID), a.EvidenceDigest).Scan(&row.CompatibilityJSON, &row.DuckDBRuntime, &row.DuckLakeExtension, &row.CatalogFormat, &row.StorageImplementation, &row.ObjectNamingContract, &row.EvidenceJSON, &row.EvidenceDigest, &row.CompatibilityDigest, &row.ConformanceVersion)
+	q := physicaldb.New(tx)
+	admissionRow, qErr := q.GetAdmissionByEvidence(ctx, physicaldb.GetAdmissionByEvidenceParams{PoolID: string(normalized.ID), EvidenceDigest: a.EvidenceDigest})
+	row = compatibilityRow{CompatibilityJSON: admissionRow.CompatibilityJson, DuckDBRuntime: admissionRow.DuckdbRuntime, DuckLakeExtension: admissionRow.DucklakeExtension, CatalogFormat: admissionRow.CatalogFormat, StorageImplementation: admissionRow.StorageImplementation, ObjectNamingContract: admissionRow.ObjectNamingContract, EvidenceJSON: admissionRow.EvidenceJson, EvidenceDigest: admissionRow.EvidenceDigest, CompatibilityDigest: admissionRow.CompatibilityDigest, ConformanceVersion: admissionRow.ConformanceVersion}
 	if qErr == nil {
 		_, _, existing, pErr := parseAdmissionRow(row, normalized.ID)
 		if pErr != nil {
@@ -314,15 +324,16 @@ func admitTx(ctx context.Context, tx DBTX, normalized physicalpool.PhysicalPool,
 	if !errors.Is(qErr, pgx.ErrNoRows) {
 		return physicalpool.PoolAdmission{}, repositoryError(qErr)
 	}
-	result, err := tx.Exec(ctx, `INSERT INTO physical_pool.physical_pool_admissions(pool_id,compatibility_json,duckdb_runtime,ducklake_extension,catalog_format,storage_implementation,object_naming_contract,evidence_json,evidence_digest,compatibility_digest,conformance_version) VALUES($1,$2::jsonb,$3,$4,$5,$6,$7,$8::jsonb,$9,$10,$11) ON CONFLICT DO NOTHING`, string(a.PoolID), compatJSON, a.Compatibility.DuckDBRuntime, a.Compatibility.DuckLakeExtension, a.Compatibility.CatalogFormat, a.Compatibility.StorageImplementation, a.Compatibility.ObjectNamingContract, evidenceJSON, a.EvidenceDigest, a.CompatibilityDigest, a.ConformanceVersion)
-	if err == nil && result.RowsAffected() == 1 {
+	result, err := q.InsertAdmission(ctx, physicaldb.InsertAdmissionParams{PoolID: string(a.PoolID), CompatibilityJson: []byte(compatJSON), DuckdbRuntime: a.Compatibility.DuckDBRuntime, DucklakeExtension: a.Compatibility.DuckLakeExtension, CatalogFormat: a.Compatibility.CatalogFormat, StorageImplementation: a.Compatibility.StorageImplementation, ObjectNamingContract: a.Compatibility.ObjectNamingContract, EvidenceJson: []byte(evidenceJSON), EvidenceDigest: a.EvidenceDigest, CompatibilityDigest: a.CompatibilityDigest, ConformanceVersion: a.ConformanceVersion})
+	if err == nil && result == 1 {
 		return a, nil
 	}
 	if err != nil {
 		return physicalpool.PoolAdmission{}, repositoryError(err)
 	}
 	// A concurrent immutable insert may have won. Resolve it identically.
-	if retryErr := tx.QueryRow(ctx, `SELECT compatibility_json,duckdb_runtime,ducklake_extension,catalog_format,storage_implementation,object_naming_contract,evidence_json,evidence_digest,compatibility_digest,conformance_version FROM physical_pool.physical_pool_admissions WHERE pool_id=$1 AND evidence_digest=$2`, string(normalized.ID), a.EvidenceDigest).Scan(&row.CompatibilityJSON, &row.DuckDBRuntime, &row.DuckLakeExtension, &row.CatalogFormat, &row.StorageImplementation, &row.ObjectNamingContract, &row.EvidenceJSON, &row.EvidenceDigest, &row.CompatibilityDigest, &row.ConformanceVersion); retryErr == nil {
+	if retryRow, retryErr := q.GetAdmissionByEvidence(ctx, physicaldb.GetAdmissionByEvidenceParams{PoolID: string(normalized.ID), EvidenceDigest: a.EvidenceDigest}); retryErr == nil {
+		row = compatibilityRow{CompatibilityJSON: retryRow.CompatibilityJson, DuckDBRuntime: retryRow.DuckdbRuntime, DuckLakeExtension: retryRow.DucklakeExtension, CatalogFormat: retryRow.CatalogFormat, StorageImplementation: retryRow.StorageImplementation, ObjectNamingContract: retryRow.ObjectNamingContract, EvidenceJSON: retryRow.EvidenceJson, EvidenceDigest: retryRow.EvidenceDigest, CompatibilityDigest: retryRow.CompatibilityDigest, ConformanceVersion: retryRow.ConformanceVersion}
 		_, _, existing, pErr := parseAdmissionRow(row, normalized.ID)
 		if pErr != nil {
 			return physicalpool.PoolAdmission{}, pErr
@@ -361,7 +372,9 @@ func (r *Repository) LoadAdmissionContract(ctx context.Context, poolID physicalp
 		if dErr != nil {
 			return dErr
 		}
-		e = tx.QueryRow(ctx, `SELECT compatibility_json,duckdb_runtime,ducklake_extension,catalog_format,storage_implementation,object_naming_contract,evidence_json,evidence_digest,compatibility_digest,conformance_version FROM physical_pool.physical_pool_admissions WHERE pool_id=$1 AND compatibility_digest=$2 ORDER BY admitted_at DESC,evidence_digest DESC LIMIT 1`, string(poolID), digest).Scan(&row.CompatibilityJSON, &row.DuckDBRuntime, &row.DuckLakeExtension, &row.CatalogFormat, &row.StorageImplementation, &row.ObjectNamingContract, &row.EvidenceJSON, &row.EvidenceDigest, &row.CompatibilityDigest, &row.ConformanceVersion)
+		admissionRow, qErr := physicaldb.New(tx).GetAdmissionByCompatibility(ctx, physicaldb.GetAdmissionByCompatibilityParams{PoolID: string(poolID), CompatibilityDigest: digest})
+		e = qErr
+		row = compatibilityRow{CompatibilityJSON: admissionRow.CompatibilityJson, DuckDBRuntime: admissionRow.DuckdbRuntime, DuckLakeExtension: admissionRow.DucklakeExtension, CatalogFormat: admissionRow.CatalogFormat, StorageImplementation: admissionRow.StorageImplementation, ObjectNamingContract: admissionRow.ObjectNamingContract, EvidenceJSON: admissionRow.EvidenceJson, EvidenceDigest: admissionRow.EvidenceDigest, CompatibilityDigest: admissionRow.CompatibilityDigest, ConformanceVersion: admissionRow.ConformanceVersion}
 		if errors.Is(e, pgx.ErrNoRows) {
 			return safe(physicalpool.ErrCompatibilityMismatch, physicalpool.DiagnosticTupleMismatch, "compatibility")
 		}
@@ -388,11 +401,13 @@ func (r *Repository) LoadAdmissionContractByCompatibilityDigest(ctx context.Cont
 		return physicalpool.AdmissionContract{}, invalidRepo()
 	}
 	var encoded []byte
-	if err := r.db.QueryRow(ctx, `SELECT compatibility_json FROM physical_pool.physical_pool_admissions WHERE pool_id=$1 AND compatibility_digest=$2 ORDER BY admitted_at DESC,evidence_digest DESC LIMIT 1`, string(poolID), digest).Scan(&encoded); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
+	var qErr error
+	encoded, qErr = physicaldb.New(r.db).GetCompatibilityJSONByDigest(ctx, physicaldb.GetCompatibilityJSONByDigestParams{PoolID: string(poolID), CompatibilityDigest: digest})
+	if qErr != nil {
+		if errors.Is(qErr, pgx.ErrNoRows) {
 			return physicalpool.AdmissionContract{}, safe(physicalpool.ErrCompatibilityMismatch, physicalpool.DiagnosticTupleMismatch, "compatibility")
 		}
-		return physicalpool.AdmissionContract{}, repositoryError(err)
+		return physicalpool.AdmissionContract{}, repositoryError(qErr)
 	}
 	var tuple physicalpool.Compatibility
 	if err := strictjson.Decode(encoded, &tuple); err != nil {
@@ -415,7 +430,9 @@ func (r *Repository) LoadAdmissionByEvidence(ctx context.Context, poolID physica
 	var out physicalpool.AdmissionContract
 	err := r.readTx(ctx, func(tx DBTX) error {
 		var row compatibilityRow
-		e := tx.QueryRow(ctx, `SELECT compatibility_json,duckdb_runtime,ducklake_extension,catalog_format,storage_implementation,object_naming_contract,evidence_json,evidence_digest,compatibility_digest,conformance_version FROM physical_pool.physical_pool_admissions WHERE pool_id=$1 AND evidence_digest=$2 LIMIT 1`, string(poolID), digest).Scan(&row.CompatibilityJSON, &row.DuckDBRuntime, &row.DuckLakeExtension, &row.CatalogFormat, &row.StorageImplementation, &row.ObjectNamingContract, &row.EvidenceJSON, &row.EvidenceDigest, &row.CompatibilityDigest, &row.ConformanceVersion)
+		admissionRow, qErr := physicaldb.New(tx).GetAdmissionByEvidence(ctx, physicaldb.GetAdmissionByEvidenceParams{PoolID: string(poolID), EvidenceDigest: digest})
+		e := qErr
+		row = compatibilityRow{CompatibilityJSON: admissionRow.CompatibilityJson, DuckDBRuntime: admissionRow.DuckdbRuntime, DuckLakeExtension: admissionRow.DucklakeExtension, CatalogFormat: admissionRow.CatalogFormat, StorageImplementation: admissionRow.StorageImplementation, ObjectNamingContract: admissionRow.ObjectNamingContract, EvidenceJSON: admissionRow.EvidenceJson, EvidenceDigest: admissionRow.EvidenceDigest, CompatibilityDigest: admissionRow.CompatibilityDigest, ConformanceVersion: admissionRow.ConformanceVersion}
 		if errors.Is(e, pgx.ErrNoRows) {
 			return safe(physicalpool.ErrEvidenceInvalid, physicalpool.DiagnosticMissingField, "evidence_digest")
 		}
@@ -453,11 +470,11 @@ type compatibilityRow struct {
 }
 
 func loadStoredPoolTx(ctx context.Context, tx DBTX, id physicalpool.PoolID, fallback physicalpool.Compatibility) (physicalpool.PhysicalPool, error) {
-	var row poolRow
-	err := tx.QueryRow(ctx, `SELECT id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,region,tenant,isolation_boundary,encryption_key_ref,credential_reference,retention_authority,orphan_grace_period_seconds,reader_grace_period_seconds,build_grace_period_seconds,retention_policy FROM physical_pool.physical_pools WHERE id=$1`, string(id)).Scan(&row.ID, &row.IdentityDigest, &row.StorageLocation, &row.StorageNamespace, &row.StorageImplementation, &row.ObjectNamingContract, &row.Region, &row.Tenant, &row.IsolationBoundary, &row.EncryptionKeyRef, &row.CredentialReference, &row.RetentionAuthority, &row.OrphanGracePeriodSeconds, &row.ReaderGracePeriodSeconds, &row.BuildGracePeriodSeconds, &row.RetentionPolicy)
+	stored, err := physicaldb.New(tx).GetPhysicalPool(ctx, string(id))
 	if err != nil {
 		return physicalpool.PhysicalPool{}, err
 	}
+	row := poolRow{ID: stored.ID, IdentityDigest: stored.IdentityDigest, StorageLocation: stored.StorageLocation, StorageNamespace: stored.StorageNamespace, StorageImplementation: stored.StorageImplementation, ObjectNamingContract: stored.ObjectNamingContract, Region: stored.Region, Tenant: stored.Tenant, IsolationBoundary: stored.IsolationBoundary, EncryptionKeyRef: stored.EncryptionKeyRef, CredentialReference: stored.CredentialReference, RetentionAuthority: stored.RetentionAuthority, OrphanGracePeriodSeconds: stored.OrphanGracePeriodSeconds, ReaderGracePeriodSeconds: stored.ReaderGracePeriodSeconds, BuildGracePeriodSeconds: stored.BuildGracePeriodSeconds, RetentionPolicy: stored.RetentionPolicy}
 	return row.pool(fallback)
 }
 
@@ -630,7 +647,8 @@ func (r *Repository) AcquireNamespaceDeletionLease(ctx context.Context, ownerID 
 	}
 	var token string
 	err = r.withTx(ctx, func(tx DBTX) error {
-		e := tx.QueryRow(ctx, `INSERT INTO physical_pool.namespace_deletion_leases(singleton,owner_id,token,expires_at) VALUES(true,$1,$2::uuid,clock_timestamp()+($3::double precision * interval '1 second')) ON CONFLICT(singleton) DO UPDATE SET owner_id=EXCLUDED.owner_id,token=EXCLUDED.token,expires_at=EXCLUDED.expires_at,acquired_at=clock_timestamp() WHERE physical_pool.namespace_deletion_leases.expires_at<=clock_timestamp() RETURNING token`, ownerID, u.String(), ttl.Seconds()).Scan(&token)
+		var e error
+		token, e = physicaldb.New(tx).AcquireDeletionLease(ctx, physicaldb.AcquireDeletionLeaseParams{OwnerID: ownerID, Token: pgtype.UUID{Bytes: u, Valid: true}, TtlSeconds: ttl.Seconds()})
 		if errors.Is(e, pgx.ErrNoRows) {
 			return physicalpool.ErrDeletionLeaseConflict
 		}
@@ -646,8 +664,12 @@ func (r *Repository) VerifyNamespaceDeletionLease(ctx context.Context, ownerID, 
 	if r == nil || r.db == nil || strings.TrimSpace(ownerID) == "" || strings.TrimSpace(token) == "" {
 		return physicalpool.ErrDeletionLeaseConflict
 	}
-	var valid bool
-	err := r.db.QueryRow(ctx, `SELECT owner_id=$1 AND token=$2::uuid AND expires_at>clock_timestamp() FROM physical_pool.namespace_deletion_leases WHERE singleton=true`, ownerID, token).Scan(&valid)
+	u, parseErr := uuid.Parse(token)
+	if parseErr != nil {
+		return physicalpool.ErrDeletionLeaseConflict
+	}
+	validResult, err := physicaldb.New(r.db).VerifyDeletionLease(ctx, physicaldb.VerifyDeletionLeaseParams{OwnerID: ownerID, Token: pgtype.UUID{Bytes: u, Valid: true}})
+	valid := validResult.Bool && validResult.Valid
 	if errors.Is(err, pgx.ErrNoRows) || err != nil || !valid {
 		return physicalpool.ErrDeletionLeaseConflict
 	}
@@ -661,20 +683,21 @@ func (r *Repository) ReleaseNamespaceDeletionLease(ctx context.Context, ownerID,
 		// Lock the singleton row while checking the owner. The DELETE repeats
 		// the expiry predicate so a lease expiring between these statements is
 		// never acknowledged as released.
-		var owner, held string
-		var active bool
-		err := tx.QueryRow(ctx, `SELECT owner_id,token::text,expires_at>clock_timestamp() FROM physical_pool.namespace_deletion_leases WHERE singleton=true FOR UPDATE`).Scan(&owner, &held, &active)
+		lease, err := physicaldb.New(tx).GetDeletionLeaseForUpdate(ctx)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil
 		}
 		if err != nil {
 			return repositoryError(err)
 		}
-		if owner != ownerID || held != token || !active {
+		if lease.OwnerID != ownerID || lease.Token != token || !lease.Active {
 			return physicalpool.ErrDeletionLeaseConflict
 		}
-		var deleted bool
-		err = tx.QueryRow(ctx, `DELETE FROM physical_pool.namespace_deletion_leases WHERE singleton=true AND owner_id=$1 AND token=$2::uuid AND expires_at>clock_timestamp() RETURNING true`, ownerID, token).Scan(&deleted)
+		u, parseErr := uuid.Parse(token)
+		if parseErr != nil {
+			return physicalpool.ErrDeletionLeaseConflict
+		}
+		deleted, err := physicaldb.New(tx).DeleteDeletionLease(ctx, physicaldb.DeleteDeletionLeaseParams{OwnerID: ownerID, Token: pgtype.UUID{Bytes: u, Valid: true}})
 		if errors.Is(err, pgx.ErrNoRows) || !deleted {
 			return physicalpool.ErrDeletionLeaseConflict
 		}

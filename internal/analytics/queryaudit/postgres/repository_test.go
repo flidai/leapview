@@ -14,8 +14,11 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var _ Tx = (pgx.Tx)(nil)
 
 func queryEventDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -26,8 +29,19 @@ func queryEventDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
-	if err := ApplySchema(t.Context(), p); err != nil {
+	tx, err := p.Begin(t.Context())
+	if err != nil {
 		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := any(p).(Tx); ok {
+		t.Fatal("pgx pool must not satisfy caller-owned Tx")
 	}
 	return p
 }
@@ -237,7 +251,15 @@ func TestRepositoryLeastPrivilegeRoles(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
-	if err := ApplySchema(t.Context(), admin); err != nil {
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	var publicSchema, publicTable bool

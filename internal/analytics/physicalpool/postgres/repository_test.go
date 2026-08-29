@@ -11,8 +11,11 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var _ Tx = (pgx.Tx)(nil)
 
 func testCompatibility() physicalpool.Compatibility {
 	return physicalpool.Compatibility{DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:0.3.0", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
@@ -65,6 +68,9 @@ func testDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
+	if _, ok := any(p).(Tx); ok {
+		t.Fatal("pgx pool must not satisfy caller-owned Tx")
+	}
 	tx, err := p.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)

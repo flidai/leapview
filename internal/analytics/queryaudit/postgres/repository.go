@@ -15,11 +15,13 @@ import (
 	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	auditdb "github.com/flidai/leapview/internal/analytics/queryaudit/postgres/internal/db"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 type DBTX interface {
@@ -28,8 +30,12 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// Tx is the strict caller-owned PostgreSQL transaction surface. Pools satisfy
+// DBTX for standalone operations but intentionally cannot satisfy Tx.
 type Tx interface {
-	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	DBTX
+	Commit(context.Context) error
+	Rollback(context.Context) error
 }
 
 var (
@@ -69,6 +75,8 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	// sqlc-exception: schema-ddl. schema.sql is the capability-owned DDL,
+	// triggers, and grants executed by migration runners.
 	_, err := tx.Exec(ctx, schemaSQL)
 	return err
 }
@@ -93,33 +101,51 @@ type storedEvent struct {
 	CreatedAt                                                                      time.Time
 }
 
-const selectEvent = `SELECT event_id,retry_identity,project_id,principal_id,surface,operation,query_kind,model_id,target,object_type,object_id,request_id,correlation_id,status,duration_ms,queue_wait_ms,planning_ms,connection_wait_ms,database_ms,execution_ms,execution_state,rows_returned,bytes_estimate,error,sql_text,plan_text,query_json,created_at FROM audit.query_event`
-
-type rowScanner interface{ Scan(...any) error }
-
-func scanStored(row rowScanner) (storedEvent, error) {
-	var event storedEvent
-	err := row.Scan(&event.ID, &event.RetryIdentity, &event.ProjectID, &event.PrincipalID, &event.Surface, &event.Operation, &event.QueryKind, &event.ModelID, &event.Target, &event.ObjectType, &event.ObjectID, &event.RequestID, &event.CorrelationID, &event.Status, &event.DurationMS, &event.QueueWaitMS, &event.PlanningMS, &event.ConnectionWaitMS, &event.DatabaseMS, &event.ExecutionMS, &event.ExecutionState, &event.RowsReturned, &event.BytesEstimate, &event.Error, &event.SQL, &event.PlanText, &event.QueryJSON, &event.CreatedAt)
-	if err == nil {
-		var document any
-		if decodeErr := json.Unmarshal(event.QueryJSON, &document); decodeErr != nil {
-			return storedEvent{}, fmt.Errorf("%w: persisted query_json: %v", ErrInvalid, decodeErr)
-		}
-		canonical, marshalErr := json.Marshal(document)
-		if marshalErr != nil {
-			return storedEvent{}, fmt.Errorf("%w: persisted query_json: %v", ErrInvalid, marshalErr)
-		}
-		event.QueryJSON = canonical
+func storedFromValues(id, retry, project, principal, surface, operation, kind, model, target, objectType, objectID, requestID, correlation, status string, duration, queueWait, planning, connectionWait, database, execution int64, executionState string, rowsReturned, bytesEstimate int64, eventErr, sqlText, planText, queryJSON string, createdAt pgtype.Timestamptz) (storedEvent, error) {
+	parsedID, err := uuid.Parse(id)
+	if err != nil {
+		return storedEvent{}, err
 	}
-	return event, err
+	if !createdAt.Valid {
+		return storedEvent{}, fmt.Errorf("%w: persisted created_at is null", ErrInvalid)
+	}
+	var document any
+	if decodeErr := json.Unmarshal([]byte(queryJSON), &document); decodeErr != nil {
+		return storedEvent{}, fmt.Errorf("%w: persisted query_json: %v", ErrInvalid, decodeErr)
+	}
+	canonical, marshalErr := json.Marshal(document)
+	if marshalErr != nil {
+		return storedEvent{}, fmt.Errorf("%w: persisted query_json: %v", ErrInvalid, marshalErr)
+	}
+	return storedEvent{ID: parsedID, RetryIdentity: retry, ProjectID: project, PrincipalID: principal, Surface: surface, Operation: operation, QueryKind: kind, ModelID: model, Target: target, ObjectType: objectType, ObjectID: objectID, RequestID: requestID, CorrelationID: correlation, Status: status, DurationMS: duration, QueueWaitMS: queueWait, PlanningMS: planning, ConnectionWaitMS: connectionWait, DatabaseMS: database, ExecutionMS: execution, ExecutionState: executionState, RowsReturned: rowsReturned, BytesEstimate: bytesEstimate, Error: eventErr, SQL: sqlText, PlanText: planText, QueryJSON: canonical, CreatedAt: createdAt.Time.UTC()}, nil
+}
+
+func storedFromGet(row auditdb.GetQueryEventRow) (storedEvent, error) {
+	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
+}
+
+func storedFromFind(row auditdb.FindQueryEventByIdentityRow) (storedEvent, error) {
+	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
+}
+
+func storedFromList(row auditdb.ListQueryEventsRow) (storedEvent, error) {
+	return storedFromValues(row.EventID, row.RetryIdentity, row.ProjectID, row.PrincipalID, row.Surface, row.Operation, row.QueryKind, row.ModelID, row.Target, row.ObjectType, row.ObjectID, row.RequestID, row.CorrelationID, row.Status, row.DurationMs, row.QueueWaitMs, row.PlanningMs, row.ConnectionWaitMs, row.DatabaseMs, row.ExecutionMs, row.ExecutionState, row.RowsReturned, row.BytesEstimate, row.Error, row.SqlText, row.PlanText, row.QueryJson, row.CreatedAt)
 }
 
 func (r *Repository) getStored(ctx context.Context, id uuid.UUID) (storedEvent, error) {
-	return scanStored(r.db.QueryRow(ctx, selectEvent+` WHERE event_id = $1`, id))
+	row, err := auditdb.New(r.db).GetQueryEvent(ctx, pgtype.UUID{Bytes: id, Valid: true})
+	if err != nil {
+		return storedEvent{}, err
+	}
+	return storedFromGet(row)
 }
 
 func (r *Repository) findStored(ctx context.Context, id uuid.UUID, retry string) (storedEvent, error) {
-	stored, err := scanStored(r.db.QueryRow(ctx, selectEvent+` WHERE event_id = $1 OR retry_identity = $2 ORDER BY (event_id = $1) DESC LIMIT 1`, id, retry))
+	row, err := auditdb.New(r.db).FindQueryEventByIdentity(ctx, auditdb.FindQueryEventByIdentityParams{EventID: pgtype.UUID{Bytes: id, Valid: true}, RetryIdentity: retry})
+	stored, convErr := storedFromFind(row)
+	if err == nil {
+		err = convErr
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return storedEvent{}, fmt.Errorf("%w: conflicting insert was not visible", ErrConflict)
 	}
@@ -137,16 +163,14 @@ func (r *Repository) RecordQueryEvent(ctx context.Context, input queryaudit.Even
 	if err != nil {
 		return err
 	}
-	var returned uuid.UUID
-	err = r.db.QueryRow(ctx, `
-INSERT INTO audit.query_event (
- event_id,retry_identity,project_id,principal_id,surface,operation,query_kind,model_id,target,object_type,object_id,request_id,correlation_id,status,
- duration_ms,queue_wait_ms,planning_ms,connection_wait_ms,database_ms,execution_ms,execution_state,rows_returned,bytes_estimate,error,sql_text,plan_text,query_json)
-VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27::jsonb)
-ON CONFLICT DO NOTHING RETURNING event_id`,
-		eventID, retry, normalized.ProjectID.String(), normalized.PrincipalID, normalized.Surface, normalized.Operation, normalized.QueryKind, normalized.ModelID, normalized.Target, normalized.ObjectType, normalized.ObjectID, normalized.RequestID, normalized.CorrelationID, normalized.Status,
-		normalized.DurationMS, normalized.QueueWaitMS, normalized.PlanningMS, normalized.ConnectionWaitMS, normalized.DatabaseMS, normalized.ExecutionMS, normalized.ExecutionState, normalized.RowsReturned, normalized.BytesEstimate, normalized.Error, normalized.SQL, normalized.PlanText, normalized.QueryJSON).Scan(&returned)
+	returnedText, err := auditdb.New(r.db).InsertQueryEvent(ctx, auditdb.InsertQueryEventParams{
+		EventID: pgtype.UUID{Bytes: eventID, Valid: true}, RetryIdentity: retry, ProjectID: normalized.ProjectID.String(), PrincipalID: normalized.PrincipalID, Surface: normalized.Surface, Operation: normalized.Operation, QueryKind: normalized.QueryKind, ModelID: normalized.ModelID, Target: normalized.Target, ObjectType: normalized.ObjectType, ObjectID: normalized.ObjectID, RequestID: normalized.RequestID, CorrelationID: normalized.CorrelationID, Status: normalized.Status,
+		DurationMs: normalized.DurationMS, QueueWaitMs: normalized.QueueWaitMS, PlanningMs: normalized.PlanningMS, ConnectionWaitMs: normalized.ConnectionWaitMS, DatabaseMs: normalized.DatabaseMS, ExecutionMs: normalized.ExecutionMS, ExecutionState: normalized.ExecutionState, RowsReturned: int64(normalized.RowsReturned), BytesEstimate: normalized.BytesEstimate, Error: normalized.Error, SqlText: normalized.SQL, PlanText: normalized.PlanText, QueryJson: []byte(normalized.QueryJSON),
+	})
 	if err == nil {
+		if returnedText != eventID.String() {
+			return fmt.Errorf("%w: inserted event identity mismatch", ErrConflict)
+		}
 		_, err = r.getStored(ctx, eventID)
 		return err
 	}
@@ -225,77 +249,57 @@ func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filt
 	} else if (filter.CursorTime == "") != (filter.CursorID == "") {
 		return nil, fmt.Errorf("%w: cursor time and cursor id must be supplied together", ErrInvalid)
 	}
-	where := make([]string, 0, 16)
-	args := make([]any, 0, 16)
-	arg := func(value any) string { args = append(args, value); return fmt.Sprintf("$%d", len(args)) }
-	if values := projectValues(filter); len(values) > 0 {
-		where = append(where, "project_id = ANY("+arg(values)+"::text[])")
-	}
-	if values := stringValues(filter.PrincipalID, filter.PrincipalIDs); len(values) > 0 {
-		where = append(where, "principal_id = ANY("+arg(values)+"::text[])")
-	}
-	if values := stringValues(filter.Surface, filter.Surfaces); len(values) > 0 {
-		where = append(where, "surface = ANY("+arg(values)+"::text[])")
-	}
-	if value := strings.TrimSpace(filter.Operation); value != "" {
-		where = append(where, "operation = "+arg(value))
-	}
-	if values := stringValues(filter.QueryKind, filter.QueryKinds); len(values) > 0 {
-		where = append(where, "query_kind = ANY("+arg(values)+"::text[])")
-	}
-	if value := strings.TrimSpace(filter.ModelID); value != "" {
-		where = append(where, "model_id = "+arg(value))
-	}
-	if value := strings.TrimSpace(filter.Target); value != "" {
-		where = append(where, "target = "+arg(value))
-	}
-	if values := stringValues(filter.Status, filter.Statuses); len(values) > 0 {
-		where = append(where, "status = ANY("+arg(values)+"::text[])")
-	}
-	if value := strings.TrimSpace(filter.Search); value != "" {
-		searchArg := arg(value)
-		where = append(where, "search_document @@ websearch_to_tsquery('simple', "+searchArg+")")
-	}
+	projects := projectValues(filter)
+	principals := stringValues(filter.PrincipalID, filter.PrincipalIDs)
+	surfaces := stringValues(filter.Surface, filter.Surfaces)
+	operations := strings.TrimSpace(filter.Operation)
+	kinds := stringValues(filter.QueryKind, filter.QueryKinds)
+	model := strings.TrimSpace(filter.ModelID)
+	target := strings.TrimSpace(filter.Target)
+	statuses := stringValues(filter.Status, filter.Statuses)
+	search := strings.TrimSpace(filter.Search)
+	var fromTime, toTime, cursorTime pgtype.Timestamptz
 	if value := strings.TrimSpace(filter.From); value != "" {
 		parsed, parseErr := parseTime(value)
 		if parseErr != nil {
 			return nil, fmt.Errorf("%w: from time: %v", ErrInvalid, parseErr)
 		}
-		where = append(where, "created_at >= "+arg(parsed))
+		fromTime = pgtype.Timestamptz{Time: parsed, Valid: true}
 	}
 	if value := strings.TrimSpace(filter.To); value != "" {
 		parsed, parseErr := parseTime(value)
 		if parseErr != nil {
 			return nil, fmt.Errorf("%w: to time: %v", ErrInvalid, parseErr)
 		}
-		where = append(where, "created_at <= "+arg(parsed))
+		toTime = pgtype.Timestamptz{Time: parsed, Valid: true}
 	}
-	if cursorTime := strings.TrimSpace(filter.CursorTime); cursorTime != "" {
-		parsed, parseErr := parseTime(cursorTime)
+	var cursorID pgtype.UUID
+	if value := strings.TrimSpace(filter.CursorTime); value != "" {
+		parsed, parseErr := parseTime(value)
 		if parseErr != nil {
 			return nil, fmt.Errorf("%w: cursor time: %v", ErrInvalid, parseErr)
 		}
-		cursorID, parseErr := parseUUID(filter.CursorID)
+		cursorTime = pgtype.Timestamptz{Time: parsed, Valid: true}
+		id, parseErr := parseUUID(filter.CursorID)
 		if parseErr != nil {
 			return nil, fmt.Errorf("%w: cursor id: %v", ErrInvalid, parseErr)
 		}
-		timeArg := arg(parsed)
-		idArg := arg(cursorID)
-		where = append(where, "(created_at < "+timeArg+" OR (created_at = "+timeArg+" AND event_id < "+idArg+"))")
+		cursorID = pgtype.UUID{Bytes: id, Valid: true}
 	}
-	query := selectEvent
-	if len(where) > 0 {
-		query += " WHERE " + strings.Join(where, " AND ")
-	}
-	query += " ORDER BY created_at DESC,event_id DESC LIMIT " + arg(limit)
-	rows, err := r.db.Query(ctx, query, args...)
+	rows, err := auditdb.New(r.db).ListQueryEvents(ctx, auditdb.ListQueryEventsParams{
+		HasProject: len(projects) > 0, ProjectIds: projects, HasPrincipal: len(principals) > 0, PrincipalIds: principals,
+		HasSurface: len(surfaces) > 0, Surfaces: surfaces, HasOperation: operations != "", Operation: operations,
+		HasQueryKind: len(kinds) > 0, QueryKinds: kinds, HasModel: model != "", ModelID: model, HasTarget: target != "", Target: target,
+		HasStatus: len(statuses) > 0, Statuses: statuses, HasSearch: search != "", Search: search,
+		HasFrom: fromTime.Valid, FromTime: fromTime, HasTo: toTime.Valid, ToTime: toTime,
+		HasCursor: cursorTime.Valid, CursorTime: cursorTime, CursorID: cursorID, PageSize: int32(limit),
+	})
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	events := make([]queryaudit.Event, 0, limit)
-	for rows.Next() {
-		stored, scanErr := scanStored(rows)
+	for _, row := range rows {
+		stored, scanErr := storedFromList(row)
 		if scanErr != nil {
 			return nil, scanErr
 		}
@@ -304,9 +308,6 @@ func (r *Repository) ListQueryEvents(ctx context.Context, filter queryaudit.Filt
 			return nil, convertErr
 		}
 		events = append(events, event)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 	return events, nil
 }
@@ -318,8 +319,8 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	column, ok := filterColumn(strings.TrimSpace(field))
-	if !ok {
+	field = strings.TrimSpace(field)
+	if _, ok := filterColumn(field); !ok {
 		return nil, fmt.Errorf("%w: unsupported query event filter option field %q", ErrInvalid, field)
 	}
 	if len(search) > MaxSearchBytes || !utf8.ValidString(search) {
@@ -331,21 +332,55 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 	if limit > MaxPageSize {
 		limit = MaxPageSize
 	}
-	rows, err := r.db.Query(ctx, `SELECT `+column+` AS value,count(*) AS count FROM audit.query_event WHERE `+column+` <> '' AND ($1 = '' OR `+column+` ILIKE '%' || $1 || '%') GROUP BY `+column+` ORDER BY count DESC,value ASC LIMIT $2`, strings.TrimSpace(search), limit)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 	options := make([]queryaudit.FilterOption, 0, limit)
-	for rows.Next() {
-		var value string
-		var count int64
-		if err := rows.Scan(&value, &count); err != nil {
-			return nil, err
-		}
+	search = strings.TrimSpace(search)
+	pageSize := int32(limit)
+	appendOption := func(value string, count int64) {
 		options = append(options, queryaudit.FilterOption{Value: value, Count: int(count)})
 	}
-	return options, rows.Err()
+	switch field {
+	case "project":
+		rows, err := auditdb.New(r.db).ListQueryEventFilterOptions(ctx, auditdb.ListQueryEventFilterOptionsParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "principal":
+		rows, err := auditdb.New(r.db).ListPrincipalFilterOptions(ctx, auditdb.ListPrincipalFilterOptionsParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "surface":
+		rows, err := auditdb.New(r.db).ListSurfaceFilterOptions(ctx, auditdb.ListSurfaceFilterOptionsParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "kind":
+		rows, err := auditdb.New(r.db).ListKindFilterOptions(ctx, auditdb.ListKindFilterOptionsParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	case "status":
+		rows, err := auditdb.New(r.db).ListStatusFilterOptions(ctx, auditdb.ListStatusFilterOptionsParams{Search: search, PageSize: pageSize})
+		if err != nil {
+			return nil, err
+		}
+		for _, row := range rows {
+			appendOption(row.Value, row.Count)
+		}
+	}
+	return options, nil
 }
 
 func toEvent(stored storedEvent) (queryaudit.Event, error) {

@@ -247,6 +247,30 @@ sql:
         emit_empty_slices: true
         omit_unused_structs: true
 
+  - engine: "postgresql"
+    queries: "internal/analytics/physicalpool/postgres/queries"
+    schema: "internal/analytics/physicalpool/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/physicalpool/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/analytics/queryaudit/postgres/queries"
+    schema: "internal/analytics/queryaudit/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/queryaudit/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
   - engine: "sqlite"
     queries:
       - "internal/dashboard/publication/sqlite/queries"
