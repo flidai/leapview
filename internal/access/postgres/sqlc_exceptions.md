@@ -21,22 +21,6 @@ but must never replace or generate it.
 - `access_audit.go`: filtered audit listing has optional predicates and a
   cursor tuple.  It is kept as one query so ordering and cursor bounds cannot
   drift; canonicalization and aggregate sequencing remain in Go.
-- `access_core.go`: password/token/session creation and verification include
-  secret hashing, HMAC fingerprints, database-clock expiry checks, and
-  revocation cascades.  Their writes are deliberately grouped in caller-owned
-  transactions.  Membership and identity upserts use guarded `EXISTS`/
-  `NOT EXISTS` statements whose atomicity is part of the authorization
-  boundary.  Dynamic group filters and security predicates remain fixed in
-  hand-authored SQL.
-- `access_extended.go`: disabling/revoking a principal updates several
-  append-only tables in one transaction; avatar deduplication and preference
-  replacement similarly require multi-write orchestration.  Keep the guarded
-  statements together with their domain validation.
-- `authoring_auth.go`: device/authoring session issuance, refresh rotation,
-  and desktop token renewal combine database-clock reads, `FOR UPDATE` locks,
-  guarded transitions, and credential hashing.  Splitting these into
-  generated calls would weaken replay/fencing semantics, so only their leaf
-  reads may move in a later slice.
 - `scim.go`: SCIM reconciliation intentionally loops over principals/groups,
   computes the desired membership set in Go, and applies revocations and
   inserts in one transaction.  Dynamic filters and the `ANY(uuid[])` member
@@ -45,23 +29,23 @@ but must never replace or generate it.
   computes the digest in Go, and writes immutable rows plus grants/policies in
   one transaction.  The transaction wrapper and conflict/error mapping stay
   handwritten.
-- `instance_initialization.go`: initialization is a one-time, database-clock
-  guarded marker used during process bootstrap; the surrounding transaction
-  and idempotency handling remain in Go.
-
 ## Generated leaves
 
-`queries/oauth.sql` and `queries/principal.sql` contain the stable OAuth
-client/session/assertion leaves and principal reads.  `internal/db/*.go` is
-generated with sqlc v1.30.0 and `sql_package: pgx/v5`; `postgres_store.go` and
-`access_core.go` retain transaction ownership, fosite replay/error mapping,
-secret handling, and domain conversion around those methods.
+`queries/oauth.sql`, `queries/principal.sql`, `queries/core_ops.sql`,
+`queries/extended_ops.sql`, and `queries/authoring_ops.sql` contain the stable
+OAuth, principal, core access, extended access, device authorization,
+authoring credential, and instance-clock leaves. `internal/db/*.go` is
+generated with sqlc v1.30.0 and `sql_package: pgx/v5`. The repository Go files
+retain transaction ownership, fosite and authoring replay/error mapping,
+secret handling, audit orchestration, state-machine checks, and domain
+conversion around those generated methods.
 
 ## Coverage
 
 The PostgreSQL 18 integration suites in `internal/access/postgres/*_test.go`
-exercise the principal reads and their revocation/clock invariants.  OAuth
-replay, rotation, invalidation, and transaction behavior are covered by
-`internal/access/http/mcpoauth/*_test.go`.  These tests intentionally use
-direct admin SQL for schema/permission and invariant assertions; that test SQL
-is not production repository code.
+exercise principal, authorization, session, device, credential, replay,
+revocation, and database-clock invariants. OAuth replay, rotation,
+invalidation, and transaction behavior are covered by
+`internal/access/http/mcpoauth/*_test.go`. These tests intentionally use direct
+admin SQL for schema/permission and invariant assertions; that test SQL is not
+production repository code.

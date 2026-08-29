@@ -202,10 +202,6 @@ func formatTimePtr(v *time.Time) string {
 	return formatTime(*v)
 }
 
-func principalSelect() string {
-	return `SELECT id::text, principal_type, status, COALESCE(email,''), display_name, disabled_at, blocked_at, last_seen_at, created_at, updated_at FROM access.principal`
-}
-
 func (r *Repository) PrincipalByID(ctx context.Context, id string) (access.Principal, error) {
 	db, err := r.requireDB()
 	if err != nil {

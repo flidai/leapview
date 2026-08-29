@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record access.DeviceAuthorization) error {
@@ -30,7 +32,10 @@ func (r *Repository) CreateDeviceAuthorization(ctx context.Context, record acces
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `WITH db_now AS (SELECT clock_timestamp() AS ts) INSERT INTO access.device_authorization(id,client_id,device_code_hash,user_code_hash,target_id,project_id,capabilities,status,expires_at,created_at,poll_interval_seconds) SELECT $1,$2,$3,$4,$5,$6,$7::jsonb,$8,db_now.ts+$9::interval,db_now.ts,$10 FROM db_now`, record.ID, record.ClientID, record.DeviceCodeHash, record.UserCodeHash, record.Scope.TargetID, record.Scope.ProjectID.String(), caps, record.Status, ttl.String(), int(record.PollInterval/time.Second)); err != nil {
+	if err = accessdb.New(tx).InsertDeviceAuthorization(ctx, accessdb.InsertDeviceAuthorizationParams{ID: record.ID, ClientID: record.ClientID,
+		DeviceCodeHash: record.DeviceCodeHash, UserCodeHash: record.UserCodeHash, TargetID: record.Scope.TargetID,
+		ProjectID: record.Scope.ProjectID.String(), Capabilities: caps, Status: string(record.Status), Ttl: pgInterval(ttl),
+		PollIntervalSeconds: int32(record.PollInterval / time.Second)}); err != nil {
 		return err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
@@ -48,7 +53,11 @@ func (r *Repository) DeviceAuthorizationByUserCodeHash(ctx context.Context, hash
 	if err != nil {
 		return access.DeviceAuthorization{}, err
 	}
-	return scanDeviceAuthorization(db.QueryRow(ctx, `SELECT id,client_id,device_code_hash,user_code_hash,target_id,project_id,capabilities::text,status,principal_id::text,expires_at,poll_interval_seconds,last_polled_at,created_at,approved_at,denied_at,consumed_at FROM access.device_authorization WHERE user_code_hash=$1`, strings.TrimSpace(hash)))
+	row, err := accessdb.New(db).GetDeviceAuthorizationByUserCodeHash(ctx, strings.TrimSpace(hash))
+	if err != nil {
+		return access.DeviceAuthorization{}, err
+	}
+	return deviceAuthorizationFromGenerated(row)
 }
 
 func (r *Repository) ApproveDeviceAuthorization(ctx context.Context, id, principalID string, now time.Time) error {
@@ -69,13 +78,18 @@ func (r *Repository) decideDeviceAuthorization(ctx context.Context, id, principa
 		return err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	status := "denied"
-	column := "denied_at"
-	if approve {
-		status, column = "approved", "approved_at"
+	principalUUID, err := pgUUID(pid)
+	if err != nil {
+		return err
 	}
-	q := fmt.Sprintf(`UPDATE access.device_authorization SET status='%s',principal_id=$2::uuid,%s=clock_timestamp() WHERE id=$1 AND status='pending' AND expires_at>clock_timestamp()`, status, column)
-	tag, err := tx.Exec(ctx, q, id, pid)
+	var tag pgconnCommandTag
+	if approve {
+		result, qerr := accessdb.New(tx).ApproveDeviceAuthorization(ctx, accessdb.ApproveDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
+		tag, err = result, qerr
+	} else {
+		result, qerr := accessdb.New(tx).DenyDeviceAuthorization(ctx, accessdb.DenyDeviceAuthorizationParams{ID: id, PrincipalID: principalUUID})
+		tag, err = result, qerr
+	}
 	if err != nil {
 		return err
 	}
@@ -99,7 +113,11 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	var record access.DeviceAuthorization
-	record, err = scanDeviceAuthorization(tx.QueryRow(ctx, `SELECT id,client_id,device_code_hash,user_code_hash,target_id,project_id,capabilities::text,status,principal_id::text,expires_at,poll_interval_seconds,last_polled_at,created_at,approved_at,denied_at,consumed_at FROM access.device_authorization WHERE device_code_hash=$1 FOR UPDATE`, strings.TrimSpace(issue.DeviceCodeHash)))
+	generatedRecord, qerr := accessdb.New(tx).LockDeviceAuthorizationByDeviceCodeHash(ctx, strings.TrimSpace(issue.DeviceCodeHash))
+	if qerr == nil {
+		record, qerr = deviceAuthorizationFromGenerated(generatedRecord)
+	}
+	err = qerr
 	if errors.Is(err, pgx.ErrNoRows) {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
@@ -107,9 +125,11 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 		return access.AuthoringCredential{}, err
 	}
 	var dbNow time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+	nowEpoch, err := accessdb.New(tx).DatabaseNow(ctx)
+	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
+	dbNow = dbEpochMicros(nowEpoch)
 	if record.ClientID != issue.ClientID || !dbNow.Before(record.ExpiresAt) {
 		return access.AuthoringCredential{}, access.ErrDeviceAuthorizationExpired
 	}
@@ -118,7 +138,7 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 		if !record.LastPolledAt.IsZero() && dbNow.Sub(record.LastPolledAt) < record.PollInterval {
 			return access.AuthoringCredential{}, access.ErrDeviceAuthorizationSlowDown
 		}
-		if _, err = tx.Exec(ctx, `UPDATE access.device_authorization SET last_polled_at=clock_timestamp() WHERE id=$1`, record.ID); err != nil {
+		if err = accessdb.New(tx).TouchDeviceAuthorizationPoll(ctx, record.ID); err != nil {
 			return access.AuthoringCredential{}, err
 		}
 		if err = tx.Commit(ctx); err != nil {
@@ -136,15 +156,22 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 	if record.PrincipalID == "" {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
-	principal, err := scanPrincipal(tx.QueryRow(ctx, principalSelect()+` WHERE id=$1::uuid AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL`, record.PrincipalID))
+	principalID, err := pgUUID(record.PrincipalID)
 	if err != nil {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
-	tag, err := tx.Exec(ctx, `UPDATE access.device_authorization SET status='consumed',consumed_at=clock_timestamp() WHERE id=$1 AND status='approved' AND expires_at>clock_timestamp()`, record.ID)
+	principalRow, err := accessdb.New(tx).GetActiveAuthoringPrincipal(ctx, principalID)
+	if err != nil {
+		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
+	}
+	principal := principalFromGenerated(accessdb.GetPrincipalRow{ID: principalRow.ID, PrincipalType: principalRow.PrincipalType, Status: principalRow.Status,
+		Email: principalRow.Email, DisplayName: principalRow.DisplayName, DisabledAt: principalRow.DisabledAt, BlockedAt: principalRow.BlockedAt,
+		LastSeenAt: principalRow.LastSeenAt, CreatedAt: principalRow.CreatedAt, UpdatedAt: principalRow.UpdatedAt})
+	consumeTag, err := accessdb.New(tx).ConsumeDeviceAuthorization(ctx, record.ID)
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	if tag.RowsAffected() != 1 {
+	if consumeTag.RowsAffected() != 1 {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
 	if !dbNow.Before(issue.AccessExpiresAt) || !dbNow.Before(issue.RefreshExpiresAt) || !issue.AccessExpiresAt.Before(issue.RefreshExpiresAt) {
@@ -154,7 +181,12 @@ func (r *Repository) IssueDeviceCredential(ctx context.Context, issue access.Dev
 		return access.AuthoringCredential{}, err
 	}
 	var sessionCreated time.Time
-	if err = tx.QueryRow(ctx, `SELECT created_at FROM access.authoring_session WHERE id=$1`, issue.SessionID).Scan(&sessionCreated); err != nil {
+	createdAt, err := accessdb.New(tx).GetAuthoringSessionCreatedAt(ctx, issue.SessionID)
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	sessionCreated, err = pgRequiredTime("authoring session created_at", createdAt)
+	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
@@ -173,22 +205,35 @@ func (r *Repository) CreateWorkloadCredential(ctx context.Context, issue access.
 		return access.AuthoringCredential{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	principal, err := scanPrincipal(tx.QueryRow(ctx, principalSelect()+` WHERE id=$1::uuid AND principal_type='service' AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL`, issue.Session.PrincipalID))
+	principalID, err := pgUUID(issue.Session.PrincipalID)
 	if err != nil {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
+	principalRow, err := accessdb.New(tx).GetActiveServiceAuthoringPrincipal(ctx, principalID)
+	if err != nil {
+		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
+	}
+	principal := principalFromGenerated(accessdb.GetPrincipalRow{ID: principalRow.ID, PrincipalType: principalRow.PrincipalType, Status: principalRow.Status,
+		Email: principalRow.Email, DisplayName: principalRow.DisplayName, DisabledAt: principalRow.DisabledAt, BlockedAt: principalRow.BlockedAt,
+		LastSeenAt: principalRow.LastSeenAt, CreatedAt: principalRow.CreatedAt, UpdatedAt: principalRow.UpdatedAt})
 	var dbNow time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+	nowEpoch, err := accessdb.New(tx).DatabaseNow(ctx)
+	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
+	dbNow = dbEpochMicros(nowEpoch)
 	if !dbNow.Before(issue.Session.ExpiresAt) || !dbNow.Before(issue.AccessExpiresAt) || issue.Session.ExpiresAt.Before(issue.AccessExpiresAt) {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
 	if err = insertAuthoringSessionAndCredential(ctx, tx, issue.Session.ID, issue.Session.Kind, issue.Session.ClientID, principal.ID, issue.Session.Scope, issue.Session.CreatedAt, issue.Session.ExpiresAt, issue.CredentialID, issue.AccessTokenHash, "", issue.AccessExpiresAt, time.Time{}); err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	var sessionCreated time.Time
-	if err = tx.QueryRow(ctx, `SELECT created_at FROM access.authoring_session WHERE id=$1`, issue.Session.ID).Scan(&sessionCreated); err != nil {
+	createdAt, err := accessdb.New(tx).GetAuthoringSessionCreatedAt(ctx, issue.Session.ID)
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	sessionCreated, err := pgRequiredTime("authoring session created_at", createdAt)
+	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	auditRepo := &Repository{db: tx, fingerprintKey: r.fingerprintKey}
@@ -207,19 +252,24 @@ func insertAuthoringSessionAndCredential(ctx context.Context, tx pgx.Tx, session
 	if err != nil {
 		return err
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO access.authoring_session(id,kind,client_id,principal_id,target_id,project_id,capabilities,created_at,expires_at) VALUES($1,$2,$3,$4::uuid,$5,$6,$7::jsonb,clock_timestamp(),$8)`, sessionID, kind, clientID, principalID, scope.TargetID, scope.ProjectID.String(), caps, expiresAt.UTC()); err != nil {
+	parsedPrincipalID, err := pgUUID(principalID)
+	if err != nil {
 		return err
 	}
-	var refresh any
+	if err = accessdb.New(tx).InsertAuthoringSession(ctx, accessdb.InsertAuthoringSessionParams{ID: sessionID, Kind: string(kind), ClientID: clientID,
+		PrincipalID: parsedPrincipalID, TargetID: scope.TargetID, ProjectID: scope.ProjectID.String(), Capabilities: caps, ExpiresAt: pgTimestamp(expiresAt)}); err != nil {
+		return err
+	}
+	var refresh *string
 	if refreshHash != "" {
-		refresh = refreshHash
+		refresh = &refreshHash
 	}
-	var refreshExp any
+	var refreshExp pgtype.Timestamptz
 	if !refreshExpiresAt.IsZero() {
-		refreshExp = refreshExpiresAt.UTC()
+		refreshExp = pgTimestamp(refreshExpiresAt)
 	}
-	_, err = tx.Exec(ctx, `INSERT INTO access.authoring_credential(id,session_id,access_token_hash,refresh_token_hash,access_expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,$6)`, credentialID, sessionID, accessHash, refresh, accessExpiresAt.UTC(), refreshExp)
-	return err
+	return accessdb.New(tx).InsertAuthoringCredential(ctx, accessdb.InsertAuthoringCredentialParams{ID: credentialID, SessionID: sessionID,
+		AccessTokenHash: accessHash, RefreshTokenHash: refresh, AccessExpiresAt: pgTimestamp(accessExpiresAt), RefreshExpiresAt: refreshExp})
 }
 
 func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation access.AuthoringCredentialRotation) (access.AuthoringCredential, error) {
@@ -228,40 +278,87 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 		return access.AuthoringCredential{}, err
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var oldID, sessionID, principalID, kind, clientID, targetID, projectID, capsJSON string
-	var accessExp, refreshExp, sessionExpires, sessionCreated time.Time
-	var sessionRevoked *time.Time
-	var active bool
-	err = tx.QueryRow(ctx, `SELECT c.id,c.session_id,c.access_expires_at,COALESCE(c.refresh_expires_at,'epoch'::timestamptz),c.active,s.principal_id::text,s.kind,s.client_id,s.target_id,s.project_id,s.capabilities::text,s.expires_at,s.created_at,s.revoked_at FROM access.authoring_credential c JOIN access.authoring_session s ON s.id=c.session_id WHERE c.refresh_token_hash=$1 FOR UPDATE`, rotation.RefreshTokenHash).Scan(&oldID, &sessionID, &accessExp, &refreshExp, &active, &principalID, &kind, &clientID, &targetID, &projectID, &capsJSON, &sessionExpires, &sessionCreated, &sessionRevoked)
+	var refreshTokenHash = rotation.RefreshTokenHash
+	principalPGID, err := accessdb.New(tx).LookupAuthoringPrincipalIDForRotation(ctx, &refreshTokenHash)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	var dbNow time.Time
-	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
+	principalRow, err := accessdb.New(tx).GetActiveAuthoringPrincipal(ctx, principalPGID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
+	}
+	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
+	principal := principalFromGenerated(accessdb.GetPrincipalRow{ID: principalRow.ID, PrincipalType: principalRow.PrincipalType, Status: principalRow.Status,
+		Email: principalRow.Email, DisplayName: principalRow.DisplayName, DisabledAt: principalRow.DisabledAt, BlockedAt: principalRow.BlockedAt,
+		LastSeenAt: principalRow.LastSeenAt, CreatedAt: principalRow.CreatedAt, UpdatedAt: principalRow.UpdatedAt})
+	row, err := accessdb.New(tx).LockAuthoringCredentialForRotation(ctx, &refreshTokenHash)
+	var oldID, sessionID, principalID, kind, clientID, targetID, projectID, capsJSON string
+	var refreshExp, sessionExpires, sessionCreated time.Time
+	var sessionRevoked *time.Time
+	var active bool
+	if err == nil {
+		refreshExp, err = pgRequiredTime("authoring refresh_expires_at", row.RefreshExpiresAt)
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		oldID, sessionID, active = row.ID, row.SessionID, row.Active
+		principalID, kind, clientID, targetID, projectID = principalUUID(row.PrincipalID), row.Kind, row.ClientID, row.TargetID, row.ProjectID
+		if row.PrincipalID != principalPGID {
+			return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
+		}
+		sessionExpires, err = pgRequiredTime("authoring session expires_at", row.ExpiresAt)
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		sessionCreated, err = pgRequiredTime("authoring session created_at", row.CreatedAt)
+		if err != nil {
+			return access.AuthoringCredential{}, err
+		}
+		capsJSON = string(row.Capabilities)
+		if row.RevokedAt.Valid {
+			t := row.RevokedAt.Time
+			sessionRevoked = &t
+		}
+	}
+	if errors.Is(err, pgx.ErrNoRows) {
+		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
+	}
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	nowEpoch, err := accessdb.New(tx).DatabaseNow(ctx)
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	dbNow := dbEpochMicros(nowEpoch)
 	if !active {
-		_, _ = tx.Exec(ctx, `UPDATE access.authoring_session SET revoked_at=clock_timestamp() WHERE id=$1 AND revoked_at IS NULL`, sessionID)
+		if parsedReplayPrincipal, parseErr := pgUUID(principalID); parseErr == nil {
+			_, _ = accessdb.New(tx).RevokeAuthoringSession(ctx, accessdb.RevokeAuthoringSessionParams{ID: sessionID, PrincipalID: parsedReplayPrincipal})
+		}
 		_ = tx.Commit(ctx)
 		return access.AuthoringCredential{}, access.ErrAuthoringRefreshReplay
 	}
 	if sessionRevoked != nil || !dbNow.Before(refreshExp) || !dbNow.Before(sessionExpires) || !dbNow.Before(rotation.AccessExpiresAt) || !dbNow.Before(rotation.RefreshExpiresAt) || !rotation.AccessExpiresAt.Before(rotation.RefreshExpiresAt) {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
-	if _, err = tx.Exec(ctx, `UPDATE access.authoring_credential SET active=false,replaced_at=clock_timestamp() WHERE id=$1 AND active`, oldID); err != nil {
+	if err = accessdb.New(tx).MarkAuthoringCredentialInactive(ctx, oldID); err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE access.authoring_session SET expires_at=$2 WHERE id=$1 AND revoked_at IS NULL AND $2>clock_timestamp()`, sessionID, rotation.RefreshExpiresAt.UTC())
+	tag, err := accessdb.New(tx).ExtendAuthoringSession(ctx, accessdb.ExtendAuthoringSessionParams{ID: sessionID, ExpiresAt: pgTimestamp(rotation.RefreshExpiresAt)})
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	if tag.RowsAffected() != 1 {
 		return access.AuthoringCredential{}, access.ErrInvalidAuthoringCredential
 	}
-	if _, err = tx.Exec(ctx, `INSERT INTO access.authoring_credential(id,session_id,access_token_hash,refresh_token_hash,access_expires_at,refresh_expires_at) VALUES($1,$2,$3,$4,$5,$6)`, rotation.CredentialID, sessionID, rotation.AccessTokenHash, rotation.RefreshTokenHashNew, rotation.AccessExpiresAt.UTC(), rotation.RefreshExpiresAt.UTC()); err != nil {
+	refreshTokenHashNew := rotation.RefreshTokenHashNew
+	if err = accessdb.New(tx).InsertRotatedAuthoringCredential(ctx, accessdb.InsertRotatedAuthoringCredentialParams{ID: rotation.CredentialID, SessionID: sessionID,
+		AccessTokenHash: rotation.AccessTokenHash, RefreshTokenHash: &refreshTokenHashNew, AccessExpiresAt: pgTimestamp(rotation.AccessExpiresAt), RefreshExpiresAt: pgTimestamp(rotation.RefreshExpiresAt)}); err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	project, err := graph.NewResourceID(projectID)
@@ -271,10 +368,6 @@ func (r *Repository) RotateAuthoringCredential(ctx context.Context, rotation acc
 	var capabilities []access.Capability
 	if err = json.Unmarshal([]byte(capsJSON), &capabilities); err != nil {
 		return access.AuthoringCredential{}, err
-	}
-	principal, err := scanPrincipal(tx.QueryRow(ctx, principalSelect()+` WHERE id=$1::uuid AND status='active' AND revoked_at IS NULL AND disabled_at IS NULL AND blocked_at IS NULL FOR UPDATE`, principalID))
-	if err != nil {
-		return access.AuthoringCredential{}, access.ErrInvalidAuthoringPrincipal
 	}
 	if err = tx.Commit(ctx); err != nil {
 		return access.AuthoringCredential{}, err
@@ -287,26 +380,33 @@ func (r *Repository) AuthoringCredentialByAccessTokenHash(ctx context.Context, h
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	var credentialID, sessionID, principalID, kind, clientID, targetID, projectID, capsJSON string
-	var accessExpires, sessionExpires time.Time
-	err = db.QueryRow(ctx, `SELECT c.id,c.session_id,s.principal_id::text,s.kind,s.client_id,s.target_id,s.project_id,s.capabilities::text,c.access_expires_at,s.expires_at FROM access.authoring_credential c JOIN access.authoring_session s ON s.id=c.session_id JOIN access.principal p ON p.id=s.principal_id WHERE c.access_token_hash=$1 AND c.active AND c.access_expires_at>clock_timestamp() AND s.expires_at>clock_timestamp() AND s.revoked_at IS NULL AND p.status='active' AND p.revoked_at IS NULL AND p.disabled_at IS NULL AND p.blocked_at IS NULL`, hash).Scan(&credentialID, &sessionID, &principalID, &kind, &clientID, &targetID, &projectID, &capsJSON, &accessExpires, &sessionExpires)
+	row, err := accessdb.New(db).GetAuthoringCredentialByAccessTokenHash(ctx, hash)
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	_, _ = db.Exec(ctx, `UPDATE access.authoring_session SET last_used_at=clock_timestamp() WHERE id=$1`, sessionID)
-	project, err := graph.NewResourceID(projectID)
+	_ = accessdb.New(db).TouchAuthoringSession(ctx, row.SessionID)
+	project, err := graph.NewResourceID(row.ProjectID)
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
 	var capabilities []access.Capability
-	if err = json.Unmarshal([]byte(capsJSON), &capabilities); err != nil {
+	if err = json.Unmarshal(row.Capabilities, &capabilities); err != nil {
 		return access.AuthoringCredential{}, err
 	}
+	principalID := principalUUID(row.PrincipalID)
 	principal, err := r.PrincipalByID(ctx, principalID)
 	if err != nil {
 		return access.AuthoringCredential{}, err
 	}
-	return access.AuthoringCredential{ID: credentialID, Principal: principal, Session: access.AuthoringSession{ID: sessionID, Kind: access.AuthoringSessionKind(kind), ClientID: clientID, PrincipalID: principalID, Scope: access.AuthoringScope{TargetID: targetID, ProjectID: project, Capabilities: capabilities}, ExpiresAt: sessionExpires}, AccessExpiresAt: accessExpires}, nil
+	sessionExpires, err := pgRequiredTime("authoring session expires_at", row.ExpiresAt)
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	accessExpires, err := pgRequiredTime("authoring access_expires_at", row.AccessExpiresAt)
+	if err != nil {
+		return access.AuthoringCredential{}, err
+	}
+	return access.AuthoringCredential{ID: row.ID, Principal: principal, Session: access.AuthoringSession{ID: row.SessionID, Kind: access.AuthoringSessionKind(row.Kind), ClientID: row.ClientID, PrincipalID: principalID, Scope: access.AuthoringScope{TargetID: row.TargetID, ProjectID: project, Capabilities: capabilities}, ExpiresAt: sessionExpires}, AccessExpiresAt: accessExpires}, nil
 }
 
 func (r *Repository) ListAuthoringSessions(ctx context.Context, principalID string) ([]access.AuthoringSession, error) {
@@ -318,43 +418,44 @@ func (r *Repository) ListAuthoringSessions(ctx context.Context, principalID stri
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(ctx, `SELECT id,kind,client_id,target_id,project_id,capabilities::text,created_at,last_used_at,expires_at,revoked_at FROM access.authoring_session WHERE principal_id=$1::uuid ORDER BY created_at DESC LIMIT $2`, id, maxPageSize)
+	parsedPrincipalID, err := pgUUID(id)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-	out := make([]access.AuthoringSession, 0)
-	for rows.Next() {
+	rows, err := accessdb.New(db).ListAuthoringSessions(ctx, accessdb.ListAuthoringSessionsParams{PrincipalID: parsedPrincipalID, PageSize: maxPageSize})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]access.AuthoringSession, 0, len(rows))
+	for _, row := range rows {
 		var value access.AuthoringSession
-		var kind, projectID, caps string
-		var created, last, expires, revoked *time.Time
-		if err := rows.Scan(&value.ID, &kind, &value.ClientID, &value.Scope.TargetID, &projectID, &caps, &created, &last, &expires, &revoked); err != nil {
-			return nil, err
-		}
-		value.Kind = access.AuthoringSessionKind(kind)
+		value.ID, value.Kind, value.ClientID = row.ID, access.AuthoringSessionKind(row.Kind), row.ClientID
+		value.Scope.TargetID = row.TargetID
 		value.PrincipalID = id
-		value.Scope.ProjectID, err = graph.NewResourceID(projectID)
+		value.Scope.ProjectID, err = graph.NewResourceID(row.ProjectID)
 		if err != nil {
 			return nil, err
 		}
-		if err = json.Unmarshal([]byte(caps), &value.Scope.Capabilities); err != nil {
+		if err = json.Unmarshal(row.Capabilities, &value.Scope.Capabilities); err != nil {
 			return nil, err
 		}
-		if created != nil {
-			value.CreatedAt = created.UTC()
+		value.CreatedAt, err = pgRequiredTime("authoring session created_at", row.CreatedAt)
+		if err != nil {
+			return nil, err
 		}
-		if last != nil {
-			value.LastUsedAt = last.UTC()
+		if row.LastUsedAt.Valid {
+			value.LastUsedAt = row.LastUsedAt.Time.UTC()
 		}
-		if expires != nil {
-			value.ExpiresAt = expires.UTC()
+		value.ExpiresAt, err = pgRequiredTime("authoring session expires_at", row.ExpiresAt)
+		if err != nil {
+			return nil, err
 		}
-		if revoked != nil {
-			value.RevokedAt = revoked.UTC()
+		if row.RevokedAt.Valid {
+			value.RevokedAt = row.RevokedAt.Time.UTC()
 		}
 		out = append(out, value)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
 func (r *Repository) RevokeAuthoringSession(ctx context.Context, principalID, sessionID string, now time.Time) error {
@@ -366,7 +467,11 @@ func (r *Repository) RevokeAuthoringSession(ctx context.Context, principalID, se
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.authoring_session SET revoked_at=clock_timestamp() WHERE id=$1 AND principal_id=$2::uuid AND revoked_at IS NULL`, sessionID, id)
+	parsedPrincipalID, err := pgUUID(id)
+	if err != nil {
+		return err
+	}
+	tag, err := accessdb.New(db).RevokeAuthoringSession(ctx, accessdb.RevokeAuthoringSessionParams{ID: sessionID, PrincipalID: parsedPrincipalID})
 	if err == nil && tag.RowsAffected() == 0 {
 		return access.ErrInvalidAuthoringCredential
 	}
@@ -378,54 +483,57 @@ func (r *Repository) RevokeAuthoringSessionByAccessTokenHash(ctx context.Context
 	if err != nil {
 		return err
 	}
-	tag, err := db.Exec(ctx, `UPDATE access.authoring_session SET revoked_at=clock_timestamp() WHERE id=(SELECT session_id FROM access.authoring_credential WHERE access_token_hash=$1) AND revoked_at IS NULL`, hash)
+	tag, err := accessdb.New(db).RevokeAuthoringSessionByAccessTokenHash(ctx, hash)
 	if err == nil && tag.RowsAffected() == 0 {
 		return access.ErrInvalidAuthoringCredential
 	}
 	return err
 }
 
-func scanDeviceAuthorization(row interface{ Scan(...any) error }) (access.DeviceAuthorization, error) {
-	var value access.DeviceAuthorization
-	var caps string
-	var status string
-	var principal *string
-	var expires, last, created, approved, denied, consumed *time.Time
-	var poll int
-	err := row.Scan(&value.ID, &value.ClientID, &value.DeviceCodeHash, &value.UserCodeHash, &value.Scope.TargetID, &value.Scope.ProjectID, &caps, &status, &principal, &expires, &poll, &last, &created, &approved, &denied, &consumed)
+func dbEpochMicros(value int64) time.Time {
+	return time.UnixMicro(value).UTC()
+}
+
+func pgRequiredTime(label string, value pgtype.Timestamptz) (time.Time, error) {
+	if !value.Valid {
+		return time.Time{}, fmt.Errorf("%s is unexpectedly null", label)
+	}
+	return value.Time.UTC(), nil
+}
+
+func deviceAuthorizationFromGenerated(row accessdb.AccessDeviceAuthorization) (access.DeviceAuthorization, error) {
+	projectID, err := graph.NewResourceID(row.ProjectID)
 	if err != nil {
-		return value, err
+		return access.DeviceAuthorization{}, err
 	}
-	value.Status = access.DeviceAuthorizationStatus(status)
-	if principal != nil {
-		value.PrincipalID = *principal
+	value := access.DeviceAuthorization{ID: row.ID, ClientID: row.ClientID, DeviceCodeHash: row.DeviceCodeHash,
+		UserCodeHash: row.UserCodeHash, Scope: access.AuthoringScope{TargetID: row.TargetID, ProjectID: projectID},
+		Status: access.DeviceAuthorizationStatus(row.Status), PollInterval: time.Duration(row.PollIntervalSeconds) * time.Second}
+	if row.Capabilities != nil {
+		if err := json.Unmarshal(row.Capabilities, &value.Scope.Capabilities); err != nil {
+			return access.DeviceAuthorization{}, err
+		}
 	}
-	var parseErr error
-	value.Scope.ProjectID, parseErr = graph.NewResourceID(value.Scope.ProjectID.String())
-	if parseErr != nil {
-		return value, parseErr
+	value.PrincipalID = principalUUID(row.PrincipalID)
+	value.ExpiresAt, err = pgRequiredTime("device authorization expires_at", row.ExpiresAt)
+	if err != nil {
+		return access.DeviceAuthorization{}, err
 	}
-	if err = json.Unmarshal([]byte(caps), &value.Scope.Capabilities); err != nil {
-		return value, err
+	if row.LastPolledAt.Valid {
+		value.LastPolledAt = row.LastPolledAt.Time.UTC()
 	}
-	value.PollInterval = time.Duration(poll) * time.Second
-	if expires != nil {
-		value.ExpiresAt = expires.UTC()
+	value.CreatedAt, err = pgRequiredTime("device authorization created_at", row.CreatedAt)
+	if err != nil {
+		return access.DeviceAuthorization{}, err
 	}
-	if last != nil {
-		value.LastPolledAt = last.UTC()
+	if row.ApprovedAt.Valid {
+		value.ApprovedAt = row.ApprovedAt.Time.UTC()
 	}
-	if created != nil {
-		value.CreatedAt = created.UTC()
+	if row.DeniedAt.Valid {
+		value.DeniedAt = row.DeniedAt.Time.UTC()
 	}
-	if approved != nil {
-		value.ApprovedAt = approved.UTC()
-	}
-	if denied != nil {
-		value.DeniedAt = denied.UTC()
-	}
-	if consumed != nil {
-		value.ConsumedAt = consumed.UTC()
+	if row.ConsumedAt.Valid {
+		value.ConsumedAt = row.ConsumedAt.Time.UTC()
 	}
 	return value, nil
 }

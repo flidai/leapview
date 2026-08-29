@@ -69,6 +69,9 @@ func (r *Repository) DeletePrincipal(ctx context.Context, id string) error {
 	if err = accessdb.New(tx).RevokePrincipalSecrets(ctx, principalID); err != nil {
 		return err
 	}
+	if err = accessdb.New(tx).RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
+		return err
+	}
 	_ = accessdb.New(tx).RevokePrincipalGroups(ctx, principalID)
 	if ownTx {
 		return tx.Commit(ctx)
@@ -118,6 +121,12 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 			return access.Principal{}, err
 		}
 		if err = accessdb.New(tx).RevokePrincipalTokens(ctx, principalID); err != nil {
+			return access.Principal{}, err
+		}
+		if err = accessdb.New(tx).RevokePrincipalSecrets(ctx, principalID); err != nil {
+			return access.Principal{}, err
+		}
+		if err = accessdb.New(tx).RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
 	}
