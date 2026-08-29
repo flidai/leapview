@@ -17,8 +17,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
-	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasedb "github.com/flidai/leapview/internal/release/postgres/internal/db"
@@ -49,30 +47,97 @@ type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
-// AuditAppender is the direct Access-owned audit boundary. It receives this
-// package's caller-owned pgx transaction and therefore shares its commit.
+// AuditAppender is the Release-owned audit boundary. Composition adapters map
+// it to the Access authority while receiving this package's caller-owned pgx
+// transaction, and therefore share its commit.
 type AuditAppender interface {
-	RecordAuditEvent(context.Context, accesspostgres.Tx, access.AuditIntent) (accesspostgres.Event, error)
+	RecordAuditEvent(context.Context, Tx, access.AuditIntent) (AuditEvent, error)
 }
 
 // EventAppender is the durable event-log boundary. The release repository
 // passes its caller-owned transaction through unchanged.
 type EventAppender interface {
-	AppendEvent(context.Context, eventspostgres.Tx, eventspostgres.EventInput) (eventspostgres.Event, error)
+	AppendEvent(context.Context, Tx, EventInput) (Event, error)
+}
+
+// WorkflowAppender is the Release-owned workflow boundary. Composition maps
+// this narrow port to the jobs PostgreSQL authority; the caller-owned pgx
+// transaction remains the single commit/rollback boundary.
+type WorkflowAppender interface {
+	RecordWorkflow(context.Context, Tx, publicjobs.WorkflowIntent) error
+}
+
+// AuditEvent is the release-owned projection returned by a composition audit
+// adapter. Keeping this shape here means release persistence does not depend
+// on Access's PostgreSQL storage package (or any other sibling authority).
+// The repository only needs the error boundary today; the complete projection
+// lets adapters validate replay identity before returning.
+type AuditEvent struct {
+	AuditID           string
+	DomainEventID     string
+	ScopeID           string
+	ActorID           string
+	PrincipalID       string
+	Source            string
+	Operation         string
+	Action            string
+	ResourceKind      string
+	ResourceID        string
+	Capability        access.Capability
+	Outcome           string
+	RequestID         string
+	RequestDigest     string
+	CorrelationID     string
+	AggregateKey      string
+	AggregateSequence int64
+	MetadataJSON      string
+	OccurredAt        time.Time
+	IntentDigest      string
+}
+
+// EventInput describes the durable release event emitted after a state
+// transition. It deliberately mirrors only the event-log contract needed by
+// release; the platform event repository remains an app-composition detail.
+type EventInput struct {
+	EventID       string
+	ScopeID       string
+	AggregateType string
+	AggregateID   string
+	EventType     string
+	SchemaVersion int64
+	CorrelationID string
+	Payload       json.RawMessage
+}
+
+// Event is the release-owned durable event projection. Adapters map this to
+// the platform event authority and validate all immutable replay fields.
+type Event struct {
+	EventID          string
+	ScopeID          string
+	AggregateType    string
+	AggregateID      string
+	AggregateVersion int64
+	EventType        string
+	SchemaVersion    int64
+	OccurredAt       time.Time
+	CorrelationID    string
+	Payload          json.RawMessage
 }
 
 // Options wires transactional side effects. Event and audit appenders are
 // optional for isolated persistence tests; when an intent is supplied without
 // an audit appender the mutation fails closed.
 type Options struct {
-	Audit  AuditAppender
-	Events EventAppender
+	Audit    AuditAppender
+	Events   EventAppender
+	Workflow WorkflowAppender
 }
 
 type Repository struct {
-	db     DBTX
-	audit  AuditAppender
-	events EventAppender
+	db       DBTX
+	audit    AuditAppender
+	events   EventAppender
+	workflow WorkflowAppender
 }
 
 var (
@@ -102,8 +167,34 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 func New(db DBTX) *Repository           { return &Repository{db: db} }
 func NewRepository(db DBTX) *Repository { return New(db) }
 func NewWithOptions(db DBTX, options Options) *Repository {
-	return &Repository{db: db, audit: options.Audit, events: options.Events}
+	return &Repository{db: db, audit: options.Audit, events: options.Events, workflow: options.Workflow}
 }
+
+// PostgreSQLAuthority marks this repository as the native release capability.
+// Module composition uses the marker to reject SQLite or test doubles in a
+// production process unless they explicitly implement the same authority
+// contract.
+func (*Repository) PostgreSQLAuthority() {}
+
+// Configured reports whether the repository has a usable native handle. It is
+// intentionally a shallow check; pool readiness and schema revision remain
+// application lifecycle concerns.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
+// AuditCapable reports whether transactional release mutations can append
+// their canonical audit intent. Production composition requires this
+// capability; isolated repository tests may intentionally omit it.
+func (r *Repository) AuditCapable() bool { return r != nil && r.audit != nil }
+
+// EventCapable reports whether release transitions can append durable domain
+// events. Production composition requires this capability; read-only and
+// focused persistence tests may omit it.
+func (r *Repository) EventCapable() bool { return r != nil && r.events != nil }
+
+// WorkflowCapable reports whether finalization can persist a durable workflow
+// intent in the release transaction.
+func (r *Repository) WorkflowCapable() bool { return r != nil && r.workflow != nil }
+
 func (r *Repository) WithTx(tx Tx) *Repository {
 	if r == nil {
 		return &Repository{}
@@ -188,7 +279,7 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, input release.CreateIn
 				return release.Release{}, mapError(err)
 			}
 		}
-		if err := r.recordAuditAndEvent(ctx, tx, stored, "release.created", "release.created"); err != nil {
+		if err := r.recordAuditAndEvent(ctx, tx, stored, "release.created"); err != nil {
 			return release.Release{}, err
 		}
 	} else {
@@ -378,7 +469,7 @@ func (r *Repository) RecordArtifactTx(ctx context.Context, tx Tx, artifact relea
 	if err != nil {
 		return err
 	}
-	return r.recordAuditAndEvent(ctx, tx, row, "release.artifact_uploaded", "release.artifact_uploaded")
+	return r.recordAuditAndEvent(ctx, tx, row, "release.artifact_uploaded")
 }
 
 func (r *Repository) BeginFinalization(ctx context.Context, projectID, releaseID string, workflow publicjobs.WorkflowIntent) (release.Release, error) {
@@ -423,11 +514,13 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 	if current.Status != release.StatusDraft && current.Status != release.StatusValidating {
 		return release.Release{}, release.ErrImmutable
 	}
-	// Jobs owns durable workflow records. Reject a non-empty intent before any
-	// release mutation so callers that retain this transaction cannot commit a
-	// partial transition alongside the capability error.
+	if (workflow.Event.Key != "" || workflow.Job.ID != "") && r.workflow == nil {
+		return release.Release{}, errors.New("release workflow appender is required")
+	}
 	if workflow.Event.Key != "" || workflow.Job.ID != "" {
-		return release.Release{}, errors.New("PostgreSQL release finalization workflow must be recorded by the caller-owned jobs capability")
+		if err := r.workflow.RecordWorkflow(contextOrBackground(ctx), tx, workflow); err != nil {
+			return release.Release{}, err
+		}
 	}
 	transitioned := false
 	if current.Status == release.StatusDraft {
@@ -452,7 +545,7 @@ func (r *Repository) BeginFinalizationTx(ctx context.Context, tx Tx, projectID, 
 		return release.Release{}, err
 	}
 	if transitioned {
-		if err := r.recordAuditAndEvent(ctx, tx, current, "release.validating", "release.validating"); err != nil {
+		if err := r.recordAuditAndEvent(ctx, tx, current, "release.validating"); err != nil {
 			return release.Release{}, err
 		}
 	}
@@ -532,7 +625,7 @@ func (r *Repository) CompleteFinalizationTx(ctx context.Context, tx Tx, projectI
 	if err != nil {
 		return release.Release{}, err
 	}
-	if err := r.recordAuditAndEvent(ctx, tx, ready, "release.ready", "release.ready"); err != nil {
+	if err := r.recordAuditAndEvent(ctx, tx, ready, "release.ready"); err != nil {
 		return release.Release{}, err
 	}
 	return ready, nil
@@ -594,13 +687,13 @@ func (r *Repository) FailFinalizationTx(ctx context.Context, tx Tx, projectID, r
 	if err != nil {
 		return release.Release{}, err
 	}
-	if err := r.recordAuditAndEvent(ctx, tx, failed, "release.failed", "release.failed"); err != nil {
+	if err := r.recordAuditAndEvent(ctx, tx, failed, "release.failed"); err != nil {
 		return release.Release{}, err
 	}
 	return failed, nil
 }
 
-func (r *Repository) recordAuditAndEvent(ctx context.Context, tx Tx, row release.Release, eventType, auditAction string) error {
+func (r *Repository) recordAuditAndEvent(ctx context.Context, tx Tx, row release.Release, eventType string) error {
 	intent, hasIntent := release.AuditIntentFromContext(ctx)
 	if hasIntent {
 		if r.audit == nil {
@@ -617,9 +710,27 @@ func (r *Repository) recordAuditAndEvent(ctx context.Context, tx Tx, row release
 	if err != nil {
 		return err
 	}
-	_, err = r.events.AppendEvent(contextOrBackground(ctx), tx, eventspostgres.EventInput{ScopeID: row.ServingIdentity.ProjectID.String(), AggregateType: "release", AggregateID: row.ID, EventType: eventType, SchemaVersion: 1, Payload: payload})
-	_ = auditAction
+	event, err := r.events.AppendEvent(contextOrBackground(ctx), tx, EventInput{ScopeID: row.ServingIdentity.ProjectID.String(), AggregateType: "release", AggregateID: row.ID, EventType: eventType, SchemaVersion: 1, Payload: payload})
+	if err != nil {
+		return err
+	}
+	if event.ScopeID != row.ServingIdentity.ProjectID.String() || event.AggregateType != "release" || event.AggregateID != row.ID || event.EventType != eventType || event.SchemaVersion != 1 || !jsonEqual(event.Payload, payload) {
+		return fmt.Errorf("%w: release event identity differs", ErrConflict)
+	}
 	return err
+}
+
+func jsonEqual(left, right json.RawMessage) bool {
+	var a, b any
+	if json.Unmarshal(left, &a) != nil || json.Unmarshal(right, &b) != nil {
+		return false
+	}
+	la, err := json.Marshal(a)
+	if err != nil {
+		return false
+	}
+	ra, err := json.Marshal(b)
+	return err == nil && string(la) == string(ra)
 }
 
 func (r *Repository) RetainCandidateProvenance(ctx context.Context, projectID projectgraph.ResourceID, p release.Provenance) (release.Provenance, error) {

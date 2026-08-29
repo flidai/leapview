@@ -908,7 +908,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(err)
 	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
+		Database: store.SQLDB(), LegacySQLite: true, AuditIntentRecorder: auditRuntime.recorder,
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ExtensionPreparation: extensionSupply,

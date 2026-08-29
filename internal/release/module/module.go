@@ -52,10 +52,26 @@ var (
 )
 
 type Config struct {
-	Database *sql.DB
+	// Persistence is the capability-owned release authority. Production
+	// composition injects a native PostgreSQL implementation; the module never
+	// opens or infers a control-plane database from this interface.
+	Persistence NativePersistence
+	// Catalog is the project/connection read authority. Native production
+	// composition injects a PostgreSQL-marked catalog independently from the
+	// release mutation authority; legacy composition derives it from SQLite.
+	Catalog release.CatalogRepository
+	// Database is retained only for explicitly selected legacy SQLite
+	// development/test composition.
+	Database     *sql.DB
+	LegacySQLite bool
+	Production   bool
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
 	// It is required whenever release SQLite persistence is configured.
-	AuditIntentRecorder  access.AuditIntentRecorder
+	AuditIntentRecorder access.AuditIntentRecorder
+	// Deployments is optional for native authorities that expose deployment
+	// linkage through the legacy cross-capability contract. SQLite composition
+	// derives it from the selected repository.
+	Deployments          release.DeploymentLinkage
 	States               ServingStateRepository
 	ManagedDataPins      ManagedDataPins
 	ManagedDataHook      validate.Hook
@@ -64,6 +80,39 @@ type Config struct {
 	API                  APIConfig
 	Logger               *slog.Logger
 	ExtensionPreparation extension.Preparation
+}
+
+// NativePersistence is the capability-owned release authority consumed by the
+// module. It intentionally contains only Release domain contracts; concrete
+// PostgreSQL transaction and pool types stay inside the authority package.
+// PostgreSQL implementations must also expose PostgreSQLAuthority and
+// Configured so production cannot be accidentally backed by SQLite or a nil
+// handle that happens to satisfy the domain methods.
+type NativePersistence interface {
+	release.Repository
+	release.FinalizationUnitOfWork
+	release.CandidateProvenanceRepository
+	release.ServingStateProvenanceRepository
+}
+
+type postgresAuthority interface {
+	PostgreSQLAuthority()
+	Configured() bool
+	AuditCapable() bool
+	EventCapable() bool
+	WorkflowCapable() bool
+}
+
+type postgresCatalog interface {
+	release.CatalogRepository
+	PostgreSQLAuthority()
+	Configured() bool
+}
+
+type postgresDeployments interface {
+	release.DeploymentLinkage
+	PostgreSQLAuthority()
+	Configured() bool
 }
 
 type ServingStateRepository interface {
@@ -88,8 +137,48 @@ type projectcatalogSearcher interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Database != nil && config.AuditIntentRecorder == nil {
-		return nil, errors.New("release audit intent recorder is required")
+	native := config.Persistence
+	if config.Production {
+		if config.Database != nil || config.LegacySQLite {
+			return nil, errors.New("production release module rejects SQLite database")
+		}
+		if native == nil {
+			return nil, errors.New("production release module requires native PostgreSQL persistence")
+		}
+		authority, ok := native.(postgresAuthority)
+		if !ok || !authority.Configured() {
+			return nil, errors.New("production release module requires configured native PostgreSQL persistence")
+		}
+		if !authority.AuditCapable() {
+			return nil, errors.New("production release module requires transactional audit capability")
+		}
+		if !authority.EventCapable() {
+			return nil, errors.New("production release module requires durable event capability")
+		}
+		if !authority.WorkflowCapable() {
+			return nil, errors.New("production release module requires transactional workflow capability")
+		}
+		catalog, ok := config.Catalog.(postgresCatalog)
+		if !ok || !catalog.Configured() {
+			return nil, errors.New("production release module requires configured native PostgreSQL catalog")
+		}
+		if config.Deployments != nil {
+			deployments, ok := config.Deployments.(postgresDeployments)
+			if !ok || !deployments.Configured() {
+				return nil, errors.New("production release module requires configured native PostgreSQL deployments")
+			}
+		}
+	} else if native != nil {
+		return nil, errors.New("native PostgreSQL persistence requires production release mode")
+	} else if config.Database != nil {
+		if !config.LegacySQLite {
+			return nil, errors.New("SQLite release build requires LegacySQLite=true; inject PostgreSQL persistence for production")
+		}
+		if config.AuditIntentRecorder == nil {
+			return nil, errors.New("release audit intent recorder is required")
+		}
+	} else {
+		return nil, errors.New("release persistence is required; choose native repository or explicit SQLite database")
 	}
 	environment := config.Environment
 	if string(environment) != strings.TrimSpace(string(environment)) {
@@ -102,17 +191,43 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	releases, finalization, catalog, deployments, err := releaseStoresWithAudit(config.Database, config.API.Workflow, config.AuditIntentRecorder)
-	if err != nil {
-		return nil, err
+	var releases release.Repository
+	var finalization release.FinalizationUnitOfWork
+	var catalog release.CatalogRepository
+	var deployments release.DeploymentLinkage
+	var candidateProvenance release.CandidateProvenanceRepository
+	var servingProvenance release.ServingStateProvenanceRepository
+	auditIntentConfigured := config.Database != nil && config.AuditIntentRecorder != nil
+	if native != nil {
+		releases, finalization = native, native
+		catalog = config.Catalog
+		candidateProvenance, servingProvenance = native, native
+		auditIntentConfigured = true
+		deployments = config.Deployments
+		if deployments == nil {
+			if linked, ok := any(native).(release.DeploymentLinkage); ok {
+				deployments = linked
+			}
+		}
+	} else {
+		releases, finalization, catalog, deployments, err = releaseStoresWithAudit(config.Database, config.API.Workflow, config.AuditIntentRecorder)
+		if err != nil {
+			return nil, err
+		}
+		candidateProvenance, _ = releases.(release.CandidateProvenanceRepository)
+		servingProvenance, _ = releases.(release.ServingStateProvenanceRepository)
 	}
-	candidateProvenance, ok := releases.(release.CandidateProvenanceRepository)
-	if !ok {
+	if candidateProvenance == nil {
 		return nil, errors.New("candidate provenance repository is required")
 	}
-	servingProvenance, ok := releases.(release.ServingStateProvenanceRepository)
-	if !ok {
+	if servingProvenance == nil {
 		return nil, errors.New("serving-state provenance repository is required")
+	}
+	if catalog == nil {
+		return nil, errors.New("release catalog repository is required")
+	}
+	if deployments == nil && native == nil {
+		return nil, errors.New("release deployment linkage repository is required")
 	}
 	store := releasefilesystem.NewArtifactStore(config.ArtifactDirectory)
 	hooks := []validate.Hook{}
@@ -144,7 +259,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
 		searchCatalog: config.API.ProjectSearchCatalog,
 		environment:   string(environment), api: config.API, logger: logger,
-		finalizeExecution: finalizeExecution, auditIntentConfigured: config.Database != nil && config.AuditIntentRecorder != nil,
+		finalizeExecution: finalizeExecution, auditIntentConfigured: auditIntentConfigured,
 	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {
 		return nil, err

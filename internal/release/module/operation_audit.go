@@ -1,14 +1,13 @@
 package module
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"fmt"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
+	"github.com/google/uuid"
 )
 
 const (
@@ -74,7 +73,10 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 	if key == "" {
 		return access.AuditIntent{}, fmt.Errorf("release audit intent requires idempotency key")
 	}
-	sum := sha256.Sum256([]byte("release\x00" + input.OperationID + "\x00" + aggregateKey + "\x00" + key))
+	// Access PostgreSQL stores audit_id as uuid. UUIDv5 gives us a canonical,
+	// deterministic retry identity derived from the immutable operation and
+	// idempotency key, so replaying the command addresses the same audit row.
+	auditEventID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("release\x00"+input.OperationID+"\x00"+aggregateKey+"\x00"+key)).String()
 	sequence := int64(1)
 	switch input.OperationID {
 	case string(releasegen.GenOperationUploadReleaseArtifact):
@@ -87,7 +89,7 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 		outcome = "success"
 	}
 	intent := access.AuditIntent{
-		EventID: "release:" + hex.EncodeToString(sum[:16]), Source: "release", Operation: input.OperationID,
+		EventID: auditEventID, Source: "release", Operation: input.OperationID,
 		PrincipalID: strings.TrimSpace(input.PrincipalID), Action: contract.Command.Audit.SuccessAction,
 		ResourceKind: "project", ResourceID: input.ProjectID.String(), Capability: access.CapabilityResourcePublish,
 		Outcome: outcome, RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID),

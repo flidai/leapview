@@ -11,6 +11,7 @@ import (
 	access "github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -58,6 +59,10 @@ func testEffectsDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -101,6 +106,35 @@ func provenance(t *testing.T, id projectgraph.ServingIdentity) release.Provenanc
 		t.Fatal(err)
 	}
 	return p
+}
+
+// testAuditAppender and testEventAppender keep the repository tests focused
+// on transaction behavior while adapting the sibling authorities through the
+// same narrow contracts used by app composition.
+type testAuditAppender struct{}
+
+func (testAuditAppender) RecordAuditEvent(ctx context.Context, tx Tx, intent access.AuditIntent) (AuditEvent, error) {
+	stored, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
+	if err != nil {
+		return AuditEvent{}, err
+	}
+	return AuditEvent{AuditID: stored.AuditID, DomainEventID: stored.DomainEventID, ScopeID: stored.ScopeID, ActorID: stored.ActorID, PrincipalID: stored.PrincipalID, Source: stored.Source, Operation: stored.Operation, Action: stored.Action, ResourceKind: stored.ResourceKind, ResourceID: stored.ResourceID, Capability: stored.Capability, Outcome: stored.Outcome, RequestID: stored.RequestID, RequestDigest: stored.RequestDigest, CorrelationID: stored.CorrelationID, AggregateKey: stored.AggregateKey, AggregateSequence: stored.AggregateSequence, MetadataJSON: stored.MetadataJSON, OccurredAt: stored.OccurredAt, IntentDigest: stored.IntentDigest}, nil
+}
+
+type testEventAppender struct{}
+
+func (testEventAppender) AppendEvent(ctx context.Context, tx Tx, input EventInput) (Event, error) {
+	stored, err := eventspostgres.New().AppendEvent(ctx, tx, eventspostgres.EventInput{EventID: input.EventID, ScopeID: input.ScopeID, AggregateType: input.AggregateType, AggregateID: input.AggregateID, EventType: input.EventType, SchemaVersion: input.SchemaVersion, CorrelationID: input.CorrelationID, Payload: input.Payload})
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{EventID: stored.EventID, ScopeID: stored.ScopeID, AggregateType: stored.AggregateType, AggregateID: stored.AggregateID, AggregateVersion: stored.AggregateVersion, EventType: stored.EventType, SchemaVersion: stored.SchemaVersion, OccurredAt: stored.OccurredAt, CorrelationID: stored.CorrelationID, Payload: stored.Payload}, nil
+}
+
+type testWorkflowAppender struct{}
+
+func (testWorkflowAppender) RecordWorkflow(ctx context.Context, tx Tx, intent jobs.WorkflowIntent) error {
+	return jobspostgres.NewRepository(tx).RecordWorkflow(ctx, tx, intent)
 }
 
 func TestReleasePostgresLifecycleAndIdempotentReplay(t *testing.T) {
@@ -157,7 +191,7 @@ func TestReleasePostgresConcurrentCompletionConvergesAndAppendsEffectsOnce(t *te
 	id := identity(t, "generation_complete_concurrent")
 	prov := provenance(t, id)
 	in := release.CreateInput{ID: "release_complete_concurrent", ServingIdentity: id, ProjectDigest: prov.Artifact.ProjectDigest, ArtifactDigest: prov.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "request_complete_concurrent", CreatedBy: "principal_1", Provenance: &prov}
-	r := NewWithOptions(p, Options{Audit: accesspostgres.New(), Events: eventspostgres.New()})
+	r := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}})
 	created, err := r.Create(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -250,7 +284,7 @@ func TestReleasePostgresSourceTransactionAuditEventAtomicAndReplaySafe(t *testin
 	prov := provenance(t, id)
 	intent := access.AuditIntent{EventID: "20000000-0000-0000-0000-000000000001", Source: "release", Operation: "createRelease", Action: "release.created", ResourceKind: "project", ResourceID: id.ProjectID.String(), Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:" + id.ProjectID.String() + ":release_effects", AggregateSequence: 1, MetadataJSON: `{}`}
 	in := release.CreateInput{ID: "release_effects", ServingIdentity: id, ProjectDigest: prov.Artifact.ProjectDigest, ArtifactDigest: prov.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "request_effects", CreatedBy: "principal_1", Provenance: &prov}
-	r := NewWithOptions(p, Options{Audit: accesspostgres.New(), Events: eventspostgres.New()})
+	r := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}})
 	if _, err := r.Create(release.WithAuditIntent(context.Background(), intent), in); err != nil {
 		t.Fatal(err)
 	}
@@ -276,16 +310,123 @@ func TestReleasePostgresSourceTransactionAuditEventAtomicAndReplaySafe(t *testin
 	}
 }
 
+func TestReleasePostgresTransactionCommitsAndRollsBackWorkflowAuditEventTogether(t *testing.T) {
+	p := testEffectsDB(t)
+	id := identity(t, "generation_workflow_atomic")
+	prov := provenance(t, id)
+	in := release.CreateInput{ID: "release_workflow_atomic", ServingIdentity: id, ProjectDigest: prov.Artifact.ProjectDigest, ArtifactDigest: prov.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "request_workflow_atomic", CreatedBy: "principal_1", Provenance: &prov}
+	base := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: testEventAppender{}, Workflow: testWorkflowAppender{}})
+	created, err := base.Create(context.Background(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := base.RecordArtifact(context.Background(), release.Artifact{ReleaseID: created.ID, ServingIdentity: id, ExpectedDigest: in.ArtifactDigest, ActualDigest: in.ArtifactDigest, SizeBytes: 42}); err != nil {
+		t.Fatal(err)
+	}
+	jobID := "release:" + created.ID + ":finalize"
+	workflow := jobs.WorkflowIntent{
+		Event: jobs.EventInput{Key: "release.workflow.atomic", ResourceKind: "release", ResourceID: created.ID, EventType: "release.workflow", Data: []byte(`{"status":"queued"}`)},
+		Job:   jobs.EnqueueInput{ID: jobID, Kind: "release.finalize", WorkloadClass: "control", PrincipalID: "principal_1", PartitionKey: "release:" + id.ProjectID.String(), ResourceKind: "release", ResourceID: created.ID, EstimatedMemoryBytes: 16 << 20, Payload: []byte(`{}`)},
+	}
+	intent := access.AuditIntent{EventID: "20000000-0000-0000-0000-000000000010", Source: "release", Operation: "finalizeRelease", Action: "release.validating", ResourceKind: "project", ResourceID: id.ProjectID.String(), Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:" + id.ProjectID.String() + ":" + created.ID, AggregateSequence: 3, MetadataJSON: `{}`}
+
+	tx, err := p.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.BeginFinalizationTx(release.WithAuditIntent(context.Background(), intent), tx, id.ProjectID.String(), created.ID, workflow); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	if err := p.QueryRow(context.Background(), `SELECT status FROM release.release_record WHERE release_id=$1`, created.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(release.StatusDraft) {
+		t.Fatalf("rolled back release status = %q, want draft", status)
+	}
+	var count int
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM audit.audit_event WHERE audit_id=$1::uuid`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled back audit rows = %d, want zero", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.event WHERE resource_kind='release' AND resource_id=$1 AND event_key=$2`, created.ID, workflow.Event.Key).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled back workflow rows = %d, want zero", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job WHERE id=$1`, jobID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled back workflow jobs = %d, want zero", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM event.event_log WHERE aggregate_id=$1 AND event_type='release.validating'`, created.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rolled back domain event rows = %d, want zero", count)
+	}
+
+	tx, err = p.Begin(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.BeginFinalizationTx(release.WithAuditIntent(context.Background(), intent), tx, id.ProjectID.String(), created.ID, workflow); err != nil {
+		_ = tx.Rollback(context.Background())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT status FROM release.release_record WHERE release_id=$1`, created.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(release.StatusValidating) {
+		t.Fatalf("committed release status = %q, want validating", status)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM audit.audit_event WHERE audit_id=$1::uuid`, intent.EventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("committed audit rows = %d, want one", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.event WHERE resource_kind='release' AND resource_id=$1 AND event_key=$2`, created.ID, workflow.Event.Key).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("committed workflow rows = %d, want one", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM jobs.job WHERE id=$1`, jobID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("committed workflow jobs = %d, want one", count)
+	}
+	if err := p.QueryRow(context.Background(), `SELECT count(*) FROM event.event_log WHERE aggregate_id=$1 AND event_type='release.validating'`, created.ID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("committed domain event rows = %d, want one", count)
+	}
+}
+
 type successfulAudit struct{}
 
-func (successfulAudit) RecordAuditEvent(context.Context, accesspostgres.Tx, access.AuditIntent) (accesspostgres.Event, error) {
-	return accesspostgres.Event{}, nil
+func (successfulAudit) RecordAuditEvent(context.Context, Tx, access.AuditIntent) (AuditEvent, error) {
+	return AuditEvent{}, nil
 }
 
 type failingEvent struct{}
 
-func (failingEvent) AppendEvent(context.Context, eventspostgres.Tx, eventspostgres.EventInput) (eventspostgres.Event, error) {
-	return eventspostgres.Event{}, errors.New("event append failed")
+func (failingEvent) AppendEvent(context.Context, Tx, EventInput) (Event, error) {
+	return Event{}, errors.New("event append failed")
 }
 
 func TestReleasePostgresEventFailureRollsBackSourceMutation(t *testing.T) {
@@ -294,7 +435,7 @@ func TestReleasePostgresEventFailureRollsBackSourceMutation(t *testing.T) {
 	prov := provenance(t, id)
 	in := release.CreateInput{ID: "release_event_rollback", ServingIdentity: id, ProjectDigest: prov.Artifact.ProjectDigest, ArtifactDigest: prov.Artifact.ContentDigest, RequestDigest: digest("6"), IdempotencyKey: "request_event_rollback", CreatedBy: "principal_1", Provenance: &prov}
 	intent := access.AuditIntent{EventID: "20000000-0000-0000-0000-000000000002", Source: "release", Operation: "createRelease", Action: "release.created", ResourceKind: "project", ResourceID: id.ProjectID.String(), Capability: access.CapabilityResourcePublish, Outcome: "success", AggregateKey: "release:" + id.ProjectID.String() + ":" + in.ID, AggregateSequence: 1, MetadataJSON: `{}`}
-	r := NewWithOptions(p, Options{Audit: accesspostgres.New(), Events: failingEvent{}})
+	r := NewWithOptions(p, Options{Audit: testAuditAppender{}, Events: failingEvent{}})
 	if _, err := r.Create(release.WithAuditIntent(context.Background(), intent), in); err == nil {
 		t.Fatal("Create unexpectedly succeeded")
 	}
