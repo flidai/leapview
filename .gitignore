@@ -43,6 +43,7 @@ internal/access/postgres/internal/db/
 internal/platform/operation/postgres/internal/db/
 internal/platform/http/cursorsigning/postgres/internal/db/
 internal/manageddata/postgres/internal/db/
+internal/platform/events/postgres/internal/db/
 internal/platform/**/sqlite/*db/
 docs/visuals/examples.gen.json
 web/generated/

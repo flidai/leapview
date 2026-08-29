@@ -585,6 +585,7 @@ tasks:
       - internal/platform/operation/postgres/internal/db/*.go
       - internal/platform/http/cursorsigning/postgres/internal/db/*.go
       - internal/manageddata/postgres/internal/db/*.go
+      - internal/platform/events/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
     cmds:
       - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate

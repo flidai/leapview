@@ -112,6 +112,8 @@ func (l *Listener) listen(ctx context.Context, reconcile ReconcileFunc) error {
 	if err != nil {
 		return fmt.Errorf("begin event LISTEN setup: %w", err)
 	}
+	// sqlc-exception:listen-protocol. LISTEN is PostgreSQL session control
+	// syntax; it cannot be represented as a parameterized data query.
 	if _, err := tx.Exec(ctx, `LISTEN `+NotificationChannel); err != nil {
 		_ = tx.Rollback(ctx)
 		return fmt.Errorf("establish event LISTEN: %w", err)
@@ -154,6 +156,8 @@ func releaseListenerConnection(conn *pgxpool.Conn) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
+	// sqlc-exception:listen-protocol. UNLISTEN is PostgreSQL session control
+	// syntax used only while releasing the dedicated listener connection.
 	_, _ = conn.Exec(ctx, `UNLISTEN *`)
 	conn.Release()
 }
