@@ -33,7 +33,7 @@ esac
 
 archive_name="prometheus-$version.$platform.tar.gz"
 archive_root="prometheus-$version.$platform"
-cache_root=${LEAPVIEW_PROMTOOL_CACHE_ROOT:-.tmp/tools}
+cache_root=.tmp/tools
 tool_root="$cache_root/$archive_root"
 promtool="$tool_root/promtool"
 
