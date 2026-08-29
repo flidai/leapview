@@ -9,6 +9,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 )
 
 func TestRuntimeQueryPlannerFailsClosedWhenActivationPlannerIsAbsent(t *testing.T) {
@@ -40,6 +41,15 @@ func (s ownershipSources) Prepare(context.Context, *semanticmodel.Model) (Prepar
 
 type ownershipPreparedSources struct{}
 
+func ownershipPartition(t *testing.T) resultidentity.Partition {
+	t.Helper()
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project:ownership", Environment: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return partition
+}
+
 func (ownershipPreparedSources) Close() error { return nil }
 func (ownershipPreparedSources) PlanModelTable(context.Context, *semanticmodel.Model, string, semanticmodel.Table) (ModelTablePlan, error) {
 	return ModelTablePlan{Mode: PlanModeModelSQL, SQL: "SELECT 1 AS id"}, nil
@@ -56,7 +66,7 @@ func ownershipModel() *semanticmodel.Model {
 func TestOpenRuntimeOwnedFailureClosesDatabaseExactlyOnceAndJoinsErrors(t *testing.T) {
 	primary, cleanup := errors.New("refresh failed"), errors.New("database close failed")
 	db := &ownershipDatabase{closeErr: cleanup}
-	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: primary}, OwnDatabase: true})
+	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: primary}, QueryCachePartition: ownershipPartition(t), OwnDatabase: true})
 	if !errors.Is(err, primary) || !errors.Is(err, cleanup) {
 		t.Fatalf("OpenRuntime error = %v, want primary and cleanup", err)
 	}
@@ -67,7 +77,7 @@ func TestOpenRuntimeOwnedFailureClosesDatabaseExactlyOnceAndJoinsErrors(t *testi
 
 func TestOpenRuntimeBorrowedDatabaseRemainsOpenOnFailure(t *testing.T) {
 	db := &ownershipDatabase{}
-	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: errors.New("refresh failed")}})
+	_, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{err: errors.New("refresh failed")}, QueryCachePartition: ownershipPartition(t)})
 	if err == nil {
 		t.Fatal("OpenRuntime unexpectedly succeeded")
 	}
@@ -78,15 +88,15 @@ func TestOpenRuntimeBorrowedDatabaseRemainsOpenOnFailure(t *testing.T) {
 
 func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 	db := &ownershipDatabase{}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: 2, PartitionBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "r"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "r", PartitionID: "r"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope})
+	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope, QueryCachePartition: ownershipPartition(t)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +109,7 @@ func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 	if got := db.closes.Load(); got != 0 {
 		t.Fatalf("borrowed database close count = %d, want 0", got)
 	}
-	other, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "other"})
+	other, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "other", PartitionID: "other"})
 	if err != nil || other == nil {
 		t.Fatalf("shared cache pool was closed: scope=%v err=%v", other, err)
 	}
@@ -109,22 +119,22 @@ func TestOpenRuntimeCloseIsExactlyOnceAndSharedCacheSurvives(t *testing.T) {
 
 func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 	db := &ownershipDatabase{}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: 2, PartitionBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned", PartitionID: "owned"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope, OwnQueryCache: true})
+	runtime, err := OpenRuntime(context.Background(), RuntimeConfig{Model: ownershipModel(), Database: db, Sources: ownershipSources{}, QueryCache: scope, QueryCachePartition: ownershipPartition(t), OwnQueryCache: true})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := runtime.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned"}); err != nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned", PartitionID: "owned"}); err != nil {
 		t.Fatalf("owned cache scope remained open: %v", err)
 	}
 	_ = pool.Close()
@@ -133,11 +143,11 @@ func TestOpenRuntimeOwnedCacheScopeClosesOnRuntimeClose(t *testing.T) {
 func TestNewRuntimeViewOwnedCacheClosesOnModelCompilationFailure(t *testing.T) {
 	cleanup := errors.New("database close failed")
 	db := &ownershipDatabase{closeErr: cleanup}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: 2, PartitionBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input", PartitionID: "owned-input"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -151,18 +161,18 @@ func TestNewRuntimeViewOwnedCacheClosesOnModelCompilationFailure(t *testing.T) {
 	if got := db.closes.Load(); got != 1 {
 		t.Fatalf("database close count = %d, want 1", got)
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input"}); err != nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "owned-input", PartitionID: "owned-input"}); err != nil {
 		t.Fatalf("owned cache scope leaked after model failure: %v", err)
 	}
 	_ = pool.Close()
 }
 
 func TestNewRuntimeViewBorrowedCacheRemainsOpenOnModelFailure(t *testing.T) {
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: 2, PartitionBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	if err != nil {
 		t.Fatal(err)
 	}
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure"})
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure", PartitionID: "borrowed-failure"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,7 +180,7 @@ func TestNewRuntimeViewBorrowedCacheRemainsOpenOnModelFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("model compilation unexpectedly succeeded")
 	}
-	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure"}); err == nil {
+	if _, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "borrowed-failure", PartitionID: "borrowed-failure"}); err == nil {
 		t.Fatal("borrowed cache scope was closed")
 	}
 	_ = pool.Close()

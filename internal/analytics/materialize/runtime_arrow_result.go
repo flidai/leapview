@@ -126,7 +126,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		// classification even though planning now precedes cache eligibility.
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
 	} else if cacheable && planned.reusable {
-		result, err = r.queryCache.executeArrow(ctx, request, execute)
+		result, err = r.queryCache.executeArrowWithDependency(ctx, request, planned.dependency, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute()

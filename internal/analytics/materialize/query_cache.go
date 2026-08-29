@@ -2,24 +2,21 @@ package materialize
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
-	"sync/atomic"
 
+	resultcacheidentity "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
-
-var localCacheID atomic.Uint64
 
 // queryResultCache retains the materialization-specific key contract while the
 // resultcache scope owns retention, hierarchy, invalidation, and coalescing.
 type queryResultCache struct {
 	mu           sync.Mutex
-	namespace    string
 	pool         *resultcache.Pool
 	scope        *resultcache.Scope
 	owned        bool
@@ -28,6 +25,7 @@ type queryResultCache struct {
 	maxBytes     int64
 	currentBytes int64
 	generation   uint64
+	partition    resultidentity.Partition
 }
 
 type arrowQueryExecution struct {
@@ -36,8 +34,11 @@ type arrowQueryExecution struct {
 	summary  dataquery.Result
 }
 
-func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, execute func() (arrowQueryExecution, error)) (dataquery.Result, error) {
-	key, generation, err := c.cacheKey(request)
+// executeArrowWithDependency is the production path. A query is reusable only
+// after planning has supplied immutable dependency evidence; the dependency
+// digest is therefore part of both L1 lookup and stampede-coalescing identity.
+func (c *queryResultCache) executeArrowWithDependency(ctx context.Context, request dataquery.Query, dependency resultidentity.Dependency, execute func() (arrowQueryExecution, error)) (dataquery.Result, error) {
+	key, generation, err := c.cacheKeyWithDependency(request, dependency)
 	if err != nil {
 		return dataquery.Result{}, err
 	}
@@ -124,31 +125,33 @@ func (c *queryResultCache) getArrow(ctx context.Context, request dataquery.Query
 	return result, true, nil
 }
 
-func newQueryResultCache(capacity int, namespace string) *queryResultCache {
-	return newQueryResultCacheWithLimits(capacity, 64<<20, namespace)
-}
-
-func newQueryResultCacheWithLimits(capacity int, maxBytes int64, namespace string) *queryResultCache {
+func newQueryResultCacheWithPartition(capacity int, maxBytes int64, partition resultidentity.Partition) *queryResultCache {
 	if capacity <= 0 {
 		capacity = 1
 	}
 	if maxBytes <= 0 {
 		maxBytes = 1
 	}
-	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: capacity, RuntimeBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
+	if partition.Version() == 0 {
+		panic("typed query cache partition is required")
+	}
+	pool, err := resultcache.New(resultcache.Limits{PartitionEntries: capacity, PartitionBytes: maxBytes, NodeEntries: capacity, NodeBytes: maxBytes})
 	if err != nil {
 		panic(err)
 	}
-	id := fmt.Sprintf("local-%d", localCacheID.Add(1))
-	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: id})
+	id := fmt.Sprintf("cache-%p", pool)
+	scope, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: id, PartitionID: resultcacheidentity.PartitionIdentity(partition)})
 	if err != nil {
 		panic(err)
 	}
-	return &queryResultCache{namespace: namespace, pool: pool, scope: scope, owned: true, capacity: capacity, maxBytes: maxBytes}
+	return &queryResultCache{pool: pool, scope: scope, owned: true, capacity: capacity, maxBytes: maxBytes, partition: partition}
 }
 
-func newQueryResultCacheWithScope(scope *resultcache.Scope, namespace string) *queryResultCache {
-	return &queryResultCache{namespace: namespace, scope: scope}
+func newQueryResultCacheWithScopeAndPartition(scope *resultcache.Scope, partition resultidentity.Partition) *queryResultCache {
+	if scope == nil || partition.Version() == 0 {
+		panic("typed query cache scope and partition are required")
+	}
+	return &queryResultCache{scope: scope, partition: partition}
 }
 
 func (c *queryResultCache) ownScope() {
@@ -201,8 +204,8 @@ func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execut
 	return shared, err
 }
 
-func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query) (dataquery.Result, string, uint64, bool, error) {
-	key, generation, err := c.cacheKey(request)
+func (c *queryResultCache) lookupArrowWithDependency(ctx context.Context, request dataquery.Query, dependency resultidentity.Dependency) (dataquery.Result, string, uint64, bool, error) {
+	key, generation, err := c.cacheKeyWithDependency(request, dependency)
 	if err != nil {
 		return dataquery.Result{}, "", 0, false, err
 	}
@@ -210,48 +213,23 @@ func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Qu
 	return result, key, generation, hit, err
 }
 
-func (c *queryResultCache) cacheKey(request dataquery.Query) (string, uint64, error) {
-	spatialTileGenerationVersion := 0
-	if request.SpatialTile != nil || request.SpatialTileBudget != nil {
-		// Bump whenever MVT encoding or promoted feature identity changes so an
-		// active cache can never serve bytes from an older tile contract.
-		spatialTileGenerationVersion = 5
+func (c *queryResultCache) cacheKeyWithDependency(request dataquery.Query, dependency resultidentity.Dependency) (string, uint64, error) {
+	if dependency.Version() == 0 || dependency.Digest() == "" {
+		return "", 0, fmt.Errorf("governed query dependency evidence is unavailable")
 	}
-	keyBytes, err := json.Marshal(queryResultCacheKey{
-		Namespace:                    c.namespace,
-		CandidateID:                  request.CandidateID,
-		EffectivePolicyFingerprint:   request.EffectivePolicyFingerprint,
-		Operation:                    request.Operation,
-		ModelID:                      request.ModelID,
-		Kind:                         request.Kind,
-		Target:                       request.Target,
-		Fields:                       request.Fields,
-		Metrics:                      request.Metrics,
-		AuthorizationFields:          request.AuthorizationFields,
-		Value:                        request.Value,
-		Time:                         request.Time,
-		Filters:                      request.Filters,
-		Sort:                         request.Sort,
-		ColumnMasks:                  request.ColumnMasks,
-		Offset:                       request.Offset,
-		Limit:                        request.Limit,
-		BinCount:                     request.BinCount,
-		Histogram:                    request.Histogram,
-		Distribution:                 request.Distribution,
-		IncludeTotal:                 request.IncludeTotal,
-		SpatialTile:                  request.SpatialTile,
-		SpatialTileBudget:            request.SpatialTileBudget,
-		SpatialTileGenerationVersion: spatialTileGenerationVersion,
-		SpatialMetadata:              request.SpatialMetadata,
-	})
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
 	if err != nil {
-		return "", 0, fmt.Errorf("encode governed query cache key: %w", err)
+		return "", 0, err
+	}
+	key, err := resultcacheidentity.NewKey(resultcacheidentity.KeyInput{Partition: c.partition, Dependency: dependency, EffectivePolicyFingerprint: request.EffectivePolicyFingerprint, CanonicalQueryDigest: queryDigest})
+	if err != nil {
+		return "", 0, err
 	}
 	generation := uint64(c.scope.Generation())
 	c.mu.Lock()
 	c.generation = generation
 	c.mu.Unlock()
-	return string(keyBytes), generation, nil
+	return key.Digest(), generation, nil
 }
 
 type canceledQueryCacheFlightError struct{ err error }
@@ -259,36 +237,8 @@ type canceledQueryCacheFlightError struct{ err error }
 func (e canceledQueryCacheFlightError) Error() string { return e.err.Error() }
 func (e canceledQueryCacheFlightError) Unwrap() error { return e.err }
 
-type queryResultCacheKey struct {
-	Namespace                    string
-	CandidateID                  string
-	EffectivePolicyFingerprint   string
-	Operation                    string
-	ModelID                      string
-	Kind                         dataquery.Kind
-	Target                       string
-	Fields                       []dataquery.Field
-	Metrics                      []dataquery.Field
-	AuthorizationFields          []dataquery.Field
-	Value                        dataquery.Field
-	Time                         dataquery.Time
-	Filters                      []dataquery.Filter
-	Sort                         []dataquery.Sort
-	ColumnMasks                  []dataquery.ColumnMask
-	Offset                       int
-	Limit                        int
-	BinCount                     int
-	Histogram                    *dataquery.HistogramOptions
-	Distribution                 *dataquery.DistributionOptions
-	IncludeTotal                 bool
-	SpatialTile                  *dataquery.SpatialTile
-	SpatialTileBudget            *dataquery.SpatialTileBudget
-	SpatialTileGenerationVersion int
-	SpatialMetadata              *dataquery.SpatialMetadata
-}
-
 func (c *queryResultCache) clear() {
-	c.scope.Invalidate()
+	c.scope.Clear()
 	c.mu.Lock()
 	c.generation = uint64(c.scope.Generation())
 	c.mu.Unlock()

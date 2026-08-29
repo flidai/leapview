@@ -159,7 +159,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 	}
 	cache, err := resultcache.New(resultcache.Limits{
-		RuntimeEntries: config.RuntimeCacheEntries, RuntimeBytes: config.RuntimeCacheBytes,
+		PartitionEntries: config.RuntimeCacheEntries, PartitionBytes: config.RuntimeCacheBytes,
 		NodeEntries: config.NodeCacheEntries, NodeBytes: config.NodeCacheBytes,
 	})
 	if err != nil {

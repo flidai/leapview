@@ -609,6 +609,7 @@ type ProjectRuntimeConfig struct {
 	QueryCache               *resultcache.Scope
 	ResultLimits             dataquery.ResultLimits
 	DependencyEvidence       map[string]resultidentity.Evidence
+	QueryCachePartition      resultidentity.Partition
 }
 
 type ProjectRuntime struct {
@@ -734,6 +735,10 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 		config.SnapshotID = r.lastSnapshotID
 	}
 	next := make(map[string]*analyticsmaterialize.Runtime, len(r.models))
+	cachePartition := config.QueryCachePartition
+	if cachePartition.Version() == 0 {
+		return fmt.Errorf("typed query cache partition is required")
+	}
 	for modelID, model := range r.models {
 		dependencyEvidence := config.DependencyEvidence[modelID]
 		tableRelation := func(table string) (string, error) {
@@ -747,12 +752,13 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			return "model." + physical, nil
 		}
 		view, err := analyticsmaterialize.NewRuntimeView(ctx, analyticsmaterialize.RuntimeConfig{
-			ModelID: modelID, Model: model, QueryCacheNamespace: projectQueryCacheNamespace(config),
+			ModelID: modelID, Model: model,
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryCache: config.QueryCache, ResultLimits: config.ResultLimits,
-			DependencyEvidence: dependencyEvidence,
-			RequiredExtensions: config.RequiredExtensions,
+			QueryCachePartition: cachePartition,
+			DependencyEvidence:  dependencyEvidence,
+			RequiredExtensions:  config.RequiredExtensions,
 		})
 		if err != nil {
 			for _, opened := range next {
@@ -842,22 +848,6 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 		}
 	}
 	return nil
-}
-
-func projectQueryCacheNamespace(config ProjectRuntimeConfig) string {
-	return fmt.Sprintf(
-		"snapshot=%d;serving=%q;project=%q;environment=%q;semantic=%q;artifact=%q;source=%q;candidate=%q;authorization=%q;bindings=%q",
-		config.SnapshotID,
-		config.ServingStateID,
-		config.ProjectID.String(),
-		config.Environment,
-		config.SemanticDigest,
-		config.ArtifactDigest,
-		config.SourceDataDigest,
-		config.CandidateID,
-		config.AuthorizationFingerprint,
-		config.BindingFingerprint,
-	)
 }
 
 func (r *ProjectRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {

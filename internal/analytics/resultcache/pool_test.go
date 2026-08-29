@@ -13,13 +13,13 @@ import (
 )
 
 func TestPoolEnforcesRuntimeAndNodeBudgets(t *testing.T) {
-	pool, err := New(Limits{RuntimeEntries: 2, RuntimeBytes: 1 << 20, NodeEntries: 4, NodeBytes: 1 << 20})
+	pool, err := New(Limits{PartitionEntries: 2, PartitionBytes: 1 << 20, NodeEntries: 4, NodeBytes: 1 << 20})
 	if err != nil {
 		t.Fatal(err)
 	}
-	a1 := mustScope(t, pool, ScopeID{RuntimeID: "a1"})
-	a2 := mustScope(t, pool, ScopeID{RuntimeID: "a2"})
-	b1 := mustScope(t, pool, ScopeID{RuntimeID: "b1"})
+	a1 := mustScope(t, pool, ScopeID{RuntimeID: "a1", PartitionID: "a1"})
+	a2 := mustScope(t, pool, ScopeID{RuntimeID: "a2", PartitionID: "a2"})
+	b1 := mustScope(t, pool, ScopeID{RuntimeID: "b1", PartitionID: "b1"})
 
 	put(t, a1, "a1-1", "one")
 	put(t, a1, "a1-2", "two")
@@ -33,16 +33,16 @@ func TestPoolEnforcesRuntimeAndNodeBudgets(t *testing.T) {
 	if got := pool.Stats().Entries; got != 4 {
 		t.Fatalf("node entries = %d, want 4", got)
 	}
-	if pool.Stats().Evictions[ConstraintRuntime] == 0 || pool.Stats().Evictions[ConstraintNode] == 0 {
+	if pool.Stats().Evictions[ConstraintPartition] == 0 || pool.Stats().Evictions[ConstraintNode] == 0 {
 		t.Fatalf("evictions = %#v", pool.Stats().Evictions)
 	}
 }
 
-func TestScopeInvalidationPreventsStaleStoreAndCloseBalancesAccounting(t *testing.T) {
+func TestScopeInvalidationPreventsStaleStoreAndClosePreservesPartitionEntries(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	token := scope.Generation()
-	scope.Invalidate()
+	scope.Fence()
 	stale := testArrowResult(t, memory.DefaultAllocator, "stale")
 	if outcome := scope.StoreArrow("stale", token, stale, Metadata{}); outcome != StoreStale {
 		t.Fatalf("outcome = %q", outcome)
@@ -52,7 +52,7 @@ func TestScopeInvalidationPreventsStaleStoreAndCloseBalancesAccounting(t *testin
 	if err := scope.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if stats := pool.Stats(); stats.Entries != 0 || stats.Bytes != 0 {
+	if stats := pool.Stats(); stats.Entries != 1 || stats.Bytes == 0 {
 		t.Fatalf("stats after close = %#v", stats)
 	}
 	closed := testArrowResult(t, memory.DefaultAllocator, "closed")
@@ -62,9 +62,48 @@ func TestScopeInvalidationPreventsStaleStoreAndCloseBalancesAccounting(t *testin
 	closed.Release()
 }
 
+func TestStablePartitionEntriesSurviveOverlappingRuntimeCloseAndFenceWrites(t *testing.T) {
+	pool, _ := New(testLimits())
+	first := mustScope(t, pool, ScopeID{RuntimeID: "generation-1", PartitionID: "production:project:env"})
+	second := mustScope(t, pool, ScopeID{RuntimeID: "generation-2", PartitionID: "production:project:env"})
+	put(t, first, "query", "stable")
+	entry, _, hit, err := second.LookupArrow("query")
+	if err != nil || !hit {
+		t.Fatalf("overlapping generation lookup hit=%v err=%v", hit, err)
+	}
+	entry.Release()
+	first.Fence()
+	stale := testArrowResult(t, memory.DefaultAllocator, "stale")
+	if outcome := first.StoreArrow("stale", 0, stale, Metadata{}); outcome != StoreStale {
+		t.Fatalf("invalidated generation accepted stale write: %q", outcome)
+	}
+	stale.Release()
+	if err := first.Close(); err != nil {
+		t.Fatal(err)
+	}
+	entry, _, hit, err = second.LookupArrow("query")
+	if err != nil || !hit {
+		t.Fatalf("entry disappeared after first generation close hit=%v err=%v", hit, err)
+	}
+	entry.Release()
+	if got := second.Stats().Entries; got != 1 {
+		t.Fatalf("stable partition stats entries=%d", got)
+	}
+	second.Clear()
+	entry, _, hit, err = second.LookupArrow("query")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hit {
+		entry.Release()
+		t.Fatal("partition clear left entry visible to overlapping scope")
+	}
+	_ = second.Close()
+}
+
 func TestOversizedEntryIsSkipped(t *testing.T) {
-	pool, _ := New(Limits{RuntimeEntries: 2, RuntimeBytes: 64, NodeEntries: 2, NodeBytes: 64})
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	pool, _ := New(Limits{PartitionEntries: 2, PartitionBytes: 64, NodeEntries: 2, NodeBytes: 64})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	large := testArrowResult(t, memory.DefaultAllocator, string(make([]byte, 256)))
 	if outcome := scope.StoreArrow("large", scope.Generation(), large, Metadata{}); outcome != StoreOversized {
 		t.Fatalf("outcome = %q", outcome)
@@ -77,7 +116,7 @@ func TestOversizedEntryIsSkipped(t *testing.T) {
 
 func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	original := []byte{1, 2, 3}
 	if outcome := scope.StoreBytes("tile", scope.Generation(), original); outcome != StoreStored {
 		t.Fatalf("store bytes outcome = %q", outcome)
@@ -99,7 +138,7 @@ func TestByteEntriesAreImmutableAndShareCacheBudgets(t *testing.T) {
 
 func TestByteEntriesRetainValidEmptyPayloads(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	if outcome := scope.StoreBytes("empty-tile", scope.Generation(), []byte{}); outcome != StoreStored {
 		t.Fatalf("store empty bytes outcome = %q", outcome)
 	}
@@ -114,7 +153,7 @@ func BenchmarkWarmTileByteLookup(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	scope, err := pool.OpenScope(ScopeID{RuntimeID: "serving-1"})
+	scope, err := pool.OpenScope(ScopeID{RuntimeID: "serving-1", PartitionID: "serving-1"})
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -136,7 +175,7 @@ func BenchmarkWarmTileByteLookup(b *testing.B) {
 
 func TestCoalesceCancellationDoesNotPoisonLiveWaiter(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	owner, cancel := context.WithCancel(context.Background())
 	started := make(chan struct{})
 	release := make(chan struct{})
@@ -166,7 +205,7 @@ func TestCoalesceArrowReturnsIndependentLeasesAndReleasesFlightHold(t *testing.T
 	defer allocator.AssertSize(t, 0)
 	pool, _ := New(testLimits())
 	defer pool.Close()
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	result := testArrowResult(t, allocator, "shared")
@@ -231,7 +270,7 @@ func TestCoalesceArrowCanceledWaiterDoesNotLeakOrCancelLiveWaiter(t *testing.T) 
 	defer allocator.AssertSize(t, 0)
 	pool, _ := New(testLimits())
 	defer pool.Close()
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	started := make(chan struct{})
 	release := make(chan struct{})
 	owner, cancel := context.WithCancel(context.Background())
@@ -292,14 +331,14 @@ func waitForArrowFlightWaiters(t *testing.T, pool *Pool, key string, want int) {
 
 func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {
 	pool, _ := New(testLimits())
-	scope := mustScope(t, pool, ScopeID{RuntimeID: "one"})
+	scope := mustScope(t, pool, ScopeID{RuntimeID: "one", PartitionID: "one"})
 	var wg sync.WaitGroup
 	for i := 0; i < 20; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			_ = pool.Stats()
-			scope.Invalidate()
+			scope.Fence()
 			value := testArrowResult(t, memory.DefaultAllocator, "value")
 			scope.StoreArrow("key", scope.Generation(), value, Metadata{})
 			value.Release()
@@ -315,7 +354,7 @@ func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {
 }
 
 func testLimits() Limits {
-	return Limits{RuntimeEntries: 8, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 4 << 20}
+	return Limits{PartitionEntries: 8, PartitionBytes: 1 << 20, NodeEntries: 32, NodeBytes: 4 << 20}
 }
 func mustScope(t *testing.T, p *Pool, id ScopeID) *Scope {
 	t.Helper()

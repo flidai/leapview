@@ -4,10 +4,12 @@ import (
 	"context"
 	"fmt"
 
+	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 )
 
@@ -39,6 +41,17 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 	if environment == nil {
 		return nil, fmt.Errorf("analytical runtime environment is unavailable")
 	}
+	cachePartition := request.QueryCachePartition
+	if cachePartition.Version() == 0 {
+		return nil, fmt.Errorf("typed query cache partition is required")
+	}
+	wantKind := resultidentity.PartitionProduction
+	if request.CandidateID != "" {
+		wantKind = resultidentity.PartitionCandidate
+	}
+	if cachePartition.Kind() != wantKind || cachePartition.ProjectID() != request.ProjectID || cachePartition.Environment() != request.Environment || cachePartition.CandidateID() != request.CandidateID {
+		return nil, fmt.Errorf("query cache partition does not match project serving scope")
+	}
 	var connectionResolver analyticsruntime.ConnectionResolver
 	if request.CandidateID != "" {
 		var ok bool
@@ -56,7 +69,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		}
 	}
 	cacheScope, err := f.module.cache.OpenScope(resultcache.ScopeID{
-		RuntimeID: projectRuntimeCacheIdentity(request),
+		RuntimeID: projectRuntimeCacheIdentity(request), PartitionID: analyticscache.PartitionIdentity(cachePartition),
 	})
 	if err != nil {
 		return nil, err
@@ -71,10 +84,11 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SourceDataDigest: request.SourceDataDigest,
 		CandidateID:      request.CandidateID, AuthorizationFingerprint: request.AuthorizationFingerprint,
-		BindingFingerprint: request.BindingFingerprint,
-		DependencyEvidence: request.DependencyEvidence,
-		RequiredExtensions: request.RequiredExtensions,
-		SkipInitialRefresh: request.SkipInitialRefresh,
+		BindingFingerprint:  request.BindingFingerprint,
+		QueryCachePartition: cachePartition,
+		DependencyEvidence:  request.DependencyEvidence,
+		RequiredExtensions:  request.RequiredExtensions,
+		SkipInitialRefresh:  request.SkipInitialRefresh,
 	})
 	if err != nil {
 		_ = cacheScope.Close()

@@ -16,10 +16,12 @@ import (
 	"time"
 
 	_ "github.com/duckdb/duckdb-go/v2"
+	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	extensionsupply "github.com/flidai/leapview/internal/deployment/extensionsupply"
 	"github.com/flidai/leapview/internal/extension"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -291,7 +293,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	t.Cleanup(func() { lease.Release() })
 	first, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": firstModel}, Database: environment,
-		ExtensionAdmission: admission,
+		ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t),
 	})
 	require.NoError(t, err)
 	snapshotID := first.DuckLakeSnapshotID()
@@ -319,7 +321,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	// admitted lease from the workload context before DESCRIBE.
 	second, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": secondModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t),
 	})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = second.Close() })
@@ -341,7 +343,7 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	contractModel.Tables["operations_customers"] = contractTable
 	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": contractModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, ConnectionResolver: resolver, ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t),
 	})
 	require.ErrorContains(t, err, `field "customer_id" datatype "Integer" is incompatible with discovered physical type "VARCHAR"`)
 
@@ -350,20 +352,21 @@ func TestSnapshotRuntimeDiscoversDistinctSemanticDatasetAliasSchemas(t *testing.
 	badTable.ModelName = "missing_snapshot_table"
 	badModel.Tables["operations_customers"] = badTable
 	badModel.Datasets["operations_customers"] = semanticmodel.SemanticDatasetSpec{Model: "missing_snapshot_table"}
-	cachePool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
+	cachePool, err := resultcache.New(resultcache.Limits{PartitionEntries: 2, PartitionBytes: 1024, NodeEntries: 2, NodeBytes: 1024})
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = cachePool.Close() })
-	cacheScope, err := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure"})
+	cachePartition := duckdbTestQueryCachePartition(t)
+	cacheScope, err := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure", PartitionID: analyticscache.PartitionIdentity(cachePartition)})
 	require.NoError(t, err)
 	_, err = OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{
 		ProjectID: "test", Models: map[string]*semanticmodel.Model{"semantic-model:operations": badModel}, Database: environment,
-		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope, ExtensionAdmission: admission,
+		SnapshotID: snapshotID, SkipInitialRefresh: true, QueryCache: cacheScope, ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t),
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "snapshot schema discovery")
 	// A discovery failure must close the partially built ProjectRuntime,
 	// including its generation cache scope.
-	reopened, reopenErr := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure"})
+	reopened, reopenErr := cachePool.OpenScope(resultcache.ScopeID{RuntimeID: "snapshot-discovery-failure", PartitionID: analyticscache.PartitionIdentity(cachePartition)})
 	require.NoError(t, reopenErr, "post-construction discovery failure leaked cache scope")
 	reopened.Close()
 }
@@ -623,7 +626,7 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 	require.NoError(t, err)
 	lease, err := controller.Acquire(ctx, workload.Request{Class: workload.Refresh, PrincipalID: "test", Operation: "schema-test", EstimatedMemoryBytes: 1})
 	require.NoError(t, err)
-	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
+	runtime, err := OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t)})
 	if err != nil {
 		lease.Release()
 		controller.Close()
@@ -640,6 +643,15 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 	require.NoError(t, err)
 	t.Cleanup(analyticalLease.Release)
 	return analyticalLease.Context(), environment, runtime
+}
+
+func duckdbTestQueryCachePartition(t testing.TB) resultidentity.Partition {
+	t.Helper()
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "test", Environment: "test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return partition
 }
 
 func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir string, model *semanticmodel.Model) (*ProjectRuntime, error) {
@@ -660,7 +672,7 @@ func openSchemaTestRuntimeExpectError(t *testing.T, ctx context.Context, dir str
 		return nil, err
 	}
 	defer lease.Release()
-	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission})
+	return OpenProjectMaterializeRuntime(lease.Context(), ProjectRuntimeConfig{ProjectID: "test", Models: map[string]*semanticmodel.Model{"test": model}, Database: environment, ExtensionAdmission: admission, QueryCachePartition: duckdbTestQueryCachePartition(t)})
 }
 
 func TestCompileSourceRelation(t *testing.T) {

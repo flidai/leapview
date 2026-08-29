@@ -1,32 +1,21 @@
 package duckdb
 
-import "testing"
+import (
+	"testing"
 
-func TestProjectQueryCacheNamespacePartitionsCandidateSecurityBoundaries(t *testing.T) {
-	base := ProjectRuntimeConfig{
-		SnapshotID: 11, ServingStateID: "state_1", ProjectID: "sales",
-		Environment: "prod", SemanticDigest: "semantic", ArtifactDigest: "artifact",
-		SourceDataDigest: "data", CandidateID: "cand_1",
-		AuthorizationFingerprint: "policy-a", BindingFingerprint: "bindings-a",
+	"github.com/flidai/leapview/internal/analytics/resultidentity"
+)
+
+func TestProjectQueryCachePartitionSeparatesCandidateSecurityBoundaries(t *testing.T) {
+	production, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "sales", Environment: "prod"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	namespace := projectQueryCacheNamespace(base)
-	for name, mutate := range map[string]func(*ProjectRuntimeConfig){
-		"candidate": func(config *ProjectRuntimeConfig) {
-			config.CandidateID = "cand_2"
-		},
-		"authorization": func(config *ProjectRuntimeConfig) {
-			config.AuthorizationFingerprint = "policy-b"
-		},
-		"binding": func(config *ProjectRuntimeConfig) {
-			config.BindingFingerprint = "bindings-b"
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			changed := base
-			mutate(&changed)
-			if got := projectQueryCacheNamespace(changed); got == namespace {
-				t.Fatalf("%s boundary reused candidate cache namespace %q", name, got)
-			}
-		})
+	candidate, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionCandidate, ProjectID: "sales", Environment: "prod", CandidateID: "cand_1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(production.Canonical()) == string(candidate.Canonical()) {
+		t.Fatal("production and candidate cache partitions collided")
 	}
 }

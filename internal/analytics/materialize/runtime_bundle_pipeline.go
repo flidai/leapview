@@ -174,7 +174,13 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			out.misses = append(out.misses, branch)
 			continue
 		}
-		cached, key, generation, hit, err := r.queryCache.lookupArrow(ctx, branch.Query)
+		dependency, dependencyErr := r.dependencyEvidence.Dependency(r.dependencyPlanInput(projection))
+		if dependencyErr != nil {
+			out.slots[branch.ID] = bundleCacheSlot{}
+			out.misses = append(out.misses, branch)
+			continue
+		}
+		cached, key, generation, hit, err := r.queryCache.lookupArrowWithDependency(ctx, branch.Query, dependency)
 		if err != nil {
 			return resolvedBundle{}, &dataquery.BundleBranchError{ID: branch.ID, Err: err}
 		}

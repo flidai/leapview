@@ -22,21 +22,21 @@ import (
 )
 
 type RuntimeConfig struct {
-	ModelID string
-	Model   *semanticmodel.Model
-	// QueryCacheNamespace identifies the immutable serving snapshot and source
-	// digests backing this runtime. Mutable refreshes additionally advance the
-	// cache generation before any subsequent query can reuse results.
-	QueryCacheNamespace string
-	QueryCache          *resultcache.Scope
-	ResultLimits        dataquery.ResultLimits
+	ModelID      string
+	Model        *semanticmodel.Model
+	QueryCache   *resultcache.Scope
+	ResultLimits dataquery.ResultLimits
 	// DependencyEvidence is immutable activation evidence used to derive an
 	// exact dependency identity from each validated query plan. When it is
 	// absent or incomplete, result reuse fails closed while execution remains
 	// available.
 	DependencyEvidence resultidentity.Evidence
-	RequiredExtensions []string
-	TableRelation      semanticquery.TableRelation
+	// QueryCachePartition is the stable production or isolated candidate
+	// partition. It excludes serving-generation identity; dependency evidence
+	// carries exact relation/runtime revisions.
+	QueryCachePartition resultidentity.Partition
+	RequiredExtensions  []string
+	TableRelation       semanticquery.TableRelation
 
 	Database Database
 	Sources  SourcePreparer
@@ -170,10 +170,15 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if !planner.IsCompiled() {
 		return nil, fmt.Errorf("compiled semantic planner is required")
 	}
-	cache = newQueryResultCacheWithScope(config.QueryCache, config.QueryCacheNamespace)
+	if config.QueryCachePartition.Version() == 0 {
+		return nil, fmt.Errorf("typed query cache partition is required")
+	}
 	if config.QueryCache == nil {
-		cache = newQueryResultCache(256, config.QueryCacheNamespace)
-	} else if config.OwnQueryCache {
+		cache = newQueryResultCacheWithPartition(256, 64<<20, config.QueryCachePartition)
+	} else {
+		cache = newQueryResultCacheWithScopeAndPartition(config.QueryCache, config.QueryCachePartition)
+	}
+	if config.QueryCache != nil && config.OwnQueryCache {
 		cache.ownScope()
 	}
 	limits := config.ResultLimits

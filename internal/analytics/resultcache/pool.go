@@ -16,8 +16,8 @@ import (
 type Constraint string
 
 const (
-	ConstraintRuntime Constraint = "runtime"
-	ConstraintNode    Constraint = "node"
+	ConstraintPartition Constraint = "partition"
+	ConstraintNode      Constraint = "node"
 )
 
 type StoreOutcome string
@@ -30,26 +30,31 @@ const (
 )
 
 type Limits struct {
-	RuntimeEntries int
-	RuntimeBytes   int64
-	NodeEntries    int
-	NodeBytes      int64
+	PartitionEntries int
+	PartitionBytes   int64
+	NodeEntries      int
+	NodeBytes        int64
 }
 
 func (l Limits) Validate() error {
-	if l.RuntimeEntries <= 0 || l.NodeEntries <= 0 || l.RuntimeBytes <= 0 || l.NodeBytes <= 0 {
+	if l.PartitionEntries <= 0 || l.NodeEntries <= 0 || l.PartitionBytes <= 0 || l.NodeBytes <= 0 {
 		return fmt.Errorf("query cache limits must be positive")
 	}
-	if l.RuntimeEntries > l.NodeEntries {
-		return fmt.Errorf("query cache entry limits must satisfy runtime <= node")
+	if l.PartitionEntries > l.NodeEntries {
+		return fmt.Errorf("query cache entry limits must satisfy partition <= node")
 	}
-	if l.RuntimeBytes > l.NodeBytes {
-		return fmt.Errorf("query cache byte limits must satisfy runtime <= node")
+	if l.PartitionBytes > l.NodeBytes {
+		return fmt.Errorf("query cache byte limits must satisfy partition <= node")
 	}
 	return nil
 }
 
-type ScopeID struct{ RuntimeID string }
+type ScopeID struct {
+	RuntimeID string
+	// PartitionID identifies the stable production or isolated candidate
+	// namespace. It is required for every scope.
+	PartitionID string
+}
 type Token uint64
 
 // ScopeProvider is the cache capability required by runtime consumers.
@@ -64,6 +69,7 @@ type Pool struct {
 	entries      map[string]*list.Element
 	lru          *list.List
 	scopes       map[string]*scopeState
+	partitions   map[string]*usage
 	bytes        int64
 	evictions    map[Constraint]uint64
 	stores       map[StoreOutcome]uint64
@@ -80,7 +86,6 @@ type scopeState struct {
 	generation Token
 	closed     bool
 	entries    map[string]struct{}
-	usage      usage
 }
 type usage struct {
 	entries int
@@ -88,6 +93,7 @@ type usage struct {
 }
 type entry struct {
 	composite, key, scope string
+	partition             string
 	arrowResult           *arrowresult.Result
 	arrowHold             *arrowresult.Lease
 	byteValue             []byte
@@ -204,7 +210,11 @@ func (s *Scope) Stats() UsageSnapshot {
 	s.pool.mu.Lock()
 	defer s.pool.mu.Unlock()
 	if state := s.pool.scopes[s.key]; state != nil {
-		return UsageSnapshot{Entries: state.usage.entries, Bytes: state.usage.bytes}
+		usage := s.pool.partitions[state.id.PartitionID]
+		if usage == nil {
+			return UsageSnapshot{}
+		}
+		return UsageSnapshot{Entries: usage.entries, Bytes: usage.bytes}
 	}
 	return UsageSnapshot{}
 }
@@ -221,7 +231,7 @@ func New(limits Limits) (*Pool, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
+	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, partitions: map[string]*usage{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
 }
 
 func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
@@ -230,6 +240,9 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	}
 	if id.RuntimeID == "" {
 		return nil, fmt.Errorf("result cache runtime ID is required")
+	}
+	if id.PartitionID == "" {
+		return nil, fmt.Errorf("result cache partition ID is required")
 	}
 	key := id.RuntimeID
 	p.mu.Lock()
@@ -256,6 +269,14 @@ func (s *Scope) Generation() Token {
 	return 0
 }
 
+func (s *Scope) flightKey(key string) string {
+	return s.key + "\x00" + key
+}
+
+func entryCompositeLocked(state *scopeState, key string) string {
+	return state.id.PartitionID + "\x00" + key
+}
+
 // LookupArrow returns an independently retained lease. Eviction, invalidation,
 // or scope closure can remove the cache's reference without invalidating it.
 func (s *Scope) LookupArrow(key string) (*EntryLease, Token, bool, error) {
@@ -269,7 +290,7 @@ func (s *Scope) LookupArrow(key string) (*EntryLease, Token, bool, error) {
 	if p.closed || state == nil || state.closed {
 		return nil, 0, false, fmt.Errorf("result cache scope is closed")
 	}
-	element := p.entries[s.key+"\x00"+key]
+	element := p.entries[entryCompositeLocked(state, key)]
 	if element == nil {
 		return nil, state.generation, false, nil
 	}
@@ -298,7 +319,7 @@ func (s *Scope) LookupBytes(key string) ([]byte, Token, bool, error) {
 	if p.closed || state == nil || state.closed {
 		return nil, 0, false, fmt.Errorf("result cache scope is closed")
 	}
-	element := p.entries[s.key+"\x00"+key]
+	element := p.entries[entryCompositeLocked(state, key)]
 	if element == nil {
 		return nil, state.generation, false, nil
 	}
@@ -329,7 +350,7 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 		return StoreStale
 	}
 	bytes := int64(len(key)) + result.Bytes() + metadataBytes(metadata)
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.PartitionBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
@@ -338,16 +359,18 @@ func (s *Scope) StoreArrow(key string, token Token, result *arrowresult.Result, 
 		p.stores[StoreClosed]++
 		return StoreClosed
 	}
-	composite := s.key + "\x00" + key
+	partition := state.id.PartitionID
+	composite := partition + "\x00" + key
 	if old := p.entries[composite]; old != nil {
 		p.removeLocked(old, "")
 	}
-	e := entry{composite: composite, key: key, scope: s.key, arrowResult: result, arrowHold: hold, metadata: cloneMetadata(metadata), bytes: bytes}
+	e := entry{composite: composite, key: key, scope: s.key, partition: partition, arrowResult: result, arrowHold: hold, metadata: cloneMetadata(metadata), bytes: bytes}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}
-	state.usage.entries++
-	state.usage.bytes += bytes
+	usage := p.partitionUsageLocked(partition)
+	usage.entries++
+	usage.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -373,22 +396,24 @@ func (s *Scope) StoreBytes(key string, token Token, value []byte) StoreOutcome {
 		return StoreStale
 	}
 	bytes := int64(len(key) + len(value))
-	if bytes > p.limits.RuntimeBytes || bytes > p.limits.NodeBytes {
+	if bytes > p.limits.PartitionBytes || bytes > p.limits.NodeBytes {
 		p.stores[StoreOversized]++
 		return StoreOversized
 	}
-	composite := s.key + "\x00" + key
+	partition := state.id.PartitionID
+	composite := partition + "\x00" + key
 	if old := p.entries[composite]; old != nil {
 		p.removeLocked(old, "")
 	}
 	stored := make([]byte, len(value))
 	copy(stored, value)
-	e := entry{composite: composite, key: key, scope: s.key, byteValue: stored, bytes: bytes}
+	e := entry{composite: composite, key: key, scope: s.key, partition: partition, byteValue: stored, bytes: bytes}
 	element := p.lru.PushFront(e)
 	p.entries[composite] = element
 	state.entries[composite] = struct{}{}
-	state.usage.entries++
-	state.usage.bytes += bytes
+	usage := p.partitionUsageLocked(partition)
+	usage.entries++
+	usage.bytes += bytes
 	p.bytes += bytes
 	p.enforceLocked(state)
 	p.stores[StoreStored]++
@@ -406,12 +431,14 @@ func (s *Scope) Delete(key string) {
 	if state == nil || state.closed {
 		return
 	}
-	p.removeLocked(p.entries[s.key+"\x00"+key], "")
+	p.removeLocked(p.entries[entryCompositeLocked(state, key)], "")
 }
 
 func (p *Pool) enforceLocked(state *scopeState) {
-	for state.usage.entries > p.limits.RuntimeEntries || state.usage.bytes > p.limits.RuntimeBytes {
-		p.removeLocked(p.oldestLocked(func(e entry) bool { return e.scope == scopeKey(state.id) }), ConstraintRuntime)
+	partition := state.id.PartitionID
+	usage := p.partitionUsageLocked(partition)
+	for usage.entries > p.limits.PartitionEntries || usage.bytes > p.limits.PartitionBytes {
+		p.removeLocked(p.oldestLocked(func(e entry) bool { return e.partition == partition }), ConstraintPartition)
 	}
 	for len(p.entries) > p.limits.NodeEntries || p.bytes > p.limits.NodeBytes {
 		p.removeLocked(p.lru.Back(), ConstraintNode)
@@ -440,8 +467,13 @@ func (p *Pool) removeLocked(element *list.Element, constraint Constraint) {
 	p.bytes -= e.bytes
 	if state != nil {
 		delete(state.entries, e.composite)
-		state.usage.entries--
-		state.usage.bytes -= e.bytes
+	}
+	if usage := p.partitions[e.partition]; usage != nil {
+		usage.entries--
+		usage.bytes -= e.bytes
+		if usage.entries <= 0 {
+			delete(p.partitions, e.partition)
+		}
 	}
 	if constraint != "" {
 		p.evictions[constraint]++
@@ -460,9 +492,18 @@ func metadataBytes(metadata Metadata) int64 {
 	}
 	return bytes
 }
-func scopeKey(id ScopeID) string { return id.RuntimeID }
+func (p *Pool) partitionUsageLocked(partition string) *usage {
+	if value := p.partitions[partition]; value != nil {
+		return value
+	}
+	value := &usage{}
+	p.partitions[partition] = value
+	return value
+}
 
-func (s *Scope) Invalidate() {
+// Fence advances this scope's write generation without evicting stable
+// partition entries. Use Clear for an explicit partition-wide eviction.
+func (s *Scope) Fence() {
 	if s == nil || s.pool == nil {
 		return
 	}
@@ -473,8 +514,31 @@ func (s *Scope) Invalidate() {
 	if state == nil || state.closed {
 		return
 	}
-	for composite := range state.entries {
-		p.removeLocked(p.entries[composite], "")
+	state.generation++
+}
+
+// Clear explicitly removes every retained entry in this stable partition and
+// advances its generation. Fence and Close intentionally leave compatible
+// entries available to another runtime scope; Clear is the destructive cache
+// operation used by an explicit operator/request action.
+func (s *Scope) Clear() {
+	if s == nil || s.pool == nil {
+		return
+	}
+	p := s.pool
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	state := p.scopes[s.key]
+	if state == nil || state.closed {
+		return
+	}
+	partition := state.id.PartitionID
+	for element := p.lru.Back(); element != nil; {
+		previous := element.Prev()
+		if element.Value.(entry).partition == partition {
+			p.removeLocked(element, "")
+		}
+		element = previous
 	}
 	state.generation++
 }
@@ -489,9 +553,6 @@ func (s *Scope) Close() error {
 	state := p.scopes[s.key]
 	if state == nil || state.closed {
 		return nil
-	}
-	for composite := range state.entries {
-		p.removeLocked(p.entries[composite], "")
 	}
 	state.closed = true
 	state.generation++
@@ -512,7 +573,7 @@ func (s *Scope) Coalesce(ctx context.Context, key string, execute func() (any, e
 	if s == nil || s.pool == nil {
 		return nil, false, fmt.Errorf("result cache scope is required")
 	}
-	flightKey := s.key + "\x00" + key
+	flightKey := s.flightKey(key)
 	for {
 		ch := s.pool.group.DoChan(flightKey, func() (any, error) {
 			value, err := execute()
@@ -545,7 +606,7 @@ func (s *Scope) CoalesceArrow(ctx context.Context, key string, execute func() (A
 	if s == nil || s.pool == nil {
 		return nil, ArrowFlightStatus{}, fmt.Errorf("result cache scope is required")
 	}
-	flightKey := s.key + "\x00" + key
+	flightKey := s.flightKey(key)
 	for {
 		flight, owner := s.joinArrowFlight(flightKey, ctx, execute)
 		select {
@@ -641,7 +702,13 @@ func (p *Pool) Stats() Snapshot {
 	defer p.mu.Unlock()
 	result := Snapshot{Entries: len(p.entries), Bytes: p.bytes, Scopes: map[string]ScopeSnapshot{}, Evictions: map[Constraint]uint64{}, Stores: map[StoreOutcome]uint64{}}
 	for key, state := range p.scopes {
-		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: state.usage.entries, Bytes: state.usage.bytes, Generation: state.generation}
+		usage := p.partitions[state.id.PartitionID]
+		var entries int
+		var byteCount int64
+		if usage != nil {
+			entries, byteCount = usage.entries, usage.bytes
+		}
+		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: entries, Bytes: byteCount, Generation: state.generation}
 	}
 	for key, value := range p.evictions {
 		result.Evictions[key] = value
