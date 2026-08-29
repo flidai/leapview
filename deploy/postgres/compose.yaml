@@ -1,0 +1,42 @@
+# Development/test-only PostgreSQL provisioning.
+#
+# Production deployments use externally managed PostgreSQL databases and
+# inject LEAPVIEW_POSTGRES_CONTROL_URL and LEAPVIEW_POSTGRES_DUCKLAKE_URL from
+# their secret manager. This file intentionally binds only to loopback and
+# must not be used as a production topology.
+name: ${COMPOSE_PROJECT_NAME:-leapview-postgres-dev}
+
+services:
+  postgres:
+    image: docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: leapview_bootstrap
+      # These defaults are local-only bootstrap credentials. Override them in
+      # the invoking environment; the provisioning script never prints them.
+      POSTGRES_PASSWORD: ${LEAPVIEW_POSTGRES_BOOTSTRAP_PASSWORD:-leapview-local-bootstrap}
+      LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview-local-control}
+      LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}
+      LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapview-local-control-migrator}
+      LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD: ${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}
+    ports:
+      - "127.0.0.1:${LEAPVIEW_POSTGRES_DEV_PORT:-55432}:5432"
+    volumes:
+      # PostgreSQL 18 images expect the parent mount so their
+      # major-version-specific data directory remains visible to pg_upgrade.
+      - leapview-postgres-dev:/var/lib/postgresql
+      - ./init.sh:/docker-entrypoint-initdb.d/10-leapview-roles.sh:ro
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U leapview_bootstrap -d postgres"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+    logging:
+      driver: local
+      options:
+        max-size: 10m
+        max-file: "3"
+
+volumes:
+  leapview-postgres-dev:

@@ -96,6 +96,68 @@ tasks:
     cmds:
       - ./scripts/dev-server.sh logs
 
+  postgres:dev:up:
+    desc: Provision the loopback-only PostgreSQL 18 development databases and roles
+    cmds:
+      - ./scripts/postgres-dev.sh up
+
+  postgres:dev:
+    desc: Provision the local PostgreSQL development databases and roles
+    cmds:
+      - task: postgres:dev:up
+
+  postgres:dev:down:
+    desc: Stop the local PostgreSQL development service (retains its volume)
+    cmds:
+      - ./scripts/postgres-dev.sh down
+
+  postgres:dev:status:
+    desc: Show the local PostgreSQL development service status
+    cmds:
+      - ./scripts/postgres-dev.sh status
+
+  postgres:dev:env:
+    desc: Print the path to the mode-0600 local PostgreSQL runtime environment file
+    cmds:
+      - ./scripts/postgres-dev.sh env
+
+  postgres:dev:check:
+    desc: Verify local PostgreSQL database and runtime-role isolation
+    cmds:
+      - ./scripts/postgres-dev.sh check
+
+  postgres:test:up:
+    desc: Provision an isolated PostgreSQL 18 test service on a worktree-scoped port
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh up
+
+  postgres:test:
+    desc: Provision the isolated PostgreSQL test databases and roles
+    cmds:
+      - task: postgres:test:up
+
+  postgres:test:down:
+    desc: Stop the isolated PostgreSQL test service (retains its volume)
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh down
+
+  postgres:test:check:
+    desc: Verify isolated PostgreSQL test database and runtime-role isolation
+    env:
+      LEAPVIEW_POSTGRES_PROJECT_SUFFIX: -test
+      LEAPVIEW_POSTGRES_TEST_MODE: "1"
+      LEAPVIEW_POSTGRES_DEV_ENV_FILE: "{{.ROOT_DIR}}/.tmp/postgres-test.env"
+    cmds:
+      - ./scripts/postgres-dev.sh check
+
   node:deps:
     desc: Install JavaScript dependencies with Bun
     method: checksum
