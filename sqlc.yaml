@@ -248,6 +248,19 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
+    queries: "internal/platform/jobs/postgres/queries"
+    schema: "internal/platform/jobs/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/jobs/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        emit_pointers_for_null_types: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
     queries: "internal/analytics/physicalpool/postgres/queries"
     schema: "internal/analytics/physicalpool/postgres/schema.sql"
     gen:
