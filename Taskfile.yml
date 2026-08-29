@@ -581,6 +581,7 @@ tasks:
       - internal/platform/db/*.sql.go
       - internal/*/internal/db/*.go
       - internal/project/postgres/internal/db/*.go
+      - internal/access/postgres/internal/db/*.go
       - internal/platform/operation/postgres/internal/db/*.go
       - internal/platform/http/cursorsigning/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
