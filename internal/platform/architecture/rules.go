@@ -85,6 +85,7 @@ var SharedContractPrefixes = map[string][]string{
 	"analytics":    {"internal/project/graph", "internal/project/contracts"},
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
+	"lineage":      {"internal/project/graph"},
 	"manageddata":  {"internal/access", "internal/project/graph"},
 	"refresh":      {"internal/project/graph", "internal/project/manifest", "internal/project/contracts/pipelineplan"},
 	"release":      {"internal/project/graph"},
@@ -178,6 +179,7 @@ var CapabilityDependencies = map[string]map[string]bool{
 	"servingstate": {"access": true, "workload": true},
 	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":  {"manageddata": true, "servingstate": true},
+	"lineage":      {"project": true},
 	"workload":     {},
 	"platform":     {},
 }
@@ -248,6 +250,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/runtime", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
+	{Prefix: "internal/lineage/postgres", Capability: "lineage", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/resultidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/modelsql", Capability: "analytics", Layer: LayerContract},

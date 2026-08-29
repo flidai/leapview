@@ -29,14 +29,14 @@ type goFile struct {
 var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
-	"refresh": {}, "runtimehost": {}, "workload": {}, "platform": {},
+	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "platform": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {}, "extension": {},
+	"runtimehost": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -863,6 +863,13 @@ func TestApplicationOwnsProductConfigurationContract(t *testing.T) {
 func TestPlatformProductionCodeDoesNotOwnApplicationEnvironment(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		if file.pkgDir != "internal/platform" && !strings.HasPrefix(file.pkgDir, "internal/platform/") {
+			continue
+		}
+		// postgrestest is an importable test harness rather than runtime code.
+		// Its environment gate is deliberately owned by the conformance lane so
+		// CI can fail closed while ordinary developer runs may skip without a
+		// container provider.
+		if file.pkgDir == "internal/platform/postgres/postgrestest" {
 			continue
 		}
 		parsed, err := parser.ParseFile(token.NewFileSet(), file.path, file.body, 0)
