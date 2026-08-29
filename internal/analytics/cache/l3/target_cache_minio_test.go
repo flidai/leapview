@@ -5,6 +5,7 @@ package l3_test
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"os"
 	"strings"
@@ -79,7 +80,6 @@ const (
 	targetL3Image  = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	targetL3User   = "leapview"
 	targetL3Secret = "leapview-conformance-secret"
-	targetL3KMS    = "leapview-sse-key:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 )
 
 func startTargetL3MinIO(t *testing.T, ctx context.Context) string {
@@ -88,7 +88,8 @@ func startTargetL3MinIO(t *testing.T, ctx context.Context) string {
 	if !required {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	container, err := tcminio.Run(ctx, targetL3Image, tcminio.WithUsername(targetL3User), tcminio.WithPassword(targetL3Secret), testcontainers.WithEnv(map[string]string{"MINIO_KMS_SECRET_KEY": targetL3KMS}), testcontainers.WithLogger(log.TestLogger(t)))
+	testKMSKey := "leapview-sse-key:" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("0", 32)))
+	container, err := tcminio.Run(ctx, targetL3Image, tcminio.WithUsername(targetL3User), tcminio.WithPassword(targetL3Secret), testcontainers.WithEnv(map[string]string{"MINIO_KMS_SECRET_KEY": testKMSKey}), testcontainers.WithLogger(log.TestLogger(t)))
 	if err != nil {
 		if required {
 			t.Fatalf("required MinIO target cache container: %v", err)

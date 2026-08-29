@@ -4,6 +4,7 @@ package l3
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"strings"
@@ -22,7 +23,6 @@ const (
 	l3MinIOImage  = "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
 	l3MinIOUser   = "leapview"
 	l3MinIOSecret = "leapview-conformance-secret"
-	l3MinIOKMS    = "leapview-sse-key:MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
 )
 
 // TestS3ObjectStoreMinIOConformance owns its disposable MinIO service and
@@ -115,7 +115,8 @@ func startL3MinIO(t *testing.T, ctx context.Context) string {
 	if !l3MinIORequired() {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
-	container, err := tcminio.Run(ctx, l3MinIOImage, tcminio.WithUsername(l3MinIOUser), tcminio.WithPassword(l3MinIOSecret), testcontainers.WithEnv(map[string]string{"MINIO_KMS_SECRET_KEY": l3MinIOKMS}), testcontainers.WithLogger(log.TestLogger(t)))
+	testKMSKey := "leapview-sse-key:" + base64.StdEncoding.EncodeToString([]byte(strings.Repeat("0", 32)))
+	container, err := tcminio.Run(ctx, l3MinIOImage, tcminio.WithUsername(l3MinIOUser), tcminio.WithPassword(l3MinIOSecret), testcontainers.WithEnv(map[string]string{"MINIO_KMS_SECRET_KEY": testKMSKey}), testcontainers.WithLogger(log.TestLogger(t)))
 	if err != nil {
 		l3MinIOSkipOrFail(t, "start MinIO conformance container", err)
 	}
