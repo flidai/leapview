@@ -8,6 +8,7 @@ import (
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
+	queryauditsqlite "github.com/flidai/leapview/internal/analytics/queryaudit/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -106,7 +107,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.ProjectCatalog = catalog
 	}
 	if options.QueryAudit == nil && (options.AnalyticsModule == nil || options.AnalyticsModule.QueryAuditReader() == nil) {
-		options.QueryAudit = analyticsmodule.BuildQueryAuditSurface(store.SQLDB())
+		options.QueryAudit = analyticsmodule.BuildQueryAuditSurface(queryauditsqlite.NewRepository(store.SQLDB()))
 	}
 	return options
 }

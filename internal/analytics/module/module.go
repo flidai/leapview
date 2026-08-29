@@ -14,7 +14,6 @@ import (
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	queryauditsqlite "github.com/flidai/leapview/internal/analytics/queryaudit/sqlite"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
@@ -33,6 +32,10 @@ const (
 
 type Config struct {
 	Database *sql.DB
+	// QueryAuditRepository is the explicit capability-owned query-audit
+	// authority. SQLite fixtures may wrap their database and pass that adapter;
+	// production wiring supplies the native PostgreSQL repository.
+	QueryAuditRepository queryaudit.Repository
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
 	// consumed by connection-binding SQLite mutations.
 	AuditIntentRecorder   access.AuditIntentRecorder
@@ -72,22 +75,16 @@ func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.P
 // NewQueryAuditSurface constructs the analytics-owned control-plane adapter
 // without opening the analytical runtime. It is useful to compose API-only
 // surfaces and focused tests.
-func NewQueryAuditSurface(database *sql.DB) *Module {
-	if database == nil {
-		return &Module{}
-	}
-	return &Module{queryAudit: queryauditsqlite.NewRepository(database)}
+func NewQueryAuditSurface(repository queryaudit.Repository) *Module {
+	return &Module{queryAudit: repository}
 }
 
 type QueryAuditSurface struct {
 	repository queryaudit.Repository
 }
 
-func BuildQueryAuditSurface(database *sql.DB) *QueryAuditSurface {
-	if database == nil {
-		return &QueryAuditSurface{}
-	}
-	return &QueryAuditSurface{repository: queryauditsqlite.NewRepository(database)}
+func BuildQueryAuditSurface(repository queryaudit.Repository) *QueryAuditSurface {
+	return &QueryAuditSurface{repository: repository}
 }
 
 func (s *QueryAuditSurface) Provider() func() (queryaudit.Reader, error) {
@@ -168,10 +165,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		return nil, err
 	}
-	var queryAudit queryaudit.Repository
+	queryAudit := config.QueryAuditRepository
 	var connectionBindings connectionbinding.BindingCatalog
 	if config.Database != nil {
-		queryAudit = queryauditsqlite.NewRepository(config.Database)
 		if config.AuditIntentRecorder != nil {
 			connectionBindings = analyticssqlite.NewConnectionBindingRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
 		} else {

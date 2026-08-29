@@ -9,6 +9,14 @@ import (
 )
 
 type EventInput struct {
+	// EventID is the caller-supplied durable event identity. PostgreSQL
+	// persistence accepts UUID identities (UUIDv7 is recommended) and never
+	// manufactures an identity from wall-clock time or process randomness.
+	EventID string
+	// RetryIdentity is an optional deterministic identity for callers that do
+	// not have a UUID. PostgreSQL derives a stable UUID from this value so an
+	// exact retry replays the original event while a changed payload conflicts.
+	RetryIdentity string
 	// ProjectID is the immutable project identity carried by every query event.
 	ProjectID        projectgraph.ResourceID
 	PrincipalID      string
