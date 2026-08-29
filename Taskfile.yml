@@ -1029,6 +1029,14 @@ tasks:
     desc: Run container-backed external-service integration tests serially
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
+      - task: test:go:postgres-conformance
+
+  test:go:postgres-conformance:
+    desc: Run the required PostgreSQL 18 pool conformance test against a pinned image
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView
