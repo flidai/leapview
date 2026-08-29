@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,19 +11,20 @@ import (
 	"io"
 	"net/http"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	apiaggregate "github.com/flidai/leapview/internal/app/api/aggregate"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
-	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 )
 
 type Config struct {
-	Database        *sql.DB
+	// Store is the durable idempotency capability. Production callers inject
+	// the PostgreSQL-backed implementation.
+	Store           idempotency.Store
+	CursorSigning   cursorsigning.Initializer
 	BearerToken     func(*http.Request) string
 	AcceptsBearer   func(*http.Request) bool
 	PrincipalID     func(*http.Request) (string, bool)
@@ -36,22 +36,15 @@ type Config struct {
 
 type Protocol struct {
 	config      Config
-	store       idempotencyStore
-	mu          sync.Mutex
-	idempotency map[string]*apiIdempotencyRecord
+	store       idempotency.Store
 	lease       time.Duration
 	renewEvery  time.Duration
 	leaseFailed atomic.Bool
 }
 
-type idempotencyStore interface {
-	Claim(context.Context, string, string, string, time.Duration, time.Duration) (apiidempotencysqlite.Record, bool, error)
-	Load(context.Context, string) (apiidempotencysqlite.Record, error)
-	Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error)
-	Complete(context.Context, string, string, string, int64, int, http.Header, []byte) error
-	Abandon(context.Context, string, string, string, int64) error
-	MarkIndeterminate(context.Context, string, string, string, int64) error
-}
+// idempotencyStore is retained as an unexported alias for package-local test
+// doubles; the protocol boundary itself is the neutral idempotency.Store.
+type idempotencyStore = idempotency.Store
 
 func (p *Protocol) SetReplayAuthorize(authorize func(*http.Request) bool) {
 	if p != nil {
@@ -60,14 +53,19 @@ func (p *Protocol) SetReplayAuthorize(authorize func(*http.Request) bool) {
 }
 
 func Build(ctx context.Context, config Config) (*Protocol, error) {
-	var store idempotencyStore
-	if config.Database != nil {
-		if err := cursorsigningsqlite.Configure(ctx, config.Database); err != nil {
-			return nil, err
-		}
-		store = apiidempotencysqlite.NewStore(config.Database)
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	return &Protocol{config: config, store: store, idempotency: map[string]*apiIdempotencyRecord{}, lease: IdempotencyLease, renewEvery: IdempotencyLease / 3}, nil
+	if config.Store == nil {
+		return nil, errors.New("API protocol requires an idempotency capability")
+	}
+	if config.CursorSigning == nil {
+		return nil, errors.New("API protocol requires a cursor-signing initializer")
+	}
+	if err := config.CursorSigning.Configure(ctx); err != nil {
+		return nil, err
+	}
+	return &Protocol{config: config, store: config.Store, lease: IdempotencyLease, renewEvery: IdempotencyLease / 3}, nil
 }
 
 func (p *Protocol) LeaseRenewalError() error {
@@ -77,19 +75,9 @@ func (p *Protocol) LeaseRenewalError() error {
 	return nil
 }
 
-type apiIdempotencyRecord struct {
-	digest  string
-	ready   chan struct{}
-	expires time.Time
-	status  int
-	header  http.Header
-	body    []byte
-}
-
 const apiCursorLifetime = 15 * time.Minute
 const IdempotencyLifetime = 24 * time.Hour
 const IdempotencyLease = 30 * time.Second
-const maxInMemoryIdempotencyRecords = 4096
 
 type apiCursor struct {
 	Value    string `json:"value"`
@@ -328,54 +316,11 @@ func (p *Protocol) serveIdempotent(w http.ResponseWriter, r *http.Request, next 
 	}
 	credentialHash := sha256.Sum256([]byte(credentialScope))
 	scope := callerScope + ":" + hex.EncodeToString(credentialHash[:]) + ":" + r.Method + ":" + r.URL.EscapedPath() + ":" + key
-	if p.store != nil {
-		p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize)
+	if len(scope) > 4096 {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_SCOPE_TOO_LARGE", "The idempotency scope exceeds the configured size limit", nil)
 		return
 	}
-
-	p.mu.Lock()
-	p.pruneInMemoryIdempotency(time.Now())
-	if existing := p.idempotency[scope]; existing != nil {
-		if existing.digest != digest {
-			p.mu.Unlock()
-			apitransport.WriteProblem(w, r, http.StatusConflict, "IDEMPOTENCY_KEY_REUSED", "Idempotency-Key was already used for a different request", nil)
-			return
-		}
-		ready := existing.ready
-		p.mu.Unlock()
-		if !replayAuthorized(r, replayAuthorize) {
-			apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-			return
-		}
-		select {
-		case <-ready:
-			if !replayAuthorized(r, replayAuthorize) {
-				apitransport.WriteProblem(w, r, http.StatusForbidden, "IDEMPOTENCY_REPLAY_UNAUTHORIZED", "The current principal is not authorized to replay this request", nil)
-				return
-			}
-			replayIdempotentResponse(w, existing)
-		case <-r.Context().Done():
-			apitransport.WriteProblem(w, r, http.StatusRequestTimeout, "IDEMPOTENCY_WAIT_CANCELLED", "The original request did not finish before this request was cancelled", nil)
-		}
-		return
-	}
-	if len(p.idempotency) >= maxInMemoryIdempotencyRecords {
-		p.mu.Unlock()
-		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "IDEMPOTENCY_CAPACITY_EXHAUSTED", "Idempotency capacity is exhausted; configure durable platform storage", nil)
-		return
-	}
-	record := &apiIdempotencyRecord{digest: digest, ready: make(chan struct{}), expires: time.Now().Add(IdempotencyLifetime)}
-	p.idempotency[scope] = record
-	p.mu.Unlock()
-
-	capture := newProtocolResponseCapture()
-	next.ServeHTTP(capture, r)
-	record.status = capture.statusCode()
-	record.header = capture.header.Clone()
-	record.body = append([]byte(nil), capture.body.Bytes()...)
-	record.status, record.header, record.body = safeIdempotencyResponse(record.status, record.header, record.body)
-	close(record.ready)
-	capture.flush(w)
+	p.serveDurableIdempotent(w, r, next, scope, digest, replayAuthorize)
 }
 
 func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request, next http.Handler, scope, digest string, replayAuthorize func(*http.Request) bool) {
@@ -464,19 +409,21 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 	default:
 	}
 	if record.Status >= http.StatusInternalServerError {
-		if err := p.store.Abandon(persistCtx, scope, digest, owner, record.LeaseGeneration); err != nil {
-			if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) {
+		// A 5xx response does not prove that the domain mutation failed. Keep
+		// the operation durable and quarantine it as indeterminate; retries must
+		// reconcile the exact external attempt before any repeat is allowed.
+		if err := p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration); err != nil {
+			if errors.Is(err, idempotency.ErrLeaseLost) {
 				p.leaseFailed.Store(true)
-				_ = p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration)
 			}
-			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "IDEMPOTENCY_UNAVAILABLE", "The failed request lease could not be released", nil)
+			apitransport.WriteProblem(w, r, http.StatusInternalServerError, "IDEMPOTENCY_UNAVAILABLE", "The failed request outcome could not be quarantined", nil)
 			return
 		}
 		capture.flush(w)
 		return
 	}
 	if err := p.store.Complete(persistCtx, scope, digest, owner, record.LeaseGeneration, storedStatus, storedHeader, storedBody); err != nil {
-		if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) {
+		if errors.Is(err, idempotency.ErrLeaseLost) {
 			p.leaseFailed.Store(true)
 		}
 		_ = p.store.MarkIndeterminate(persistCtx, scope, digest, owner, record.LeaseGeneration)
@@ -503,33 +450,20 @@ func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool 
 	return authorize == nil || authorize(r)
 }
 
-func (p *Protocol) pruneInMemoryIdempotency(now time.Time) {
-	for scope, record := range p.idempotency {
-		if now.Before(record.expires) {
-			continue
-		}
-		select {
-		case <-record.ready:
-			delete(p.idempotency, scope)
-		default:
-		}
-	}
-}
-
-func waitForAPIIdempotency(r *http.Request, store idempotencyStore, scope, digest, owner string) (apiidempotencysqlite.Record, bool, error) {
+func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string) (idempotency.Record, bool, error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
 		record, err := store.Load(r.Context(), scope)
 		if err != nil {
-			return apiidempotencysqlite.Record{}, false, err
+			return idempotency.Record{}, false, err
 		}
 		if record.Digest != digest || record.Status != 0 || record.State != "pending" {
 			return record, false, nil
 		}
 		select {
 		case <-r.Context().Done():
-			return apiidempotencysqlite.Record{}, false, r.Context().Err()
+			return idempotency.Record{}, false, r.Context().Err()
 		case <-ticker.C:
 		}
 	}
@@ -548,7 +482,7 @@ func (p *Protocol) renewAPIIdempotencyLease(ctx context.Context, scope, digest, 
 				deadline = expires
 				continue
 			}
-			if errors.Is(err, apiidempotencysqlite.ErrLeaseLost) || !time.Now().Before(deadline) {
+			if errors.Is(err, idempotency.ErrLeaseLost) || !time.Now().Before(deadline) {
 				lost(err)
 				return
 			}
@@ -561,10 +495,6 @@ func apiRequestDigest(r *http.Request, body []byte) string {
 	_, _ = fmt.Fprintf(digest, "%s\n%s\n%s\n%s\n", r.Method, r.URL.EscapedPath(), r.URL.Query().Encode(), strings.ToLower(strings.TrimSpace(r.Header.Get("Content-Type"))))
 	_, _ = digest.Write(body)
 	return hex.EncodeToString(digest.Sum(nil))
-}
-
-func replayIdempotentResponse(w http.ResponseWriter, record *apiIdempotencyRecord) {
-	replayStoredIdempotentResponse(w, record.status, record.header, record.body)
 }
 
 func replayStoredIdempotentResponse(w http.ResponseWriter, status int, header http.Header, body []byte) {

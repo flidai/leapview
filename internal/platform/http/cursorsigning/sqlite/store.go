@@ -5,11 +5,26 @@ import (
 	"context"
 	"crypto/rand"
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	platformdb "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite/cursordb"
 )
+
+// Initializer is the explicit SQLite fixture adapter for the engine-neutral
+// cursor-signing startup port. Production protocol code should inject the
+// PostgreSQL implementation instead.
+type Initializer struct{ database platformdb.DBTX }
+
+func NewInitializer(database platformdb.DBTX) Initializer { return Initializer{database: database} }
+
+func (i Initializer) Configure(ctx context.Context) error {
+	if i.database == nil || (reflect.ValueOf(i.database).Kind() == reflect.Ptr && reflect.ValueOf(i.database).IsNil()) {
+		return fmt.Errorf("cursor signing SQLite database is nil")
+	}
+	return Configure(ctx, i.database)
+}
 
 func Configure(ctx context.Context, database platformdb.DBTX) error {
 	queries := platformdb.New(database)

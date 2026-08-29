@@ -83,16 +83,14 @@ var UnknownOutcome = json.RawMessage(`{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","det
 // caller already computed RequestDigest; when present, its canonical SHA-256
 // digest is checked against RequestDigest.
 type AcquireInput struct {
-	Scope           string
-	OperationType   string
-	IdempotencyKey  string
-	Request         []byte
-	RequestDigest   string
-	OwnerID         string
-	Lease           time.Duration
-	Retention       time.Duration
-	AttemptID       string
-	AttemptIdentity string
+	Scope          string
+	OperationType  string
+	IdempotencyKey string
+	Request        []byte
+	RequestDigest  string
+	OwnerID        string
+	Lease          time.Duration
+	Retention      time.Duration
 }
 
 // Lease is the owner token. Every terminal transition must supply the exact
@@ -187,7 +185,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 }
 
 func New(db DBTX) *Repository {
-	return &Repository{db: db, lease: 30 * time.Second, retention: 24 * time.Hour, clock: time.Now}
+	return &Repository{db: db, lease: 30 * time.Second, retention: 24 * time.Hour}
 }
 
 func NewWithConfig(db DBTX, lease, retention time.Duration) *Repository {
@@ -238,6 +236,45 @@ func (r *Repository) Acquire(ctx context.Context, in AcquireInput) (AcquireResul
 	return result, nil
 }
 
+// AcquireWithAttempt performs acquisition and binds an external attempt in
+// the same PostgreSQL transaction before returning an executable lease. This
+// closes the handoff window in which a short lease could expire after
+// AcquireTx committed but before the caller persisted its attempt identity.
+func (r *Repository) AcquireWithAttempt(ctx context.Context, in AcquireInput, attemptIdentity string) (AcquireResult, error) {
+	if r == nil || r.db == nil {
+		return AcquireResult{}, ErrInvalid
+	}
+	if attemptIdentity == "" || attemptIdentity != strings.TrimSpace(attemptIdentity) || len(attemptIdentity) > 512 {
+		return AcquireResult{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var result AcquireResult
+	err := r.withTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		result, err = r.AcquireTx(ctx, tx, in)
+		if err != nil {
+			return err
+		}
+		if result.Status != StatusAcquired || result.Replay || result.Lease.OperationID == "" || result.Lease.AttemptID != "" {
+			return nil
+		}
+		attempt, err := r.BeginAttemptTx(ctx, tx, BeginAttemptInput{
+			Lease:           result.Lease,
+			AttemptIdentity: attemptIdentity,
+		})
+		if err != nil {
+			return err
+		}
+		result.Lease = attempt.Lease
+		result.Operation.AttemptID = attempt.AttemptID
+		result.Operation.AttemptIdentity = attempt.AttemptIdentity
+		return nil
+	})
+	return result, err
+}
+
 // AcquireTx atomically inserts, acquires, replays, or conflicts on one key.
 // The caller owns commit/rollback.
 func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (AcquireResult, error) {
@@ -251,7 +288,10 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 	if err != nil {
 		return AcquireResult{}, err
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return AcquireResult{}, err
+	}
 	lease := in.Lease
 	if lease <= 0 {
 		lease = r.lease
@@ -275,9 +315,9 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 	err = tx.QueryRow(ctx, `
 INSERT INTO platform.operation
  (scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,created_at,updated_at,retention_interval,expires_at)
-VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,1,'{}'::jsonb,$8,$9,$10,$10,$11::interval,$12)
+VALUES ($1,$2,$3,$4,$5,'pending',$6,$7,1,'{}'::jsonb,NULL,NULL,$8,$8,$9::interval,$10)
 ON CONFLICT (scope_id,idempotency_key) DO NOTHING
-	RETURNING operation_id`, in.Scope, in.OperationType, in.IdempotencyKey, digest, operationID, in.OwnerID, now.Add(lease), nullableUUID(in.AttemptID), nullableText(in.AttemptIdentity), now, fmt.Sprintf("%.9f seconds", retention.Seconds()), now.Add(retention)).Scan(&insertedID)
+	RETURNING operation_id`, in.Scope, in.OperationType, in.IdempotencyKey, digest, operationID, in.OwnerID, now.Add(lease), now, fmt.Sprintf("%.9f seconds", retention.Seconds()), now.Add(retention)).Scan(&insertedID)
 	if err == nil {
 		inserted = true
 	}
@@ -372,15 +412,6 @@ func normalizeInput(in *AcquireInput) (string, error) {
 	if in.Scope == "" || len(in.Scope) > 255 || in.OperationType == "" || len(in.OperationType) > 255 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 512 || in.OwnerID == "" || len(in.OwnerID) > 255 {
 		return "", ErrInvalid
 	}
-	if in.AttemptID != strings.TrimSpace(in.AttemptID) || in.AttemptIdentity != strings.TrimSpace(in.AttemptIdentity) || len(in.AttemptIdentity) > 512 {
-		return "", ErrInvalid
-	}
-	if (in.AttemptID == "") != (in.AttemptIdentity == "") {
-		return "", ErrInvalid
-	}
-	if in.AttemptID != "" && !validUUID(in.AttemptID) {
-		return "", ErrInvalid
-	}
 	digest := in.RequestDigest
 	if digest != strings.TrimSpace(digest) {
 		return "", ErrInvalid
@@ -406,11 +437,25 @@ func normalizeInput(in *AcquireInput) (string, error) {
 	return digest, nil
 }
 
-func (r *Repository) now() time.Time {
-	if r.clock != nil {
-		return r.clock().UTC()
+// nowTx obtains the authoritative database clock for lease and expiry
+// decisions. Tests may inject Repository.clock to deterministically advance
+// time; production repositories leave it nil and use clock_timestamp() on the
+// same PostgreSQL transaction as the state transition.
+func (r *Repository) nowTx(ctx context.Context, tx Tx) (time.Time, error) {
+	if r != nil && r.clock != nil {
+		return r.clock().UTC(), nil
 	}
-	return time.Now().UTC()
+	if tx == nil {
+		return time.Time{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var now time.Time
+	if err := tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&now); err != nil {
+		return time.Time{}, err
+	}
+	return now.UTC(), nil
 }
 
 func (r *Repository) Complete(ctx context.Context, lease Lease, outcome json.RawMessage) error {
@@ -431,7 +476,10 @@ func (r *Repository) CompleteTx(ctx context.Context, tx Tx, lease Lease, outcome
 	if err != nil {
 		return err
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	command, err := tx.Exec(ctx, `UPDATE platform.operation SET state='completed', outcome=$1::jsonb, updated_at=$2, terminal_at=$2, expires_at=$2::timestamptz+retention_interval WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, string(canonical), now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
 	if err != nil {
 		return err
@@ -460,7 +508,10 @@ func (r *Repository) FailTx(ctx context.Context, tx Tx, lease Lease, outcome jso
 	if err != nil {
 		return err
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	command, err := tx.Exec(ctx, `UPDATE platform.operation SET state='failed', outcome=$1::jsonb, updated_at=$2, terminal_at=$2, expires_at=$2::timestamptz+retention_interval WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, string(canonical), now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
 	if err != nil {
 		return err
@@ -489,7 +540,10 @@ func (r *Repository) MarkIndeterminateTx(ctx context.Context, tx Tx, lease Lease
 	if err != nil {
 		return err
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
 	if lease.AttemptID == "" || lease.AttemptIdentity == "" {
 		return ErrInvalid
 	}
@@ -529,7 +583,10 @@ func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, lease Lease, durat
 	if duration < time.Microsecond || duration > maxLeaseDuration {
 		return Lease{}, ErrInvalid
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Lease{}, err
+	}
 	newExpiry := now.Add(duration)
 	command, err := tx.Exec(ctx, `UPDATE platform.operation SET lease_expires_at=$1, updated_at=$2 WHERE scope_id=$3 AND idempotency_key=$4 AND operation_id=$5 AND owner_id=$6 AND fencing_generation=$7 AND state='pending' AND lease_expires_at > $2`, newExpiry, now, lease.Scope, lease.IdempotencyKey, lease.OperationID, lease.OwnerID, lease.FencingGeneration)
 	if err != nil {
@@ -575,7 +632,11 @@ func (r *Repository) BeginAttemptTx(ctx context.Context, tx Tx, in BeginAttemptI
 	if identity == "" || len(identity) > 512 {
 		return Attempt{}, ErrInvalid
 	}
-	command, err := tx.Exec(ctx, `UPDATE platform.operation SET attempt_id=$1, attempt_identity=$2, updated_at=$3 WHERE scope_id=$4 AND idempotency_key=$5 AND operation_id=$6 AND owner_id=$7 AND fencing_generation=$8 AND state='pending' AND lease_expires_at > $3 AND (attempt_id IS NULL OR (attempt_id=$1 AND attempt_identity=$2))`, attemptID, identity, r.now(), in.Lease.Scope, in.Lease.IdempotencyKey, in.Lease.OperationID, in.Lease.OwnerID, in.Lease.FencingGeneration)
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Attempt{}, err
+	}
+	command, err := tx.Exec(ctx, `UPDATE platform.operation SET attempt_id=$1, attempt_identity=$2, updated_at=$3 WHERE scope_id=$4 AND idempotency_key=$5 AND operation_id=$6 AND owner_id=$7 AND fencing_generation=$8 AND state='pending' AND lease_expires_at > $3 AND (attempt_id IS NULL OR (attempt_id=$1 AND attempt_identity=$2))`, attemptID, identity, now, in.Lease.Scope, in.Lease.IdempotencyKey, in.Lease.OperationID, in.Lease.OwnerID, in.Lease.FencingGeneration)
 	if err != nil {
 		return Attempt{}, err
 	}
@@ -616,7 +677,10 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 	if err != nil {
 		return Operation{}, err
 	}
-	now := r.now()
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Operation{}, err
+	}
 	// Lock before deciding whether this is the first reconciliation or an
 	// idempotent retry. A different outcome/evidence pair is a conflict.
 	op, err := scanOperation(tx.QueryRow(ctx, `SELECT scope_id,operation_type,idempotency_key,request_digest,operation_id,state,owner_id,lease_expires_at,fencing_generation,outcome,attempt_id,attempt_identity,attempt_evidence,resolution_evidence,created_at,updated_at,terminal_at,expires_at FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2 FOR UPDATE`, in.Scope, in.IdempotencyKey))
@@ -671,13 +735,17 @@ func (r *Repository) PruneTx(ctx context.Context, tx Tx, before time.Time, limit
 		return 0, ErrInvalid
 	}
 	if before.IsZero() {
-		before = r.now()
+		var err error
+		before, err = r.nowTx(ctx, tx)
+		if err != nil {
+			return 0, err
+		}
 	}
-	command, err := tx.Exec(ctx, `WITH doomed AS (SELECT scope_id,idempotency_key FROM platform.operation WHERE state IN ('completed','failed') AND expires_at <= $1 ORDER BY expires_at LIMIT $2) DELETE FROM platform.operation o USING doomed d WHERE o.scope_id=d.scope_id AND o.idempotency_key=d.idempotency_key`, before, limit)
-	if err != nil {
+	var count int64
+	if err := tx.QueryRow(ctx, `SELECT platform.prune_operations($1,$2)`, before, limit).Scan(&count); err != nil {
 		return 0, err
 	}
-	return command.RowsAffected(), nil
+	return count, nil
 }
 
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
@@ -720,7 +788,11 @@ func (r *Repository) transitionError(ctx context.Context, tx Tx, lease Lease) er
 	if state != StatePending {
 		return ErrAlreadyTerminal
 	}
-	if !expiry.After(r.now()) {
+	now, nowErr := r.nowTx(ctx, tx)
+	if nowErr != nil {
+		return nowErr
+	}
+	if !expiry.After(now) {
 		return ErrLeaseExpired
 	}
 	return ErrConflict
@@ -792,18 +864,6 @@ func canonicalJSONBounded(value []byte, maxBytes int64) ([]byte, error) {
 	return json.Marshal(decoded)
 }
 
-func nullableUUID(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return value
-}
-func nullableText(value string) any {
-	if strings.TrimSpace(value) == "" {
-		return nil
-	}
-	return value
-}
 func validUUID(value string) bool {
 	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
 		return false

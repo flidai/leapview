@@ -132,6 +132,44 @@ func TestReplayConflictFenceAndRollback(t *testing.T) {
 	}
 }
 
+func TestDirectSQLOperationLifecycleGuard(t *testing.T) {
+	r, p := testRepository(t)
+	if _, err := p.Exec(t.Context(), `
+		INSERT INTO platform.operation
+		 (operation_id, scope_id, operation_type, idempotency_key, request_digest,
+		  state, owner_id, lease_expires_at, fencing_generation, outcome,
+		  created_at, updated_at, terminal_at, retention_interval, expires_at)
+		VALUES ('00000000-0000-0000-0000-000000000099', 'guard-insert', 'write', 'key',
+		        'sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+		        'completed', 'owner', clock_timestamp()+interval '1 hour', 1,
+		        '{"forged":true}'::jsonb, clock_timestamp(), clock_timestamp(),
+		        clock_timestamp(), interval '1 hour', clock_timestamp()+interval '1 hour')`); err == nil {
+		t.Fatal("direct terminal operation insert unexpectedly succeeded")
+	}
+	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "guard", IdempotencyKey: "key", Request: []byte(`{"v":1}`), OwnerID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET scope_id='tampered' WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct identity mutation unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET fencing_generation=fencing_generation-1 WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct fencing rollback unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET outcome='{"forged":true}'::jsonb WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct pending outcome mutation unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct pending lease shortening unexpectedly succeeded")
+	}
+	if err := r.Complete(t.Context(), acquired.Lease, []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET state='pending', terminal_at=NULL WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("terminal operation was reopened by direct SQL")
+	}
+}
+
 func TestExpiredTakeoverAndIndeterminateReconciliation(t *testing.T) {
 	r, _ := testRepository(t)
 	now := time.Now().UTC()

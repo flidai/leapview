@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,17 +16,31 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 )
 
-func TestBuildConstructsProtocolPersistence(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+func withSQLiteProtocolConfig(t *testing.T, config Config) Config {
+	t.Helper()
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "protocol.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	config.Store = apiidempotencysqlite.NewStore(store.SQLDB())
+	config.CursorSigning = cursignInitializer(store.SQLDB())
+	return config
+}
 
-	protocol, err := Build(t.Context(), Config{Database: store.SQLDB()})
+func cursignInitializer(db *sql.DB) cursorsigning.Initializer {
+	return cursorsigning.InitializerFunc(func(ctx context.Context) error {
+		return cursorsigningsqlite.Configure(ctx, db)
+	})
+}
+
+func TestBuildConstructsProtocolPersistence(t *testing.T) {
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -35,17 +50,11 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 }
 
 func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "browser-replay.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	protocol, err := Build(t.Context(), Config{
-		Database: store.SQLDB(),
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
 		PrincipalID: func(*http.Request) (string, bool) {
 			return "principal:creator", true
 		},
-	})
+	}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +97,7 @@ func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *tes
 }
 
 func TestBrowserMutationMiddlewareRequiresMatchingGeneratedIdentity(t *testing.T) {
-	protocol, err := Build(t.Context(), Config{PrincipalID: func(*http.Request) (string, bool) { return "principal:creator", true }})
+	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{PrincipalID: func(*http.Request) (string, bool) { return "principal:creator", true }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +162,7 @@ func TestAdversarialDurableIdempotencyDatabaseAndBackupExcludeOneTimeCredential(
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	protocol, err := Build(ctx, Config{Database: store.SQLDB(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
+	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursignInitializer(store.SQLDB()), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +215,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{Database: store.SQLDB(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursignInitializer(store.SQLDB()), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +248,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 func TestAdversarialInMemoryReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	p, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +286,7 @@ func TestAdversarialIdempotencyCanonicalizesEquivalentBearerHeaders(t *testing.T
 		}
 		return ""
 	}
-	p, err := Build(t.Context(), Config{BearerToken: bearer, AcceptsBearer: func(*http.Request) bool { return true }, PrincipalID: func(*http.Request) (string, bool) { return "principal", true }})
+	p, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{BearerToken: bearer, AcceptsBearer: func(*http.Request) bool { return true }, PrincipalID: func(*http.Request) (string, bool) { return "principal", true }}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -406,7 +415,7 @@ func testLeaseProtocol(store idempotencyStore, lease, renewEvery time.Duration) 
 			BearerToken:   func(*http.Request) string { return "credential" },
 			AcceptsBearer: func(*http.Request) bool { return true },
 		},
-		store: store, idempotency: map[string]*apiIdempotencyRecord{}, lease: lease, renewEvery: renewEvery,
+		store: store, lease: lease, renewEvery: renewEvery,
 	}
 }
 
