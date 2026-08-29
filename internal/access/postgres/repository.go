@@ -51,6 +51,8 @@ type Repository struct {
 	fingerprintKey []byte
 }
 
+var _ access.Repository = (*Repository)(nil)
+
 // AuditRepository is the stateless transaction-bound audit appender.
 type AuditRepository struct{}
 
@@ -74,6 +76,16 @@ func NewAccess(db DBTX, cfg FingerprintConfig) (*Repository, error) {
 		return nil, errors.New("access fingerprint key must be at least 32 bytes")
 	}
 	return &Repository{db: db, fingerprintKey: append([]byte(nil), cfg.Key...)}, nil
+}
+
+// DB exposes the already-configured native PostgreSQL handle to sibling
+// capability adapters (for example MCP OAuth). It never opens a connection or
+// performs schema work; callers retain transaction ownership.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
 }
 
 // ApplySchema installs the clean access baseline in a caller-owned

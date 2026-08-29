@@ -84,6 +84,9 @@ func TestAccessCorePostgreSQL18ReadonlyExcludesCredentialMaterial(t *testing.T) 
 		"desktop_authorization_code",
 		"device_authorization",
 		"authoring_credential",
+		"oauth_client",
+		"oauth_session",
+		"oauth_client_assertion",
 	}
 	for _, table := range credentialTables {
 		if _, err := db.readonly.Exec(ctx, `SELECT * FROM access.`+table+` LIMIT 0`); err == nil || !strings.Contains(err.Error(), "permission denied") {
