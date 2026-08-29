@@ -633,7 +633,7 @@ func buildApplicationSurfaces(
 		var err error
 		if platform.jobModule == nil {
 			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
-				Database: data.Database, Admission: workloadmodule.JobAdmitter(runtime.workloads),
+				Database: data.Database, LegacySQLite: true, Admission: workloadmodule.JobAdmitter(runtime.workloads),
 				LeaseTimeout: httpConfig.JobLeaseTimeout, Logger: httpConfig.Logger,
 			})
 			if err != nil {
@@ -1025,7 +1025,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if routes.accessModule == nil {
 		var err error
 		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: database, ExistingAuth: platform.auth,
+			Database: database, LegacySQLite: true, ExistingAuth: platform.auth,
 			InstanceID:       storage.instanceID,
 			PublicURL:        storage.publicURL,
 			CurrentProjectID: runtime.resolveProjectID,

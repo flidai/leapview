@@ -2,17 +2,205 @@ package module
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
+	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestBuildRejectsUnmarkedOrLegacyAuthorityForProduction(t *testing.T) {
+	admitter := jobs.AdmitterFunc(func(context.Context, jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
+		return nil, nil
+	})
+	if _, err := Build(t.Context(), Config{Database: &sql.DB{}, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "LegacySQLite") {
+		t.Fatalf("implicit SQLite build error = %v, want explicit LegacySQLite rejection", err)
+	}
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: &sql.DB{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
+		t.Fatalf("legacy production build error = %v, want PostgreSQL rejection", err)
+	}
+	if _, err := Build(t.Context(), Config{Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "persistence") {
+		t.Fatalf("missing production authority error = %v, want persistence rejection", err)
+	}
+}
+
+func TestModuleFailurePayloadOmitsHandlerErrorText(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	admission, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admission.Close()
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission), PollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "secret.failure",
+		Run:     func(context.Context, jobs.Job) error { return errors.New("attacker-secret-sql-and-payload") },
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer module.Stop(context.Background())
+	const id = "secret-failure"
+	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: id, Kind: "secret.failure", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ResourceKind: "test", ResourceID: id, Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		job, getErr := module.Get(t.Context(), id)
+		if getErr != nil {
+			t.Fatal(getErr)
+		}
+		if job.Status == jobs.StatusFailed {
+			if strings.Contains(job.ErrorJSON, "attacker-secret") || job.ErrorJSON != `{"code":"ASYNC_JOB_FAILED"}` {
+				t.Fatalf("failure payload = %s, want stable code without handler error", job.ErrorJSON)
+			}
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job status = %q, want failed", job.Status)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
+func TestModulePostgreSQL18BuildRunnerAndNativeWorkflow(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "jobs_module_test")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	if _, err := pool.Exec(t.Context(), jobpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	repository := jobpostgres.NewRepository(pool)
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	admission, err := workload.New(workload.DefaultConfig())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer admission.Close()
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence, Production: true, Admission: testAdmission(admission), PollInterval: time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RegisterHandlers([]jobs.Handler{jobs.HandlerFunc{
+		JobKind: "module.pg18",
+		Run:     func(context.Context, jobs.Job) error { return nil },
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if err := module.Start(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer module.Stop(context.Background())
+	const jobID = "module-pg18-job"
+	if _, err := module.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: jobID, Kind: "module.pg18", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+		ResourceKind: "module", ResourceID: jobID, Payload: []byte(`{"ok":true}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	waitForJobStatus(t, module, jobID, jobs.StatusSucceeded)
+
+	workflow := jobs.WorkflowIntent{
+		Event: jobs.EventInput{Key: "module.pg18.commit", ResourceKind: "module", ResourceID: "workflow", EventType: "module.committed", Data: []byte(`{"status":"committed"}`)},
+		Job: jobs.EnqueueInput{ID: "module-pg18-workflow", Kind: "module.pg18", WorkloadClass: "control", PrincipalID: jobpolicy.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1,
+			ResourceKind: "module", ResourceID: "workflow", Payload: []byte(`{}`)},
+	}
+	if err := module.CommitWorkflow(t.Context(), workflow); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := module.Get(t.Context(), workflow.Job.ID); err != nil {
+		t.Fatalf("committed workflow job: %v", err)
+	}
+
+	native := jobs.WorkflowIntent{Event: jobs.EventInput{Key: "module.pg18.native", ResourceKind: "module", ResourceID: "native", EventType: "module.native", Data: []byte(`{"status":"native"}`)}}
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RecordWorkflowTx(t.Context(), tx, native); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := module.ListEvents(t.Context(), "module", "native", 0, 10); err != nil {
+		t.Fatal(err)
+	} else if len(events) != 0 {
+		t.Fatalf("rolled-back native workflow events = %#v", events)
+	}
+	tx, err = pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.RecordWorkflowTx(t.Context(), tx, native); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if events, err := module.ListEvents(t.Context(), "module", "native", 0, 10); err != nil {
+		t.Fatal(err)
+	} else if len(events) != 1 || events[0].EventType != "module.native" {
+		t.Fatalf("committed native workflow events = %#v", events)
+	}
+}
+
+func waitForJobStatus(t *testing.T, module *Module, id string, want jobs.Status) {
+	t.Helper()
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		job, err := module.Get(t.Context(), id)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if job.Status == want {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job status = %q, want %q", job.Status, want)
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
 
 func testAdmission(controller workload.Admitter) jobs.Admitter {
 	return jobs.AdmitterFunc(func(ctx context.Context, request jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
@@ -36,7 +224,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	defer admission.Close()
 
 	first, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission),
+		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -87,7 +275,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	}
 
 	second, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission),
+		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -142,7 +330,7 @@ func TestModuleRejectsDuplicateKindsBeforeStarting(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +351,7 @@ func TestModuleLifecycleIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +384,7 @@ func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
 	}
 	defer admission.Close()
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Admission: testAdmission(admission), PollInterval: time.Millisecond,
+		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission), PollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -278,7 +466,7 @@ func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +505,7 @@ func TestModuleCommitsWorkflowAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -351,7 +539,7 @@ func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -382,7 +570,7 @@ func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}

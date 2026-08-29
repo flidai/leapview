@@ -379,6 +379,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			Database:     options.Database,
+			LegacySQLite: true,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})

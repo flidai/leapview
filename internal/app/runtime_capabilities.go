@@ -109,7 +109,7 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
 	}
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: cfg.Database, Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
+		Database: cfg.Database, LegacySQLite: true, Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID: cfg.CurrentProject,
 		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
@@ -146,7 +146,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	if err != nil {
 		return workloadCapabilityBundle{}, fmt.Errorf("build workload capability: %w", err)
 	}
-	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{Database: cfg.Database, Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger})
+	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{Database: cfg.Database, LegacySQLite: true, Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger})
 	if err != nil {
 		controller.Close()
 		return workloadCapabilityBundle{}, fmt.Errorf("build jobs capability: %w", err)

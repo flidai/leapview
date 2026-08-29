@@ -31,6 +31,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
 			Database:     store.SQLDB(),
+			LegacySQLite: true,
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 		})

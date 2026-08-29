@@ -4,20 +4,30 @@ package module
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
 	"time"
 
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
-	jobsqlite "github.com/flidai/leapview/internal/platform/jobs/sqlite"
+	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
 type Config struct {
-	Database     *sql.DB
+	// Persistence is the preferred capability-owned authority bundle. It must
+	// be constructed with NewPostgresPersistence for production composition.
+	Persistence *Persistence
+	// PostgresRepository is a convenience input for callers that already own
+	// the canonical repository. It is converted into Persistence by Build.
+	PostgresRepository *jobpostgres.Repository
+	// Database is retained only for explicit SQLite development/test callers.
+	Database *sql.DB
+	// LegacySQLite is an explicit opt-in for Database. Build never selects
+	// SQLite implicitly and production composition must leave this false.
+	LegacySQLite bool
+	Production   bool
 	Admission    jobs.Admitter
 	LeaseTimeout time.Duration
 	PollInterval time.Duration
@@ -25,20 +35,56 @@ type Config struct {
 }
 
 type Module struct {
-	repository *jobsqlite.Repository
-	config     Config
-	runner     *jobs.Runner
-	handlers   map[string]struct{}
-	mu         sync.Mutex
-	cancel     context.CancelFunc
-	done       chan struct{}
+	repository  jobs.Repository
+	persistence Persistence
+	config      Config
+	runner      *jobs.Runner
+	handlers    map[string]struct{}
+	mu          sync.Mutex
+	cancel      context.CancelFunc
+	done        chan struct{}
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Database == nil || config.Admission == nil {
-		return nil, errors.New("job database and admission are required")
+	if config.Persistence != nil && (config.Database != nil || config.PostgresRepository != nil) {
+		return nil, errors.New("jobs persistence is mutually exclusive with database inputs")
 	}
-	return &Module{repository: jobsqlite.NewRepository(config.Database), config: config}, nil
+	if config.PostgresRepository != nil {
+		if config.Persistence != nil {
+			return nil, errors.New("PostgresRepository cannot be combined with Persistence")
+		}
+		persistence, err := NewPostgresPersistence(config.PostgresRepository)
+		if err != nil {
+			return nil, err
+		}
+		config.Persistence = &persistence
+	}
+	if config.Production && config.Database != nil {
+		return nil, errors.New("production jobs build rejects SQLite database injection; use PostgreSQL persistence")
+	}
+	if config.Persistence == nil && config.Database != nil {
+		if !config.LegacySQLite {
+			return nil, errors.New("SQLite jobs build requires LegacySQLite=true; inject PostgreSQL persistence for production")
+		}
+		persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: config.Database})
+		if err != nil {
+			return nil, err
+		}
+		config.Persistence = &persistence
+	}
+	if config.Persistence == nil {
+		return nil, errors.New("jobs build requires injected PostgreSQL persistence")
+	}
+	if config.Production && !config.Persistence.isPostgres() {
+		return nil, errors.New("production jobs build requires PostgreSQL persistence")
+	}
+	if err := config.Persistence.validate(); err != nil {
+		return nil, err
+	}
+	if config.Admission == nil {
+		return nil, errors.New("job admission is required")
+	}
+	return &Module{repository: config.Persistence.Repository, persistence: *config.Persistence, config: config}, nil
 }
 
 func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
@@ -55,12 +101,10 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 		Classes:      []string{jobpolicy.WorkloadClassControl, jobpolicy.WorkloadClassBackground},
 		LeaseTimeout: m.config.LeaseTimeout, PollInterval: m.config.PollInterval, Logger: m.config.Logger,
 		OwnerFactory: func() string { return jobpolicy.WorkerOwner(time.Now().UnixNano()) },
-		FailureEncoder: func(err error) []byte {
-			payload, marshalErr := json.Marshal(map[string]string{"code": "ASYNC_JOB_FAILED", "detail": err.Error()})
-			if marshalErr != nil {
-				return []byte(`{"code":"ASYNC_JOB_FAILED","detail":"job failed"}`)
-			}
-			return payload
+		FailureEncoder: func(_ error) []byte {
+			// Never persist handler error text: it may contain SQL, payloads, or
+			// credentials. This bounded stable code is the only durable detail.
+			return []byte(`{"code":"ASYNC_JOB_FAILED"}`)
 		},
 	})
 	if err != nil {
@@ -181,9 +225,10 @@ func (m *Module) CancelClaimed(ctx context.Context, id string, fence jobs.Fence)
 func (m *Module) AppendEvent(ctx context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
 	return m.repository.AppendEvent(ctx, kind, id, event, data)
 }
-func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction, intent jobs.WorkflowIntent) error {
+
+func (m *Module) validateWorkflowJob(intent jobs.WorkflowIntent) error {
 	if intent.Job.ID == "" {
-		return m.repository.RecordWorkflow(ctx, tx, intent)
+		return nil
 	}
 	m.mu.Lock()
 	_, registered := m.handlers[intent.Job.Kind]
@@ -192,24 +237,66 @@ func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction,
 	if !configured || !registered {
 		return errors.Join(jobs.ErrUnknownKind, errors.New(intent.Job.Kind))
 	}
-	return m.repository.RecordWorkflow(ctx, tx, intent)
+	return nil
 }
+
+// RecordWorkflow preserves the database/sql workflow contract solely for the
+// explicit SQLite legacy adapter. Production callers must use RecordWorkflowTx
+// with their caller-owned native pgx transaction.
+func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction, intent jobs.WorkflowIntent) error {
+	if m == nil || m.persistence.backend != backendSQLiteLegacy || m.persistence.SQLWorkflow == nil {
+		return errors.New("database/sql workflow is available only for the explicit SQLite legacy adapter")
+	}
+	if err := m.validateWorkflowJob(intent); err != nil {
+		return err
+	}
+	return m.persistence.SQLWorkflow.RecordWorkflow(ctx, tx, intent)
+}
+
+// RecordWorkflowTx records a workflow atomically in a caller-owned native
+// PostgreSQL transaction. The module never begins, commits, or rolls back tx.
+func (m *Module) RecordWorkflowTx(ctx context.Context, tx jobpostgres.Tx, intent jobs.WorkflowIntent) error {
+	if m == nil || m.persistence.backend != backendPostgres || m.persistence.NativeWorkflow == nil {
+		return errors.New("native PostgreSQL workflow is unavailable")
+	}
+	if err := m.validateWorkflowJob(intent); err != nil {
+		return err
+	}
+	return m.persistence.NativeWorkflow.RecordWorkflow(ctx, tx, intent)
+}
+
 func (m *Module) CancelWorkflowJob(ctx context.Context, tx transaction.Transaction, id string) error {
+	if m == nil || m.persistence.backend != backendSQLiteLegacy || m.persistence.SQLWorkflow == nil {
+		return errors.New("database/sql workflow is available only for the explicit SQLite legacy adapter")
+	}
+	return m.persistence.SQLWorkflow.CancelWorkflowJob(ctx, tx, id)
+}
+func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
 	if m == nil || m.repository == nil {
 		return jobs.ErrStoreRequired
 	}
-	return m.repository.CancelWorkflowJob(ctx, tx, id)
-}
-func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
-	if m == nil || m.repository == nil || m.config.Database == nil {
+	if err := m.validateWorkflowJob(intent); err != nil {
+		return err
+	}
+	if m.persistence.backend == backendPostgres {
+		if m.persistence.NativeCommitter == nil {
+			return errors.New("native PostgreSQL workflow committer is unavailable")
+		}
+		return m.persistence.NativeCommitter.CommitWorkflow(ctx, intent)
+	}
+	database := m.persistence.legacyDatabase
+	if database == nil {
+		database = m.config.Database
+	}
+	if database == nil {
 		return jobs.ErrStoreRequired
 	}
-	tx, err := m.config.Database.BeginTx(ctx, nil)
+	tx, err := database.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
 	defer tx.Rollback()
-	if err := m.RecordWorkflow(ctx, tx, intent); err != nil {
+	if err := m.persistence.SQLWorkflow.RecordWorkflow(ctx, tx, intent); err != nil {
 		return err
 	}
 	return tx.Commit()
