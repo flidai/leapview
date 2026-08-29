@@ -244,3 +244,19 @@ DROP TRIGGER IF EXISTS event_log_immutable ON event.event_log;
 CREATE TRIGGER event_log_immutable
     BEFORE UPDATE ON event.event_log
     FOR EACH ROW EXECUTE FUNCTION event.reject_event_update();
+
+-- Retention is an operational capability, not request-serving authority.
+-- Runtime can append and process events through its table grants, but only a
+-- separately authenticated maintenance process may advance the retention
+-- floor and remove fully satisfied history.
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA event TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_maintenance;
+    END IF;
+END
+$$;

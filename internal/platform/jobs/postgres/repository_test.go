@@ -29,6 +29,7 @@ func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "maintenance-secret"})
 	readonly := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Login: true, Password: "readonly-secret"})
 	h.GrantRole(t, owner, migrator)
 	database := h.NewDatabase(t, "jobs_roles")
@@ -77,6 +78,9 @@ func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
 	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM jobs.job`); err == nil {
 		t.Fatal("runtime direct jobs DELETE unexpectedly succeeded")
 	}
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT jobs.prune(clock_timestamp(), 1)`); err == nil {
+		t.Fatal("runtime job retention unexpectedly succeeded")
+	}
 	if _, err := runtimeDB.Exec(t.Context(), `
 		INSERT INTO jobs.event_sequence(resource_kind, resource_id, next_event_id)
 		VALUES ('refresh', 'append-only-proof', 1)`); err != nil {
@@ -91,6 +95,15 @@ func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
 		UPDATE jobs.event SET data='{"ok":false}'::jsonb
 		WHERE resource_kind='refresh' AND resource_id='append-only-proof' AND event_id=1`); err == nil {
 		t.Fatal("runtime mutated append-only job event")
+	}
+
+	maintenanceDB, err := pgxpool.New(t.Context(), database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT jobs.prune(clock_timestamp(), 1)`); err != nil {
+		t.Fatalf("maintenance job retention: %v", err)
 	}
 
 	readonlyDB, err := pgxpool.New(t.Context(), database.URL(readonly))

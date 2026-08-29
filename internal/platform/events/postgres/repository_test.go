@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/log"
@@ -17,6 +18,39 @@ import (
 )
 
 const postgres18EventImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+
+func TestPostgreSQL18EventRetentionRoleBoundary(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "maintenance-secret"})
+	database := h.NewDatabase(t, "event_retention_roles")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(t.Context(), SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT event.prune_event_log(clock_timestamp(), 1)`); err == nil {
+		t.Fatal("runtime event retention unexpectedly succeeded")
+	}
+
+	maintenanceDB, err := pgxpool.New(t.Context(), database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT event.prune_event_log(clock_timestamp(), 1)`); err != nil {
+		t.Fatalf("maintenance event retention: %v", err)
+	}
+}
 
 func TestPostgreSQL18EventRollbackAndVersionAllocation(t *testing.T) {
 	db := eventTestDB(t)

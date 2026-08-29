@@ -12,12 +12,14 @@ import (
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 )
 
 const (
@@ -33,10 +35,12 @@ var plan = platformmigrations.Plan{
 		{Name: "platform.cursor_signing", SQL: cursorsigningpostgres.SchemaSQL()},
 		{Name: "project", SQL: projectpostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
+		{Name: "managed_data", SQL: manageddatapostgres.SchemaSQL()},
 		{Name: "deployment", SQL: deploymentpostgres.SchemaSQL()},
 		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "ducklake", SQL: ducklakepostgres.SchemaSQL()},
 		{Name: "jobs", SQL: jobspostgres.SchemaSQL()},
+		{Name: "refresh", SQL: refreshpostgres.SchemaSQL()},
 		{Name: "lineage", SQL: lineagepostgres.SchemaSQL()},
 		{Name: "cache", SQL: cachepostgres.SchemaSQL()},
 		{Name: "queryaudit", SQL: queryauditpostgres.SchemaSQL()},
@@ -64,7 +68,7 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, ducklake, jobs, cache TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, jobs TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
         GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO leapview_control_runtime;
         GRANT SELECT ON ALL TABLES IN SCHEMA lineage TO leapview_control_runtime;
@@ -74,8 +78,14 @@ BEGIN
         REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime;
         REVOKE UPDATE, DELETE ON audit.audit_event FROM leapview_control_runtime;
         REVOKE UPDATE, DELETE ON ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_runtime;
+        REVOKE INSERT, UPDATE, DELETE ON ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification FROM leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA event, jobs TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache TO leapview_control_readonly;

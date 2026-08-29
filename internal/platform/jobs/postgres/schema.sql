@@ -416,7 +416,8 @@ LEFT JOIN LATERAL (
 
 -- Only terminal rows older than the caller's cutoff are eligible.  The
 -- function locks and deletes one bounded batch, and is the sole delete surface
--- granted to the runtime role.  Attempts are removed by the FK cascade.
+-- granted only to the dedicated maintenance role. Attempts are removed by
+-- the FK cascade; ordinary workers cannot erase queue history.
 CREATE OR REPLACE FUNCTION jobs.prune(p_before timestamptz, p_batch_limit integer)
 RETURNS bigint
 LANGUAGE plpgsql
@@ -469,8 +470,12 @@ BEGIN
         GRANT USAGE ON SCHEMA jobs TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event TO leapview_control_runtime;
         GRANT SELECT ON jobs.job_observability TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime;
         REVOKE DELETE ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA jobs TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA jobs TO leapview_control_readonly;
