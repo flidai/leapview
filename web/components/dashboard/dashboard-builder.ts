@@ -1,6 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
+import { ChartColumn, Database, ListFilter, PanelRightClose, PanelRightOpen, Redo2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -26,6 +27,7 @@ import type {
 } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
+import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
 import './visualization/host'
@@ -51,6 +53,10 @@ type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
 type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
 type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
 type BuilderFilterScope = 'report' | 'page' | 'visual' | 'custom'
+type BuilderPane = 'filters' | 'visuals' | 'data'
+
+const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
+const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false }
 
 type BuilderCatalogField = {
   field: DashboardBuilderFieldSignal
@@ -121,6 +127,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private redoStack: BuilderRevisionReference[] = []
   @state() private visualTypeOverrides: Record<string, BuilderVisualType> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
+  @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
   private commandPending = false
   private pendingHistorySnapshot: BuilderHistorySnapshot | null = null
   private copiedVisual: BuilderClipboard | null = null
@@ -158,6 +165,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   override connectedCallback(): void {
     super.connectedCallback()
+    this.restoreCollapsedPanes()
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
     this.addEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
     this.addEventListener('lv-filter-options-needed', this.handleBuilderFilterOptionsNeeded as EventListener, { capture: true })
@@ -295,6 +303,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: 0.4rem;
     }
 
+    .icon-action,
+    .pane-collapse {
+      width: var(--lv-button-height-xs, var(--control-xsmall-size));
+      min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
+      flex: 0 0 auto;
+      padding: 0;
+      border-color: var(--lv-button-invisible-border-rest, var(--control-transparent-borderColor-rest));
+      color: var(--lv-button-invisible-icon-rest, var(--lv-fg-muted));
+      background: var(--lv-button-invisible-bg-rest, var(--control-transparent-bgColor-rest));
+    }
+
+    .icon-action:hover,
+    .pane-collapse:hover {
+      border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover));
+      color: var(--lv-fg-default);
+      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover));
+    }
+
     button,
     .button {
       display: inline-flex;
@@ -396,7 +422,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .body {
       display: grid;
       min-height: 0;
-      grid-template-columns: minmax(0, 1fr) minmax(34rem, 38rem);
+      grid-template-columns: minmax(0, 1fr) max-content;
       grid-template-rows: minmax(0, 1fr) auto;
     }
 
@@ -406,7 +432,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       grid-row: 1 / span 2;
       min-width: 0;
       min-height: 0;
-      grid-template-columns: minmax(10rem, 12rem) minmax(12rem, 14rem) minmax(12rem, 1fr);
+      grid-template-columns: var(--dock-filters-width) var(--dock-visuals-width) var(--dock-data-width);
       background: var(--lv-bg-panel);
     }
 
@@ -627,6 +653,32 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: 0.9rem 0.85rem 0.6rem;
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-panel);
+    }
+
+    .pane-heading-row {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--base-size-8);
+    }
+
+    .pane-title-group {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      gap: var(--base-size-8);
+    }
+
+    .pane-title-icon {
+      display: inline-flex;
+      flex: 0 0 auto;
+      color: var(--lv-fg-muted);
+    }
+
+    .pane-content[hidden],
+    .pane-header-details[hidden] {
+      display: none !important;
     }
 
     .inspector-heading {
@@ -871,6 +923,41 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-12);
       border-bottom: var(--lv-border-muted);
       background: var(--lv-bg-panel);
+    }
+
+    @media (min-width: 1201px), (min-width: 641px) and (max-width: 960px) {
+      .pane[data-collapsed='true'] {
+        overflow: hidden;
+      }
+
+      .pane[data-collapsed='true'] .pane-header,
+      .pane[data-collapsed='true'] .field-browser-header {
+        position: static;
+        height: 100%;
+        box-sizing: border-box;
+        padding: var(--base-size-8) var(--base-size-4);
+        border-bottom: 0;
+      }
+
+      .pane[data-collapsed='true'] .pane-heading-row,
+      .pane[data-collapsed='true'] .inspector-heading {
+        height: 100%;
+        flex-direction: column-reverse;
+        justify-content: flex-end;
+        flex-wrap: nowrap;
+      }
+
+      .pane[data-collapsed='true'] .pane-title-group,
+      .pane[data-collapsed='true'] .inspector-title {
+        flex-direction: column;
+      }
+
+      .pane[data-collapsed='true'] .pane-title {
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        overflow: visible;
+        text-overflow: clip;
+      }
     }
 
     .canvas-pane {
@@ -1761,7 +1848,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         grid-column: 1;
         grid-row: 3;
         max-height: 19rem;
-        grid-template-columns: repeat(3, minmax(0, 1fr));
+        grid-template-columns: var(--dock-filters-flex) var(--dock-visuals-flex) var(--dock-data-flex);
         grid-template-rows: minmax(0, 1fr);
         border-top: var(--lv-border-muted);
       }
@@ -1789,7 +1876,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
       .right-dock {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: repeat(3, minmax(0, 1fr));
+        grid-template-rows: var(--dock-filters-row) var(--dock-visuals-row) var(--dock-data-row);
       }
 
       .properties,
@@ -2095,6 +2182,71 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.filterOptionInFlight.clear()
   }
 
+  private restoreCollapsedPanes(): void {
+    if (typeof window === 'undefined') return
+    try {
+      const value = JSON.parse(window.localStorage.getItem(builderPaneStorageKey) ?? '[]')
+      if (!Array.isArray(value)) return
+      const collapsed = new Set(value.filter((pane): pane is BuilderPane => pane === 'filters' || pane === 'visuals' || pane === 'data'))
+      this.collapsedPanes = {
+        filters: collapsed.has('filters'),
+        visuals: collapsed.has('visuals'),
+        data: collapsed.has('data'),
+      }
+    } catch {
+      this.collapsedPanes = { ...defaultCollapsedPanes }
+    }
+  }
+
+  private persistCollapsedPanes(): void {
+    if (typeof window === 'undefined') return
+    try {
+      const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => this.collapsedPanes[pane])
+      window.localStorage.setItem(builderPaneStorageKey, JSON.stringify(collapsed))
+    } catch {
+      // Storage can be unavailable in hardened browser contexts. The current
+      // session still keeps the pane state through this reactive property.
+    }
+  }
+
+  private togglePane = (pane: BuilderPane): void => {
+    this.collapsedPanes = { ...this.collapsedPanes, [pane]: !this.collapsedPanes[pane] }
+    this.persistCollapsedPanes()
+  }
+
+  private rightDockStyle(): string {
+    const size = (pane: BuilderPane, open: string) => this.collapsedPanes[pane] ? '2.75rem' : open
+    const rowSize = (pane: BuilderPane) => this.collapsedPanes[pane] ? '3.5rem' : 'minmax(0, 1fr)'
+    return [
+      `--dock-filters-width:${size('filters', '12rem')}`,
+      `--dock-visuals-width:${size('visuals', '14rem')}`,
+      `--dock-data-width:${size('data', '12rem')}`,
+      `--dock-filters-flex:${size('filters', 'minmax(0, 1fr)')}`,
+      `--dock-visuals-flex:${size('visuals', 'minmax(0, 1fr)')}`,
+      `--dock-data-flex:${size('data', 'minmax(0, 1fr)')}`,
+      `--dock-filters-row:${rowSize('filters')}`,
+      `--dock-visuals-row:${rowSize('visuals')}`,
+      `--dock-data-row:${rowSize('data')}`,
+    ].join(';')
+  }
+
+  private renderPaneToggle(pane: BuilderPane, label: string, controls: string) {
+    const collapsed = this.collapsedPanes[pane]
+    const action = collapsed ? 'Expand' : 'Collapse'
+    return html`
+      <button
+        type="button"
+        class="pane-collapse"
+        data-pane-toggle=${pane}
+        aria-label=${`${action} ${label}`}
+        aria-controls=${controls}
+        aria-expanded=${!collapsed}
+        title=${`${action} ${label}`}
+        @click=${() => this.togglePane(pane)}
+      >${lucideIcon(collapsed ? PanelRightOpen : PanelRightClose, { size: 16, strokeWidth: 2 })}</button>
+    `
+  }
+
   private get builderFilterValidation(): DashboardFilterValidationResult {
     return this.signal<DashboardFilterValidationResult>('builderFilterValidation', { accepted: true, message: '', currentRevision: this.builderFilterState.revision, clientMutationID: '' })
   }
@@ -2119,7 +2271,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="body">
           ${this.renderCanvas(builder, page)}
           ${this.renderPageBar(builder, page)}
-          <div class="right-dock">
+          <div class="right-dock" style=${this.rightDockStyle()}>
             ${this.renderFiltersPane(builder)}
             ${this.renderInspector(builder, page, visual)}
             ${this.renderDataPane(builder, visual)}
@@ -2142,8 +2294,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
-          <button type="button" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>Undo</button>
-          <button type="button" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>Redo</button>
+          <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
+          <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
           ${(builder.preview.href || this.previewHref) && builder.capabilities.canPreview
             ? html`<a class="button" href=${builder.preview.href || this.previewHref}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
@@ -2251,38 +2403,49 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const supported = visibleCatalog.filter((item) => visual ? this.fieldCompatibleWithVisual(item.field, visual) : this.fieldDataTypeSupported(item.field))
     const unsupported = visibleCatalog.filter((item) => !supported.includes(item))
     const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
+    const collapsed = this.collapsedPanes.data
     return html`
       <div class="field-browser">
         <div class="field-browser-header">
-          <h2 id="builder-data-heading" class="pane-title">Data</h2>
-          <p class="pane-hint">${builder.semanticModel.title} semantic model</p>
-          <label>
-            <span class="sr-only">Search fields</span>
-            <input class="search" type="search" aria-label="Search fields" placeholder="Search measures and dimensions" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
-          </label>
-          <div class="field-filter" role="group" aria-label="Filter fields by role">
-            ${(['all', ...groups] as BuilderFieldFilter[]).map((filter) => html`
-              <button type="button" data-field-filter=${filter} aria-pressed=${this.fieldFilter === filter} @click=${() => { this.fieldFilter = filter }}>
-                ${this.fieldFilterLabel(filter)}
-              </button>
-            `)}
+          <div class="pane-heading-row">
+            <div class="pane-title-group">
+              <span class="pane-title-icon">${lucideIcon(Database, { size: 16, strokeWidth: 2 })}</span>
+              <h2 id="builder-data-heading" class="pane-title">Data</h2>
+            </div>
+            ${this.renderPaneToggle('data', 'Data pane', 'builder-data-content')}
+          </div>
+          <div class="pane-header-details" ?hidden=${collapsed}>
+            <p class="pane-hint">${builder.semanticModel.title} semantic model</p>
+            <label>
+              <span class="sr-only">Search fields</span>
+              <input class="search" type="search" aria-label="Search fields" placeholder="Search measures and dimensions" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
+            </label>
+            <div class="field-filter" role="group" aria-label="Filter fields by role">
+              ${(['all', ...groups] as BuilderFieldFilter[]).map((filter) => html`
+                <button type="button" data-field-filter=${filter} aria-pressed=${this.fieldFilter === filter} @click=${() => { this.fieldFilter = filter }}>
+                  ${this.fieldFilterLabel(filter)}
+                </button>
+              `)}
+            </div>
           </div>
         </div>
-        <p class="sr-only" role="status" aria-live="polite">${visibleCatalog.length} ${visibleCatalog.length === 1 ? 'field' : 'fields'} shown.</p>
-        <div class="field-results">
-          ${visibleCatalog.length === 0
-            ? html`<div class="empty-fields"><p class="pane-hint">No fields match this search.</p>${this.fieldQuery ? html`<button type="button" @click=${this.clearFieldQuery}>Clear search</button>` : nothing}</div>`
-            : html`
-              ${groups.map((group) => this.renderCatalogGroup(group, supported.filter((item) => item.group === group), visual))}
-              ${unsupported.length > 0 ? html`
-                <details class="unsupported-fields" ?open=${Boolean(this.fieldQuery)}>
-                  <summary>Other fields not supported by this visual (${unsupported.length})</summary>
-                  <div class="field-list">
-                    ${repeat(unsupported, (item) => this.catalogFieldKey(item), (item) => this.renderCatalogField(item, visual, false))}
-                  </div>
-                </details>
-              ` : nothing}
-            `}
+        <div id="builder-data-content" class="pane-content" ?hidden=${collapsed}>
+          <p class="sr-only" role="status" aria-live="polite">${visibleCatalog.length} ${visibleCatalog.length === 1 ? 'field' : 'fields'} shown.</p>
+          <div class="field-results">
+            ${visibleCatalog.length === 0
+              ? html`<div class="empty-fields"><p class="pane-hint">No fields match this search.</p>${this.fieldQuery ? html`<button type="button" @click=${this.clearFieldQuery}>Clear search</button>` : nothing}</div>`
+              : html`
+                ${groups.map((group) => this.renderCatalogGroup(group, supported.filter((item) => item.group === group), visual))}
+                ${unsupported.length > 0 ? html`
+                  <details class="unsupported-fields" ?open=${Boolean(this.fieldQuery)}>
+                    <summary>Other fields not supported by this visual (${unsupported.length})</summary>
+                    <div class="field-list">
+                      ${repeat(unsupported, (item) => this.catalogFieldKey(item), (item) => this.renderCatalogField(item, visual, false))}
+                    </div>
+                  </details>
+                ` : nothing}
+              `}
+          </div>
         </div>
       </div>
     `
@@ -2290,7 +2453,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderDataPane(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
     return html`
-      <aside class="pane data-pane" aria-labelledby="builder-data-heading">
+      <aside class="pane data-pane" data-collapsed=${this.collapsedPanes.data} aria-labelledby="builder-data-heading">
         ${this.renderFieldBrowser(builder, visual)}
       </aside>
     `
@@ -2304,14 +2467,23 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const grouped = this.groupFiltersByScope(filters, page, visual)
     const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => item.field.kind === 'dimension')
     const filterError = this.builderFilterErrorMessage()
+    const collapsed = this.collapsedPanes.filters
     return html`
-      <aside class="pane filters-pane" aria-labelledby="builder-filters-heading">
+      <aside class="pane filters-pane" data-collapsed=${collapsed} aria-labelledby="builder-filters-heading">
         <div class="pane-header">
-          <h2 id="builder-filters-heading" class="pane-title">Filters</h2>
-          <p class="pane-hint">Report filters in dashboard code. Applied to every page unless targets narrow them.</p>
-          ${filterError ? html`<p class="filter-validation" role="alert" aria-live="assertive">${filterError}</p>` : nothing}
+          <div class="pane-heading-row">
+            <div class="pane-title-group">
+              <span class="pane-title-icon">${lucideIcon(ListFilter, { size: 16, strokeWidth: 2 })}</span>
+              <h2 id="builder-filters-heading" class="pane-title">Filters</h2>
+            </div>
+            ${this.renderPaneToggle('filters', 'Filters pane', 'builder-filters-content')}
+          </div>
+          <div class="pane-header-details" ?hidden=${collapsed}>
+            <p class="pane-hint">Report filters in dashboard code. Applied to every page unless targets narrow them.</p>
+            ${filterError ? html`<p class="filter-validation" role="alert" aria-live="assertive">${filterError}</p>` : nothing}
+          </div>
         </div>
-        <div class="filter-pane-body">
+        <div id="builder-filters-content" class="filter-pane-body pane-content" ?hidden=${collapsed}>
           <div class="filter-drop-zone" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnFilters}>
             Drop a governed dimension to create a report filter
           </div>
@@ -2539,32 +2711,42 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
+    const collapsed = this.collapsedPanes.visuals
     return html`
-      <aside class="pane properties visual-builder" aria-label="Visual builder">
+      <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label="Visual builder">
         <div class="pane-header">
           <div class="inspector-heading">
-            <div class="inspector-title"><h2 class="pane-title">${visual ? visual.title : page ? 'Add a visual' : 'Visual builder'}</h2>${visual ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}</div>
+            <div class="inspector-title">
+              <span class="pane-title-icon">${lucideIcon(ChartColumn, { size: 16, strokeWidth: 2 })}</span>
+              <h2 class="pane-title">${collapsed ? 'Visuals' : visual ? visual.title : page ? 'Add a visual' : 'Visual builder'}</h2>
+              ${visual && !collapsed ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}
+            </div>
+            ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
-          <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
+          <div class="pane-header-details" ?hidden=${collapsed}>
+            <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
+          </div>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
-        <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
-          <button class="inspector-tab" role="tab" data-inspector-tab="build" aria-selected=${this.inspectorTab === 'build'} @click=${() => { this.inspectorTab = 'build' }}>Build</button>
-          <button class="inspector-tab" role="tab" data-inspector-tab="format" aria-selected=${this.inspectorTab === 'format'} @click=${() => { this.inspectorTab = 'format' }}>Format</button>
-        </div>
-        ${this.inspectorTab === 'build'
-          ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
-              ${this.renderVisualPicker(builder, page, visual)}
-              ${visual ? this.renderFieldWells(visual) : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
-            </div>`
-          : html`<div class="inspector-panel" role="tabpanel" aria-label="Format visual">
-              ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
-            </div>`}
-        <div class="properties-body">
-          <details class="secondary-details">
-            <summary>Diagnostics &amp; source evidence</summary>
-            <div class="secondary-details-content">${this.renderDiagnostics(builder.diagnostics)}${this.renderEvidence(builder)}</div>
-          </details>
+        <div id="builder-visuals-content" class="pane-content" ?hidden=${collapsed}>
+          <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
+            <button class="inspector-tab" role="tab" data-inspector-tab="build" aria-selected=${this.inspectorTab === 'build'} @click=${() => { this.inspectorTab = 'build' }}>Build</button>
+            <button class="inspector-tab" role="tab" data-inspector-tab="format" aria-selected=${this.inspectorTab === 'format'} @click=${() => { this.inspectorTab = 'format' }}>Format</button>
+          </div>
+          ${this.inspectorTab === 'build'
+            ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
+                ${this.renderVisualPicker(builder, page, visual)}
+                ${visual ? this.renderFieldWells(visual) : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
+              </div>`
+            : html`<div class="inspector-panel" role="tabpanel" aria-label="Format visual">
+                ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
+              </div>`}
+          <div class="properties-body">
+            <details class="secondary-details">
+              <summary>Diagnostics &amp; source evidence</summary>
+              <div class="secondary-details-content">${this.renderDiagnostics(builder.diagnostics)}${this.renderEvidence(builder)}</div>
+            </details>
+          </div>
         </div>
       </aside>
     `
