@@ -90,6 +90,7 @@
           "path"
         ],
         "secretType": "azure",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -139,7 +140,8 @@
         ],
         "name": "blob",
         "scanFunction": "read_blob",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "CSVPathSourceLocation": {
@@ -198,7 +200,8 @@
         ],
         "name": "csv",
         "scanFunction": "read_csv",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "CompatibleSourceSchema": {
@@ -342,6 +345,7 @@
         "requiredExtension": "delta",
         "scanFunction": "delta_scan",
         "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable",
         "tableLike": true
       }
     },
@@ -400,6 +404,7 @@
           "relation"
         ],
         "secretType": "ducklake",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -447,7 +452,8 @@
         "name": "excel",
         "requiredExtension": "excel",
         "scanFunction": "read_xlsx",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "FieldFreshness": {
@@ -535,6 +541,7 @@
           "path"
         ],
         "secretType": "gcs",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -574,6 +581,7 @@
           "path"
         ],
         "secretType": "http",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -615,6 +623,7 @@
         "requiredExtension": "iceberg",
         "scanFunction": "iceberg_scan",
         "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable",
         "tableLike": true
       }
     },
@@ -683,7 +692,8 @@
         ],
         "name": "json",
         "scanFunction": "read_json",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "LancePathSourceLocation": {
@@ -714,6 +724,7 @@
         "name": "lance",
         "requiredExtension": "lance",
         "scanKind": "replacement",
+        "sourceDataIdentityCapability": "unavailable",
         "sourceSecretType": "lance",
         "tableLike": true
       }
@@ -752,6 +763,7 @@
           "path"
         ],
         "secretType": "none",
+        "sourceDataIdentityCapability": "content_revision",
         "supportStatus": "stable"
       }
     },
@@ -1074,6 +1086,7 @@
           "relation"
         ],
         "secretType": "mysql",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -1147,7 +1160,8 @@
         ],
         "name": "parquet",
         "scanFunction": "read_parquet",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "PathSourceLocation": {
@@ -1236,6 +1250,7 @@
           "relation"
         ],
         "secretType": "postgres",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -1277,6 +1292,7 @@
           "relation"
         ],
         "secretType": "quack",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "experimental"
       }
     },
@@ -1316,6 +1332,7 @@
           "path"
         ],
         "secretType": "r2",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -1558,6 +1575,7 @@
           "path"
         ],
         "secretType": "s3",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -1615,6 +1633,7 @@
           "relation"
         ],
         "secretType": "sqlite",
+        "sourceDataIdentityCapability": "unavailable",
         "supportStatus": "stable"
       }
     },
@@ -1947,7 +1966,8 @@
         ],
         "name": "text",
         "scanFunction": "read_text",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     },
     "UniqueModelCheck": {
@@ -2018,7 +2038,8 @@
         "name": "vortex",
         "requiredExtension": "vortex",
         "scanFunction": "read_vortex",
-        "scanKind": "table_function"
+        "scanKind": "table_function",
+        "sourceDataIdentityCapability": "unavailable"
       }
     }
   },

@@ -81,25 +81,26 @@ var PathFormatNames = []string{"csv", "json", "parquet", "excel", "text", "blob"
 
 // FormatProfile is generated from x-leapview-format metadata.
 type FormatProfile struct {
-	Name              string
-	Extensions        []string
-	ScanKind          string
-	ScanFunction      string
-	RequiredExtension string
-	SourceSecretType  string
-	TableLike         bool
-	AllowsOptions     bool
+	Name                         string
+	Extensions                   []string
+	ScanKind                     string
+	ScanFunction                 string
+	RequiredExtension            string
+	SourceSecretType             string
+	SourceDataIdentityCapability SourceDataIdentityCapability
+	TableLike                    bool
+	AllowsOptions                bool
 }
 
 var FormatRegistry = []FormatProfile{
-	{Name: "csv", Extensions: []string{".csv", ".csv.gz"}, ScanKind: "table_function", ScanFunction: "read_csv", RequiredExtension: "", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "json", Extensions: []string{".json", ".jsonl", ".ndjson"}, ScanKind: "table_function", ScanFunction: "read_json", RequiredExtension: "", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "parquet", Extensions: []string{".parquet"}, ScanKind: "table_function", ScanFunction: "read_parquet", RequiredExtension: "", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "excel", Extensions: []string{".xlsx"}, ScanKind: "table_function", ScanFunction: "read_xlsx", RequiredExtension: "excel", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "text", Extensions: []string{".txt"}, ScanKind: "table_function", ScanFunction: "read_text", RequiredExtension: "", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "blob", Extensions: []string{".blob"}, ScanKind: "table_function", ScanFunction: "read_blob", RequiredExtension: "", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "vortex", Extensions: []string{".vortex"}, ScanKind: "table_function", ScanFunction: "read_vortex", RequiredExtension: "vortex", SourceSecretType: "", TableLike: false, AllowsOptions: true},
-	{Name: "delta", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "delta_scan", RequiredExtension: "delta", SourceSecretType: "", TableLike: true, AllowsOptions: true},
-	{Name: "iceberg", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "iceberg_scan", RequiredExtension: "iceberg", SourceSecretType: "", TableLike: true, AllowsOptions: true},
-	{Name: "lance", Extensions: []string{".lance"}, ScanKind: "replacement", ScanFunction: "", RequiredExtension: "lance", SourceSecretType: "lance", TableLike: true, AllowsOptions: false},
+	{Name: "csv", Extensions: []string{".csv", ".csv.gz"}, ScanKind: "table_function", ScanFunction: "read_csv", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "json", Extensions: []string{".json", ".jsonl", ".ndjson"}, ScanKind: "table_function", ScanFunction: "read_json", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "parquet", Extensions: []string{".parquet"}, ScanKind: "table_function", ScanFunction: "read_parquet", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "excel", Extensions: []string{".xlsx"}, ScanKind: "table_function", ScanFunction: "read_xlsx", RequiredExtension: "excel", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "text", Extensions: []string{".txt"}, ScanKind: "table_function", ScanFunction: "read_text", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "blob", Extensions: []string{".blob"}, ScanKind: "table_function", ScanFunction: "read_blob", RequiredExtension: "", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "vortex", Extensions: []string{".vortex"}, ScanKind: "table_function", ScanFunction: "read_vortex", RequiredExtension: "vortex", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: false, AllowsOptions: true},
+	{Name: "delta", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "delta_scan", RequiredExtension: "delta", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: true},
+	{Name: "iceberg", Extensions: []string{}, ScanKind: "table_function", ScanFunction: "iceberg_scan", RequiredExtension: "iceberg", SourceSecretType: "", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: true},
+	{Name: "lance", Extensions: []string{".lance"}, ScanKind: "replacement", ScanFunction: "", RequiredExtension: "lance", SourceSecretType: "lance", SourceDataIdentityCapability: SourceDataIdentityCapability("unavailable"), TableLike: true, AllowsOptions: false},
 }

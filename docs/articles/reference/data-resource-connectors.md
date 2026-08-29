@@ -6,33 +6,33 @@ This reference is generated from the reviewed TypeSpec connector profiles and ru
 
 ## Connectors
 
-| Key | Activation | Locations | Public access | Approved extensions | Secret type | Support | Adapter |
-| --- | --- | --- | --- | --- | --- | --- | --- |
-| `azure_blob` | `target_binding` | `path` | `true` | `azure` | `azure` | `stable` | `azure_blob` |
-| `ducklake` | `target_binding` | `relation` | `false` | `ducklake` | `ducklake` | `stable` | `ducklake` |
-| `gcs` | `target_binding` | `path` | `true` | `httpfs` | `gcs` | `stable` | `gcs` |
-| `http` | `authored` | `path` | `true` | `httpfs` | `http` | `stable` | `http` |
-| `managed` | `managed` | `path` | `true` | `none` | `none` | `stable` | `managed` |
-| `mysql` | `target_binding` | `relation` | `false` | `mysql` | `mysql` | `stable` | `mysql` |
-| `postgres` | `target_binding` | `relation` | `false` | `postgres` | `postgres` | `stable` | `postgres` |
-| `quack` | `target_binding` | `relation` | `false` | `httpfs`, `quack` | `quack` | `experimental` | `quack` |
-| `r2` | `target_binding` | `path` | `true` | `httpfs` | `r2` | `stable` | `r2` |
-| `s3` | `target_binding` | `path` | `true` | `httpfs` | `s3` | `stable` | `s3` |
-| `sqlite` | `target_binding` | `relation` | `false` | `sqlite` | `sqlite` | `stable` | `sqlite` |
+| Key | Activation | Locations | Source data identity | Public access | Approved extensions | Secret type | Support | Adapter |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `azure_blob` | `target_binding` | `path` | `unavailable` | `true` | `azure` | `azure` | `stable` | `azure_blob` |
+| `ducklake` | `target_binding` | `relation` | `unavailable` | `false` | `ducklake` | `ducklake` | `stable` | `ducklake` |
+| `gcs` | `target_binding` | `path` | `unavailable` | `true` | `httpfs` | `gcs` | `stable` | `gcs` |
+| `http` | `authored` | `path` | `unavailable` | `true` | `httpfs` | `http` | `stable` | `http` |
+| `managed` | `managed` | `path` | `content_revision` | `true` | `none` | `none` | `stable` | `managed` |
+| `mysql` | `target_binding` | `relation` | `unavailable` | `false` | `mysql` | `mysql` | `stable` | `mysql` |
+| `postgres` | `target_binding` | `relation` | `unavailable` | `false` | `postgres` | `postgres` | `stable` | `postgres` |
+| `quack` | `target_binding` | `relation` | `unavailable` | `false` | `httpfs`, `quack` | `quack` | `experimental` | `quack` |
+| `r2` | `target_binding` | `path` | `unavailable` | `true` | `httpfs` | `r2` | `stable` | `r2` |
+| `s3` | `target_binding` | `path` | `unavailable` | `true` | `httpfs` | `s3` | `stable` | `s3` |
+| `sqlite` | `target_binding` | `relation` | `unavailable` | `false` | `sqlite` | `sqlite` | `stable` | `sqlite` |
 
 ## Path format options
 
 Path Sources retain the scalar ADR shape (`format` plus sibling `options`) where a format supports reader options. Optionless formats are emitted without an options model; unknown or cross-format option fields are rejected.
 
-| Format | Option model |
-| --- | --- |
-| `csv` | `CSVReaderOptions` |
-| `json` | `JSONReaderOptions` |
-| `parquet` | `ParquetReaderOptions` |
-| `excel` | `ExcelReaderOptions` |
-| `text` | `TextReaderOptions` |
-| `blob` | `BlobReaderOptions` |
-| `vortex` | `VortexReaderOptions` |
-| `delta` | `DeltaReaderOptions` |
-| `iceberg` | `IcebergReaderOptions` |
-| `lance` | none |
+| Format | Option model | Source data identity |
+| --- | --- | --- |
+| `csv` | `CSVReaderOptions` | `unavailable` |
+| `json` | `JSONReaderOptions` | `unavailable` |
+| `parquet` | `ParquetReaderOptions` | `unavailable` |
+| `excel` | `ExcelReaderOptions` | `unavailable` |
+| `text` | `TextReaderOptions` | `unavailable` |
+| `blob` | `BlobReaderOptions` | `unavailable` |
+| `vortex` | `VortexReaderOptions` | `unavailable` |
+| `delta` | `DeltaReaderOptions` | `unavailable` |
+| `iceberg` | `IcebergReaderOptions` | `unavailable` |
+| `lance` | none | `unavailable` |

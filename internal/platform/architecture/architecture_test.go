@@ -233,6 +233,39 @@ func TestResultIdentityPackageIsAnAnalyticsContract(t *testing.T) {
 	}
 }
 
+func TestSourceDataIdentityPackageIsAnEngineIndependentAnalyticsContract(t *testing.T) {
+	const path = "internal/analytics/sourcedataidentity"
+	rule, ok := ClassifyPackage(path)
+	if !ok {
+		t.Fatalf("%s is not classified", path)
+	}
+	if rule.Capability != "analytics" || rule.Layer != LayerContract {
+		t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+	}
+	if !IsPublicContractImport("analytics", path) {
+		t.Fatalf("%s is not published as an analytics contract", path)
+	}
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != path {
+			continue
+		}
+		for _, imported := range file.imports {
+			for _, forbidden := range []string{
+				modulePath + "/internal/analytics/connectors",
+				modulePath + "/internal/analytics/materialize",
+				modulePath + "/internal/analytics/model",
+				modulePath + "/internal/analytics/resultcache",
+				modulePath + "/internal/deployment",
+				modulePath + "/internal/release",
+			} {
+				if imported == forbidden || strings.HasPrefix(imported, forbidden+"/") {
+					t.Errorf("%s imports forbidden implementation dependency %s", file.path, imported)
+				}
+			}
+		}
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string
