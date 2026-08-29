@@ -38,12 +38,14 @@ func (r recordingRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	if len(dest) != 3 {
+	switch len(dest) {
+	case 3:
+		*dest[0].(*int64) = r.revision
+		*dest[1].(*string) = r.migrationID
+		*dest[2].(*string) = r.checksum
+	default:
 		return errors.New("unexpected destination count")
 	}
-	*dest[0].(*int64) = r.revision
-	*dest[1].(*string) = r.migrationID
-	*dest[2].(*string) = r.checksum
 	return nil
 }
 
@@ -52,30 +54,32 @@ func TestBaselineMetadata(t *testing.T) {
 		t.Fatalf("baseline metadata = revision %d, id %q", BaselineRevision, BaselineMigrationID)
 	}
 	sql := BaselineSQL()
-	for _, schema := range []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent"} {
-		if !strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS "+schema) {
-			t.Errorf("baseline does not create %s capability schema", schema)
-		}
-	}
-	for _, role := range []string{"leapview_control_owner", "leapview_control_migrator", "leapview_control_runtime", "leapview_control_readonly"} {
-		if !strings.Contains(sql, role) {
-			t.Errorf("baseline does not declare/grant %s", role)
-		}
-	}
-	for _, marker := range []string{
-		"platform.schema_revision",
-		"platform.operation",
-		"event.event_aggregate",
-		"event.event_retention_root",
-		"delivery.delivery_snapshot_retention",
-		"octet_length(payload::text) <= 65536",
-		"octet_length(properties::text) <= 16384",
-		"octet_length(metadata::text) <= 16384",
-		"audit.reject_audit_mutation",
-		"REVOKE UPDATE, DELETE ON audit.audit_event",
-	} {
+	for _, marker := range []string{"platform.schema_revision", "platform.reject_schema_revision_mutation", "leapview_control_owner", "leapview_control_backup"} {
 		if !strings.Contains(sql, marker) {
-			t.Errorf("baseline missing required contract marker %q", marker)
+			t.Errorf("foundation missing required contract marker %q", marker)
+		}
+	}
+	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS platform.operation") || strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS access") {
+		t.Fatal("foundation must not duplicate capability-owned DDL")
+	}
+	want := []string{"platform.operation", "platform.cursor_signing", "project", "access", "deployment", "event", "ducklake", "jobs", "lineage", "cache", "queryaudit"}
+	components := BaselineComponents()
+	if len(components) != len(want) {
+		t.Fatalf("assembled component count = %d, want %d", len(components), len(want))
+	}
+	for i, component := range components {
+		if component.Name != want[i] {
+			t.Errorf("component[%d] = %q, want %q", i, component.Name, want[i])
+		}
+		if component.SQL == "" {
+			t.Errorf("component[%q] has empty SQL", component.Name)
+		}
+	}
+	for _, missing := range []string{"refresh", "agent"} {
+		for _, component := range components {
+			if component.Name == missing {
+				t.Errorf("unimplemented capability %q unexpectedly assembled", missing)
+			}
 		}
 	}
 	if strings.Contains(sql, "-- +goose") {
@@ -91,8 +95,8 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 2 || recorder.sqls[0] != BaselineSQL() {
-		t.Fatal("Apply() did not execute the authored baseline SQL")
+	if len(recorder.sqls) != 4 || recorder.sqls[2] != BaselineSQL() {
+		t.Fatal("Apply() did not acquire its lock and execute the authored foundation")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
