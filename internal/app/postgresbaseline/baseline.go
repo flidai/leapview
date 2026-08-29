@@ -21,6 +21,7 @@ import (
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 )
 
 const (
@@ -39,6 +40,7 @@ var plan = platformmigrations.Plan{
 		{Name: "managed_data", SQL: manageddatapostgres.SchemaSQL()},
 		{Name: "physical_pool", SQL: physicalpoolpostgres.SchemaSQL()},
 		{Name: "deployment", SQL: deploymentpostgres.SchemaSQL()},
+		{Name: "serving_state", SQL: servingstatepostgres.SchemaSQL()},
 		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "ducklake", SQL: ducklakepostgres.SchemaSQL()},
 		{Name: "jobs", SQL: jobspostgres.SchemaSQL()},
@@ -69,7 +71,7 @@ const rolePolicySQL = `
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_runtime;
+        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, jobs TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
         GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO leapview_control_runtime;
@@ -84,6 +86,10 @@ BEGIN
         REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime;
         GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
+        GRANT SELECT, INSERT ON serving_state.bundle, serving_state.asset, serving_state.asset_edge TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON serving_state.reader_lease TO leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid, bigint) TO leapview_control_runtime;
+        REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON serving_state.bundle, serving_state.asset, serving_state.asset_edge FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
@@ -95,8 +101,9 @@ BEGIN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
-        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_readonly;
+        GRANT USAGE ON SCHEMA access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool TO leapview_control_readonly;
+        GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
         GRANT SELECT ON jobs.job_observability TO leapview_control_readonly;
         REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_readonly;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool FROM leapview_control_readonly;
@@ -106,8 +113,9 @@ BEGIN
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
-        GRANT USAGE ON SCHEMA project, access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_backup;
+        GRANT USAGE ON SCHEMA project, access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool, serving_state TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_backup;
+        GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_keys TO leapview_control_backup;
     END IF;
