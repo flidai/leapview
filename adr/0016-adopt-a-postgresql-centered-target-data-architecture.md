@@ -274,7 +274,14 @@ The PostgreSQL-backed DuckLake catalog is long-lived and owned per admitted
 physical pool. Builds use candidate-qualified schemas or physical relation
 names so concurrent candidates never contend for or mutate the same logical
 serving namespace. A successful build commits one DuckLake transaction and
-captures the exact committed snapshot.
+captures the exact committed snapshot. Before that commit, the build sets
+persistent DuckLake commit metadata containing the
+`delivery_build_attempt_id`, canonical request digest, plan digest, and marker
+schema version, together with the physical-pool identity and writer fencing
+epoch. The marker is bounded canonical JSON in `commit_extra_info`;
+DuckLake exposes it with the snapshot after restart, unlike
+`last_committed_snapshot()`, which is connection-local. See DuckLake's
+[snapshot and commit-message guidance](https://ducklake.select/docs/stable/duckdb/usage/snapshots).
 
 A qualified physical seal is identified logically by:
 
@@ -292,6 +299,9 @@ Qualification attaches or queries that exact snapshot read-only, verifies the
 compiled relation closure and compatibility contract, and records immutable
 evidence in `delivery_snapshot_seal`. Publication and rollback only change the
 control pointer; they never copy, upload, rewrite, or promote catalog metadata.
+The compatibility evidence and digest include the exact DuckDB version,
+DuckLake extension version, DuckLake specification version, catalog-schema
+version, and result-affecting storage settings.
 
 The target therefore has no catalog-object path, catalog-file byte size,
 catalog-file upload acknowledgement, downloaded catalog cache, or catalog-file
@@ -299,13 +309,37 @@ digest as generation identity. A snapshot seal may retain a canonical manifest
 digest for verification and explanation, but DuckLake remains authoritative
 for schema, table, file, delete-file, statistics, and snapshot membership.
 
-Control-plane roots and active-query leases bind exact DuckLake snapshots.
-Fenced maintenance expires only snapshots absent from candidates, generations,
-rollback windows, active queries, and recovery holds. DuckLake schedules
-unreferenced files for deletion; cleanup and orphan collection run only after
-the configured reader and failure grace. LeapView records the maintenance
-decision and outcome but does not duplicate DuckLake's per-file manifest as a
-second authority.
+Control-plane roots and active-query leases bind exact DuckLake snapshots. A
+snapshot-retention record has `live`, `retiring`, and `expired` states. Query
+lease acquisition locks that record and succeeds only while it is `live`.
+Retirement locks the same record, changes `live` to `retiring` to prevent new
+leases, waits for existing leases and the reader/failure grace, expires the
+explicit external snapshot, verifies the result, and then records `expired`.
+An indeterminate expiration is reconciled against exact snapshot identity
+before it is retried.
+
+Fenced maintenance may retire only snapshots absent from candidates,
+generations, rollback windows, active queries, and recovery holds. DuckLake
+schedules unreferenced files for deletion; cleanup and orphan collection run
+only after the configured file grace. LeapView records the maintenance decision
+and outcome but does not duplicate DuckLake's per-file manifest as a second
+authority. This is the same prevent-new-references, remove-reachability, then
+delete invariant used for shared cache objects.
+
+A physical pool is also the catalog retention and failure-isolation unit. It
+contains exactly one long-lived DuckLake catalog and one dedicated object
+namespace. The default scope is one project, environment, tenant-isolation
+domain, region, security boundary, and retention policy; production and
+candidate relations for that target may share it. Different tenants,
+environments, regions, security boundaries, or retention policies do not share
+a pool merely to improve reuse.
+
+Admission defines split thresholds for retained bytes, oldest protected
+snapshot age, snapshot and metadata counts, commit contention, qualification
+latency, and tenant/security policy. Crossing a hard threshold provisions a
+new pool for future generations rather than allowing unbounded retention
+coupling. Existing generations remain bound to the old pool until their roots
+retire; cross-pool reuse is never assumed.
 
 ### Idempotency and operation outcomes
 
@@ -328,6 +362,14 @@ marking it indeterminate. A lease may coordinate the reconciler, but lease
 expiry alone never authorizes repeating an external effect without that
 identity check.
 
+For a DuckLake build, reconciliation searches persistent snapshot commit
+metadata for the exact `delivery_build_attempt_id`. Exactly one snapshot with
+the expected request and plan digests may complete the attempt. More than one
+match or any digest mismatch quarantines the pool and attempt. A retry is
+allowed only after the prior writer is fenced, its transaction can no longer
+commit, and reconciliation establishes that no matching snapshot exists;
+connection-local `last_committed_snapshot()` is not restart evidence.
+
 ### Durable events, audit, and process fan-out
 
 A domain mutation and its durable event commit in one PostgreSQL transaction.
@@ -343,14 +385,36 @@ another explicit version row. `MAX(sequence) + 1` is prohibited. A global
 identity or commit position may support scanning, but it does not imply
 business order across aggregates.
 
-Durable broadcast delivery uses rows keyed by `(consumer_id, event_id)`.
-Delivery rows for enabled consumers are created in the source transaction; a
-new consumer's historical rows are backfilled before it is enabled. Each
-consumer claims only its own rows atomically, records attempts and terminal
-outcome, and may replay by event identity. This avoids treating a global
-sequence watermark as a safe commit-order cursor across concurrent
-transactions. Consumers that only need current authority may instead reconcile
-that authority and use events as wake-up hints.
+Durable broadcast delivery uses rows keyed by `(consumer_id, event_id)` and a
+consumer lifecycle of `backfilling`, `enabled`, `paused`, and `retired`.
+`Backfilling`, `enabled`, and `paused` consumers receive new delivery rows;
+`retired` consumers do not. Event-producing transactions lock one fan-out
+registry row `FOR KEY SHARE`, read the delivery-eligible consumers, and insert
+their delivery rows in the source transaction. Enrollment and retirement lock
+that row `FOR UPDATE`, so their boundary cannot race an in-flight event
+transaction while independent producers can still proceed concurrently.
+
+The enrollment transaction creates the consumer as `backfilling` while holding
+that fence and commits before backfill begins. It then idempotently backfills
+the admitted replay interval in bounded transactions with
+`INSERT ... ON CONFLICT DO NOTHING`, and finally changes the consumer to
+`enabled`.
+Retirement fences producers before stopping new fan-out; existing deliveries
+must drain or receive an explicit audited waiver. Each consumer claims only its
+own rows atomically, records attempts and terminal outcome, and may replay by
+event identity. This avoids treating a global sequence watermark as a safe
+commit-order cursor across concurrent transactions. Consumers that only need
+current authority may instead reconcile that authority and use events as
+wake-up hints.
+
+Transactional fan-out is limited to a small, configured maximum number of
+durable consumers. A consumer declares a replay start no earlier than the
+published event-retention floor. Event and delivery rows may be pruned only
+after that replay window closes and every applicable delivery is terminal or
+audited as waived. Exhausted poison deliveries enter a visible dead-letter
+terminal state and prevent pruning until resolved or waived. A large or
+dynamically growing subscriber set requires one external-broker dispatcher
+consumer rather than unbounded `event × consumer` rows.
 
 Compliance audit events are inserted directly and immutably through the source
 mutation's transaction. The runtime role receives append-only access and
@@ -447,6 +511,26 @@ identity and settings, and result format. Dashboard presentation and serving
 generation identity are excluded. Missing or unverifiable evidence fails
 closed to execution without reuse.
 
+`canonical_query_digest` represents result equivalence rather than query text.
+It covers normalized executable query semantics, the type and value of every
+bound parameter, result-shaping options, deterministic function inputs, and
+all other result-affecting execution inputs. Two textually identical queries
+with different typed parameter values must not share a key.
+
+`effective_policy_fingerprint` covers the fully resolved, result-affecting
+authorization context: tenant and principal identity where relevant, group and
+attribute values, row predicates and their bound values, masks, grants, and
+policy/compiler versions. Two authorized principals may share a result only
+when this resolved context proves their results equivalent; authorization
+before lookup alone is insufficient.
+
+A query with an unrepresented volatile input is not cacheable. This includes
+clock, randomness, session state, side-effecting or volatile functions, and an
+external or streaming source without a verified revision/watermark. Reuse is
+allowed only when the planner can either prove determinism or represent the
+volatility explicitly in the dependency/query key with its declared validity
+contract.
+
 Consequently, production cache ownership is not scoped by serving-state or
 generation ID. Runtime generations acquire leases on entries in the stable
 production partition; candidate partitions remain isolated by candidate
@@ -519,6 +603,17 @@ prevent independent builds from overwriting the same logical serving objects.
 Snapshot expiry is catalog-wide maintenance and is therefore driven by the
 complete set of control-plane retention roots, not by an age-only default.
 
+LeapView pins one tested DuckDB, DuckLake extension, DuckLake specification,
+and catalog-schema compatibility tuple. Ordinary runtime attachments keep
+`AUTOMATIC_MIGRATION` disabled and fail closed on a version mismatch. Only a
+dedicated migration process and role may change the DuckLake catalog schema;
+it acquires the pool maintenance fence, drains writers and readers, verifies
+backups and retained snapshot seals, performs the explicit migration, and
+requalifies the pool before reopening it. The normal runtime role cannot opt
+into migration. DuckLake documents the version-mismatch behavior and explicit
+[`AUTOMATIC_MIGRATION`](https://ducklake.select/docs/stable/duckdb/guides/troubleshooting)
+path.
+
 DuckLake data inlining may optimize small analytical inserts or deletes inside
 its catalog. It is DuckLake-managed physical state, not a query-result cache or
 permission for application modules to write analytical rows directly into the
@@ -549,9 +644,12 @@ generation, replication lag, event backlog, job age, and cache-fill contention.
 application operation identities provide the initial diagnostic surface. See
 the [`pg_stat_statements` documentation](https://www.postgresql.org/docs/current/pgstatstatements.html).
 
-A recovery set covers both PostgreSQL databases and versioned object storage.
-It records the recovery point for each durable store and the control-plane
-retention roots expected at that point. Before serving, recovery validation
+A recovery set records one recovery point per PostgreSQL cluster plus the
+corresponding versioned object-storage recovery frontier. While both databases
+share the default HA cluster, physical PITR restores them at one cluster-wide
+recovery point; if they later move to separate clusters, the recovery set has
+two PostgreSQL recovery points. It also records the control-plane retention
+roots expected at those points. Before serving, recovery validation
 must prove that every selected generation resolves its immutable artifact,
 exact DuckLake snapshot seal, relation closure, and required objects. Missing
 evidence blocks readiness or requires an explicit, audited recovery selection
@@ -564,6 +662,13 @@ Repository and integration conformance run against the supported PostgreSQL
 version with real concurrent connections. SQLite fixtures may test pure domain
 interfaces, but passing them is not evidence for PostgreSQL locking, isolation,
 roles, failover, notification, or recovery behavior.
+
+Every bounded `jsonb` document has a versioned maximum serialized byte size for
+its record type, enforced at the shared persistence boundary and by a database
+constraint. This applies at least to domain-event payloads, lineage properties,
+idempotency outcomes, cache metadata, and delivery evidence. Content exceeding
+the limit is rejected or placed as an immutable object with a typed digest
+reference; PostgreSQL TOAST is not the bounding mechanism.
 
 ### SQLite's target role
 
@@ -584,8 +689,12 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
 ### Prohibited shortcuts
 
 - Do not use `LISTEN`/`NOTIFY` as the only record of a domain event.
+- Do not enroll or retire a durable event consumer without the transactional
+  fan-out registry fence.
 - Do not route per-client Pagestream patches through PostgreSQL.
 - Do not make event delivery or eager deletion part of cache validity.
+- Do not reuse a query result when typed bound values, resolved policy inputs,
+  or volatility are absent from its equivalence evidence.
 - Do not store bulk Arrow results or analytical fact data in control tables.
 - Do not reconstruct query dependencies by traversing lineage on every cache
   lookup.
@@ -604,6 +713,13 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
 - Do not allocate aggregate event versions with `MAX(sequence) + 1`.
 - Do not treat a different process session or an expired lease as proof that an
   idempotent external operation is safe to repeat.
+- Do not retry an indeterminate DuckLake build without reconciling its
+  persistent commit marker, or admit more than one snapshot for an attempt.
+- Do not grant a new query lease after its snapshot enters `retiring`.
+- Do not share a physical pool across tenant, environment, region, security, or
+  retention boundaries, or allow a pool to grow past its admission thresholds.
+- Do not enable DuckLake automatic catalog migration on ordinary runtime
+  attachments.
 - Do not use PostgreSQL unlogged tables for cache manifests or other state that
   must survive failover.
 
@@ -632,7 +748,14 @@ At-least-once events create duplicate-delivery and retention obligations.
 Consumers must be idempotent, poison or stalled delivery must be visible, and
 notification health must not be confused with durable backlog health. Logical
 decoding, if later enabled, adds replication-slot retention and failover
-operations.
+operations. Transactional delivery fan-out also adds one row per durable
+consumer and therefore intentionally supports only a bounded consumer set.
+
+Catalog isolation limits snapshot-retention coupling and security blast radius
+at the cost of more catalogs and possible duplication when a future generation
+moves to a new pool. Explicit DuckLake upgrade fencing adds operational work,
+but prevents a routine application attachment from irreversibly migrating the
+catalog beneath retained generations.
 
 Persisting lineage creates a derived copy that must be verified against its
 canonical artifact. Closure storage may amplify graph size. These costs are
@@ -660,7 +783,10 @@ Linear; this ADR records the destination and its invariants.
   backed by SQLite.
 - Audit and domain-event tests prove mutation/event atomicity, at-least-once
   idempotency, listener startup reconciliation, disconnect recovery, duplicate
-  notification tolerance, terminal delivery visibility, and payload redaction.
+  notification tolerance, terminal delivery visibility, payload redaction,
+  replay retention, and poison-delivery handling. Concurrent enrollment tests
+  prove that events committed before, during, and after backfill receive exactly
+  one delivery row, and retirement tests prove the fan-out boundary is closed.
 - Multi-node tests prove that durable workers do not execute one lease
   concurrently, stale owners cannot publish, and active serving transitions
   converge after a missed notification or node restart.
@@ -671,13 +797,22 @@ Linear; this ADR records the destination and its invariants.
 - Query-cache tests prove that dashboard-only changes reuse compatible results;
   semantic, relation, binding, policy, execution and format changes miss; a
   missed event cannot return stale data; and authorization is evaluated before
-  lookup.
+  lookup. They also cover identical query text with distinct typed parameter
+  values, two authorized principals with distinct row filters or masks, and
+  volatile-query bypass unless every volatile input is represented.
 - Cache storage tests prove L2 loss is rebuildable, L3 publication never exposes
   an uncommitted or mismatched object, stale fill owners are fenced, orphan
   objects are reclaimed, and PostgreSQL contains no bulk Arrow payloads.
 - DuckLake qualification tests exercise a PostgreSQL-backed catalog with
   concurrent remote clients while preserving exact snapshot seals, relation
-  closure, retention and active-query leases.
+  closure, retention and active-query leases. Lost-commit-acknowledgement tests
+  reconcile exactly zero or one persistent build marker and quarantine
+  duplicates or digest mismatches. Retirement races prove no new query lease is
+  granted after `retiring`, while existing leases drain before expiration.
+- Pool conformance proves the catalog isolation unit and split thresholds, pins
+  and records the complete DuckDB/DuckLake compatibility tuple, rejects runtime
+  automatic migration, and requalifies retained seals after an explicit catalog
+  migration.
 - Backup, point-in-time recovery and failover exercises restore PostgreSQL and
   object storage to a state whose active pointers, lineage digests, catalog
   snapshot seals, immutable artifacts and retention roots all verify before
@@ -685,4 +820,6 @@ Linear; this ADR records the destination and its invariants.
 - Architecture checks reject production SQLite control composition, mutable
   dual-write authority, shared application/DuckLake ownership, legacy delivery
   projections, catalog-file generation artifacts, and direct application
-  writes of analytical or cache payload data to control tables.
+  writes of analytical or cache payload data to control tables. Persistence
+  tests reject oversized bounded JSON documents and verify typed object
+  references for intentionally externalized content.
