@@ -204,6 +204,17 @@ type LeaseFence struct {
 	FencingEpoch               int64
 }
 
+// CompleteBuildResult is the durable PostgreSQL evidence produced by a
+// completed build. The lease is returned in its post-release state so callers
+// can append their own event/audit/workflow consequences in the same
+// transaction without having to issue another read.
+type CompleteBuildResult struct {
+	Attempt   DeliveryBuildAttempt
+	Seal      SnapshotSeal
+	Candidate DeliveryCandidate
+	Lease     DeliveryLease
+}
+
 type DeliveryApproval struct {
 	ApprovalID, CandidateID, PrincipalID, Decision string
 	Evidence                                       json.RawMessage
@@ -2550,6 +2561,20 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	if err != nil {
 		return err
 	}
+	return releaseLease(contextOrBackground(ctx), db, f)
+}
+
+// ReleaseLeaseTx releases a lease through a caller-owned PostgreSQL
+// transaction. It deliberately has the exact replay and stale-fence
+// semantics of ReleaseLease and never commits or rolls back tx.
+func (r *Repository) ReleaseLeaseTx(ctx context.Context, tx Tx, f LeaseFence) error {
+	if tx == nil {
+		return ErrInvalid
+	}
+	return releaseLease(contextOrBackground(ctx), tx, f)
+}
+
+func releaseLease(ctx context.Context, db DBTX, f LeaseFence) error {
 	id, err := uuidID(f.LeaseID, "lease id", false)
 	if err != nil {
 		return err
@@ -2562,7 +2587,7 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	if err != nil {
 		return err
 	}
-	updated, err := depdb.New(db).ReleaseLease(contextOrBackground(ctx), depdb.ReleaseLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch})
+	updated, err := depdb.New(db).ReleaseLease(ctx, depdb.ReleaseLeaseParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch})
 	if errors.Is(err, pgx.ErrNoRows) {
 		updated, err = false, nil
 	}
@@ -2572,7 +2597,7 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	if updated {
 		return nil
 	}
-	l, e := loadLeaseSimple(contextOrBackground(ctx), db, id)
+	l, e := loadLeaseSimple(ctx, db, id)
 	if e != nil {
 		return e
 	}
@@ -2584,6 +2609,193 @@ func (r *Repository) ReleaseLease(ctx context.Context, f LeaseFence) error {
 	}
 	return ErrStaleFence
 }
+
+// CompleteBuildTx composes the durable build completion boundary through one
+// caller-owned PostgreSQL transaction. It commits (or exactly replays) the
+// attempt, creates (or exactly replays) its immutable snapshot seal,
+// qualifies (or exactly replays) the candidate, and releases the exact lease
+// fence. The method never commits or rolls back tx; callers can append their
+// event, audit, and workflow consequences before committing the transaction.
+func (r *Repository) CompleteBuildTx(
+	ctx context.Context,
+	tx Tx,
+	commit CommitAttemptInput,
+	seal SnapshotSealInput,
+	qualificationDigest string,
+	fence LeaseFence,
+) (CompleteBuildResult, error) {
+	if tx == nil {
+		return CompleteBuildResult{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+
+	// Validate the key cross-authority identity before the first state
+	// transition.
+	// The individual Tx methods repeat their own checks while holding the
+	// relevant row locks; this preflight prevents a caller accidentally
+	// committing a partial transaction after a mismatched composition error.
+	candidateID, err := validateCompleteBuildPreflight(ctx, tx, commit, seal, qualificationDigest, fence)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+
+	attempt, err := r.CommitBuildAttemptTx(ctx, tx, commit)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	sealed, err := r.CreateSnapshotSealTx(ctx, tx, seal)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	candidate, err := r.QualifyCandidateTx(ctx, tx, candidateID, sealed.SealID, qualificationDigest)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	if err := r.ReleaseLeaseTx(ctx, tx, fence); err != nil {
+		return CompleteBuildResult{}, err
+	}
+	lease, err := loadLeaseSimple(ctx, tx, fence.LeaseID)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	return CompleteBuildResult{Attempt: attempt, Seal: sealed, Candidate: candidate, Lease: lease}, nil
+}
+
+// CompleteBuild owns a short transaction around CompleteBuildTx. Callers
+// that need to append event/audit/workflow evidence atomically should use the
+// Tx form directly instead.
+func (r *Repository) CompleteBuild(
+	ctx context.Context,
+	commit CommitAttemptInput,
+	seal SnapshotSealInput,
+	qualificationDigest string,
+	fence LeaseFence,
+) (CompleteBuildResult, error) {
+	ctx = contextOrBackground(ctx)
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(ctx)
+		}
+	}()
+	result, err := r.CompleteBuildTx(ctx, tx, commit, seal, qualificationDigest, fence)
+	if err != nil {
+		return CompleteBuildResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CompleteBuildResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+func validateCompleteBuildPreflight(
+	ctx context.Context,
+	tx Tx,
+	commit CommitAttemptInput,
+	seal SnapshotSealInput,
+	qualificationDigest string,
+	fence LeaseFence,
+) (candidateID string, err error) {
+	attemptID, err := uuidID(commit.AttemptID, "attempt id", false)
+	if err != nil {
+		return "", err
+	}
+	if _, err := uuidID(fence.LeaseID, "lease id", false); err != nil {
+		return "", err
+	}
+	if _, err := uuidID(seal.SealID, "seal id", false); err != nil {
+		return "", err
+	}
+	sealAttemptID, err := uuidID(seal.AttemptID, "attempt id", false)
+	if err != nil {
+		return "", err
+	}
+	if attemptID != sealAttemptID {
+		return "", fmt.Errorf("%w: commit and seal attempts differ", ErrConflict)
+	}
+	candidateID, err = uuidID(seal.CandidateID, "candidate id", false)
+	if err != nil {
+		return "", err
+	}
+	if commit.OwnerID != fence.OwnerID || commit.FencingEpoch != fence.FencingEpoch {
+		return "", fmt.Errorf("%w: commit and lease fence differ", ErrConflict)
+	}
+	if _, err := textID(fence.TargetID, "target id"); err != nil {
+		return "", err
+	}
+	if _, err := textID(fence.OwnerID, "owner id"); err != nil {
+		return "", err
+	}
+	if fence.FencingEpoch <= 0 {
+		return "", ErrInvalid
+	}
+	if _, err := digest(qualificationDigest, "qualification digest"); err != nil {
+		return "", err
+	}
+
+	// Hold the lease row lock across the full completion sequence. This keeps a
+	// concurrent takeover/release from changing the fence after preflight but
+	// before the final exact release.
+	if _, lockErr := depdb.New(tx).LockLease(ctx, dbUUID(fence.LeaseID)); errors.Is(lockErr, pgx.ErrNoRows) {
+		return "", ErrNotFound
+	} else if lockErr != nil {
+		return "", lockErr
+	}
+	lease, err := loadLeaseSimple(ctx, tx, fence.LeaseID)
+	if err != nil {
+		return "", err
+	}
+	if lease.TargetID != fence.TargetID || lease.OwnerID != fence.OwnerID || lease.FencingEpoch != fence.FencingEpoch {
+		return "", ErrStaleFence
+	}
+	if lease.State != "active" && lease.State != "released" {
+		return "", ErrStaleFence
+	}
+	if lease.State == "active" {
+		now, nowErr := databaseNow(ctx, tx)
+		if nowErr != nil {
+			return "", nowErr
+		}
+		if !lease.ExpiresAt.After(now) {
+			return "", ErrStaleFence
+		}
+	}
+
+	attempt, err := loadAttempt(ctx, tx, attemptID)
+	if err != nil {
+		return "", err
+	}
+	if attempt.OwnerID != fence.OwnerID || attempt.FencingEpoch != fence.FencingEpoch {
+		return "", ErrStaleFence
+	}
+	if lease.State == "released" && attempt.State != AttemptCommitted {
+		return "", ErrStaleFence
+	}
+	if attempt.CandidateID == "" {
+		return "", fmt.Errorf("%w: build attempt has no candidate", ErrConflict)
+	}
+	attemptCandidateID, parseErr := uuidID(attempt.CandidateID, "candidate id", false)
+	if parseErr != nil {
+		return "", parseErr
+	}
+	if attemptCandidateID != candidateID {
+		return "", fmt.Errorf("%w: attempt and seal candidates differ", ErrConflict)
+	}
+	candidate, err := loadCandidate(ctx, tx, candidateID, CandidateInput{})
+	if err != nil {
+		return "", err
+	}
+	if candidate.TargetID != fence.TargetID || candidate.PlanID != attempt.PlanID {
+		return "", fmt.Errorf("%w: build completion target or plan differs", ErrConflict)
+	}
+	return candidateID, nil
+}
+
 func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt time.Time) error {
 	db, err := requireDB(r)
 	if err != nil {
