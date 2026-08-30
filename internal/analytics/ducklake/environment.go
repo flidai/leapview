@@ -326,10 +326,10 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		if commitMarker != nil && commitMarker.PhysicalPoolID != postgresConfig.PhysicalPoolID {
 			return nil, fmt.Errorf("DuckLake commit marker physical pool does not match PostgreSQL catalog")
 		}
-		if config.ReadOnly && postgresConfig.Mode != PostgresCatalogServing {
-			return nil, fmt.Errorf("PostgreSQL DuckLake read-only environment requires serving mode")
+		if config.ReadOnly && postgresConfig.Mode != PostgresCatalogServing && postgresConfig.Mode != PostgresCatalogMarkerReadOnly {
+			return nil, fmt.Errorf("PostgreSQL DuckLake read-only environment requires serving or marker-reconciliation mode")
 		}
-		if postgresConfig.Mode == PostgresCatalogServing {
+		if postgresConfig.Mode == PostgresCatalogServing || postgresConfig.Mode == PostgresCatalogMarkerReadOnly {
 			config.ReadOnly = true
 		}
 		if config.PhysicalPoolID != "" && config.PhysicalPoolID != postgresConfig.PhysicalPoolID {

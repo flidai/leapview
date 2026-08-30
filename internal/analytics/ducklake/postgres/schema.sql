@@ -54,7 +54,8 @@ CREATE TABLE IF NOT EXISTS ducklake.attempt_evidence (
     CHECK (commit_marker IS NULL OR (jsonb_typeof(commit_marker) = 'object' AND octet_length(commit_marker::text) <= 4096)),
     CHECK (termination_evidence IS NULL OR (jsonb_typeof(termination_evidence) = 'object' AND octet_length(termination_evidence::text) <= 32768)),
     CHECK ((state = 'running' AND terminal_at IS NULL) OR (state <> 'running' AND terminal_at IS NOT NULL)),
-    CHECK (state <> 'committed' OR (snapshot_id IS NOT NULL AND commit_marker IS NOT NULL)),
+    CHECK ((state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL)
+           OR (state <> 'committed' AND snapshot_id IS NULL AND commit_marker IS NULL)),
     CHECK (state IN ('running', 'committed') OR termination_evidence IS NOT NULL)
 );
 
@@ -431,7 +432,10 @@ BEGIN
           AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
         RAISE EXCEPTION 'DuckLake terminal attempt lease expiry is immutable';
     END IF;
-    IF OLD.state <> 'running' THEN
+    IF OLD.state = 'indeterminate' AND NEW.state NOT IN ('indeterminate','committed','aborted') THEN
+        RAISE EXCEPTION 'indeterminate DuckLake attempt may only be reconciled to committed or aborted';
+    END IF;
+    IF OLD.state NOT IN ('running','indeterminate') THEN
         IF NEW.state <> OLD.state
            OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
            OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
@@ -440,12 +444,19 @@ BEGIN
            OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
             RAISE EXCEPTION 'DuckLake terminal attempt evidence is immutable';
         END IF;
-    ELSIF NEW.state = 'running'
-          AND (NEW.snapshot_id IS NOT NULL
-               OR NEW.commit_marker IS NOT NULL
-               OR NEW.termination_evidence IS NOT NULL
-               OR NEW.terminal_at IS NOT NULL) THEN
-            RAISE EXCEPTION 'DuckLake running attempt cannot carry terminal evidence';
+    ELSIF OLD.state = 'running' AND NEW.state = 'running'
+          AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
+               OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
+               OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
+               OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at) THEN
+        RAISE EXCEPTION 'DuckLake running attempt evidence is immutable';
+    ELSIF OLD.state = 'indeterminate' AND NEW.state = 'indeterminate'
+          AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
+               OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
+               OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
+               OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
+               OR NEW.updated_at IS DISTINCT FROM OLD.updated_at) THEN
+        RAISE EXCEPTION 'DuckLake indeterminate attempt evidence is immutable';
     END IF;
     IF NEW.state = 'committed' THEN
         IF NEW.commit_marker->>'attempt_id' IS DISTINCT FROM NEW.attempt_id::text
@@ -455,8 +466,8 @@ BEGIN
            OR NEW.commit_marker->>'lease_epoch' IS DISTINCT FROM NEW.fencing_epoch::text THEN
             RAISE EXCEPTION 'DuckLake commit marker does not match attempt identity';
         END IF;
-    ELSIF NEW.commit_marker IS NOT NULL THEN
-        RAISE EXCEPTION 'DuckLake non-committed attempt cannot carry a commit marker';
+    ELSIF NEW.commit_marker IS NOT NULL OR NEW.snapshot_id IS NOT NULL THEN
+        RAISE EXCEPTION 'DuckLake non-committed attempt cannot carry commit evidence';
     END IF;
     RETURN NEW;
 END;

@@ -248,6 +248,91 @@ func TestResolveCommittedSnapshotRejectsDuplicatePersistentMarkers(t *testing.T)
 	}
 }
 
+func TestResolveCommittedSnapshotMatchesSemanticMarkerJSONAfterRestart(t *testing.T) {
+	marker := CommitMarker{
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-formatted",
+		GenerationID: "generation-formatted", AttemptID: "attempt-formatted",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:formatted",
+		Environment: "production", PhysicalPoolID: "pool-formatted",
+	}
+	canonical, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	formatted := "{\n" + canonical[1:]
+	db := openMarkerLookupDB(t, markerLookupState{fallback: [][2]driver.Value{{int64(29), formatted}}})
+	defer db.Close()
+	lookup, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lookup.Close()
+	got, err := ResolveCommittedSnapshot(context.Background(), lookup, marker)
+	if err != nil || got != 29 {
+		t.Fatalf("formatted marker resolution = %d, %v; want 29", got, err)
+	}
+}
+
+func TestResolveCommittedMarkerReturnsTypedAbsentAndFoundResults(t *testing.T) {
+	marker := CommitMarker{
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-typed",
+		GenerationID: "generation-typed", AttemptID: "attempt-typed",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:typed",
+		Environment: "production", PhysicalPoolID: "pool-typed",
+	}
+	canonical, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, tc := range map[string]struct {
+		state markerLookupState
+		want  PhysicalMarkerResolution
+	}{
+		"found":  {state: markerLookupState{fallback: [][2]driver.Value{{int64(31), canonical}}}, want: PhysicalMarkerResolution{SnapshotID: 31, Found: true}},
+		"absent": {state: markerLookupState{}, want: PhysicalMarkerResolution{}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			db := openMarkerLookupDB(t, tc.state)
+			defer db.Close()
+			lookup, err := db.Conn(context.Background())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer lookup.Close()
+			got, err := ResolveCommittedMarker(context.Background(), lookup, marker)
+			if err != nil {
+				t.Fatalf("typed resolution error = %v", err)
+			}
+			if got != tc.want {
+				t.Fatalf("typed resolution = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveCommittedMarkerRejectsDuplicateEvenWhenLastPointerMatches(t *testing.T) {
+	marker := CommitMarker{
+		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-duplicate-pointer",
+		GenerationID: "generation-duplicate-pointer", AttemptID: "attempt-duplicate-pointer",
+		LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project:duplicate-pointer",
+		Environment: "production", PhysicalPoolID: "pool-duplicate-pointer",
+	}
+	canonical, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openMarkerLookupDB(t, markerLookupState{lastID: 10, lastExtra: canonical, fallback: [][2]driver.Value{{int64(10), canonical}, {int64(11), canonical}}})
+	defer db.Close()
+	lookup, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lookup.Close()
+	if _, err := ResolveCommittedMarker(context.Background(), lookup, marker); !errors.Is(err, ErrCommittedSnapshotAmbiguous) {
+		t.Fatalf("duplicate pointer resolution error = %v, want %v", err, ErrCommittedSnapshotAmbiguous)
+	}
+}
+
 func TestResolveCommittedSnapshotPropagatesCatalogProbeError(t *testing.T) {
 	marker := CommitMarker{
 		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-1",

@@ -157,8 +157,10 @@ func (c *ackFailureConn) QueryContext(_ context.Context, query string, _ []drive
 	switch {
 	case strings.Contains(lower, "last_committed_snapshot"):
 		return &ackFailureRows{columns: []string{"id"}, values: []driver.Value{int64(42)}}, nil
-	case strings.Contains(lower, "snapshots()"):
+	case strings.Contains(lower, "snapshots()") && strings.Contains(lower, "where snapshot_id"):
 		return &ackFailureRows{columns: []string{"commit_extra_info"}, values: []driver.Value{c.state.marker}}, nil
+	case strings.Contains(lower, "snapshots()"):
+		return &ackFailureRows{columns: []string{"snapshot_id", "commit_extra_info"}, values: []driver.Value{int64(42), c.state.marker}}, nil
 	default:
 		return nil, errors.New("unexpected reconciliation query")
 	}

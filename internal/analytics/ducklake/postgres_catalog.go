@@ -55,6 +55,12 @@ const (
 	PostgresCatalogWriter PostgresCatalogMode = "writer"
 	// PostgresCatalogServing attaches a qualified snapshot read-only.
 	PostgresCatalogServing PostgresCatalogMode = "serving"
+	// PostgresCatalogMarkerReadOnly attaches an existing PostgreSQL catalog
+	// read-only without pinning one snapshot. It is reserved for exact commit
+	// marker reconciliation; callers must not use it for serving reads.
+	PostgresCatalogMarkerReadOnly PostgresCatalogMode = "marker_read_only"
+	// PostgresCatalogRecovery is a descriptive alias for marker reconciliation.
+	PostgresCatalogRecovery = PostgresCatalogMarkerReadOnly
 	// PostgresCatalogMigrate is reserved for the fenced catalog upgrade
 	// coordinator. It is never accepted by ordinary AttachSQL/Statements;
 	// callers must use MigrationStatements so AUTOMATIC_MIGRATION=true is an
@@ -119,6 +125,13 @@ func (c PostgresCatalogConfig) Validate() error {
 		}
 		if c.SnapshotVersion <= 0 {
 			return errors.New("serving PostgreSQL DuckLake attachment requires a positive SNAPSHOT_VERSION")
+		}
+	case PostgresCatalogMarkerReadOnly:
+		if strings.TrimSpace(c.DataPath) != "" {
+			return errors.New("DATA_PATH must be loaded from catalog metadata for marker reconciliation")
+		}
+		if c.SnapshotVersion != 0 {
+			return errors.New("SNAPSHOT_VERSION is not valid while resolving a commit marker")
 		}
 	case PostgresCatalogMigrate:
 		if strings.TrimSpace(c.PhysicalPoolID) == "" {
@@ -195,6 +208,8 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 		options = append(options, "CREATE_IF_NOT_EXISTS false")
 	case PostgresCatalogServing:
 		options = append(options, "READ_ONLY", "CREATE_IF_NOT_EXISTS false", fmt.Sprintf("SNAPSHOT_VERSION %d", c.SnapshotVersion))
+	case PostgresCatalogMarkerReadOnly:
+		options = append(options, "READ_ONLY", "CREATE_IF_NOT_EXISTS false")
 	}
 	// A pooled :memory: DuckDB database may invoke the connector initializer
 	// once per physical client while sharing the process-local attached
@@ -280,10 +295,52 @@ type SnapshotLookup interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
+// PhysicalMarkerResolution is the bounded value returned by a marker
+// reconciliation. Found is false only when no persistent snapshot carries
+// the exact marker; a true result always contains one positive snapshot ID.
+// Ambiguous matches are returned as ErrCommittedSnapshotAmbiguous instead of
+// exposing a count to callers that could accidentally choose one row.
+type PhysicalMarkerResolution struct {
+	SnapshotID int64
+	Found      bool
+}
+
+// PhysicalMarkerResolver is the narrow read-only capability needed by native
+// build recovery. It intentionally exposes no materialization, transaction,
+// maintenance, or catalog mutation methods.
+type PhysicalMarkerResolver interface {
+	ResolveCommittedMarker(context.Context, CommitMarker) (PhysicalMarkerResolution, error)
+	Close() error
+}
+
+// PhysicalMarkerResolverFactory opens a read-only resolver. Implementations
+// must create a fresh physical DuckDB session for every resolution call.
+type PhysicalMarkerResolverFactory interface {
+	OpenReadOnly(context.Context) (PhysicalMarkerResolver, error)
+}
+
+// PhysicalMarkerResolverFactoryFunc adapts a constructor for tests and
+// embedders while retaining the explicit read-only factory boundary.
+type PhysicalMarkerResolverFactoryFunc func(context.Context) (PhysicalMarkerResolver, error)
+
+var _ PhysicalMarkerResolverFactory = PhysicalMarkerResolverFactoryFunc(nil)
+
+func (f PhysicalMarkerResolverFactoryFunc) OpenReadOnly(ctx context.Context) (PhysicalMarkerResolver, error) {
+	if f == nil {
+		return nil, errors.New("DuckLake physical marker resolver factory is not configured")
+	}
+	return f(ctx)
+}
+
+func (f PhysicalMarkerResolverFactoryFunc) Open(ctx context.Context) (PhysicalMarkerResolver, error) {
+	return f.OpenReadOnly(ctx)
+}
+
 // ResolveCommittedSnapshot first consults DuckLake's connection-local
 // last_committed_snapshot and verifies its persistent marker.  On a fresh
-// connection it scans snapshots for the exact canonical marker.  It never
-// orders by snapshot ID or treats catalog recency as build identity.
+// connection it scans persistent snapshot metadata and compares canonical
+// marker identities in-process. It never orders by snapshot ID or treats
+// catalog recency or JSON text formatting as build identity.
 func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marker CommitMarker) (int64, error) {
 	if queryer == nil {
 		return 0, errors.New("DuckLake snapshot lookup is nil")
@@ -297,28 +354,27 @@ func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marke
 	}
 	var last sql.NullInt64
 	lastErr := queryer.QueryRowContext(ctx, "SELECT id FROM "+catalogAlias+".last_committed_snapshot()").Scan(&last)
-	switch {
-	case lastErr == nil && last.Valid && last.Int64 > 0:
+	if lastErr != nil && !errors.Is(lastErr, sql.ErrNoRows) {
+		return 0, fmt.Errorf("read DuckLake last committed snapshot: %w", lastErr)
+	}
+	var lastMarkerMatch int64
+	if lastErr == nil && last.Valid && last.Int64 > 0 {
 		var extra string
 		verifyErr := queryer.QueryRowContext(ctx,
 			"SELECT CAST(commit_extra_info AS VARCHAR) FROM "+catalogAlias+".snapshots() WHERE snapshot_id = ?", last.Int64).Scan(&extra)
 		switch {
 		case verifyErr == nil && commitMarkerMatches(extra, canonical):
-			return last.Int64, nil
+			lastMarkerMatch = last.Int64
 		case verifyErr == nil, errors.Is(verifyErr, sql.ErrNoRows):
 			// The connection-local pointer may be absent after restart or may
 			// point at another writer's commit; reconcile persistent markers.
 		default:
 			return 0, fmt.Errorf("verify DuckLake last committed snapshot: %w", verifyErr)
 		}
-	case lastErr == nil, errors.Is(lastErr, sql.ErrNoRows):
-		// NULL/empty connection-local evidence requires persistent lookup.
-	default:
-		return 0, fmt.Errorf("read DuckLake last committed snapshot: %w", lastErr)
 	}
 
 	rows, err := queryer.QueryContext(ctx,
-		"SELECT snapshot_id, CAST(commit_extra_info AS VARCHAR) FROM "+catalogAlias+".snapshots() WHERE CAST(commit_extra_info AS VARCHAR) = ?", canonical)
+		"SELECT snapshot_id, CAST(commit_extra_info AS VARCHAR) FROM "+catalogAlias+".snapshots() WHERE commit_extra_info IS NOT NULL")
 	if err != nil {
 		return 0, fmt.Errorf("find DuckLake snapshot for commit marker: %w", err)
 	}
@@ -342,6 +398,9 @@ func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marke
 	}
 	switch count {
 	case 0:
+		if lastMarkerMatch > 0 {
+			return lastMarkerMatch, nil
+		}
 		return 0, ErrCommittedSnapshotNotFound
 	case 1:
 		if found <= 0 {
@@ -351,6 +410,19 @@ func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marke
 	default:
 		return 0, ErrCommittedSnapshotAmbiguous
 	}
+}
+
+// ResolveCommittedMarker returns a typed found/absent result while retaining
+// the resolver's fail-closed ambiguity and catalog-error behavior.
+func ResolveCommittedMarker(ctx context.Context, queryer SnapshotLookup, marker CommitMarker) (PhysicalMarkerResolution, error) {
+	snapshotID, err := ResolveCommittedSnapshot(ctx, queryer, marker)
+	if errors.Is(err, ErrCommittedSnapshotNotFound) {
+		return PhysicalMarkerResolution{}, nil
+	}
+	if err != nil {
+		return PhysicalMarkerResolution{}, err
+	}
+	return PhysicalMarkerResolution{SnapshotID: snapshotID, Found: true}, nil
 }
 
 func commitMarkerMatches(extra, canonical string) bool {

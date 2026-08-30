@@ -101,9 +101,20 @@ WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
 WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
+-- name: ReconcileBuildAttemptCommitted :execrows
+-- Explicit recovery may close an exact running or indeterminate attempt after
+-- its target lease has expired. Normal completion remains guarded by the
+-- CommitBuildAttempt query and its active-lease check in the repository.
+UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,termination_evidence=NULL,updated_at=clock_timestamp(),finished_at=clock_timestamp()
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+
 -- name: TerminateBuildAttempt :execrows
 UPDATE delivery.delivery_build_attempt SET state=sqlc.arg(state),termination_evidence=sqlc.arg(evidence)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
 WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+
+-- name: ReconcileBuildAttemptTerminal :execrows
+UPDATE delivery.delivery_build_attempt SET state=sqlc.arg(state),termination_evidence=sqlc.arg(evidence)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
 -- name: RenewBuildAttemptLease :execresult
 UPDATE delivery.delivery_build_attempt

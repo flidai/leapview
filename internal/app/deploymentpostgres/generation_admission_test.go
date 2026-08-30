@@ -250,6 +250,8 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, ducklake *ducklakepostgres.Repository, input GenerationAdmissionInput) {
 	t.Helper()
 	ctx := t.Context()
+	leaseExpiresAt := timeNowPlusHour().Truncate(time.Microsecond)
+	const sessionIdentity = "duckdb-session-admission"
 	targetCreated := false
 	if _, err := repo.Target(ctx, input.Generation.TargetID); errors.Is(err, deploymentnative.ErrNotFound) {
 		if _, err := repo.CreateTarget(ctx, deploymentnative.TargetInput{TargetID: input.Generation.TargetID, ProjectID: input.Bundle.ProjectID.String(), Environment: string(input.Bundle.Environment)}); err != nil {
@@ -281,7 +283,7 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, du
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := repo.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx, deploymentnative.LeaseInput{LeaseID: input.Fence.LeaseID, TargetID: input.Fence.TargetID, OwnerID: input.Fence.OwnerID, ExpiresAt: timeNowPlusHour()}, deploymentnative.BuildAttemptInput{AttemptID: input.Commit.AttemptID, PlanID: input.Generation.PlanID, CandidateID: input.Generation.CandidateID, OwnerID: input.Commit.OwnerID, PhysicalPoolID: input.Seal.PhysicalPoolID, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Generation.PlanDigest, Namespace: input.Seal.RelationNamespace, SessionIdentity: "session-admission"}); err != nil {
+	if _, _, err := repo.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx, deploymentnative.LeaseInput{LeaseID: input.Fence.LeaseID, TargetID: input.Fence.TargetID, OwnerID: input.Fence.OwnerID, ExpiresAt: leaseExpiresAt}, deploymentnative.BuildAttemptInput{AttemptID: input.Commit.AttemptID, PlanID: input.Generation.PlanID, CandidateID: input.Generation.CandidateID, OwnerID: input.Commit.OwnerID, PhysicalPoolID: input.Seal.PhysicalPoolID, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Generation.PlanDigest, Namespace: input.Seal.RelationNamespace, SessionIdentity: sessionIdentity, LeaseExpiresAt: leaseExpiresAt}); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -298,7 +300,7 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, du
 	if _, err := ducklake.BeginAttempt(ctx, ducklakepostgres.BeginAttemptInput{
 		AttemptID: input.Commit.AttemptID, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Generation.PlanDigest,
 		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, OwnerID: input.Commit.OwnerID,
-		FencingEpoch: input.Commit.FencingEpoch, SessionIdentity: "duckdb-session-admission", LeaseExpiresAt: timeNowPlusHour(),
+		FencingEpoch: input.Commit.FencingEpoch, SessionIdentity: sessionIdentity, LeaseExpiresAt: leaseExpiresAt,
 	}); err != nil {
 		t.Fatal(err)
 	}

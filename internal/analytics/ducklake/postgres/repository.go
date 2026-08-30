@@ -156,6 +156,23 @@ type TerminateAttemptInput struct {
 	TerminatedAt time.Time
 }
 
+// ReconcileAttemptInput is exact restart evidence for a DuckLake build
+// attempt. It intentionally contains the already-resolved snapshot marker;
+// marker lookup/resolution belongs to a separate physical adapter. Recovery
+// may transition only running or indeterminate rows and never infers an
+// outcome from lease expiry alone.
+type ReconcileAttemptInput struct {
+	AttemptID           string
+	OwnerID             string
+	FencingEpoch        int64
+	Snapshot            SnapshotRef
+	CommitMarker        string
+	TerminationEvidence json.RawMessage
+	SessionTerminated   bool
+	SessionIdentity     string
+	State               AttemptState
+}
+
 type SnapshotLeaseState string
 
 const (
@@ -1058,6 +1075,196 @@ func (r *Repository) MarkAttemptIndeterminate(ctx context.Context, in TerminateA
 		return AttemptEvidence{}, ErrInvalid
 	}
 	return TerminateAttempt(ctx, r.db, in, AttemptIndeterminate)
+}
+
+// ReconcileAttempt applies an explicit exact-marker or positive
+// session-termination recovery decision. It owns a short transaction.
+func (r *Repository) ReconcileAttempt(ctx context.Context, in ReconcileAttemptInput) (AttemptEvidence, error) {
+	if r == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if b, ok := r.db.(beginner); ok {
+		tx, err := b.Begin(ctx)
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		committed := false
+		defer func() {
+			if !committed {
+				_ = tx.Rollback(ctx)
+			}
+		}()
+		got, err := r.ReconcileAttemptTx(ctx, tx, in)
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		if err := tx.Commit(ctx); err != nil {
+			return AttemptEvidence{}, err
+		}
+		committed = true
+		return got, nil
+	}
+	return reconcileAttemptTx(ctx, r.db, in)
+}
+
+// ReconcileAttemptTx applies exact recovery evidence in a caller-owned
+// transaction. It never begins, commits, or rolls back tx.
+func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in ReconcileAttemptInput) (AttemptEvidence, error) {
+	if r == nil || tx == nil || !r.Configured() {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return reconcileAttemptTx(ctx, tx, in)
+}
+
+func reconcileAttemptTx(ctx context.Context, tx DBTX, in ReconcileAttemptInput) (AttemptEvidence, error) {
+	if tx == nil || !validUUID(in.AttemptID) || !validID(in.OwnerID) || in.FencingEpoch <= 0 {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	state := in.State
+	if state != AttemptCommitted && state != AttemptAborted {
+		return AttemptEvidence{}, fmt.Errorf("%w: reconciliation outcome must be committed or aborted", ErrInvalid)
+	}
+	var marker canonicalDuckLakeRecoveryMarker
+	var markerCanonical string
+	var evidence string
+	if state == AttemptCommitted {
+		if !validSnapshotRef(in.Snapshot) || in.CommitMarker == "" || len(in.TerminationEvidence) != 0 || in.SessionTerminated {
+			return AttemptEvidence{}, fmt.Errorf("%w: committed recovery requires an exact marker", ErrInvalid)
+		}
+		parsed, err := ducklake.ParseCommitMarker(in.CommitMarker)
+		if err != nil {
+			return AttemptEvidence{}, fmt.Errorf("%w: invalid recovery commit marker: %v", ErrInvalid, err)
+		}
+		canonical, err := parsed.CanonicalJSON()
+		if err != nil {
+			return AttemptEvidence{}, fmt.Errorf("%w: invalid recovery commit marker: %v", ErrInvalid, err)
+		}
+		marker = canonicalDuckLakeRecoveryMarker{AttemptID: parsed.AttemptID, PhysicalPoolID: parsed.PhysicalPoolID, RequestDigest: parsed.RequestDigest, PlanDigest: parsed.PlanDigest, LeaseEpoch: parsed.LeaseEpoch}
+		markerCanonical = canonical
+	} else {
+		if in.Snapshot != (SnapshotRef{}) || in.CommitMarker != "" || !in.SessionTerminated {
+			return AttemptEvidence{}, fmt.Errorf("%w: aborted recovery requires positive session-termination evidence", ErrInvalid)
+		}
+		if !validID(in.SessionIdentity) {
+			return AttemptEvidence{}, fmt.Errorf("%w: session identity is invalid", ErrInvalid)
+		}
+		if err := validateSessionTerminationEvidence(in.TerminationEvidence, in.AttemptID, in.OwnerID, in.SessionIdentity, in.FencingEpoch); err != nil {
+			return AttemptEvidence{}, err
+		}
+	}
+
+	existing, err := loadAttemptForUpdate(ctx, tx, in.AttemptID)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	if existing.OwnerID != in.OwnerID || existing.FencingEpoch != in.FencingEpoch {
+		return AttemptEvidence{}, ErrStaleFence
+	}
+	if state == AttemptAborted && existing.SessionIdentity != in.SessionIdentity {
+		return AttemptEvidence{}, fmt.Errorf("%w: session-termination evidence session differs", ErrConflict)
+	}
+	if state == AttemptCommitted && (existing.PhysicalPoolID != in.Snapshot.PhysicalPoolID || existing.CatalogID != in.Snapshot.CatalogID) {
+		return AttemptEvidence{}, fmt.Errorf("%w: attempt catalog identity differs", ErrConflict)
+	}
+	if state == AttemptCommitted {
+		if marker.AttemptID != in.AttemptID || marker.PhysicalPoolID != existing.PhysicalPoolID || marker.RequestDigest != existing.RequestDigest || marker.PlanDigest != existing.PlanDigest || marker.LeaseEpoch != existing.FencingEpoch {
+			return AttemptEvidence{}, fmt.Errorf("%w: recovery commit marker identity mismatch", ErrConflict)
+		}
+		if existing.State == AttemptCommitted {
+			if existing.SnapshotID == in.Snapshot.SnapshotID && markersEqual(existing.CommitMarker, markerCanonical) {
+				return existing, nil
+			}
+			return AttemptEvidence{}, fmt.Errorf("%w: committed recovery evidence differs", ErrConflict)
+		}
+	} else if existing.State == AttemptAborted {
+		var evidenceErr error
+		evidence, evidenceErr = canonicalEvidence(in.TerminationEvidence)
+		if evidenceErr == nil && evidenceEqual(existing.TerminationEvidence, evidence) {
+			return existing, nil
+		}
+		return AttemptEvidence{}, fmt.Errorf("%w: aborted recovery evidence differs", ErrConflict)
+	}
+	if existing.State != AttemptRunning && existing.State != AttemptIndeterminate {
+		return AttemptEvidence{}, fmt.Errorf("%w: attempt is %s", ErrConflict, existing.State)
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	if state == AttemptCommitted {
+		if err := ensureSnapshotLive(ctx, tx, in.Snapshot); err != nil {
+			return AttemptEvidence{}, err
+		}
+		rows, err := querygen(tx).ReconcileAttemptCommitted(ctx, dbgen.ReconcileAttemptCommittedParams{AttemptID: pgUUID(in.AttemptID), OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, SnapshotID: &in.Snapshot.SnapshotID, CommitMarker: []byte(markerCanonical), UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true}})
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		if rows != 1 {
+			return AttemptEvidence{}, ErrConflict
+		}
+	} else {
+		evidence, err = canonicalEvidence(in.TerminationEvidence)
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		rows, err := querygen(tx).ReconcileAttemptTerminal(ctx, dbgen.ReconcileAttemptTerminalParams{AttemptID: pgUUID(in.AttemptID), OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, State: string(state), TerminationEvidence: []byte(evidence), UpdatedAt: pgtype.Timestamptz{Time: now, Valid: true}})
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		if rows != 1 {
+			return AttemptEvidence{}, ErrConflict
+		}
+	}
+	got, err := LoadAttempt(ctx, tx, in.AttemptID)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	if got.State != state {
+		return AttemptEvidence{}, fmt.Errorf("%w: attempt is %s", ErrConflict, got.State)
+	}
+	if state == AttemptCommitted {
+		if got.SnapshotID != in.Snapshot.SnapshotID || !markersEqual(got.CommitMarker, markerCanonical) {
+			return AttemptEvidence{}, fmt.Errorf("%w: committed recovery evidence differs", ErrConflict)
+		}
+	} else if !evidenceEqual(got.TerminationEvidence, string(evidence)) {
+		return AttemptEvidence{}, fmt.Errorf("%w: aborted recovery evidence differs", ErrConflict)
+	}
+	return got, nil
+}
+
+type canonicalDuckLakeRecoveryMarker struct {
+	AttemptID, PhysicalPoolID, RequestDigest, PlanDigest string
+	LeaseEpoch                                           int64
+}
+
+type sessionTerminationEvidenceDocument struct {
+	SchemaVersion     int    `json:"schema_version"`
+	AttemptID         string `json:"attempt_id"`
+	OwnerID           string `json:"owner_id"`
+	FencingEpoch      int64  `json:"fencing_epoch"`
+	SessionIdentity   string `json:"session_identity"`
+	SessionTerminated bool   `json:"session_terminated"`
+}
+
+func validateSessionTerminationEvidence(raw json.RawMessage, attemptID, ownerID, sessionIdentity string, fencingEpoch int64) error {
+	evidence, err := canonicalEvidence(raw)
+	if err != nil {
+		return fmt.Errorf("%w: positive session-termination evidence is required", ErrInvalid)
+	}
+	var document sessionTerminationEvidenceDocument
+	if err := strictjson.Decode([]byte(evidence), &document); err != nil {
+		return fmt.Errorf("%w: positive session-termination evidence is invalid", ErrInvalid)
+	}
+	if document.SchemaVersion != 1 || document.AttemptID != attemptID || document.OwnerID != ownerID || document.FencingEpoch != fencingEpoch || document.SessionIdentity != sessionIdentity || !document.SessionTerminated {
+		return fmt.Errorf("%w: positive session-termination evidence identity differs", ErrInvalid)
+	}
+	return nil
 }
 
 func LoadAttempt(ctx context.Context, db DBTX, id string) (AttemptEvidence, error) {

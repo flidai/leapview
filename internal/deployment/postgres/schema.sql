@@ -412,12 +412,15 @@ BEGIN
           AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
         RAISE EXCEPTION 'terminal build attempt lease expiry is immutable';
     END IF;
-    IF OLD.state <> 'running' AND (NEW.state <> OLD.state OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
+    IF OLD.state = 'indeterminate' AND NEW.state NOT IN ('indeterminate','committed','aborted') THEN
+        RAISE EXCEPTION 'indeterminate build attempt may only be reconciled to committed or aborted';
+    END IF;
+    IF OLD.state NOT IN ('running','indeterminate') AND (NEW.state <> OLD.state OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
        OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
        OR NEW.finished_at IS DISTINCT FROM OLD.finished_at OR NEW.updated_at <> OLD.updated_at) THEN
         RAISE EXCEPTION 'terminal build attempt evidence is immutable';
     END IF;
-    IF OLD.state = 'running' AND NEW.state = 'running'
+    IF OLD.state IN ('running','indeterminate') AND NEW.state = OLD.state
        AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
             OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
             OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence

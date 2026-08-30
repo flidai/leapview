@@ -173,6 +173,22 @@ type TerminateAttemptInput struct {
 	Evidence           json.RawMessage
 }
 
+// ReconcileBuildAttemptInput is exact restart evidence for one previously
+// running (or indeterminate) build attempt. Unlike CommitAttemptInput, this
+// explicit recovery input is allowed to complete an expired attempt lease;
+// the supplied marker or positive session-termination evidence is the guard.
+// State must be committed or aborted.
+type ReconcileBuildAttemptInput struct {
+	AttemptID, OwnerID  string
+	FencingEpoch        int64
+	SnapshotID          int64
+	CommitMarker        json.RawMessage
+	TerminationEvidence json.RawMessage
+	SessionTerminated   bool
+	SessionIdentity     string
+	State               BuildAttemptState
+}
+
 // SnapshotSeal is immutable qualification evidence.  Every field that can
 // affect execution or routing is relational, never hidden in evidence JSON.
 type SnapshotSeal struct {
@@ -1602,6 +1618,199 @@ func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in T
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
 	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
+}
+
+// ReconcileBuildAttempt applies an explicit exact-marker or positive
+// session-termination recovery decision. It owns a short transaction; use
+// ReconcileBuildAttemptTx when composing the decision with another ledger.
+func (r *Repository) ReconcileBuildAttempt(ctx context.Context, in ReconcileBuildAttemptInput) (DeliveryBuildAttempt, error) {
+	if _, err := requireDB(r); err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	tx, err := r.begin(contextOrBackground(ctx))
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	attempt, err := r.ReconcileBuildAttemptTx(ctx, tx, in)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	committed = true
+	return attempt, nil
+}
+
+// ReconcileBuildAttemptTx applies exact recovery evidence in a caller-owned
+// native PostgreSQL transaction. It never begins, commits, or rolls back tx.
+func (r *Repository) ReconcileBuildAttemptTx(ctx context.Context, tx Tx, in ReconcileBuildAttemptInput) (DeliveryBuildAttempt, error) {
+	if r == nil || tx == nil || !r.Configured() {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	return reconcileBuildAttemptTx(contextOrBackground(ctx), tx, in)
+}
+
+func reconcileBuildAttemptTx(ctx context.Context, db DBTX, in ReconcileBuildAttemptInput) (DeliveryBuildAttempt, error) {
+	if db == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	id, err := uuidID(in.AttemptID, "attempt id", false)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	owner, err := textID(in.OwnerID, "owner id")
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if in.FencingEpoch <= 0 {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	state := in.State
+	if state != AttemptCommitted && state != AttemptAborted {
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: reconciliation outcome must be committed or aborted", ErrInvalid)
+	}
+	var markerCanonical []byte
+	if state == AttemptCommitted {
+		if in.SnapshotID <= 0 {
+			return DeliveryBuildAttempt{}, ErrInvalid
+		}
+		marker, canonical, markerErr := decodeCommitMarker(in.CommitMarker, true)
+		if markerErr != nil {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: invalid recovery commit marker: %v", ErrInvalid, markerErr)
+		}
+		// Identity fields that depend on the persisted attempt are checked after
+		// locking it below. This preflight only guarantees marker structure.
+		_ = marker
+		markerCanonical = canonical
+		if len(in.TerminationEvidence) != 0 || in.SessionTerminated {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: committed recovery cannot carry termination evidence", ErrInvalid)
+		}
+	} else {
+		if len(in.CommitMarker) != 0 {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: aborted recovery cannot carry a commit marker", ErrInvalid)
+		}
+		if !in.SessionTerminated {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: aborted recovery requires positive session-termination evidence", ErrInvalid)
+		}
+		if in.SessionIdentity == "" || in.SessionIdentity != strings.TrimSpace(in.SessionIdentity) || len(in.SessionIdentity) > 512 || strings.ContainsAny(in.SessionIdentity, "\x00\r\n") {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: session identity is invalid", ErrInvalid)
+		}
+		if err := validateSessionTerminationEvidence(in.TerminationEvidence, id, owner, in.SessionIdentity, in.FencingEpoch); err != nil {
+			return DeliveryBuildAttempt{}, err
+		}
+	}
+
+	if _, err := depdb.New(db).LockBuildAttempt(ctx, dbUUID(id)); errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryBuildAttempt{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	at, err := loadAttempt(ctx, db, id)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if at.OwnerID != owner || at.FencingEpoch != in.FencingEpoch {
+		return DeliveryBuildAttempt{}, ErrStaleFence
+	}
+	if state == AttemptAborted && at.SessionIdentity != in.SessionIdentity {
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: session-termination evidence session differs", ErrConflict)
+	}
+	if state == AttemptCommitted {
+		marker, _, markerErr := decodeCommitMarker(markerCanonical, false)
+		if markerErr != nil || !markerIdentityMatches(marker, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, in.FencingEpoch) {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: recovery commit marker identity mismatch", ErrConflict)
+		}
+		if at.State == AttemptCommitted {
+			stored, _, storedErr := decodeCommitMarker(at.CommitMarker, false)
+			if storedErr == nil && at.SnapshotID == in.SnapshotID && markerIdentityMatches(stored, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, in.FencingEpoch) {
+				storedCanonical, canonicalErr := stored.CanonicalJSON()
+				if canonicalErr == nil && bytes.Equal([]byte(storedCanonical), markerCanonical) {
+					return at, nil
+				}
+			}
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: committed recovery evidence differs", ErrConflict)
+		}
+	} else if at.State == AttemptAborted {
+		evidence, evidenceErr := canonicalNonEmpty(in.TerminationEvidence, maxEvidence)
+		if evidenceErr == nil && sameCanonical(at.TerminationEvidence, evidence) {
+			return at, nil
+		}
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: aborted recovery evidence differs", ErrConflict)
+	}
+	if at.State != AttemptRunning && at.State != AttemptIndeterminate {
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: attempt is %s", ErrConflict, at.State)
+	}
+	if state == AttemptCommitted {
+		rows, err := depdb.New(db).ReconcileBuildAttemptCommitted(ctx, depdb.ReconcileBuildAttemptCommittedParams{AttemptID: dbUUID(id), SnapshotID: pgInt8(&in.SnapshotID), CommitMarker: markerCanonical, OwnerID: owner, FencingEpoch: in.FencingEpoch})
+		if err != nil {
+			return DeliveryBuildAttempt{}, err
+		}
+		if rows != 1 {
+			return DeliveryBuildAttempt{}, ErrConflict
+		}
+	} else {
+		evidence, evidenceErr := canonicalNonEmpty(in.TerminationEvidence, maxEvidence)
+		if evidenceErr != nil {
+			return DeliveryBuildAttempt{}, ErrInvalid
+		}
+		rows, err := depdb.New(db).ReconcileBuildAttemptTerminal(ctx, depdb.ReconcileBuildAttemptTerminalParams{AttemptID: dbUUID(id), State: string(state), Evidence: evidence, OwnerID: owner, FencingEpoch: in.FencingEpoch})
+		if err != nil {
+			return DeliveryBuildAttempt{}, err
+		}
+		if rows != 1 {
+			return DeliveryBuildAttempt{}, ErrConflict
+		}
+	}
+	got, err := loadAttempt(ctx, db, id)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if got.State != state {
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: attempt is %s", ErrConflict, got.State)
+	}
+	if state == AttemptCommitted {
+		stored, _, storedErr := decodeCommitMarker(got.CommitMarker, false)
+		storedCanonical, canonicalErr := stored.CanonicalJSON()
+		if got.SnapshotID != in.SnapshotID || !markerMatches(got.CommitMarker, id, got.PhysicalPoolID, got.RequestDigest, got.PlanDigest, in.FencingEpoch) || storedErr != nil || canonicalErr != nil || !bytes.Equal([]byte(storedCanonical), markerCanonical) {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: committed recovery evidence differs", ErrConflict)
+		}
+	} else if !sameCanonical(got.TerminationEvidence, in.TerminationEvidence) {
+		return DeliveryBuildAttempt{}, fmt.Errorf("%w: aborted recovery evidence differs", ErrConflict)
+	}
+	return got, nil
+}
+
+// validateSessionTerminationEvidence requires one closed, attempt-bound,
+// positive session-termination document.
+type sessionTerminationEvidenceDocument struct {
+	SchemaVersion     int    `json:"schema_version"`
+	AttemptID         string `json:"attempt_id"`
+	OwnerID           string `json:"owner_id"`
+	FencingEpoch      int64  `json:"fencing_epoch"`
+	SessionIdentity   string `json:"session_identity"`
+	SessionTerminated bool   `json:"session_terminated"`
+}
+
+func validateSessionTerminationEvidence(raw json.RawMessage, attemptID, ownerID, sessionIdentity string, fencingEpoch int64) error {
+	canonical, err := canonicalNonEmpty(raw, maxEvidence)
+	if err != nil {
+		return fmt.Errorf("%w: positive session-termination evidence is required", ErrInvalid)
+	}
+	var document sessionTerminationEvidenceDocument
+	if err := strictjson.Decode(canonical, &document); err != nil {
+		return fmt.Errorf("%w: positive session-termination evidence is invalid", ErrInvalid)
+	}
+	if document.SchemaVersion != 1 || document.AttemptID != attemptID || document.OwnerID != ownerID || document.FencingEpoch != fencingEpoch || document.SessionIdentity != sessionIdentity || !document.SessionTerminated {
+		return fmt.Errorf("%w: positive session-termination evidence identity differs", ErrInvalid)
+	}
+	return nil
 }
 
 // RenewBuildAttemptLeaseTx extends a running build attempt lease on a

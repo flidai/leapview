@@ -217,10 +217,22 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
 
-	// The DuckLake ledger is written before delivery completion while the
-	// caller-owned transaction still contains the running attempt. Any failure
-	// in the subsequent delivery, generation, or serving steps rolls back this
-	// evidence together with the rest of admission.
+	// Every cross-ledger attempt transition locks the delivery attempt before
+	// the DuckLake attempt. Recovery and normal completion therefore cannot
+	// form a delivery<->DuckLake lock cycle when they race. The artifact bind
+	// provides that first delivery lock and remains atomic with every later
+	// mutation in this caller-owned transaction.
+	artifactBinding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
+		AttemptID: normalized.Commit.AttemptID, ServingArtifactID: normalized.Seal.ServingArtifactID,
+		ServingArtifactDigest: normalized.Seal.ServingArtifactDigest, ServingStateID: normalized.Generation.GenerationID,
+		OwnerID: normalized.Fence.OwnerID, FencingEpoch: normalized.Fence.FencingEpoch,
+	})
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := verifyArtifactBinding(artifactBinding, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 	duckAttempt, err := a.ducklake.CommitAttemptTx(ctx, tx, ducklakepostgres.CommitAttemptInput{
 		AttemptID:    normalized.Commit.AttemptID,
 		OwnerID:      normalized.Commit.OwnerID,
@@ -232,18 +244,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 		return GenerationAdmissionResult{}, err
 	}
 	if err := verifyDuckLakeAttempt(duckAttempt, normalized); err != nil {
-		return GenerationAdmissionResult{}, err
-	}
-
-	artifactBinding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
-		AttemptID: normalized.Commit.AttemptID, ServingArtifactID: normalized.Seal.ServingArtifactID,
-		ServingArtifactDigest: normalized.Seal.ServingArtifactDigest, ServingStateID: normalized.Generation.GenerationID,
-		OwnerID: normalized.Fence.OwnerID, FencingEpoch: normalized.Fence.FencingEpoch,
-	})
-	if err != nil {
-		return GenerationAdmissionResult{}, err
-	}
-	if err := verifyArtifactBinding(artifactBinding, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	completed, err := a.delivery.CompleteBuildTx(ctx, tx, deploymentnative.CommitAttemptInput{

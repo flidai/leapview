@@ -1,8 +1,6 @@
 package postgres
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,34 +10,11 @@ import (
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
-	_ "modernc.org/sqlite"
 )
 
 func digest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
 const testCatalogUUID = "0198f2c0-7c7a-7f00-8a11-000000000001"
-
-// sqliteSnapshotLookup adapts a tiny in-memory SQL fixture to DuckLake's
-// SnapshotLookup interface. Rewriting only the DuckLake table-function names
-// keeps the production resolver's query shape intact while exercising its
-// missing-marker path without requiring a DuckDB extension.
-type sqliteSnapshotLookup struct{ db *sql.DB }
-
-func (s sqliteSnapshotLookup) rewrite(query string) string {
-	return strings.NewReplacer(
-		"lake.last_committed_snapshot()", "fake_last_committed_snapshot",
-		"lake.snapshots()", "fake_snapshots",
-		"CAST(commit_extra_info AS VARCHAR)", "commit_extra_info",
-	).Replace(query)
-}
-
-func (s sqliteSnapshotLookup) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
-	return s.db.QueryRowContext(ctx, s.rewrite(query), args...)
-}
-
-func (s sqliteSnapshotLookup) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
-	return s.db.QueryContext(ctx, s.rewrite(query), args...)
-}
 
 func TestValidationRejectsUnboundedOrCrossPoolIdentity(t *testing.T) {
 	if err := validateCatalog(CatalogIdentity{PhysicalPoolID: " ", CatalogID: "catalog", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); !errors.Is(err, ErrInvalid) {
@@ -257,7 +232,7 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	}
 }
 
-func TestReconcileRequiresPositiveTerminationEvidence(t *testing.T) {
+func TestReconcileAttemptRequiresClosedTerminationEvidenceAndProtectsIndeterminateState(t *testing.T) {
 	h := postgrestest.Start(t)
 	db := h.NewDatabase(t, "ducklake_reconcile_test")
 	p, err := pgxpool.New(t.Context(), db.AdminURL())
@@ -281,46 +256,38 @@ func TestReconcileRequiresPositiveTerminationEvidence(t *testing.T) {
 	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatal(err)
 	}
-	lookupDB, err := sql.Open("sqlite", "file:ducklake_reconcile_lookup?mode=memory&cache=shared")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = lookupDB.Close() })
-	if _, err := lookupDB.ExecContext(t.Context(), `CREATE TABLE fake_last_committed_snapshot (id INTEGER); CREATE TABLE fake_snapshots (snapshot_id INTEGER, commit_extra_info TEXT);`); err != nil {
-		t.Fatal(err)
-	}
-	lookup := sqliteSnapshotLookup{db: lookupDB}
-
-	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000010"
+	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000010"
 	requestDigest, planDigest := digest('b'), digest('c')
 	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder", FencingEpoch: 1, SessionIdentity: "session", LeaseExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-reconcile", GenerationID: "generation-reconcile", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest, Project: "project", Environment: "prod", PhysicalPoolID: poolID}
-	got, err := r.ReconcileExternalAttempt(t.Context(), ExternalAttemptReconciliation{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, Marker: marker, Snapshot: SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 99}, Local: lookup, SessionTerminated: true})
-	if err != nil {
+	if _, err := r.MarkAttemptIndeterminate(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, Evidence: json.RawMessage(`{"reason":"marker-outcome-unknown"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if got.State != AttemptIndeterminate {
-		t.Fatalf("missing termination evidence state = %s, want indeterminate", got.State)
+	if _, err := r.ReconcileAttempt(t.Context(), ReconcileAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SessionIdentity: "session", SessionTerminated: true, TerminationEvidence: json.RawMessage(`{"session":"terminated"}`), State: AttemptAborted}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("open termination evidence error = %v, want invalid", err)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE ducklake.attempt_evidence SET termination_evidence='{"tampered":true}'::jsonb,updated_at=clock_timestamp(),terminal_at=clock_timestamp() WHERE attempt_id=$1`, attemptID); err == nil {
+		t.Fatal("indeterminate attempt evidence rewrite was accepted")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE ducklake.attempt_evidence SET snapshot_id=99 WHERE attempt_id=$1`, attemptID); err == nil {
+		t.Fatal("indeterminate attempt accepted commit snapshot evidence")
 	}
 
-	attemptID = "0198f2c0-7c7a-7f00-8a11-000000000011"
-	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder", FencingEpoch: 1, SessionIdentity: "session-2", LeaseExpiresAt: time.Now().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
-	marker.AttemptID = attemptID
-	got, err = r.ReconcileExternalAttempt(t.Context(), ExternalAttemptReconciliation{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, Marker: marker, Snapshot: SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 100}, Local: lookup, SessionTerminated: true, TerminationEvidence: json.RawMessage(`{"session":"terminated","exit_code":1}`)})
+	evidence := json.RawMessage(`{"schema_version":1,"attempt_id":"` + attemptID + `","owner_id":"builder","fencing_epoch":1,"session_identity":"session","session_terminated":true}`)
+	in := ReconcileAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SessionIdentity: "session", SessionTerminated: true, TerminationEvidence: evidence, State: AttemptAborted}
+	got, err := r.ReconcileAttempt(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.State != AttemptAborted {
 		t.Fatalf("positive termination evidence state = %s, want aborted", got.State)
 	}
-	if _, err := r.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, Evidence: json.RawMessage(`{"session":"different"}`)}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("terminal evidence rewrite error = %v", err)
+	if replay, err := r.ReconcileAttempt(t.Context(), in); err != nil || replay.State != AttemptAborted {
+		t.Fatalf("exact reconciliation replay = %#v, %v", replay, err)
 	}
-	if _, err := r.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "stale-builder", FencingEpoch: 1, Evidence: json.RawMessage(`{"session":"terminated","exit_code":1}`)}); !errors.Is(err, ErrStaleFence) {
+	staleEvidence := json.RawMessage(`{"schema_version":1,"attempt_id":"` + attemptID + `","owner_id":"stale-builder","fencing_epoch":1,"session_identity":"session","session_terminated":true}`)
+	if _, err := r.ReconcileAttempt(t.Context(), ReconcileAttemptInput{AttemptID: attemptID, OwnerID: "stale-builder", FencingEpoch: 1, SessionIdentity: "session", SessionTerminated: true, TerminationEvidence: staleEvidence, State: AttemptAborted}); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("terminal stale owner error = %v", err)
 	}
 }

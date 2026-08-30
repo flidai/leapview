@@ -96,9 +96,21 @@ UPDATE ducklake.attempt_evidence
 SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
 WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
+-- name: ReconcileAttemptCommitted :execrows
+-- Explicit restart recovery may close an exact running or indeterminate
+-- attempt. Ordinary CommitAttempt remains unchanged and owns its normal
+-- running-attempt transition.
+UPDATE ducklake.attempt_evidence
+SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,termination_evidence=NULL,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
+WHERE attempt_id=sqlc.arg(attempt_id) AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+
 -- name: UpdateAttemptTerminal :exec
 UPDATE ducklake.attempt_evidence SET state=sqlc.arg(state),termination_evidence=sqlc.arg(termination_evidence)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
 WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+
+-- name: ReconcileAttemptTerminal :execrows
+UPDATE ducklake.attempt_evidence SET state=sqlc.arg(state),termination_evidence=sqlc.arg(termination_evidence)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
+WHERE attempt_id=sqlc.arg(attempt_id) AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
 -- name: RenewAttemptLease :execresult
 UPDATE ducklake.attempt_evidence

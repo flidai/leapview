@@ -187,7 +187,11 @@ func TestNativeBuildExpiredLeasesSettleEveryLedger(t *testing.T) {
 				}
 			}
 			buildErr := errors.New("expired native build failure")
-			got := coordinator.settleNativeBuildFailure(t.Context(), f.Lease, admission, buildErr, tt.classification, NativePhysicalBuildPhaseEvidence, nil)
+			phase := NativePhysicalBuildPhaseEvidence
+			if tt.classification == NativePhysicalFailureDeterministic {
+				phase = NativePhysicalBuildPhaseValidation
+			}
+			got := coordinator.settleNativeBuildFailure(t.Context(), f.Lease, admission, buildErr, tt.classification, phase, nil)
 			if !errors.Is(got, buildErr) {
 				t.Fatalf("settlement error = %v, want original build error", got)
 			}
