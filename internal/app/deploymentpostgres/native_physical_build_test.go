@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -22,17 +24,45 @@ import (
 func nativePhysicalDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
 type nativePhysicalEnvironmentFake struct {
-	materialize  func(context.Context, analyticsmaterialization.Request) (int64, error)
-	seal         ducklake.PostgresSnapshotSealEvidence
-	closure      ducklake.NativeSnapshotClosureEvidence
-	closeErr     error
-	materializes int
-	seals        int
-	closures     int
-	closes       int
-	request      analyticsmaterialization.Request
-	closureReq   ducklake.NativeSnapshotClosureRequest
+	materialize        func(context.Context, analyticsmaterialization.Request) (int64, error)
+	seal               ducklake.PostgresSnapshotSealEvidence
+	closure            ducklake.NativeSnapshotClosureEvidence
+	closeErr           error
+	materializes       int
+	seals              int
+	closures           int
+	closes             int
+	request            analyticsmaterialization.Request
+	closureReq         ducklake.NativeSnapshotClosureRequest
+	observations       []analyticsmaterialize.SourceObservation
+	atomicObservations []analyticsmaterialize.SourceObservation
+	observationErr     error
 }
+
+// nativePhysicalGetterOnlyEnvironment deliberately exposes a latest-value
+// getter without the atomic materialization extension. Native physical builds
+// must ignore that getter because it cannot prove which concurrent writer run
+// produced the observations.
+type nativePhysicalGetterOnlyEnvironment struct {
+	delegate    *nativePhysicalEnvironmentFake
+	getterCalls int
+}
+
+func (e *nativePhysicalGetterOnlyEnvironment) CatalogID() string { return e.delegate.CatalogID() }
+func (e *nativePhysicalGetterOnlyEnvironment) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
+	return e.delegate.Materialize(ctx, request)
+}
+func (e *nativePhysicalGetterOnlyEnvironment) SourceObservations(context.Context) ([]analyticsmaterialize.SourceObservation, error) {
+	e.getterCalls++
+	return []analyticsmaterialize.SourceObservation{{ID: "uncorrelated"}}, nil
+}
+func (e *nativePhysicalGetterOnlyEnvironment) SnapshotSealEvidence(ctx context.Context, snapshotID int64) (ducklake.PostgresSnapshotSealEvidence, error) {
+	return e.delegate.SnapshotSealEvidence(ctx, snapshotID)
+}
+func (e *nativePhysicalGetterOnlyEnvironment) NativeSnapshotClosureEvidence(ctx context.Context, request ducklake.NativeSnapshotClosureRequest) (ducklake.NativeSnapshotClosureEvidence, error) {
+	return e.delegate.NativeSnapshotClosureEvidence(ctx, request)
+}
+func (e *nativePhysicalGetterOnlyEnvironment) Close() error { return e.delegate.Close() }
 
 func (e *nativePhysicalEnvironmentFake) CatalogID() string { return e.closure.CatalogID }
 
@@ -43,6 +73,26 @@ func (f *nativePhysicalEnvironmentFake) Materialize(ctx context.Context, request
 		return f.materialize(ctx, request)
 	}
 	return 42, nil
+}
+func (f *nativePhysicalEnvironmentFake) MaterializeWithObservations(ctx context.Context, request analyticsmaterialization.Request) (int64, []analyticsmaterialize.SourceObservation, error) {
+	snapshotID, err := f.Materialize(ctx, request)
+	if err != nil {
+		return 0, nil, err
+	}
+	if f.observationErr != nil {
+		return 0, nil, f.observationErr
+	}
+	observations := f.observations
+	if f.atomicObservations != nil {
+		observations = f.atomicObservations
+	}
+	return snapshotID, cloneSourceObservations(observations), nil
+}
+func (f *nativePhysicalEnvironmentFake) SourceObservations(context.Context) ([]analyticsmaterialize.SourceObservation, error) {
+	if f.observationErr != nil {
+		return nil, f.observationErr
+	}
+	return cloneSourceObservations(f.observations), nil
 }
 func (f *nativePhysicalEnvironmentFake) SnapshotSealEvidence(context.Context, int64) (ducklake.PostgresSnapshotSealEvidence, error) {
 	f.seals++
@@ -134,8 +184,9 @@ func nativePhysicalEnvironment(t *testing.T, in NativePhysicalBuildInput) *nativ
 		t.Fatal(err)
 	}
 	f := &nativePhysicalEnvironmentFake{
-		seal:    ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(in.Attempt.PhysicalPoolID), DataPath: root, ExtensionVersion: "1", CatalogVersion: "1", SnapshotID: snapshot, CommitMarker: canonical},
-		closure: ducklake.NativeSnapshotClosureEvidence{CatalogID: in.CatalogID, SnapshotID: snapshot, ObjectRoot: root, RelationNamespace: in.Attempt.Namespace, Relations: relations, Objects: []ducklake.NativeSnapshotObject{}, RelationManifestJSON: relationJSON, ClosureJSON: closureJSON, CanonicalJSON: canonicalClosure, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest, ObjectRootDigest: rootDigest},
+		seal:         ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(in.Attempt.PhysicalPoolID), DataPath: root, ExtensionVersion: "1", CatalogVersion: "1", SnapshotID: snapshot, CommitMarker: canonical},
+		closure:      ducklake.NativeSnapshotClosureEvidence{CatalogID: in.CatalogID, SnapshotID: snapshot, ObjectRoot: root, RelationNamespace: in.Attempt.Namespace, Relations: relations, Objects: []ducklake.NativeSnapshotObject{}, RelationManifestJSON: relationJSON, ClosureJSON: closureJSON, CanonicalJSON: canonicalClosure, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest, ObjectRootDigest: rootDigest},
+		observations: []analyticsmaterialize.SourceObservation{{ID: "orders", Schema: []semanticmodel.ColumnSchema{{Name: "id", Ordinal: 0, PhysicalType: "BIGINT"}}, Revision: "rev-1", ObservationQueries: 1, ObservationRows: 2, ObservationMillis: 3}},
 	}
 	return f
 }
@@ -174,6 +225,109 @@ func TestBuildNativePhysicalSuccess(t *testing.T) {
 	}
 	if env.request.RelationNamespace != in.Attempt.Namespace {
 		t.Fatalf("materialization relation namespace = %q, want attempt namespace %q", env.request.RelationNamespace, in.Attempt.Namespace)
+	}
+	if len(got.SourceObservations) != 1 || got.SourceObservations[0].ID != "orders" {
+		t.Fatalf("source observations = %#v", got.SourceObservations)
+	}
+}
+
+func TestBuildNativePhysicalObservationEvidenceIsCopyIsolated(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := nativePhysicalEnvironment(t, in)
+	got, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got.SourceObservations[0].ID = "mutated"
+	got.SourceObservations[0].Schema[0].Name = "mutated"
+	if env.observations[0].ID != "orders" || env.observations[0].Schema[0].Name != "id" {
+		t.Fatalf("source observations alias runtime state: %#v", env.observations)
+	}
+	env.observations[0].ID = "changed-after-return"
+	if got.SourceObservations[0].ID != "mutated" {
+		t.Fatalf("source observations unexpectedly alias environment after return: %#v", got.SourceObservations)
+	}
+}
+
+func TestBuildNativePhysicalUsesAtomicObservationResult(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := nativePhysicalEnvironment(t, in)
+	env.observations = []analyticsmaterialize.SourceObservation{{ID: "stale-getter"}}
+	env.atomicObservations = []analyticsmaterialize.SourceObservation{{ID: "same-writer"}}
+	got, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.SourceObservations) != 1 || got.SourceObservations[0].ID != "same-writer" {
+		t.Fatalf("source observations = %#v, want atomic result", got.SourceObservations)
+	}
+}
+
+func TestBuildNativePhysicalIgnoresUncorrelatedObservationGetter(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := &nativePhysicalGetterOnlyEnvironment{delegate: nativePhysicalEnvironment(t, in)}
+	got, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if env.getterCalls != 0 {
+		t.Fatalf("uncorrelated observation getter called %d times", env.getterCalls)
+	}
+	if got.SourceObservations != nil {
+		t.Fatalf("source observations = %#v, want no uncorrelated evidence", got.SourceObservations)
+	}
+}
+
+func TestBuildNativePhysicalAcceptsBoundedSQLMetadataWhitespace(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := nativePhysicalEnvironment(t, in)
+	env.observations[0].Schema[0].Name = " id "
+	env.observations[0].Schema[0].PhysicalType = " BIGINT "
+	env.observations[0].Schema[0].Default = "  now()  "
+	env.observations[0].Schema[0].Comment = "first line\nsecond line"
+	if _, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	})); err != nil {
+		t.Fatalf("bounded SQL metadata whitespace rejected: %v", err)
+	}
+}
+
+func TestValidateSourceObservationsRejectsAggregateColumnBudget(t *testing.T) {
+	observations := make([]analyticsmaterialize.SourceObservation, 5)
+	remaining := maxNativeObservationTotalColumns + 1
+	for i := range observations {
+		count := min(remaining, maxNativeObservationSchemaColumns)
+		observations[i].ID = fmt.Sprintf("source-%d", i)
+		observations[i].Schema = make([]semanticmodel.ColumnSchema, count)
+		for j := range observations[i].Schema {
+			observations[i].Schema[j] = semanticmodel.ColumnSchema{Name: "id", PhysicalType: "BIGINT"}
+		}
+		remaining -= count
+		if remaining == 0 {
+			observations = observations[:i+1]
+			break
+		}
+	}
+	if err := validateSourceObservations(observations); !errors.Is(err, deploymentnative.ErrInvalid) {
+		t.Fatalf("aggregate source schema error = %v, want ErrInvalid", err)
+	}
+}
+
+func TestBuildNativePhysicalRejectsInvalidSourceObservationEvidence(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := nativePhysicalEnvironment(t, in)
+	env.observations = []analyticsmaterialize.SourceObservation{{ID: "orders"}, {ID: "orders"}}
+	_, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	}))
+	if err == nil || !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("duplicate source observation error = %v, want conflict", err)
 	}
 }
 

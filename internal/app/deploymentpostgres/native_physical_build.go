@@ -21,6 +21,8 @@ import (
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
@@ -56,6 +58,98 @@ func (f NativePhysicalBuildEnvironmentFactoryFunc) Open(ctx context.Context, mar
 		return nil, errors.New("native physical build environment factory is not configured")
 	}
 	return f(ctx, marker)
+}
+
+// NativePhysicalBuildPhase identifies the boundary at which a native physical
+// build failed. The phases are intentionally coarse: callers use them to
+// decide whether an attempt can be safely failed or needs indeterminate
+// recovery, not to expose implementation details of the writer.
+type NativePhysicalBuildPhase string
+
+const (
+	NativePhysicalBuildPhaseValidation  NativePhysicalBuildPhase = "validation"
+	NativePhysicalBuildPhaseOpen        NativePhysicalBuildPhase = "open"
+	NativePhysicalBuildPhaseMaterialize NativePhysicalBuildPhase = "materialize"
+	NativePhysicalBuildPhaseEvidence    NativePhysicalBuildPhase = "evidence"
+	NativePhysicalBuildPhaseClose       NativePhysicalBuildPhase = "close"
+)
+
+// NativePhysicalFailureClassification describes whether a failed build has a
+// positive no-commit conclusion. Once the environment Open boundary has been
+// crossed, failures are indeterminate because this boundary has no proof that
+// an external writer did not commit.
+type NativePhysicalFailureClassification string
+
+const (
+	NativePhysicalFailureDeterministic NativePhysicalFailureClassification = "deterministic_no_commit"
+	NativePhysicalFailureIndeterminate NativePhysicalFailureClassification = "indeterminate"
+)
+
+// NativePhysicalBuildError annotates a build failure with its lifecycle phase
+// and commit outcome. It wraps Err so errors.Is and errors.As continue to find
+// the original sentinel or typed operation error.
+type NativePhysicalBuildError struct {
+	Phase          NativePhysicalBuildPhase
+	Classification NativePhysicalFailureClassification
+	Err            error
+}
+
+func (e *NativePhysicalBuildError) Error() string {
+	if e == nil {
+		return "<nil>"
+	}
+	if e.Err == nil {
+		return fmt.Sprintf("native physical build %s failure (%s)", e.Phase, e.Classification)
+	}
+	return fmt.Sprintf("native physical build %s failure (%s): %v", e.Phase, e.Classification, e.Err)
+}
+
+func (e *NativePhysicalBuildError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// NativePhysicalBuildFailureOf returns the first lifecycle classification in
+// err, following the same wrapping tree as errors.As. It is useful to
+// coordinators that need both the phase and commit outcome without repeating
+// the type assertion boilerplate.
+func NativePhysicalBuildFailureOf(err error) (*NativePhysicalBuildError, bool) {
+	var failure *NativePhysicalBuildError
+	if !errors.As(err, &failure) {
+		return nil, false
+	}
+	return failure, true
+}
+
+// NativePhysicalBuildFailureIsIndeterminate reports whether err carries an
+// indeterminate native physical build classification.
+func NativePhysicalBuildFailureIsIndeterminate(err error) bool {
+	failure, ok := NativePhysicalBuildFailureOf(err)
+	return ok && failure.Classification == NativePhysicalFailureIndeterminate
+}
+
+// NativePhysicalBuildFailureIsDeterministic reports whether err carries a
+// deterministic no-commit native physical build classification.
+func NativePhysicalBuildFailureIsDeterministic(err error) bool {
+	failure, ok := NativePhysicalBuildFailureOf(err)
+	return ok && failure.Classification == NativePhysicalFailureDeterministic
+}
+
+func nativePhysicalBuildFailure(phase NativePhysicalBuildPhase, classification NativePhysicalFailureClassification, err error) error {
+	if err == nil {
+		return nil
+	}
+	return &NativePhysicalBuildError{Phase: phase, Classification: classification, Err: err}
+}
+
+func nativePhysicalBuildDeterministicFailure(phase NativePhysicalBuildPhase, err error) error {
+	return nativePhysicalBuildFailure(phase, NativePhysicalFailureDeterministic, err)
+}
+
+func nativePhysicalBuildIndeterminateFailure(phase NativePhysicalBuildPhase, err error) error {
+	return nativePhysicalBuildFailure(phase, NativePhysicalFailureIndeterminate, err)
 }
 
 // DuckLakePhysicalBuildEnvironmentFactory is the production adapter shape for
@@ -124,6 +218,31 @@ func (e *duckLakePhysicalBuildEnvironment) Materialize(ctx context.Context, requ
 	return e.materializer.Materialize(ctx, request)
 }
 
+// MaterializeWithObservations preserves the single-call correlation when the
+// underlying materializer supports the optional atomic observation extension.
+// A getter-only provider is deliberately not consulted: a separate read could
+// observe a concurrent run and falsely bind its source evidence to this
+// snapshot. Materializers without the atomic extension remain executable but
+// return no source observations, causing any evidence-dependent qualification
+// gate to fail closed.
+func (e *duckLakePhysicalBuildEnvironment) MaterializeWithObservations(ctx context.Context, request analyticsmaterialization.Request) (int64, []analyticsmaterialize.SourceObservation, error) {
+	if e == nil || e.environment == nil || e.materializer == nil {
+		return 0, nil, fmt.Errorf("%w: native physical build environment is not initialized", deploymentnative.ErrInvalid)
+	}
+	if executor, ok := e.materializer.(analyticsmaterialization.ObservationExecutor); ok {
+		snapshotID, observations, err := executor.MaterializeWithObservations(ctx, request)
+		if err != nil {
+			return 0, nil, err
+		}
+		return snapshotID, cloneSourceObservations(observations), nil
+	}
+	snapshotID, err := e.materializer.Materialize(ctx, request)
+	if err != nil {
+		return 0, nil, err
+	}
+	return snapshotID, nil, nil
+}
+
 func (e *duckLakePhysicalBuildEnvironment) SnapshotSealEvidence(ctx context.Context, snapshotID int64) (ducklake.PostgresSnapshotSealEvidence, error) {
 	if e == nil || e.environment == nil {
 		return ducklake.PostgresSnapshotSealEvidence{}, fmt.Errorf("%w: native physical build environment is not initialized", deploymentnative.ErrInvalid)
@@ -168,7 +287,20 @@ type NativePhysicalBuildEvidence struct {
 	CanonicalMarkerJSON json.RawMessage
 	Seal                ducklake.PostgresSnapshotSealEvidence
 	Closure             ducklake.NativeSnapshotClosureEvidence
+	SourceObservations  []analyticsmaterialize.SourceObservation
 }
+
+const (
+	maxNativeSourceObservations              = 4096
+	maxNativeObservationSchemaColumns        = 16384
+	maxNativeObservationTotalColumns         = 65536
+	maxNativeObservationTotalTextBytes       = 8 << 20
+	maxNativeObservationIDBytes              = 512
+	maxNativeObservationRevisionBytes        = 4096
+	maxNativeObservationQueries              = 1 << 31
+	maxNativeObservationRows           int64 = 1 << 62
+	maxNativeObservationMillis         int64 = 7 * 24 * 60 * 60 * 1000
+)
 
 // PhysicalBuildInput and PhysicalBuildEvidence are concise aliases for
 // callers that do not need to repeat the native qualifier.
@@ -184,10 +316,13 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 	ctx = contextOrBackground(ctx)
 	normalized, canonicalMarker, canonicalRoot, err := validateNativePhysicalBuildInput(input)
 	if err != nil {
-		return NativePhysicalBuildEvidence{}, err
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, err)
 	}
-	if factory == nil {
-		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: native physical build environment factory is not configured", deploymentnative.ErrInvalid)
+	if !nativePhysicalBuildFactoryConfigured(factory) {
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(
+			NativePhysicalBuildPhaseValidation,
+			fmt.Errorf("%w: native physical build environment factory is not configured", deploymentnative.ErrInvalid),
+		)
 	}
 
 	environment, openErr := factory.Open(ctx, normalized.Marker)
@@ -195,54 +330,93 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 		// A defensive close handles factories that return a usable environment
 		// together with an error while preserving the open error as primary.
 		if environment != nil {
-			return NativePhysicalBuildEvidence{}, errors.Join(openErr, environment.Close())
+			return NativePhysicalBuildEvidence{}, errors.Join(
+				nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseOpen, openErr),
+				nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseClose, environment.Close()),
+			)
 		}
-		return NativePhysicalBuildEvidence{}, openErr
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseOpen, openErr)
 	}
 	if environment == nil {
-		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: native physical build environment factory returned nil environment", deploymentnative.ErrInvalid)
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(
+			NativePhysicalBuildPhaseOpen,
+			fmt.Errorf("%w: native physical build environment factory returned nil environment", deploymentnative.ErrInvalid),
+		)
 	}
 	defer func() {
 		closeErr := environment.Close()
 		if closeErr != nil {
-			err = errors.Join(err, closeErr)
-			if err != nil {
-				evidence = NativePhysicalBuildEvidence{}
+			closeFailure := nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseClose, closeErr)
+			if err == nil {
+				err = closeFailure
+			} else {
+				err = errors.Join(err, closeFailure)
 			}
+			evidence = NativePhysicalBuildEvidence{}
 		}
 	}()
 	if environment.CatalogID() != normalized.CatalogID {
-		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: native physical build environment catalog identity differs", deploymentnative.ErrConflict)
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(
+			NativePhysicalBuildPhaseOpen,
+			fmt.Errorf("%w: native physical build environment catalog identity differs", deploymentnative.ErrConflict),
+		)
 	}
 
-	snapshotID, materializeErr := environment.Materialize(ctx, normalized.Request)
+	var observations []analyticsmaterialize.SourceObservation
+	var snapshotID int64
+	var materializeErr error
+	if executor, ok := environment.(analyticsmaterialization.ObservationExecutor); ok {
+		snapshotID, observations, materializeErr = executor.MaterializeWithObservations(ctx, normalized.Request)
+	} else {
+		snapshotID, materializeErr = environment.Materialize(ctx, normalized.Request)
+	}
 	if materializeErr != nil {
-		return NativePhysicalBuildEvidence{}, materializeErr
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseMaterialize, materializeErr)
 	}
 	if snapshotID <= 0 {
-		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: materialization returned non-positive snapshot", deploymentnative.ErrInvalid)
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(
+			NativePhysicalBuildPhaseMaterialize,
+			fmt.Errorf("%w: materialization returned non-positive snapshot", deploymentnative.ErrInvalid),
+		)
 	}
+	if err := validateSourceObservations(observations); err != nil {
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, err)
+	}
+	observations = cloneSourceObservations(observations)
 
 	seal, sealErr := environment.SnapshotSealEvidence(ctx, snapshotID)
 	if sealErr != nil {
-		return NativePhysicalBuildEvidence{}, sealErr
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, sealErr)
 	}
 	closure, closureErr := environment.NativeSnapshotClosureEvidence(ctx, ducklake.NativeSnapshotClosureRequest{
 		CatalogID: normalized.CatalogID, SnapshotID: snapshotID, ObjectRoot: canonicalRoot,
 		RelationNamespace: normalized.Attempt.Namespace,
 	})
 	if closureErr != nil {
-		return NativePhysicalBuildEvidence{}, closureErr
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, closureErr)
 	}
 	if err := verifyNativePhysicalEvidence(seal, closure, normalized, canonicalMarker, canonicalRoot, snapshotID); err != nil {
-		return NativePhysicalBuildEvidence{}, err
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, err)
 	}
 
 	return NativePhysicalBuildEvidence{
 		AttemptID: normalized.Attempt.AttemptID, CatalogID: normalized.CatalogID, ObjectRoot: canonicalRoot,
 		SnapshotID: snapshotID, Marker: normalized.Marker,
 		CanonicalMarkerJSON: append(json.RawMessage(nil), canonicalMarker...), Seal: cloneSealEvidence(seal), Closure: cloneClosureEvidence(closure),
+		SourceObservations: observations,
 	}, nil
+}
+
+func nativePhysicalBuildFactoryConfigured(factory NativePhysicalBuildEnvironmentFactory) bool {
+	if factory == nil {
+		return false
+	}
+	// A nil function adapter is an interface value with a non-nil dynamic
+	// type, so account for it before crossing the factory.Open boundary.
+	if function, ok := factory.(NativePhysicalBuildEnvironmentFactoryFunc); ok {
+		return function != nil
+	}
+	return true
 }
 
 // RunNativePhysicalBuild is an explicit verb alias for callers that prefer a
@@ -373,6 +547,117 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 		}
 	}
 	return nil
+}
+
+func validateSourceObservations(observations []analyticsmaterialize.SourceObservation) error {
+	if len(observations) > maxNativeSourceObservations {
+		return fmt.Errorf("%w: source observations exceed maximum count", deploymentnative.ErrInvalid)
+	}
+	seen := make(map[string]struct{}, len(observations))
+	totalColumns := 0
+	totalTextBytes := 0
+	addText := func(value string) error {
+		if len(value) > maxNativeObservationTotalTextBytes-totalTextBytes {
+			return fmt.Errorf("%w: source observation text exceeds aggregate bound", deploymentnative.ErrInvalid)
+		}
+		totalTextBytes += len(value)
+		return nil
+	}
+	for _, observation := range observations {
+		if err := validateTextField(observation.ID, "source observation id", maxNativeObservationIDBytes); err != nil {
+			return err
+		}
+		if err := addText(observation.ID); err != nil {
+			return err
+		}
+		if _, duplicate := seen[observation.ID]; duplicate {
+			return fmt.Errorf("%w: duplicate source observation id %q", deploymentnative.ErrConflict, observation.ID)
+		}
+		seen[observation.ID] = struct{}{}
+		if observation.Revision != "" {
+			if err := validateTextField(observation.Revision, "source observation revision", maxNativeObservationRevisionBytes); err != nil {
+				return err
+			}
+			if err := addText(observation.Revision); err != nil {
+				return err
+			}
+		}
+		if observation.ObservationQueries < 0 || observation.ObservationQueries > maxNativeObservationQueries || observation.ObservationRows < 0 || observation.ObservationRows > maxNativeObservationRows || observation.ObservationMillis < 0 || observation.ObservationMillis > maxNativeObservationMillis {
+			return fmt.Errorf("%w: source observation counters are outside bounds", deploymentnative.ErrInvalid)
+		}
+		if len(observation.Schema) > maxNativeObservationSchemaColumns {
+			return fmt.Errorf("%w: source observation schema exceeds maximum columns", deploymentnative.ErrInvalid)
+		}
+		if len(observation.Schema) > maxNativeObservationTotalColumns-totalColumns {
+			return fmt.Errorf("%w: source observation schemas exceed aggregate column bound", deploymentnative.ErrInvalid)
+		}
+		totalColumns += len(observation.Schema)
+		for _, column := range observation.Schema {
+			if strings.TrimSpace(column.Name) == "" {
+				return fmt.Errorf("%w: source observation column name is blank", deploymentnative.ErrInvalid)
+			}
+			if err := validateBoundedObservationText(column.Name, "source observation column name", maxNativeObservationRevisionBytes); err != nil {
+				return err
+			}
+			if strings.TrimSpace(column.PhysicalType) == "" {
+				return fmt.Errorf("%w: source observation column physical type is blank", deploymentnative.ErrInvalid)
+			}
+			if err := validateBoundedObservationText(column.PhysicalType, "source observation column physical type", maxNativeObservationRevisionBytes); err != nil {
+				return err
+			}
+			if err := addText(column.Name); err != nil {
+				return err
+			}
+			if err := addText(column.PhysicalType); err != nil {
+				return err
+			}
+			if column.Default != "" {
+				if err := validateBoundedObservationText(column.Default, "source observation column default", maxNativeObservationRevisionBytes); err != nil {
+					return err
+				}
+				if err := addText(column.Default); err != nil {
+					return err
+				}
+			}
+			if column.Comment != "" {
+				if err := validateBoundedObservationText(column.Comment, "source observation column comment", maxNativeObservationRevisionBytes); err != nil {
+					return err
+				}
+				if err := addText(column.Comment); err != nil {
+					return err
+				}
+			}
+			if column.Ordinal < 0 {
+				return fmt.Errorf("%w: source observation column ordinal cannot be negative", deploymentnative.ErrInvalid)
+			}
+		}
+		for label, observedAt := range map[string]time.Time{"revision observed": observation.RevisionObserved, "freshness observed": observation.FreshnessObserved} {
+			if !observedAt.IsZero() && (observedAt.Location() != time.UTC || !observedAt.Equal(observedAt.UTC())) {
+				return fmt.Errorf("%w: source observation %s timestamp must be UTC", deploymentnative.ErrInvalid, label)
+			}
+		}
+		if err := validateObservationFailure(observation.SchemaFailure, "schema"); err != nil {
+			return err
+		}
+		if err := validateObservationFailure(observation.FreshnessFailure, "freshness"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateBoundedObservationText(value, label string, max int) error {
+	if len(value) > max || !utf8.ValidString(value) || strings.IndexByte(value, 0) >= 0 {
+		return fmt.Errorf("%w: %s is invalid", deploymentnative.ErrInvalid, label)
+	}
+	return nil
+}
+
+func validateObservationFailure(value analyticsmaterialize.ObservationFailure, label string) error {
+	if value == "" || value == analyticsmaterialize.ObservationUnavailable || value == analyticsmaterialize.ObservationTimeout || value == analyticsmaterialize.ObservationBounds {
+		return nil
+	}
+	return fmt.Errorf("%w: source observation %s failure is unknown", deploymentnative.ErrInvalid, label)
 }
 
 func verifyNativePhysicalEvidence(seal ducklake.PostgresSnapshotSealEvidence, closure ducklake.NativeSnapshotClosureEvidence, input NativePhysicalBuildInput, canonicalMarker []byte, canonicalRoot string, snapshotID int64) error {
@@ -506,4 +791,25 @@ func cloneClosureEvidence(value ducklake.NativeSnapshotClosureEvidence) ducklake
 	value.ClosureJSON = append(json.RawMessage(nil), value.ClosureJSON...)
 	value.CanonicalJSON = append(json.RawMessage(nil), value.CanonicalJSON...)
 	return value
+}
+
+func cloneSourceObservations(observations []analyticsmaterialize.SourceObservation) []analyticsmaterialize.SourceObservation {
+	if observations == nil {
+		return nil
+	}
+	result := make([]analyticsmaterialize.SourceObservation, len(observations))
+	for i, observation := range observations {
+		result[i] = observation
+		if observation.Schema != nil {
+			result[i].Schema = make([]semanticmodel.ColumnSchema, len(observation.Schema))
+			for j, column := range observation.Schema {
+				result[i].Schema[j] = column
+				if column.Nullable != nil {
+					nullable := *column.Nullable
+					result[i].Schema[j].Nullable = &nullable
+				}
+			}
+		}
+	}
+	return result
 }
