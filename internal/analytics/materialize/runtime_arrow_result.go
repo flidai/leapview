@@ -50,10 +50,10 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 			planned.dependency, planned.reusable = r.dependencyForPlan(planned.plan)
 		}
 	}
-	execute := func() (arrowQueryExecution, error) {
+	execute := func(executionCtx context.Context) (arrowQueryExecution, error) {
 		var execution arrowQueryExecution
 		current := planned
-		execCtx, statements := withPhysicalStatementCounter(dataquery.WithResultBudget(ctx, r.queryResultLimits()))
+		execCtx, statements := withPhysicalStatementCounter(dataquery.WithResultBudget(executionCtx, r.queryResultLimits()))
 		summary, err := admitPhysicalQuery(execCtx, request, func(queryCtx context.Context) (dataquery.Result, error) {
 			if !cacheable {
 				var planningErr error
@@ -129,7 +129,7 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
-		execution, executeErr := execute()
+		execution, executeErr := execute(ctx)
 		err = executeErr
 		if execution.data != nil {
 			lease, acquireErr := execution.data.Acquire()

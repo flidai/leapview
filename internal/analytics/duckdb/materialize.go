@@ -606,6 +606,7 @@ type ProjectRuntimeConfig struct {
 	ResultPartition     resultidentity.Partition
 	QueryResultCache    *resultcache.Scope
 	ImmutableByteCache  *resultcache.Scope
+	ExecutionScope      *resultcache.ExecutionScope
 	ResultLimits        dataquery.ResultLimits
 	DependencyEvidence  map[string]resultidentity.Evidence
 }
@@ -626,6 +627,7 @@ type ProjectRuntime struct {
 	commitMetadata          map[string]string
 	queryResultCacheScope   *resultcache.Scope
 	immutableByteCacheScope *resultcache.Scope
+	executionScope          *resultcache.ExecutionScope
 	viewConfig              ProjectRuntimeConfig
 }
 
@@ -693,6 +695,11 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 			}
 		}
 	}
+	executionScope := config.ExecutionScope
+	if executionScope == nil {
+		executionScope = resultcache.NewExecutionScope()
+	}
+	config.ExecutionScope = executionScope
 	runtime := &ProjectRuntime{
 		projectID:               config.ProjectID,
 		db:                      db,
@@ -705,6 +712,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		commitMetadata:          projectCommitMetadata(config),
 		queryResultCacheScope:   config.QueryResultCache,
 		immutableByteCacheScope: config.ImmutableByteCache,
+		executionScope:          executionScope,
 		viewConfig:              config,
 	}
 	if config.SnapshotID > 0 {
@@ -714,7 +722,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		runtime.lastSnapshotID = config.SnapshotID
 	} else if !config.SkipInitialRefresh {
 		if err := runtime.Refresh(ctx); err != nil {
-			return nil, err
+			return nil, errors.Join(err, runtime.Close())
 		}
 	}
 	if len(runtime.views) == 0 {
@@ -752,6 +760,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,
+			ExecutionScope:     config.ExecutionScope,
 			ResultLimits:       config.ResultLimits,
 			DependencyEvidence: dependencyEvidence,
 			RequiredExtensions: config.RequiredExtensions,
@@ -1279,18 +1288,23 @@ func (r *ProjectRuntime) Close() error {
 		return nil
 	}
 	var errs []error
+	if r.executionScope != nil {
+		if err := r.executionScope.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
 	for _, view := range r.views {
 		if err := view.CloseView(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if r.queryResultCacheScope != nil {
-		if err := r.queryResultCacheScope.Close(); err != nil {
+	if r.immutableByteCacheScope != nil && r.immutableByteCacheScope != r.queryResultCacheScope {
+		if err := r.immutableByteCacheScope.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}
-	if r.immutableByteCacheScope != nil && r.immutableByteCacheScope != r.queryResultCacheScope {
-		if err := r.immutableByteCacheScope.Close(); err != nil {
+	if r.queryResultCacheScope != nil {
+		if err := r.queryResultCacheScope.Close(); err != nil {
 			errs = append(errs, err)
 		}
 	}

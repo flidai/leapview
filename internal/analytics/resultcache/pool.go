@@ -1,17 +1,14 @@
-// Package resultcache owns node-wide retention and coalescing for governed
-// analytical query results.
+// Package resultcache owns node-wide retained analytical results and
+// generation-scoped execution coalescing through separate lifetimes.
 package resultcache
 
 import (
 	"container/list"
-	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 
 	"github.com/flidai/leapview/pkg/arrowresult"
-	"golang.org/x/sync/singleflight"
 )
 
 type Constraint string
@@ -59,17 +56,15 @@ type ScopeProvider interface {
 }
 
 type Pool struct {
-	mu           sync.Mutex
-	limits       Limits
-	closed       bool
-	entries      map[string]*list.Element
-	lru          *list.List
-	scopes       map[string]*scopeState
-	bytes        int64
-	evictions    map[Constraint]uint64
-	stores       map[StoreOutcome]uint64
-	group        singleflight.Group
-	arrowFlights map[string]*arrowFlight
+	mu        sync.Mutex
+	limits    Limits
+	closed    bool
+	entries   map[string]*list.Element
+	lru       *list.List
+	scopes    map[string]*scopeState
+	bytes     int64
+	evictions map[Constraint]uint64
+	stores    map[StoreOutcome]uint64
 }
 
 type Scope struct {
@@ -159,15 +154,6 @@ func (l *ArrowFlightLease) Release() {
 	l.data = nil
 }
 
-type arrowFlight struct {
-	done     chan struct{}
-	waiters  int
-	shared   bool
-	complete bool
-	value    ArrowFlightValue
-	err      error
-}
-
 func (l *EntryLease) Data() *arrowresult.Lease {
 	if l == nil {
 		return nil
@@ -225,7 +211,7 @@ func New(limits Limits) (*Pool, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
+	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}}, nil
 }
 
 func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
@@ -285,18 +271,6 @@ func (s *Scope) openStateLocked() *scopeState {
 		return nil
 	}
 	return state
-}
-
-func (s *Scope) requireOpen() error {
-	if s == nil || s.pool == nil {
-		return fmt.Errorf("result cache scope is required")
-	}
-	s.pool.mu.Lock()
-	defer s.pool.mu.Unlock()
-	if s.openStateLocked() == nil {
-		return fmt.Errorf("result cache scope is closed")
-	}
-	return nil
 }
 
 func (s *Scope) Generation() Token {
@@ -559,140 +533,6 @@ func (s *Scope) Close() error {
 	state.generation++
 	delete(p.scopes, s.key)
 	return nil
-}
-
-type canceledFlight struct{ err error }
-
-func (e canceledFlight) Error() string { return e.err.Error() }
-func (e canceledFlight) Unwrap() error { return e.err }
-
-// OwnerCanceled marks a coalesced execution whose owning context was canceled,
-// allowing a still-live waiter to replace that flight.
-func OwnerCanceled(err error) error { return canceledFlight{err: err} }
-
-func (s *Scope) Coalesce(ctx context.Context, key string, execute func() (any, error)) (any, bool, error) {
-	if err := s.requireOpen(); err != nil {
-		return nil, false, err
-	}
-	flightKey := s.key + "\x00" + key
-	for {
-		ch := s.pool.group.DoChan(flightKey, func() (any, error) {
-			value, err := execute()
-			if ownerErr := ctx.Err(); ownerErr != nil {
-				return nil, canceledFlight{ownerErr}
-			}
-			return value, err
-		})
-		select {
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
-		case call := <-ch:
-			if call.Err != nil {
-				var canceled canceledFlight
-				if ctx.Err() == nil && errors.As(call.Err, &canceled) {
-					continue
-				}
-				return nil, call.Shared, call.Err
-			}
-			return call.Val, call.Shared, nil
-		}
-	}
-}
-
-// CoalesceArrow runs one Arrow-producing execution and gives every live caller
-// an independently retained lease. Canceled callers are removed without
-// releasing buffers still needed by other waiters. If the owning execution was
-// canceled, a live waiter starts a replacement flight.
-func (s *Scope) CoalesceArrow(ctx context.Context, key string, execute func() (ArrowFlightValue, error)) (*ArrowFlightLease, ArrowFlightStatus, error) {
-	if err := s.requireOpen(); err != nil {
-		return nil, ArrowFlightStatus{}, err
-	}
-	flightKey := s.key + "\x00" + key
-	for {
-		flight, owner := s.joinArrowFlight(flightKey, ctx, execute)
-		select {
-		case <-ctx.Done():
-			s.leaveArrowFlight(flight)
-			return nil, ArrowFlightStatus{}, ctx.Err()
-		case <-flight.done:
-		}
-
-		s.pool.mu.Lock()
-		flightErr := flight.err
-		shared := flight.shared
-		value := flight.value
-		s.pool.mu.Unlock()
-		if flightErr != nil {
-			s.leaveArrowFlight(flight)
-			var canceled canceledFlight
-			if ctx.Err() == nil && errors.As(flightErr, &canceled) {
-				continue
-			}
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, flightErr
-		}
-		if value.Data == nil {
-			s.leaveArrowFlight(flight)
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, fmt.Errorf("coalesced Arrow execution returned no data")
-		}
-		lease, err := value.Data.Acquire()
-		s.leaveArrowFlight(flight)
-		if err != nil {
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, err
-		}
-		return &ArrowFlightLease{data: lease, metadata: cloneMetadata(value.Metadata), cached: value.Cached}, ArrowFlightStatus{Owner: owner, Shared: shared}, nil
-	}
-}
-
-func (s *Scope) joinArrowFlight(key string, ctx context.Context, execute func() (ArrowFlightValue, error)) (*arrowFlight, bool) {
-	p := s.pool
-	p.mu.Lock()
-	if existing := p.arrowFlights[key]; existing != nil {
-		existing.waiters++
-		existing.shared = true
-		p.mu.Unlock()
-		return existing, false
-	}
-	flight := &arrowFlight{done: make(chan struct{}), waiters: 1}
-	p.arrowFlights[key] = flight
-	p.mu.Unlock()
-	go func() {
-		value, err := execute()
-		if ownerErr := ctx.Err(); ownerErr != nil {
-			err = canceledFlight{ownerErr}
-		}
-		p.mu.Lock()
-		flight.value, flight.err, flight.complete = value, err, true
-		delete(p.arrowFlights, key)
-		close(flight.done)
-		release := flight.waiters == 0 && flight.value.Data != nil
-		if release {
-			flight.value.Data = nil
-		}
-		p.mu.Unlock()
-		if release {
-			value.Data.Release()
-		}
-	}()
-	return flight, true
-}
-
-func (s *Scope) leaveArrowFlight(flight *arrowFlight) {
-	if flight == nil {
-		return
-	}
-	p := s.pool
-	p.mu.Lock()
-	flight.waiters--
-	release := flight.waiters == 0 && flight.complete && flight.value.Data != nil
-	var data *arrowresult.Lease
-	if release {
-		data = flight.value.Data
-		flight.value.Data = nil
-	}
-	p.mu.Unlock()
-	if data != nil {
-		data.Release()
-	}
 }
 
 func (p *Pool) Stats() Snapshot {

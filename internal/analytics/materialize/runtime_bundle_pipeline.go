@@ -281,8 +281,8 @@ func (r *Runtime) executePlannedBundle(ctx context.Context, planned plannedBundl
 	if err := enterBundleStage(ctx, bundleStageExecute); err != nil {
 		return bundleExecution{}, false, err
 	}
-	execute := func() (bundleExecution, error) {
-		execCtx, statements := withPhysicalStatementCounter(dataquery.WithIndependentResultBudget(ctx, r.queryResultLimits()))
+	execute := func(executionCtx context.Context) (bundleExecution, error) {
+		execCtx, statements := withPhysicalStatementCounter(dataquery.WithIndependentResultBudget(executionCtx, r.queryResultLimits()))
 		var execution bundleExecution
 		summary, executeErr := admitPhysicalQuery(execCtx, planned.resolved.misses[0].Query, func(queryCtx context.Context) (dataquery.Result, error) {
 			var err error
@@ -296,10 +296,10 @@ func (r *Runtime) executePlannedBundle(ctx context.Context, planned plannedBundl
 		return execution, executeErr
 	}
 	if planned.flightKey == "" {
-		execution, err := execute()
+		execution, err := execute(ctx)
 		return execution, false, err
 	}
-	value, shared, err := r.queryCache.coalesce(ctx, planned.flightKey, func() (any, error) { return execute() })
+	value, shared, err := r.queryCache.coalesce(ctx, planned.flightKey, func(executionCtx context.Context) (any, error) { return execute(executionCtx) })
 	if err != nil {
 		return bundleExecution{}, shared, err
 	}
