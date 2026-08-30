@@ -8,6 +8,9 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	dashboardpublicationaudit "github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
+	dashboardpublicationevents "github.com/flidai/leapview/internal/app/dashboardpublicationevents"
 	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -16,6 +19,7 @@ import (
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -70,9 +74,17 @@ func (nativePublicationAuditStub) RecordAuditIntent(context.Context, dashboardpu
 	return nil
 }
 
-type capturingNativePublicationAudit struct{ count int }
+type capturingNativePublicationAudit struct {
+	count    int
+	delegate dashboardpublicationpostgres.AuditPort
+}
 
-func (a *capturingNativePublicationAudit) RecordAuditIntent(context.Context, dashboardpublicationpostgres.Tx, access.AuditIntent) error {
+func (a *capturingNativePublicationAudit) RecordAuditIntent(ctx context.Context, tx dashboardpublicationpostgres.Tx, intent access.AuditIntent) error {
+	if a.delegate != nil {
+		if err := a.delegate.RecordAuditIntent(ctx, tx, intent); err != nil {
+			return err
+		}
+	}
 	a.count++
 	return nil
 }
@@ -220,6 +232,14 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := dashboardappearancepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -260,8 +280,9 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	audit := &capturingNativePublicationAudit{}
-	publications, err := dashboardpublicationpostgres.New(db, audit, nativePublicationEventStub{})
+	events := eventspostgres.New()
+	audit := &capturingNativePublicationAudit{delegate: dashboardpublicationaudit.NewWithRepository(accesspostgres.New())}
+	publications, err := dashboardpublicationpostgres.New(db, audit, dashboardpublicationevents.NewWithRepository(events))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -274,12 +295,13 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 	}
 
 	projectID := projectgraph.ResourceID("project_native")
+	principalID := uuid.MustParse("018f4f2e-0000-7000-8000-000000000730").String()
 	tx, err = db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := publications.ReconcileTx(t.Context(), tx, publication.ReconcileInput{
-		ProjectID: projectID, ServingStateID: "generation_native", ActorID: "principal:owner",
+		ProjectID: projectID, ServingStateID: "generation_native", ActorID: principalID,
 		Publications: map[string]publication.Definition{
 			"website": {Name: "website", Dashboard: "dashboard:website", DefaultPage: "overview", ConfigurationDigest: "sha256:" + "a" + strings.Repeat("0", 63)},
 		},
@@ -304,7 +326,7 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestID := uuid.MustParse("018f4f2e-0000-7000-0000-000000000731").String()
-	_, err = module.MutatePublicationWithInvocation(t.Context(), projectID.String(), "website", "principal:owner", publication.ActionSuspend, publication.CommandInvocation{
+	_, err = module.MutatePublicationWithInvocation(t.Context(), projectID.String(), "website", principalID, publication.ActionSuspend, publication.CommandInvocation{
 		Surface: "api", OperationID: "suspendDashboardPublication", RequestID: requestID, CorrelationID: requestID,
 		IdempotencyKey: uuid.MustParse("018f4f2e-0000-7000-0000-000000000732").String(), ExpectedRevision: row.Revision,
 	})

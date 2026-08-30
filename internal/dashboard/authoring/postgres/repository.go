@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 
@@ -173,6 +174,10 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 			return authoring.DashboardLifecycle{}, err
 		}
 	}
+	revisionNumber, err := checkedInt64(input.Revision.Number, "revision number")
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
 	documentJSON, provenanceJSON, err := encodeRevision(input.Revision)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -197,27 +202,6 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 			}
 			return lifecycle, nil
 		}
-		inserted, err := insertCreateOperation(ctx, tx, input.Operation, input.Lifecycle.ID, input.Revision.Token())
-		if err != nil {
-			return authoring.DashboardLifecycle{}, err
-		}
-		if inserted == 0 {
-			// Another transaction claimed the same operation. The insert uses
-			// ON CONFLICT DO NOTHING so this transaction remains usable while we
-			// read and validate the winner's immutable result.
-			replay, found, lookupErr := lookupCreateOperation(ctx, tx, input.Operation)
-			if lookupErr != nil {
-				return authoring.DashboardLifecycle{}, lookupErr
-			}
-			if !found {
-				return authoring.DashboardLifecycle{}, authoring.ErrCommandReuse
-			}
-			lifecycle, getErr := r.getLifecycle(ctx, q, projectID, replay.DashboardID)
-			if getErr != nil {
-				return authoring.DashboardLifecycle{}, getErr
-			}
-			return lifecycle, nil
-		}
 	}
 	ownerPrincipalID, err := nativeUUID(input.Lifecycle.OwnerPrincipalID)
 	if err != nil {
@@ -226,23 +210,47 @@ func (r *Repository) Create(ctx context.Context, input authoring.CreateInput) (a
 	if !ownerPrincipalID.Valid {
 		return authoring.DashboardLifecycle{}, fmt.Errorf("%w: owner principal id must be a canonical UUID", authoring.ErrInvalidAuthoring)
 	}
-	err = q.InsertDashboard(ctx, dashboarddb.InsertDashboardParams{ProjectID: projectID,
-		DashboardID: string(input.Lifecycle.ID), OwnerPrincipalID: ownerPrincipalID,
+	var draftID pgtype.UUID
+	var draftProvenance []byte
+	if input.Lifecycle.Draft != nil {
+		draftID = nativeUUIDValue(input.Lifecycle.Draft.ID.String())
+		draftProvenance, err = json.Marshal(input.Lifecycle.Draft.Provenance)
+		if err != nil {
+			return authoring.DashboardLifecycle{}, err
+		}
+	}
+	operation := input.Operation
+	intent, _ := authoring.AuditIntentFromContext(ctx)
+	applied, err := q.CreateDashboard(ctx, dashboarddb.CreateDashboardParams{
+		ProjectID: projectID, DashboardID: string(input.Lifecycle.ID), OwnerPrincipalID: ownerPrincipalID,
 		Slug: input.Lifecycle.Slug, Title: input.Lifecycle.Title, SemanticModel: input.Lifecycle.SemanticModel.String(),
-		Visibility: string(input.Lifecycle.Visibility), Status: string(input.Lifecycle.Status)})
+		Visibility: string(input.Lifecycle.Visibility), Status: string(input.Lifecycle.Status),
+		RevisionID: nativeUUIDValue(input.Revision.ID.String()), RevisionNumber: revisionNumber,
+		DocumentJson: []byte(documentJSON), ContentHash: input.Revision.ContentHash, ProvenanceJson: []byte(provenanceJSON), CreatedAt: input.Revision.CreatedAt,
+		DraftID: draftID, DraftProvenanceJson: draftProvenance, OperationEnabled: operation.Enabled(),
+		ActorID: operation.ActorID, OperationKind: operation.Kind, IdempotencyKey: operation.IdempotencyKey,
+		ConversationID: operation.ConversationID, ToolCallID: operation.ToolCallID, RequestFingerprint: operation.Fingerprint,
+		EventID: nativeUUIDValue(intent.EventID),
+	})
 	if err != nil {
 		if isConstraint(err) {
 			return authoring.DashboardLifecycle{}, fmt.Errorf("%w: dashboard identity already exists or slug is in use", authoring.ErrConflict)
 		}
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := insertRevision(ctx, q, projectID, input.Revision, documentJSON, provenanceJSON); err != nil {
-		return authoring.DashboardLifecycle{}, err
-	}
-	if input.Lifecycle.Draft != nil {
-		if err := insertDraft(ctx, q, projectID, input.Lifecycle.ID, *input.Lifecycle.Draft); err != nil {
-			return authoring.DashboardLifecycle{}, err
+	if applied == 0 {
+		replay, found, lookupErr := lookupCreateOperation(ctx, tx, input.Operation)
+		if lookupErr != nil {
+			return authoring.DashboardLifecycle{}, lookupErr
 		}
+		if !found {
+			return authoring.DashboardLifecycle{}, authoring.ErrCommandReuse
+		}
+		lifecycle, getErr := r.getLifecycle(ctx, q, projectID, replay.DashboardID)
+		if getErr != nil {
+			return authoring.DashboardLifecycle{}, getErr
+		}
+		return lifecycle, nil
 	}
 	if err := r.recordAuditIntent(ctx, tx, input.Lifecycle, input.Revision, input.Operation.IdempotencyKey); err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -337,6 +345,22 @@ func (r *Repository) CommitRevalidation(ctx context.Context, input authoring.Rev
 			return err
 		}
 	}
+	publishedNumber, err := checkedInt64(input.Dashboard.Published.Revision.Number, "published revision number")
+	if err != nil {
+		return err
+	}
+	priorCompiledNumber, err := checkedInt64(input.PriorCompilation.AuthoredRevision.Number, "prior compiled revision number")
+	if err != nil {
+		return err
+	}
+	compiledNumber, err := checkedInt64(input.Compilation.AuthoredRevision.Number, "compiled revision number")
+	if err != nil {
+		return err
+	}
+	authoredNumber, err := checkedInt64(input.AuthoredRevision.Number, "authored revision number")
+	if err != nil {
+		return err
+	}
 	tx, err := r.beginTx(ctx)
 	if err != nil {
 		return err
@@ -356,24 +380,25 @@ func (r *Repository) CommitRevalidation(ctx context.Context, input authoring.Rev
 	if err != nil {
 		return err
 	}
-	if current.RevisionID != string(input.Dashboard.Published.Revision.RevisionID) || current.RevisionNumber != int64(input.Dashboard.Published.Revision.Number) || current.ContentHash != input.Dashboard.Published.Revision.ContentHash || current.CompiledRevisionID != string(input.PriorCompilation.AuthoredRevision.RevisionID) || current.CompiledRevisionNumber != int64(input.PriorCompilation.AuthoredRevision.Number) || current.CompiledContentHash != input.PriorCompilation.AuthoredRevision.ContentHash || current.CompiledDefinitionHash != input.PriorCompilation.DefinitionHash || !canonicalJSONEqual([]byte(current.CompiledSemanticIdentityJson), []byte(priorIdentityJSON)) || current.CompiledSemanticModelID != input.PriorCompilation.SemanticModelID.String() {
+	if current.RevisionID != string(input.Dashboard.Published.Revision.RevisionID) || current.RevisionNumber != publishedNumber || current.ContentHash != input.Dashboard.Published.Revision.ContentHash || current.CompiledRevisionID != string(input.PriorCompilation.AuthoredRevision.RevisionID) || current.CompiledRevisionNumber != priorCompiledNumber || current.CompiledContentHash != input.PriorCompilation.AuthoredRevision.ContentHash || current.CompiledDefinitionHash != input.PriorCompilation.DefinitionHash || !canonicalJSONEqual([]byte(current.CompiledSemanticIdentityJson), []byte(priorIdentityJSON)) || current.CompiledSemanticModelID != input.PriorCompilation.SemanticModelID.String() {
 		return authoring.ErrRevalidationConflict
 	}
-	compiledRevisionID := nativeUUIDValue(input.Compilation.AuthoredRevision.RevisionID.String())
-	err = q.InsertCompilation(ctx, dashboarddb.InsertCompilationParams{ProjectID: input.Compilation.ProjectID.String(), DashboardID: input.Compilation.DashboardID.String(), RevisionID: compiledRevisionID, RevisionNumber: int64(input.Compilation.AuthoredRevision.Number), ContentHash: input.Compilation.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: input.Compilation.DefinitionHash, SemanticModelID: input.Compilation.SemanticModelID.String(), SemanticIdentityJson: []byte(compiledIdentityJSON), CompiledAt: input.Compilation.CompiledAt})
+	result, err := q.CommitRevalidation(ctx, dashboarddb.CommitRevalidationParams{
+		ProjectID: input.Dashboard.ProjectID.String(), DashboardID: input.Dashboard.ID.String(),
+		RevisionID: nativeUUIDValue(input.Compilation.AuthoredRevision.RevisionID.String()), RevisionNumber: compiledNumber,
+		ContentHash: input.Compilation.AuthoredRevision.ContentHash, DefinitionJson: definitionJSON, DefinitionHash: input.Compilation.DefinitionHash,
+		SemanticModelID: input.Compilation.SemanticModelID.String(), SemanticIdentityJson: []byte(compiledIdentityJSON), CompiledAt: input.Compilation.CompiledAt,
+		GenerationID: input.Generation.Identity.GenerationID, AttemptID: nativeUUIDValue(input.AttemptID), GenerationIdentityJson: []byte(identityJSON),
+		GraphDigest: input.Generation.Graph.Digest(), DependencyIdsJson: []byte(depsJSON), AuthoredRevisionID: nativeUUIDValue(input.AuthoredRevision.ID.String()),
+		AuthoredRevisionNumber: authoredNumber, AuthoredContentHash: input.AuthoredRevision.ContentHash, PriorCompiledIdentityJson: []byte(priorIdentityJSON),
+		AttemptedAt: input.AttemptedAt, PriorCompiledRevisionID: nativeUUIDValue(input.PriorCompilation.AuthoredRevision.RevisionID.String()),
+		PriorCompiledRevisionNumber: priorCompiledNumber, PriorCompiledContentHash: input.PriorCompilation.AuthoredRevision.ContentHash,
+		PriorCompiledDefinitionHash: input.PriorCompilation.DefinitionHash, PriorCompiledSemanticModelID: input.PriorCompilation.SemanticModelID.String(),
+	})
 	if err != nil {
-		return err
-	}
-	compiledDefinitionHash, compiledSemanticModelID := input.Compilation.DefinitionHash, input.Compilation.SemanticModelID.String()
-	err = q.InsertRevalidationSuccess(ctx, dashboarddb.InsertRevalidationSuccessParams{ProjectID: input.Dashboard.ProjectID.String(), DashboardID: input.Dashboard.ID.String(), GenerationID: input.Generation.Identity.GenerationID, AttemptID: nativeUUIDValue(input.AttemptID), GenerationIdentityJson: []byte(identityJSON), GraphDigest: input.Generation.Graph.Digest(), DependencyIdsJson: []byte(depsJSON), AuthoredRevisionID: nativeUUIDValue(input.AuthoredRevision.ID.String()), AuthoredRevisionNumber: int64(input.AuthoredRevision.Number), AuthoredContentHash: input.AuthoredRevision.ContentHash, PriorCompiledIdentityJson: []byte(priorIdentityJSON), CompiledDefinitionHash: &compiledDefinitionHash, CompiledSemanticModelID: &compiledSemanticModelID, CompiledSemanticIdentityJson: []byte(compiledIdentityJSON), AttemptedAt: input.AttemptedAt})
-	if isConstraint(err) {
-		return fmt.Errorf("%w: %v", authoring.ErrRevalidationConflict, err)
-	}
-	if err != nil {
-		return err
-	}
-	result, err := q.UpdateCompiledPointer(ctx, dashboarddb.UpdateCompiledPointerParams{CompiledRevisionID: nativeUUIDValue(input.Compilation.AuthoredRevision.RevisionID.String()), CompiledRevisionNumber: int64(input.Compilation.AuthoredRevision.Number), CompiledContentHash: input.Compilation.AuthoredRevision.ContentHash, CompiledDefinitionHash: input.Compilation.DefinitionHash, CompiledSemanticModelID: input.Compilation.SemanticModelID.String(), CompiledSemanticIdentityJson: []byte(compiledIdentityJSON), ProjectID: input.Dashboard.ProjectID.String(), DashboardID: input.Dashboard.ID.String(), RevisionID: nativeUUIDValue(input.Dashboard.Published.Revision.RevisionID.String()), RevisionNumber: int64(input.Dashboard.Published.Revision.Number), ContentHash: input.Dashboard.Published.Revision.ContentHash, PriorCompiledRevisionID: nativeUUIDValue(input.PriorCompilation.AuthoredRevision.RevisionID.String()), PriorCompiledRevisionNumber: int64(input.PriorCompilation.AuthoredRevision.Number), PriorCompiledContentHash: input.PriorCompilation.AuthoredRevision.ContentHash, PriorCompiledDefinitionHash: input.PriorCompilation.DefinitionHash, PriorCompiledSemanticModelID: input.PriorCompilation.SemanticModelID.String(), PriorCompiledIdentityJson: []byte(priorIdentityJSON)})
-	if err != nil {
+		if isConstraint(err) || strings.Contains(err.Error(), "compare-and-swap conflict") {
+			return fmt.Errorf("%w: %v", authoring.ErrRevalidationConflict, err)
+		}
 		return err
 	}
 	if result != 1 {
@@ -409,6 +434,10 @@ func (r *Repository) RecordRevalidationFailure(ctx context.Context, input author
 			return err
 		}
 	}
+	authoredNumber, err := checkedInt64(input.AuthoredRevision.Number, "authored revision number")
+	if err != nil {
+		return err
+	}
 	tx, err := r.beginTx(ctx)
 	if err != nil {
 		return err
@@ -426,12 +455,15 @@ func (r *Repository) RecordRevalidationFailure(ctx context.Context, input author
 		return err
 	}
 	errCode, errMessage := input.Failure.Code, input.Failure.Message
-	err = q.InsertRevalidationFailure(ctx, dashboarddb.InsertRevalidationFailureParams{ProjectID: input.Dashboard.ProjectID.String(), DashboardID: input.Dashboard.ID.String(), GenerationID: input.Generation.Identity.GenerationID, AttemptID: nativeUUIDValue(input.AttemptID), GenerationIdentityJson: []byte(identityJSON), GraphDigest: input.Generation.Graph.Digest(), DependencyIdsJson: []byte(depsJSON), AuthoredRevisionID: nativeUUIDValue(input.AuthoredRevision.ID.String()), AuthoredRevisionNumber: int64(input.AuthoredRevision.Number), AuthoredContentHash: input.AuthoredRevision.ContentHash, PriorCompiledIdentityJson: []byte(priorIdentityJSON), ErrorCode: &errCode, ErrorMessage: &errMessage, AttemptedAt: input.Failure.FailedAt})
+	result, err := q.RecordRevalidationFailure(ctx, dashboarddb.RecordRevalidationFailureParams{ProjectID: input.Dashboard.ProjectID.String(), DashboardID: input.Dashboard.ID.String(), GenerationID: input.Generation.Identity.GenerationID, AttemptID: nativeUUIDValue(input.AttemptID), GenerationIdentityJson: []byte(identityJSON), GraphDigest: input.Generation.Graph.Digest(), DependencyIdsJson: []byte(depsJSON), AuthoredRevisionID: nativeUUIDValue(input.AuthoredRevision.ID.String()), AuthoredRevisionNumber: authoredNumber, AuthoredContentHash: input.AuthoredRevision.ContentHash, PriorCompiledIdentityJson: []byte(priorIdentityJSON), ErrorCode: errCode, ErrorMessage: errMessage, AttemptedAt: input.Failure.FailedAt})
 	if isConstraint(err) {
 		return authoring.ErrRevalidationConflict
 	}
 	if err != nil {
 		return err
+	}
+	if result != 1 {
+		return authoring.ErrRevalidationConflict
 	}
 	return tx.Commit(ctx)
 }
@@ -518,6 +550,13 @@ func nonNegativeCount(value int64) (uint64, error) {
 		return 0, fmt.Errorf("%w: count cannot be negative", authoring.ErrInvalidAuthoring)
 	}
 	return uint64(value), nil
+}
+
+func checkedInt64(value uint64, label string) (int64, error) {
+	if value > math.MaxInt64 {
+		return 0, fmt.Errorf("%w: %s exceeds PostgreSQL bigint range", authoring.ErrInvalidAuthoring, label)
+	}
+	return int64(value), nil
 }
 
 func (r *Repository) GetRevision(ctx context.Context, projectID graph.ResourceID, dashboardID authoring.DashboardID, revisionID authoring.RevisionID) (authoring.Revision, error) {
@@ -656,7 +695,11 @@ func (r *Repository) GetPublishedCompilation(ctx context.Context, projectID grap
 	if err != nil {
 		return authoring.CompiledRevision{}, err
 	}
-	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticModelID != compiled.SemanticModelID.String() || !canonicalJSONEqual([]byte(published.CompiledSemanticIdentityJson), []byte(semanticJSON)) || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != int64(compiled.AuthoredRevision.Number) || published.ContentHash != compiled.AuthoredRevision.ContentHash {
+	compiledNumber, err := checkedInt64(compiled.AuthoredRevision.Number, "compiled revision number")
+	if err != nil {
+		return authoring.CompiledRevision{}, err
+	}
+	if published.CompiledDefinitionHash != compiled.DefinitionHash || published.CompiledSemanticModelID != compiled.SemanticModelID.String() || !canonicalJSONEqual([]byte(published.CompiledSemanticIdentityJson), []byte(semanticJSON)) || published.RevisionID != string(compiled.AuthoredRevision.RevisionID) || published.RevisionNumber != compiledNumber || published.ContentHash != compiled.AuthoredRevision.ContentHash {
 		return authoring.CompiledRevision{}, fmt.Errorf("%w: published compilation pointer does not match immutable compiled artifact", authoring.ErrInvalidAuthoring)
 	}
 	return compiled, nil
@@ -685,11 +728,12 @@ func (r *Repository) AppendDraft(ctx context.Context, input authoring.AppendDraf
 	}
 	defer tx.Rollback(ctx)
 	q := dashboarddb.New(r.db).WithTx(tx)
-	if _, err := q.LockDashboard(ctx, dashboarddb.LockDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID)}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return authoring.Revision{}, authoring.ErrNotFound
-		}
-		return authoring.Revision{}, err
+	// Serialize the command replay lookup with the owner-owned mutation
+	// function. Without this read-side lock, a concurrent retry can observe
+	// the post-CAS draft before its command row and incorrectly report stale
+	// instead of returning the idempotent result.
+	if _, lockErr := q.LockDashboard(ctx, dashboarddb.LockDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID)}); lockErr != nil && !errors.Is(lockErr, pgx.ErrNoRows) {
+		return authoring.Revision{}, fmt.Errorf("lock dashboard for append replay: %w", lockErr)
 	}
 	if replay, err := commandReplay(ctx, q, projectID, input.DashboardID, input.Evidence); err != nil {
 		return authoring.Revision{}, err
@@ -723,28 +767,51 @@ func (r *Repository) AppendDraft(ctx context.Context, input authoring.AppendDraf
 	if err != nil {
 		return authoring.Revision{}, err
 	}
-	if err := insertRevision(ctx, q, projectID, input.Revision, documentJSON, provenanceJSON); err != nil {
-		return authoring.Revision{}, err
-	}
-	if _, err := q.UpdateDashboard(ctx, dashboarddb.UpdateDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID), Slug: input.Next.Slug, Title: input.Next.Title, SemanticModel: input.Next.SemanticModel.String(), Visibility: string(input.Next.Visibility), Status: string(input.Next.Status)}); err != nil {
-		return authoring.Revision{}, err
-	}
 	nextDraftProvenance, err := json.Marshal(input.Next.Draft.Provenance)
 	if err != nil {
 		return authoring.Revision{}, err
 	}
-	result, err := q.UpdateDraft(ctx, dashboarddb.UpdateDraftParams{RevisionID: nativeUUIDValue(string(input.Revision.ID)),
-		RevisionNumber: int64(input.Revision.Number), ContentHash: input.Revision.ContentHash, ProvenanceJson: nextDraftProvenance,
-		ProjectID: projectID, DashboardID: string(input.DashboardID), ExpectedRevisionID: nativeUUIDValue(string(input.ExpectedDraftRevision.RevisionID)),
-		ExpectedRevisionNumber: int64(input.ExpectedDraftRevision.Number), ExpectedContentHash: input.ExpectedDraftRevision.ContentHash})
+	commandProvenanceJSON, err := json.Marshal(input.Evidence.Provenance)
 	if err != nil {
 		return authoring.Revision{}, err
 	}
+	revisionNumber, err := checkedInt64(input.Revision.Number, "revision number")
+	if err != nil {
+		return authoring.Revision{}, err
+	}
+	expectedRevisionNumber, err := checkedInt64(input.ExpectedDraftRevision.Number, "expected draft revision number")
+	if err != nil {
+		return authoring.Revision{}, err
+	}
+	result, err := q.AppendDraft(ctx, dashboarddb.AppendDraftParams{
+		ProjectID: projectID, DashboardID: string(input.DashboardID), Slug: input.Next.Slug, Title: input.Next.Title,
+		SemanticModel: input.Next.SemanticModel.String(), Visibility: string(input.Next.Visibility), Status: string(input.Next.Status),
+		RevisionID: nativeUUIDValue(string(input.Revision.ID)), RevisionNumber: revisionNumber, DocumentJson: []byte(documentJSON),
+		ContentHash: input.Revision.ContentHash, ProvenanceJson: []byte(provenanceJSON), CreatedAt: input.Revision.CreatedAt,
+		DraftProvenanceJson: nextDraftProvenance, ExpectedRevisionID: nativeUUIDValue(string(input.ExpectedDraftRevision.RevisionID)),
+		ExpectedRevisionNumber: expectedRevisionNumber, ExpectedContentHash: input.ExpectedDraftRevision.ContentHash,
+		CommandID: nativeUUIDValue(string(input.Evidence.ID)), RequestFingerprint: input.Evidence.Fingerprint, Action: string(input.Evidence.Action),
+		CommandProvenanceJson: commandProvenanceJSON, OccurredAt: input.Evidence.OccurredAt, EventID: auditEventID(ctx),
+	})
+	if err != nil {
+		return authoring.Revision{}, err
+	}
+	if result == 0 {
+		replay, replayErr := commandReplay(ctx, q, projectID, input.DashboardID, input.Evidence)
+		if replayErr != nil {
+			return authoring.Revision{}, replayErr
+		}
+		if replay == nil || replay.RevisionID == "" {
+			return authoring.Revision{}, authoring.ErrCommandReuse
+		}
+		revision, revisionErr := getRevision(ctx, q, projectID, input.DashboardID, replay.RevisionID)
+		if revisionErr != nil {
+			return authoring.Revision{}, revisionErr
+		}
+		return revision, nil
+	}
 	if result != 1 {
 		return authoring.Revision{}, staleConflict()
-	}
-	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, input.Revision.Token()); err != nil {
-		return authoring.Revision{}, err
 	}
 	if err := r.recordAuditIntent(ctx, tx, input.Next, input.Revision, input.Evidence.ID.String()); err != nil {
 		return authoring.Revision{}, err
@@ -757,6 +824,10 @@ func (r *Repository) AppendDraft(ctx context.Context, input authoring.AppendDraf
 
 func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) (authoring.DashboardLifecycle, error) {
 	projectID, target, compilation, provenance, publishedAt, err := validatePublishInput(input)
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
+	targetNumber, err := checkedInt64(target.Number, "published revision number")
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
@@ -776,12 +847,6 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	}
 	defer tx.Rollback(ctx)
 	q := dashboarddb.New(r.db).WithTx(tx)
-	if _, err := q.LockDashboard(ctx, dashboarddb.LockDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID)}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return authoring.DashboardLifecycle{}, authoring.ErrNotFound
-		}
-		return authoring.DashboardLifecycle{}, err
-	}
 	if replay, err := commandReplay(ctx, q, projectID, input.DashboardID, input.Evidence); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	} else if replay != nil {
@@ -820,9 +885,6 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := insertCompiledRevision(ctx, q, compilation, string(definitionJSON)); err != nil {
-		return authoring.DashboardLifecycle{}, err
-	}
 	semanticIdentityJSON, err := encodeServingIdentity(compilation.SemanticIdentity)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -831,22 +893,24 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	_, err = q.UpdateDashboard(ctx, dashboarddb.UpdateDashboardParams{ProjectID: projectID,
-		DashboardID: string(input.DashboardID), Slug: lifecycle.Slug, Title: lifecycle.Title, SemanticModel: lifecycle.SemanticModel.String(),
-		Visibility: string(lifecycle.Visibility), Status: string(authoring.LifecycleStatusPublished)})
+	commandProvenanceJSON, err := json.Marshal(input.Evidence.Provenance)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	err = q.UpsertPublished(ctx, dashboarddb.UpsertPublishedParams{ProjectID: projectID,
-		DashboardID: string(input.DashboardID), RevisionID: nativeUUIDValue(string(target.RevisionID)), RevisionNumber: int64(target.Number),
-		ContentHash: target.ContentHash, CompiledRevisionID: nativeUUIDValue(string(compilation.AuthoredRevision.RevisionID)), CompiledRevisionNumber: int64(compilation.AuthoredRevision.Number), CompiledContentHash: compilation.AuthoredRevision.ContentHash,
-		CompiledDefinitionHash: compilation.DefinitionHash, CompiledSemanticModelID: compilation.SemanticModelID.String(), CompiledSemanticIdentityJson: []byte(semanticIdentityJSON),
-		ProvenanceJson: provenanceJSON, PublishedAt: publishedAt})
+	applied, err := q.PublishDashboard(ctx, dashboarddb.PublishDashboardParams{
+		ProjectID: projectID, DashboardID: string(input.DashboardID), Slug: lifecycle.Slug, Title: lifecycle.Title,
+		SemanticModel: lifecycle.SemanticModel.String(), Visibility: string(lifecycle.Visibility), Status: string(authoring.LifecycleStatusPublished),
+		RevisionID: nativeUUIDValue(string(target.RevisionID)), RevisionNumber: targetNumber, ContentHash: target.ContentHash,
+		DefinitionJson: definitionJSON, DefinitionHash: compilation.DefinitionHash, SemanticModelID: compilation.SemanticModelID.String(),
+		SemanticIdentityJson: []byte(semanticIdentityJSON), CompiledAt: compilation.CompiledAt, ProvenanceJson: provenanceJSON, PublishedAt: publishedAt,
+		CommandID: nativeUUIDValue(string(input.Evidence.ID)), RequestFingerprint: input.Evidence.Fingerprint, Action: string(input.Evidence.Action),
+		CommandProvenanceJson: commandProvenanceJSON, OccurredAt: input.Evidence.OccurredAt, EventID: auditEventID(ctx),
+	})
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, target); err != nil {
-		return authoring.DashboardLifecycle{}, err
+	if applied == 0 {
+		return r.getLifecycle(ctx, q, projectID, input.DashboardID)
 	}
 	if err := r.recordAuditIntent(ctx, tx, lifecycle, revision, input.Evidence.ID.String()); err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -859,6 +923,10 @@ func (r *Repository) Publish(ctx context.Context, input authoring.PublishInput) 
 
 func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) (authoring.DashboardLifecycle, error) {
 	projectID, err := validateArchiveInput(input)
+	if err != nil {
+		return authoring.DashboardLifecycle{}, err
+	}
+	expectedRevisionNumber, err := checkedInt64(input.ExpectedCurrentRevision.Number, "expected current revision number")
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
@@ -876,12 +944,6 @@ func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) 
 	}
 	defer tx.Rollback(ctx)
 	q := dashboarddb.New(r.db).WithTx(tx)
-	if _, err := q.LockDashboard(ctx, dashboarddb.LockDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID)}); err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return authoring.DashboardLifecycle{}, authoring.ErrNotFound
-		}
-		return authoring.DashboardLifecycle{}, err
-	}
 	if replay, err := commandReplay(ctx, q, projectID, input.DashboardID, input.Evidence); err != nil {
 		return authoring.DashboardLifecycle{}, err
 	} else if replay != nil {
@@ -902,13 +964,24 @@ func (r *Repository) Archive(ctx context.Context, input authoring.ArchiveInput) 
 	if err := authoring.ValidateTransition(lifecycle.Status, authoring.LifecycleStatusArchived); err != nil {
 		return authoring.DashboardLifecycle{}, conflict(err.Error())
 	}
-	result := expected
-	_, err = q.ArchiveDashboard(ctx, dashboarddb.ArchiveDashboardParams{ProjectID: projectID, DashboardID: string(input.DashboardID)})
+	commandProvenanceJSON, err := json.Marshal(input.Evidence.Provenance)
 	if err != nil {
 		return authoring.DashboardLifecycle{}, err
 	}
-	if err := insertCommand(ctx, q, projectID, input.DashboardID, input.Evidence, result); err != nil {
+	applied, err := q.ArchiveDashboard(ctx, dashboarddb.ArchiveDashboardParams{
+		ProjectID: projectID, DashboardID: string(input.DashboardID), ExpectedRevisionID: nativeUUIDValue(string(expected.RevisionID)),
+		ExpectedRevisionNumber: expectedRevisionNumber, ExpectedContentHash: expected.ContentHash,
+		CommandID: nativeUUIDValue(string(input.Evidence.ID)), RequestFingerprint: input.Evidence.Fingerprint, Action: string(input.Evidence.Action),
+		CommandProvenanceJson: commandProvenanceJSON, OccurredAt: input.Evidence.OccurredAt, EventID: auditEventID(ctx),
+	})
+	if err != nil {
 		return authoring.DashboardLifecycle{}, err
+	}
+	if applied == 0 {
+		return r.getLifecycle(ctx, q, projectID, input.DashboardID)
+	}
+	if applied != 1 {
+		return authoring.DashboardLifecycle{}, staleConflict()
 	}
 	if err := r.recordAuditIntent(ctx, tx, lifecycle, authoring.Revision{ID: expected.RevisionID, DashboardID: input.DashboardID, Number: expected.Number, ContentHash: expected.ContentHash}, input.Evidence.ID.String()); err != nil {
 		return authoring.DashboardLifecycle{}, err
@@ -938,52 +1011,6 @@ func commandReplay(ctx context.Context, q *dashboarddb.Queries, projectID string
 		return &commandResult{}, nil
 	}
 	return &commandResult{RevisionID: authoring.RevisionID(row.ResultRevisionID)}, nil
-}
-
-func insertCompiledRevision(ctx context.Context, q *dashboarddb.Queries, compiled authoring.CompiledRevision, definitionJSON string) error {
-	if err := compiled.Validate(); err != nil {
-		return err
-	}
-	semanticIdentityJSON, err := encodeServingIdentity(compiled.SemanticIdentity)
-	if err != nil {
-		return err
-	}
-	row, err := q.GetCompilation(ctx, dashboarddb.GetCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: nativeUUIDValue(string(compiled.AuthoredRevision.RevisionID)), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionHash: compiled.DefinitionHash, SemanticModelID: compiled.SemanticModelID.String(), SemanticIdentityJson: []byte(semanticIdentityJSON)})
-	if err == nil {
-		if !canonicalJSONEqual([]byte(row.DefinitionJson), []byte(definitionJSON)) || row.DefinitionHash != compiled.DefinitionHash || row.SemanticModelID != compiled.SemanticModelID.String() || !canonicalJSONEqual([]byte(row.SemanticIdentityJson), []byte(semanticIdentityJSON)) {
-			return conflict("compiled revision identity is immutable")
-		}
-		return nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	err = q.InsertCompilation(ctx, dashboarddb.InsertCompilationParams{ProjectID: compiled.ProjectID.String(), DashboardID: string(compiled.DashboardID), RevisionID: nativeUUIDValue(string(compiled.AuthoredRevision.RevisionID)), RevisionNumber: int64(compiled.AuthoredRevision.Number), ContentHash: compiled.AuthoredRevision.ContentHash, DefinitionJson: []byte(definitionJSON), DefinitionHash: compiled.DefinitionHash, SemanticModelID: compiled.SemanticModelID.String(), SemanticIdentityJson: []byte(semanticIdentityJSON), CompiledAt: compiled.CompiledAt})
-	if isConstraint(err) {
-		return conflict("compiled revision identity is immutable")
-	}
-	return err
-}
-
-func insertCommand(ctx context.Context, q *dashboarddb.Queries, projectID string, dashboardID authoring.DashboardID, evidence authoring.CommandEvidence, token authoring.RevisionToken) error {
-	_, err := q.GetCommand(ctx, dashboarddb.GetCommandParams{ProjectID: projectID, DashboardID: string(dashboardID), CommandID: nativeUUIDValue(string(evidence.ID))})
-	if err == nil {
-		return authoring.ErrCommandReuse
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
-		return err
-	}
-	provenanceJSON, err := json.Marshal(evidence.Provenance)
-	if err != nil {
-		return err
-	}
-	rid, rnum, rhash := string(token.RevisionID), int64(token.Number), token.ContentHash
-	err = q.InsertCommand(ctx, dashboarddb.InsertCommandParams{ProjectID: projectID, DashboardID: string(dashboardID), CommandID: nativeUUIDValue(string(evidence.ID)), RequestFingerprint: evidence.Fingerprint, Action: string(evidence.Action), ProvenanceJson: provenanceJSON, OccurredAt: evidence.OccurredAt,
-		ResultRevisionID: nativeUUIDValue(rid), ResultRevisionNumber: &rnum, ResultContentHash: &rhash})
-	if isConstraint(err) {
-		return authoring.ErrCommandReuse
-	}
-	return err
 }
 
 func validateCreateOperationKey(operation authoring.CreateOperation) error {
@@ -1027,32 +1054,6 @@ func lookupCreateOperation(ctx context.Context, tx Tx, operation authoring.Creat
 	return result, true, nil
 }
 
-func insertCreateOperation(ctx context.Context, tx Tx, operation authoring.CreateOperation, dashboardID authoring.DashboardID, token authoring.RevisionToken) (int64, error) {
-	return dashboarddb.New(tx).InsertCreateOperation(ctx, dashboarddb.InsertCreateOperationParams{ProjectID: operation.ProjectID.String(), ActorID: operation.ActorID, OperationKind: operation.Kind, IdempotencyKey: operation.IdempotencyKey, ConversationID: operation.ConversationID, ToolCallID: operation.ToolCallID, RequestFingerprint: operation.Fingerprint, DashboardID: dashboardID.String(), ResultRevisionID: nativeUUIDValue(token.RevisionID.String()), ResultRevisionNumber: int64(token.Number), ResultContentHash: token.ContentHash})
-}
-
-func insertRevision(ctx context.Context, q *dashboarddb.Queries, projectID string, revision authoring.Revision, documentJSON, provenanceJSON string) error {
-	err := q.InsertRevision(ctx, dashboarddb.InsertRevisionParams{ProjectID: projectID, DashboardID: string(revision.DashboardID), RevisionID: nativeUUIDValue(string(revision.ID)), RevisionNumber: int64(revision.Number),
-		DocumentJson: []byte(documentJSON), ContentHash: revision.ContentHash, ProvenanceJson: []byte(provenanceJSON), CreatedAt: revision.CreatedAt})
-	if isConstraint(err) {
-		return conflict("revision identity or number already exists")
-	}
-	return err
-}
-
-func insertDraft(ctx context.Context, q *dashboarddb.Queries, projectID string, dashboardID authoring.DashboardID, draft authoring.Draft) error {
-	provenanceJSON, err := json.Marshal(draft.Provenance)
-	if err != nil {
-		return err
-	}
-	err = q.InsertDraft(ctx, dashboarddb.InsertDraftParams{ProjectID: projectID, DashboardID: string(dashboardID), DraftID: nativeUUIDValue(string(draft.ID)), RevisionID: nativeUUIDValue(string(draft.Revision.RevisionID)), RevisionNumber: int64(draft.Revision.Number),
-		ContentHash: draft.Revision.ContentHash, ProvenanceJson: []byte(provenanceJSON)})
-	if isConstraint(err) {
-		return conflict("draft pointer is invalid")
-	}
-	return err
-}
-
 func (r *Repository) begin(ctx context.Context) (Tx, error) {
 	if r == nil || r.db == nil {
 		return nil, fmt.Errorf("dashboard authoring persistence is unavailable")
@@ -1084,6 +1085,7 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, lifecycle aut
 		return fmt.Errorf("dashboard authoring audit intent recorder is required")
 	}
 	projectID := lifecycle.ProjectID.String()
+	intent.ScopeID = projectID
 	aggregateKey := "dashboard_authoring:" + projectID + ":" + lifecycle.ID.String()
 	intent.ResourceKind = "dashboard"
 	intent.ResourceID = lifecycle.ID.String()
@@ -1092,6 +1094,10 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, lifecycle aut
 	commandID = strings.TrimSpace(commandID)
 	if commandID == "" {
 		return fmt.Errorf("dashboard authoring audit command identity is required")
+	}
+	revisionNumber, err := checkedInt64(revision.Number, "audit revision number")
+	if err != nil {
+		return err
 	}
 	actorID := strings.TrimSpace(intent.ActorID)
 	if actorID == "" {
@@ -1147,16 +1153,24 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, lifecycle aut
 		return fmt.Errorf("dashboard authoring domain event port is required")
 	}
 	eventID := auditID
-	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: projectID, DashboardID: lifecycle.ID.String(), ActorID: intent.ActorID, CorrelationID: intent.CorrelationID, Revision: int64(revision.Number), Type: intent.Action, Payload: []byte(metadata)})
+	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: projectID, DashboardID: lifecycle.ID.String(), ActorID: intent.ActorID, CorrelationID: intent.CorrelationID, Revision: revisionNumber, Type: intent.Action, Payload: []byte(metadata)})
 	if err != nil {
 		return fmt.Errorf("append dashboard authoring domain event: %w", err)
 	}
-	if event.EventID != eventID.String() || event.ProjectID != projectID || event.DashboardID != lifecycle.ID.String() || event.ActorID != intent.ActorID || event.CorrelationID != intent.CorrelationID || event.Revision != int64(revision.Number) || event.Type != intent.Action || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, []byte(metadata)) {
+	if event.EventID != eventID.String() || event.ProjectID != projectID || event.DashboardID != lifecycle.ID.String() || event.ActorID != intent.ActorID || event.CorrelationID != intent.CorrelationID || event.Revision != revisionNumber || event.Type != intent.Action || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, []byte(metadata)) {
 		return fmt.Errorf("dashboard authoring domain event returned mismatched identity")
 	}
 	intent.DomainEventID = event.EventID
 	intent.AggregateSequence = event.AggregateVersion
 	return r.audit.RecordAuditIntent(ctx, tx, intent)
+}
+
+func auditEventID(ctx context.Context) pgtype.UUID {
+	intent, ok := authoring.AuditIntentFromContext(ctx)
+	if !ok {
+		return pgtype.UUID{}
+	}
+	return nativeUUIDValue(intent.EventID)
 }
 
 // canonicalJSONEqual compares event payloads as JSON values, rather than

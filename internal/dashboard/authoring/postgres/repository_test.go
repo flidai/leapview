@@ -3,16 +3,19 @@ package postgres
 import (
 	"context"
 	"errors"
+	"math"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	eventpostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -21,6 +24,15 @@ import (
 )
 
 type testDBTX struct{ *pgxpool.Pool }
+
+func TestCheckedInt64RejectsPostgreSQLBigintOverflow(t *testing.T) {
+	if got, err := checkedInt64(uint64(math.MaxInt64), "revision"); err != nil || got != math.MaxInt64 {
+		t.Fatalf("checked maximum = %d, %v", got, err)
+	}
+	if _, err := checkedInt64(uint64(math.MaxInt64)+1, "revision"); err == nil || !strings.Contains(err.Error(), "exceeds PostgreSQL bigint range") {
+		t.Fatalf("overflow error = %v", err)
+	}
+}
 
 func authoringDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
@@ -35,6 +47,14 @@ func authoringDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventpostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -42,7 +62,41 @@ func authoringDB(t *testing.T) *pgxpool.Pool {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO access.principal(id,principal_type) VALUES ($1::uuid,'user') ON CONFLICT (id) DO NOTHING`, "018f4f2e-0000-7000-0000-000000000601"); err != nil {
+		t.Fatal(err)
+	}
 	return db
+}
+
+func insertAuthoringEvidence(t *testing.T, db *pgxpool.Pool, eventID, projectID, dashboardID string) {
+	t.Helper()
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	payload := []byte(`{"kind":"schema_test"}`)
+	const eventType = "schema_test"
+	if _, err := eventpostgres.New().AppendEvent(t.Context(), tx, eventpostgres.EventInput{
+		EventID: eventID, ScopeID: projectID, AggregateType: "dashboard_authoring", AggregateID: dashboardID,
+		EventType: eventType, SchemaVersion: 1, CorrelationID: eventID, Payload: payload,
+	}); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := accesspostgres.New().RecordAuditEvent(t.Context(), tx, access.AuditIntent{
+		EventID: eventID, DomainEventID: eventID, ScopeID: projectID, ActorID: "schema-test-actor",
+		Source: "dashboard.authoring", Operation: "schemaTest", Action: eventType,
+		ResourceKind: "dashboard", ResourceID: dashboardID, Capability: access.CapabilityResourceEdit,
+		Outcome: "success", RequestID: eventID, CorrelationID: eventID,
+		AggregateKey: "dashboard_authoring:" + projectID + ":" + dashboardID, AggregateSequence: 1,
+		MetadataJSON: string(payload),
+	}); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestRepositoryPostgreSQL18NativeOpaqueIDsAndFence(t *testing.T) {
@@ -77,7 +131,9 @@ func TestAuthoringSchemaRejectsInvalidRows(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status) VALUES ('project:invalid','dashboard:bad',$1::uuid,'Bad Slug','Title','model','private','draft')`, "018f4f2e-0000-7000-0000-000000000601"); err == nil {
 		t.Fatal("invalid dashboard slug was accepted")
 	}
-	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status) VALUES ('project:invalid','dashboard:valid',$1::uuid,'valid','Title','model','private','draft')`, "018f4f2e-0000-7000-0000-000000000601"); err != nil {
+	validEventID := "018f4f2e-0000-7000-0000-000000000621"
+	insertAuthoringEvidence(t, db, validEventID, "project:invalid", "dashboard:valid")
+	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,last_event_id) VALUES ('project:invalid','dashboard:valid',$1::uuid,'valid','Title','model','private','draft',$2::uuid)`, "018f4f2e-0000-7000-0000-000000000601", validEventID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_revisions(project_id,dashboard_id,revision_id,revision_number,document_json,content_hash,provenance_json,created_at) VALUES ('project:invalid','dashboard:valid',$1::uuid,1,'{}'::jsonb,'not-a-digest','{}'::jsonb,clock_timestamp())`, "018f4f2e-0000-7000-0000-000000000591"); err == nil {
@@ -101,7 +157,9 @@ func TestAuthoringSchemaIdentityAndTransitionGuards(t *testing.T) {
 	db := authoringDB(t)
 	ctx := t.Context()
 	owner := "018f4f2e-0000-7000-0000-000000000601"
-	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status) VALUES ('project:guards','dashboard:guards',$1::uuid,'guards','Guards','model','private','draft')`, owner); err != nil {
+	guardEventID := "018f4f2e-0000-7000-0000-000000000622"
+	insertAuthoringEvidence(t, db, guardEventID, "project:guards", "dashboard:guards")
+	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,last_event_id) VALUES ('project:guards','dashboard:guards',$1::uuid,'guards','Guards','model','private','draft',$2::uuid)`, owner, guardEventID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := db.Exec(ctx, `UPDATE dashboard.authoring_dashboards SET owner_principal_id=$1::uuid WHERE project_id='project:guards' AND dashboard_id='dashboard:guards'`, "018f4f2e-0000-7000-0000-000000000602"); err == nil {
@@ -146,16 +204,31 @@ type authoringAudit struct {
 	err error
 }
 
-func (a *authoringAudit) RecordAuditIntent(context.Context, Tx, access.AuditIntent) error {
+func (a *authoringAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.err
+	if a.err != nil {
+		return a.err
+	}
+	// The fixture's opaque actor intentionally is not a typed access principal.
+	// Preserve it in actor_id while leaving principal_id NULL for the canonical
+	// PostgreSQL audit adapter.
+	intent.PrincipalID = ""
+	_, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
+	return err
 }
 
 type authoringEvents struct{}
 
-func (authoringEvents) AppendEvent(_ context.Context, _ Tx, input EventInput) (Event, error) {
-	return Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, Payload: input.Payload}, nil
+func (authoringEvents) AppendEvent(ctx context.Context, tx Tx, input EventInput) (Event, error) {
+	stored, err := eventpostgres.New().AppendEvent(ctx, tx, eventpostgres.EventInput{
+		EventID: input.EventID, ScopeID: input.ProjectID, AggregateType: "dashboard_authoring", AggregateID: input.DashboardID,
+		EventType: input.Type, SchemaVersion: 1, CorrelationID: input.CorrelationID, Payload: input.Payload,
+	})
+	if err != nil {
+		return Event{}, err
+	}
+	return Event{EventID: stored.EventID, ProjectID: stored.ScopeID, DashboardID: stored.AggregateID, ActorID: input.ActorID, CorrelationID: stored.CorrelationID, Revision: input.Revision, AggregateVersion: stored.AggregateVersion, Type: stored.EventType, Payload: stored.Payload}, nil
 }
 
 type countingAuthoringEvents struct {
@@ -163,11 +236,11 @@ type countingAuthoringEvents struct {
 	count int
 }
 
-func (e *countingAuthoringEvents) AppendEvent(_ context.Context, _ Tx, input EventInput) (Event, error) {
+func (e *countingAuthoringEvents) AppendEvent(ctx context.Context, tx Tx, input EventInput) (Event, error) {
 	e.mu.Lock()
 	e.count++
 	e.mu.Unlock()
-	return Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, Payload: input.Payload}, nil
+	return authoringEvents{}.AppendEvent(ctx, tx, input)
 }
 
 type countingAuthoringAudit struct {
@@ -175,11 +248,30 @@ type countingAuthoringAudit struct {
 	count int
 }
 
-func (a *countingAuthoringAudit) RecordAuditIntent(context.Context, Tx, access.AuditIntent) error {
+// postgresAuthoringAudit and postgresAuthoringEvents are the production
+// capability adapters used by the runtime-role conformance test below. They
+// deliberately retain the caller-owned transaction and never commit it.
+type postgresAuthoringAudit struct{}
+
+func (postgresAuthoringAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
+	intent.PrincipalID = ""
+	_, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
+	return err
+}
+
+type postgresAuthoringEvents struct{}
+
+func (postgresAuthoringEvents) AppendEvent(ctx context.Context, tx Tx, input EventInput) (Event, error) {
+	return authoringEvents{}.AppendEvent(ctx, tx, input)
+}
+
+func (a *countingAuthoringAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
 	a.mu.Lock()
 	a.count++
 	a.mu.Unlock()
-	return nil
+	intent.PrincipalID = ""
+	_, err := accesspostgres.New().RecordAuditEvent(ctx, tx, intent)
+	return err
 }
 
 type authoringFence struct {
@@ -575,5 +667,83 @@ func TestRepositoryPostgreSQL18ConcurrentAppendCommandReplay(t *testing.T) {
 	audits.mu.Unlock()
 	if eventCount != 1 || auditCount != 1 {
 		t.Fatalf("concurrent append evidence events=%d audits=%d, want 1/1", eventCount, auditCount)
+	}
+}
+
+func TestRepositoryPostgreSQL18RuntimeRoleUsesGuardedAuthoringMutation(t *testing.T) {
+	// Reuse the canonical fixture values, but execute the mutation against a
+	// separately provisioned database through the non-owner runtime role.
+	seed := newAuthoringFixture(t)
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-authoring-secret", Login: true})
+	database := h.NewDatabase(t, "")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventpostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	// The standalone event capability intentionally leaves role policy to the
+	// control-plane baseline. Mirror that narrow runtime event append surface
+	// here so the real event adapter can participate in the same transaction.
+	if _, err := tx.Exec(t.Context(), `GRANT USAGE ON SCHEMA event TO leapview_control_runtime;
+GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
+REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime`); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO access.principal(id,principal_type) VALUES ($1::uuid,'user')`, seed.lifecycle.OwnerPrincipalID); err != nil {
+		t.Fatal(err)
+	}
+	runtime, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	repo, err := New(runtime, postgresAuthoringAudit{}, postgresAuthoringEvents{}, &authoringFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := authoring.CreateInput{
+		ProjectID: seed.project, Lifecycle: seed.lifecycle, Revision: seed.revision,
+		Operation: authoring.CreateOperation{ProjectID: seed.project, ActorID: "actor", Kind: "create", IdempotencyKey: "runtime-create", ConversationID: "conversation", ToolCallID: "tool", Fingerprint: "sha256:" + strings.Repeat("c", 64)},
+	}
+	created, err := repo.Create(auditContext(uuidv7("018f4f2e-0000-7000-8000-000000001020"), "dashboard_authoring.draft_created"), create)
+	if err != nil {
+		t.Fatalf("runtime guarded create failed: %v", err)
+	}
+	if created.ID != seed.dashboard {
+		t.Fatalf("runtime guarded create dashboard = %q, want %q", created.ID, seed.dashboard)
+	}
+	if _, err := runtime.Exec(t.Context(), `INSERT INTO dashboard.authoring_revisions(project_id,dashboard_id,revision_id,revision_number,document_json,content_hash,provenance_json,created_at) VALUES ('project:runtime','dashboard:runtime',$1::uuid,2,'{}'::jsonb,$2,'{}'::jsonb,clock_timestamp())`, "018f4f2e-0000-7000-8000-000000001021", "sha256:"+strings.Repeat("a", 64)); err == nil {
+		t.Fatal("runtime role unexpectedly inserted an authoring revision directly")
+	}
+	if _, err := runtime.Exec(t.Context(), `UPDATE dashboard.authoring_dashboards SET title='bypass' WHERE project_id=$1 AND dashboard_id=$2`, seed.project.String(), seed.dashboard.String()); err == nil {
+		t.Fatal("runtime role unexpectedly updated an authoring dashboard directly")
+	}
+	var count int
+	if err := runtime.QueryRow(t.Context(), `SELECT count(*) FROM dashboard.authoring_dashboards WHERE project_id=$1 AND dashboard_id=$2`, seed.project.String(), seed.dashboard.String()).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("runtime dashboard visibility count = %d, want 1", count)
 	}
 }

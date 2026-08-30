@@ -83,11 +83,25 @@ func TestProductRolePolicyDoesNotBroadenDashboardProjectionMutation(t *testing.T
 		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_dashboards",
 		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_drafts",
 		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_published",
+		"GRANT SELECT, INSERT ON dashboard.authoring_revisions",
+		"GRANT SELECT, INSERT ON dashboard.publication_events",
 		"GRANT SELECT, INSERT, UPDATE ON dashboard.publications",
 		"GRANT SELECT, INSERT, UPDATE ON dashboard.publication_streams",
+		"GRANT SELECT, DELETE ON dashboard.publication_streams",
 	} {
 		if strings.Contains(rolePolicySQL, forbidden) {
 			t.Fatalf("dashboard role policy broadens component column grants through %q", forbidden)
+		}
+	}
+	for _, required := range []string{
+		"GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions",
+		"dashboard.publication_events, dashboard.publication_streams TO leapview_control_runtime",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.authoring_dashboards",
+		"dashboard.publication_events, dashboard.publication_streams FROM leapview_control_runtime",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.publication_streams FROM leapview_control_maintenance",
+	} {
+		if !strings.Contains(rolePolicySQL, required) {
+			t.Fatalf("dashboard role policy is missing guarded-mutation boundary %q", required)
 		}
 	}
 }

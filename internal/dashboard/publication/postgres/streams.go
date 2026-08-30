@@ -169,11 +169,10 @@ func (r *StreamRegistry) PrepareCommand(ctx context.Context, publicationID, stre
 		return command.PreparedRefresh{}, 0, err
 	}
 	for attempt := 0; attempt < 8; attempt++ {
-		now := time.Now().UTC()
 		row, err := r.q.GetCommandState(ctx, publicationdb.GetCommandStateParams{
 			PublicationID: publicationUUID, StreamID: streamID,
 			PublicID: version.PublicID, ServingStateID: version.ServingStateID,
-			RegistrationID: registrationUUID, Now: now,
+			RegistrationID: registrationUUID,
 		})
 		if err != nil {
 			return command.PreparedRefresh{}, 0, fmt.Errorf("load publication command state: %w", err)
@@ -196,7 +195,7 @@ func (r *StreamRegistry) PrepareCommand(ctx context.Context, publicationID, stre
 			PublicationID: publicationUUID, StreamID: streamID,
 			PublicID: version.PublicID, ServingStateID: version.ServingStateID,
 			RegistrationID:    registrationUUID,
-			CurrentGeneration: row.Generation, Now: now,
+			CurrentGeneration: row.Generation,
 		})
 		if err != nil {
 			return command.PreparedRefresh{}, 0, err
@@ -242,7 +241,6 @@ func (r *StreamRegistry) Active(publicationID, streamID string, version publicat
 		PublicationID: publicationUUID, StreamID: streamID,
 		PublicID: version.PublicID, ServingStateID: version.ServingStateID,
 		RegistrationID: registrationUUID,
-		Now:            time.Now().UTC(),
 	})
 	return err == nil && exists
 }
@@ -276,7 +274,7 @@ func (r *StreamRegistry) Reconcile(ctx context.Context, active map[string]public
 }
 
 func (r *StreamRegistry) loadDurableRegistrations(ctx context.Context) (map[streamKey]string, bool) {
-	rows, err := r.q.ListActiveStreams(ctx, time.Now().UTC())
+	rows, err := r.q.ListActiveStreams(ctx)
 	if err != nil {
 		return nil, false
 	}
@@ -323,7 +321,6 @@ func (r *StreamRegistry) heartbeat(ctx context.Context, publicationID, streamID 
 				ExpiresAt: streamExpiry(), PublicationID: publicationUUID,
 				StreamID: streamID, PublicID: version.PublicID,
 				ServingStateID: version.ServingStateID, RegistrationID: registrationUUID,
-				Now: time.Now().UTC(),
 			})
 			if err != nil {
 				continue

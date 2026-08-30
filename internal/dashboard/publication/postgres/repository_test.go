@@ -11,11 +11,13 @@ import (
 
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
 	"github.com/flidai/leapview/internal/access"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationdb "github.com/flidai/leapview/internal/dashboard/publication/postgres/internal/db"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
@@ -26,7 +28,26 @@ import (
 
 type integrationAudit struct{}
 
-func (integrationAudit) RecordAuditIntent(context.Context, Tx, access.AuditIntent) error { return nil }
+func (integrationAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
+	_, err := tx.Exec(ctx, `INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,source,operation,action,resource_kind,resource_id,capability,outcome,correlation_id,aggregate_key,aggregate_sequence,metadata)
+VALUES ($1::uuid,NULLIF($2,'')::uuid,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),$10,$11,NULLIF($12,'')::uuid,$13,$14,$15::jsonb)
+ON CONFLICT (audit_id) DO NOTHING`, intent.EventID, intent.DomainEventID, intent.ScopeID, intent.ActorID, intent.Source, intent.Operation, intent.Action, intent.ResourceKind, intent.ResourceID, intent.Capability.String(), intent.Outcome, intent.CorrelationID, intent.AggregateKey, intent.AggregateSequence, coalesceAuditMetadata(intent.MetadataJSON))
+	if err == nil {
+		var count int
+		_ = tx.QueryRow(ctx, `SELECT count(*) FROM audit.audit_event WHERE event_id=$1::uuid AND scope_id=$2 AND actor_id=$3 AND action=$4 AND resource_kind='publication' AND resource_id=$5 AND outcome='success' AND aggregate_key=$6 AND aggregate_sequence=$7`, intent.DomainEventID, intent.ScopeID, intent.ActorID, intent.Action, intent.ResourceID, intent.AggregateKey, intent.AggregateSequence).Scan(&count)
+		if count != 1 {
+			return fmt.Errorf("publication audit evidence was not persisted")
+		}
+	}
+	return err
+}
+
+func coalesceAuditMetadata(value string) string {
+	if strings.TrimSpace(value) == "" {
+		return "{}"
+	}
+	return value
+}
 
 type failingPublicationAudit struct{ err error }
 
@@ -34,12 +55,29 @@ func (r failingPublicationAudit) RecordAuditIntent(context.Context, Tx, access.A
 	return r.err
 }
 
+type mismatchingPublicationAudit struct{}
+
+func (mismatchingPublicationAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
+	intent.MetadataJSON = `{"tampered":true}`
+	return persistPublicationAudit(ctx, tx, intent)
+}
+
 type capturingPublicationAudit struct {
 	mu      sync.Mutex
 	intents []access.AuditIntent
 }
 
-func (r *capturingPublicationAudit) RecordAuditIntent(_ context.Context, _ Tx, intent access.AuditIntent) error {
+func persistPublicationAudit(ctx context.Context, tx Tx, intent access.AuditIntent) error {
+	_, err := tx.Exec(ctx, `INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,source,operation,action,resource_kind,resource_id,capability,outcome,correlation_id,aggregate_key,aggregate_sequence,metadata)
+VALUES ($1::uuid,NULLIF($2,'')::uuid,NULLIF($3,''),NULLIF($4,''),$5,$6,$7,NULLIF($8,''),NULLIF($9,''),$10,$11,NULLIF($12,'')::uuid,$13,$14,$15::jsonb)
+ON CONFLICT (audit_id) DO NOTHING`, intent.EventID, intent.DomainEventID, intent.ScopeID, intent.ActorID, intent.Source, intent.Operation, intent.Action, intent.ResourceKind, intent.ResourceID, intent.Capability.String(), intent.Outcome, intent.CorrelationID, intent.AggregateKey, intent.AggregateSequence, coalesceAuditMetadata(intent.MetadataJSON))
+	return err
+}
+
+func (r *capturingPublicationAudit) RecordAuditIntent(ctx context.Context, tx Tx, intent access.AuditIntent) error {
+	if err := persistPublicationAudit(ctx, tx, intent); err != nil {
+		return err
+	}
 	r.mu.Lock()
 	r.intents = append(r.intents, intent)
 	r.mu.Unlock()
@@ -48,7 +86,13 @@ func (r *capturingPublicationAudit) RecordAuditIntent(_ context.Context, _ Tx, i
 
 type integrationEvents struct{}
 
-func (integrationEvents) AppendEvent(_ context.Context, _ Tx, input EventInput) (Event, error) {
+func (integrationEvents) AppendEvent(ctx context.Context, tx Tx, input EventInput) (Event, error) {
+	if _, err := tx.Exec(ctx, `INSERT INTO event.event_aggregate(scope_id,aggregate_type,aggregate_id,next_version) VALUES ($1,'dashboard_publication',$2,$3) ON CONFLICT DO NOTHING`, input.ProjectID, input.PublicationID, input.Revision+1); err != nil {
+		return Event{}, err
+	}
+	if _, err := tx.Exec(ctx, `INSERT INTO event.event_log(event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,correlation_id,payload) VALUES ($1::uuid,$2,'dashboard_publication',$3,$4,$5,1,NULLIF($6,'')::uuid,$7::jsonb) ON CONFLICT (event_id) DO NOTHING`, input.EventID, input.ProjectID, input.PublicationID, input.Revision, input.Type, input.CorrelationID, input.Payload); err != nil {
+		return Event{}, err
+	}
 	return Event{EventID: input.EventID, ProjectID: input.ProjectID, PublicationID: input.PublicationID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Type: input.Type, ServingStateID: input.ServingStateID, Revision: input.Revision, AggregateVersion: input.Revision, Payload: input.Payload}, nil
 }
 
@@ -63,6 +107,14 @@ func publicationDB(t *testing.T) *pgxpool.Pool {
 	t.Cleanup(db.Close)
 	tx, err := db.Begin(t.Context())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
@@ -343,6 +395,39 @@ func TestRepositoryPostgreSQL18PublicationMutationAuditRollback(t *testing.T) {
 	}
 }
 
+func TestRepositoryPostgreSQL18PublicationMutationAuditMetadataMismatchRollsBack(t *testing.T) {
+	db, _, row := reconciledPublication(t)
+	repo, err := New(db, mismatchingPublicationAudit{}, integrationEvents{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	intent := access.AuditIntent{
+		EventID: "018f4f2e-0000-7000-8000-000000000311", ActorID: "principal:owner",
+		CorrelationID: "018f4f2e-0000-7000-8000-000000000312", Action: "dashboard_publication.suspended",
+		MetadataJSON: `{"operationId":"suspend-dashboard-publication","owner":"dashboard","surface":"api"}`,
+	}
+	if _, err := repo.Suspend(publication.WithAuditIntent(t.Context(), intent), row.ProjectID, row.Name, "principal:owner", row.Revision); err == nil || !strings.Contains(err.Error(), "audit evidence") {
+		t.Fatalf("metadata mismatch error=%v, want audit evidence failure", err)
+	}
+	retained, err := repo.Get(t.Context(), row.ProjectID, row.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retained.Revision != row.Revision || retained.Status() != publication.StatusActive {
+		t.Fatalf("publication after metadata rollback=%#v, want unchanged active row", retained)
+	}
+	var projectionEvents, auditEvents int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM dashboard.publication_events WHERE publication_id=$1::uuid`, row.ID).Scan(&projectionEvents); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE aggregate_key=$1`, "dashboard_publication:"+row.ProjectID.String()+":"+row.Name).Scan(&auditEvents); err != nil {
+		t.Fatal(err)
+	}
+	if projectionEvents != 1 || auditEvents != 1 {
+		t.Fatalf("metadata mismatch left projection events=%d audit events=%d, want 1/1", projectionEvents, auditEvents)
+	}
+}
+
 func TestRepositoryPostgreSQL18ProjectionReplayRejectsTamper(t *testing.T) {
 	db := publicationDB(t)
 	_, err := New(db, integrationAudit{}, integrationEvents{})
@@ -354,7 +439,6 @@ func TestRepositoryPostgreSQL18ProjectionReplayRejectsTamper(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(context.Background())
-	q := newQueries(tx)
 	row := publication.Publication{ID: "018f4f2e-0000-7000-8000-000000000211", ProjectID: "project:projection", Name: "website", Revision: 1, Configured: true, ServingStateID: "generation-1", Dashboard: "dashboard:website", DefaultPage: "overview", ConfigurationDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
 	if _, err := tx.Exec(t.Context(), `INSERT INTO dashboard.publications(id,project_id,name,public_id,dashboard,default_page,configuration_digest,revision,configured,active_serving_state_id,configured_at) VALUES ($1::uuid,$2,$3,$4,$5,$6,$7,1,true,$8,clock_timestamp())`, row.ID, row.ProjectID.String(), row.Name, "public-id", row.Dashboard, row.DefaultPage, row.ConfigurationDigest, row.ServingStateID); err != nil {
 		t.Fatal(err)
@@ -364,22 +448,34 @@ func TestRepositoryPostgreSQL18ProjectionReplayRejectsTamper(t *testing.T) {
 		t.Fatal(err)
 	}
 	event := Event{EventID: "018f4f2e-0000-7000-8000-000000000212", PublicationID: row.ID, Revision: 1, AggregateVersion: 1, Type: "dashboard_publication.suspended", ActorID: "principal:owner", CorrelationID: "corr", ServingStateID: row.ServingStateID, Payload: payload}
-	if err := insertEvent(t.Context(), q, row.ID, event, row); err != nil {
+	if err := recordProjectionEvent(t.Context(), tx, event); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `UPDATE dashboard.publication_events SET actor_id='tampered' WHERE domain_event_id=$1::uuid`, event.EventID); err != nil {
 		t.Fatal(err)
 	}
-	if err := insertEvent(t.Context(), q, row.ID, event, row); !errors.Is(err, publication.ErrConflict) {
+	if _, err := tx.Exec(t.Context(), `SAVEPOINT tampered_replay`); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordProjectionEvent(t.Context(), tx, event); err == nil || !strings.Contains(err.Error(), "publication event replay differs") {
 		t.Fatalf("tampered replay error = %v", err)
+	}
+	if _, err := tx.Exec(t.Context(), `ROLLBACK TO SAVEPOINT tampered_replay`); err != nil {
+		t.Fatal(err)
 	}
 	if _, err := tx.Exec(t.Context(), `UPDATE dashboard.publication_events SET actor_id='principal:owner' WHERE domain_event_id=$1::uuid`, event.EventID); err != nil {
 		t.Fatal(err)
 	}
 	differentSequence := event
 	differentSequence.AggregateVersion = 2
-	if err := insertEvent(t.Context(), q, row.ID, differentSequence, row); !errors.Is(err, publication.ErrConflict) {
+	if _, err := tx.Exec(t.Context(), `SAVEPOINT sequence_replay`); err != nil {
+		t.Fatal(err)
+	}
+	if err := recordProjectionEvent(t.Context(), tx, differentSequence); err == nil || !strings.Contains(err.Error(), "publication event replay differs") {
 		t.Fatalf("same event UUID with different aggregate sequence error = %v", err)
+	}
+	if _, err := tx.Exec(t.Context(), `ROLLBACK TO SAVEPOINT sequence_replay`); err != nil {
+		t.Fatal(err)
 	}
 	_ = tx.Rollback(t.Context())
 }
@@ -396,6 +492,14 @@ func TestRepositoryPostgreSQL18RuntimeMaintenanceRoleGrants(t *testing.T) {
 	t.Cleanup(admin.Close)
 	tx, err := admin.Begin(t.Context())
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	if err := ApplySchema(t.Context(), tx); err != nil {
@@ -417,17 +521,95 @@ func TestRepositoryPostgreSQL18RuntimeMaintenanceRoleGrants(t *testing.T) {
 	t.Cleanup(maintenance.Close)
 	publicationID := "018f4f2e-0000-7000-8000-000000000401"
 	registrationID := "018f4f2e-0000-7000-8000-000000000402"
+	// Seed canonical evidence as an administrator. Runtime retains append rights
+	// on the platform event/audit authorities, while dashboard projection DML
+	// remains owner-function-bound.
+	mutationEventID := "018f4f2e-0000-7000-8000-000000000403"
+	mutationCorrelationID := "018f4f2e-0000-7000-8000-000000000404"
 	if _, err := admin.Exec(t.Context(), `INSERT INTO dashboard.publications(id,project_id,name,public_id,dashboard,default_page,configuration_digest,active_serving_state_id,configured_at) VALUES ($1::uuid,'project:roles','website','public-roles','dashboard:website','overview','sha256:`+strings.Repeat("a", 64)+`','generation-roles',clock_timestamp())`, publicationID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := runtime.Exec(t.Context(), `INSERT INTO dashboard.publication_streams(publication_id,stream_id,public_id,serving_state_id,registration_id,filters_json,expires_at) VALUES ($1::uuid,'role-stream','public-roles','generation-roles',$2::uuid,'{}'::jsonb,clock_timestamp()+interval '1 hour')`, publicationID, registrationID); err != nil {
+	row := publication.Publication{ID: publicationID, ProjectID: projectgraph.ResourceID("project:roles"), Name: "website", PublicID: "public-roles", Dashboard: "dashboard:website", DefaultPage: "overview", ConfigurationDigest: "sha256:" + strings.Repeat("a", 64), Revision: 2, Configured: true, ServingStateID: "generation-roles", AllowedOrigins: []string{}, DependencyAssetIDs: []string{}, SuspendedBy: "principal:runtime"}
+	payload, err := publicationEventPayload(row, "dashboard_publication.suspended")
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditMetadata := []byte(`{"operationId":"runtime-test","owner":"runtime","surface":"test"}`)
+	if _, err := admin.Exec(t.Context(), `INSERT INTO event.event_log(event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,correlation_id,payload) VALUES ($1::uuid,$2,'dashboard_publication',$3::text,1,$4,1,$5::uuid,$6::jsonb)`, mutationEventID, row.ProjectID.String(), publicationID, "dashboard_publication.suspended", mutationCorrelationID, payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,source,operation,action,resource_kind,resource_id,capability,outcome,correlation_id,aggregate_key,aggregate_sequence,metadata) VALUES ($1::uuid,$1::uuid,$2,$3,'dashboard.publication','mutation','dashboard_publication.suspended','publication',$4,'RESOURCE_PUBLISH','success',$5::uuid,$6,1,$7::jsonb)`, mutationEventID, row.ProjectID.String(), "principal:runtime", publicationID, mutationCorrelationID, "dashboard_publication:"+row.ProjectID.String()+":"+row.Name, auditMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT dashboard.suspend_publication($1,'website','principal:runtime',1,$2::uuid,1,$3,$4::jsonb,'mutation','publication',$5,$6::jsonb)`, row.ProjectID.String(), mutationEventID, mutationCorrelationID, payload, publicationID, auditMetadata); err != nil {
+		t.Fatalf("runtime guarded publication mutation failed: %v", err)
+	}
+	var revision int64
+	if err := admin.QueryRow(t.Context(), `SELECT revision FROM dashboard.publications WHERE id=$1::uuid`, publicationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 2 {
+		t.Fatalf("runtime guarded mutation revision=%d, want 2", revision)
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT dashboard.suspend_publication($1,'website','principal:runtime',NULL,$2::uuid,1,$3,$4::jsonb,'mutation','publication',$5,$6::jsonb)`, row.ProjectID.String(), mutationEventID, mutationCorrelationID, payload, publicationID, auditMetadata); err == nil || !strings.Contains(err.Error(), "expected revision must be positive") {
+		t.Fatalf("runtime NULL expected revision error=%v, want guarded rejection", err)
+	}
+	// A mismatched audit envelope must roll back the row update and private
+	// projection event, even when the runtime can call the wrapper.
+	mismatchPublicationID := "018f4f2e-0000-7000-8000-000000000407"
+	mismatchEventID := "018f4f2e-0000-7000-8000-000000000408"
+	mismatchCorrelationID := "018f4f2e-0000-7000-8000-000000000409"
+	if _, err := admin.Exec(t.Context(), `INSERT INTO dashboard.publications(id,project_id,name,public_id,dashboard,default_page,configuration_digest,active_serving_state_id,configured_at) VALUES ($1::uuid,'project:roles','mismatch','public-mismatch','dashboard:mismatch','overview','sha256:`+strings.Repeat("c", 64)+`','generation-roles',clock_timestamp())`, mismatchPublicationID); err != nil {
+		t.Fatal(err)
+	}
+	mismatchRow := publication.Publication{ID: mismatchPublicationID, ProjectID: row.ProjectID, Name: "mismatch", PublicID: "public-mismatch", Dashboard: "dashboard:mismatch", DefaultPage: "overview", ConfigurationDigest: "sha256:" + strings.Repeat("c", 64), Revision: 2, Configured: true, ServingStateID: "generation-roles", AllowedOrigins: []string{}, DependencyAssetIDs: []string{}, SuspendedBy: "principal:runtime"}
+	mismatchPayload, err := publicationEventPayload(mismatchRow, "dashboard_publication.suspended")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO event.event_log(event_id,scope_id,aggregate_type,aggregate_id,aggregate_version,event_type,schema_version,correlation_id,payload) VALUES ($1::uuid,$2,'dashboard_publication',$3::text,1,$4,1,$5::uuid,$6::jsonb)`, mismatchEventID, mismatchRow.ProjectID.String(), mismatchPublicationID, "dashboard_publication.suspended", mismatchCorrelationID, mismatchPayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO audit.audit_event(audit_id,event_id,scope_id,actor_id,source,operation,action,resource_kind,resource_id,capability,outcome,correlation_id,aggregate_key,aggregate_sequence,metadata) VALUES ($1::uuid,$1::uuid,$2,$3,'dashboard.publication','suspendDashboardPublication','dashboard_publication.suspended','project',$4,'RESOURCE_PUBLISH','success',$5::uuid,$6,1,'{}'::jsonb)`, mismatchEventID, mismatchRow.ProjectID.String(), "principal:runtime", mismatchRow.ProjectID.String(), mismatchCorrelationID, "dashboard_publication:"+mismatchRow.ProjectID.String()+":"+mismatchRow.Name); err != nil {
+		t.Fatal(err)
+	}
+	mismatchAuditMetadata := []byte(`{"operationId":"suspendDashboardPublication","owner":"dashboard","surface":"api"}`)
+	if _, err := runtime.Exec(t.Context(), `SELECT dashboard.suspend_publication($1,'mismatch','principal:runtime',1,$2::uuid,1,$3,$4::jsonb,'suspendDashboardPublication','project',$5,$6::jsonb)`, mismatchRow.ProjectID.String(), mismatchEventID, mismatchCorrelationID, mismatchPayload, mismatchRow.ProjectID.String(), mismatchAuditMetadata); err == nil || !strings.Contains(err.Error(), "audit evidence") {
+		t.Fatalf("runtime mismatched audit metadata error=%v, want audit evidence failure", err)
+	}
+	if err := admin.QueryRow(t.Context(), `SELECT revision FROM dashboard.publications WHERE id=$1::uuid`, mismatchPublicationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != 1 {
+		t.Fatalf("runtime mismatched audit metadata revision=%d, want rollback to 1", revision)
+	}
+	var mismatchEvents int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM dashboard.publication_events WHERE publication_id=$1::uuid`, mismatchPublicationID).Scan(&mismatchEvents); err != nil {
+		t.Fatal(err)
+	}
+	if mismatchEvents != 0 {
+		t.Fatalf("runtime mismatched audit metadata projection events=%d, want 0", mismatchEvents)
+	}
+	if _, err := runtime.Exec(t.Context(), `INSERT INTO dashboard.publications(id,project_id,name,public_id,dashboard,default_page,configuration_digest) VALUES ($1::uuid,'project:roles','forbidden','public-forbidden','dashboard:forbidden','overview','sha256:`+strings.Repeat("b", 64)+`')`, "018f4f2e-0000-7000-8000-000000000405"); err == nil {
+		t.Fatal("runtime role unexpectedly has publication INSERT")
+	}
+	if _, err := runtime.Exec(t.Context(), `UPDATE dashboard.publications SET dashboard='dashboard:forbidden' WHERE id=$1::uuid`, publicationID); err == nil {
+		t.Fatal("runtime role unexpectedly has publication UPDATE")
+	}
+	if _, err := runtime.Exec(t.Context(), `DELETE FROM dashboard.publications WHERE id=$1::uuid`, publicationID); err == nil {
+		t.Fatal("runtime role unexpectedly has publication DELETE")
+	}
+	if _, err := runtime.Exec(t.Context(), `INSERT INTO dashboard.publication_events(publication_id,domain_event_id,aggregate_version,revision,event_type,payload_json) VALUES ($1::uuid,$2::uuid,9,9,'dashboard_publication.suspended','{}'::jsonb)`, publicationID, "018f4f2e-0000-7000-8000-000000000406"); err == nil {
+		t.Fatal("runtime role unexpectedly has publication event INSERT")
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT dashboard.upsert_publication_stream($1::uuid,'role-stream','public-roles','generation-roles',$2::uuid,'{}'::jsonb,clock_timestamp()+interval '1 hour')`, publicationID, registrationID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := runtime.Exec(t.Context(), `DELETE FROM dashboard.publication_streams WHERE publication_id=$1::uuid`, publicationID); err == nil {
 		t.Fatal("runtime role unexpectedly has DELETE on stream registrations")
 	}
-	if _, err := maintenance.Exec(t.Context(), `DELETE FROM dashboard.publication_streams WHERE publication_id=$1::uuid`, publicationID); err != nil {
-		t.Fatalf("maintenance role cannot delete stream registration: %v", err)
+	if _, err := maintenance.Exec(t.Context(), `SELECT dashboard.prune_expired_publication_streams(clock_timestamp()+interval '1 hour',1000)`); err != nil {
+		t.Fatalf("maintenance role cannot prune stream registration: %v", err)
 	}
 	if _, err := maintenance.Exec(t.Context(), `SELECT 1 FROM dashboard.publications LIMIT 1`); err == nil {
 		t.Fatal("maintenance role unexpectedly has publication projection read access")
@@ -512,7 +694,7 @@ func TestPublicationStreamExpiredHeartbeatCASStops(t *testing.T) {
 	rows, err := q.ExtendStream(ctx, publicationdb.ExtendStreamParams{
 		ExpiresAt: time.Now().UTC().Add(time.Hour), PublicationID: pgtype.UUID{Bytes: pubUUID, Valid: true},
 		StreamID: "stream-heartbeat", PublicID: "public-heartbeat", ServingStateID: "generation",
-		RegistrationID: pgtype.UUID{Bytes: regUUID, Valid: true}, Now: time.Now().UTC(),
+		RegistrationID: pgtype.UUID{Bytes: regUUID, Valid: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -560,6 +742,19 @@ func TestMaintenancePruneExpiredConcurrentClaimsAreBounded(t *testing.T) {
 	}
 }
 
-// newQueries keeps the generated query package private to this integration
-// test while preserving the repository's exact projection validation path.
-func newQueries(tx Tx) *publicationdb.Queries { return publicationdb.New(tx) }
+// recordProjectionEvent exercises the owner-only projection event boundary
+// directly; production mutations reach it through guarded SQL functions.
+func recordProjectionEvent(ctx context.Context, tx Tx, event Event) error {
+	publicationID, err := nativeUUID(event.PublicationID)
+	if err != nil {
+		return err
+	}
+	domainEventID, err := nativeUUID(event.EventID)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(ctx, `SELECT dashboard.record_publication_event($1::uuid,$2::uuid,$3,$4,$5,$6,$7,$8,$9::jsonb)`,
+		publicationID, domainEventID, event.AggregateVersion, event.Revision, event.Type,
+		event.ActorID, event.CorrelationID, event.ServingStateID, event.Payload)
+	return err
+}

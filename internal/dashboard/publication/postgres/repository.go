@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"sort"
 	"strings"
 	"time"
@@ -42,6 +43,10 @@ type Event struct {
 	EventID, ProjectID, PublicationID, ActorID, CorrelationID, Type, ServingStateID string
 	Revision, AggregateVersion                                                      int64
 	Payload                                                                         []byte
+}
+type publicationAuditEvidence struct {
+	Operation, ResourceKind, ResourceID string
+	Metadata                            []byte
 }
 type EventPort interface {
 	AppendEvent(context.Context, Tx, EventInput) (Event, error)
@@ -170,10 +175,6 @@ func projectionFromByPublicID(row publicationdb.GetByPublicIDRow) publicationPro
 	return publicationProjection{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage, ConfigurationDigest: row.ConfigurationDigest, AllowedOriginsJSON: row.AllowedOriginsJson, DependencyAssetIDsJSON: row.DependencyAssetIdsJson, Revision: row.Revision, Configured: row.Configured, ActiveServingStateID: row.ActiveServingStateID, SuspendedAt: row.SuspendedAt, SuspendedBy: row.SuspendedBy, ConfiguredAt: row.ConfiguredAt, DisabledAt: row.DisabledAt, RotatedAt: row.RotatedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
 
-func projectionFromConfigured(row publicationdb.GetConfiguredRow) publicationProjection {
-	return publicationProjection{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage, ConfigurationDigest: row.ConfigurationDigest, AllowedOriginsJSON: row.AllowedOriginsJson, DependencyAssetIDsJSON: row.DependencyAssetIdsJson, Revision: row.Revision, Configured: row.Configured, ActiveServingStateID: row.ActiveServingStateID, SuspendedAt: row.SuspendedAt, SuspendedBy: row.SuspendedBy, ConfiguredAt: row.ConfiguredAt, DisabledAt: row.DisabledAt, RotatedAt: row.RotatedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-}
-
 func projectionFromList(row publicationdb.ListRow) publicationProjection {
 	return publicationProjection{ID: row.ID, ProjectID: row.ProjectID, Name: row.Name, PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage, ConfigurationDigest: row.ConfigurationDigest, AllowedOriginsJSON: row.AllowedOriginsJson, DependencyAssetIDsJSON: row.DependencyAssetIdsJson, Revision: row.Revision, Configured: row.Configured, ActiveServingStateID: row.ActiveServingStateID, SuspendedAt: row.SuspendedAt, SuspendedBy: row.SuspendedBy, ConfiguredAt: row.ConfiguredAt, DisabledAt: row.DisabledAt, RotatedAt: row.RotatedAt, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
 }
@@ -270,9 +271,15 @@ func (r *Repository) Suspend(ctx context.Context, projectID projectgraph.Resourc
 	if expectedRevision <= 0 {
 		return publication.Publication{}, fmt.Errorf("publication expected revision must be positive")
 	}
-	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "suspended", func(q *publicationdb.Queries) (int64, error) {
+	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "suspended", nil, func(q *publicationdb.Queries, event Event, row publication.Publication, evidence publicationAuditEvidence) (int64, error) {
+		eventID, err := nativeUUID(event.EventID)
+		if err != nil {
+			return 0, err
+		}
 		return q.Suspend(ctx, publicationdb.SuspendParams{
 			ActorID: strings.TrimSpace(actorID), ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
+			DomainEventID: eventID, AggregateVersion: event.AggregateVersion, CorrelationID: event.CorrelationID, PayloadJson: event.Payload,
+			AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata,
 		})
 	})
 }
@@ -281,9 +288,15 @@ func (r *Repository) Resume(ctx context.Context, projectID projectgraph.Resource
 	if expectedRevision <= 0 {
 		return publication.Publication{}, fmt.Errorf("publication expected revision must be positive")
 	}
-	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "resumed", func(q *publicationdb.Queries) (int64, error) {
+	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "resumed", nil, func(q *publicationdb.Queries, event Event, row publication.Publication, evidence publicationAuditEvidence) (int64, error) {
+		eventID, err := nativeUUID(event.EventID)
+		if err != nil {
+			return 0, err
+		}
 		return q.Resume(ctx, publicationdb.ResumeParams{
-			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
+			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision, ActorID: strings.TrimSpace(actorID),
+			DomainEventID: eventID, AggregateVersion: event.AggregateVersion, CorrelationID: event.CorrelationID, PayloadJson: event.Payload,
+			AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata,
 		})
 	})
 }
@@ -296,9 +309,15 @@ func (r *Repository) Rotate(ctx context.Context, projectID projectgraph.Resource
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "rotated", func(q *publicationdb.Queries) (int64, error) {
+	return r.mutate(ctx, projectID, name, actorID, expectedRevision, "rotated", func(row *publication.Publication) error { row.PublicID = publicID; return nil }, func(q *publicationdb.Queries, event Event, row publication.Publication, evidence publicationAuditEvidence) (int64, error) {
+		eventID, err := nativeUUID(event.EventID)
+		if err != nil {
+			return 0, err
+		}
 		return q.Rotate(ctx, publicationdb.RotateParams{
-			PublicID: publicID, ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
+			PublicID: publicID, ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision, ActorID: strings.TrimSpace(actorID),
+			DomainEventID: eventID, AggregateVersion: event.AggregateVersion, CorrelationID: event.CorrelationID, PayloadJson: event.Payload,
+			AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata,
 		})
 	})
 }
@@ -306,7 +325,8 @@ func (r *Repository) Rotate(ctx context.Context, projectID projectgraph.Resource
 func (r *Repository) mutate(
 	ctx context.Context,
 	projectID projectgraph.ResourceID, name, actorID string, expectedRevision int64, eventType string,
-	mutation func(*publicationdb.Queries) (int64, error),
+	adjust func(*publication.Publication) error,
+	mutation func(*publicationdb.Queries, Event, publication.Publication, publicationAuditEvidence) (int64, error),
 ) (publication.Publication, error) {
 	b, ok := r.db.(interface {
 		Begin(context.Context) (pgx.Tx, error)
@@ -320,7 +340,44 @@ func (r *Repository) mutate(
 	}
 	defer tx.Rollback(ctxOrBackground(ctx))
 	q := r.q.WithTx(tx)
-	result, err := mutation(q)
+	stored, err := q.Get(ctx, publicationdb.GetParams{ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return publication.Publication{}, publication.ErrNotFound
+	}
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	before, err := mapPublication(projectionFromGet(stored))
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	if before.Revision != expectedRevision || ((eventType == "suspended" || eventType == "resumed" || eventType == "rotated") && !before.Configured) {
+		if !before.Configured {
+			return publication.Publication{}, publication.ErrConflict
+		}
+		return publication.Publication{}, apigenfailure.Wrap("precondition", publication.ErrConflict)
+	}
+	if expectedRevision == math.MaxInt64 {
+		return publication.Publication{}, fmt.Errorf("%w: publication revision is exhausted", publication.ErrConflict)
+	}
+	row := before
+	row.Revision = expectedRevision + 1
+	switch eventType {
+	case "suspended":
+		row.SuspendedBy = strings.TrimSpace(actorID)
+	case "resumed":
+		row.SuspendedBy = ""
+	}
+	if adjust != nil {
+		if err := adjust(&row); err != nil {
+			return publication.Publication{}, err
+		}
+	}
+	event, evidence, err := r.recordAuditIntent(ctx, tx, row.ID, &row, eventType, actorID)
+	if err != nil {
+		return publication.Publication{}, err
+	}
+	result, err := mutation(q, event, row, evidence)
 	if err != nil {
 		return publication.Publication{}, err
 	}
@@ -345,51 +402,34 @@ func (r *Repository) mutate(
 		// identity while classifying it for the public 412 contract.
 		return publication.Publication{}, apigenfailure.Wrap("precondition", publication.ErrConflict)
 	}
-	stored, err := q.GetConfigured(ctx, publicationdb.GetConfiguredParams{
-		ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
-	})
-	if err != nil {
-		return publication.Publication{}, err
-	}
-	row, err := mapPublication(projectionFromConfigured(stored))
-	if err != nil {
-		return publication.Publication{}, err
-	}
-	event, err := r.recordAuditIntent(ctx, tx, row.ID, &row, eventType, actorID)
-	if err != nil {
-		return publication.Publication{}, err
-	}
-	if err := insertEvent(ctx, q, row.ID, event, row); err != nil {
-		return publication.Publication{}, err
-	}
 	if err := tx.Commit(ctxOrBackground(ctx)); err != nil {
 		return publication.Publication{}, err
 	}
 	return r.Get(ctx, projectID, name)
 }
 
-func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, publicationID string, row *publication.Publication, eventType, actorID string) (Event, error) {
+func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, publicationID string, row *publication.Publication, eventType, actorID string) (Event, publicationAuditEvidence, error) {
 	intent, ok := publication.AuditIntentFromContext(ctx)
 	if !ok {
-		return Event{}, fmt.Errorf("dashboard publication audit intent is required")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit intent is required")
 	}
 	if r.audit == nil {
-		return Event{}, fmt.Errorf("dashboard publication audit intent recorder is required")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit intent recorder is required")
 	}
 	if row == nil {
-		return Event{}, fmt.Errorf("dashboard publication audit intent publication is required")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit intent publication is required")
 	}
 	if intent.ActorID == "" {
 		intent.ActorID = strings.TrimSpace(actorID)
 	} else if intent.ActorID != strings.TrimSpace(actorID) {
-		return Event{}, fmt.Errorf("dashboard publication audit actor does not match mutation actor")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit actor does not match mutation actor")
 	}
 	qualifiedAction := "dashboard_publication." + strings.TrimSpace(eventType)
 	if strings.TrimSpace(intent.Action) == "" {
-		return Event{}, fmt.Errorf("dashboard publication audit action is required")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit action is required")
 	}
 	if strings.TrimSpace(intent.Action) != qualifiedAction {
-		return Event{}, fmt.Errorf("dashboard publication audit action does not match mutation event")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit action does not match mutation event")
 	}
 	eventType = qualifiedAction
 	// Publication events are the source-owned aggregate sequence. Counting
@@ -397,30 +437,63 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, publicationID
 	// monotonic sequence while preserving the stable aggregate identity built
 	// by the command producer.
 	if r.events == nil {
-		return Event{}, fmt.Errorf("dashboard publication domain event port is required")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication domain event port is required")
 	}
 	eventID, err := uuid.Parse(strings.TrimSpace(intent.EventID))
 	if err != nil || eventID.Version() != 7 || eventID.String() != strings.ToLower(strings.TrimSpace(intent.EventID)) {
-		return Event{}, fmt.Errorf("dashboard publication audit event id must be a canonical UUIDv7")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit event id must be a canonical UUIDv7")
 	}
 	payload, err := publicationEventPayload(*row, eventType)
 	if err != nil {
-		return Event{}, err
+		return Event{}, publicationAuditEvidence{}, err
 	}
 	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: row.ProjectID.String(), PublicationID: publicationID, ActorID: actorID, CorrelationID: intent.CorrelationID, Type: eventType, ServingStateID: row.ServingStateID, Revision: row.Revision, Payload: payload})
 	if err != nil {
-		return Event{}, fmt.Errorf("append dashboard publication domain event: %w", err)
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("append dashboard publication domain event: %w", err)
 	}
 	if event.EventID != eventID.String() || event.ProjectID != row.ProjectID.String() || event.PublicationID != publicationID || event.ActorID != actorID || event.CorrelationID != intent.CorrelationID || event.Type != eventType || event.ServingStateID != row.ServingStateID || event.Revision != row.Revision || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, payload) {
-		return Event{}, fmt.Errorf("dashboard publication domain event returned mismatched identity")
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication domain event returned mismatched identity")
 	}
 	intent.DomainEventID = event.EventID
 	intent.AggregateSequence = event.AggregateVersion
 	intent.EventID = eventID.String()
-	if err := r.audit.RecordAuditIntent(ctx, tx, intent); err != nil {
-		return Event{}, err
+	if intent.ScopeID == "" {
+		intent.ScopeID = row.ProjectID.String()
 	}
-	return event, nil
+	if intent.Source == "" {
+		intent.Source = "dashboard.publication"
+	}
+	if intent.Operation == "" {
+		intent.Operation = "mutation"
+	}
+	if intent.ResourceKind == "" {
+		intent.ResourceKind = "publication"
+	}
+	if intent.ResourceID == "" {
+		intent.ResourceID = row.ID
+	}
+	if intent.Outcome == "" {
+		intent.Outcome = "success"
+	}
+	if intent.Capability == "" {
+		intent.Capability = access.CapabilityResourcePublish
+	}
+	if intent.AggregateKey == "" {
+		intent.AggregateKey = "dashboard_publication:" + row.ProjectID.String() + ":" + row.Name
+	}
+	canonicalIntent, err := intent.Canonicalize()
+	if err != nil {
+		return Event{}, publicationAuditEvidence{}, fmt.Errorf("dashboard publication audit intent is not canonical: %w", err)
+	}
+	intent = canonicalIntent
+	evidence := publicationAuditEvidence{
+		Operation: intent.Operation, ResourceKind: intent.ResourceKind, ResourceID: intent.ResourceID,
+		Metadata: []byte(intent.MetadataJSON),
+	}
+	if err := r.audit.RecordAuditIntent(ctx, tx, intent); err != nil {
+		return Event{}, publicationAuditEvidence{}, err
+	}
+	return event, evidence, nil
 }
 
 // ReconcileTx runs activation reconciliation against the caller-owned
@@ -491,27 +564,39 @@ func reconcileTx(
 	sort.Strings(removals)
 	for _, name := range removals {
 		row := existing[name]
+		if row.revision == math.MaxInt64 {
+			return fmt.Errorf("%w: publication revision is exhausted", publication.ErrConflict)
+		}
 		rowID, err := nativeUUID(row.id)
 		if err != nil {
 			return err
-		}
-		changed, err := q.Disable(ctx, publicationdb.DisableParams{ID: rowID, ExpectedRevision: row.revision})
-		if err != nil {
-			return err
-		}
-		if changed != 1 {
-			return publication.ErrConflict
 		}
 		stored, err := q.GetByID(ctx, rowID)
 		if err != nil {
 			return err
 		}
-		projection, err := mapPublication(projectionFromByID(stored))
+		before, err := mapPublication(projectionFromByID(stored))
 		if err != nil {
 			return err
 		}
-		if err := r.appendReconcileEvent(ctx, tx, q, projection, "dashboard_publication.disabled", input.ActorID); err != nil {
+		projection := before
+		projection.Revision = row.revision + 1
+		projection.Configured = false
+		projection.ServingStateID = ""
+		event, payload, evidence, err := r.appendReconcileEvent(ctx, tx, projection, "dashboard_publication.disabled", input.ActorID)
+		if err != nil {
 			return err
+		}
+		eventID, err := nativeUUID(event.EventID)
+		if err != nil {
+			return err
+		}
+		changed, err := q.Disable(ctx, publicationdb.DisableParams{ID: rowID, ExpectedRevision: row.revision, ActorID: input.ActorID, DomainEventID: eventID, AggregateVersion: event.AggregateVersion, CorrelationID: event.CorrelationID, PayloadJson: payload, AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata})
+		if err != nil {
+			return err
+		}
+		if changed != 1 {
+			return publication.ErrConflict
 		}
 	}
 
@@ -551,7 +636,41 @@ func reconcileTx(
 			if eventType == "" {
 				continue
 			}
+			if current.revision == math.MaxInt64 {
+				return fmt.Errorf("%w: publication revision is exhausted", publication.ErrConflict)
+			}
 			currentID, err := nativeUUID(current.id)
+			if err != nil {
+				return err
+			}
+			stored, err := q.GetByID(ctx, currentID)
+			if err != nil {
+				return err
+			}
+			projection, err := mapPublication(projectionFromByID(stored))
+			if err != nil {
+				return err
+			}
+			projection.Revision = current.revision + 1
+			projection.Dashboard = compiled.Dashboard
+			projection.DefaultPage = compiled.DefaultPage
+			projection.ConfigurationDigest = compiled.ConfigurationDigest
+			projection.AllowedOrigins = append([]string(nil), compiled.AllowedOrigins...)
+			projection.DependencyAssetIDs = append([]string(nil), compiled.DependencyAssetIDs...)
+			projection.Configured = true
+			projection.ServingStateID = input.ServingStateID
+			if projection.AllowedOrigins == nil {
+				projection.AllowedOrigins = []string{}
+			}
+			if projection.DependencyAssetIDs == nil {
+				projection.DependencyAssetIDs = []string{}
+			}
+			fullEventType := "dashboard_publication." + eventType
+			event, payload, evidence, err := r.appendReconcileEvent(ctx, tx, projection, fullEventType, input.ActorID)
+			if err != nil {
+				return err
+			}
+			eventID, err := nativeUUID(event.EventID)
 			if err != nil {
 				return err
 			}
@@ -559,27 +678,16 @@ func reconcileTx(
 				Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage,
 				ConfigurationDigest: compiled.ConfigurationDigest,
 				AllowedOriginsJson:  origins, DependencyAssetIdsJson: dependencies,
-				ActiveServingStateID: &input.ServingStateID,
-				ID:                   currentID, ExpectedRevision: current.revision,
+				ActiveServingStateID: input.ServingStateID,
+				ID:                   currentID, ExpectedRevision: current.revision, ActorID: input.ActorID,
+				DomainEventID: eventID, AggregateVersion: event.AggregateVersion, EventType: fullEventType, CorrelationID: event.CorrelationID, PayloadJson: payload,
+				AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata,
 			})
 			if err != nil {
 				return err
 			}
 			if changed != 1 {
 				return publication.ErrConflict
-			}
-			if eventType != "" {
-				stored, err := q.GetByID(ctx, currentID)
-				if err != nil {
-					return err
-				}
-				projection, err := mapPublication(projectionFromByID(stored))
-				if err != nil {
-					return err
-				}
-				if err := r.appendReconcileEvent(ctx, tx, q, projection, "dashboard_publication."+eventType, input.ActorID); err != nil {
-					return err
-				}
 			}
 			continue
 		}
@@ -596,45 +704,55 @@ func reconcileTx(
 		if err != nil {
 			return err
 		}
-		if err := q.Create(ctx, publicationdb.CreateParams{
+		projection := publication.Publication{ID: id, ProjectID: input.ProjectID, Name: name, PublicID: publicID, Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage, ConfigurationDigest: compiled.ConfigurationDigest, Configured: true, Revision: 1, ServingStateID: input.ServingStateID, AllowedOrigins: compiled.AllowedOrigins, DependencyAssetIDs: compiled.DependencyAssetIDs}
+		if projection.AllowedOrigins == nil {
+			projection.AllowedOrigins = []string{}
+		}
+		if projection.DependencyAssetIDs == nil {
+			projection.DependencyAssetIDs = []string{}
+		}
+		event, payload, evidence, err := r.appendReconcileEvent(ctx, tx, projection, "dashboard_publication.configured", input.ActorID)
+		if err != nil {
+			return err
+		}
+		eventID, err := nativeUUID(event.EventID)
+		if err != nil {
+			return err
+		}
+		created, err := q.Create(ctx, publicationdb.CreateParams{
 			ID: idUUID, ProjectID: input.ProjectID.String(), Name: name, PublicID: publicID,
 			Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage,
 			ConfigurationDigest: compiled.ConfigurationDigest,
 			AllowedOriginsJson:  origins, DependencyAssetIdsJson: dependencies,
-			ActiveServingStateID: &input.ServingStateID,
-		}); err != nil {
-			return err
-		}
-		stored, err := q.GetByID(ctx, idUUID)
+			ActiveServingStateID: input.ServingStateID, ActorID: input.ActorID,
+			DomainEventID: eventID, AggregateVersion: event.AggregateVersion, CorrelationID: event.CorrelationID, PayloadJson: payload,
+			AuditOperation: evidence.Operation, AuditResourceKind: evidence.ResourceKind, AuditResourceID: evidence.ResourceID, AuditMetadataJson: evidence.Metadata,
+		})
 		if err != nil {
 			return err
 		}
-		projection, err := mapPublication(projectionFromByID(stored))
-		if err != nil {
-			return err
-		}
-		if err := r.appendReconcileEvent(ctx, tx, q, projection, "dashboard_publication.configured", input.ActorID); err != nil {
-			return err
+		if created != 1 {
+			return publication.ErrConflict
 		}
 	}
 	return nil
 }
 
-func (r *Repository) appendReconcileEvent(ctx context.Context, tx Tx, q *publicationdb.Queries, row publication.Publication, eventType, actorID string) error {
+func (r *Repository) appendReconcileEvent(ctx context.Context, tx Tx, row publication.Publication, eventType, actorID string) (Event, []byte, publicationAuditEvidence, error) {
 	payload, err := publicationEventPayload(row, eventType)
 	if err != nil {
-		return err
+		return Event{}, nil, publicationAuditEvidence{}, err
 	}
 	eventID, err := uuid.NewV7()
 	if err != nil {
-		return err
+		return Event{}, nil, publicationAuditEvidence{}, err
 	}
 	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: row.ProjectID.String(), PublicationID: row.ID, ActorID: actorID, Type: eventType, ServingStateID: row.ServingStateID, Revision: row.Revision, Payload: payload})
 	if err != nil {
-		return fmt.Errorf("append dashboard publication reconciliation event: %w", err)
+		return Event{}, nil, publicationAuditEvidence{}, fmt.Errorf("append dashboard publication reconciliation event: %w", err)
 	}
 	if event.EventID != eventID.String() || event.ProjectID != row.ProjectID.String() || event.PublicationID != row.ID || event.ActorID != actorID || event.Type != eventType || event.ServingStateID != row.ServingStateID || event.Revision != row.Revision || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, payload) {
-		return fmt.Errorf("dashboard publication reconciliation event returned mismatched identity")
+		return Event{}, nil, publicationAuditEvidence{}, fmt.Errorf("dashboard publication reconciliation event returned mismatched identity")
 	}
 	intent := access.AuditIntent{
 		EventID: event.EventID, DomainEventID: event.EventID,
@@ -643,49 +761,14 @@ func (r *Repository) appendReconcileEvent(ctx context.Context, tx Tx, q *publica
 		Outcome: "success", AggregateKey: "dashboard_publication:" + row.ProjectID.String() + ":" + row.Name,
 		AggregateSequence: event.AggregateVersion, MetadataJSON: string(payload),
 	}
-	if err := r.audit.RecordAuditIntent(ctx, tx, intent); err != nil {
-		return err
-	}
-	return insertEvent(ctx, q, row.ID, event, row)
-}
-
-func insertEvent(ctx context.Context, q *publicationdb.Queries, id string, event Event, row publication.Publication) error {
-	if event.EventID == "" || event.AggregateVersion <= 0 || event.Revision <= 0 {
-		return fmt.Errorf("dashboard publication projection event identity is incomplete")
-	}
-	if event.PublicationID != id || event.Revision != row.Revision {
-		return fmt.Errorf("dashboard publication projection event does not match publication revision")
-	}
-	publicationID, err := nativeUUID(id)
+	canonicalIntent, err := intent.Canonicalize()
 	if err != nil {
-		return err
+		return Event{}, nil, publicationAuditEvidence{}, fmt.Errorf("dashboard publication reconciliation audit intent is not canonical: %w", err)
 	}
-	domainEventID, err := nativeUUID(event.EventID)
-	if err != nil {
-		return err
+	if err := r.audit.RecordAuditIntent(ctx, tx, canonicalIntent); err != nil {
+		return Event{}, nil, publicationAuditEvidence{}, err
 	}
-	inserted, err := q.InsertEvent(ctx, publicationdb.InsertEventParams{
-		PublicationID: publicationID, DomainEventID: domainEventID, AggregateVersion: event.AggregateVersion,
-		Revision: event.Revision, EventType: event.Type, ActorID: strings.TrimSpace(event.ActorID),
-		CorrelationID: strings.TrimSpace(event.CorrelationID), ServingStateID: event.ServingStateID,
-		PayloadJson: append([]byte(nil), event.Payload...),
-	})
-	if err != nil {
-		return err
-	}
-	if inserted > 0 {
-		return nil
-	}
-	// ON CONFLICT is an idempotency boundary, not permission to accept a
-	// conflicting projection. Replays must match every immutable field exactly.
-	existing, err := q.GetEventProjection(ctx, domainEventID)
-	if err != nil {
-		return err
-	}
-	if existing.PublicationID != strings.TrimSpace(id) || existing.DomainEventID != strings.TrimSpace(event.EventID) || existing.AggregateVersion != event.AggregateVersion || existing.Revision != event.Revision || existing.EventType != strings.TrimSpace(event.Type) || existing.ActorID != strings.TrimSpace(event.ActorID) || existing.CorrelationID != strings.TrimSpace(event.CorrelationID) || existing.ServingStateID != strings.TrimSpace(event.ServingStateID) || !canonicalJSONEqual([]byte(existing.PayloadJson), event.Payload) {
-		return fmt.Errorf("%w: publication projection replay differs", publication.ErrConflict)
-	}
-	return nil
+	return event, payload, publicationAuditEvidence{Operation: canonicalIntent.Operation, ResourceKind: canonicalIntent.ResourceKind, ResourceID: canonicalIntent.ResourceID, Metadata: []byte(canonicalIntent.MetadataJSON)}, nil
 }
 
 func publicationEventPayload(row publication.Publication, eventType string) ([]byte, error) {
