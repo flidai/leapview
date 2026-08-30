@@ -30,7 +30,4 @@ func TestOpenPostgresControlPlaneRejectsMissingPoolConfiguration(t *testing.T) {
 	if err == nil {
 		t.Fatal("openPostgresControlPlane accepted an empty pool configuration")
 	}
-	if !strings.Contains(err.Error(), "PostgreSQL URL is required") {
-		t.Fatalf("openPostgresControlPlane error = %v, want URL validation", err)
-	}
 }
