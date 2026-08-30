@@ -388,6 +388,31 @@ func (r *Repository) ArtifactByServingState(ctx context.Context, id servingstate
 	}
 	return bundleArtifact(b), nil
 }
+
+// RecordDuckLakeSnapshot verifies the runtime-prepared snapshot against the
+// immutable delivery seal. Native serving evidence already carries this value,
+// so publication may confirm it but must never update the admitted bundle.
+func (r *Repository) RecordDuckLakeSnapshot(ctx context.Context, id servingstate.ID, snapshot int64) error {
+	if snapshot <= 0 {
+		return fmt.Errorf("ducklake snapshot id must be positive")
+	}
+	db, err := r.dbOrErr()
+	if err != nil {
+		return err
+	}
+	bundle, err := readBundle(ctx, db, string(id))
+	if err != nil {
+		return err
+	}
+	if bundle.DuckLakeSnapshotID <= 0 {
+		return fmt.Errorf("persisted ducklake snapshot id is missing for serving state %q", id)
+	}
+	if bundle.DuckLakeSnapshotID != snapshot {
+		return fmt.Errorf("ducklake snapshot id mismatch for serving state %q: persisted=%d requested=%d", id, bundle.DuckLakeSnapshotID, snapshot)
+	}
+	return nil
+}
+
 func (r *Repository) ActiveArtifact(ctx context.Context, p projectgraph.ResourceID, e servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
 	if err := p.Validate(); err != nil {
 		return servingstate.State{}, servingstate.Artifact{}, err

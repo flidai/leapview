@@ -95,6 +95,14 @@ func seedGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, publi
 	}
 }
 
+func seedBundle(t *testing.T, admin *pgxpool.Pool, generation, digest, graphDigest string) {
+	t.Helper()
+	_, err := admin.Exec(t.Context(), `INSERT INTO serving_state.bundle(generation_id,project_id,environment,artifact_id,artifact_digest,compiled_graph_digest,artifact_format,artifact_locator,manifest_json,project_digest,access_policy_json,created_by) VALUES($1::uuid,'project_demo','prod',$2,$3,$4,'json','objects/artifact.json','{}'::jsonb,$5,'{}'::jsonb,'test')`, generation, "artifact_"+generation, digest, graphDigest, "sha256:"+strings.Repeat("b", 64))
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func testGraph(t *testing.T) projectgraph.ProjectGraph {
 	g, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_demo", Kind: projectgraph.KindProject, Name: "project"}, {ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, []projectgraph.Edge{{From: "project_demo", To: "dashboard", Relation: "contains"}})
 	if err != nil {
@@ -345,6 +353,35 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	}
 	if after != before {
 		t.Fatalf("conflicting replay changed extra child count: before=%d after=%d", before, after)
+	}
+}
+
+func TestRecordDuckLakeSnapshotVerifiesImmutableSealedEvidence(t *testing.T) {
+	admin, pool, _ := servingDB(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	graphDigest := testGraph(t).Digest()
+	generation := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	seedGeneration(t, admin, generation, "target_snapshot", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "cccccccc-cccc-cccc-cccc-cccccccccccc", "dddddddd-dddd-dddd-dddd-dddddddddddd", digest, graphDigest, 37)
+	seedBundle(t, admin, generation, digest, graphDigest)
+	r := New(pool)
+	if err := r.RecordDuckLakeSnapshot(t.Context(), servingstate.ID(generation), 37); err != nil {
+		t.Fatalf("exact sealed snapshot replay: %v", err)
+	}
+	if err := r.RecordDuckLakeSnapshot(t.Context(), servingstate.ID(generation), 0); err == nil {
+		t.Fatal("zero requested snapshot unexpectedly succeeded")
+	}
+	if err := r.RecordDuckLakeSnapshot(t.Context(), servingstate.ID(generation), 38); err == nil {
+		t.Fatal("mismatched requested snapshot unexpectedly succeeded")
+	}
+	if err := r.RecordDuckLakeSnapshot(t.Context(), servingstate.ID("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"), 37); !errors.Is(err, servingstate.ErrNotFound) {
+		t.Fatalf("missing sealed state error = %v, want servingstate.ErrNotFound", err)
+	}
+
+	zeroGeneration := "11111111-1111-1111-1111-111111111111"
+	seedGeneration(t, admin, zeroGeneration, "target_snapshot_zero", "12121212-1212-1212-1212-121212121212", "13131313-1313-1313-1313-131313131313", "14141414-1414-1414-1414-141414141414", digest, graphDigest, 0)
+	seedBundle(t, admin, zeroGeneration, digest, graphDigest)
+	if err := r.RecordDuckLakeSnapshot(t.Context(), servingstate.ID(zeroGeneration), 1); err == nil {
+		t.Fatal("state with zero persisted snapshot unexpectedly succeeded")
 	}
 }
 
