@@ -1,0 +1,337 @@
+package app
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	adminproductpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
+	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
+	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
+	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
+	"github.com/flidai/leapview/internal/app/agentaudit"
+	"github.com/flidai/leapview/internal/app/agentevents"
+	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
+	manageddataaudit "github.com/flidai/leapview/internal/app/manageddataaudit"
+	manageddataworkflow "github.com/flidai/leapview/internal/app/manageddataworkflow"
+	"github.com/flidai/leapview/internal/app/productaudit"
+	"github.com/flidai/leapview/internal/app/releaseaudit"
+	"github.com/flidai/leapview/internal/app/releasecatalog"
+	"github.com/flidai/leapview/internal/app/releaseevents"
+	"github.com/flidai/leapview/internal/app/releasejobs"
+	"github.com/flidai/leapview/internal/deployment/module"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
+	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
+	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
+	idempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	"github.com/flidai/leapview/internal/release"
+	releasemodule "github.com/flidai/leapview/internal/release/module"
+	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
+)
+
+// PostgresAuthorityGraph is the application-owned native control-plane graph.
+// Each field is a capability authority over the already-retained PostgreSQL
+// pool; no field opens a pool, migrates a schema, or owns lifecycle shutdown.
+// The graph is intentionally separate from BuildProduction while the HTTP
+// surface is being migrated, so construction and validation can be tested in
+// isolation.
+type PostgresAuthorityGraph struct {
+	Bootstrap *platformbootstrappostgres.Repository
+	// Settings is an explicit alias for the platform bootstrap/settings
+	// authority. Keeping it named makes the settings dependency visible to
+	// future composition without introducing a second repository or pool.
+	Settings *platformbootstrappostgres.Repository
+
+	Operation            *operationpostgres.Repository
+	OperationMaintenance *operationpostgres.Maintenance
+	Jobs                 *jobspostgres.Repository
+	Events               *eventspostgres.Repository
+
+	Project     *projectpostgres.Repository
+	Access      *accesspostgres.Repository
+	AccessAudit *accesspostgres.AuditRepository
+	Product     *adminproductpostgres.Repository
+
+	Idempotency              *idempotencypostgres.Store
+	CursorSigning            *cursorsigningpostgres.Repository
+	CursorSigningMaintenance *cursorsigningpostgres.Maintenance
+
+	ConnectionBinding *connectionbindingpostgres.Repository
+	QueryAudit        *queryauditpostgres.Repository
+	Cache             *cachepostgres.Repository
+	Lineage           *lineagepostgres.Repository
+
+	Release        *releasepostgres.Repository
+	ReleaseCatalog *releasemodule.PostgresCatalog
+
+	DeploymentRepository   *deploymentpostgres.Repository
+	DeploymentPersistence  *module.Persistence
+	AgentRepository        *agentpostgres.Repository
+	AgentPersistence       *agentmodule.Persistence
+	ManagedDataRepository  *manageddatapostgres.Repository
+	ManagedDataPersistence *manageddatamodule.Persistence
+}
+
+// PostgresAuthorityGraphOptions supplies values that are not persisted in the
+// pool lifecycle itself. FingerprintKey must be the explicit API-token HMAC
+// key; TargetID is the process-bound delivery target used by the release
+// catalog and is never read from a browser request.
+type PostgresAuthorityGraphOptions struct {
+	TargetID       string
+	FingerprintKey []byte
+}
+
+// NewPostgresAuthorityGraph composes the native authorities over the pools
+// retained by postgresControlPlaneLifecycle. It performs no network I/O and
+// does not change lifecycle ownership. Callers should invoke Validate before
+// exposing any handlers.
+func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options PostgresAuthorityGraphOptions) (*PostgresAuthorityGraph, error) {
+	if lifecycle == nil || lifecycle.pools == nil || lifecycle.pools.Runtime == nil || lifecycle.pools.Maintenance == nil {
+		return nil, errors.New("PostgreSQL authority graph requires initialized runtime and maintenance pools")
+	}
+	if strings.TrimSpace(options.TargetID) == "" {
+		return nil, errors.New("PostgreSQL authority graph target id is required")
+	}
+	if len(options.FingerprintKey) < 32 {
+		return nil, errors.New("PostgreSQL authority graph fingerprint key must be at least 32 bytes")
+	}
+	runtime := lifecycle.pools.Runtime
+	maintenance := lifecycle.pools.Maintenance
+
+	bootstrap := platformbootstrappostgres.New(runtime)
+	operations := operationpostgres.New(runtime)
+	operationMaintenance := operationpostgres.NewMaintenance(maintenance)
+	jobs := jobspostgres.New(runtime)
+	events := eventspostgres.New()
+	project := projectpostgres.New(runtime)
+	audit := accesspostgres.New()
+	accessRepository, err := accesspostgres.NewAccess(runtime, accesspostgres.FingerprintConfig{Key: options.FingerprintKey})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL access authority: %w", err)
+	}
+	product, err := adminproductpostgres.NewWithOptions(runtime, adminproductpostgres.Options{Audit: productaudit.New()})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL product authority: %w", err)
+	}
+	binding, err := connectionbindingpostgres.NewProduction(runtime, connectionbindingaudit.New())
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL connection-binding authority: %w", err)
+	}
+
+	deploymentPersistence, err := NewDeploymentPostgresPersistence(runtime, DeploymentPostgresAuthorities{
+		Access: audit, Events: events, Jobs: jobs, Operations: operations,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL deployment authority: %w", err)
+	}
+	// Reuse the exact repository allocated by the persistence helper. Keeping
+	// one pointer for the module bundle and release catalog avoids split
+	// identity even though both surfaces are otherwise capability-equivalent.
+	deploymentRepository := deploymentPersistence.Repository
+	agentRepository, err := agentpostgres.NewProduction(runtime, agentpostgres.Options{
+		Workflow: jobs, Jobs: jobs,
+		Audit: agentaudit.NewWithRepository(audit), Domain: agentevents.NewWithRepository(events),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL agent authority: %w", err)
+	}
+	agentPersistence, err := agentmodule.NewPostgresPersistence(agentRepository)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL agent persistence: %w", err)
+	}
+	managedDataRepository := manageddatapostgres.NewWithOptions(runtime, manageddatapostgres.Options{
+		Workflow: manageddataworkflow.New(jobs), Audit: manageddataaudit.New(),
+	})
+	managedDataPersistence, err := manageddatamodule.NewPostgresPersistence(managedDataRepository)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL managed-data persistence: %w", err)
+	}
+
+	releaseRepository := releasepostgres.NewWithOptions(runtime, releasepostgres.Options{
+		Audit: releaseaudit.New(), Events: releaseevents.New(), Workflow: releasejobs.New(jobs),
+	})
+	projectCatalog, err := releasecatalog.NewProjectAuthority(project)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL release project catalog: %w", err)
+	}
+	bindingCatalog, err := releasecatalog.NewConnectionBindingAuthority(binding)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL release binding catalog: %w", err)
+	}
+	releaseCatalog, err := releasemodule.NewPostgresCatalog(releasemodule.PostgresCatalogConfig{
+		Projects: projectCatalog, Bindings: bindingCatalog, TargetID: options.TargetID,
+		LatestReleaseID: func(ctx context.Context, projectID string) (string, error) {
+			return latestReleaseID(ctx, releaseRepository, projectID)
+		},
+		ActiveDeploymentID: func(ctx context.Context, _ string) (string, error) {
+			return activeDeploymentID(ctx, deploymentRepository, options.TargetID)
+		},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL release catalog: %w", err)
+	}
+
+	graph := &PostgresAuthorityGraph{
+		Bootstrap: bootstrap, Settings: bootstrap,
+		Operation: operations, OperationMaintenance: operationMaintenance, Jobs: jobs, Events: events,
+		Project: project, Access: accessRepository, AccessAudit: audit, Product: product,
+		Idempotency:   idempotencypostgres.NewStore(runtime),
+		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorsigningpostgres.NewMaintenance(maintenance),
+		ConnectionBinding: binding, QueryAudit: queryauditpostgres.New(runtime), Cache: cachepostgres.New(runtime), Lineage: lineagepostgres.New(runtime),
+		Release: releaseRepository, ReleaseCatalog: releaseCatalog,
+		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
+		AgentRepository: agentRepository, AgentPersistence: &agentPersistence,
+		ManagedDataRepository: managedDataRepository, ManagedDataPersistence: &managedDataPersistence,
+	}
+	if err := graph.Validate(); err != nil {
+		return nil, err
+	}
+	return graph, nil
+}
+
+func projectIDValue(value string) (projectgraph.ResourceID, error) {
+	id, err := projectgraph.NewResourceID(value)
+	if err != nil {
+		return "", fmt.Errorf("invalid project id %q: %w", value, err)
+	}
+	return id, nil
+}
+
+type releaseLister interface {
+	List(context.Context, projectgraph.ResourceID) ([]release.Release, error)
+}
+
+type deploymentTargetReader interface {
+	Target(context.Context, string) (deploymentpostgres.DeliveryTarget, error)
+}
+
+// latestReleaseID preserves the native release query's ordering contract:
+// ListReleases orders by created_at DESC, release_id DESC, so the first row is
+// the latest release. Keeping this in a small function makes the ordering
+// invariant testable without a database.
+func latestReleaseID(ctx context.Context, releases releaseLister, projectID string) (string, error) {
+	if releases == nil {
+		return "", errors.New("release authority is required")
+	}
+	id, err := projectIDValue(projectID)
+	if err != nil {
+		return "", err
+	}
+	rows, err := releases.List(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	if len(rows) == 0 {
+		return "", nil
+	}
+	return rows[0].ID, nil
+}
+
+// activeDeploymentID maps the native delivery pointer's publication identity
+// to the release catalog's deployment identity. sealedcontrol.Coordinator
+// deliberately sets DeploymentID from Publication.ID, so ActivePublicationID
+// is the canonical value (not ActiveGenerationID).
+func activeDeploymentID(ctx context.Context, targets deploymentTargetReader, targetID string) (string, error) {
+	if targets == nil {
+		return "", errors.New("deployment authority is required")
+	}
+	target, err := targets.Target(ctx, targetID)
+	if err != nil {
+		return "", err
+	}
+	return target.ActivePublicationID, nil
+}
+
+// Validate rejects a nil or partial graph. The checks are intentionally
+// structural and side-effect free: pool readiness and schema revision remain
+// owned by postgresControlPlaneLifecycle.Start.
+func (g *PostgresAuthorityGraph) Validate() error {
+	if g == nil {
+		return errors.New("PostgreSQL authority graph is nil")
+	}
+	required := []struct {
+		name  string
+		value any
+	}{
+		{"platform bootstrap authority", g.Bootstrap}, {"platform settings authority", g.Settings},
+		{"operation authority", g.Operation}, {"operation maintenance authority", g.OperationMaintenance},
+		{"jobs authority", g.Jobs}, {"event authority", g.Events}, {"project authority", g.Project},
+		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product},
+		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
+		{"connection-binding authority", g.ConnectionBinding}, {"query-audit authority", g.QueryAudit}, {"cache authority", g.Cache}, {"lineage authority", g.Lineage},
+		{"release authority", g.Release}, {"release catalog authority", g.ReleaseCatalog},
+		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
+		{"agent repository", g.AgentRepository}, {"agent persistence", g.AgentPersistence},
+		{"managed-data repository", g.ManagedDataRepository}, {"managed-data persistence", g.ManagedDataPersistence},
+	}
+	for _, item := range required {
+		if isNilAuthority(item.value) {
+			return fmt.Errorf("PostgreSQL authority graph missing %s", item.name)
+		}
+	}
+	if g.Bootstrap != g.Settings {
+		return errors.New("PostgreSQL authority graph platform bootstrap and settings authorities must share identity")
+	}
+	if g.Access.DB() == nil {
+		return errors.New("PostgreSQL authority graph access authority is not configured")
+	}
+	if !g.Project.Configured() {
+		return errors.New("PostgreSQL authority graph project authority is not configured")
+	}
+	if !g.ConnectionBinding.Configured() || !g.ConnectionBinding.AuditCapable() {
+		return errors.New("PostgreSQL authority graph connection-binding authority is not audit-capable")
+	}
+	if !g.Release.Configured() || !g.Release.AuditCapable() || !g.Release.EventCapable() || !g.Release.WorkflowCapable() {
+		return errors.New("PostgreSQL authority graph release authority is not fully configured")
+	}
+	if !g.ReleaseCatalog.Configured() {
+		return errors.New("PostgreSQL authority graph release catalog is not configured")
+	}
+	if !g.DeploymentRepository.Configured() || !g.DeploymentRepository.TransactionCapable() || !g.DeploymentRepository.AuditCapable() {
+		return errors.New("PostgreSQL authority graph deployment authority is not fully configured")
+	}
+	if !g.AgentRepository.Configured() || !g.AgentRepository.TransactionCapable() || !g.AgentRepository.WorkflowCapable() || !g.AgentRepository.JobsCapable() || !g.AgentRepository.AuditCapable() || !g.AgentRepository.DomainEventCapable() {
+		return errors.New("PostgreSQL authority graph agent authority is not fully configured")
+	}
+	if !g.ManagedDataRepository.TransitionCapabilitiesConfigured() {
+		return errors.New("PostgreSQL authority graph managed-data authority is not fully configured")
+	}
+	if !deploymentPersistenceMatches(g.DeploymentRepository, g.DeploymentPersistence) || !agentPersistenceMatches(g.AgentRepository, g.AgentPersistence) {
+		return errors.New("PostgreSQL authority graph persistence identity mismatch")
+	}
+	return nil
+}
+
+func deploymentPersistenceMatches(repository *deploymentpostgres.Repository, persistence *module.Persistence) bool {
+	return repository != nil && persistence != nil && persistence.Repository == repository
+}
+
+func agentPersistenceMatches(repository *agentpostgres.Repository, persistence *agentmodule.Persistence) bool {
+	return repository != nil && persistence != nil && persistence.Repository == repository
+}
+
+func isNilAuthority(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
