@@ -7,7 +7,10 @@ import (
 	"testing"
 	"time"
 
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
+	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -97,6 +100,27 @@ func (f fakeManagedData) PruneUploadSessions(context.Context, time.Time, int) (i
 	return 9, nil
 }
 
+type fakeAccessAudit struct{ calls *[]string }
+
+func (f fakeAccessAudit) Prune(_ context.Context, class accesspostgres.RetentionClass, before time.Time, limit int) (accesspostgres.AuditRetentionResult, error) {
+	*f.calls = append(*f.calls, "access audit "+string(class))
+	return accesspostgres.AuditRetentionResult{RetentionClass: class, RequestedCutoff: before, Cutoff: before, RequestedLimit: limit, RemovedCount: 10, RetainedFloor: before}, nil
+}
+
+type fakeQueryAudit struct{ calls *[]string }
+
+func (f fakeQueryAudit) Prune(_ context.Context, before time.Time, _ int) (queryauditpostgres.PruneResult, error) {
+	*f.calls = append(*f.calls, "query audit")
+	return queryauditpostgres.PruneResult{Before: before, Cutoff: before, FloorAt: before, Removed: 3}, nil
+}
+
+type fakeAgentHistory struct{ calls *[]string }
+
+func (f fakeAgentHistory) Prune(_ context.Context, before time.Time, limit int) (agentpostgres.RetentionResult, error) {
+	*f.calls = append(*f.calls, "agent history")
+	return agentpostgres.RetentionResult{Before: before, Cutoff: before, RequestedLimit: limit, RunEventsDeleted: 4, ConversationsFloorAt: before, RunEventsFloorAt: before}, nil
+}
+
 func testOptions(calls *[]string, events *fakeEvents) Options {
 	return Options{
 		Operations:        fakeOperations{calls},
@@ -109,6 +133,9 @@ func testOptions(calls *[]string, events *fakeEvents) Options {
 		DashboardUsage:    fakeDashboardUsage{calls},
 		DashboardStreams:  fakeDashboardStreams{calls},
 		ManagedData:       fakeManagedData{calls},
+		AccessAudit:       fakeAccessAudit{calls},
+		QueryAudit:        fakeQueryAudit{calls},
+		AgentHistory:      fakeAgentHistory{calls},
 	}
 }
 
@@ -124,6 +151,13 @@ func testPolicy() Policy {
 		DashboardUsage:   DashboardUsagePolicy{Before: cutoff, Limit: 10},
 		DashboardStreams: DashboardPublicationPolicy{Now: cutoff, Limit: 10},
 		ManagedData:      ManagedDataPolicy{Before: cutoff, Limit: 10},
+		AccessAudit: AccessAuditPolicy{
+			Short:    RetentionWindow{Before: cutoff, Limit: 10},
+			Standard: RetentionWindow{Before: cutoff, Limit: 10},
+			Security: RetentionWindow{Before: cutoff, Limit: 10},
+		},
+		QueryAudit:   RetentionWindow{Before: cutoff, Limit: 10},
+		AgentHistory: RetentionWindow{Before: cutoff, Limit: 10},
 	}
 }
 
@@ -148,14 +182,24 @@ func TestRunInvokesEveryBoundedAuthorityAndPreservesEventTransaction(t *testing.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "cache", "dashboard session", "dashboard usage", "dashboard streams", "managed data"}
+	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "cache", "dashboard session", "dashboard usage", "dashboard streams", "managed data", "access audit short", "access audit standard", "access audit security", "query audit", "agent history"}
 	if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
 	}
 	if !events.tx {
 		t.Fatal("events pruner did not receive caller-owned transaction")
 	}
-	want := Result{OperationsRemoved: 1, CursorSigningRemoved: 2, JobsRemoved: 3, EventsRemoved: 4, Cache: cachepostgres.PruneStats{Invalidations: 5, ExpiredLeases: 6}, DashboardSessionsRemoved: 7, DashboardUsageRemoved: 8, DashboardPublicationBatchDone: true, ManagedDataUploadSessionsRemoved: 9}
+	cutoff := testPolicy().AccessAudit.Short.Before
+	want := Result{
+		OperationsRemoved: 1, CursorSigningRemoved: 2, JobsRemoved: 3, EventsRemoved: 4,
+		Cache: cachepostgres.PruneStats{Invalidations: 5, ExpiredLeases: 6}, DashboardSessionsRemoved: 7,
+		DashboardUsageRemoved: 8, DashboardPublicationBatchDone: true, ManagedDataUploadSessionsRemoved: 9,
+		AccessAuditShort:    accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionShort, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
+		AccessAuditStandard: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionStandard, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
+		AccessAuditSecurity: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionSecurity, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
+		QueryAudit:          queryauditpostgres.PruneResult{Before: cutoff, Cutoff: cutoff, FloorAt: cutoff, Removed: 3},
+		AgentHistory:        agentpostgres.RetentionResult{Before: cutoff, Cutoff: cutoff, RequestedLimit: 10, RunEventsDeleted: 4, ConversationsFloorAt: cutoff, RunEventsFloorAt: cutoff},
+	}
 	if result != want {
 		t.Fatalf("result = %#v, want %#v", result, want)
 	}
@@ -174,6 +218,22 @@ func TestRunValidatesPolicyBeforeCallingAuthorities(t *testing.T) {
 	}
 	if len(calls) != 0 {
 		t.Fatalf("authorities called during invalid policy: %v", calls)
+	}
+}
+
+func TestPolicyRequiresIndependentEvidenceWindows(t *testing.T) {
+	for _, mutate := range []func(*Policy){
+		func(p *Policy) { p.AccessAudit.Short.Before = time.Time{} },
+		func(p *Policy) { p.AccessAudit.Standard.Limit = 1001 },
+		func(p *Policy) { p.AccessAudit.Security.Before = time.Time{} },
+		func(p *Policy) { p.QueryAudit.Limit = 0 },
+		func(p *Policy) { p.AgentHistory.Before = time.Time{} },
+	} {
+		policy := testPolicy()
+		mutate(&policy)
+		if err := policy.Validate(); err == nil {
+			t.Fatalf("Validate() accepted invalid evidence policy %#v", policy)
+		}
 	}
 }
 

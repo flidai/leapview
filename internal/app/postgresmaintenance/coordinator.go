@@ -11,7 +11,10 @@ import (
 	"reflect"
 	"time"
 
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
+	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
@@ -81,6 +84,24 @@ type ManagedDataPruner interface {
 	PruneUploadSessions(context.Context, time.Time, int) (int64, error)
 }
 
+// AccessAuditPruner owns bounded retention for the three policy classes
+// encoded in access-audit envelopes. Unknown classes remain preserved by the
+// capability owner function.
+type AccessAuditPruner interface {
+	Prune(context.Context, accesspostgres.RetentionClass, time.Time, int) (accesspostgres.AuditRetentionResult, error)
+}
+
+// QueryAuditPruner is the bounded query-evidence retention surface.
+type QueryAuditPruner interface {
+	Prune(context.Context, time.Time, int) (queryauditpostgres.PruneResult, error)
+}
+
+// AgentHistoryPruner is the bounded archived-conversation and terminal-run
+// retention surface.
+type AgentHistoryPruner interface {
+	Prune(context.Context, time.Time, int) (agentpostgres.RetentionResult, error)
+}
+
 // Options contains only capability-owned retention ports. Every port must be
 // backed by the separately authenticated control-plane maintenance role;
 // runtime-backed repositories intentionally fail their SQL privilege checks
@@ -97,6 +118,9 @@ type Options struct {
 	DashboardUsage    DashboardUsagePruner
 	DashboardStreams  DashboardPublicationPruner
 	ManagedData       ManagedDataPruner
+	AccessAudit       AccessAuditPruner
+	QueryAudit        QueryAuditPruner
+	AgentHistory      AgentHistoryPruner
 }
 
 // Coordinator invokes one bounded batch for each configured authority. A
@@ -125,6 +149,9 @@ func New(options Options) (*Coordinator, error) {
 		{"dashboard usage", options.DashboardUsage},
 		{"dashboard publication streams", options.DashboardStreams},
 		{"managed data", options.ManagedData},
+		{"access audit", options.AccessAudit},
+		{"query audit", options.QueryAudit},
+		{"agent history", options.AgentHistory},
 	}
 	for _, item := range missing {
 		if nilAuthority(item.value) {
@@ -194,6 +221,20 @@ type ManagedDataPolicy struct {
 	Limit  int
 }
 
+// RetentionWindow controls one bounded time-based evidence batch.
+type RetentionWindow struct {
+	Before time.Time
+	Limit  int
+}
+
+// AccessAuditPolicy keeps every known audit class explicit. Security evidence
+// therefore cannot accidentally inherit the shorter operational cutoff.
+type AccessAuditPolicy struct {
+	Short    RetentionWindow
+	Standard RetentionWindow
+	Security RetentionWindow
+}
+
 // Policy is explicit per capability so retention cutoffs cannot be
 // accidentally inferred from a sibling store's clock or policy.
 type Policy struct {
@@ -206,6 +247,9 @@ type Policy struct {
 	DashboardUsage   DashboardUsagePolicy
 	DashboardStreams DashboardPublicationPolicy
 	ManagedData      ManagedDataPolicy
+	AccessAudit      AccessAuditPolicy
+	QueryAudit       RetentionWindow
+	AgentHistory     RetentionWindow
 }
 
 func (p Policy) Validate() error {
@@ -254,6 +298,23 @@ func (p Policy) Validate() error {
 	if err := validateLimit("managed-data", p.ManagedData.Limit); err != nil {
 		return err
 	}
+	for _, window := range []struct {
+		name   string
+		policy RetentionWindow
+	}{
+		{"access audit short", p.AccessAudit.Short},
+		{"access audit standard", p.AccessAudit.Standard},
+		{"access audit security", p.AccessAudit.Security},
+		{"query audit", p.QueryAudit},
+		{"agent history", p.AgentHistory},
+	} {
+		if window.policy.Before.IsZero() {
+			return fmt.Errorf("%s retention cutoff is required", window.name)
+		}
+		if err := validateLimit(window.name, window.policy.Limit); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -276,6 +337,11 @@ type Result struct {
 	DashboardUsageRemoved            int64
 	DashboardPublicationBatchDone    bool
 	ManagedDataUploadSessionsRemoved int64
+	AccessAuditShort                 accesspostgres.AuditRetentionResult
+	AccessAuditStandard              accesspostgres.AuditRetentionResult
+	AccessAuditSecurity              accesspostgres.AuditRetentionResult
+	QueryAudit                       queryauditpostgres.PruneResult
+	AgentHistory                     agentpostgres.RetentionResult
 }
 
 // Run executes one bounded batch per capability in a stable order. It stops
@@ -320,6 +386,21 @@ func (c *Coordinator) Run(ctx context.Context, policy Policy) (Result, error) {
 	result.DashboardPublicationBatchDone = true
 	if result.ManagedDataUploadSessionsRemoved, err = c.options.ManagedData.PruneUploadSessions(ctx, policy.ManagedData.Before, policy.ManagedData.Limit); err != nil {
 		return result, fmt.Errorf("prune managed-data upload sessions: %w", err)
+	}
+	if result.AccessAuditShort, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionShort, policy.AccessAudit.Short.Before, policy.AccessAudit.Short.Limit); err != nil {
+		return result, fmt.Errorf("prune short access audit: %w", err)
+	}
+	if result.AccessAuditStandard, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionStandard, policy.AccessAudit.Standard.Before, policy.AccessAudit.Standard.Limit); err != nil {
+		return result, fmt.Errorf("prune standard access audit: %w", err)
+	}
+	if result.AccessAuditSecurity, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionSecurity, policy.AccessAudit.Security.Before, policy.AccessAudit.Security.Limit); err != nil {
+		return result, fmt.Errorf("prune security access audit: %w", err)
+	}
+	if result.QueryAudit, err = c.options.QueryAudit.Prune(ctx, policy.QueryAudit.Before, policy.QueryAudit.Limit); err != nil {
+		return result, fmt.Errorf("prune query audit: %w", err)
+	}
+	if result.AgentHistory, err = c.options.AgentHistory.Prune(ctx, policy.AgentHistory.Before, policy.AgentHistory.Limit); err != nil {
+		return result, fmt.Errorf("prune agent history: %w", err)
 	}
 	return result, nil
 }
@@ -389,12 +470,15 @@ func (r *PgxEventTxRunner) Run(ctx context.Context, fn func(eventspostgres.Tx) e
 var (
 	_ OperationPruner            = (*operationpostgres.Maintenance)(nil)
 	_ CursorSigningPruner        = (*cursorsigningpostgres.Maintenance)(nil)
-	_ JobsPruner                 = (*jobspostgres.Repository)(nil)
+	_ JobsPruner                 = (*jobspostgres.Maintenance)(nil)
 	_ EventsPruner               = (*eventspostgres.Repository)(nil)
-	_ CachePruner                = (*cachepostgres.Repository)(nil)
-	_ DashboardSessionPruner     = (*dashboardsessionpostgres.Store)(nil)
-	_ DashboardUsagePruner       = (*dashboardusagepostgres.Repository)(nil)
+	_ CachePruner                = (*cachepostgres.Maintenance)(nil)
+	_ DashboardSessionPruner     = (*dashboardsessionpostgres.Maintenance)(nil)
+	_ DashboardUsagePruner       = (*dashboardusagepostgres.Maintenance)(nil)
 	_ DashboardPublicationPruner = (*dashboardpublicationpostgres.Maintenance)(nil)
-	_ ManagedDataPruner          = (*manageddatapostgres.Repository)(nil)
+	_ ManagedDataPruner          = (*manageddatapostgres.Maintenance)(nil)
+	_ AccessAuditPruner          = (*accesspostgres.Maintenance)(nil)
+	_ QueryAuditPruner           = (*queryauditpostgres.Maintenance)(nil)
+	_ AgentHistoryPruner         = (*agentpostgres.Maintenance)(nil)
 	_ EventTxRunner              = (*PgxEventTxRunner)(nil)
 )
