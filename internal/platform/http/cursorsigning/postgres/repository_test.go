@@ -33,6 +33,56 @@ func testRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 	return NewRepository(p), p
 }
 
+func TestPostgreSQL18CursorRetentionRoleBoundary(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "maintenance-secret"})
+	database := h.NewDatabase(t, "cursor_signing_retention_roles")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(t.Context(), SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	var runtimeExecute bool
+	if err := runtimeDB.QueryRow(t.Context(), `SELECT has_function_privilege(current_user, 'platform.prune_expired_cursor_signing_keys(integer)', 'EXECUTE')`).Scan(&runtimeExecute); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeExecute {
+		t.Fatal("runtime role has cursor retention EXECUTE privilege")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT platform.prune_expired_cursor_signing_keys(1)`); err == nil {
+		t.Fatal("runtime cursor retention unexpectedly succeeded")
+	}
+	if err := NewRepository(runtimeDB).Configure(t.Context()); err != nil {
+		t.Fatalf("runtime cursor configuration: %v", err)
+	}
+
+	maintenanceDB, err := pgxpool.New(t.Context(), database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	var maintenanceExecute bool
+	if err := maintenanceDB.QueryRow(t.Context(), `SELECT has_function_privilege(current_user, 'platform.prune_expired_cursor_signing_keys(integer)', 'EXECUTE')`).Scan(&maintenanceExecute); err != nil {
+		t.Fatal(err)
+	}
+	if !maintenanceExecute {
+		t.Fatal("maintenance role is missing cursor retention EXECUTE privilege")
+	}
+	if removed, err := NewMaintenance(maintenanceDB).PruneExpired(t.Context(), 1000); err != nil || removed != 0 {
+		t.Fatalf("empty maintenance cursor retention removed=%d err=%v", removed, err)
+	}
+}
+
 func TestConfigureCreatesOneDurableKeyAndVerifiesCursor(t *testing.T) {
 	r, p := testRepository(t)
 	if err := r.Configure(t.Context()); err != nil {
@@ -155,4 +205,98 @@ func TestDirectSQLCursorKeyGuardsAndMetadataView(t *testing.T) {
 	if err := p.QueryRow(t.Context(), `SELECT secret FROM platform.api_cursor_signing_key_metadata LIMIT 1`).Scan(new([]byte)); err == nil {
 		t.Fatal("cursor metadata view exposed secret column")
 	}
+}
+
+func TestMaintenancePruneExpiredPreservesCurrentAndVerifiableKeys(t *testing.T) {
+	r, p := testRepository(t)
+	if err := r.Configure(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var currentID string
+	if err := p.QueryRow(t.Context(), `SELECT key_id FROM platform.api_cursor_signing_keys WHERE active`).Scan(&currentID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Rotate(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const expiredCount = 3
+	// Seed expired and still-verifiable retired rows under the test admin while
+	// leaving the production insert/update guards enabled for normal paths.
+	if _, err := p.Exec(t.Context(), `ALTER TABLE platform.api_cursor_signing_keys DISABLE TRIGGER ALL`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < expiredCount; i++ {
+		if _, err := p.Exec(t.Context(), `
+			INSERT INTO platform.api_cursor_signing_keys (key_id, secret, active, created_at, verify_until)
+			VALUES ($1, decode(repeat('01',32),'hex'), false, clock_timestamp(), clock_timestamp()-interval '1 minute')`,
+			"expired-"+string(rune('a'+i))); err != nil {
+			_ = enableCursorKeyTriggers(p, t)
+			t.Fatal(err)
+		}
+	}
+	if _, err := p.Exec(t.Context(), `
+		INSERT INTO platform.api_cursor_signing_keys (key_id, secret, active, created_at, verify_until)
+		VALUES ('verifiable-retired', decode(repeat('02',32),'hex'), false, clock_timestamp(), clock_timestamp()+interval '1 hour')`); err != nil {
+		_ = enableCursorKeyTriggers(p, t)
+		t.Fatal(err)
+	}
+	if err := enableCursorKeyTriggers(p, t); err != nil {
+		t.Fatal(err)
+	}
+
+	// Runtime configuration only reads verifiable rows; it must not perform
+	// destructive retention as a side effect.
+	if err := r.Configure(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var before int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM platform.api_cursor_signing_keys WHERE key_id LIKE 'expired-%'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	if before != expiredCount {
+		t.Fatalf("runtime configuration removed %d expired keys, want %d", expiredCount-before, 0)
+	}
+
+	maintenance := NewMaintenance(p)
+	removed, err := maintenance.PruneExpired(t.Context(), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("bounded cursor prune removed %d rows, want 1", removed)
+	}
+	removed, err = maintenance.PruneExpired(t.Context(), 1000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != expiredCount-1 {
+		t.Fatalf("cursor prune retry removed %d rows, want %d", removed, expiredCount-1)
+	}
+	if removed, err = maintenance.PruneExpired(t.Context(), 1000); err != nil || removed != 0 {
+		t.Fatalf("idempotent cursor prune retry removed=%d err=%v", removed, err)
+	}
+	var current, expired, verifiable int
+	if err := p.QueryRow(t.Context(), `
+		SELECT count(*) FILTER (WHERE key_id=$1),
+		       count(*) FILTER (WHERE key_id LIKE 'expired-%'),
+		       count(*) FILTER (WHERE key_id='verifiable-retired')
+		FROM platform.api_cursor_signing_keys`, currentID).Scan(&current, &expired, &verifiable); err != nil {
+		t.Fatal(err)
+	}
+	if current != 1 {
+		t.Fatalf("pre-rotation key %q disappeared before verification expiry", currentID)
+	}
+	var active int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM platform.api_cursor_signing_keys WHERE active`).Scan(&active); err != nil {
+		t.Fatal(err)
+	}
+	if active != 1 || expired != 0 || verifiable != 1 {
+		t.Fatalf("cursor retention state active=%d expired=%d verifiable=%d", active, expired, verifiable)
+	}
+}
+
+func enableCursorKeyTriggers(p *pgxpool.Pool, t *testing.T) error {
+	t.Helper()
+	_, err := p.Exec(t.Context(), `ALTER TABLE platform.api_cursor_signing_keys ENABLE TRIGGER ALL`)
+	return err
 }

@@ -93,6 +93,7 @@ BEGIN
           AND verify_until IS NOT NULL
           AND verify_until <= clock_timestamp()
         ORDER BY verify_until, key_id
+        FOR UPDATE SKIP LOCKED
         LIMIT p_limit
     )
     DELETE FROM platform.api_cursor_signing_keys
@@ -112,7 +113,8 @@ COMMENT ON TABLE platform.api_cursor_signing_keys IS
     'Durable HMAC cursor-signing key ring; exactly one active key signs new cursors';
 
 -- Keep cursor key material out of ambient PUBLIC access. Runtime owns key
--- rotation/configuration; readonly consumers may inspect metadata only.
+-- rotation/configuration; retention cleanup is maintenance-only; readonly
+-- consumers may inspect metadata only.
 REVOKE ALL ON SCHEMA platform FROM PUBLIC;
 REVOKE ALL ON TABLE platform.api_cursor_signing_keys FROM PUBLIC;
 REVOKE ALL ON TABLE platform.api_cursor_signing_key_metadata FROM PUBLIC;
@@ -130,7 +132,11 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON TABLE platform.api_cursor_signing_keys TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION platform.prune_expired_cursor_signing_keys(integer) TO leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION platform.prune_expired_cursor_signing_keys(integer) FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA platform TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION platform.prune_expired_cursor_signing_keys(integer) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;

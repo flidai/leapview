@@ -88,9 +88,10 @@ CREATE TRIGGER operation_insert_guard
     BEFORE INSERT ON platform.operation
     FOR EACH ROW EXECUTE FUNCTION platform.guard_operation_insert();
 
--- Runtime cleanup is deliberately a bounded SECURITY DEFINER surface. The
--- runtime role never receives direct DELETE, preserving pending/indeterminate
--- evidence for reconciliation and audit.
+-- Retention cleanup is deliberately a bounded SECURITY DEFINER surface. The
+-- runtime role never receives direct DELETE or function EXECUTE, preserving
+-- pending/indeterminate evidence for reconciliation and audit. Only the
+-- separately authenticated maintenance role may invoke this function.
 CREATE OR REPLACE FUNCTION platform.prune_operations(p_before timestamptz, p_limit integer)
 RETURNS bigint
 LANGUAGE plpgsql
@@ -111,6 +112,7 @@ BEGIN
         WHERE state IN ('completed', 'failed')
           AND expires_at <= cutoff
         ORDER BY expires_at
+        FOR UPDATE SKIP LOCKED
         LIMIT p_limit
     )
     DELETE FROM platform.operation o
@@ -255,7 +257,11 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON TABLE platform.operation TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION platform.prune_operations(timestamptz, integer) TO leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION platform.prune_operations(timestamptz, integer) FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA platform TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION platform.prune_operations(timestamptz, integer) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;

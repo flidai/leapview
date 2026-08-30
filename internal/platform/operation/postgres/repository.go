@@ -32,6 +32,15 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated maintenance pool. It intentionally has the same pgx method
+// set as DBTX so bounded pool/transaction implementations can be passed
+// without an adapter; the database role remains the enforcement boundary.
+// Runtime repositories never retain this value or expose the prune leaf.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
@@ -169,6 +178,11 @@ type Repository struct {
 	clock     func() time.Time
 }
 
+// Maintenance owns destructive retention work. It must be constructed with
+// the separately authenticated maintenance DBTX; the database grants deny the
+// same SECURITY DEFINER function to the normal runtime role.
+type Maintenance struct{ db MaintenanceDBTX }
+
 //go:embed schema.sql
 var schemaSQL string
 
@@ -202,6 +216,15 @@ func NewWithConfig(db DBTX, lease, retention time.Duration) *Repository {
 	}
 	return r
 }
+
+// NewMaintenance constructs the bounded operation-retention facade. The
+// facade is deliberately separate from Repository so request-serving code has
+// no destructive prune method to call accidentally.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
+
+// NewMaintenanceRepository is a descriptive alias for callers that name all
+// capability adapters as repositories.
+func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
 
 // RequestDigest computes canonical SHA-256 for JSON requests. Whitespace and
 // object-key ordering therefore cannot produce a second logical operation.
@@ -767,14 +790,25 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 	return op, nil
 }
 
-func (r *Repository) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
+// Prune removes at most limit expired terminal operations whose database
+// expiry is at or before before. Pending and indeterminate records are never
+// eligible. Each invocation commits one bounded SECURITY DEFINER batch so a
+// retry is idempotent and callers can drain larger backlogs explicitly.
+func (m *Maintenance) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
 	var count int64
-	err := r.withTx(ctx, func(tx pgx.Tx) error { var err error; count, err = r.PruneTx(ctx, tx, before, limit); return err })
+	err := m.withTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		count, err = m.PruneTx(ctx, tx, before, limit)
+		return err
+	})
 	return count, err
 }
 
-func (r *Repository) PruneTx(ctx context.Context, tx Tx, before time.Time, limit int) (int64, error) {
-	if r == nil || tx == nil {
+// PruneTx runs one bounded retention batch on a caller-owned transaction. It
+// does not commit or roll back, allowing maintenance orchestration to compose
+// the prune with its own lease/evidence bookkeeping.
+func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limit int) (int64, error) {
+	if m == nil || tx == nil {
 		return 0, ErrInvalid
 	}
 	if ctx == nil {
@@ -784,13 +818,38 @@ func (r *Repository) PruneTx(ctx context.Context, tx Tx, before time.Time, limit
 		return 0, ErrInvalid
 	}
 	if before.IsZero() {
-		var err error
-		before, err = r.nowTx(ctx, tx)
+		now, err := operationdb.New(tx).ClockTimestamp(ctx)
 		if err != nil {
 			return 0, err
 		}
+		if !now.Valid {
+			return 0, errors.New("postgresql clock timestamp is null")
+		}
+		before = now.Time
 	}
 	return operationdb.New(tx).PruneOperations(ctx, operationdb.PruneOperationsParams{PBefore: timestampParam(before), PLimit: int32(limit)})
+}
+
+func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	if m == nil || m.db == nil {
+		return ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b, ok := m.db.(beginner)
+	if !ok {
+		return errors.New("operation maintenance requires a pgx transaction-capable DB")
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {

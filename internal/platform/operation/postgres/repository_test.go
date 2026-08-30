@@ -40,6 +40,68 @@ func acquireInput(owner string) AcquireInput {
 	return AcquireInput{Scope: "tenant-a", OperationType: "write", IdempotencyKey: "key-1", Request: []byte(`{"b":2,"a":1}`), OwnerID: owner}
 }
 
+func TestPostgreSQL18OperationMaintenanceRoleBoundary(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "maintenance-secret"})
+	database := h.NewDatabase(t, "operation_retention_roles")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(t.Context(), SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	var runtimeExecute bool
+	if err := runtimeDB.QueryRow(t.Context(), `SELECT has_function_privilege(current_user, 'platform.prune_operations(timestamptz, integer)', 'EXECUTE')`).Scan(&runtimeExecute); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeExecute {
+		t.Fatal("runtime role has operation prune EXECUTE privilege")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT platform.prune_operations(clock_timestamp(), 1)`); err == nil {
+		t.Fatal("runtime operation retention unexpectedly succeeded")
+	}
+
+	// Runtime may still create and complete records; only the maintenance role
+	// can remove the expired terminal evidence.
+	runtimeRepo := NewWithConfig(runtimeDB, time.Second, time.Microsecond)
+	completed, err := runtimeRepo.Acquire(t.Context(), AcquireInput{Scope: "role", IdempotencyKey: "terminal", Request: []byte(`{"v":1}`), OwnerID: "runtime", Retention: time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runtimeRepo.Complete(t.Context(), completed.Lease, []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+
+	maintenanceDB, err := pgxpool.New(t.Context(), database.URL(maintenance))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	var maintenanceExecute bool
+	if err := maintenanceDB.QueryRow(t.Context(), `SELECT has_function_privilege(current_user, 'platform.prune_operations(timestamptz, integer)', 'EXECUTE')`).Scan(&maintenanceExecute); err != nil {
+		t.Fatal(err)
+	}
+	if !maintenanceExecute {
+		t.Fatal("maintenance role is missing operation prune EXECUTE privilege")
+	}
+	removed, err := NewMaintenance(maintenanceDB).Prune(t.Context(), time.Now().UTC().Add(time.Hour), 1000)
+	if err != nil {
+		t.Fatalf("maintenance operation retention: %v", err)
+	}
+	if removed != 1 {
+		t.Fatalf("maintenance removed %d operation rows, want 1", removed)
+	}
+}
+
 func TestCanonicalDigestAndConcurrentAcquire(t *testing.T) {
 	r, _ := testRepository(t)
 	d1, err := RequestDigest([]byte(`{"a":1,"b":2}`))
@@ -275,7 +337,7 @@ func TestPruneSafety(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Prune(t.Context(), time.Now().Add(time.Hour), 100); err != nil {
+	if _, err := NewMaintenance(p).Prune(t.Context(), time.Now().Add(time.Hour), 100); err != nil {
 		t.Fatal(err)
 	}
 	var count int
@@ -287,5 +349,115 @@ func TestPruneSafety(t *testing.T) {
 	}
 	if got, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "pending", Request: []byte(`{"v":1}`), OwnerID: "one"}); err != nil || got.Operation.OperationID != pending.Operation.OperationID {
 		t.Fatalf("pending prune got=%#v err=%v", got, err)
+	}
+}
+
+func TestMaintenancePrunePreservesPendingAndIndeterminate(t *testing.T) {
+	r, p := testRepository(t)
+
+	completed, err := r.Acquire(t.Context(), AcquireInput{Scope: "retention", IdempotencyKey: "completed", Request: []byte(`{"v":1}`), OwnerID: "owner", Retention: time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Complete(t.Context(), completed.Lease, []byte(`{"ok":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	pending, err := r.Acquire(t.Context(), AcquireInput{Scope: "retention", IdempotencyKey: "pending", Request: []byte(`{"v":1}`), OwnerID: "owner", Retention: time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withAttempt, err := r.Acquire(t.Context(), AcquireInput{Scope: "retention", IdempotencyKey: "indeterminate", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: 100 * time.Millisecond, Retention: time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: withAttempt.Lease, AttemptIdentity: "external-retention-attempt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(200 * time.Millisecond)
+	indeterminate, err := r.Acquire(t.Context(), AcquireInput{Scope: "retention", IdempotencyKey: "indeterminate", Request: []byte(`{"v":1}`), OwnerID: "other", Lease: time.Second})
+	if err != nil || indeterminate.Status != StatusIndeterminate {
+		t.Fatalf("indeterminate acquisition = %#v, %v", indeterminate, err)
+	}
+
+	maintenance := NewMaintenance(p)
+	removed, err := maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("bounded prune removed %d rows, want 1", removed)
+	}
+	if removed, err = maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), 1000); err != nil {
+		t.Fatal(err)
+	} else if removed != 0 {
+		t.Fatalf("idempotent prune retry removed %d rows, want 0", removed)
+	}
+	var pendingState, indeterminateState string
+	if err := p.QueryRow(t.Context(), `SELECT state FROM platform.operation WHERE operation_id=$1`, pending.Lease.OperationID).Scan(&pendingState); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.QueryRow(t.Context(), `SELECT state FROM platform.operation WHERE scope_id='retention' AND idempotency_key='indeterminate'`).Scan(&indeterminateState); err != nil {
+		t.Fatal(err)
+	}
+	if pendingState != string(StatePending) || indeterminateState != string(StateIndeterminate) {
+		t.Fatalf("retention states pending=%q indeterminate=%q", pendingState, indeterminateState)
+	}
+}
+
+func TestMaintenancePruneConcurrentBatches(t *testing.T) {
+	r, p := testRepository(t)
+	const terminalRows = 17
+	for i := 0; i < terminalRows; i++ {
+		key := "concurrent-" + string(rune('a'+i))
+		acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "concurrent-retention", IdempotencyKey: key, Request: []byte(`{"v":1}`), OwnerID: "owner", Retention: time.Microsecond})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := r.Complete(t.Context(), acquired.Lease, []byte(`{"ok":true}`)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	maintenance := NewMaintenance(p)
+	start := make(chan struct{})
+	removed := make(chan int64, 4)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			var total int64
+			for {
+				batch, err := maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), 2)
+				if err != nil {
+					t.Errorf("concurrent operation prune: %v", err)
+					return
+				}
+				if batch == 0 {
+					break
+				}
+				total += batch
+			}
+			removed <- total
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(removed)
+	var total int64
+	for count := range removed {
+		total += count
+	}
+	if total != terminalRows {
+		t.Fatalf("concurrent operation prune removed %d rows, want %d", total, terminalRows)
+	}
+	var remaining int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id='concurrent-retention'`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("concurrent operation prune left %d rows", remaining)
 	}
 }

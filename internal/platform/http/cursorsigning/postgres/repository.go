@@ -26,6 +26,13 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated maintenance pool. The database role, rather than a Go
+// adapter, enforces that only this pool can execute retention cleanup.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 type Tx interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
@@ -58,12 +65,24 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 type Repository struct{ db DBTX }
 
+// Maintenance owns destructive cursor-key retention. Runtime repositories
+// retain only configuration and rotation authority; their role is explicitly
+// denied EXECUTE on the prune function.
+type Maintenance struct{ db MaintenanceDBTX }
+
 type keyRing struct {
 	current string
 	keys    map[string][]byte
 }
 
 func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
+
+// NewMaintenance constructs the bounded cursor-signing retention facade.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
+
+// NewMaintenanceRepository is a descriptive alias for callers that name all
+// capability adapters as repositories.
+func NewMaintenanceRepository(db MaintenanceDBTX) *Maintenance { return NewMaintenance(db) }
 
 // Configure loads the durable ring and installs it in cursorsigning. The
 // first caller atomically creates a random active key; later callers only
@@ -170,12 +189,6 @@ func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
 			return keyRing{}, err
 		}
 	}
-	// Verification retention is bounded by verify_until; remove expired
-	// secrets while holding the same table lock so the durable ring does not
-	// grow without limit across repeated rotations.
-	if _, err := cursordb.New(tx).PruneExpiredCursorSigningKeys(ctx, 1000); err != nil {
-		return keyRing{}, err
-	}
 	rows, err := cursordb.New(tx).ListVerifiableCursorSigningKeys(ctx)
 	if err != nil {
 		return keyRing{}, err
@@ -192,6 +205,64 @@ func (r *Repository) configureTx(ctx context.Context, tx Tx) (keyRing, error) {
 		return keyRing{}, errors.New("cursor signing key ring has no active key")
 	}
 	return keyRing{current: current, keys: keys}, nil
+}
+
+// PruneExpired removes at most limit retired keys whose verify-until instant
+// has elapsed. Current and still-verifiable keys are preserved. Every call is
+// one bounded SECURITY DEFINER batch, so retries are idempotent and larger
+// backlogs can be drained explicitly by the maintenance scheduler.
+func (m *Maintenance) PruneExpired(ctx context.Context, limit int) (int64, error) {
+	var removed int64
+	err := m.withTx(ctx, func(tx pgx.Tx) error {
+		var err error
+		removed, err = m.PruneExpiredTx(ctx, tx, limit)
+		return err
+	})
+	return removed, err
+}
+
+// Prune is a concise alias for PruneExpired.
+func (m *Maintenance) Prune(ctx context.Context, limit int) (int64, error) {
+	return m.PruneExpired(ctx, limit)
+}
+
+// PruneExpiredTx runs one bounded retention batch on a caller-owned
+// transaction. It does not commit or roll back.
+func (m *Maintenance) PruneExpiredTx(ctx context.Context, tx Tx, limit int) (int64, error) {
+	if m == nil || tx == nil || limit < 1 || limit > 1000 {
+		return 0, errors.New("cursor signing prune limit must be between 1 and 1000")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return cursordb.New(tx).PruneExpiredCursorSigningKeys(ctx, int32(limit))
+}
+
+// PruneTx is a concise alias for PruneExpiredTx.
+func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, limit int) (int64, error) {
+	return m.PruneExpiredTx(ctx, tx, limit)
+}
+
+func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
+	if m == nil || isNilDB(m.db) {
+		return errors.New("cursor signing maintenance repository is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b, ok := m.db.(beginner)
+	if !ok {
+		return errors.New("cursor signing maintenance requires a transaction-capable PostgreSQL DB")
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback(ctx)
+		return err
+	}
+	return tx.Commit(ctx)
 }
 
 func (r *Repository) rotateTx(ctx context.Context, tx Tx) (string, error) {
