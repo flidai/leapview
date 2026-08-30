@@ -36,6 +36,9 @@ func TestOperationAdapterFailsClosed(t *testing.T) {
 	if err := New(nil).MarkIndeterminateTx(context.Background(), nil, deploymentmodule.NativeOperationLease{}, []byte(`{"ok":true}`)); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil authority indeterminate error = %v, want deployment.ErrInvalid", err)
 	}
+	if _, err := New(nil).ConfirmExpiredAttemptTx(context.Background(), nil, deploymentmodule.NativeOperationLease{}, 2); !errors.Is(err, deploymentpostgres.ErrInvalid) {
+		t.Fatalf("nil authority expired confirmation error = %v, want deployment.ErrInvalid", err)
+	}
 	if _, err := New(nil).ReconcileAttemptTx(context.Background(), nil, deploymentmodule.NativeOperationReconcileAttemptInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil authority reconcile error = %v, want deployment.ErrInvalid", err)
 	}
@@ -339,6 +342,127 @@ func TestOperationAdapterIndeterminateProjectionAndEvidence(t *testing.T) {
 	if err := replayTx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func TestOperationAdapterExpireAttemptTxRollsBackReplaysAndRejectsStaleFence(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "deployment_operation_expire_attempt")
+	db, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	if _, err := db.Exec(t.Context(), operationpostgres.SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+	adapter := New(operationpostgres.NewWithConfig(db, 500*time.Millisecond, time.Hour))
+	input := deploymentmodule.NativeOperationAcquireInput{
+		Scope: "target", OperationType: "delivery.plan.build", IdempotencyKey: "build-expire",
+		RequestDigest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", OwnerID: "builder",
+	}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	acquired, err := adapter.AcquireTx(t.Context(), tx, input)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	bound, err := adapter.BeginAttemptTx(t.Context(), tx, deploymentmodule.NativeOperationBeginAttemptInput{
+		Lease: acquired.Lease, AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000551", AttemptIdentity: "native-expire-1",
+	})
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(750 * time.Millisecond)
+	evidence := json.RawMessage(` { "errorDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "phase": "evidence" } `)
+
+	// The operation transition participates in the caller transaction. A
+	// rollback must leave both the pending state and the bound attempt intact.
+	tx, err = db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.ExpireAttemptTx(t.Context(), tx, bound.Lease, evidence); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	pending, found, err := adapter.Lookup(t.Context(), input)
+	if err != nil || !found || pending.State != deploymentmodule.NativeOperationStatePending || pending.AttemptID != bound.AttemptID {
+		t.Fatalf("rolled-back expiry projection = %+v found=%v err=%v", pending, found, err)
+	}
+
+	tx, err = db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.ExpireAttemptTx(t.Context(), tx, bound.Lease, evidence); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	indeterminate, found, err := adapter.Lookup(t.Context(), input)
+	if err != nil || !found || indeterminate.State != deploymentmodule.NativeOperationStateIndeterminate || string(indeterminate.AttemptEvidence) != `{"errorDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","phase":"evidence"}` {
+		t.Fatalf("expired projection = %+v found=%v err=%v", indeterminate, found, err)
+	}
+	confirmTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := adapter.ConfirmExpiredAttemptTx(t.Context(), confirmTx, bound.Lease, bound.Lease.FencingGeneration+1)
+	if err != nil {
+		_ = confirmTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if confirmed.State != deploymentmodule.NativeOperationStateIndeterminate || confirmed.Scope != input.Scope || confirmed.IdempotencyKey != input.IdempotencyKey || confirmed.OperationID != bound.Lease.OperationID || confirmed.OwnerID != bound.Lease.OwnerID || confirmed.FencingGeneration != bound.Lease.FencingGeneration+1 || confirmed.AttemptID != bound.AttemptID || confirmed.AttemptIdentity != bound.AttemptIdentity || string(confirmed.AttemptEvidence) != string(indeterminate.AttemptEvidence) {
+		_ = confirmTx.Rollback(t.Context())
+		t.Fatalf("expired confirmation projection = %+v", confirmed)
+	}
+	if err := confirmTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	invalidConfirmTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := adapter.ConfirmExpiredAttemptTx(t.Context(), invalidConfirmTx, bound.Lease, bound.Lease.FencingGeneration+2); !errors.Is(err, deploymentmodule.ErrNativeOperationInvalid) {
+		_ = invalidConfirmTx.Rollback(t.Context())
+		t.Fatalf("invalid expected confirmation fence = %v, want native operation invalid", err)
+	}
+	_ = invalidConfirmTx.Rollback(t.Context())
+
+	replayTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := adapter.AcquireTx(t.Context(), replayTx, input)
+	if err != nil || replay.Status != deploymentmodule.NativeOperationIndeterminate || string(replay.Operation.AttemptEvidence) != string(indeterminate.AttemptEvidence) {
+		_ = replayTx.Rollback(t.Context())
+		t.Fatalf("expired replay = %+v err=%v", replay, err)
+	}
+	if err := replayTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	staleTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := adapter.ExpireAttemptTx(t.Context(), staleTx, bound.Lease, evidence); !errors.Is(err, deploymentmodule.ErrNativeOperationStaleFence) {
+		_ = staleTx.Rollback(t.Context())
+		t.Fatalf("stale expiry error = %v, want native operation stale fence", err)
+	}
+	_ = staleTx.Rollback(t.Context())
 }
 
 func TestValidateAcquireResultRejectsOperationLeaseAttemptDrift(t *testing.T) {

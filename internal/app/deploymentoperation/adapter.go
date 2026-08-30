@@ -166,7 +166,7 @@ func nativeLease(lease deploymentmodule.NativeOperationLease) operationpostgres.
 }
 
 func validateNativeLease(lease deploymentmodule.NativeOperationLease, requireAttempt bool) error {
-	if lease.Scope == "" || lease.Scope != strings.TrimSpace(lease.Scope) || lease.IdempotencyKey == "" || lease.IdempotencyKey != strings.TrimSpace(lease.IdempotencyKey) || lease.OwnerID == "" || lease.OwnerID != strings.TrimSpace(lease.OwnerID) || lease.FencingGeneration <= 0 || lease.LeaseExpiresAt.IsZero() {
+	if lease.Scope == "" || lease.Scope != strings.TrimSpace(lease.Scope) || len(lease.Scope) > 255 || lease.IdempotencyKey == "" || lease.IdempotencyKey != strings.TrimSpace(lease.IdempotencyKey) || len(lease.IdempotencyKey) > 512 || lease.OwnerID == "" || lease.OwnerID != strings.TrimSpace(lease.OwnerID) || len(lease.OwnerID) > 255 || lease.FencingGeneration <= 0 || lease.LeaseExpiresAt.IsZero() {
 		return fmt.Errorf("%w: operation lease identity is incomplete", deploymentmodule.ErrNativeOperationInvalid)
 	}
 	if err := validateUUIDv7(lease.OperationID, "operation id"); err != nil {
@@ -510,6 +510,59 @@ func (a *Adapter) MarkIndeterminateTx(ctx context.Context, tx deploymentmodule.N
 		return fmt.Errorf("%w: operation indeterminate evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
 	}
 	return mapError(a.operations.MarkIndeterminateTx(ctx, tx, nativeLease(lease), canonical))
+}
+
+// ExpireAttemptTx settles a bound external attempt whose operation lease has
+// expired. Every operation and attempt identity is forwarded through the
+// caller-owned transaction; the operation authority fences the row only when
+// its pending lease is actually expired. No transaction lifecycle method is
+// called here.
+func (a *Adapter) ExpireAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, evidence json.RawMessage) error {
+	if a == nil || a.operations == nil {
+		return fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, true); err != nil {
+		return err
+	}
+	canonical, err := canonicalObjectJSON(evidence, true)
+	if err != nil {
+		return fmt.Errorf("%w: operation expiry evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	return mapError(a.operations.ExpireAttemptTx(ctx, tx, nativeLease(lease), canonical))
+}
+
+// ConfirmExpiredAttemptTx locks and projects the exact indeterminate
+// operation produced by expiry fencing. The expected generation is required
+// to be the predecessor lease generation plus one, preventing confirmation of
+// a later takeover or any other terminal state. The caller owns tx.
+func (a *Adapter) ConfirmExpiredAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, expectedFencingGeneration int64) (deploymentmodule.NativeOperationRecord, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, true); err != nil {
+		return deploymentmodule.NativeOperationRecord{}, err
+	}
+	if expectedFencingGeneration <= 0 || lease.FencingGeneration == 1<<63-1 || expectedFencingGeneration != lease.FencingGeneration+1 {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: expected expiry fencing generation must be predecessor plus one", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	stored, err := a.operations.ConfirmExpiredAttemptTx(ctx, tx, nativeLease(lease), expectedFencingGeneration)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, mapError(err)
+	}
+	record, err := projectOperationRecord(stored)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, err
+	}
+	if record.State != deploymentmodule.NativeOperationStateIndeterminate || record.Scope != lease.Scope || record.IdempotencyKey != lease.IdempotencyKey || record.OperationID != lease.OperationID || record.OwnerID != lease.OwnerID || record.FencingGeneration != expectedFencingGeneration || record.AttemptID != lease.AttemptID || record.AttemptIdentity != lease.AttemptIdentity {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned a mismatched expired-attempt confirmation", deploymentmodule.ErrNativeOperationConflict)
+	}
+	return record, nil
 }
 
 func mapStatus(status operationpostgres.AcquireStatus) (deploymentmodule.NativeOperationStatus, error) {

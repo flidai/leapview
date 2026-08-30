@@ -390,14 +390,15 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 		if op.AttemptID == "" {
 			// No external attempt was started. It is safe to hand the operation
 			// to a successor, but the fence must advance monotonically.
+			takeoverExpiry := now.Add(lease).UTC().Truncate(time.Microsecond)
 			generation, err := operationdb.New(tx).TakeoverOperation(ctx, operationdb.TakeoverOperationParams{
-				OwnerID: in.OwnerID, LeaseExpiresAt: timestampParam(now.Add(lease)), UpdatedAt: timestampParam(now),
+				OwnerID: in.OwnerID, LeaseExpiresAt: timestampParam(takeoverExpiry), UpdatedAt: timestampParam(now),
 				ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
 			})
 			if err == nil {
 				op.OwnerID = in.OwnerID
 				op.FencingGeneration = generation
-				op.LeaseExpiresAt = now.Add(lease)
+				op.LeaseExpiresAt = takeoverExpiry
 				op.UpdatedAt = now
 				token := Lease{Scope: op.Scope, IdempotencyKey: op.IdempotencyKey, OperationID: op.OperationID, OwnerID: op.OwnerID, FencingGeneration: generation, LeaseExpiresAt: op.LeaseExpiresAt}
 				return AcquireResult{Status: StatusAcquired, Operation: op, Lease: token}, nil
@@ -409,8 +410,11 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 		// Expiry with an external attempt says nothing about external commit.
 		// Fence the old owner and retain an indeterminate terminal record;
 		// reconciliation evidence is required before replay can resolve it.
-		tag, err := operationdb.New(tx).MarkOperationIndeterminate(ctx, operationdb.MarkOperationIndeterminateParams{
-			UpdatedAt: timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
+		tag, err := operationdb.New(tx).ExpireOperationAttempt(ctx, operationdb.ExpireOperationAttemptParams{
+			AttemptEvidence: ExpiredAttemptEvidence,
+			UpdatedAt:       timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
+			OperationID: uuidParam(op.OperationID), OwnerID: op.OwnerID, FencingGeneration: op.FencingGeneration,
+			AttemptID: uuidParam(op.AttemptID), AttemptIdentity: textParam(op.AttemptIdentity),
 		})
 		if err != nil {
 			return AcquireResult{}, err
@@ -624,6 +628,85 @@ func (r *Repository) MarkIndeterminateTx(ctx context.Context, tx Tx, lease Lease
 	return r.transitionError(ctx, tx, lease)
 }
 
+// ExpireAttempt settles a bound external attempt after its operation lease
+// expired. It owns a short transaction for callers that do not need to
+// compose the operation transition with another mutation.
+func (r *Repository) ExpireAttempt(ctx context.Context, lease Lease, evidence json.RawMessage) error {
+	return r.withTx(ctx, func(tx pgx.Tx) error { return r.ExpireAttemptTx(ctx, tx, lease, evidence) })
+}
+
+// ExpireAttemptTx atomically fences a pending operation whose lease expired
+// after the exact external attempt was bound. The caller owns tx; this method
+// never begins, commits, or rolls it back.
+func (r *Repository) ExpireAttemptTx(ctx context.Context, tx Tx, lease Lease, evidence json.RawMessage) error {
+	if r == nil || tx == nil {
+		return ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := validateLease(lease); err != nil {
+		return err
+	}
+	if lease.AttemptID == "" || lease.AttemptIdentity == "" {
+		return ErrInvalid
+	}
+	canonicalEvidence, err := canonicalNonEmptyObjectJSON(evidence)
+	if err != nil {
+		return err
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	command, err := operationdb.New(tx).ExpireOperationAttempt(ctx, operationdb.ExpireOperationAttemptParams{
+		AttemptEvidence: canonicalEvidence,
+		UpdatedAt:       timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+		AttemptID: uuidParam(lease.AttemptID), AttemptIdentity: textParam(lease.AttemptIdentity),
+	})
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() == 1 {
+		return nil
+	}
+	return r.expiredAttemptTransitionError(ctx, tx, lease)
+}
+
+// ConfirmExpiredAttemptTx locks and returns the exact indeterminate operation
+// produced by expiry fencing. The expected fence must be the predecessor
+// lease's generation plus one; callers cannot confirm a later takeover or a
+// terminal operation. The caller owns tx and this method does not manage its
+// lifecycle.
+func (r *Repository) ConfirmExpiredAttemptTx(ctx context.Context, tx Tx, lease Lease, expectedFencingGeneration int64) (Operation, error) {
+	if r == nil || tx == nil {
+		return Operation{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := validateLease(lease); err != nil {
+		return Operation{}, err
+	}
+	if lease.AttemptID == "" || lease.AttemptIdentity == "" || expectedFencingGeneration <= 0 || lease.FencingGeneration <= 0 || lease.FencingGeneration == 1<<63-1 || expectedFencingGeneration != lease.FencingGeneration+1 {
+		return Operation{}, ErrInvalid
+	}
+	stored, err := operationdb.New(tx).GetExpiredAttemptIndeterminateForUpdate(ctx, operationdb.GetExpiredAttemptIndeterminateForUpdateParams{
+		ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID,
+		ExpectedFencingGeneration: expectedFencingGeneration,
+		AttemptID:                 uuidParam(lease.AttemptID), AttemptIdentity: textParam(lease.AttemptIdentity),
+	})
+	if err == nil {
+		return operationFromExpiredAttemptRow(stored)
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, err
+	}
+	return Operation{}, r.confirmExpiredAttemptTransitionError(ctx, tx, lease, expectedFencingGeneration)
+}
+
 func (r *Repository) RenewLease(ctx context.Context, lease Lease, duration time.Duration) (Lease, error) {
 	var result Lease
 	err := r.withTx(ctx, func(tx pgx.Tx) error {
@@ -654,10 +737,14 @@ func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, lease Lease, durat
 	if err != nil {
 		return Lease{}, err
 	}
-	newExpiry := now.Add(duration)
+	// PostgreSQL timestamptz and the delivery/DuckLake ledgers are persisted at
+	// microsecond precision. Truncate before writing and returning the lease so
+	// all four heartbeat ledgers share one exact expiry value.
+	newExpiry := now.Add(duration).UTC().Truncate(time.Microsecond)
 	command, err := operationdb.New(tx).RenewOperationLease(ctx, operationdb.RenewOperationLeaseParams{
 		LeaseExpiresAt: timestampParam(newExpiry), UpdatedAt: timestampParam(now), ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
 		OperationID: uuidParam(lease.OperationID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
+		AttemptID: uuidParam(lease.AttemptID), AttemptIdentity: textParam(lease.AttemptIdentity),
 	})
 	if err != nil {
 		return Lease{}, err
@@ -931,6 +1018,85 @@ func (r *Repository) transitionError(ctx context.Context, tx Tx, lease Lease) er
 	return ErrConflict
 }
 
+// expiredAttemptTransitionError preserves the operation authority's precise
+// error taxonomy when ExpireAttemptTx's exact attempt predicate matches no
+// row. In particular, an attempt mismatch is a conflict rather than a broad
+// lease-expired success, while an old owner/fence remains stale.
+func (r *Repository) expiredAttemptTransitionError(ctx context.Context, tx Tx, lease Lease) error {
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{
+		ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	op, err := operationFromForUpdateRow(stored)
+	if err != nil {
+		return err
+	}
+	if op.OperationID != lease.OperationID {
+		return ErrNotFound
+	}
+	if op.OwnerID != lease.OwnerID || op.FencingGeneration != lease.FencingGeneration {
+		return ErrStaleFence
+	}
+	if op.State != StatePending {
+		return ErrAlreadyTerminal
+	}
+	if op.AttemptID != lease.AttemptID || op.AttemptIdentity != lease.AttemptIdentity {
+		return ErrConflict
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	if op.LeaseExpiresAt.After(now) {
+		return ErrConflict
+	}
+	return ErrLeaseExpired
+}
+
+// confirmExpiredAttemptTransitionError classifies a failed exact confirmation
+// without weakening the SELECT predicate. Every mismatch remains observable
+// as stale, conflict, not-found, or already-terminal rather than becoming a
+// false success for a completed/failed operation.
+func (r *Repository) confirmExpiredAttemptTransitionError(ctx context.Context, tx Tx, lease Lease, expectedFencingGeneration int64) error {
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{
+		ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	op, err := operationFromForUpdateRow(stored)
+	if err != nil {
+		return err
+	}
+	if op.OperationID != lease.OperationID {
+		return ErrNotFound
+	}
+	if op.OwnerID != lease.OwnerID || op.FencingGeneration != lease.FencingGeneration && op.FencingGeneration != expectedFencingGeneration {
+		return ErrStaleFence
+	}
+	if op.AttemptID != lease.AttemptID || op.AttemptIdentity != lease.AttemptIdentity {
+		return ErrConflict
+	}
+	if op.State != StateIndeterminate {
+		if op.State == StateCompleted || op.State == StateFailed {
+			return ErrAlreadyTerminal
+		}
+		return ErrConflict
+	}
+	if op.FencingGeneration != expectedFencingGeneration {
+		return ErrStaleFence
+	}
+	return ErrConflict
+}
+
 func validateLease(lease Lease) error {
 	if lease.Scope != strings.TrimSpace(lease.Scope) || lease.IdempotencyKey != strings.TrimSpace(lease.IdempotencyKey) || lease.OperationID != strings.TrimSpace(lease.OperationID) || lease.OwnerID != strings.TrimSpace(lease.OwnerID) {
 		return ErrInvalid
@@ -1031,6 +1197,13 @@ func operationFromRow(row operationdb.GetOperationRow) (Operation, error) {
 }
 
 func operationFromForUpdateRow(row operationdb.GetOperationForUpdateRow) (Operation, error) {
+	return operationFromValues(row.ScopeID, row.OperationType, row.IdempotencyKey, row.RequestDigest,
+		row.OperationID, row.State, row.OwnerID, row.LeaseExpiresAt, row.FencingGeneration,
+		row.Outcome, row.AttemptID, row.AttemptIdentity, row.AttemptEvidence, row.ResolutionEvidence,
+		row.CreatedAt, row.UpdatedAt, row.TerminalAt, row.ExpiresAt)
+}
+
+func operationFromExpiredAttemptRow(row operationdb.GetExpiredAttemptIndeterminateForUpdateRow) (Operation, error) {
 	return operationFromValues(row.ScopeID, row.OperationType, row.IdempotencyKey, row.RequestDigest,
 		row.OperationID, row.State, row.OwnerID, row.LeaseExpiresAt, row.FencingGeneration,
 		row.Outcome, row.AttemptID, row.AttemptIdentity, row.AttemptEvidence, row.ResolutionEvidence,

@@ -85,6 +85,58 @@ func (f completeBuildFixture) fence() LeaseFence {
 	return LeaseFence{LeaseID: f.Lease.LeaseID, TargetID: f.Lease.TargetID, OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch}
 }
 
+func TestPostgresRenewLeaseTxCannotShortenActiveLease(t *testing.T) {
+	r := New(deliveryTestDB(t))
+	f := newCompleteBuildFixture(t, r)
+	shorter := f.Lease.ExpiresAt.Add(-time.Minute)
+	if !shorter.After(time.Now().UTC()) {
+		t.Fatal("fixture lease is too short for monotonic renewal test")
+	}
+	tx, err := r.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if err := r.RenewLeaseTx(t.Context(), tx, f.fence(), shorter); !errors.Is(err, ErrConflict) {
+		t.Fatalf("shortening renewal error = %v, want conflict", err)
+	}
+	lease, err := r.LeaseTx(t.Context(), tx, f.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lease.ExpiresAt.Equal(f.Lease.ExpiresAt) {
+		t.Fatalf("lease expiry changed from %v to %v", f.Lease.ExpiresAt, lease.ExpiresAt)
+	}
+}
+
+func TestPostgresReleaseLeaseAfterAttemptTerminationAcceptsExactExpiredLease(t *testing.T) {
+	r := New(deliveryTestDB(t))
+	f := newCompleteBuildFixtureWithSuffixBindingAndLifetime(t, r, "8", true, 2*time.Second)
+	if wait := time.Until(f.Lease.ExpiresAt) + 10*time.Millisecond; wait > 0 {
+		time.Sleep(wait)
+	}
+	tx, err := r.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback(t.Context())
+	if err := r.ReleaseLeaseAfterAttemptTerminationTx(t.Context(), tx, f.fence()); err != nil {
+		t.Fatalf("release exact expired lease: %v", err)
+	}
+	lease, err := r.LeaseTx(t.Context(), tx, f.LeaseID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.State != "released" || lease.ReleasedAt.IsZero() {
+		t.Fatalf("terminated lease = %+v, want released", lease)
+	}
+	stale := f.fence()
+	stale.OwnerID = "other-owner"
+	if err := r.ReleaseLeaseAfterAttemptTerminationTx(t.Context(), tx, stale); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale termination release error = %v, want stale fence", err)
+	}
+}
+
 func TestPostgresCompleteBuildTxSuccessAndExactReplay(t *testing.T) {
 	r := New(deliveryTestDB(t))
 	f := newCompleteBuildFixture(t, r)

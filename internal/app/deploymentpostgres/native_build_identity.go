@@ -37,12 +37,14 @@ const (
 // self-describing and prevents cross-scope consequence reuse.
 type nativeBuildOutcome struct {
 	OperationID           string `json:"operationId"`
+	OperationOwnerID      string `json:"operationOwnerId"`
 	PlanID                string `json:"planId"`
 	CandidateID           string `json:"candidateId"`
 	AttemptID             string `json:"attemptId"`
 	LeaseID               string `json:"leaseId"`
 	GenerationID          string `json:"generationId"`
 	SealID                string `json:"sealId"`
+	ServingArtifactID     string `json:"servingArtifactId"`
 	EventID               string `json:"eventId"`
 	AuditID               string `json:"auditId"`
 	ProjectID             string `json:"projectId"`
@@ -54,6 +56,7 @@ type nativeBuildOutcome struct {
 	PlanDigest            string `json:"planDigest"`
 	SourceDigest          string `json:"sourceDigest"`
 	ExecutionDigest       string `json:"executionDigest"`
+	QualificationDigest   string `json:"qualificationDigest"`
 	ServingArtifactDigest string `json:"servingArtifactDigest"`
 	Status                string `json:"status"`
 }
@@ -89,6 +92,18 @@ func validateNativeBuildRequest(request deploymentmodule.NativeDeliveryBuildRequ
 		}
 	}
 	return nil
+}
+
+// normalizeNativeBuildRequest returns the canonical value used throughout a
+// build command. NativeDeliveryBuildRequest currently contains only scalar
+// strings and a UUID, nevertheless trimming is intentionally not performed:
+// accepting a non-canonical wire value and silently changing its digest would
+// make operation idempotency ambiguous.
+func normalizeNativeBuildRequest(request deploymentmodule.NativeDeliveryBuildRequest) (deploymentmodule.NativeDeliveryBuildRequest, error) {
+	if err := validateNativeBuildRequest(request); err != nil {
+		return deploymentmodule.NativeDeliveryBuildRequest{}, err
+	}
+	return request, nil
 }
 
 // nativeBuildRequestDigest computes a deterministic digest over the complete
@@ -206,14 +221,21 @@ func validateNativeBuildOutcome(outcome nativeBuildOutcome, request *deploymentm
 			return fmt.Errorf("%w: native build outcome %s is not canonical: %v", deployment.ErrDeliveryConflict, label, err)
 		}
 	}
+	if _, err := canonicalUUIDv7(outcome.OperationOwnerID); err != nil {
+		return fmt.Errorf("%w: native build outcome operation owner identity: %v", deployment.ErrDeliveryConflict, err)
+	}
 	for label, value := range map[string]string{
 		"request digest": outcome.RequestDigest, "plan digest": outcome.PlanDigest,
 		"source digest": outcome.SourceDigest, "execution digest": outcome.ExecutionDigest,
+		"qualification digest":    outcome.QualificationDigest,
 		"serving artifact digest": outcome.ServingArtifactDigest,
 	} {
 		if err := platformdigest.ValidateSHA256Identity(value); err != nil {
 			return fmt.Errorf("%w: native build outcome %s: %v", deployment.ErrDeliveryConflict, label, err)
 		}
+	}
+	if err := validateText(outcome.ServingArtifactID, "serving artifact id", 255); err != nil {
+		return fmt.Errorf("%w: native build outcome serving artifact id is not canonical: %v", deployment.ErrDeliveryConflict, err)
 	}
 	switch outcome.Status {
 	case "sealed":
@@ -244,10 +266,13 @@ func validateNativeBuildOutcome(outcome nativeBuildOutcome, request *deploymentm
 		}
 	}
 	if operationInput != nil {
-		if validateText(operationInput.Scope, "operation scope", 255) != nil || validateText(operationInput.IdempotencyKey, "operation idempotency key", 512) != nil || operationInput.OperationType != nativeBuildOperationType || platformdigest.ValidateSHA256Identity(operationInput.RequestDigest) != nil {
+		if validateText(operationInput.Scope, "operation scope", 255) != nil || validateText(operationInput.IdempotencyKey, "operation idempotency key", 512) != nil || validateText(operationInput.OwnerID, "operation owner id", 255) != nil || operationInput.OperationType != nativeBuildOperationType || platformdigest.ValidateSHA256Identity(operationInput.RequestDigest) != nil {
 			return fmt.Errorf("%w: native build operation binding is incomplete", deployment.ErrDeliveryConflict)
 		}
-		if outcome.TargetID != operationInput.Scope || outcome.IdempotencyKey != operationInput.IdempotencyKey || outcome.RequestDigest != operationInput.RequestDigest {
+		if _, err := canonicalUUIDv7(operationInput.OwnerID); err != nil {
+			return fmt.Errorf("%w: native build operation owner identity is invalid", deployment.ErrDeliveryConflict)
+		}
+		if outcome.TargetID != operationInput.Scope || outcome.IdempotencyKey != operationInput.IdempotencyKey || outcome.RequestDigest != operationInput.RequestDigest || outcome.OperationOwnerID != operationInput.OwnerID {
 			return fmt.Errorf("%w: native build outcome operation identity differs", deployment.ErrDeliveryConflict)
 		}
 	}

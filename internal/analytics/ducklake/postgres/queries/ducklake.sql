@@ -100,6 +100,16 @@ WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(
 UPDATE ducklake.attempt_evidence SET state=sqlc.arg(state),termination_evidence=sqlc.arg(termination_evidence)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
 WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
+-- name: RenewAttemptLease :execresult
+UPDATE ducklake.attempt_evidence
+SET lease_expires_at=sqlc.arg(expires_at),updated_at=clock_timestamp()
+WHERE attempt_id=sqlc.arg(attempt_id)
+  AND owner_id=sqlc.arg(owner_id)
+  AND fencing_epoch=sqlc.arg(fencing_epoch)
+  AND state='running'
+  AND lease_expires_at>clock_timestamp()
+  AND lease_expires_at<=sqlc.arg(expires_at);
+
 -- name: GetAttemptEvidence :one
 SELECT attempt_id::text,request_digest,plan_digest,physical_pool_id,catalog_id,owner_id,fencing_epoch,lease_expires_at,session_identity,state,snapshot_id,commit_marker,termination_evidence,created_at,updated_at,terminal_at
 FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id);

@@ -105,6 +105,16 @@ WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sql
 UPDATE delivery.delivery_build_attempt SET state=sqlc.arg(state),termination_evidence=sqlc.arg(evidence)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
 WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
 
+-- name: RenewBuildAttemptLease :execresult
+UPDATE delivery.delivery_build_attempt
+SET lease_expires_at=sqlc.arg(expires_at),updated_at=clock_timestamp()
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid
+  AND owner_id=sqlc.arg(owner_id)
+  AND fencing_epoch=sqlc.arg(fencing_epoch)
+  AND state='running'
+  AND lease_expires_at>clock_timestamp()
+  AND lease_expires_at<=sqlc.arg(expires_at);
+
 -- name: GetCandidateIdentity :one
 SELECT target_id,plan_id::text,status,artifact_digest FROM delivery.delivery_candidate WHERE candidate_id=sqlc.arg(candidate_id)::uuid;
 
@@ -137,6 +147,10 @@ FROM delivery.delivery_candidate c WHERE c.candidate_id=sqlc.arg(candidate_id)::
 -- name: QualifyCandidate :exec
 UPDATE delivery.delivery_candidate SET status='qualified',snapshot_seal_id=sqlc.arg(snapshot_seal_id)::uuid,qualification_digest=sqlc.arg(qualification_digest),qualified_at=clock_timestamp()
 WHERE candidate_id=sqlc.arg(candidate_id)::uuid AND status IN ('building','ready');
+
+-- name: RejectCandidate :execrows
+UPDATE delivery.delivery_candidate SET status='rejected'
+WHERE candidate_id=sqlc.arg(candidate_id)::uuid AND status IN ('building','ready','qualified');
 
 -- name: GetCandidateStatus :one
 SELECT status,target_id,plan_id::text,COALESCE(snapshot_seal_id::text,'')::text AS snapshot_seal_id FROM delivery.delivery_candidate WHERE candidate_id=sqlc.arg(candidate_id)::uuid;
@@ -217,9 +231,17 @@ FROM delivery.delivery_lease WHERE lease_id=sqlc.arg(lease_id)::uuid;
 UPDATE delivery.delivery_lease SET state='released',released_at=clock_timestamp()
 WHERE lease_id=sqlc.arg(lease_id)::uuid AND target_id=sqlc.arg(target_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active' AND expires_at>clock_timestamp() RETURNING true;
 
+-- name: ReleaseLeaseAfterAttemptTermination :one
+UPDATE delivery.delivery_lease SET state='released',released_at=clock_timestamp()
+WHERE lease_id=sqlc.arg(lease_id)::uuid AND target_id=sqlc.arg(target_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active' RETURNING true;
+
 -- name: RenewLease :one
 UPDATE delivery.delivery_lease SET expires_at=sqlc.arg(expires_at)
 WHERE lease_id=sqlc.arg(lease_id)::uuid AND target_id=sqlc.arg(target_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active' AND expires_at>clock_timestamp() RETURNING true;
+
+-- name: RenewLeaseForward :one
+UPDATE delivery.delivery_lease SET expires_at=sqlc.arg(expires_at)
+WHERE lease_id=sqlc.arg(lease_id)::uuid AND target_id=sqlc.arg(target_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active' AND expires_at>clock_timestamp() AND expires_at<=sqlc.arg(expires_at) RETURNING true;
 
 -- name: LockPublication :one
 SELECT publication_id FROM delivery.delivery_publication WHERE publication_id=sqlc.arg(publication_id)::uuid FOR UPDATE;

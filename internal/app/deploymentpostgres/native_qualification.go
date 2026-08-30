@@ -175,6 +175,10 @@ func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationReque
 	if err := validateNativeQualificationRequest(request); err != nil {
 		return NativeQualificationEvidence{}, err
 	}
+	preflightQueries, preflightRows, preflightMillis, err := nativeQualificationPreflight(request.Sources)
+	if err != nil {
+		return NativeQualificationEvidence{}, fmt.Errorf("%w: source observation metrics: %v", ErrNativeQualificationInvalid, err)
+	}
 	if factory == nil {
 		return NativeQualificationEvidence{}, fmt.Errorf("%w: environment factory is required", ErrNativeQualificationRuntime)
 	}
@@ -186,7 +190,13 @@ func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationReque
 	}
 	env, err := factory.Open(ctx, openRequest)
 	if err != nil {
-		return NativeQualificationEvidence{}, fmt.Errorf("%w: open exact snapshot: %v", ErrNativeQualificationFailed, err)
+		openErr := fmt.Errorf("%w: open exact snapshot: %v", ErrNativeQualificationFailed, err)
+		if env != nil {
+			if closeErr := env.Close(); closeErr != nil {
+				openErr = errors.Join(openErr, fmt.Errorf("%w: close partially opened snapshot: %v", ErrNativeQualificationFailed, closeErr))
+			}
+		}
+		return NativeQualificationEvidence{}, openErr
 	}
 	if env == nil {
 		return NativeQualificationEvidence{}, fmt.Errorf("%w: factory returned nil environment", ErrNativeQualificationRuntime)
@@ -219,6 +229,7 @@ func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationReque
 		BindingGeneration: request.BindingGeneration, RuntimeVersion: request.RuntimeVersion,
 		DuckDBVersion: compatibility.DuckDBRuntime, Now: request.Now, Bounds: request.Bounds,
 		Sources: request.Sources, Models: request.Models, RelationNamespace: build.Closure.RelationNamespace,
+		PreflightQueries: preflightQueries, PreflightRows: preflightRows, PreflightMillis: preflightMillis,
 		Query: func(queryCtx context.Context, plan semanticquery.Plan) (semanticquery.Rows, error) {
 			return env.Query(queryCtx, plan)
 		},
@@ -243,6 +254,46 @@ func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationReque
 		return NativeQualificationEvidence{}, err
 	}
 	return result, nil
+}
+
+// nativeQualificationPreflight totals the source-session work that has
+// already happened before the closed gate evaluator starts. Checked
+// aggregation prevents malformed evidence from wrapping around and evading
+// the evaluator's bounds checks; Evaluate remains responsible for deciding
+// whether a valid total exhausts the configured budget.
+func nativeQualificationPreflight(sources []gates.SourceInput) (queries int, rows, millis int64, err error) {
+	for _, source := range sources {
+		if source.ObservationQueries < 0 || source.ObservationRows < 0 || source.ObservationMillis < 0 {
+			return 0, 0, 0, fmt.Errorf("source %q observation counters cannot be negative", source.ID)
+		}
+		queries, err = checkedNativeQualificationIntAdd(queries, source.ObservationQueries)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("source %q observation queries overflow: %w", source.ID, err)
+		}
+		rows, err = checkedNativeQualificationInt64Add(rows, source.ObservationRows)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("source %q observation rows overflow: %w", source.ID, err)
+		}
+		millis, err = checkedNativeQualificationInt64Add(millis, source.ObservationMillis)
+		if err != nil {
+			return 0, 0, 0, fmt.Errorf("source %q observation millis overflow: %w", source.ID, err)
+		}
+	}
+	return queries, rows, millis, nil
+}
+
+func checkedNativeQualificationIntAdd(total, value int) (int, error) {
+	if value > int(^uint(0)>>1)-total {
+		return 0, errors.New("integer overflow")
+	}
+	return total + value, nil
+}
+
+func checkedNativeQualificationInt64Add(total, value int64) (int64, error) {
+	if value > int64(^uint64(0)>>1)-total {
+		return 0, errors.New("integer overflow")
+	}
+	return total + value, nil
 }
 
 // QualifyNative is a command-style alias retained for callers which use the

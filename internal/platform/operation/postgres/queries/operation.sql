@@ -43,17 +43,33 @@ WHERE scope_id = sqlc.arg(scope_id) AND idempotency_key = sqlc.arg(idempotency_k
   AND attempt_id IS NULL
 RETURNING fencing_generation;
 
--- name: MarkOperationIndeterminate :execresult
+-- name: ExpireOperationAttempt :execresult
 UPDATE platform.operation
 SET state = 'indeterminate',
     outcome = '{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}'::jsonb,
-    attempt_evidence = '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb,
+    attempt_evidence = sqlc.arg(attempt_evidence)::jsonb,
     fencing_generation = fencing_generation + 1,
     updated_at = sqlc.arg(updated_at), terminal_at = sqlc.arg(updated_at),
     expires_at = sqlc.arg(updated_at)::timestamptz + retention_interval
 WHERE scope_id = sqlc.arg(scope_id) AND idempotency_key = sqlc.arg(idempotency_key)
-  AND state = 'pending' AND attempt_id IS NOT NULL
+  AND operation_id = sqlc.arg(operation_id) AND owner_id = sqlc.arg(owner_id)
+  AND fencing_generation = sqlc.arg(fencing_generation)
+  AND attempt_id = sqlc.arg(attempt_id) AND attempt_identity = sqlc.arg(attempt_identity)
+  AND state = 'pending'
   AND lease_expires_at <= sqlc.arg(updated_at);
+
+-- name: GetExpiredAttemptIndeterminateForUpdate :one
+SELECT scope_id, operation_type, idempotency_key, request_digest,
+       operation_id, state, owner_id, lease_expires_at, fencing_generation,
+       outcome, attempt_id, attempt_identity, attempt_evidence,
+       resolution_evidence, created_at, updated_at, terminal_at, expires_at
+FROM platform.operation
+WHERE scope_id = sqlc.arg(scope_id) AND idempotency_key = sqlc.arg(idempotency_key)
+  AND operation_id = sqlc.arg(operation_id) AND owner_id = sqlc.arg(owner_id)
+  AND fencing_generation = sqlc.arg(expected_fencing_generation)
+  AND attempt_id = sqlc.arg(attempt_id) AND attempt_identity = sqlc.arg(attempt_identity)
+  AND state = 'indeterminate'
+FOR UPDATE;
 
 -- name: CompleteOperation :execresult
 UPDATE platform.operation
@@ -95,6 +111,8 @@ SET lease_expires_at = sqlc.arg(lease_expires_at), updated_at = sqlc.arg(updated
 WHERE scope_id = sqlc.arg(scope_id) AND idempotency_key = sqlc.arg(idempotency_key)
   AND operation_id = sqlc.arg(operation_id) AND owner_id = sqlc.arg(owner_id)
   AND fencing_generation = sqlc.arg(fencing_generation) AND state = 'pending'
+  AND attempt_id IS NOT DISTINCT FROM sqlc.arg(attempt_id)
+  AND attempt_identity IS NOT DISTINCT FROM sqlc.arg(attempt_identity)
   AND lease_expires_at > sqlc.arg(updated_at);
 
 -- name: BindOperationAttempt :execresult

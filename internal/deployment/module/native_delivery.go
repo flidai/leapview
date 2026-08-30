@@ -111,7 +111,10 @@ type NativeDeliveryBuild struct {
 	// AuditID are internal completion evidence. The HTTP response deliberately
 	// omits them; the production command completer uses them to re-read the
 	// exact durable build consequences before acknowledging the mutation.
-	ActorID               string
+	ActorID string
+	// OperationOwnerID is the server-allocated owner of the durable operation;
+	// it is internal completion evidence and is not exposed in the HTTP DTO.
+	OperationOwnerID      string
 	IdempotencyKey        string
 	RequestDigest         string
 	OperationID           uuid.UUID

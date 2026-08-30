@@ -252,6 +252,14 @@ type NativeBuildOperationAuthority interface {
 	RenewLeaseTx(context.Context, NativeOperationTx, NativeOperationLease, time.Duration) (NativeOperationLease, error)
 	FailTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
 	MarkIndeterminateTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
+	// ExpireAttemptTx settles a bound external attempt after the operation
+	// lease has expired. The authority must match every lease and attempt
+	// identity field exactly before fencing the operation to indeterminate.
+	ExpireAttemptTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
+	// ConfirmExpiredAttemptTx locks and projects the exact indeterminate row
+	// produced by ExpireAttemptTx. expectedFencingGeneration must be the
+	// predecessor lease fence plus one.
+	ConfirmExpiredAttemptTx(context.Context, NativeOperationTx, NativeOperationLease, int64) (NativeOperationRecord, error)
 }
 
 type persistenceBackend uint8

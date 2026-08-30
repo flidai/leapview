@@ -43,12 +43,13 @@ func nativeBuildIdentityOutcome(t *testing.T, request deploymentmodule.NativeDel
 		}
 	}
 	outcome := nativeBuildOutcome{
-		OperationID: operationID, PlanID: request.PlanID.String(), CandidateID: ids["candidate"],
+		OperationID: operationID, OperationOwnerID: "0198f2c0-7c7a-7f00-8a11-000000001003", PlanID: request.PlanID.String(), CandidateID: ids["candidate"],
 		AttemptID: ids["attempt"], LeaseID: ids["lease"], GenerationID: ids["generation"], SealID: ids["seal"],
 		EventID: ids["event"], AuditID: ids["audit"], ProjectID: request.ProjectID.String(), TargetID: request.TargetID,
 		Environment: request.Environment, ActorID: request.PrincipalID, IdempotencyKey: request.IdempotencyKey,
 		RequestDigest: requestDigest, PlanDigest: buildIdentityDigest('a'), SourceDigest: buildIdentityDigest('b'),
-		ExecutionDigest: buildIdentityDigest('c'), ServingArtifactDigest: buildIdentityDigest('d'), Status: "sealed",
+		ExecutionDigest: buildIdentityDigest('c'), ServingArtifactID: "artifact-native-build",
+		QualificationDigest: buildIdentityDigest('e'), ServingArtifactDigest: buildIdentityDigest('d'), Status: "sealed",
 	}
 	operationInput := deploymentmodule.NativeOperationAcquireInput{
 		Scope: request.TargetID, OperationType: nativeBuildOperationType, IdempotencyKey: request.IdempotencyKey,
@@ -156,9 +157,10 @@ func TestNativeBuildOutcomeEncodeDecodeBindsTerminalEvidence(t *testing.T) {
 	}
 
 	operationInput.OwnerID = "another-ephemeral-owner"
-	if _, err := decodeNativeBuildOutcome(raw, request, operationInput); err != nil {
-		t.Fatalf("ephemeral operation owner incorrectly bound to actor: %v", err)
+	if _, err := decodeNativeBuildOutcome(raw, request, operationInput); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("tampered operation owner accepted: %v", err)
 	}
+	operationInput.OwnerID = outcome.OperationOwnerID
 
 	badStatus := outcome
 	badStatus.Status = "failed"
@@ -169,6 +171,11 @@ func TestNativeBuildOutcomeEncodeDecodeBindsTerminalEvidence(t *testing.T) {
 	badDigest.RequestDigest = buildIdentityDigest('e')
 	if _, err := decodeNativeBuildOutcome(mustJSON(t, badDigest), request, operationInput); !errors.Is(err, deployment.ErrDeliveryConflict) {
 		t.Fatalf("tampered request digest error = %v", err)
+	}
+	badOwner := outcome
+	badOwner.OperationOwnerID = "0198f2c0-7c7a-7f00-8a11-000000001004"
+	if _, err := encodeNativeBuildOutcome(badOwner, request, operationInput); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("tampered operation owner outcome accepted: %v", err)
 	}
 }
 
@@ -201,6 +208,55 @@ func TestDecodeNativeBuildOutcomeRejectsUnknownOversizedAndNoncanonicalData(t *t
 	}
 	if _, err := encodeNativeBuildOutcome(nativeBuildOutcome{}, request, operationInput); !errors.Is(err, deployment.ErrDeliveryConflict) {
 		t.Fatalf("empty outcome error = %v", err)
+	}
+}
+
+func TestReplayFailedNativeBuildValidatesExactSanitizedEvidence(t *testing.T) {
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000001020"
+	requestDigest := buildIdentityDigest('a')
+	errorDigest := buildIdentityDigest('f')
+	evidence := nativeBuildTerminationEvidence{
+		SchemaVersion: 1, AttemptID: attemptID, OwnerID: "principal-native-build", FencingEpoch: 2,
+		RequestDigest: requestDigest, PlanDigest: buildIdentityDigest('b'), PhysicalPoolID: "pool-native",
+		Namespace: "candidate/native", SessionIdentity: "native-session", Phase: NativePhysicalBuildPhaseValidation,
+		Classification: NativePhysicalFailureDeterministic, ErrorDigest: errorDigest,
+	}
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := deploymentmodule.NativeOperationRecord{State: deploymentmodule.NativeOperationStateFailed, AttemptID: attemptID, Outcome: raw}
+	err = replayFailedNativeBuild(operation, requestDigest)
+	if !errors.Is(err, deployment.ErrDeliveryConflict) || !strings.Contains(err.Error(), errorDigest) {
+		t.Fatalf("failed replay error = %v, want terminal conflict correlation", err)
+	}
+	evidence.RequestDigest = buildIdentityDigest('c')
+	operation.Outcome, _ = json.Marshal(evidence)
+	if err := replayFailedNativeBuild(operation, requestDigest); !errors.Is(err, deployment.ErrDeliveryConflict) || strings.Contains(err.Error(), errorDigest) {
+		t.Fatalf("tampered failed replay error = %v", err)
+	}
+}
+
+func TestReplayFailedNativeBuildValidatesPreflightEvidence(t *testing.T) {
+	requestDigest := buildIdentityDigest('a')
+	errorDigest := buildIdentityDigest('f')
+	evidence := nativeBuildPreflightFailureEvidence{
+		SchemaVersion: 1, RequestDigest: requestDigest, PlanDigest: buildIdentityDigest('b'),
+		Phase: NativePhysicalBuildPhaseValidation, Classification: NativePhysicalFailureDeterministic,
+		ErrorDigest: errorDigest,
+	}
+	raw, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation := deploymentmodule.NativeOperationRecord{State: deploymentmodule.NativeOperationStateFailed, Outcome: raw}
+	if err := replayFailedNativeBuild(operation, requestDigest); !errors.Is(err, deployment.ErrDeliveryConflict) || !strings.Contains(err.Error(), errorDigest) {
+		t.Fatalf("preflight replay error = %v, want terminal conflict correlation", err)
+	}
+	evidence.RequestDigest = buildIdentityDigest('c')
+	operation.Outcome, _ = json.Marshal(evidence)
+	if err := replayFailedNativeBuild(operation, requestDigest); !errors.Is(err, deployment.ErrDeliveryConflict) || strings.Contains(err.Error(), errorDigest) {
+		t.Fatalf("tampered preflight replay error = %v", err)
 	}
 }
 

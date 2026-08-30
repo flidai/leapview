@@ -221,10 +221,10 @@ BEGIN
         IF OLD.attempt_id IS NULL THEN
             RAISE EXCEPTION 'indeterminate transition requires a bound attempt';
         END IF;
-        IF OLD.lease_expires_at <= clock_timestamp()
-           AND NEW.attempt_evidence IS DISTINCT FROM '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb THEN
-            RAISE EXCEPTION 'expired attempt transition requires canonical lease-expiry evidence';
-        END IF;
+        -- Expired attempts carry caller-supplied, canonical evidence (for
+        -- example native-build failure evidence). The transition query binds
+        -- that evidence to the exact operation/owner/fence/attempt tuple;
+        -- only the active-lease path reserves the lease-expiry sentinel.
         IF OLD.lease_expires_at > clock_timestamp()
            AND NEW.attempt_evidence IS NOT DISTINCT FROM '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb THEN
             RAISE EXCEPTION 'active attempt transition cannot claim lease-expiry evidence';

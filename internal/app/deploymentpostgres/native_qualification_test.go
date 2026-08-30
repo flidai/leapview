@@ -48,11 +48,25 @@ func (e *qualificationEnvironmentFake) Close() error { e.closed++; return nil }
 type qualificationFactoryFake struct {
 	env *qualificationEnvironmentFake
 	got NativeQualificationOpenRequest
+	err error
 }
 
 func (f *qualificationFactoryFake) Open(_ context.Context, request NativeQualificationOpenRequest) (NativeQualificationEnvironment, error) {
 	f.got = request
-	return f.env, nil
+	return f.env, f.err
+}
+
+func TestQualifyNativeSnapshotClosesPartiallyOpenedEnvironment(t *testing.T) {
+	request, _ := qualificationRequest(t)
+	env := &qualificationEnvironmentFake{}
+	factory := &qualificationFactoryFake{env: env, err: errors.New("attach failed after allocation")}
+	_, err := QualifyNativeSnapshot(t.Context(), request, factory)
+	if !errors.Is(err, ErrNativeQualificationFailed) {
+		t.Fatalf("qualification error = %v, want failed", err)
+	}
+	if env.closed != 1 {
+		t.Fatalf("partially opened environment closed %d times, want 1", env.closed)
+	}
 }
 
 func qualificationBuildEvidence(t *testing.T) (NativePhysicalBuildEvidence, string) {
@@ -129,6 +143,70 @@ func TestQualifyNativeSnapshotRunsGatesAgainstExactNamespace(t *testing.T) {
 	encoded, digestValue, err := result.Canonical()
 	if err != nil || digestValue != result.Digest || len(encoded) == 0 {
 		t.Fatalf("canonical evidence bytes=%d digest=%q err=%v", len(encoded), digestValue, err)
+	}
+}
+
+func TestQualifyNativeSnapshotChargesSourceObservationBounds(t *testing.T) {
+	cases := []struct {
+		name        string
+		queries     int
+		rows        int64
+		millis      int64
+		wantTimeout bool
+	}{
+		{name: "queries", queries: 6},
+		{name: "rows", rows: 11},
+		{name: "millis", millis: 1000, wantTimeout: true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request, _ := qualificationRequest(t)
+			request.Sources = []gates.SourceInput{{
+				ID: "source-1", Source: semanticmodel.Source{SchemaMode: "inferred"},
+				Observed:           []semanticmodel.ColumnSchema{{Name: "id", PhysicalType: "BIGINT"}},
+				ObservationQueries: tc.queries, ObservationRows: tc.rows, ObservationMillis: tc.millis,
+			}}
+			request.Bounds = gates.Bounds{MaxRows: 10, MaxQueries: 5, MaxMillis: 1000}
+			compat := NativeRuntimeCompatibilityEvidence{SnapshotID: 42, CatalogType: "postgres", DataPath: "/objects", MetadataSchema: ducklake.MetadataSchemaForPool("pool"), DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "1", CompatibilityDigest: request.Compatibility.CompatibilityDigest, CatalogSchemaVersion: request.Compatibility.CatalogSchemaVersion}
+			queried := false
+			env := &qualificationEnvironmentFake{compat: compat, closure: request.Build.Closure, query: func(context.Context, semanticquery.Plan) (semanticquery.Rows, error) {
+				queried = true
+				return nil, nil
+			}}
+			_, err := QualifyNativeSnapshot(t.Context(), request, &qualificationFactoryFake{env: env})
+			if err == nil || !errors.Is(err, ErrNativeQualificationFailed) {
+				t.Fatalf("err = %v, want native qualification failure", err)
+			}
+			if queried {
+				t.Fatal("gate query ran despite source observation budget exhaustion")
+			}
+			if tc.wantTimeout && !strings.Contains(err.Error(), string(release.GateTimeout)) {
+				t.Fatalf("millis bound error = %v, want timeout", err)
+			}
+		})
+	}
+}
+
+func TestNativeQualificationPreflightRejectsCounterOverflow(t *testing.T) {
+	maxInt := int(^uint(0) >> 1)
+	maxInt64 := int64(^uint64(0) >> 1)
+	_, _, _, err := nativeQualificationPreflight([]gates.SourceInput{
+		{ID: "queries", ObservationQueries: maxInt}, {ID: "queries-2", ObservationQueries: 1},
+	})
+	if err == nil {
+		t.Fatal("query counter overflow was accepted")
+	}
+	_, _, _, err = nativeQualificationPreflight([]gates.SourceInput{
+		{ID: "rows", ObservationRows: maxInt64}, {ID: "rows-2", ObservationRows: 1},
+	})
+	if err == nil {
+		t.Fatal("row counter overflow was accepted")
+	}
+	_, _, _, err = nativeQualificationPreflight([]gates.SourceInput{
+		{ID: "millis", ObservationMillis: maxInt64}, {ID: "millis-2", ObservationMillis: 1},
+	})
+	if err == nil {
+		t.Fatal("millisecond counter overflow was accepted")
 	}
 }
 

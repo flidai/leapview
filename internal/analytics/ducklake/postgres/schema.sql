@@ -419,9 +419,17 @@ BEGIN
        OR NEW.catalog_id <> OLD.catalog_id
        OR NEW.owner_id <> OLD.owner_id
        OR NEW.fencing_epoch <> OLD.fencing_epoch
-       OR NEW.lease_expires_at <> OLD.lease_expires_at
        OR NEW.session_identity <> OLD.session_identity THEN
         RAISE EXCEPTION 'DuckLake attempt identity is immutable';
+    END IF;
+    IF OLD.state <> 'running' AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'DuckLake terminal attempt lease expiry is immutable';
+    ELSIF OLD.state = 'running' AND NEW.state = 'running'
+          AND NEW.lease_expires_at < OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'DuckLake running attempt lease expiry cannot move backwards';
+    ELSIF OLD.state = 'running' AND NEW.state <> 'running'
+          AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'DuckLake terminal attempt lease expiry is immutable';
     END IF;
     IF OLD.state <> 'running' THEN
         IF NEW.state <> OLD.state

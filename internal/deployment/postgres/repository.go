@@ -1604,6 +1604,58 @@ func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in T
 	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
 }
 
+// RenewBuildAttemptLeaseTx extends a running build attempt lease on a
+// caller-owned transaction. The attempt identity is immutable; only its
+// expiry and updated timestamp move forward. This method deliberately shares
+// the transaction with the target lease, operation lease, and DuckLake ledger
+// during a native-build heartbeat.
+func (r *Repository) RenewBuildAttemptLeaseTx(ctx context.Context, tx Tx, attemptID, ownerID string, fencingEpoch int64, expiresAt time.Time) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	id, err := uuidID(attemptID, "attempt id", false)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	owner, err := textID(ownerID, "owner id")
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if fencingEpoch <= 0 {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	now, err := databaseNow(ctx, tx)
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	exp := expiresAt.UTC().Truncate(time.Microsecond)
+	if !exp.After(now) || exp.After(now.Add(maxLease)) {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	command, err := depdb.New(tx).RenewBuildAttemptLease(ctx, depdb.RenewBuildAttemptLeaseParams{AttemptID: dbUUID(id), OwnerID: owner, FencingEpoch: fencingEpoch, ExpiresAt: pgTime(exp)})
+	if err != nil {
+		return DeliveryBuildAttempt{}, err
+	}
+	if command.RowsAffected() != 1 {
+		current, loadErr := loadAttempt(ctx, tx, id)
+		if loadErr != nil {
+			return DeliveryBuildAttempt{}, loadErr
+		}
+		if current.OwnerID != owner || current.FencingEpoch != fencingEpoch {
+			return DeliveryBuildAttempt{}, ErrStaleFence
+		}
+		if current.State != AttemptRunning {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: build attempt is %s", ErrConflict, current.State)
+		}
+		if current.LeaseExpiresAt.After(exp) {
+			return DeliveryBuildAttempt{}, ErrConflict
+		}
+		return DeliveryBuildAttempt{}, ErrLeaseExpired
+	}
+	return loadAttempt(ctx, tx, id)
+}
+
 func (r *Repository) transitionAttempt(ctx context.Context, in CommitAttemptInput, state BuildAttemptState) (DeliveryBuildAttempt, error) {
 	tx, err := r.begin(ctx)
 	if err != nil {
@@ -1974,6 +2026,47 @@ func (r *Repository) CreateCandidateAllocatedTx(ctx context.Context, tx Tx, in C
 		return DeliveryCandidate{}, ErrInvalid
 	}
 	return createCandidateAllocated(contextOrBackground(ctx), tx, in)
+}
+
+// RejectCandidateTx moves a non-terminal candidate to the explicit rejected
+// state through the caller-owned transaction. Rejection is intentionally
+// evidence-light at the candidate layer; detailed failure evidence is stored
+// on the attempt and operation ledgers by the native termination authority.
+// The operation is idempotent for an already-rejected candidate.
+func (r *Repository) RejectCandidateTx(ctx context.Context, tx Tx, candidateID string) (DeliveryCandidate, error) {
+	if tx == nil {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	id, err := uuidID(candidateID, "candidate id", false)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	ctx = contextOrBackground(ctx)
+	candidate, err := loadCandidate(ctx, tx, id, CandidateInput{})
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if candidate.Status == "rejected" {
+		return candidate, nil
+	}
+	if candidate.Status != "building" && candidate.Status != "ready" && candidate.Status != "qualified" {
+		return DeliveryCandidate{}, ErrConflict
+	}
+	tag, err := depdb.New(tx).RejectCandidate(ctx, dbUUID(id))
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if tag != 1 {
+		candidate, err = loadCandidate(ctx, tx, id, CandidateInput{})
+		if err == nil && candidate.Status == "rejected" {
+			return candidate, nil
+		}
+		if err != nil {
+			return DeliveryCandidate{}, err
+		}
+		return DeliveryCandidate{}, ErrConflict
+	}
+	return loadCandidate(ctx, tx, id, CandidateInput{})
 }
 
 // CreateCandidateAllocated owns a short transaction around the Tx API.
@@ -2993,6 +3086,20 @@ func (r *Repository) Lease(ctx context.Context, id string) (DeliveryLease, error
 	}
 	return loadLeaseSimple(contextOrBackground(ctx), db, id)
 }
+
+// LeaseTx reads one target lease through a caller-owned transaction. It is
+// provided for atomic coordinators that must verify the post-renewal value
+// before committing adjacent control ledgers.
+func (r *Repository) LeaseTx(ctx context.Context, tx Tx, id string) (DeliveryLease, error) {
+	if tx == nil {
+		return DeliveryLease{}, ErrInvalid
+	}
+	id, err := uuidID(id, "lease id", false)
+	if err != nil {
+		return DeliveryLease{}, err
+	}
+	return loadLeaseSimple(contextOrBackground(ctx), tx, id)
+}
 func loadLeaseSimple(ctx context.Context, db DBTX, id string) (DeliveryLease, error) {
 	var l DeliveryLease
 	row, err := depdb.New(db).GetLease(ctx, dbUUID(id))
@@ -3024,6 +3131,52 @@ func (r *Repository) ReleaseLeaseTx(ctx context.Context, tx Tx, f LeaseFence) er
 		return ErrInvalid
 	}
 	return releaseLease(contextOrBackground(ctx), tx, f)
+}
+
+// ReleaseLeaseAfterAttemptTerminationTx closes the exact target lease after
+// both build-attempt ledgers have reached a terminal state in the same
+// transaction. Unlike ordinary release, an exact expired lease is accepted:
+// heartbeat loss must not roll back the attempt and operation settlement that
+// makes the stale writer non-admissible. A different owner or fence remains a
+// hard stale-fence error.
+func (r *Repository) ReleaseLeaseAfterAttemptTerminationTx(ctx context.Context, tx Tx, f LeaseFence) error {
+	if tx == nil {
+		return ErrInvalid
+	}
+	id, err := uuidID(f.LeaseID, "lease id", false)
+	if err != nil {
+		return err
+	}
+	target, err := textID(f.TargetID, "target id")
+	if err != nil {
+		return err
+	}
+	owner, err := textID(f.OwnerID, "owner id")
+	if err != nil || f.FencingEpoch <= 0 {
+		return ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	updated, err := depdb.New(tx).ReleaseLeaseAfterAttemptTermination(ctx, depdb.ReleaseLeaseAfterAttemptTerminationParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch})
+	if errors.Is(err, pgx.ErrNoRows) {
+		updated, err = false, nil
+	}
+	if err != nil {
+		return err
+	}
+	if updated {
+		return nil
+	}
+	lease, err := loadLeaseSimple(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	if lease.OwnerID != owner || lease.TargetID != target || lease.FencingEpoch != f.FencingEpoch {
+		return ErrStaleFence
+	}
+	if lease.State == "released" || lease.State == "expired" {
+		return nil
+	}
+	return ErrConflict
 }
 
 func releaseLease(ctx context.Context, db DBTX, f LeaseFence) error {
@@ -3313,6 +3466,61 @@ func (r *Repository) RenewLease(ctx context.Context, f LeaseFence, expiresAt tim
 	}
 	if l.OwnerID != owner || l.TargetID != target || l.FencingEpoch != f.FencingEpoch {
 		return ErrStaleFence
+	}
+	return ErrLeaseExpired
+}
+
+// RenewLeaseTx renews an active target lease on a caller-owned transaction.
+// The lease identity and fencing epoch are checked by the database update;
+// callers may compose this operation with the operation and build-attempt
+// ledgers before committing one control-plane transaction.
+func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, f LeaseFence, expiresAt time.Time) error {
+	if tx == nil {
+		return ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	id, err := uuidID(f.LeaseID, "lease id", false)
+	if err != nil {
+		return err
+	}
+	target, err := textID(f.TargetID, "target id")
+	if err != nil {
+		return err
+	}
+	owner, err := textID(f.OwnerID, "owner id")
+	if err != nil {
+		return err
+	}
+	if f.FencingEpoch <= 0 {
+		return ErrInvalid
+	}
+	now, err := databaseNow(ctx, tx)
+	if err != nil {
+		return err
+	}
+	exp := expiresAt.UTC().Truncate(time.Microsecond)
+	if !exp.After(now) || exp.After(now.Add(maxLease)) {
+		return ErrInvalid
+	}
+	updated, err := depdb.New(tx).RenewLeaseForward(ctx, depdb.RenewLeaseForwardParams{LeaseID: dbUUID(id), TargetID: target, OwnerID: owner, FencingEpoch: f.FencingEpoch, ExpiresAt: pgTime(exp)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		updated, err = false, nil
+	}
+	if err != nil {
+		return err
+	}
+	if updated {
+		return nil
+	}
+	l, e := loadLeaseSimple(ctx, tx, id)
+	if e != nil {
+		return e
+	}
+	if l.OwnerID != owner || l.TargetID != target || l.FencingEpoch != f.FencingEpoch {
+		return ErrStaleFence
+	}
+	if l.State == "active" && l.ExpiresAt.After(exp) {
+		return ErrConflict
 	}
 	return ErrLeaseExpired
 }

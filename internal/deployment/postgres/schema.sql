@@ -400,8 +400,17 @@ BEGIN
        OR NEW.owner_id <> OLD.owner_id OR NEW.physical_pool_id <> OLD.physical_pool_id OR NEW.fencing_epoch <> OLD.fencing_epoch
        OR NEW.request_digest <> OLD.request_digest OR NEW.plan_digest <> OLD.plan_digest
        OR NEW.namespace <> OLD.namespace OR NEW.session_identity <> OLD.session_identity
-       OR NEW.lease_expires_at <> OLD.lease_expires_at OR NEW.created_at <> OLD.created_at THEN
+       OR NEW.created_at <> OLD.created_at THEN
         RAISE EXCEPTION 'delivery build attempt identity is immutable';
+    END IF;
+    IF OLD.state <> 'running' AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'terminal build attempt lease expiry is immutable';
+    ELSIF OLD.state = 'running' AND NEW.state = 'running'
+          AND NEW.lease_expires_at < OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'running build attempt lease expiry cannot move backwards';
+    ELSIF OLD.state = 'running' AND NEW.state <> 'running'
+          AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+        RAISE EXCEPTION 'terminal build attempt lease expiry is immutable';
     END IF;
     IF OLD.state <> 'running' AND (NEW.state <> OLD.state OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
        OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence

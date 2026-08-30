@@ -421,6 +421,50 @@ func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in T
 	return TerminateAttempt(ctx, tx, in, AttemptIndeterminate)
 }
 
+// RenewAttemptLeaseTx extends a running DuckLake build-attempt lease on the
+// caller-owned control transaction. Identity columns remain fenced by owner
+// and epoch; only the expiry and updated timestamp advance monotonically.
+func (r *Repository) RenewAttemptLeaseTx(ctx context.Context, tx Tx, attemptID, ownerID string, fencingEpoch int64, expiresAt time.Time) (AttemptEvidence, error) {
+	if r == nil || tx == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if !validUUID(attemptID) || !validID(ownerID) || fencingEpoch <= 0 {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	now, err := databaseClock(ctx, tx)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	exp := expiresAt.UTC().Truncate(time.Microsecond)
+	if !exp.After(now) || exp.After(now.Add(maxAttemptLease)) {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	command, err := querygen(tx).RenewAttemptLease(ctx, dbgen.RenewAttemptLeaseParams{AttemptID: pgUUID(attemptID), OwnerID: ownerID, FencingEpoch: fencingEpoch, ExpiresAt: pgtype.Timestamptz{Time: exp, Valid: true}})
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	if command.RowsAffected() != 1 {
+		current, loadErr := LoadAttempt(ctx, tx, attemptID)
+		if loadErr != nil {
+			return AttemptEvidence{}, loadErr
+		}
+		if current.OwnerID != ownerID || current.FencingEpoch != fencingEpoch {
+			return AttemptEvidence{}, ErrStaleFence
+		}
+		if current.State != AttemptRunning {
+			return AttemptEvidence{}, fmt.Errorf("%w: attempt is %s", ErrConflict, current.State)
+		}
+		if current.LeaseExpiresAt.After(exp) {
+			return AttemptEvidence{}, ErrConflict
+		}
+		return AttemptEvidence{}, ErrLeaseExpired
+	}
+	return LoadAttempt(ctx, tx, attemptID)
+}
+
 // BindGenerationTx records the immutable generation binding and its
 // retention root through a caller-owned transaction. It never commits or
 // rolls back tx.

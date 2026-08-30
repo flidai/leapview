@@ -351,6 +351,85 @@ func TestExpiredTakeoverAndIndeterminateReconciliation(t *testing.T) {
 	}
 }
 
+func TestExpireAttemptMatchesExactLeaseAndPreservesEvidence(t *testing.T) {
+	r, db := testRepository(t)
+	acquired, err := r.Acquire(t.Context(), AcquireInput{
+		Scope: "expire", IdempotencyKey: "exact", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "native-build-expire"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(750 * time.Millisecond)
+	evidence := []byte(` { "phase": "evidence", "errorDigest": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } `)
+	if err := r.ExpireAttempt(t.Context(), attempt.Lease, evidence); err != nil {
+		t.Fatal(err)
+	}
+	persisted, err := r.Get(t.Context(), "expire", "exact")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persisted.State != StateIndeterminate || persisted.FencingGeneration != attempt.Lease.FencingGeneration+1 || string(persisted.AttemptEvidence) != `{"errorDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","phase":"evidence"}` {
+		t.Fatalf("expired operation = %#v", persisted)
+	}
+	confirmTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	confirmed, err := r.ConfirmExpiredAttemptTx(t.Context(), confirmTx, attempt.Lease, attempt.Lease.FencingGeneration+1)
+	if err != nil {
+		_ = confirmTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if confirmed.State != StateIndeterminate || confirmed.OperationID != attempt.Lease.OperationID || confirmed.OwnerID != attempt.Lease.OwnerID || confirmed.FencingGeneration != attempt.Lease.FencingGeneration+1 || confirmed.AttemptID != attempt.AttemptID || confirmed.AttemptIdentity != attempt.AttemptIdentity || string(confirmed.AttemptEvidence) != string(persisted.AttemptEvidence) {
+		_ = confirmTx.Rollback(t.Context())
+		t.Fatalf("expired confirmation = %#v", confirmed)
+	}
+	if err := confirmTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	invalidConfirmTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ConfirmExpiredAttemptTx(t.Context(), invalidConfirmTx, attempt.Lease, attempt.Lease.FencingGeneration+2); !errors.Is(err, ErrInvalid) {
+		_ = invalidConfirmTx.Rollback(t.Context())
+		t.Fatalf("invalid expected confirmation fence = %v, want ErrInvalid", err)
+	}
+	_ = invalidConfirmTx.Rollback(t.Context())
+
+	// A predecessor fence cannot settle the same row after the exact
+	// transition, and a mismatched bound attempt cannot broaden the predicate.
+	if err := r.ExpireAttempt(t.Context(), attempt.Lease, evidence); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("expired replay error = %v, want ErrStaleFence", err)
+	}
+
+	stale, err := r.Acquire(t.Context(), AcquireInput{
+		Scope: "expire", IdempotencyKey: "stale", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: 500 * time.Millisecond,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleAttempt, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: stale.Lease, AttemptIdentity: "native-build-stale"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(750 * time.Millisecond)
+	wrongFence := staleAttempt.Lease
+	wrongFence.FencingGeneration++
+	if err := r.ExpireAttempt(t.Context(), wrongFence, evidence); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale expiry error = %v, want ErrStaleFence", err)
+	}
+	wrongAttempt := staleAttempt.Lease
+	wrongAttempt.AttemptIdentity = "other-attempt"
+	if err := r.ExpireAttempt(t.Context(), wrongAttempt, evidence); !errors.Is(err, ErrConflict) {
+		t.Fatalf("attempt mismatch error = %v, want ErrConflict", err)
+	}
+}
+
 func TestAttemptEvidenceAndLeaseBounds(t *testing.T) {
 	r, _ := testRepository(t)
 	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "bounded", Request: []byte(`{"v":1}`), OwnerID: "owner"})
@@ -372,6 +451,44 @@ func TestAttemptEvidenceAndLeaseBounds(t *testing.T) {
 	}
 	if err := r.Fail(t.Context(), attempt.Lease, []byte(`{"late":true}`)); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("indeterminate attempt fence=%v", err)
+	}
+}
+
+func TestRenewLeaseRequiresExactAttemptAndUsesMicrosecondExpiry(t *testing.T) {
+	r, _ := testRepository(t)
+	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "renew", IdempotencyKey: "attempt", Request: []byte(`{"v":1}`), OwnerID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempt, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "renew-attempt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A pre-attempt lease must not renew a row after an attempt has been bound;
+	// the nullable attempt pair is part of the SQL predicate.
+	if _, err := r.RenewLease(t.Context(), acquired.Lease, time.Second); !errors.Is(err, ErrConflict) {
+		t.Fatalf("pre-attempt renewal after binding = %v, want ErrConflict", err)
+	}
+	wrongAttempt := attempt.Lease
+	wrongAttempt.AttemptIdentity = "different-attempt"
+	if _, err := r.RenewLease(t.Context(), wrongAttempt, time.Second); !errors.Is(err, ErrConflict) {
+		t.Fatalf("mismatched attempt renewal = %v, want ErrConflict", err)
+	}
+
+	renewed, err := r.RenewLease(t.Context(), attempt.Lease, time.Second+time.Nanosecond)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renewed.LeaseExpiresAt.Nanosecond()%1000 != 0 {
+		t.Fatalf("renewed expiry precision = %v, want microsecond precision", renewed.LeaseExpiresAt)
+	}
+	persisted, err := r.Get(t.Context(), "renew", "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !persisted.LeaseExpiresAt.Equal(renewed.LeaseExpiresAt) {
+		t.Fatalf("persisted expiry = %v, renewed expiry = %v", persisted.LeaseExpiresAt, renewed.LeaseExpiresAt)
 	}
 }
 
