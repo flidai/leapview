@@ -69,6 +69,10 @@ type DeliveryPlanRequest struct {
 	Environment  string
 	Operation    DeliveryOperationKind
 	SourceDigest string
+	// ServingArtifactDigest is the deterministic packed serving-bundle identity
+	// selected during native planning. Legacy callers may leave it empty; the
+	// repository then retains SourceDigest for backwards compatibility.
+	ServingArtifactDigest string
 	// SourceAttestationDigest is an opaque target-issued identity for the
 	// exact retained source revision. It participates in provenance/plan
 	// identity, never execution identity.
@@ -436,7 +440,7 @@ func (l *DeliveryLifecycle) Plan(ctx context.Context, request DeliveryPlanReques
 	}
 	plan, err := NewDeliveryPlan(DeliveryPlan{
 		ID: request.ID, ActorID: request.ActorID, TargetID: target.TargetID, ProjectID: projectgraph.ResourceID(request.ProjectID), Environment: request.Environment,
-		Operation: request.Operation, SourceDigest: request.SourceDigest, BaseGenerationID: target.ActiveGenerationID,
+		Operation: request.Operation, SourceDigest: request.SourceDigest, ServingArtifactDigest: request.ServingArtifactDigest, BaseGenerationID: target.ActiveGenerationID,
 		BaseTargetRevision: target.TargetRevision, Execution: request.Execution, Provenance: request.Provenance,
 		Governance: request.Governance, Evidence: request.Evidence, PipelinePlan: request.PipelinePlan, CreatedAt: request.CreatedAt,
 	})

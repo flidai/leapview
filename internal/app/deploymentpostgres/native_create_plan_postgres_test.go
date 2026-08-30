@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"sync"
@@ -23,6 +25,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	project "github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
@@ -80,6 +83,18 @@ func (r *nativePlanArtifactInspector) InspectCandidateArtifacts(_ context.Contex
 	}
 	digest := sha256.Sum256([]byte(request.CandidateID))
 	set.Generation.Identity = projectgraph.ServingIdentity{ProjectID: request.Scope.ProjectID, Environment: request.Scope.Environment, GenerationID: "inspect-" + hex.EncodeToString(digest[:])}
+	manifest, bundleDigest, err := projectbundle.PackCompiledProject(set.Compiler.Artifact, set.Compiler.Plan, io.Discard)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
+	}
+	set.Artifact.ContentDigest = bundleDigest
+	set.Generation.ArtifactDigest = bundleDigest
+	set.Generation.ServingArtifactID = "artifact-" + strings.TrimPrefix(bundleDigest, "sha256:")
+	set.Generation.BundleManifestJSON = string(manifestJSON)
 	return set, nil
 }
 
@@ -230,6 +245,34 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 	}
 	if operations != 1 || plans != 1 || events != 1 || audits != 1 {
 		t.Fatalf("durable consequence counts operation/plan/event/audit = %d/%d/%d/%d, want 1/1/1/1", operations, plans, events, audits)
+	}
+	var plannedServingDigest string
+	if err := db.QueryRow(t.Context(), `SELECT artifact_digest FROM delivery.delivery_plan`).Scan(&plannedServingDigest); err != nil {
+		t.Fatal(err)
+	}
+	if err := deployment.ValidateDeliveryDigest(plannedServingDigest); err != nil {
+		t.Fatalf("planned serving digest = %q: %v", plannedServingDigest, err)
+	}
+	if plannedServingDigest == request.SourceDigest {
+		t.Fatalf("planned serving digest unexpectedly reused source digest %q", plannedServingDigest)
+	}
+	_, expectedServingDigest, err := projectbundle.PackCompiledProject(artifacts.Compiler.Artifact, artifacts.Compiler.Plan, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plannedServingDigest != expectedServingDigest {
+		t.Fatalf("planned serving digest = %q, want deterministic bundle digest %q", plannedServingDigest, expectedServingDigest)
+	}
+	persistedRow, err := repo.Plan(t.Context(), first.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistedRich, err := persistedRow.RichPlan()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedRich.SourceDigest != request.SourceDigest || persistedRich.ServingArtifactDigest != plannedServingDigest {
+		t.Fatalf("persisted source/serving identities = %q/%q, want %q/%q", persistedRich.SourceDigest, persistedRich.ServingArtifactDigest, request.SourceDigest, plannedServingDigest)
 	}
 }
 

@@ -127,6 +127,28 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err := retainNativeServingDocuments(&result.Generation, compiledProject); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	// Planning is deliberately read-only, but it still has to bind the exact
+	// immutable serving identity that a later materialization must reproduce.
+	// Pack the generated serving bundle deterministically without retaining its
+	// bytes so the plan can retain its content digest and manifest without
+	// writing an object or opening a serving-state transaction. The source
+	// artifact digest remains separate provenance evidence on
+	// result.Artifact.SourceDigest.
+	bundleManifest, bundleDigest, err := projectbundle.PackCompiledProject(compiledProject, plan, io.Discard)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if bundleDigest == "" || platformdigest.ValidateSHA256Identity(bundleDigest) != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("planned native serving artifact identity is invalid"))
+	}
+	manifestJSON, err := nativeBundleManifestJSON(bundleManifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	result.Artifact.ContentDigest = bundleDigest
+	result.Generation.BundleManifestJSON = manifestJSON
+	result.Generation.ServingArtifactID = nativeServingArtifactID(bundleDigest)
+	result.Generation.ArtifactDigest = bundleDigest
 	return result, nil
 }
 
@@ -351,7 +373,12 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	objectEvidence := nativeArtifactObjectEvidence(info)
-	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, inspected.Generation.ServingArtifactID == "" && inspected.Generation.ArtifactDigest == "" && inspected.Artifact.ContentDigest == ""); err != nil {
+	// Inspection computes the serving identity in memory but deliberately has
+	// no object metadata.  Accept that empty evidence only for the inspect
+	// generation; once a concrete serving generation is supplied, a missing
+	// metadata binding is tampering and must fail closed.
+	allowInspectOnly := strings.HasPrefix(inspected.Generation.Identity.GenerationID, "inspect-")
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, allowInspectOnly); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	identity, err := projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, generationID.String())
@@ -427,7 +454,8 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	objectEvidence := nativeArtifactObjectEvidence(object.Info)
-	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, inspected.Generation.ServingArtifactID == "" && inspected.Generation.ArtifactDigest == "" && inspected.Artifact.ContentDigest == ""); err != nil {
+	allowInspectOnly := strings.HasPrefix(inspected.Generation.Identity.GenerationID, "inspect-")
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, allowInspectOnly); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)

@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -22,6 +23,7 @@ import (
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -335,6 +337,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	planRequest.ID = operationID
 	planRequest.ActorID = request.PrincipalID
 	planRequest.SourceAttestationDigest = request.SourceAttestationDigest
+	planRequest.ServingArtifactDigest = inspected.Generation.ArtifactDigest
 	planRequest.Persist = true
 	planRequest.TargetID, planRequest.ProjectID, planRequest.Environment = request.TargetID, request.ProjectID.String(), request.Environment
 	planRequest.CreatedAt = now
@@ -353,7 +356,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	stored, err := c.repository.CreatePlanAllocatedTx(ctx, tx, deploymentnative.PlanInput{
 		PlanID: operationID, TargetID: request.TargetID, PlanRevision: 0, PlanDigest: rich.Digest,
 		CompiledGraphDigest: inspected.Compiler.Graph.Digest(), CompiledConfigDigest: rich.Execution.ConfigDigest,
-		SecurityDomainFingerprint: inspected.AuthorizationFingerprint, ArtifactDigest: request.SourceDigest,
+		SecurityDomainFingerprint: inspected.AuthorizationFingerprint, ArtifactDigest: inspected.Generation.ArtifactDigest,
 		QualificationDigest: rich.Governance.QualificationDigest, QualificationRequired: true,
 		PlanDocument: planDocument, Evidence: evidence, CreatedAt: rich.CreatedAt,
 	})
@@ -666,10 +669,35 @@ func validateNativePlanInspection(request deploymentmodule.NativeDeliveryPlanReq
 		inspected.Compiler.Plan.Project != request.ProjectID.String() || !sameNativeValue(inspected.Compiler.Manifest, compilerArtifact.Manifest()) ||
 		identity.Validate() != nil || identity.ProjectID != request.ProjectID || identity.Environment != request.Environment || identity.GenerationID != expectedGenerationID ||
 		platformdigest.ValidateSHA256Identity(inspected.AuthorizationFingerprint) != nil ||
-		inspected.Generation.ArtifactDigest != "" && inspected.Generation.ArtifactDigest != request.SourceDigest {
+		platformdigest.ValidateSHA256Identity(inspected.Artifact.ContentDigest) != nil ||
+		inspected.Generation.ArtifactDigest != inspected.Artifact.ContentDigest ||
+		inspected.Generation.ServingArtifactID != nativePlannedServingArtifactID(inspected.Generation.ArtifactDigest) ||
+		inspected.Generation.BundleManifestJSON == "" || inspected.Generation.BundleManifestJSON != strings.TrimSpace(inspected.Generation.BundleManifestJSON) {
 		return fmt.Errorf("%w: inspected compiler artifact identity differs from retained source and target scope", deployment.ErrDeliveryConflict)
 	}
+	// Recompute the deterministic serving bundle identity from the exact
+	// compiler evidence supplied by the inspector. This prevents a forged
+	// ContentDigest/manifest from being persisted merely because its format
+	// looks valid; later materialization must reproduce these same bytes.
+	manifest, servingDigest, err := projectbundle.PackCompiledProject(compilerArtifact, inspected.Compiler.Plan, io.Discard)
+	if err != nil {
+		return fmt.Errorf("%w: recompute planned serving artifact: %v", deployment.ErrDeliveryConflict, err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("%w: encode planned serving artifact manifest: %v", deployment.ErrDeliveryConflict, err)
+	}
+	if servingDigest != inspected.Generation.ArtifactDigest || servingDigest != inspected.Artifact.ContentDigest || string(manifestJSON) != inspected.Generation.BundleManifestJSON {
+		return fmt.Errorf("%w: planned serving artifact identity does not match compiler evidence", deployment.ErrDeliveryConflict)
+	}
 	return nil
+}
+
+func nativePlannedServingArtifactID(digest string) string {
+	if platformdigest.ValidateSHA256Identity(digest) != nil {
+		return ""
+	}
+	return "artifact-" + strings.TrimPrefix(digest, "sha256:")
 }
 
 func nativePlanConsequenceID(planID, role string) (string, error) {
@@ -814,7 +842,7 @@ func richPlanFromRequest(request deployment.DeliveryPlanRequest, sourceOwner, pl
 	plan := deployment.DeliveryPlan{
 		ID: planID, ActorID: request.ActorID, SourceOwnerID: sourceOwner,
 		TargetID: request.TargetID, ProjectID: projectID, Environment: request.Environment,
-		Operation: request.Operation, SourceDigest: request.SourceDigest,
+		Operation: request.Operation, SourceDigest: request.SourceDigest, ServingArtifactDigest: request.ServingArtifactDigest,
 		BaseGenerationID: baseGeneration, BaseTargetRevision: baseRevision,
 		Execution: request.Execution, Provenance: request.Provenance, Governance: request.Governance,
 		Evidence: request.Evidence, PipelinePlan: request.PipelinePlan, CreatedAt: request.CreatedAt,

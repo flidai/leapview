@@ -108,9 +108,23 @@ func TestRichPlanRehydratesAndKeepsApprovalSeparateFromQualificationProjection(t
 		t.Fatal("approval-policy change unexpectedly changed qualification projection identity")
 	}
 
+	servingRich := rich
+	servingRich.ServingArtifactDigest = testDigest('9')
+	servingRich, err = deployment.NewDeliveryPlan(servingRich)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servingDocument, err := json.Marshal(servingRich)
+	if err != nil {
+		t.Fatal(err)
+	}
+	servingDigestInput := planDocumentProjectionFixture(t, servingRich, servingDocument)
+	servingDigestInput.ArtifactDigest = servingRich.ServingArtifactDigest
+	if !planDocumentProjectionMatches(servingRich, servingDigestInput) || servingDigestInput.ArtifactDigest == servingRich.SourceDigest {
+		t.Fatal("serving artifact digest was incorrectly coupled to source digest")
+	}
 	for name, mutate := range map[string]func(*PlanInput){
-		"source artifact": func(input *PlanInput) { input.ArtifactDigest = testDigest('9') },
-		"authorization":   func(input *PlanInput) { input.SecurityDomainFingerprint = testDigest('9') },
+		"authorization": func(input *PlanInput) { input.SecurityDomainFingerprint = testDigest('9') },
 	} {
 		t.Run(name, func(t *testing.T) {
 			drifted := input

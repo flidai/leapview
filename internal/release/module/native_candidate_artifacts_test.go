@@ -136,6 +136,12 @@ func TestNativeCandidateInspectUsesObjectReaderAndReturnsCompilerArtifact(t *tes
 	if set.Compiler.Artifact.ProjectID() != request.Scope.ProjectID || set.Compiler.Artifact.Digest() != request.Source.ProjectDigest {
 		t.Fatalf("compiler artifact identity = %s/%s", set.Compiler.Artifact.ProjectID(), set.Compiler.Artifact.Digest())
 	}
+	if set.Artifact.ContentDigest == "" || set.Artifact.ContentDigest != set.Generation.ArtifactDigest || set.Generation.ServingArtifactID != nativeServingArtifactID(set.Generation.ArtifactDigest) || set.Generation.BundleManifestJSON == "" {
+		t.Fatalf("inspection did not bind deterministic serving identity: artifact=%#v generation=%#v", set.Artifact, set.Generation)
+	}
+	if set.Artifact.ContentDigest == request.ArtifactDigest {
+		t.Fatalf("inspection reused source digest %q as serving bundle digest", request.ArtifactDigest)
+	}
 	if reader.opens-before != len(fixture.refs) {
 		t.Fatalf("source object opens = %d, want %d", reader.opens-before, len(fixture.refs))
 	}

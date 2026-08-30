@@ -668,9 +668,17 @@ func normalizeStoredPlanDocument(raw json.RawMessage) (json.RawMessage, deployme
 }
 
 func planDocumentProjectionMatches(plan deployment.DeliveryPlan, in PlanInput) bool {
+	// ArtifactDigest is the immutable packed serving-bundle identity retained
+	// by the delivery row. Native plans carry it explicitly in the rich plan;
+	// legacy plans omitted that field, so their source digest remains the
+	// backwards-compatible fallback.
+	plannedArtifactDigest := plan.ServingArtifactDigest
+	if plannedArtifactDigest == "" {
+		plannedArtifactDigest = plan.SourceDigest
+	}
 	return plan.ID == in.PlanID && plan.TargetID == in.TargetID &&
 		plan.Digest == in.PlanDigest && plan.Execution.ConfigDigest == in.CompiledConfigDigest &&
-		plan.SourceDigest == in.ArtifactDigest &&
+		plannedArtifactDigest == in.ArtifactDigest &&
 		plan.Governance.AuthorizationDigest == in.SecurityDomainFingerprint &&
 		plan.Governance.QualificationDigest == in.QualificationDigest
 }

@@ -6,12 +6,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
@@ -76,7 +78,7 @@ func TestRichPlanFromRequestCarriesActorSourceOwnerAndBaseFence(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	d := createPlanTestDigest
 	request := deployment.DeliveryPlanRequest{
-		ActorID: "reviewer", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('a'), CreatedAt: now,
+		ActorID: "reviewer", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('a'), ServingArtifactDigest: d('6'), CreatedAt: now,
 		Provenance: deployment.DeliveryProvenance{Builder: "test", AttestationDigest: d('b')},
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('c'), ExecutableDigest: d('d'), DependencyDigest: d('e'), ConfigDigest: d('f'), BindingDigest: d('0'), RuntimeDigest: d('1'), CapabilityDigest: d('2')},
 		Governance: deployment.DeliveryGovernance{PolicyDigest: d('3'), AuthorizationDigest: d('4'), QualificationDigest: d('5'), ExpiresAt: now.Add(time.Hour)},
@@ -86,7 +88,7 @@ func TestRichPlanFromRequestCarriesActorSourceOwnerAndBaseFence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if plan.ActorID != "reviewer" || plan.SourceOwnerID != "author" || plan.BaseGenerationID == "" || plan.BaseTargetRevision != 9 || plan.Status != deployment.DeliveryPlanPlanned {
+	if plan.ActorID != "reviewer" || plan.SourceOwnerID != "author" || plan.ServingArtifactDigest != d('6') || plan.BaseGenerationID == "" || plan.BaseTargetRevision != 9 || plan.Status != deployment.DeliveryPlanPlanned {
 		t.Fatalf("rich plan omitted immutable actor/source/base evidence: %#v", plan)
 	}
 	if _, err := uuid.Parse(plan.ID); err != nil || projectgraph.ResourceID(plan.ProjectID) != "project" {
@@ -111,8 +113,35 @@ func TestValidateNativePlanInspectionRejectsCrossProjectEvidence(t *testing.T) {
 	inspectID := "inspect-" + strings.TrimPrefix(requestDigest, "sha256:")
 	digest := sha256.Sum256([]byte(inspectID))
 	inspected.Generation.Identity = projectgraph.ServingIdentity{ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: "inspect-" + hex.EncodeToString(digest[:])}
+	manifest, servingDigest, err := projectbundle.PackCompiledProject(inspected.Compiler.Artifact, inspected.Compiler.Plan, io.Discard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	inspected.Artifact.ContentDigest = servingDigest
+	inspected.Generation.ArtifactDigest = servingDigest
+	inspected.Generation.ServingArtifactID = nativePlannedServingArtifactID(servingDigest)
+	inspected.Generation.BundleManifestJSON = string(manifestJSON)
 	if err := validateNativePlanInspection(request, source, inspected, inspectID); err != nil {
 		t.Fatalf("valid inspection rejected: %v", err)
+	}
+	tamperedServing := inspected
+	tamperedServing.Generation.ArtifactDigest = createPlanTestDigest('e')
+	if err := validateNativePlanInspection(request, source, tamperedServing, inspectID); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("tampered serving digest accepted: %v", err)
+	}
+	tamperedManifest := inspected
+	tamperedManifest.Generation.BundleManifestJSON = "{}"
+	if err := validateNativePlanInspection(request, source, tamperedManifest, inspectID); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("tampered serving manifest accepted: %v", err)
+	}
+	tamperedCompiler := inspected
+	tamperedCompiler.Compiler.Plan.Deterministic = !tamperedCompiler.Compiler.Plan.Deterministic
+	if err := validateNativePlanInspection(request, source, tamperedCompiler, inspectID); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("tampered compiler evidence accepted: %v", err)
 	}
 	inspected.Artifact.ProjectDigest = createPlanTestDigest('f')
 	if err := validateNativePlanInspection(request, source, inspected, inspectID); !errors.Is(err, deployment.ErrDeliveryConflict) {

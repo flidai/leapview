@@ -28,26 +28,27 @@ type DeliveryPlan struct {
 	// SourceOwnerID is the retained-source namespace used to rehydrate the
 	// exact attestation during later builds. It may differ from ActorID for
 	// scheduler- or reviewer-initiated restatements.
-	SourceOwnerID      string                  `json:"sourceOwnerId,omitempty"`
-	TargetID           string                  `json:"targetId"`
-	ProjectID          graph.ResourceID        `json:"projectId"`
-	Environment        string                  `json:"environment"`
-	Operation          DeliveryOperationKind   `json:"operation"`
-	SourceDigest       string                  `json:"sourceDigest"`
-	BaseGenerationID   string                  `json:"baseGenerationId,omitempty"`
-	BaseTargetRevision int64                   `json:"baseTargetRevision"`
-	Execution          DeliveryExecutionInputs `json:"execution"`
-	Provenance         DeliveryProvenance      `json:"provenance"`
-	Governance         DeliveryGovernance      `json:"governance"`
-	Evidence           DeliveryPlanEvidence    `json:"evidence"`
-	PipelinePlan       *PipelinePlan           `json:"pipelinePlan,omitempty"`
-	ExecutionDigest    string                  `json:"executionDigest"`
-	ProvenanceDigest   string                  `json:"provenanceDigest"`
-	GovernanceDigest   string                  `json:"governanceDigest"`
-	EvidenceDigest     string                  `json:"evidenceDigest"`
-	Digest             string                  `json:"digest"`
-	Status             DeliveryPlanStatus      `json:"status"`
-	CreatedAt          time.Time               `json:"createdAt"`
+	SourceOwnerID         string                  `json:"sourceOwnerId,omitempty"`
+	TargetID              string                  `json:"targetId"`
+	ProjectID             graph.ResourceID        `json:"projectId"`
+	Environment           string                  `json:"environment"`
+	Operation             DeliveryOperationKind   `json:"operation"`
+	SourceDigest          string                  `json:"sourceDigest"`
+	ServingArtifactDigest string                  `json:"servingArtifactDigest,omitempty"`
+	BaseGenerationID      string                  `json:"baseGenerationId,omitempty"`
+	BaseTargetRevision    int64                   `json:"baseTargetRevision"`
+	Execution             DeliveryExecutionInputs `json:"execution"`
+	Provenance            DeliveryProvenance      `json:"provenance"`
+	Governance            DeliveryGovernance      `json:"governance"`
+	Evidence              DeliveryPlanEvidence    `json:"evidence"`
+	PipelinePlan          *PipelinePlan           `json:"pipelinePlan,omitempty"`
+	ExecutionDigest       string                  `json:"executionDigest"`
+	ProvenanceDigest      string                  `json:"provenanceDigest"`
+	GovernanceDigest      string                  `json:"governanceDigest"`
+	EvidenceDigest        string                  `json:"evidenceDigest"`
+	Digest                string                  `json:"digest"`
+	Status                DeliveryPlanStatus      `json:"status"`
+	CreatedAt             time.Time               `json:"createdAt"`
 }
 
 // NewDeliveryPlan validates and computes all canonical identity digests. The
@@ -97,7 +98,7 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	}
 	plan.Digest, err = canonicalJSONDigest(deliveryPlanCanonical{
 		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
-		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
+		Operation: plan.Operation, SourceDigest: plan.SourceDigest, ServingArtifactDigest: plan.ServingArtifactDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
 		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
@@ -113,20 +114,21 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 func NewPlan(plan DeliveryPlan) (DeliveryPlan, error) { return NewDeliveryPlan(plan) }
 
 type deliveryPlanCanonical struct {
-	ID                 string                `json:"id"`
-	SourceOwnerID      string                `json:"sourceOwnerId,omitempty"`
-	TargetID           string                `json:"targetId"`
-	ProjectID          graph.ResourceID      `json:"projectId"`
-	Environment        string                `json:"environment"`
-	Operation          DeliveryOperationKind `json:"operation"`
-	SourceDigest       string                `json:"sourceDigest"`
-	BaseGenerationID   string                `json:"baseGenerationId,omitempty"`
-	BaseTargetRevision int64                 `json:"baseTargetRevision"`
-	ExecutionDigest    string                `json:"executionDigest"`
-	ProvenanceDigest   string                `json:"provenanceDigest"`
-	GovernanceDigest   string                `json:"governanceDigest"`
-	EvidenceDigest     string                `json:"evidenceDigest"`
-	PipelinePlanDigest string                `json:"pipelinePlanDigest,omitempty"`
+	ID                    string                `json:"id"`
+	SourceOwnerID         string                `json:"sourceOwnerId,omitempty"`
+	TargetID              string                `json:"targetId"`
+	ProjectID             graph.ResourceID      `json:"projectId"`
+	Environment           string                `json:"environment"`
+	Operation             DeliveryOperationKind `json:"operation"`
+	SourceDigest          string                `json:"sourceDigest"`
+	ServingArtifactDigest string                `json:"servingArtifactDigest,omitempty"`
+	BaseGenerationID      string                `json:"baseGenerationId,omitempty"`
+	BaseTargetRevision    int64                 `json:"baseTargetRevision"`
+	ExecutionDigest       string                `json:"executionDigest"`
+	ProvenanceDigest      string                `json:"provenanceDigest"`
+	GovernanceDigest      string                `json:"governanceDigest"`
+	EvidenceDigest        string                `json:"evidenceDigest"`
+	PipelinePlanDigest    string                `json:"pipelinePlanDigest,omitempty"`
 }
 
 func pipelinePlanDigest(plan *PipelinePlan) string {
@@ -161,6 +163,11 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 	}
 	if err := ValidateDeliveryDigest(plan.SourceDigest); err != nil {
 		return fmt.Errorf("source digest: %w", err)
+	}
+	if plan.ServingArtifactDigest != "" {
+		if err := ValidateDeliveryDigest(plan.ServingArtifactDigest); err != nil {
+			return fmt.Errorf("serving artifact digest: %w", err)
+		}
 	}
 	if plan.BaseGenerationID != "" {
 		if err := ValidateDeliveryID(plan.BaseGenerationID); err != nil {
@@ -242,7 +249,7 @@ func (plan DeliveryPlan) Validate() error {
 	}
 	expectedPlan, err := canonicalJSONDigest(deliveryPlanCanonical{
 		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
-		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
+		Operation: plan.Operation, SourceDigest: plan.SourceDigest, ServingArtifactDigest: plan.ServingArtifactDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
 		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
@@ -263,7 +270,7 @@ func (plan DeliveryPlan) Validate() error {
 func (plan DeliveryPlan) SameCanonicalIntent(other DeliveryPlan) bool {
 	if plan.ID != other.ID || plan.SourceOwnerID != other.SourceOwnerID || plan.TargetID != other.TargetID || plan.ProjectID != other.ProjectID ||
 		plan.Environment != other.Environment || plan.Operation != other.Operation ||
-		plan.SourceDigest != other.SourceDigest || plan.BaseGenerationID != other.BaseGenerationID ||
+		plan.SourceDigest != other.SourceDigest || plan.ServingArtifactDigest != other.ServingArtifactDigest || plan.BaseGenerationID != other.BaseGenerationID ||
 		plan.BaseTargetRevision != other.BaseTargetRevision {
 		return false
 	}
