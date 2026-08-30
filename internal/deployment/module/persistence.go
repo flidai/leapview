@@ -91,8 +91,8 @@ type NativePersistenceCapabilities struct {
 }
 
 // NativeDeliveryEventInput is the capability-neutral event contract used by
-// native deployment mutations. The event appender owns UUIDv7 allocation and
-// exact keyed replay; deployment only supplies the immutable aggregate data.
+// native deployment mutations. Deployment supplies the preallocated UUIDv7
+// retry identity; the event appender owns exact keyed replay.
 type NativeDeliveryEventInput struct {
 	EventID, ScopeID, AggregateType, AggregateID, EventType string
 	SchemaVersion                                           int64

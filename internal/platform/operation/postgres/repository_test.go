@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -102,6 +103,10 @@ func TestReplayConflictFenceAndRollback(t *testing.T) {
 	first, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "k", Request: []byte(`{"v":1}`), OwnerID: "one"})
 	if err != nil {
 		t.Fatal(err)
+	}
+	operationID, parseErr := uuid.Parse(first.Operation.OperationID)
+	if parseErr != nil || operationID.String() != first.Operation.OperationID || operationID.Version() != 7 {
+		t.Fatalf("operation ID = %q, want canonical UUIDv7: %v", first.Operation.OperationID, parseErr)
 	}
 	if err := r.Complete(t.Context(), first.Lease, []byte(` { "ok": true } `)); err != nil {
 		t.Fatal(err)

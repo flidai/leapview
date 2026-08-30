@@ -13,6 +13,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -28,6 +29,13 @@ var _ deploymentpostgres.ActivationAuditPort = (*Adapter)(nil)
 
 // New returns an adapter backed by the Access-owned immutable audit table.
 func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
+
+// NewWithRepository keeps the Access authority explicit at the composition
+// boundary. The audit repository is stateless, so the same adapter can be
+// shared by activation and delivery-mutation audit projections.
+func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
+	return &Adapter{audit: audit}
+}
 
 // AppendActivationAudit appends the canonical Access audit intent in the
 // caller-owned transaction and reads it back before returning. Access and
@@ -71,6 +79,42 @@ func (a *Adapter) GetActivationAudit(ctx context.Context, tx deploymentpostgres.
 		return deploymentpostgres.AuditEvent{}, err
 	}
 	return mapAuditEvent(stored), nil
+}
+
+// AppendMutationAudit appends the canonical Access audit intent for a native
+// delivery publication mutation. It deliberately accepts the deployment
+// module's capability-neutral projection and forwards the caller-owned
+// transaction without beginning, committing, or rolling it back.
+func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error) {
+	if a == nil || a.audit == nil {
+		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: delivery mutation audit adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	intent, err := mutationIntent(input)
+	if err != nil {
+		return deploymentpostgres.AuditEvent{}, err
+	}
+	stored, err := a.audit.RecordAuditEvent(ctx, tx, intent)
+	if err != nil {
+		return deploymentpostgres.AuditEvent{}, normalize(err, "append delivery mutation")
+	}
+	if err := validateStored(stored, intent); err != nil {
+		return deploymentpostgres.AuditEvent{}, err
+	}
+	return mapAuditEvent(stored), nil
+}
+
+func mutationIntent(input deploymentmodule.NativeDeliveryAuditInput) (access.AuditIntent, error) {
+	if input.Outcome != "accepted" {
+		return access.AuditIntent{}, fmt.Errorf("%w: delivery mutation audit outcome is not accepted", deploymentpostgres.ErrInvalid)
+	}
+	return access.AuditIntent{
+		EventID: input.AuditID, DomainEventID: input.DomainEventID, ScopeID: input.ScopeID,
+		ActorID: input.ActorID, Source: "deployment", Operation: "publication",
+		Action: input.Action, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
+		Outcome: "success", RequestDigest: input.RequestDigest, CorrelationID: input.CorrelationID,
+		AggregateKey: input.AggregateKey, AggregateSequence: input.AggregateSequence,
+		MetadataJSON: string(input.Metadata),
+	}, nil
 }
 
 func activationIntent(input deploymentpostgres.ActivationAuditInput) (access.AuditIntent, error) {

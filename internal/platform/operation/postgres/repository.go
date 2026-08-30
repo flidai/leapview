@@ -6,7 +6,6 @@ package postgres
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	_ "embed"
 	"encoding/hex"
@@ -18,6 +17,7 @@ import (
 
 	operationdb "github.com/flidai/leapview/internal/platform/operation/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -931,13 +931,11 @@ func validUUID(value string) bool {
 }
 
 func newUUID() (string, error) {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
+	id, err := uuid.NewV7()
+	if err != nil {
 		return "", err
 	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%s-%s-%s-%s-%s", hex.EncodeToString(b[0:4]), hex.EncodeToString(b[4:6]), hex.EncodeToString(b[6:8]), hex.EncodeToString(b[8:10]), hex.EncodeToString(b[10:16])), nil
+	return id.String(), nil
 }
 
 func operationFromRow(row operationdb.GetOperationRow) (Operation, error) {
