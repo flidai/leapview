@@ -61,12 +61,12 @@ COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WH
 t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id);
 
 -- name: InsertPlan :exec
-INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,evidence)
-VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_digest),sqlc.arg(qualification_required),sqlc.arg(evidence)::jsonb)
+INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,plan_document,evidence)
+VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_digest),sqlc.arg(qualification_required),sqlc.arg(plan_document)::jsonb,sqlc.arg(evidence)::jsonb)
 ON CONFLICT(plan_id) DO NOTHING;
 
 -- name: GetPlan :one
-SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,evidence,created_at
+SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,plan_document,evidence,created_at
 FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: GetCandidatePlan :one

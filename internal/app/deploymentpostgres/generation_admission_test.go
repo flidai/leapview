@@ -31,11 +31,18 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	planID := "0198f2c0-7c7a-7f00-8a11-000000000101"
 	leaseID := "0198f2c0-7c7a-7f00-8a11-000000000107"
 	pool := "pool-admission"
-	planDigest, artifactDigest := admissionDigest('a'), admissionDigest('e')
+	artifactDigest := admissionDigest('e')
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{{ID: "project_admission", Kind: projectgraph.KindProject, Name: "project"}, {ID: "dashboard", Kind: projectgraph.KindDashboard, Name: "dashboard"}}, []projectgraph.Edge{{From: "project_admission", To: "dashboard", Relation: "contains"}})
 	if err != nil {
 		t.Fatal(err)
 	}
+	planRecord := nativePlanFixture(t, deploymentnative.PlanInput{
+		PlanID: planID, TargetID: "target-admission", PlanRevision: 1,
+		CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'),
+		SecurityDomainFingerprint: admissionDigest('d'), ArtifactDigest: artifactDigest,
+		QualificationDigest: admissionDigest('3'),
+	}, "project_admission")
+	planDigest := planRecord.PlanDigest
 	relationNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
@@ -253,7 +260,11 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, du
 		t.Fatal(err)
 	}
 	if _, err := repo.Plan(ctx, input.Generation.PlanID); errors.Is(err, deploymentnative.ErrNotFound) {
-		if _, err := repo.CreatePlan(ctx, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, PlanDigest: input.Generation.PlanDigest, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest, QualificationDigest: input.QualificationDigest}); err != nil {
+		plan := nativePlanFixture(t, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest, QualificationDigest: input.QualificationDigest}, input.Bundle.ProjectID.String())
+		if plan.PlanDigest != input.Generation.PlanDigest {
+			t.Fatalf("native plan fixture digest = %s, generation expects %s", plan.PlanDigest, input.Generation.PlanDigest)
+		}
+		if _, err := repo.CreatePlan(ctx, plan); err != nil {
 			t.Fatal(err)
 		}
 	} else if err != nil {

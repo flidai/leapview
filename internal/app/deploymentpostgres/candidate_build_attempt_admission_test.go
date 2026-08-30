@@ -50,11 +50,12 @@ type candidateAdmissionFixture struct {
 	ExpiresAt time.Time
 }
 
-func candidateAdmissionFixtureInput() candidateAdmissionFixture {
-	digestPlan := candidateAdmissionDigest('a')
+func candidateAdmissionFixtureInput(t *testing.T) candidateAdmissionFixture {
+	t.Helper()
 	expires := time.Now().UTC().Add(time.Hour)
 	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000303"
 	const candidateID = "0198f2c0-7c7a-7f00-8a11-000000000304"
+	plan := nativePlanFixture(t, deploymentnative.PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", TargetID: "target-candidate-admission", PlanRevision: 1, CompiledGraphDigest: candidateAdmissionDigest('d'), CompiledConfigDigest: candidateAdmissionDigest('e'), SecurityDomainFingerprint: candidateAdmissionDigest('f'), ArtifactDigest: candidateAdmissionDigest('c'), QualificationDigest: candidateAdmissionDigest('1')}, "project-candidate-admission")
 	return candidateAdmissionFixture{
 		Input: CandidateBuildAttemptAdmissionInput{
 			Lease: deploymentnative.LeaseInput{
@@ -62,14 +63,14 @@ func candidateAdmissionFixtureInput() candidateAdmissionFixture {
 			},
 			Attempt: deploymentnative.BuildAttemptInput{
 				AttemptID: attemptID, PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", CandidateID: candidateID,
-				OwnerID: "builder-candidate-admission", PhysicalPoolID: "pool-candidate-admission", RequestDigest: candidateAdmissionDigest('b'), PlanDigest: digestPlan,
+				OwnerID: "builder-candidate-admission", PhysicalPoolID: "pool-candidate-admission", RequestDigest: candidateAdmissionDigest('b'), PlanDigest: plan.PlanDigest,
 				SessionIdentity: "duckdb-session-candidate-admission", LeaseExpiresAt: expires,
 			},
 			Artifact:  CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + strings.TrimPrefix(candidateAdmissionDigest('c'), "sha256:"), ServingArtifactDigest: candidateAdmissionDigest('c'), ServingStateID: "candidate-serving-state"},
 			CatalogID: "catalog-candidate-admission",
 		},
 		Target:    deploymentnative.TargetInput{TargetID: "target-candidate-admission", ProjectID: "project-candidate-admission", Environment: "prod"},
-		Plan:      deploymentnative.PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", TargetID: "target-candidate-admission", PlanRevision: 1, PlanDigest: digestPlan, CompiledGraphDigest: candidateAdmissionDigest('d'), CompiledConfigDigest: candidateAdmissionDigest('e'), SecurityDomainFingerprint: candidateAdmissionDigest('f'), ArtifactDigest: candidateAdmissionDigest('c'), QualificationDigest: candidateAdmissionDigest('1')},
+		Plan:      plan,
 		Candidate: deploymentnative.CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000304", TargetID: "target-candidate-admission", PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", CandidateRevision: 1, ArtifactDigest: candidateAdmissionDigest('c')},
 		ExpiresAt: expires,
 	}
@@ -114,7 +115,7 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 		t.Fatal(err)
 	}
 
-	fixture := candidateAdmissionFixtureInput()
+	fixture := candidateAdmissionFixtureInput(t)
 	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
 	first, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input)
 	if err != nil {
@@ -140,7 +141,7 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 		t.Fatalf("artifact replay drift error = %v, want delivery conflict", err)
 	}
 
-	rollback := candidateAdmissionFixtureInput()
+	rollback := candidateAdmissionFixtureInput(t)
 	rollback.Input.Lease.LeaseID = "0198f2c0-7c7a-7f00-8a11-000000000311"
 	rollback.Input.Attempt.AttemptID = "0198f2c0-7c7a-7f00-8a11-000000000313"
 	rollback.Input.Attempt.PlanID = "0198f2c0-7c7a-7f00-8a11-000000000312"
@@ -156,6 +157,8 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	rollback.Candidate.CandidateID = rollback.Input.Attempt.CandidateID
 	rollback.Candidate.PlanID = rollback.Plan.PlanID
 	rollback.Candidate.TargetID = rollback.Target.TargetID
+	rollback.Plan = nativePlanFixture(t, rollback.Plan, rollback.Target.ProjectID)
+	rollback.Input.Attempt.PlanDigest = rollback.Plan.PlanDigest
 	seedCandidateAdmissionFixture(t, delivery, ducklake, rollback)
 	if _, err := p.Exec(t.Context(), `CREATE OR REPLACE FUNCTION ducklake.reject_candidate_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected candidate attempt conflict'; END; $$; CREATE TRIGGER reject_candidate_attempt BEFORE INSERT ON ducklake.attempt_evidence FOR EACH ROW EXECUTE FUNCTION ducklake.reject_candidate_attempt()`); err != nil {
 		t.Fatal(err)
@@ -181,7 +184,7 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 }
 
 func TestNormalizeCandidateBuildAttemptAdmissionRejectsExpiryDrift(t *testing.T) {
-	fixture := candidateAdmissionFixtureInput()
+	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Attempt.LeaseExpiresAt = fixture.Input.Lease.ExpiresAt.Add(time.Second)
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrConflict) {
 		t.Fatalf("expiry drift error = %v, want delivery conflict", err)
@@ -189,7 +192,7 @@ func TestNormalizeCandidateBuildAttemptAdmissionRejectsExpiryDrift(t *testing.T)
 }
 
 func TestNormalizeCandidateBuildAttemptAdmissionRequiresCandidateID(t *testing.T) {
-	fixture := candidateAdmissionFixtureInput()
+	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Attempt.CandidateID = ""
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 		t.Fatalf("missing candidate id error = %v, want delivery invalid", err)
@@ -197,7 +200,7 @@ func TestNormalizeCandidateBuildAttemptAdmissionRequiresCandidateID(t *testing.T
 }
 
 func TestNormalizeCandidateBuildAttemptAdmissionRejectsRelationNamespaceDrift(t *testing.T) {
-	fixture := candidateAdmissionFixtureInput()
+	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Attempt.Namespace = "_not-the-canonical-namespace"
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 		t.Fatalf("caller-authored namespace error = %v, want delivery invalid", err)
@@ -205,7 +208,7 @@ func TestNormalizeCandidateBuildAttemptAdmissionRejectsRelationNamespaceDrift(t 
 }
 
 func TestNormalizeCandidateBuildAttemptAdmissionRejectsCallerFencingEpoch(t *testing.T) {
-	fixture := candidateAdmissionFixtureInput()
+	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Attempt.FencingEpoch = 1
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 		t.Fatalf("caller-authored fencing epoch error = %v, want delivery invalid", err)
@@ -222,7 +225,7 @@ func TestNormalizeCandidateBuildAttemptAdmissionRejectsOversizedArtifactAndCatal
 		},
 	} {
 		t.Run(name, func(t *testing.T) {
-			fixture := candidateAdmissionFixtureInput()
+			fixture := candidateAdmissionFixtureInput(t)
 			mutate(&fixture.Input)
 			if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 				t.Fatalf("oversized %s error = %v, want delivery invalid", name, err)

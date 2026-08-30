@@ -65,6 +65,12 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_plan (
     artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_digest text NOT NULL CHECK (qualification_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_required boolean NOT NULL DEFAULT false,
+    -- The complete canonical deployment.DeliveryPlan document is the
+    -- execution contract. Digest/evidence columns above remain relational
+    -- projections for indexed authority checks, but this document is what a
+    -- native build rehydrates when it executes a persisted plan.
+    plan_document jsonb NOT NULL
+        CHECK (jsonb_typeof(plan_document) = 'object' AND octet_length(plan_document::text) <= 1048576),
     evidence jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 65536),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),

@@ -154,25 +154,29 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_sales_prod", ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: "target_sales_prod", PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	planInput := richPlanInputFixture(t, ids["plan"], "target_sales_prod", "project_sales")
+	planInput.Evidence = []byte(`{"qualification":"none"}`)
+	createdPlan, err := r.CreatePlan(ctx, planInput)
+	if err != nil {
 		got, ge := r.Plan(ctx, ids["plan"])
 		t.Logf("plan got=%#v load=%v", got, ge)
 		t.Fatalf("plan: %v", err)
 	}
+	planDigest := createdPlan.PlanDigest
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: "target_sales_prod", PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: ids["attempt"], ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), ServingStateID: "generation-test", OwnerID: "builder-a", FencingEpoch: 1}); err != nil {
 		t.Fatal(err)
 	}
-	marker := testCommitMarker(ids["attempt"], "pool-sales", testDigest('f'), testDigest('a'))
+	marker := testCommitMarker(ids["attempt"], "pool-sales", testDigest('f'), planDigest)
 	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-a", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogID: "catalog-sales", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
+	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogID: "catalog-sales", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: planDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
 	if _, err := r.CreateSnapshotSeal(ctx, sealInput); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +194,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: approvalID, CandidateID: ids["candidate"], Decision: "denied", Evidence: json.RawMessage(`{"review":"ok"}`)}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("approval identity mismatch = %v", err)
 	}
-	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: testDigest('a'), ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
+	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: planDigest, ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
 	if _, err := r.CreateGeneration(ctx, generationInput); err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +363,10 @@ func TestPostgresDeliveryCallerOwnedMutationTransactions(t *testing.T) {
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: targetID, ProjectID: "project_tx", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: artifactDigest, QualificationDigest: testDigest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	planInput := richPlanInputFixture(t, ids["plan"], targetID, "project_tx")
+	planInput.Evidence = []byte(`{"qualification":"none"}`)
+	planDigest = planInput.PlanDigest
+	if _, err := r.CreatePlan(ctx, planInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: targetID, PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
@@ -493,18 +500,8 @@ func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
 	r := New(p)
 	ctx := context.Background()
 	target := TargetInput{TargetID: "target_atomic_admission", ProjectID: "project_atomic", Environment: "prod"}
-	plan := PlanInput{
-		PlanID:                    "0198f2c0-7c7a-7f00-8a11-000000000101",
-		TargetID:                  target.TargetID,
-		PlanRevision:              1,
-		PlanDigest:                testDigest('a'),
-		CompiledGraphDigest:       testDigest('b'),
-		CompiledConfigDigest:      testDigest('c'),
-		SecurityDomainFingerprint: testDigest('d'),
-		ArtifactDigest:            testDigest('e'),
-		QualificationDigest:       testDigest('3'),
-		Evidence:                  []byte(`{"source":"retained"}`),
-	}
+	plan := richPlanInputFixture(t, "0198f2c0-7c7a-7f00-8a11-000000000101", target.TargetID, target.ProjectID)
+	plan.Evidence = []byte(`{"source":"retained"}`)
 	tx, err := r.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -587,17 +584,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 	if _, err := r.CreateTarget(ctx, target); err != nil {
 		t.Fatal(err)
 	}
-	plan := PlanInput{
-		PlanID:                    "0198f2c0-7c7a-7f00-8a11-000000000103",
-		TargetID:                  target.TargetID,
-		PlanRevision:              1,
-		PlanDigest:                testDigest('a'),
-		CompiledGraphDigest:       testDigest('b'),
-		CompiledConfigDigest:      testDigest('c'),
-		SecurityDomainFingerprint: testDigest('d'),
-		ArtifactDigest:            testDigest('e'),
-		QualificationDigest:       testDigest('3'),
-	}
+	plan := richPlanInputFixture(t, "0198f2c0-7c7a-7f00-8a11-000000000103", target.TargetID, target.ProjectID)
 	if _, err := r.CreatePlan(ctx, plan); err != nil {
 		t.Fatal(err)
 	}
@@ -834,16 +821,18 @@ func TestPostgresBuildAttemptCommitAbortRace(t *testing.T) {
 	if _, err := r.CreateTarget(t.Context(), TargetInput{TargetID: target, ProjectID: "project_race", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(t.Context(), PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}); err != nil {
+	planInput := richPlanInputFixture(t, plan, target, "project_race")
+	planDigest := planInput.PlanDigest
+	if _, err := r.CreatePlan(t.Context(), planInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(t.Context(), CandidateInput{CandidateID: candidate, TargetID: target, PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{AttemptID: attempt, PlanID: plan, CandidateID: candidate, OwnerID: "builder", PhysicalPoolID: "pool-race", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), Namespace: "candidate/race", SessionIdentity: "session-race", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{AttemptID: attempt, PlanID: plan, CandidateID: candidate, OwnerID: "builder", PhysicalPoolID: "pool-race", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/race", SessionIdentity: "session-race", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := json.RawMessage(testCommitMarker(attempt, "pool-race", testDigest('f'), testDigest('a')))
+	marker := json.RawMessage(testCommitMarker(attempt, "pool-race", testDigest('f'), planDigest))
 	results := make(chan error, 2)
 	go func() {
 		_, err := r.CommitBuildAttempt(t.Context(), CommitAttemptInput{AttemptID: attempt, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 7, CommitMarker: marker})
@@ -876,11 +865,13 @@ func TestPostgresCommitBuildAttemptRejectsIncompleteDuckLakeMarker(t *testing.T)
 	const target = "target_marker_schema"
 	plan := "0198f2c0-7c7a-7f00-0000-000000000031"
 	attempt := "0198f2c0-7c7a-7f00-0000-000000000032"
-	request, planDigest := testDigest('f'), testDigest('a')
+	request := testDigest('f')
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: target, ProjectID: "project_marker", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}); err != nil {
+	planInput := richPlanInputFixture(t, plan, target, "project_marker")
+	planDigest := planInput.PlanDigest
+	if _, err := r.CreatePlan(ctx, planInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attempt, PlanID: plan, OwnerID: "builder", PhysicalPoolID: "pool-marker", FencingEpoch: 1, RequestDigest: request, PlanDigest: planDigest, Namespace: "candidate/marker", SessionIdentity: "session-marker", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {

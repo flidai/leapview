@@ -57,7 +57,6 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		t.Fatal(err)
 	}
 	requestDigest := testPostgresResolverDigest('1')
-	planDigest := testPostgresResolverDigest('2')
 	graphDigest := testPostgresResolverDigest('3')
 	configDigest := testPostgresResolverDigest('4')
 	securityDigest := testPostgresResolverDigest('5')
@@ -67,6 +66,23 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	relationDigest := testPostgresResolverDigest('9')
 	objectDigest := testPostgresResolverDigest('a')
 	qualificationDigest := testPostgresResolverDigest('b')
+	planDocument, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
+		ID: planID, TargetID: targetID, ProjectID: projectgraph.ResourceID(projectID), Environment: environment,
+		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: artifactDigest,
+		Execution:  deploymentdomain.DeliveryExecutionInputs{SourceArtifactDigest: artifactDigest, CompilerDigest: graphDigest, ExecutableDigest: testPostgresResolverDigest('c'), DependencyDigest: testPostgresResolverDigest('d'), ConfigDigest: configDigest, BindingDigest: securityDigest, RuntimeDigest: testPostgresResolverDigest('e'), CapabilityDigest: testPostgresResolverDigest('f')},
+		Provenance: deploymentdomain.DeliveryProvenance{Builder: "runtimefactory-test"},
+		Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: testPostgresResolverDigest('0'), AuthorizationDigest: securityDigest, QualificationDigest: runtimeFactoryDigest("qualification"), ExpiresAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)},
+		Evidence:   deploymentdomain.DeliveryPlanEvidence{ImpactStatement: "runtime resolver fixture", PhysicalWorkStatement: "resolve sealed physical state", ReuseStatement: "no fixture reuse", Qualification: deploymentdomain.DeliveryQualificationEvidence{Policy: "exact sealed snapshot", Steps: []deploymentdomain.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify sealed snapshot", Required: true, Blocking: true}}}, StalePolicy: deploymentdomain.DeliveryStalePolicy{Mode: "reject"}, Rollback: deploymentdomain.DeliveryRollbackEvidence{Class: deploymentdomain.DeliveryServingSafe}},
+		CreatedAt:  time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDocumentJSON, err := json.Marshal(planDocument)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDigest := planDocument.Digest
 
 	compatibility := physicalpool.Compatibility{
 		DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:0.3.0",
@@ -106,7 +122,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest,
 		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest,
 		SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: runtimeFactoryDigest("qualification"),
-		Evidence: json.RawMessage(`{"source":"resolver-test"}`),
+		QualificationRequired: true, PlanDocument: planDocumentJSON, Evidence: json.RawMessage(`{"source":"resolver-test"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}

@@ -2,11 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sort"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/flidai/leapview/internal/deployment"
 )
 
 func TestPostgresTargetRevisionAllocationReplayRollbackAndConcurrency(t *testing.T) {
@@ -18,7 +21,21 @@ func TestPostgresTargetRevisionAllocationReplayRollbackAndConcurrency(t *testing
 		t.Fatal(err)
 	}
 	plan := func(id string, digestByte byte) PlanInput {
-		return PlanInput{PlanID: id, TargetID: target, PlanDigest: testDigest(digestByte), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}
+		rich, document := richPlanDocumentFixture(t, id, target, "project_revision")
+		if digestByte != 'a' {
+			rich.SourceDigest = testDigest(digestByte)
+			rich.Execution.SourceArtifactDigest = rich.SourceDigest
+			var err error
+			rich, err = deployment.NewDeliveryPlan(rich)
+			if err != nil {
+				t.Fatal(err)
+			}
+			document, err = json.Marshal(rich)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		return PlanInput{PlanID: id, TargetID: target, PlanRevision: 0, PlanDigest: rich.Digest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest, SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: rich.Governance.QualificationDigest, PlanDocument: document}
 	}
 	invalidRevision := plan("0198f2c0-7c7a-7f00-8a11-000000001000", 'a')
 	invalidRevision.PlanRevision = 9
@@ -100,11 +117,14 @@ func TestPostgresTargetRevisionAllocationReplayRollbackAndConcurrency(t *testing
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: explicitTarget, ProjectID: "project_explicit", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	explicitPlan := PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000001500", TargetID: explicitTarget, PlanRevision: 7, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}
+	explicitPlan := richPlanInputFixture(t, "0198f2c0-7c7a-7f00-8a11-000000001500", explicitTarget, "project_explicit")
+	explicitPlan.PlanRevision = 7
 	if _, err := r.CreatePlan(ctx, explicitPlan); err != nil {
 		t.Fatal(err)
 	}
-	allocatedPlan, err := r.CreatePlanAllocated(ctx, PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000001501", TargetID: explicitTarget, PlanDigest: explicitPlan.PlanDigest, CompiledGraphDigest: explicitPlan.CompiledGraphDigest, CompiledConfigDigest: explicitPlan.CompiledConfigDigest, SecurityDomainFingerprint: explicitPlan.SecurityDomainFingerprint, ArtifactDigest: explicitPlan.ArtifactDigest, QualificationDigest: explicitPlan.QualificationDigest})
+	allocatedInput := richPlanInputFixture(t, "0198f2c0-7c7a-7f00-8a11-000000001501", explicitTarget, "project_explicit")
+	allocatedInput.PlanRevision = 0
+	allocatedPlan, err := r.CreatePlanAllocated(ctx, allocatedInput)
 	if err != nil || allocatedPlan.PlanRevision != 8 {
 		t.Fatalf("post-explicit plan allocation = %#v, %v", allocatedPlan, err)
 	}
@@ -120,7 +140,7 @@ func TestPostgresFreshTargetPlanAllocationAndCandidateConcurrency(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, plan, err := r.CreateTargetAndPlanAllocatedTx(ctx, tx, TargetInput{TargetID: target, ProjectID: "project_fresh", Environment: "prod"}, PlanInput{PlanID: planID, TargetID: target, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')})
+	_, plan, err := r.CreateTargetAndPlanAllocatedTx(ctx, tx, TargetInput{TargetID: target, ProjectID: "project_fresh", Environment: "prod"}, richPlanInputFixture(t, planID, target, "project_fresh"))
 	if err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
@@ -177,7 +197,11 @@ func TestPostgresFreshTargetPlanAllocationAndCandidateConcurrency(t *testing.T) 
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: explicitTarget, ProjectID: "project_explicit_candidate", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: explicitPlanID, TargetID: explicitTarget, PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}); err != nil {
+	if _, err := r.CreatePlan(ctx, func() PlanInput {
+		p := richPlanInputFixture(t, explicitPlanID, explicitTarget, "project_explicit_candidate")
+		p.PlanRevision = 1
+		return p
+	}()); err != nil {
 		t.Fatal(err)
 	}
 	explicitCandidate := CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000002501", TargetID: explicitTarget, PlanID: explicitPlanID, CandidateRevision: 7, ArtifactDigest: testDigest('e')}
@@ -203,7 +227,9 @@ func TestPostgresGenerationRevisionAllocationReplayRollbackAndConcurrency(t *tes
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: target, ProjectID: "project_generation", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlanAllocated(ctx, PlanInput{PlanID: planID, TargetID: target, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: artifactDigest, QualificationDigest: testDigest('3')}); err != nil {
+	planInput := richPlanInputFixture(t, planID, target, "project_generation")
+	planDigest, artifactDigest = planInput.PlanDigest, planInput.ArtifactDigest
+	if _, err := r.CreatePlanAllocated(ctx, planInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidateAllocated(ctx, CandidateInput{CandidateID: candidateID, TargetID: target, PlanID: planID, ArtifactDigest: artifactDigest}); err != nil {

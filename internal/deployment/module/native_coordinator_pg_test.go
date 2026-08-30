@@ -195,16 +195,34 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.CreateTarget(ctx, deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: digest('a'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	createdAt := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	richPlan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
+		ID: planID, TargetID: targetID, ProjectID: "project_sales", Environment: "prod",
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: digest('e'),
+		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: digest('e'), CompilerDigest: digest('b'), ExecutableDigest: digest('4'), DependencyDigest: digest('5'), ConfigDigest: digest('c'), BindingDigest: digest('d'), RuntimeDigest: digest('0'), CapabilityDigest: digest('9')},
+		Provenance: deployment.DeliveryProvenance{Builder: "native-coordinator-test"},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), ExpiresAt: createdAt.Add(time.Hour)},
+		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "native coordinator fixture", PhysicalWorkStatement: "seal fixture snapshot", ReuseStatement: "no fixture reuse", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact native snapshot", Steps: []deployment.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify native snapshot", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
+		CreatedAt:  createdAt,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDocument, err := json.Marshal(richPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDigest := richPlan.Digest
+	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), QualificationRequired: true, PlanDocument: planDocument, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: digest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.BeginBuildAttempt(ctx, deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder", PhysicalPoolID: "pool", FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Namespace: "candidate/attempt", SessionIdentity: "session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := repo.BeginBuildAttempt(ctx, deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder", PhysicalPoolID: "pool", FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/attempt", SessionIdentity: "session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	commitMarker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-native", GenerationID: generationID, AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Project: "project_sales", Environment: "prod", PhysicalPoolID: "pool"}
+	commitMarker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-native", GenerationID: generationID, AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Project: "project_sales", Environment: "prod", PhysicalPoolID: "pool"}
 	markerJSON, err := commitMarker.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
@@ -216,7 +234,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.CommitBuildAttempt(ctx, deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: digest('a'), CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.QualifyCandidate(ctx, candidateID, sealID, digest('3')); err != nil {
@@ -225,7 +243,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.ApproveCandidate(ctx, deploymentpostgres.DeliveryApproval{ApprovalID: uuid.New().String(), CandidateID: candidateID, Decision: "approved", Evidence: json.RawMessage(`{"review":"ok"}`)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateGeneration(ctx, deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: digest('a'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), ServingArtifactDigest: digest('e'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), GenerationRevision: 1}); err != nil {
+	if _, err := repo.CreateGeneration(ctx, deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), ServingArtifactDigest: digest('e'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), GenerationRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	events := &nativePGEventPort{repo: eventspostgres.New()}

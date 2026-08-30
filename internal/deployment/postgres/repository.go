@@ -63,7 +63,11 @@ var (
 const (
 	maxText     = 255
 	maxEvidence = 32768
-	maxLease    = 24 * time.Hour
+	// maxPlanDocument bounds the complete canonical deployment.DeliveryPlan
+	// persisted for native build rehydration. It is intentionally independent
+	// from the smaller redacted evidence projection limit.
+	maxPlanDocument = 1 << 20
+	maxLease        = 24 * time.Hour
 )
 
 // DeliveryTarget is the single mutable project/environment target fence.
@@ -90,8 +94,13 @@ type DeliveryPlan struct {
 	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint string
 	ArtifactDigest, QualificationDigest                                  string
 	QualificationRequired                                                bool
-	Evidence                                                             json.RawMessage
-	CreatedAt                                                            time.Time
+	// PlanDocument is the complete canonical JSON serialization of the rich
+	// deployment.DeliveryPlan. PostgreSQL stores this document as jsonb; the
+	// repository canonicalizes it again on reads so native builders always
+	// receive the exact execution contract rather than a projection.
+	PlanDocument json.RawMessage
+	Evidence     json.RawMessage
+	CreatedAt    time.Time
 }
 type PlanInput = DeliveryPlan
 type DeliveryPlanInput = DeliveryPlan
@@ -601,6 +610,120 @@ func canonicalObject(raw json.RawMessage, max int, allowEmpty bool) (json.RawMes
 	return b, nil
 }
 
+// canonicalPlanDocument validates and canonicalizes the complete rich
+// deployment plan document. Plan creation requires the caller's bytes to be
+// the canonical serialization emitted by deployment.NewDeliveryPlan; reads
+// from PostgreSQL jsonb use normalizeStoredPlanDocument because jsonb may
+// reorder object keys while preserving the same value.
+func canonicalPlanDocument(raw json.RawMessage) (json.RawMessage, deployment.DeliveryPlan, error) {
+	if len(raw) == 0 || len(raw) > maxPlanDocument {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	var plan deployment.DeliveryPlan
+	if err := strictjson.DecodeWithOptions(raw, &plan, strictjson.Options{MaxBytes: maxPlanDocument}); err != nil {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	normalized, err := deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		return nil, deployment.DeliveryPlan{}, fmt.Errorf("%w: plan document: %v", ErrInvalid, err)
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil || len(encoded) > maxPlanDocument || !bytes.Equal(raw, encoded) {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	return encoded, normalized, nil
+}
+
+func normalizeStoredPlanDocument(raw json.RawMessage) (json.RawMessage, deployment.DeliveryPlan, error) {
+	if len(raw) == 0 || len(raw) > maxPlanDocument {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	var plan deployment.DeliveryPlan
+	if err := strictjson.DecodeWithOptions(raw, &plan, strictjson.Options{MaxBytes: maxPlanDocument}); err != nil {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	normalized, err := deployment.NewDeliveryPlan(plan)
+	if err != nil {
+		return nil, deployment.DeliveryPlan{}, fmt.Errorf("%w: plan document: %v", ErrInvalid, err)
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil || len(encoded) > maxPlanDocument {
+		return nil, deployment.DeliveryPlan{}, ErrInvalid
+	}
+	return encoded, normalized, nil
+}
+
+func planDocumentProjectionMatches(plan deployment.DeliveryPlan, in PlanInput) bool {
+	return plan.ID == in.PlanID && plan.TargetID == in.TargetID &&
+		plan.Digest == in.PlanDigest && plan.Execution.ConfigDigest == in.CompiledConfigDigest &&
+		plan.SourceDigest == in.ArtifactDigest &&
+		plan.Governance.AuthorizationDigest == in.SecurityDomainFingerprint &&
+		plan.Governance.QualificationDigest == in.QualificationDigest
+}
+
+func validatePlanTargetScope(ctx context.Context, db DBTX, plan DeliveryPlan) error {
+	richPlan, err := plan.RichPlan()
+	if err != nil {
+		return err
+	}
+	target, err := loadTarget(ctx, db, plan.TargetID)
+	if err != nil {
+		return err
+	}
+	if richPlan.ProjectID.String() != target.ProjectID || richPlan.Environment != target.Environment {
+		return fmt.Errorf("%w: plan document scope differs from target", ErrConflict)
+	}
+	return nil
+}
+
+func samePlanDocument(a, b []byte) bool {
+	left, _, leftErr := normalizeStoredPlanDocument(a)
+	right, _, rightErr := normalizeStoredPlanDocument(b)
+	return leftErr == nil && rightErr == nil && bytes.Equal(left, right)
+}
+
+// RichPlan rehydrates the complete canonical deployment contract retained in
+// PlanDocument. The same strict decoding and projection checks used by reads
+// are applied again so native orchestration cannot accidentally execute an
+// unvalidated document supplied by a caller.
+func (p DeliveryPlan) RichPlan() (deployment.DeliveryPlan, error) {
+	_, richPlan, err := normalizeStoredPlanDocument(p.PlanDocument)
+	if err != nil {
+		return deployment.DeliveryPlan{}, fmt.Errorf("%w: plan document is invalid", ErrConflict)
+	}
+	if !planDocumentProjectionMatches(richPlan, PlanInput{
+		PlanID: p.PlanID, TargetID: p.TargetID, PlanDigest: p.PlanDigest,
+		CompiledConfigDigest: p.CompiledConfigDigest, SecurityDomainFingerprint: p.SecurityDomainFingerprint,
+		ArtifactDigest: p.ArtifactDigest, QualificationDigest: p.QualificationDigest,
+	}) {
+		return deployment.DeliveryPlan{}, fmt.Errorf("%w: plan projections differ from plan document", ErrConflict)
+	}
+	return richPlan, nil
+}
+
+func mapPlanRow(row depdb.GetPlanRow) (DeliveryPlan, error) {
+	document, richPlan, err := normalizeStoredPlanDocument(row.PlanDocument)
+	if err != nil {
+		return DeliveryPlan{}, fmt.Errorf("%w: persisted plan document is invalid", ErrConflict)
+	}
+	p := DeliveryPlan{
+		PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision,
+		PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest,
+		CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint,
+		ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest,
+		QualificationRequired: row.QualificationRequired, PlanDocument: append([]byte(nil), document...),
+		Evidence: append([]byte(nil), row.Evidence...), CreatedAt: dbTime(row.CreatedAt),
+	}
+	if !planDocumentProjectionMatches(richPlan, PlanInput{
+		PlanID: p.PlanID, TargetID: p.TargetID, PlanDigest: p.PlanDigest,
+		CompiledConfigDigest: p.CompiledConfigDigest, QualificationDigest: p.QualificationDigest,
+		QualificationRequired: p.QualificationRequired,
+	}) {
+		return DeliveryPlan{}, fmt.Errorf("%w: persisted plan projections differ from plan document", ErrConflict)
+	}
+	return p, nil
+}
+
 func canonicalNonEmpty(raw json.RawMessage, max int) (json.RawMessage, error) {
 	return canonicalObject(raw, max, false)
 }
@@ -856,42 +979,63 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 	if err != nil {
 		return DeliveryPlan{}, fmt.Errorf("%w: plan evidence", ErrInvalid)
 	}
-	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence})
+	planDocument, richPlan, err := canonicalPlanDocument(in.PlanDocument)
+	if err != nil {
+		return DeliveryPlan{}, fmt.Errorf("%w: plan document", ErrInvalid)
+	}
+	if !planDocumentProjectionMatches(richPlan, in) {
+		return DeliveryPlan{}, fmt.Errorf("%w: plan projections differ from plan document", ErrConflict)
+	}
+	targetRow, err := loadTarget(ctx, db, target)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if richPlan.ProjectID.String() != targetRow.ProjectID || richPlan.Environment != targetRow.Environment {
+		return DeliveryPlan{}, fmt.Errorf("%w: plan document scope differs from target", ErrConflict)
+	}
+	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, PlanDocument: planDocument, Evidence: evidence})
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
 	return loadPlan(ctx, db, id, in)
 }
 
-func planAllocationInput(in PlanInput) (id, target string, evidence []byte, err error) {
+func planAllocationInput(in PlanInput) (id, target string, evidence, planDocument []byte, err error) {
 	if in.PlanRevision != 0 {
-		return "", "", nil, ErrInvalid
+		return "", "", nil, nil, ErrInvalid
 	}
 	id, err = uuidID(in.PlanID, "plan id", true)
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, nil, err
 	}
 	target, err = textID(in.TargetID, "target id")
 	if err != nil {
-		return "", "", nil, err
+		return "", "", nil, nil, err
 	}
 	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest, "qualification digest": in.QualificationDigest} {
 		if _, err := digest(value, label); err != nil {
-			return "", "", nil, err
+			return "", "", nil, nil, err
 		}
 	}
 	evidence, err = canonicalObject(in.Evidence, 65536, true)
 	if err != nil {
-		return "", "", nil, fmt.Errorf("%w: plan evidence", ErrInvalid)
+		return "", "", nil, nil, fmt.Errorf("%w: plan evidence", ErrInvalid)
 	}
-	return id, target, evidence, nil
+	planDocument, richPlan, documentErr := canonicalPlanDocument(in.PlanDocument)
+	if documentErr != nil {
+		return "", "", nil, nil, fmt.Errorf("%w: plan document", ErrInvalid)
+	}
+	if !planDocumentProjectionMatches(richPlan, in) {
+		return "", "", nil, nil, fmt.Errorf("%w: plan projections differ from plan document", ErrConflict)
+	}
+	return id, target, evidence, planDocument, nil
 }
 
 func planImmutableMatches(p DeliveryPlan, in PlanInput, target, id string, evidence []byte) bool {
 	return p.PlanID == id && p.TargetID == target && p.PlanDigest == in.PlanDigest &&
 		p.CompiledGraphDigest == in.CompiledGraphDigest && p.CompiledConfigDigest == in.CompiledConfigDigest &&
 		p.SecurityDomainFingerprint == in.SecurityDomainFingerprint && p.ArtifactDigest == in.ArtifactDigest && p.QualificationDigest == in.QualificationDigest &&
-		p.QualificationRequired == in.QualificationRequired && sameCanonical(p.Evidence, evidence)
+		p.QualificationRequired == in.QualificationRequired && sameCanonical(p.Evidence, evidence) && samePlanDocument(p.PlanDocument, in.PlanDocument)
 }
 
 func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in PlanInput, evidence []byte) (DeliveryPlan, error) {
@@ -902,7 +1046,13 @@ func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in P
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p, mapErr := mapPlanRow(row)
+	if mapErr != nil {
+		return DeliveryPlan{}, mapErr
+	}
+	if scopeErr := validatePlanTargetScope(ctx, db, p); scopeErr != nil {
+		return DeliveryPlan{}, scopeErr
+	}
 	if !planImmutableMatches(p, in, target, id, evidence) {
 		return DeliveryPlan{}, ErrConflict
 	}
@@ -910,7 +1060,7 @@ func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in P
 }
 
 func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
-	id, target, evidence, err := planAllocationInput(in)
+	id, target, evidence, planDocument, err := planAllocationInput(in)
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -924,6 +1074,17 @@ func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPl
 		}
 		return DeliveryPlan{}, err
 	}
+	richPlan, richPlanErr := DeliveryPlan{PlanID: id, TargetID: target, PlanDigest: in.PlanDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, PlanDocument: planDocument}.RichPlan()
+	if richPlanErr != nil {
+		return DeliveryPlan{}, richPlanErr
+	}
+	targetRow, targetErr := loadTarget(ctx, db, target)
+	if targetErr != nil {
+		return DeliveryPlan{}, targetErr
+	}
+	if richPlan.ProjectID.String() != targetRow.ProjectID || richPlan.Environment != targetRow.Environment {
+		return DeliveryPlan{}, fmt.Errorf("%w: plan document scope differs from target", ErrConflict)
+	}
 	if existing, lookupErr := loadPlanForAllocation(ctx, db, id, target, in, evidence); lookupErr == nil {
 		return existing, nil
 	} else if !errors.Is(lookupErr, ErrNotFound) {
@@ -933,15 +1094,14 @@ func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPl
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence}); err != nil {
+	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, PlanDocument: planDocument, Evidence: evidence}); err != nil {
 		return DeliveryPlan{}, err
 	}
 	allocated := in
-	allocated.PlanID, allocated.TargetID, allocated.PlanRevision, allocated.Evidence = id, target, revision, evidence
+	allocated.PlanID, allocated.TargetID, allocated.PlanRevision, allocated.PlanDocument, allocated.Evidence = id, target, revision, planDocument, evidence
 	return loadPlan(ctx, db, id, allocated)
 }
 func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (DeliveryPlan, error) {
-	var p DeliveryPlan
 	row, err := depdb.New(db).GetPlan(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryPlan{}, ErrNotFound
@@ -949,10 +1109,15 @@ func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (Deli
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p.PlanID, p.TargetID, p.PlanRevision, p.PlanDigest, p.CompiledGraphDigest, p.CompiledConfigDigest, p.SecurityDomainFingerprint, p.ArtifactDigest, p.QualificationDigest, p.QualificationRequired, p.CreatedAt = row.PlanID, row.TargetID, row.PlanRevision, row.PlanDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.ArtifactDigest, row.QualificationDigest, row.QualificationRequired, dbTime(row.CreatedAt)
-	p.Evidence = append([]byte(nil), row.Evidence...)
+	p, mapErr := mapPlanRow(row)
+	if mapErr != nil {
+		return DeliveryPlan{}, mapErr
+	}
+	if scopeErr := validatePlanTargetScope(ctx, db, p); scopeErr != nil {
+		return DeliveryPlan{}, scopeErr
+	}
 	expectedEvidence, _ := canonicalObject(expected.Evidence, 65536, true)
-	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationDigest != expected.QualificationDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) {
+	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationDigest != expected.QualificationDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) || !samePlanDocument(p.PlanDocument, expected.PlanDocument) {
 		return DeliveryPlan{}, ErrConflict
 	}
 	return p, nil
@@ -973,7 +1138,13 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p, err := mapPlanRow(row)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if err := validatePlanTargetScope(contextOrBackground(ctx), db, p); err != nil {
+		return DeliveryPlan{}, err
+	}
 	return p, nil
 }
 
@@ -995,7 +1166,13 @@ func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p, err := mapPlanRow(row)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if err := validatePlanTargetScope(contextOrBackground(ctx), tx, p); err != nil {
+		return DeliveryPlan{}, err
+	}
 	return p, nil
 }
 func (r *Repository) LoadPlan(ctx context.Context, id string) (DeliveryPlan, error) {

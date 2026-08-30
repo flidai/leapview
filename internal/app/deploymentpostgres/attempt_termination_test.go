@@ -44,8 +44,9 @@ func (s *attemptTerminationDuckLakeStub) MarkAttemptIndeterminateTx(ctx context.
 	return got, err
 }
 
-func uniqueTerminationFixture(index int) candidateAdmissionFixture {
-	fixture := candidateAdmissionFixtureInput()
+func uniqueTerminationFixture(t *testing.T, index int) candidateAdmissionFixture {
+	t.Helper()
+	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Lease.LeaseID = "0198f2c0-7c7a-7f00-8a11-0000000004" + string(rune('0'+index)) + "1"
 	fixture.Plan.PlanID = "0198f2c0-7c7a-7f00-8a11-0000000004" + string(rune('0'+index)) + "2"
 	fixture.Input.Attempt.PlanID = fixture.Plan.PlanID
@@ -62,6 +63,8 @@ func uniqueTerminationFixture(index int) candidateAdmissionFixture {
 	fixture.Candidate.CandidateID = fixture.Input.Attempt.CandidateID
 	fixture.Candidate.TargetID = fixture.Target.TargetID
 	fixture.Candidate.PlanID = fixture.Plan.PlanID
+	fixture.Plan = nativePlanFixture(t, fixture.Plan, fixture.Target.ProjectID)
+	fixture.Input.Attempt.PlanDigest = fixture.Plan.PlanDigest
 	fixture.ExpiresAt = fixture.Input.Lease.ExpiresAt
 	return fixture
 }
@@ -81,7 +84,7 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 		t.Fatal(err)
 	}
 
-	aborted := uniqueTerminationFixture(1)
+	aborted := uniqueTerminationFixture(t, 1)
 	seedCandidateAdmissionFixture(t, delivery, ducklake, aborted)
 	admission, _ := NewCandidateBuildAttemptAdmission(delivery, ducklake)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), aborted.Input); err != nil {
@@ -105,7 +108,7 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 		t.Fatalf("stale abort fence error = %v", err)
 	}
 
-	indeterminate := uniqueTerminationFixture(2)
+	indeterminate := uniqueTerminationFixture(t, 2)
 	seedCandidateAdmissionFixture(t, delivery, ducklake, indeterminate)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), indeterminate.Input); err != nil {
 		t.Fatal(err)
@@ -119,7 +122,7 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 		t.Fatalf("exact indeterminate replay = %#v, %v", replay, err)
 	}
 
-	failure := uniqueTerminationFixture(3)
+	failure := uniqueTerminationFixture(t, 3)
 	seedCandidateAdmissionFixture(t, delivery, ducklake, failure)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), failure.Input); err != nil {
 		t.Fatal(err)
@@ -145,7 +148,7 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 		t.Fatalf("abort after injected failure: %v", err)
 	}
 
-	tampered := uniqueTerminationFixture(4)
+	tampered := uniqueTerminationFixture(t, 4)
 	seedCandidateAdmissionFixture(t, delivery, ducklake, tampered)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), tampered.Input); err != nil {
 		t.Fatal(err)
@@ -166,7 +169,7 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 		t.Fatalf("DuckLake was not rolled back after tampered output = %#v, %v", got, err)
 	}
 
-	expired := uniqueTerminationFixture(5)
+	expired := uniqueTerminationFixture(t, 5)
 	expired.ExpiresAt = time.Now().UTC().Add(750 * time.Millisecond)
 	expired.Input.Lease.ExpiresAt = expired.ExpiresAt
 	expired.Input.Attempt.LeaseExpiresAt = expired.ExpiresAt
