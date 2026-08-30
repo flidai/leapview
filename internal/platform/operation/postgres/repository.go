@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -89,6 +90,12 @@ const (
 // UnknownOutcome is persisted when external work may have committed but the
 // response was lost. Its bytes are stable and replayed exactly.
 var UnknownOutcome = json.RawMessage(`{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}`)
+
+// ExpiredAttemptEvidence is the stable positive evidence recorded when an
+// operation lease expires after an external attempt was bound. The external
+// commit outcome remains unknown, but the authority can now project a valid
+// indeterminate record for reconciliation instead of fabricating completion.
+var ExpiredAttemptEvidence = json.RawMessage(`{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}`)
 
 // AcquireInput identifies one scoped request. Request is optional when the
 // caller already computed RequestDigest; when present, its canonical SHA-256
@@ -241,7 +248,7 @@ func (r *Repository) Acquire(ctx context.Context, in AcquireInput) (AcquireResul
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if r == nil || r.db == nil {
+	if r == nil || !operationDBConfigured(r.db) {
 		return AcquireResult{}, ErrInvalid
 	}
 	b, ok := r.db.(beginner)
@@ -268,7 +275,7 @@ func (r *Repository) Acquire(ctx context.Context, in AcquireInput) (AcquireResul
 // closes the handoff window in which a short lease could expire after
 // AcquireTx committed but before the caller persisted its attempt identity.
 func (r *Repository) AcquireWithAttempt(ctx context.Context, in AcquireInput, attemptIdentity string) (AcquireResult, error) {
-	if r == nil || r.db == nil {
+	if r == nil || !operationDBConfigured(r.db) {
 		return AcquireResult{}, ErrInvalid
 	}
 	if attemptIdentity == "" || attemptIdentity != strings.TrimSpace(attemptIdentity) || len(attemptIdentity) > 512 {
@@ -402,17 +409,23 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 		// Expiry with an external attempt says nothing about external commit.
 		// Fence the old owner and retain an indeterminate terminal record;
 		// reconciliation evidence is required before replay can resolve it.
-		_, err := operationdb.New(tx).MarkOperationIndeterminate(ctx, operationdb.MarkOperationIndeterminateParams{
+		tag, err := operationdb.New(tx).MarkOperationIndeterminate(ctx, operationdb.MarkOperationIndeterminateParams{
 			UpdatedAt: timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
 		})
 		if err != nil {
 			return AcquireResult{}, err
 		}
-		op.State = StateIndeterminate
-		op.FencingGeneration++
-		op.Outcome = append(json.RawMessage(nil), UnknownOutcome...)
-		op.UpdatedAt = now
-		op.TerminalAt = now
+		if tag.RowsAffected() != 1 {
+			return AcquireResult{}, ErrConflict
+		}
+		persisted, err := operationdb.New(tx).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+		if err != nil {
+			return AcquireResult{}, err
+		}
+		op, err = operationFromRow(persisted)
+		if err != nil {
+			return AcquireResult{}, err
+		}
 		return AcquireResult{Status: StatusIndeterminate, Operation: op, Replay: true}, nil
 	}
 	if op.OwnerID != in.OwnerID {
@@ -423,7 +436,7 @@ func (r *Repository) AcquireTx(ctx context.Context, tx Tx, in AcquireInput) (Acq
 
 // Get returns the durable operation record without acquiring its lease.
 func (r *Repository) Get(ctx context.Context, scope, idempotencyKey string) (Operation, error) {
-	if r == nil || r.db == nil {
+	if r == nil || !operationDBConfigured(r.db) {
 		return Operation{}, ErrInvalid
 	}
 	if ctx == nil {
@@ -831,7 +844,7 @@ func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limi
 }
 
 func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	if m == nil || m.db == nil {
+	if m == nil || !operationDBConfigured(m.db) {
 		return ErrInvalid
 	}
 	if ctx == nil {
@@ -853,7 +866,7 @@ func (m *Maintenance) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 }
 
 func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
-	if r == nil || r.db == nil {
+	if r == nil || !operationDBConfigured(r.db) {
 		return ErrInvalid
 	}
 	if ctx == nil {
@@ -872,6 +885,19 @@ func (r *Repository) withTx(ctx context.Context, fn func(pgx.Tx) error) error {
 		return err
 	}
 	return tx.Commit(ctx)
+}
+
+func operationDBConfigured(db any) bool {
+	if db == nil {
+		return false
+	}
+	value := reflect.ValueOf(db)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
 }
 
 func (r *Repository) transitionError(ctx context.Context, tx Tx, lease Lease) error {

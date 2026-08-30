@@ -146,16 +146,24 @@ BEGIN
     IF NEW.updated_at < OLD.updated_at THEN
         RAISE EXCEPTION 'operation updated_at must be monotonic';
     END IF;
+    IF NEW.updated_at > clock_timestamp() THEN
+        RAISE EXCEPTION 'operation updated_at cannot be in the future';
+    END IF;
     IF NEW.fencing_generation < OLD.fencing_generation THEN
         RAISE EXCEPTION 'operation fencing generation cannot decrease';
     END IF;
 
     IF OLD.state = 'pending' AND NEW.state = 'pending' THEN
         IF NEW.outcome IS DISTINCT FROM OLD.outcome
+           OR NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
            OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
            OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
            OR NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
             RAISE EXCEPTION 'pending operation evidence is immutable';
+        END IF;
+        IF NEW.lease_expires_at <= clock_timestamp()
+           OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours' THEN
+            RAISE EXCEPTION 'pending operation lease expiry is outside the bounded window';
         END IF;
         IF OLD.attempt_id IS NULL AND OLD.attempt_identity IS NULL THEN
             IF (NEW.attempt_id IS NULL) <> (NEW.attempt_identity IS NULL) THEN
@@ -165,16 +173,24 @@ BEGIN
            OR NEW.attempt_identity IS DISTINCT FROM OLD.attempt_identity THEN
             RAISE EXCEPTION 'pending attempt identity can only bind once';
         END IF;
-        IF NEW.owner_id IS DISTINCT FROM OLD.owner_id THEN
-            IF NEW.fencing_generation <> OLD.fencing_generation + 1
-               OR OLD.attempt_id IS NOT NULL
+        IF NEW.fencing_generation = OLD.fencing_generation + 1 THEN
+            IF OLD.attempt_id IS NOT NULL
+               OR OLD.lease_expires_at > clock_timestamp()
                OR NEW.lease_expires_at <= OLD.lease_expires_at THEN
                 RAISE EXCEPTION 'pending takeover must advance the fence exactly once';
             END IF;
-        ELSIF NEW.fencing_generation <> OLD.fencing_generation THEN
-            RAISE EXCEPTION 'pending owner fence is immutable';
-        ELSIF NEW.lease_expires_at < OLD.lease_expires_at THEN
-            RAISE EXCEPTION 'pending lease may only extend';
+        ELSIF NEW.fencing_generation = OLD.fencing_generation THEN
+            IF NEW.owner_id IS DISTINCT FROM OLD.owner_id THEN
+                RAISE EXCEPTION 'pending owner change requires fenced takeover';
+            END IF;
+            IF OLD.lease_expires_at <= clock_timestamp() THEN
+                RAISE EXCEPTION 'expired pending operation requires fenced takeover or reconciliation';
+            END IF;
+            IF NEW.lease_expires_at < OLD.lease_expires_at THEN
+                RAISE EXCEPTION 'pending lease may only extend';
+            END IF;
+        ELSE
+            RAISE EXCEPTION 'pending owner fence must remain stable or advance exactly once';
         END IF;
     ELSIF OLD.state = 'pending' AND NEW.state IN ('completed', 'failed') THEN
         IF NEW.fencing_generation <> OLD.fencing_generation
@@ -183,7 +199,10 @@ BEGIN
            OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
            OR NEW.attempt_identity IS DISTINCT FROM OLD.attempt_identity
            OR NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
-           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence THEN
+           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
+           OR OLD.lease_expires_at <= clock_timestamp()
+           OR NEW.terminal_at IS DISTINCT FROM NEW.updated_at
+           OR NEW.expires_at IS DISTINCT FROM NEW.updated_at + OLD.retention_interval THEN
             RAISE EXCEPTION 'terminal completion cannot change the fence';
         END IF;
     ELSIF OLD.state = 'pending' AND NEW.state = 'indeterminate' THEN
@@ -192,11 +211,34 @@ BEGIN
            OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
            OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
            OR NEW.attempt_identity IS DISTINCT FROM OLD.attempt_identity
-           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence THEN
+           OR NEW.attempt_evidence IS NULL
+           OR NEW.outcome IS DISTINCT FROM '{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}'::jsonb
+           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
+           OR NEW.terminal_at IS DISTINCT FROM NEW.updated_at
+           OR NEW.expires_at IS DISTINCT FROM NEW.updated_at + OLD.retention_interval THEN
             RAISE EXCEPTION 'indeterminate transition must advance the fence';
         END IF;
+        IF OLD.attempt_id IS NULL THEN
+            RAISE EXCEPTION 'indeterminate transition requires a bound attempt';
+        END IF;
+        IF OLD.lease_expires_at <= clock_timestamp()
+           AND NEW.attempt_evidence IS DISTINCT FROM '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb THEN
+            RAISE EXCEPTION 'expired attempt transition requires canonical lease-expiry evidence';
+        END IF;
+        IF OLD.lease_expires_at > clock_timestamp()
+           AND NEW.attempt_evidence IS NOT DISTINCT FROM '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb THEN
+            RAISE EXCEPTION 'active attempt transition cannot claim lease-expiry evidence';
+        END IF;
     ELSIF OLD.state = 'indeterminate' AND NEW.state IN ('completed', 'failed') THEN
-        IF NEW.fencing_generation <> OLD.fencing_generation THEN
+        IF NEW.fencing_generation <> OLD.fencing_generation
+           OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
+           OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
+           OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+           OR NEW.attempt_identity IS DISTINCT FROM OLD.attempt_identity
+           OR NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
+           OR NEW.resolution_evidence IS NULL
+           OR NEW.terminal_at IS DISTINCT FROM NEW.updated_at
+           OR NEW.expires_at IS DISTINCT FROM NEW.updated_at + OLD.retention_interval THEN
             RAISE EXCEPTION 'reconciliation cannot change the fence';
         END IF;
     ELSIF OLD.state = 'indeterminate' AND NEW.state = 'indeterminate' THEN
@@ -214,6 +256,7 @@ BEGIN
         END IF;
     ELSIF OLD.state IN ('completed', 'failed') THEN
         IF NEW.state IS DISTINCT FROM OLD.state
+           OR NEW.updated_at IS DISTINCT FROM OLD.updated_at
            OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
            OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
            OR NEW.fencing_generation IS DISTINCT FROM OLD.fencing_generation

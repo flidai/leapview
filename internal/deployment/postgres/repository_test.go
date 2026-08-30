@@ -21,6 +21,17 @@ import (
 
 func testDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
+func TestRepositoryRejectsTypedNilDatabase(t *testing.T) {
+	var pool *pgxpool.Pool
+	repository := New(pool)
+	if repository.Configured() || repository.TransactionCapable() {
+		t.Fatal("typed-nil PostgreSQL pool was reported as configured")
+	}
+	if _, err := repository.Begin(t.Context()); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("begin with typed-nil pool = %v, want ErrInvalid", err)
+	}
+}
+
 func testCommitMarker(attempt, pool, request, plan string) []byte {
 	marker := ducklake.CommitMarker{
 		SchemaVersion: ducklake.CommitMarkerSchemaVersion,

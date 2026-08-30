@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -469,13 +470,13 @@ func (*Repository) PostgreSQLAuthority() {}
 
 // Configured reports whether the repository has a native database handle.
 // Schema readiness remains the migration/lifecycle owner's responsibility.
-func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
 
 // TransactionCapable reports whether the native handle can begin the
 // caller-owned control-plane transactions required by activation, leasing,
 // and atomic candidate admission.
 func (r *Repository) TransactionCapable() bool {
-	if r == nil || r.db == nil {
+	if r == nil || !nativeDBConfigured(r.db) {
 		return false
 	}
 	_, ok := r.db.(beginner)
@@ -538,10 +539,23 @@ func databaseNow(ctx context.Context, db DBTX) (time.Time, error) {
 }
 
 func requireDB(r *Repository) (DBTX, error) {
-	if r == nil || r.db == nil {
+	if r == nil || !nativeDBConfigured(r.db) {
 		return nil, ErrInvalid
 	}
 	return r.db, nil
+}
+
+func nativeDBConfigured(db DBTX) bool {
+	if db == nil {
+		return false
+	}
+	value := reflect.ValueOf(db)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
 }
 
 func contextOrBackground(ctx context.Context) context.Context {

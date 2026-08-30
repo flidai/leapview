@@ -47,11 +47,13 @@ RETURNING fencing_generation;
 UPDATE platform.operation
 SET state = 'indeterminate',
     outcome = '{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and requires reconciliation evidence"}'::jsonb,
+    attempt_evidence = '{"code":"IDEMPOTENCY_ATTEMPT_LEASE_EXPIRED","detail":"The operation lease expired after an external attempt was bound"}'::jsonb,
     fencing_generation = fencing_generation + 1,
     updated_at = sqlc.arg(updated_at), terminal_at = sqlc.arg(updated_at),
     expires_at = sqlc.arg(updated_at)::timestamptz + retention_interval
 WHERE scope_id = sqlc.arg(scope_id) AND idempotency_key = sqlc.arg(idempotency_key)
-  AND state = 'pending';
+  AND state = 'pending' AND attempt_id IS NOT NULL
+  AND lease_expires_at <= sqlc.arg(updated_at);
 
 -- name: CompleteOperation :execresult
 UPDATE platform.operation

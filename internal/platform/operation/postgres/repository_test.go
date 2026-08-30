@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -38,6 +39,20 @@ func testRepository(t *testing.T) (*Repository, *pgxpool.Pool) {
 
 func acquireInput(owner string) AcquireInput {
 	return AcquireInput{Scope: "tenant-a", OperationType: "write", IdempotencyKey: "key-1", Request: []byte(`{"b":2,"a":1}`), OwnerID: owner}
+}
+
+func TestRepositoryRejectsTypedNilDatabase(t *testing.T) {
+	var pool *pgxpool.Pool
+	repository := New(pool)
+	if _, err := repository.Acquire(t.Context(), acquireInput("owner")); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("acquire with typed-nil pool = %v, want ErrInvalid", err)
+	}
+	if _, err := repository.Get(t.Context(), "tenant-a", "key-1"); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("get with typed-nil pool = %v, want ErrInvalid", err)
+	}
+	if _, err := NewMaintenance(pool).Prune(t.Context(), time.Now().UTC(), 1); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("prune with typed-nil pool = %v, want ErrInvalid", err)
+	}
 }
 
 func TestPostgreSQL18OperationMaintenanceRoleBoundary(t *testing.T) {
@@ -229,7 +244,23 @@ func TestDirectSQLOperationLifecycleGuard(t *testing.T) {
 	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
 		t.Fatal("direct pending lease shortening unexpectedly succeeded")
 	}
-	if err := r.Complete(t.Context(), acquired.Lease, []byte(`{"ok":true}`)); err != nil {
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET updated_at=clock_timestamp()+interval '1 hour' WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct future operation timestamp unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET lease_expires_at=clock_timestamp()+interval '25 hours', updated_at=clock_timestamp() WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct oversized pending lease unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET owner_id='intruder', fencing_generation=fencing_generation+1, lease_expires_at=lease_expires_at+interval '1 second', updated_at=clock_timestamp() WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("active pending operation was taken over by direct SQL")
+	}
+	attempt, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "guard-attempt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET attempt_evidence='{"forged":true}'::jsonb WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
+		t.Fatal("direct pending attempt evidence mutation unexpectedly succeeded")
+	}
+	if err := r.Complete(t.Context(), attempt.Lease, []byte(`{"ok":true}`)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := p.Exec(t.Context(), `UPDATE platform.operation SET state='pending', terminal_at=NULL WHERE operation_id=$1`, acquired.Lease.OperationID); err == nil {
@@ -239,13 +270,11 @@ func TestDirectSQLOperationLifecycleGuard(t *testing.T) {
 
 func TestExpiredTakeoverAndIndeterminateReconciliation(t *testing.T) {
 	r, _ := testRepository(t)
-	now := time.Now().UTC()
-	r.clock = func() time.Time { return now }
-	old, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "no-attempt", Request: []byte(`{"v":1}`), OwnerID: "old", Lease: time.Second})
+	old, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "no-attempt", Request: []byte(`{"v":1}`), OwnerID: "old", Lease: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(2 * time.Second)
+	time.Sleep(750 * time.Millisecond)
 	next, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "no-attempt", Request: []byte(`{"v":1}`), OwnerID: "new", Lease: time.Second})
 	if err != nil {
 		t.Fatal(err)
@@ -253,10 +282,22 @@ func TestExpiredTakeoverAndIndeterminateReconciliation(t *testing.T) {
 	if next.Status != StatusAcquired || next.Lease.FencingGeneration != old.Lease.FencingGeneration+1 {
 		t.Fatalf("takeover=%#v", next)
 	}
+	sameOwner, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "same-owner-takeover", Request: []byte(`{"v":1}`), OwnerID: "same", Lease: 500 * time.Millisecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(750 * time.Millisecond)
+	sameOwnerNext, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "same-owner-takeover", Request: []byte(`{"v":1}`), OwnerID: "same", Lease: time.Second})
+	if err != nil {
+		t.Fatalf("same-owner expired takeover: %v", err)
+	}
+	if sameOwnerNext.Status != StatusAcquired || sameOwnerNext.Lease.FencingGeneration != sameOwner.Lease.FencingGeneration+1 {
+		t.Fatalf("same-owner takeover=%#v", sameOwnerNext)
+	}
 	if err := r.Complete(t.Context(), old.Lease, []byte(`{"old":true}`)); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale completion=%v", err)
 	}
-	withAttempt, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "external", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: time.Second})
+	withAttempt, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "external", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: 500 * time.Millisecond})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -265,13 +306,23 @@ func TestExpiredTakeoverAndIndeterminateReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	now = now.Add(2 * time.Second)
+	time.Sleep(750 * time.Millisecond)
 	ind, err := r.Acquire(t.Context(), AcquireInput{Scope: "s", IdempotencyKey: "external", Request: []byte(`{"v":1}`), OwnerID: "other"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ind.Status != StatusIndeterminate || ind.Operation.State != StateIndeterminate {
 		t.Fatalf("indeterminate=%#v", ind)
+	}
+	if string(ind.Operation.AttemptEvidence) != string(ExpiredAttemptEvidence) {
+		t.Fatalf("indeterminate attempt evidence = %s, want %s", ind.Operation.AttemptEvidence, ExpiredAttemptEvidence)
+	}
+	persistedIndeterminate, err := r.Get(t.Context(), "s", "external")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedIndeterminate.State != StateIndeterminate || string(persistedIndeterminate.AttemptEvidence) != string(ExpiredAttemptEvidence) || !reflect.DeepEqual(persistedIndeterminate, ind.Operation) {
+		t.Fatalf("persisted indeterminate evidence = %#v", persistedIndeterminate)
 	}
 	if ind.Operation.FencingGeneration != attempt.Lease.FencingGeneration+1 {
 		t.Fatalf("indeterminate fence=%d, want %d", ind.Operation.FencingGeneration, attempt.Lease.FencingGeneration+1)
