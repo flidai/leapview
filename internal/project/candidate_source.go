@@ -53,10 +53,36 @@ type CandidateSourceSnapshot struct {
 	ProjectID               projectgraph.ResourceID
 	ArtifactDigest          string
 	SourceAttestationDigest string
-	ProjectPath             string
-	ProjectDigest           string
-	ProjectArtifactPath     string
-	SourceRevision          *CandidateSourceRevision
+	// ProjectFile is the logical authored manifest path. It is never a host
+	// filesystem path and is safe to carry across native object-backed ports.
+	ProjectFile              string
+	ProjectArtifactObjectKey string
+	ManifestObjectKey        string
+	ProjectPath              string
+	ProjectDigest            string
+	ProjectArtifactPath      string
+	SourceRevision           *CandidateSourceRevision
+}
+
+// CandidateSourceObjectRef is an immutable object-store reference. ObjectKey
+// is opaque to callers; it must never be interpreted as a local filesystem
+// path.
+type CandidateSourceObjectRef struct {
+	Path                  string
+	Digest                string
+	SizeBytes             int64
+	ObjectKey             string
+	ContentType           string
+	MetadataDigest        string
+	StorageSecurityDomain string
+}
+
+// CandidateSourceObjectReader exposes retained source bytes through exact
+// object-backed readers. Implementations must not return worktree paths.
+type CandidateSourceObjectReader interface {
+	SourceObjectRefs(context.Context, CandidateSourceScope, string) ([]CandidateSourceObjectRef, error)
+	OpenSourceObject(context.Context, CandidateSourceScope, CandidateSourceObjectRef) (io.ReadCloser, error)
+	OpenProjectArtifact(context.Context, CandidateSourceScope, string) (io.ReadCloser, error)
 }
 
 // CandidateSourceSynchronizer owns target-side retention and compiler
