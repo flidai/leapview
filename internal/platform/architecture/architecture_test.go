@@ -2975,6 +2975,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			}
 		}
 	}
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesCI, want) {
+			t.Fatalf("PR Go package validation missing observability check %q", want)
+		}
+	}
 	for _, forbidden := range []string{
 		"push:",
 		"Build and qualify the production image remotely",
@@ -3016,6 +3024,24 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	if strings.Contains(mergeText, "group: merge-validation-${{ github.repository }}") {
 		t.Fatal("merge validation concurrency must not cancel distinct merge-queue candidates")
+	}
+	goPackagesMerge := workflowJobBlock(t, mergeText, "go-packages-validation")
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesMerge, want) {
+			t.Fatalf("merge-queue Go package validation missing observability check %q", want)
+		}
+	}
+	for _, want := range []string{
+		"observability:check:",
+		"task: observability:alerts:check",
+		"task: observability:sli:check",
+	} {
+		if !strings.Contains(string(taskfile), want) {
+			t.Fatalf("Taskfile missing aggregate observability check %q", want)
+		}
 	}
 	artifactText := string(artifactWorkflow)
 	for _, want := range []string{
