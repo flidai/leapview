@@ -1837,7 +1837,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	routes, runtime, platformServices, policy, err := buildApplicationSurfaces(ctx, runtimeMetrics,
 		dataAssemblyInputs{
 			Database: store.SQLDB(), AuditRuntime: auditRuntime, PlatformHealth: store, AdminDatabase: store.SQLDB(),
-			ServingStateRepo: servingStateRepo, StorageRetention: retention,
+			ServingStateRepo: servingStateRepo, RefreshServingStateMutations: servingStateRepo, StorageRetention: retention,
 			AccessRepo: accessRepo,
 		},
 		capabilityAssemblyInputs{

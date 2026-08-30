@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
@@ -46,6 +47,11 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			panic(err)
 		}
 		options.ServingStateRepo = states
+	}
+	if options.RefreshServingStateMutations == nil {
+		if mutations, ok := options.ServingStateRepo.(refreshmodule.ServingStateRepository); ok {
+			options.RefreshServingStateMutations = mutations
+		}
 	}
 	if options.RuntimeHost == nil {
 		environment := servingstate.NormalizeEnvironment(servingstate.Environment(options.DefaultEnvironment))

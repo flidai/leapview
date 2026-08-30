@@ -26,14 +26,14 @@ func TestServiceExecuteClaimedJobActivatesAfterMaterializeAndPrepare(t *testing.
 	runtime := &fakeRuntimeHost{}
 	retention := &fakeRetention{}
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
-		Materializer:  materializer,
-		Runtime:       runtime,
-		Retention:     retention,
-		Publisher:     publisher,
-		Publication:   fakePublication{repo: repo},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:         repo,
+		Artifacts:    fakeArtifactLoader{definition: refreshTestDefinition()},
+		Materializer: materializer,
+		Runtime:      runtime,
+		Retention:    retention,
+		Publisher:    publisher,
+		Publication:  fakePublication{repo: repo},
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
@@ -71,11 +71,11 @@ func TestServiceExecuteClaimedJobMaterializeFailureDoesNotActivate(t *testing.T)
 	ctx := context.Background()
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
-		Materializer:  &fakeMaterializer{err: errors.New("materialize failed")},
-		Runtime:       &fakeRuntimeHost{},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:         repo,
+		Artifacts:    fakeArtifactLoader{definition: refreshTestDefinition()},
+		Materializer: &fakeMaterializer{err: errors.New("materialize failed")},
+		Runtime:      &fakeRuntimeHost{},
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
@@ -103,11 +103,11 @@ func TestServiceExecuteClaimedJobRuntimePrepareFailureDoesNotActivate(t *testing
 	ctx := context.Background()
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
-		Materializer:  &fakeMaterializer{snapshotID: 42},
-		Runtime:       &fakeRuntimeHost{prepareErr: errors.New("prepare failed")},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:         repo,
+		Artifacts:    fakeArtifactLoader{definition: refreshTestDefinition()},
+		Materializer: &fakeMaterializer{snapshotID: 42},
+		Runtime:      &fakeRuntimeHost{prepareErr: errors.New("prepare failed")},
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
@@ -137,11 +137,11 @@ func TestServiceExecuteClaimedJobRuntimeActivationFailureDoesNotPublishOrActivat
 	wantErr := errors.New("runtime activation failed")
 	runtime := &fakeRuntimeHost{activateErr: wantErr}
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
-		Materializer:  &fakeMaterializer{snapshotID: 42},
-		Runtime:       runtime,
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:         repo,
+		Artifacts:    fakeArtifactLoader{definition: refreshTestDefinition()},
+		Materializer: &fakeMaterializer{snapshotID: 42},
+		Runtime:      runtime,
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
@@ -165,10 +165,10 @@ func TestServiceExecuteClaimedJobRequiresAtomicRuntimeHost(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
-		Materializer:  &fakeMaterializer{snapshotID: 42},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:         repo,
+		Artifacts:    fakeArtifactLoader{definition: refreshTestDefinition()},
+		Materializer: &fakeMaterializer{snapshotID: 42},
 	}
 
 	err := service.ExecuteClaimedJob(ctx, JobRecord{
@@ -256,9 +256,9 @@ func TestServiceExecuteClaimedJobPropagatesSupersedeFailure(t *testing.T) {
 func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:      repo,
+		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
 	}
 	result, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
@@ -289,7 +289,7 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 
 func TestServiceQueuePipelineRefreshAcceptsImplicitManualInvocation(t *testing.T) {
 	repo := newFakeRepo()
-	service := Service{ServingStates: repo, Runs: repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()}}
+	service := Service{ServingStates: repo, ServingStateMutations: repo, Runs: repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()}}
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
 		PipelineID: "sales-refresh", TriggerType: TriggerManual,
@@ -309,7 +309,7 @@ func TestServiceQueuePipelineRefreshUsesExactActiveResolver(t *testing.T) {
 	identity.GenerationID = string(repo.activeDeployment.ID)
 	resolved := false
 	service := Service{
-		ServingStates: repo,
+		ServingStates: repo, ServingStateMutations: repo,
 		ResolveActive: func(_ context.Context, requested projectgraph.ServingIdentity) (ServingState, error) {
 			resolved = true
 			if requested != identity {
@@ -372,7 +372,7 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 func TestServiceQueuePipelineRefreshRejectsMismatchedActiveResolver(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
+		ServingStates: repo, ServingStateMutations: repo,
 		ResolveActive: func(context.Context, projectgraph.ServingIdentity) (ServingState, error) {
 			return ServingState{State: repo.activeDeployment, Artifact: repo.activeArtifact}, nil
 		},
@@ -395,8 +395,8 @@ func TestServiceQueuePipelineRefreshPinsCandidateManagedDataRevisions(t *testing
 	repo := newFakeRepo()
 	hook := &fakeCandidateValidationHook{}
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs: repo,
 		Artifacts: fakeArtifactLoader{
 			definition:           refreshTestDefinition(),
 			managedDataRevisions: map[string]string{"olist": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -423,8 +423,8 @@ func TestServiceQueuePipelineRefreshPinsCandidateManagedDataRevisions(t *testing
 func TestServiceQueuePipelineRefreshFailsCandidateWhenManagedDataPinningFails(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs: repo,
 		Artifacts: fakeArtifactLoader{
 			definition:           refreshTestDefinition(),
 			managedDataRevisions: map[string]string{"olist": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},
@@ -447,9 +447,9 @@ func TestServiceQueuePipelineRefreshFailsCandidateWhenManagedDataPinningFails(t 
 func TestServiceQueuePipelineRefreshRejectsSupersededScheduledArtifact(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{
-		ServingStates: repo,
-		Runs:          repo,
-		Artifacts:     fakeArtifactLoader{definition: refreshTestDefinition()},
+		ServingStates: repo, ServingStateMutations: repo,
+		Runs:      repo,
+		Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
 	}
 	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
 		Identity: serviceIdentity, PrincipalID: "principal", EstimatedMemoryBytes: 64 << 20,
@@ -467,7 +467,7 @@ func TestServiceQueuePipelineRefreshRejectsSupersededScheduledArtifact(t *testin
 func TestServiceCreateRefreshCandidateCopiesActiveArtifactMetadata(t *testing.T) {
 	ctx := context.Background()
 	repo := newFakeRepo()
-	service := Service{ServingStates: repo}
+	service := Service{ServingStates: repo, ServingStateMutations: repo}
 	active := ServingState{
 		State: servingstate.State{
 			ID:               "dep_active",

@@ -18,16 +18,33 @@ import (
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
-type ServingStateRepository interface {
+// ServingStateReader is the immutable read surface needed to resolve the
+// active generation and inspect candidate artifacts. Native PostgreSQL
+// serving state intentionally exposes this surface without legacy candidate
+// mutation methods.
+type ServingStateReader interface {
 	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
-	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
-	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
 	ByID(context.Context, servingstate.ID) (servingstate.State, error)
 	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
+}
+
+// ServingStateRepository is the legacy mutable lifecycle used by noncanonical
+// refresh execution. Keeping it as a refinement of ServingStateReader makes
+// the mutation authority explicit while preserving the existing adapter
+// contract for SQLite callers.
+type ServingStateRepository interface {
+	ServingStateReader
+	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
+	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
 	Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error)
 	MarkFailed(context.Context, servingstate.ID, error) error
 }
+
+// ErrServingStateMutationsRequired is returned whenever a legacy refresh path
+// reaches a lifecycle write without an explicitly supplied mutation authority.
+// Canonical delivery paths do not require this authority.
+var ErrServingStateMutationsRequired = errors.New("refresh serving-state mutation authority is required")
 
 type WorkflowRepository interface {
 	RunTreeRepository
@@ -110,7 +127,14 @@ type CanonicalRefreshResult struct {
 }
 
 type Service struct {
-	ServingStates            ServingStateRepository
+	// ServingStates is the read-only serving authority used by both canonical
+	// and legacy refresh flows. Native PostgreSQL composition supplies its
+	// immutable repository directly.
+	ServingStates ServingStateReader
+	// ServingStateMutations is required only for the legacy candidate/activate
+	// flow. Native canonical execution leaves it nil and performs lifecycle
+	// writes through its canonical delivery executor instead.
+	ServingStateMutations    ServingStateRepository
 	ResolveActive            func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
 	ResolveSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
@@ -241,6 +265,9 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	candidate := active
 	if s.CanonicalExecutor == nil {
+		if s.ServingStateMutations == nil {
+			return QueueAssetResult{}, fmt.Errorf("%w for noncanonical execution", ErrServingStateMutationsRequired)
+		}
 		candidate, err = s.CreateRefreshCandidate(ctx, RefreshCandidateInput{Identity: input.Identity, CreatedBy: input.PrincipalID, Active: active, ArtifactGraph: loaded.Graph, ManagedDataRevisions: loaded.ManagedDataRevisions})
 		if err != nil {
 			return QueueAssetResult{}, err
@@ -406,6 +433,9 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 	}
 	if s.ServingStates == nil || s.Runs == nil || s.Artifacts == nil || s.Materializer == nil {
 		return fmt.Errorf("serving state, refresh run, artifact loader, and materializer are required")
+	}
+	if s.ServingStateMutations == nil {
+		return fmt.Errorf("%w for noncanonical execution", ErrServingStateMutationsRequired)
 	}
 	if err := job.Validate(); err != nil {
 		return err
@@ -573,7 +603,10 @@ func (s Service) CreateRefreshCandidate(ctx context.Context, input RefreshCandid
 			return ServingState{}, fmt.Errorf("decode active access policy: %w", err)
 		}
 	}
-	created, err := s.ServingStates.Create(ctx, servingstate.CreateInput{ProjectID: input.Identity.ProjectID, Environment: servingstate.Environment(input.Identity.Environment), CreatedBy: input.CreatedBy, Source: servingstate.SourceRefresh})
+	if s.ServingStateMutations == nil {
+		return ServingState{}, ErrServingStateMutationsRequired
+	}
+	created, err := s.ServingStateMutations.Create(ctx, servingstate.CreateInput{ProjectID: input.Identity.ProjectID, Environment: servingstate.Environment(input.Identity.Environment), CreatedBy: input.CreatedBy, Source: servingstate.SourceRefresh})
 	if err != nil {
 		return ServingState{}, err
 	}
@@ -582,14 +615,14 @@ func (s Service) CreateRefreshCandidate(ctx context.Context, input RefreshCandid
 	for _, hook := range s.CandidateValidationHooks {
 		if hook != nil {
 			if err := hook.AfterArtifactValidation(ctx, created, validation); err != nil {
-				_ = s.ServingStates.MarkFailed(ctx, created.ID, err)
+				_ = s.ServingStateMutations.MarkFailed(ctx, created.ID, err)
 				return ServingState{}, err
 			}
 		}
 	}
-	validated, err := s.ServingStates.SaveValidated(ctx, created.ID, validation, candidateArtifact)
+	validated, err := s.ServingStateMutations.SaveValidated(ctx, created.ID, validation, candidateArtifact)
 	if err != nil {
-		_ = s.ServingStates.MarkFailed(ctx, created.ID, err)
+		_ = s.ServingStateMutations.MarkFailed(ctx, created.ID, err)
 		return ServingState{}, err
 	}
 	return ServingState{State: validated, Artifact: candidateArtifact}, nil
@@ -606,15 +639,24 @@ func (s Service) RecordSnapshot(ctx context.Context, candidate ServingState, sna
 	if snapshotID <= 0 {
 		return fmt.Errorf("serving state snapshot id must be positive")
 	}
-	return s.ServingStates.RecordDuckLakeSnapshot(ctx, candidate.State.ID, snapshotID)
+	if s.ServingStateMutations == nil {
+		return ErrServingStateMutationsRequired
+	}
+	return s.ServingStateMutations.RecordDuckLakeSnapshot(ctx, candidate.State.ID, snapshotID)
 }
 func (s Service) Activate(ctx context.Context, candidate ServingState) (servingstate.State, error) {
 	identity := mustStateIdentity(candidate.State)
-	return s.ServingStates.Activate(ctx, identity.ProjectID, servingstate.Environment(identity.Environment), candidate.State.ID, "")
+	if s.ServingStateMutations == nil {
+		return servingstate.State{}, ErrServingStateMutationsRequired
+	}
+	return s.ServingStateMutations.Activate(ctx, identity.ProjectID, servingstate.Environment(identity.Environment), candidate.State.ID, "")
 }
 func (s Service) MarkFailed(ctx context.Context, state ServingState, cause error) error {
 	if state.State.ID == "" || cause == nil {
 		return nil
 	}
-	return s.ServingStates.MarkFailed(ctx, state.State.ID, cause)
+	if s.ServingStateMutations == nil {
+		return ErrServingStateMutationsRequired
+	}
+	return s.ServingStateMutations.MarkFailed(ctx, state.State.ID, cause)
 }

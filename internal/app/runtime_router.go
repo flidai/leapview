@@ -159,11 +159,12 @@ type httpPolicy struct {
 }
 
 type persistenceInputs struct {
-	agentSettings    agentmodule.Settings
-	agentPersistence *agentmodule.Persistence
-	servingStateRepo servingStateRepository
-	accessRepo       access.Repository
-	auditRecorder    access.AuditIntentRecorder
+	agentSettings                agentmodule.Settings
+	agentPersistence             *agentmodule.Persistence
+	servingStateRepo             servingStateRepository
+	refreshServingStateMutations refreshmodule.ServingStateRepository
+	accessRepo                   access.Repository
+	auditRecorder                access.AuditIntentRecorder
 	// refreshPersistence is the complete capability-owned refresh authority.
 	// Native composition injects this opaque bundle; SQLite is constructed
 	// explicitly by configureRefreshModule only for development callers.
@@ -233,10 +234,14 @@ type dataAssemblyInputs struct {
 	PlatformHealth   platformHealth
 	AdminDatabase    *sql.DB
 	ServingStateRepo servingStateRepository
-	StorageRetention *servingstatemodule.Retention
-	AccessRepo       access.Repository
-	APIIdempotency   idempotency.Store
-	CursorSigning    cursorsigning.Initializer
+	// RefreshServingStateMutations is the explicit legacy SQLite mutation
+	// authority for candidate/activation refresh flows. Native PostgreSQL
+	// composition leaves this nil and uses canonical delivery instead.
+	RefreshServingStateMutations refreshmodule.ServingStateRepository
+	StorageRetention             *servingstatemodule.Retention
+	AccessRepo                   access.Repository
+	APIIdempotency               idempotency.Store
+	CursorSigning                cursorsigning.Initializer
 	// DashboardPublicationReconciler is the explicit native PostgreSQL
 	// activation path. When configured it takes precedence over Database;
 	// callers must not provide a SQLite handle as a production fallback.
@@ -807,6 +812,7 @@ func buildApplicationSurfaces(
 		}
 	}
 	persistence.servingStateRepo = servingStateRepo
+	persistence.refreshServingStateMutations = data.RefreshServingStateMutations
 	retentionStates, _ := servingStateRepo.(servingstatemodule.RetentionRepository)
 	runtime.storageRetention = data.StorageRetention
 	if runtime.storageRetention == nil && !runtimeConfig.SealedServing {

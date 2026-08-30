@@ -27,8 +27,9 @@ func projectRefreshService(persistence persistenceInputs, workflow workflowInput
 		hooks = append(hooks, workflow.managedDataValidation)
 	}
 	return refreshrun.Service{
-		ServingStates: repo,
-		Runtime:       workflow.reloader,
+		ServingStates:         repo,
+		ServingStateMutations: persistence.refreshServingStateMutations,
+		Runtime:               workflow.reloader,
 		Publisher: refreshmodule.Publisher{
 			SemanticModelVersion: func(ctx context.Context, identity projectgraph.ServingIdentity, modelID projectgraph.ResourceID) {
 				if module := dashboards(); module != nil {
