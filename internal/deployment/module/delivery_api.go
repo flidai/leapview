@@ -270,7 +270,7 @@ func (m *Module) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, proj
 		}
 		nativeRequest := NativeDeliveryPlanRequest{
 			ProjectID: intent.ProjectID, TargetID: intent.TargetID, Environment: intent.Environment,
-			PrincipalID: intent.PrincipalID, Operation: string(operation), SourceDigest: intent.SourceDigest,
+			PrincipalID: intent.PrincipalID, SourceOwnerID: intent.SourceOwnerID, Operation: string(operation), SourceDigest: intent.SourceDigest,
 			SourceAttestationDigest: intent.SourceAttestationDigest, IdempotencyKey: idempotencyKey,
 		}
 		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {

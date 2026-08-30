@@ -78,6 +78,36 @@ func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres
 	}, nil
 }
 
+// GetDeliveryEvent reads and validates one exact durable delivery event. It
+// is the post-commit counterpart to AppendDeliveryEvent and shares the
+// caller-owned transaction supplied by the command completer.
+func (a *Adapter) GetDeliveryEvent(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryEventInput) (deploymentpostgres.Event, error) {
+	if a == nil || a.events == nil {
+		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	stored, err := a.events.GetEvent(ctx, tx, input.EventID)
+	if err != nil {
+		return deploymentpostgres.Event{}, err
+	}
+	if stored.EventID != input.EventID || stored.ScopeID != input.ScopeID ||
+		stored.AggregateType != input.AggregateType || stored.AggregateID != input.AggregateID ||
+		stored.EventType != input.EventType || stored.SchemaVersion != input.SchemaVersion ||
+		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 ||
+		!sameCanonical(stored.Payload, input.Payload) {
+		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event identity differs", deploymentpostgres.ErrConflict)
+	}
+	return deploymentpostgres.Event{
+		EventID: stored.EventID, ScopeID: stored.ScopeID, AggregateType: stored.AggregateType,
+		AggregateID: stored.AggregateID, AggregateVersion: stored.AggregateVersion,
+		EventType: stored.EventType, SchemaVersion: stored.SchemaVersion,
+		OccurredAt: stored.OccurredAt, CorrelationID: stored.CorrelationID,
+		Payload: append([]byte(nil), stored.Payload...),
+	}, nil
+}
+
 func canonicalUUIDv7(value string) error {
 	if value == "" || value != strings.TrimSpace(value) {
 		return errors.New("must be a canonical UUID")

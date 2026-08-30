@@ -103,13 +103,38 @@ func (a *Adapter) AppendMutationAudit(ctx context.Context, tx deploymentpostgres
 	return mapAuditEvent(stored), nil
 }
 
+// GetMutationAudit reads and validates one native delivery mutation audit
+// against the complete expected intent. It is used after commit by generated
+// command completion guards; it never begins or ends a transaction.
+func (a *Adapter) GetMutationAudit(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error) {
+	if a == nil || a.audit == nil {
+		return deploymentpostgres.AuditEvent{}, fmt.Errorf("%w: delivery mutation audit adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	intent, err := mutationIntent(input)
+	if err != nil {
+		return deploymentpostgres.AuditEvent{}, err
+	}
+	stored, err := a.audit.GetAuditEvent(ctx, tx, input.AuditID)
+	if err != nil {
+		return deploymentpostgres.AuditEvent{}, normalize(err, "read delivery mutation")
+	}
+	if err := validateStored(stored, intent); err != nil {
+		return deploymentpostgres.AuditEvent{}, err
+	}
+	return mapAuditEvent(stored), nil
+}
+
 func mutationIntent(input deploymentmodule.NativeDeliveryAuditInput) (access.AuditIntent, error) {
 	if input.Outcome != "accepted" {
 		return access.AuditIntent{}, fmt.Errorf("%w: delivery mutation audit outcome is not accepted", deploymentpostgres.ErrInvalid)
 	}
+	operation := input.Operation
+	if operation == "" {
+		operation = "publication"
+	}
 	return access.AuditIntent{
 		EventID: input.AuditID, DomainEventID: input.DomainEventID, ScopeID: input.ScopeID,
-		ActorID: input.ActorID, Source: "deployment", Operation: "publication",
+		ActorID: input.ActorID, Source: "deployment", Operation: operation,
 		Action: input.Action, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID,
 		Outcome: "success", RequestDigest: input.RequestDigest, CorrelationID: input.CorrelationID,
 		AggregateKey: input.AggregateKey, AggregateSequence: input.AggregateSequence,

@@ -42,10 +42,14 @@ type NativeDeliveryCommandCompleter interface {
 // NativeDeliveryPlanRequest contains only authoring intent. Plan identity is
 // allocated by the native authority; callers must not supply a plan UUID.
 type NativeDeliveryPlanRequest struct {
-	ProjectID               projectgraph.ResourceID
-	TargetID                string
-	Environment             string
-	PrincipalID             string
+	ProjectID   projectgraph.ResourceID
+	TargetID    string
+	Environment string
+	PrincipalID string
+	// SourceOwnerID is the retained-source namespace. It is deliberately
+	// separate from PrincipalID so scheduler/reviewer initiated plans can
+	// attest an author-owned source without changing actor evidence.
+	SourceOwnerID           string
 	Operation               string
 	SourceDigest            string
 	SourceAttestationDigest string
@@ -56,7 +60,17 @@ type NativeDeliveryPlanRequest struct {
 // native planner. IDs are UUID-native; target and project identities retain
 // their domain-native forms.
 type NativeDeliveryPlan struct {
-	ID                      uuid.UUID
+	ID uuid.UUID
+	// ActorID, RequestDigest, EventID, and AuditID are internal completion
+	// evidence. The HTTP response intentionally does not expose them; the
+	// production command completer uses them to re-read the exact durable
+	// consequences before acknowledging the mutation.
+	ActorID                 string
+	SourceOwnerID           string
+	IdempotencyKey          string
+	RequestDigest           string
+	EventID                 uuid.UUID
+	AuditID                 uuid.UUID
 	ProjectID               projectgraph.ResourceID
 	TargetID                string
 	Environment             string
@@ -188,6 +202,9 @@ func (r NativeDeliveryPlanRequest) validate(environment string) error {
 		if value == "" || value != strings.TrimSpace(value) {
 			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
 		}
+	}
+	if r.SourceOwnerID != "" && r.SourceOwnerID != strings.TrimSpace(r.SourceOwnerID) {
+		return fmt.Errorf("%w: native delivery source owner is required and canonical", deployment.ErrDeliveryInvalid)
 	}
 	if environment != "" && r.Environment != environment {
 		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)

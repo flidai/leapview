@@ -21,6 +21,30 @@ type Adapter struct {
 
 var _ deploymentmodule.NativeOperationAuthority = (*Adapter)(nil)
 
+// Lookup performs a non-locking exact-idempotency read. Native planners use
+// it only to bypass remote source inspection for an already-terminal replay;
+// AcquireTx remains authoritative for the replay disposition.
+func (a *Adapter) Lookup(ctx context.Context, input deploymentmodule.NativeOperationAcquireInput) (deploymentmodule.NativeOperationRecord, bool, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	stored, err := a.operations.Get(ctx, input.Scope, input.IdempotencyKey)
+	if errors.Is(err, operationpostgres.ErrNotFound) {
+		return deploymentmodule.NativeOperationRecord{}, false, nil
+	}
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, false, mapError(err)
+	}
+	if stored.Scope != input.Scope || stored.OperationType != input.OperationType || stored.IdempotencyKey != input.IdempotencyKey || stored.RequestDigest != input.RequestDigest {
+		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: operation identity differs", deploymentmodule.ErrNativeOperationConflict)
+	}
+	return deploymentmodule.NativeOperationRecord{
+		Scope: stored.Scope, OperationType: stored.OperationType, IdempotencyKey: stored.IdempotencyKey,
+		RequestDigest: stored.RequestDigest, OwnerID: stored.OwnerID, OperationID: stored.OperationID,
+		Outcome: append(json.RawMessage(nil), stored.Outcome...),
+	}, true, nil
+}
+
 // New returns an adapter backed by the supplied operation authority.
 func New(repository *operationpostgres.Repository) *Adapter {
 	return &Adapter{operations: repository}

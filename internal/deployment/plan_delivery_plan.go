@@ -96,7 +96,7 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 		return DeliveryPlan{}, err
 	}
 	plan.Digest, err = canonicalJSONDigest(deliveryPlanCanonical{
-		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
+		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
@@ -114,6 +114,7 @@ func NewPlan(plan DeliveryPlan) (DeliveryPlan, error) { return NewDeliveryPlan(p
 
 type deliveryPlanCanonical struct {
 	ID                 string                `json:"id"`
+	SourceOwnerID      string                `json:"sourceOwnerId,omitempty"`
 	TargetID           string                `json:"targetId"`
 	ProjectID          graph.ResourceID      `json:"projectId"`
 	Environment        string                `json:"environment"`
@@ -240,7 +241,7 @@ func (plan DeliveryPlan) Validate() error {
 		return fmt.Errorf("%w: evidence digest does not match canonical inputs", ErrDeliveryConflict)
 	}
 	expectedPlan, err := canonicalJSONDigest(deliveryPlanCanonical{
-		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
+		ID: plan.ID, SourceOwnerID: plan.SourceOwnerID, TargetID: plan.TargetID, ProjectID: plan.ProjectID, Environment: plan.Environment,
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,

@@ -109,7 +109,7 @@ type NativeDeliveryEventAppender interface {
 // fresh mutation and must be replayed exactly on a retry.
 type NativeDeliveryAuditInput struct {
 	AuditID, DomainEventID, ScopeID, ActorID, Action, ResourceKind, ResourceID string
-	Outcome, RequestDigest, CorrelationID, AggregateKey                        string
+	Operation, Outcome, RequestDigest, CorrelationID, AggregateKey             string
 	AggregateSequence                                                          int64
 	Metadata                                                                   json.RawMessage
 }

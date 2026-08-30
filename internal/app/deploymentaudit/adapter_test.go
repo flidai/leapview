@@ -88,8 +88,17 @@ func TestAppendMutationAuditUsesCallerTransactionAndReplay(t *testing.T) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("exact replay = %v", err)
 	}
+	read, err := adapter.GetMutationAudit(t.Context(), tx, input)
+	if err != nil || read.AuditID != input.AuditID || read.RequestDigest != input.RequestDigest {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("durable audit read = %+v, %v", read, err)
+	}
 	changed := input
 	changed.Action = "publication_cancelled"
+	if _, err := adapter.GetMutationAudit(t.Context(), tx, changed); !errors.Is(err, deploymentpostgres.ErrConflict) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("conflicting read error = %v, want deployment.ErrConflict", err)
+	}
 	if _, err := adapter.AppendMutationAudit(t.Context(), tx, changed); !errors.Is(err, deploymentpostgres.ErrConflict) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("conflicting replay error = %v, want deployment.ErrConflict", err)

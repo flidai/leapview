@@ -105,8 +105,17 @@ func TestAppendDeliveryEventUsesCallerTransactionAndReplay(t *testing.T) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("exact replay = %+v, %v", replay, err)
 	}
+	read, err := adapter.GetDeliveryEvent(t.Context(), tx, input)
+	if err != nil || read.EventID != input.EventID || read.AggregateVersion != 1 {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("durable event read = %+v, %v", read, err)
+	}
 	changed := input
 	changed.Payload = []byte(`{"generation_id":"different"}`)
+	if _, err := adapter.GetDeliveryEvent(t.Context(), tx, changed); !errors.Is(err, deploymentpostgres.ErrConflict) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("conflicting read error = %v, want deployment.ErrConflict", err)
+	}
 	if _, err := adapter.AppendDeliveryEvent(t.Context(), tx, changed); !errors.Is(err, deploymentpostgres.ErrConflict) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("conflicting replay error = %v, want deployment.ErrConflict", err)

@@ -716,7 +716,8 @@ func mapPlanRow(row depdb.GetPlanRow) (DeliveryPlan, error) {
 	}
 	if !planDocumentProjectionMatches(richPlan, PlanInput{
 		PlanID: p.PlanID, TargetID: p.TargetID, PlanDigest: p.PlanDigest,
-		CompiledConfigDigest: p.CompiledConfigDigest, QualificationDigest: p.QualificationDigest,
+		CompiledConfigDigest: p.CompiledConfigDigest, SecurityDomainFingerprint: p.SecurityDomainFingerprint,
+		ArtifactDigest: p.ArtifactDigest, QualificationDigest: p.QualificationDigest,
 		QualificationRequired: p.QualificationRequired,
 	}) {
 		return DeliveryPlan{}, fmt.Errorf("%w: persisted plan projections differ from plan document", ErrConflict)

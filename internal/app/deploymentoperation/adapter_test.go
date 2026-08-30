@@ -90,6 +90,15 @@ func TestOperationAdapterUsesCallerTransactionAndReplay(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	lookedUp, found, err := adapter.Lookup(t.Context(), input)
+	if err != nil || !found || lookedUp.OperationID != acquired.Operation.OperationID || string(lookedUp.Outcome) != string(outcome) {
+		t.Fatalf("operation lookup = %+v found=%v err=%v", lookedUp, found, err)
+	}
+	missing := input
+	missing.IdempotencyKey = "missing"
+	if _, found, err := adapter.Lookup(t.Context(), missing); err != nil || found {
+		t.Fatalf("missing lookup found=%v err=%v", found, err)
+	}
 	tx, err = db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
