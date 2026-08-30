@@ -38,18 +38,20 @@ type DeliveryCandidateBuildInput struct {
 }
 
 // DeliveryTarget is the read-only target fence used by planning and build
-// stale checks.  TargetRevision is the sole publication/build authority.
+// stale checks. TargetRevision is the sole publication/build authority; the
+// active generation and publication IDs are the durable serving pointers.
 type DeliveryTarget struct {
-	TargetID           string
-	ProjectID          string
-	Environment        string
-	ActiveGenerationID string
-	TargetRevision     int64
+	TargetID            string
+	ProjectID           string
+	Environment         string
+	TargetRevision      int64
+	ActiveGenerationID  string
+	ActivePublicationID string
 }
 
 // DeliveryTargetResolver never acquires writer credentials or touches object
-// storage.  Implementations read the authoritative target revision and active
-// generation from the control plane.
+// storage. Implementations read the authoritative target revision and active
+// generation/publication pointers from the control plane.
 type DeliveryTargetResolver interface {
 	ResolveDeliveryTarget(context.Context, string) (DeliveryTarget, error)
 }
