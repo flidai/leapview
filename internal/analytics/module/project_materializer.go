@@ -26,8 +26,10 @@ func (e duckDBProjectMaterializer) Materialize(ctx context.Context, request anal
 		CredentialResolver: e.credentials,
 		ConnectionResolver: e.connectionResolver(request),
 		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
-		Environment: string(servingstate.NormalizeEnvironment(request.Environment)),
-		TargetType:  request.TargetType, TargetID: request.TargetID.String(),
+		CandidateID:       request.CandidateID,
+		Environment:       string(servingstate.NormalizeEnvironment(request.Environment)),
+		RelationNamespace: request.RelationNamespace,
+		TargetType:        request.TargetType, TargetID: request.TargetID.String(),
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SkipInitialRefresh: true, MaterializationOnly: true,
 	})

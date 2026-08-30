@@ -380,6 +380,10 @@ func (p *PreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.M
 	return planModelTable(ctx, p.session, p.model, tableName, table, p.relations)
 }
 
+func (p *PreparedSources) PlanModelTableInNamespace(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	return planModelTableInNamespace(ctx, p.session, p.model, tableName, table, p.relations, relationNamespace)
+}
+
 // SourceObservations captures all source evidence while the resolved source
 // session remains live.  The returned record contains only schemas and
 // target-owned timestamps/revision tokens; no relation text or credentials
@@ -585,16 +589,21 @@ func safeSourceError(source string, _ error) error {
 }
 
 type ProjectRuntimeConfig struct {
-	Models              map[string]*semanticmodel.Model
-	ModelTables         map[string]semanticmodel.Table
-	Database            analyticsruntime.ProjectDatabase
-	CredentialResolver  CredentialResolver
-	ConnectionResolver  analyticsruntime.ConnectionResolver
-	ExtensionAdmission  ExtensionAdmission
-	SnapshotID          int64
-	ServingStateID      string
-	ProjectID           projectgraph.ResourceID
-	Environment         string
+	Models             map[string]*semanticmodel.Model
+	ModelTables        map[string]semanticmodel.Table
+	Database           analyticsruntime.ProjectDatabase
+	CredentialResolver CredentialResolver
+	ConnectionResolver analyticsruntime.ConnectionResolver
+	ExtensionAdmission ExtensionAdmission
+	SnapshotID         int64
+	ServingStateID     string
+	ProjectID          projectgraph.ResourceID
+	CandidateID        string
+	Environment        string
+	// RelationNamespace scopes materialization DDL for an isolated candidate.
+	// Empty retains the legacy model schema for non-native callers; candidate
+	// runtimes must provide a validated namespace.
+	RelationNamespace   string
 	TargetType          string
 	TargetID            string
 	SemanticDigest      string
@@ -659,6 +668,23 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 	}
 	if err := config.ProjectID.Validate(); err != nil {
 		return nil, fmt.Errorf("project id: %w", err)
+	}
+	if config.CandidateID != "" {
+		if config.RelationNamespace == "" {
+			return nil, fmt.Errorf("candidate relation namespace is required")
+		}
+		if config.RelationNamespace == "model" || config.RelationNamespace == "source" {
+			return nil, fmt.Errorf("candidate relation namespace cannot use reserved schema %q", config.RelationNamespace)
+		}
+		if config.RelationNamespace != strings.TrimSpace(config.RelationNamespace) {
+			return nil, fmt.Errorf("candidate relation namespace must be canonical")
+		}
+	}
+	if config.RelationNamespace == "" {
+		config.RelationNamespace = "model"
+	}
+	if err := validateRelationNamespace(config.RelationNamespace); err != nil {
+		return nil, fmt.Errorf("relation namespace: %w", err)
 	}
 	dependencyEvidence := make(map[string]resultidentity.Evidence, len(config.DependencyEvidence))
 	for modelID, evidence := range config.DependencyEvidence {
@@ -1064,7 +1090,7 @@ func (r *ProjectRuntime) clearQueryCaches() {
 func (r *ProjectRuntime) discoverServingSchemas(ctx context.Context, refreshed *semanticmodel.Model) error {
 	applyDiscoveredSourceSchemas(refreshed, r.models)
 	for modelID, model := range r.models {
-		if err := discoverSchemas(ctx, r.sessions, model); err != nil {
+		if err := discoverSchemasInNamespace(ctx, r.sessions, model, r.viewConfig.RelationNamespace); err != nil {
 			return fmt.Errorf("discovering semantic model %q schemas: %w", modelID, err)
 		}
 	}
@@ -1189,14 +1215,14 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 	}
 	if r.committer == nil {
 		if len(tableNames) > 0 {
-			lastRefresh, err := analyticsmaterialize.RefreshModelTables(ctx, r.db, prepared, model, tableNames)
+			lastRefresh, err := refreshModelTablesInNamespace(ctx, r.db, prepared, model, tableNames, r.viewConfig.RelationNamespace)
 			observations, observationErr := captureSourceObservations(ctx, prepared)
 			if err == nil && observationErr == nil {
 				r.sourceObservations = observations
 			}
 			return lastRefresh, 0, errors.Join(err, observationErr, prepared.Close())
 		}
-		lastRefresh, err := analyticsmaterialize.Refresh(ctx, r.db, prepared, model)
+		lastRefresh, err := refreshModelInNamespace(ctx, r.db, prepared, model, r.viewConfig.RelationNamespace)
 		observations, observationErr := captureSourceObservations(ctx, prepared)
 		if err == nil && observationErr == nil {
 			r.sourceObservations = observations
@@ -1212,9 +1238,9 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		executor := txExecutor{tx: tx}
 		sources := txPreparedSources{PreparedSources: prepared.(*PreparedSources), tx: tx}
 		if len(tableNames) > 0 {
-			return analyticsmaterialize.ModelTablesNamed(ctx, executor, sources, model, tableNames)
+			return analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, r.viewConfig.RelationNamespace)
 		}
-		return analyticsmaterialize.ModelTables(ctx, executor, sources, model)
+		return analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, r.viewConfig.RelationNamespace)
 	})
 	if err != nil {
 		_ = prepared.Close()
@@ -1230,6 +1256,26 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		return time.Time{}, 0, fmt.Errorf("cleaning refresh staging: %w", err)
 	}
 	return time.Now(), snapshotID, nil
+}
+
+func refreshModelTablesInNamespace(ctx context.Context, executor analyticsmaterialize.Executor, sources analyticsmaterialize.ModelTablePlanner, model *semanticmodel.Model, tableNames []string, relationNamespace string) (time.Time, error) {
+	if relationNamespace == "model" {
+		return analyticsmaterialize.RefreshModelTables(ctx, executor, sources, model, tableNames)
+	}
+	if err := analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, relationNamespace); err != nil {
+		return time.Time{}, err
+	}
+	return time.Now(), nil
+}
+
+func refreshModelInNamespace(ctx context.Context, executor analyticsmaterialize.Executor, sources analyticsmaterialize.ModelTablePlanner, model *semanticmodel.Model, relationNamespace string) (time.Time, error) {
+	if relationNamespace == "model" {
+		return analyticsmaterialize.Refresh(ctx, executor, sources, model)
+	}
+	if err := analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, relationNamespace); err != nil {
+		return time.Time{}, err
+	}
+	return time.Now(), nil
 }
 
 func captureSourceObservations(ctx context.Context, prepared analyticsmaterialize.PreparedSources) ([]analyticsmaterialize.SourceObservation, error) {
@@ -1384,6 +1430,10 @@ type txPreparedSources struct {
 
 func (r txPreparedSources) PlanModelTable(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table) (analyticsmaterialize.ModelTablePlan, error) {
 	return planModelTable(ctx, r.tx, r.model, tableName, table, r.relations)
+}
+
+func (r txPreparedSources) PlanModelTableInNamespace(ctx context.Context, _ *semanticmodel.Model, tableName string, table semanticmodel.Table, relationNamespace string) (analyticsmaterialize.ModelTablePlan, error) {
+	return planModelTableInNamespace(ctx, r.tx, r.model, tableName, table, r.relations, relationNamespace)
 }
 
 func physicalProjectModel(models map[string]*semanticmodel.Model, authoredTables map[string]semanticmodel.Table) (*semanticmodel.Model, error) {

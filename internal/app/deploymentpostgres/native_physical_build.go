@@ -260,6 +260,14 @@ func validateNativePhysicalBuildInput(input NativePhysicalBuildInput) (NativePhy
 	if request.CandidateID == "" || request.CandidateID != input.Attempt.CandidateID {
 		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: materialization candidate identity differs from build attempt", deploymentnative.ErrConflict)
 	}
+	if request.RelationNamespace != "" && request.RelationNamespace != input.Attempt.Namespace {
+		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: materialization relation namespace differs from build attempt", deploymentnative.ErrConflict)
+	}
+	// The attempt namespace is the authority-derived value. Copy it into the
+	// value-only materialization request so an omitted field cannot fall back to
+	// the shared model schema, while a prepopulated conflicting value is rejected
+	// above before any environment is opened.
+	request.RelationNamespace = input.Attempt.Namespace
 	if _, err := canonicalUUID(request.CandidateID, "materialization candidate id"); err != nil {
 		return NativePhysicalBuildInput{}, nil, "", err
 	}

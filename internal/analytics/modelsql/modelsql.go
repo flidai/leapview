@@ -28,6 +28,8 @@ type Analysis struct {
 	SourceRefs      []string
 	ModelRefs       []string
 	SourceRelations []RelationRef
+	ModelRelations  []RelationRef
+	ModelColumns    []duckdbsql.ColumnRef
 }
 
 // Analyze parses sqlText with the pinned DuckDB-backed analyzer, applies the
@@ -90,6 +92,7 @@ func Analyze(ctx context.Context, sqlText string) (Analysis, error) {
 				result.SourceRelations = append(result.SourceRelations, RelationRef{Name: relation.Name, Alias: relation.Alias, Span: relation.Span})
 			case "model":
 				models[relation.Name] = struct{}{}
+				result.ModelRelations = append(result.ModelRelations, RelationRef{Name: relation.Name, Alias: relation.Alias, Span: relation.Span})
 			case "":
 				return Analysis{}, fmt.Errorf("unqualified relation %q is not governed", relation.Name)
 			default:
@@ -134,6 +137,7 @@ func Analyze(ctx context.Context, sqlText string) (Analysis, error) {
 			if namespace == "source" {
 				return Analysis{}, fmt.Errorf("column reference %q must use a table alias; source.<name> is only valid in FROM/JOIN relations", strings.Join(column.Names, "."))
 			}
+			result.ModelColumns = append(result.ModelColumns, column)
 		}
 	}
 	result.SourceRefs = sortedSet(sources)
@@ -145,8 +149,47 @@ func Analyze(ctx context.Context, sqlText string) (Analysis, error) {
 // queries. All spans came from the pinned parser and are validated atomically
 // by duckdbsql.Rewrite.
 func RewriteSources(sqlText string, analysis Analysis, replacements map[string]string, aliasUnaliased bool) (string, error) {
-	edits := make([]duckdbsql.Edit, 0, len(analysis.SourceRelations))
-	for _, relation := range analysis.SourceRelations {
+	return rewriteRelations(sqlText, analysis.SourceRelations, nil, nil, replacements, aliasUnaliased, "")
+}
+
+// RewriteSourcesAndModels atomically rewrites governed source relations and
+// authored model.<name> relations in one pass. Combining edits is important:
+// source inlining can change byte offsets, so two sequential rewrites would
+// otherwise apply parser spans to the wrong text. Model references are only
+// rewritten when relationNamespace differs from the legacy model schema.
+func RewriteSourcesAndModels(sqlText string, analysis Analysis, replacements map[string]string, relationNamespace string, aliasUnaliased bool) (string, error) {
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return "", err
+	}
+	return rewriteRelations(sqlText, analysis.SourceRelations, analysis.ModelRelations, analysis.ModelColumns, replacements, aliasUnaliased, relationNamespace)
+}
+
+// RewriteModels rewrites only governed model relation and column references.
+// It is used by the planner's isolated analysis database before source
+// projections are known, and is intentionally parser-span based.
+func RewriteModels(sqlText string, analysis Analysis, relationNamespace string) (string, error) {
+	if err := validateRelationNamespace(relationNamespace); err != nil {
+		return "", err
+	}
+	return rewriteRelations(sqlText, nil, analysis.ModelRelations, analysis.ModelColumns, nil, false, relationNamespace)
+}
+
+func validateRelationNamespace(value string) error {
+	if !validIdentifier(value) {
+		return fmt.Errorf("relation namespace %q is invalid", value)
+	}
+	if value != strings.ToLower(value) {
+		return fmt.Errorf("relation namespace %q must be lowercase canonical", value)
+	}
+	if len(value) > 63 {
+		return fmt.Errorf("relation namespace %q exceeds 63 bytes", value)
+	}
+	return nil
+}
+
+func rewriteRelations(sqlText string, sourceRelations, modelRelations []RelationRef, modelColumns []duckdbsql.ColumnRef, replacements map[string]string, aliasUnaliased bool, relationNamespace string) (string, error) {
+	edits := make([]duckdbsql.Edit, 0, len(sourceRelations)+len(modelRelations)+len(modelColumns))
+	for _, relation := range sourceRelations {
 		replacement, ok := replacements[relation.Name]
 		if !ok {
 			return "", fmt.Errorf("no replacement for source %q", relation.Name)
@@ -156,7 +199,158 @@ func RewriteSources(sqlText string, analysis Analysis, replacements map[string]s
 		}
 		edits = append(edits, duckdbsql.Edit{Span: relation.Span, Replacement: replacement})
 	}
+	if relationNamespace != "" && relationNamespace != "model" {
+		for _, relation := range modelRelations {
+			replacement := quoteIdentifier(relationNamespace) + "." + quoteIdentifier(relation.Name)
+			edits = append(edits, duckdbsql.Edit{Span: relation.Span, Replacement: replacement})
+		}
+		columnEdits, err := modelColumnEdits(sqlText, relationNamespace, modelColumns)
+		if err != nil {
+			return "", err
+		}
+		edits = append(edits, columnEdits...)
+	}
 	return duckdbsql.Rewrite(sqlText, edits)
+}
+
+type sqlIdentifierToken struct {
+	start, end int
+	value      string
+}
+
+// modelColumnEdits handles the one parser limitation relevant to candidate
+// writes: DuckDB's generic analyzer currently reports zero-width spans for
+// three-part column references. This small lexer skips quoted literals and
+// comments, then recognizes only model.<table>.<column> token sequences; it
+// cannot rewrite arbitrary SQL text or alter strings/comments.
+func modelColumnEdits(sqlText, relationNamespace string, expected []duckdbsql.ColumnRef) ([]duckdbsql.Edit, error) {
+	tokens := scanSQLIdentifiers(sqlText)
+	edits := []duckdbsql.Edit{}
+	want := map[string]int{}
+	for _, column := range expected {
+		if len(column.Names) != 3 || !strings.EqualFold(column.Names[0], "model") {
+			continue
+		}
+		want[modelColumnKey(column.Names[1], column.Names[2])]++
+	}
+	found := map[string]int{}
+	for index := 0; index+2 < len(tokens); index++ {
+		modelToken := tokens[index]
+		if !strings.EqualFold(modelToken.value, "model") {
+			continue
+		}
+		tableToken, columnToken := tokens[index+1], tokens[index+2]
+		if !onlyDotBetween(sqlText, modelToken.end, tableToken.start) || !onlyDotBetween(sqlText, tableToken.end, columnToken.start) {
+			continue
+		}
+		if !validIdentifier(tableToken.value) || !validIdentifier(columnToken.value) {
+			continue
+		}
+		key := modelColumnKey(tableToken.value, columnToken.value)
+		if want[key] == 0 {
+			continue
+		}
+		found[key]++
+		edits = append(edits, duckdbsql.Edit{
+			Span:        duckdbsql.Span{Start: modelToken.start, End: columnToken.end},
+			Replacement: quoteIdentifier(relationNamespace) + "." + quoteIdentifier(tableToken.value) + "." + quoteIdentifier(columnToken.value),
+		})
+	}
+	for key, count := range want {
+		if found[key] != count {
+			return nil, fmt.Errorf("model column reference %q was not rewritten in relation namespace %q", key, relationNamespace)
+		}
+	}
+	return edits, nil
+}
+
+func modelColumnKey(table, column string) string { return table + "\x00" + column }
+
+func onlyDotBetween(sqlText string, start, end int) bool {
+	value := strings.TrimSpace(sqlText[start:end])
+	return value == "."
+}
+
+func scanSQLIdentifiers(sqlText string) []sqlIdentifierToken {
+	tokens := []sqlIdentifierToken{}
+	for index := 0; index < len(sqlText); {
+		switch {
+		case sqlText[index] == '\'':
+			index = skipSQLQuoted(sqlText, index, sqlText[index])
+		case sqlText[index] == '"':
+			start := index
+			index++
+			for index < len(sqlText) {
+				if sqlText[index] != '"' {
+					index++
+					continue
+				}
+				if index+1 < len(sqlText) && sqlText[index+1] == '"' {
+					index += 2
+					continue
+				}
+				index++
+				value := strings.ReplaceAll(sqlText[start+1:index-1], `""`, `"`)
+				tokens = append(tokens, sqlIdentifierToken{start: start, end: index, value: value})
+				break
+			}
+		case sqlText[index] == '-' && index+1 < len(sqlText) && sqlText[index+1] == '-':
+			index = skipSQLLineComment(sqlText, index+2)
+		case sqlText[index] == '/' && index+1 < len(sqlText) && sqlText[index+1] == '*':
+			index = skipSQLBlockComment(sqlText, index+2)
+		case isSQLIdentifierStart(sqlText[index]):
+			start := index
+			index++
+			for index < len(sqlText) && isSQLIdentifierPart(sqlText[index]) {
+				index++
+			}
+			tokens = append(tokens, sqlIdentifierToken{start: start, end: index, value: sqlText[start:index]})
+		default:
+			index++
+		}
+	}
+	return tokens
+}
+
+func skipSQLQuoted(sqlText string, index int, quote byte) int {
+	index++
+	for index < len(sqlText) {
+		if sqlText[index] != quote {
+			index++
+			continue
+		}
+		if index+1 < len(sqlText) && sqlText[index+1] == quote {
+			index += 2
+			continue
+		}
+		return index + 1
+	}
+	return len(sqlText)
+}
+
+func skipSQLLineComment(sqlText string, index int) int {
+	for index < len(sqlText) && sqlText[index] != '\n' {
+		index++
+	}
+	return index
+}
+
+func skipSQLBlockComment(sqlText string, index int) int {
+	for index+1 < len(sqlText) {
+		if sqlText[index] == '*' && sqlText[index+1] == '/' {
+			return index + 2
+		}
+		index++
+	}
+	return len(sqlText)
+}
+
+func isSQLIdentifierStart(value byte) bool {
+	return value == '_' || value >= 'A' && value <= 'Z' || value >= 'a' && value <= 'z'
+}
+
+func isSQLIdentifierPart(value byte) bool {
+	return isSQLIdentifierStart(value) || value >= '0' && value <= '9'
 }
 
 func validateQuery(query duckdbsql.Query) error {

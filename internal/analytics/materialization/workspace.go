@@ -11,10 +11,14 @@ import (
 )
 
 type Request struct {
-	Models                           map[string]*semanticmodel.Model
-	ModelTables                      map[string]semanticmodel.Table
-	Identity                         projectgraph.ServingIdentity
-	CandidateID                      string
+	Models      map[string]*semanticmodel.Model
+	ModelTables map[string]semanticmodel.Table
+	Identity    projectgraph.ServingIdentity
+	CandidateID string
+	// RelationNamespace is the value-only, authority-derived DuckDB schema
+	// used by candidate materialization. Native candidate callers must supply
+	// it; legacy callers may leave it empty and retain the model schema.
+	RelationNamespace                string
 	ConnectionEvidenceServingStateID servingstate.ID
 	Environment                      servingstate.Environment
 	TargetType                       string

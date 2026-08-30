@@ -117,6 +117,65 @@ func TestRewriteSourcesRejectsMissingReplacement(t *testing.T) {
 	}
 }
 
+func TestRewriteModelsUsesParserSpansForRelationsAndColumns(t *testing.T) {
+	sqlText := `-- model.orders
+SELECT model.orders.id FROM model.orders`
+	analysis, err := Analyze(context.Background(), sqlText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RewriteModels(sqlText, analysis, "_candidate_namespace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "-- model.orders\nSELECT _candidate_namespace.orders.id FROM _candidate_namespace.orders"
+	if got != want {
+		t.Fatalf("RewriteModels() = %q, want %q", got, want)
+	}
+}
+
+func TestRewriteModelsRewritesQuotedThreePartModelColumns(t *testing.T) {
+	sqlText := `SELECT "model"."orders"."id" FROM "model"."orders"`
+	analysis, err := Analyze(context.Background(), sqlText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RewriteModels(sqlText, analysis, "_candidate_namespace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `SELECT _candidate_namespace.orders.id FROM _candidate_namespace.orders`
+	if got != want {
+		t.Fatalf("RewriteModels() = %q, want %q", got, want)
+	}
+}
+
+func TestRewriteModelsRejectsOverlappingParserSpans(t *testing.T) {
+	sqlText := `SELECT model.orders.id FROM model.orders`
+	analysis, err := Analyze(context.Background(), sqlText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Duplicate relation evidence must fail closed rather than permitting an
+	// ambiguous edit set to mutate authored SQL.
+	analysis.ModelRelations = append(analysis.ModelRelations, analysis.ModelRelations[0])
+	if _, err := RewriteModels(sqlText, analysis, "_candidate_namespace"); err == nil || !strings.Contains(err.Error(), "duplicate span") {
+		t.Fatalf("RewriteModels() error = %v, want duplicate span rejection", err)
+	}
+}
+
+func TestRewriteModelsRejectsInvalidOrOversizedNamespace(t *testing.T) {
+	analysis, err := Analyze(context.Background(), `SELECT * FROM model.orders`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, namespace := range []string{"model;drop", strings.Repeat("a", 64)} {
+		if _, err := RewriteModels(`SELECT * FROM model.orders`, analysis, namespace); err == nil || !strings.Contains(err.Error(), "relation namespace") {
+			t.Fatalf("namespace %q unexpectedly accepted: %v", namespace, err)
+		}
+	}
+}
+
 func TestValidateQueryRejectsTemporalRelationClause(t *testing.T) {
 	query := duckdbsql.Query{Statements: []duckdbsql.Statement{&duckdbsql.SelectStatement{
 		From: &duckdbsql.BaseTableRelation{Name: "orders", Schema: "source", At: &duckdbsql.AtClause{Unit: "TIMESTAMP"}},

@@ -162,6 +162,9 @@ func TestBuildNativePhysicalSuccess(t *testing.T) {
 	if env.closureReq.CatalogID != in.CatalogID || env.closureReq.SnapshotID != 42 || env.closureReq.ObjectRoot != "/tmp/native-objects" {
 		t.Fatalf("closure request = %#v", env.closureReq)
 	}
+	if env.request.RelationNamespace != in.Attempt.Namespace {
+		t.Fatalf("materialization relation namespace = %q, want attempt namespace %q", env.request.RelationNamespace, in.Attempt.Namespace)
+	}
 }
 
 func TestBuildNativePhysicalValidatesBeforeOpen(t *testing.T) {
@@ -187,6 +190,17 @@ func TestBuildNativePhysicalRejectsRelationNamespaceDrift(t *testing.T) {
 		return nil, nil
 	})); !errors.Is(err, deploymentnative.ErrConflict) {
 		t.Fatalf("namespace drift error = %v, want conflict", err)
+	}
+}
+
+func TestBuildNativePhysicalRejectsConflictingPrepopulatedRelationNamespace(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	in.Request.RelationNamespace = "_other_candidate_namespace"
+	if _, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		t.Fatal("factory opened despite materialization relation namespace conflict")
+		return nil, nil
+	})); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("namespace conflict error = %v, want conflict", err)
 	}
 }
 
