@@ -852,7 +852,7 @@ func sameNativeValue(left, right any) bool {
 
 func canonicalUUIDv7(value string) (string, error) {
 	parsed, err := uuid.Parse(value)
-	if err != nil || parsed.String() != value || parsed.Version() != 7 {
+	if err != nil || parsed.String() != value || parsed.Version() != 7 || parsed.Variant() != uuid.RFC4122 {
 		return "", errors.New("must be a canonical UUIDv7")
 	}
 	return value, nil

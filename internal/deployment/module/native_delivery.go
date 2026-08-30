@@ -107,6 +107,16 @@ type NativeDeliveryBuildRequest struct {
 // authority-owned opaque text because the PostgreSQL schema intentionally
 // treats them as pool identity strings rather than UUIDs.
 type NativeDeliveryBuild struct {
+	// ActorID, IdempotencyKey, RequestDigest, OperationID, EventID, and
+	// AuditID are internal completion evidence. The HTTP response deliberately
+	// omits them; the production command completer uses them to re-read the
+	// exact durable build consequences before acknowledging the mutation.
+	ActorID               string
+	IdempotencyKey        string
+	RequestDigest         string
+	OperationID           uuid.UUID
+	EventID               uuid.UUID
+	AuditID               uuid.UUID
 	ID                    uuid.UUID
 	PlanID                uuid.UUID
 	PlanDigest            string
