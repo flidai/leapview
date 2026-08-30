@@ -10,46 +10,18 @@ import (
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 )
 
-// ErrPublicationIdentityUnavailable indicates that the physical publication
-// identity has not been admitted (or could not be resolved) for a mutation.
-// Callers must treat this as a hard stop: refresh data is never written with
-// an empty or placeholder physical identity.
-var ErrPublicationIdentityUnavailable = errors.New("refresh publication identity unavailable")
+// These aliases keep the refresh module's public contract stable while the
+// value types live in the authority package. Keeping the contract there also
+// lets process-composition adapters import it without creating a module test
+// import cycle.
+var (
+	ErrPublicationIdentityUnavailable = refreshpostgres.ErrPublicationIdentityUnavailable
+	ErrPublicationIdentityMismatch    = refreshpostgres.ErrPublicationIdentityMismatch
+)
 
-// ErrPublicationIdentityMismatch indicates that independently verified
-// publication evidence names a different physical namespace than the one
-// resolved for this transaction.
-var ErrPublicationIdentityMismatch = errors.New("refresh publication identity mismatch")
-
-// PostgresPublicationIdentity is the exact physical namespace attached to a
-// refresh publication and its data-version provenance.
-type PostgresPublicationIdentity struct {
-	PhysicalPoolID string
-	CatalogID      string
-}
-
-// PostgresPublicationIdentityRequest scopes an identity lookup. The resolver
-// receives all operation identity available at each call site so it can select
-// the exact admitted target rather than relying on process-global state.
-type PostgresPublicationIdentityRequest struct {
-	ProjectID       string
-	Environment     string
-	GenerationID    string
-	SemanticModelID string
-	PipelineID      string
-	RunID           string
-	SnapshotID      int64
-	Source          string
-	TargetRevision  int64
-}
-
-// PostgresPublicationIdentityResolver resolves the exact physical namespace
-// while the caller-owned refresh authority transaction is open. Implementations
-// must read/admit identity through tx; the transaction is retained by the
-// repository until the complete mutation commits or rolls back.
-type PostgresPublicationIdentityResolver interface {
-	ResolvePublicationIdentityTx(context.Context, refreshpostgres.Tx, PostgresPublicationIdentityRequest) (PostgresPublicationIdentity, error)
-}
+type PostgresPublicationIdentity = refreshpostgres.PostgresPublicationIdentity
+type PostgresPublicationIdentityRequest = refreshpostgres.PostgresPublicationIdentityRequest
+type PostgresPublicationIdentityResolver = refreshpostgres.PostgresPublicationIdentityResolver
 
 // PostgresPublicationIdentityResolverFunc adapts a function to the resolver
 // capability, which is useful for composition adapters and focused tests.

@@ -11,6 +11,9 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
 	"github.com/flidai/leapview/internal/deployment"
@@ -161,6 +164,14 @@ func concreteModulePostgresDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := physicalpoolpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -200,7 +211,28 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	sealID := "0198f2c0-7c7a-7f00-8a11-000000000104"
 	generationID := "0198f2c0-7c7a-7f00-8a11-000000000105"
 	targetID := "target_concrete_prod"
-	poolID, catalogDB, catalogUUID := "pool-concrete", "ducklake", "0198f2c0-7c7a-7f00-8a11-000000000108"
+	catalogDB, catalogUUID := "ducklake", "0198f2c0-7c7a-7f00-8a11-000000000108"
+	compatibility := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "object:v1"}
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
+		StorageLocation: t.TempDir(), StorageNamespace: "concrete", Region: "us-east", Tenant: "tenant-concrete", IsolationBoundary: targetID,
+		RetentionAuthority: targetID, RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60}, Compatibility: compatibility,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	poolID := pool.ID.String()
+	poolRepo := physicalpoolpostgres.New(db)
+	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{Compatibility: compatibility, ConformanceVersion: "concrete-v1", Checks: []physicalpool.EvidenceCheck{{ID: "schema", Passed: true}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, admission, err := poolRepo.CreateAndAdmit(t.Context(), pool, evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ducklakepostgres.New(db).RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID), CompatibilityDigest: admission.CompatibilityDigest, CatalogSchemaVersion: "catalog-v1"}); err != nil {
+		t.Fatal(err)
+	}
 	pipePlan := projectpipelineplan.Plan{}
 	if len(pipelinePlans) > 0 {
 		pipePlan = pipelinePlans[0]
@@ -236,7 +268,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-concrete", FencingEpoch: 1, SnapshotID: 777, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, digest('3')); err != nil {
@@ -256,7 +288,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deliveryPlan, generationID, poolID, catalogDB, catalogUUID := seedConcreteDelivery(t, db, plan)
+	deliveryPlan, generationID, poolID, _, _ := seedConcreteDelivery(t, db, plan)
 	delivery := deploymentpostgres.NewWithActivationAudit(db, deploymentaudit.NewWithRepository(accesspostgres.New()))
 	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
 	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})
@@ -292,11 +324,11 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatalf("pipeline plan identity does not match delivery evidence: %#v", plan)
 	}
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	verifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-concrete", catalogDB, catalogUUID)
+	verifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, "target_concrete_prod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver(poolID, "catalog-concrete"), SchedulerOwner: "scheduler-concrete", Jobs: queue, CanonicalVerifier: verifier, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: verifier, SchedulerOwner: "scheduler-concrete", Jobs: queue, CanonicalVerifier: verifier, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -313,21 +345,6 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatalf("claim ok=%v err=%v", ok, err)
 	}
 	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
-		t.Fatal(err)
-	}
-	wrongCatalogVerifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-wrong", catalogDB, catalogUUID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wrongTx, err := db.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := wrongCatalogVerifier.VerifyCanonicalRefreshTx(t.Context(), wrongTx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err == nil {
-		_ = wrongTx.Rollback(t.Context())
-		t.Fatal("cross-bound catalog verifier unexpectedly accepted mismatched catalog id")
-	}
-	if err := wrongTx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	mismatchedPersistence := &postgresPublicationPersistence{repository: refreshRepo, identityResolver: staticPublicationIdentityResolver(poolID, "catalog-config-mismatch"), canonicalVerifier: verifier, queueLifecycle: queue}

@@ -139,6 +139,14 @@ JOIN delivery.delivery_target t ON t.target_id=p.target_id
 WHERE p.generation_id=sqlc.arg(generation_id)::uuid AND p.state='committed' AND p.result_target_revision=t.target_revision
 ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1;
 
+-- name: FindHistoricalCommittedPublication :one
+-- Unlike FindCommittedPublication, this lookup intentionally does not join
+-- the active pointer. A completed generation remains replayable after a
+-- successor is activated; the immutable committed publication is the proof.
+SELECT p.publication_id::text FROM delivery.delivery_publication p
+WHERE p.generation_id=sqlc.arg(generation_id)::uuid AND p.state='committed'
+ORDER BY p.committed_at DESC,p.publication_id DESC LIMIT 1;
+
 -- name: EnsureTargetFence :exec
 INSERT INTO delivery.delivery_target_fence(target_id,next_fencing_epoch)
 SELECT t.target_id,1 FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id)

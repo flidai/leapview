@@ -1727,6 +1727,29 @@ func (r *Repository) CommittedPublicationTx(ctx context.Context, tx Tx, generati
 	}
 	return loadPublication(contextOrBackground(ctx), tx, id)
 }
+
+// HistoricalCommittedPublicationTx returns the immutable committed delivery
+// publication for a generation through a caller-owned transaction. Unlike
+// CommittedPublicationTx, this lookup intentionally ignores the active
+// pointer, so completed generations remain replayable after a successor is
+// activated.
+func (r *Repository) HistoricalCommittedPublicationTx(ctx context.Context, tx Tx, generationID string) (DeliveryPublication, error) {
+	if tx == nil {
+		return DeliveryPublication{}, ErrInvalid
+	}
+	generation, err := uuidID(generationID, "generation id", false)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	id, err := depdb.New(tx).FindHistoricalCommittedPublication(contextOrBackground(ctx), dbUUID(generation))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryPublication{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryPublication{}, err
+	}
+	return loadPublication(contextOrBackground(ctx), tx, id)
+}
+
 func (r *Repository) LoadPublication(ctx context.Context, id string) (DeliveryPublication, error) {
 	return r.Publication(ctx, id)
 }
