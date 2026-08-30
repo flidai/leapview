@@ -309,3 +309,139 @@ func TestRepositoryDeterministicRetryIdentity(t *testing.T) {
 		t.Fatalf("invalid get = %v", err)
 	}
 }
+
+func TestMaintenanceRoleBoundaryAndRetentionFloor(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
+	maintenanceRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-secret", Login: true})
+	db := h.NewDatabase(t, "queryaudit_maintenance")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var runtimeDelete, runtimePrune, maintenanceDelete, maintenanceSelect, maintenancePrune bool
+	if err := admin.QueryRow(t.Context(), `SELECT
+		has_table_privilege($1,'audit.query_event','DELETE'),
+		has_function_privilege($1,'audit.prune_query_events(timestamptz,integer)','EXECUTE'),
+		has_table_privilege($2,'audit.query_event','DELETE'),
+		has_table_privilege($2,'audit.query_event_retention_floor','SELECT'),
+		has_function_privilege($2,'audit.prune_query_events(timestamptz,integer)','EXECUTE')`, runtimeRole.Name, maintenanceRole.Name).
+		Scan(&runtimeDelete, &runtimePrune, &maintenanceDelete, &maintenanceSelect, &maintenancePrune); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeDelete || runtimePrune || maintenanceDelete || maintenanceSelect || !maintenancePrune {
+		t.Fatalf("query-audit maintenance grants runtime_delete=%v runtime_prune=%v maintenance_delete=%v maintenance_select=%v maintenance_prune=%v", runtimeDelete, runtimePrune, maintenanceDelete, maintenanceSelect, maintenancePrune)
+	}
+
+	runtime, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	if _, err := runtime.Exec(t.Context(), `SELECT * FROM audit.prune_query_events(clock_timestamp(),1)`); err == nil {
+		t.Fatal("runtime prune capability unexpectedly granted")
+	}
+	if _, err := runtime.Exec(t.Context(), `DELETE FROM audit.query_event`); err == nil {
+		t.Fatal("runtime DELETE on query evidence succeeded")
+	}
+
+	// The owner inserts current events through the normal repository path. A
+	// future requested cutoff is capped by PostgreSQL's clock, while the batch
+	// limit proves the function remains bounded.
+	for i := 0; i < 3; i++ {
+		input := queryEventInput(fmt.Sprintf("01900000-0000-7000-8000-%012d", 700+i))
+		if err := New(admin).RecordQueryEvent(t.Context(), input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	maintenance, err := pgxpool.New(t.Context(), db.URL(maintenanceRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenance.Close)
+	if _, err := maintenance.Exec(t.Context(), `DELETE FROM audit.query_event`); err == nil {
+		t.Fatal("maintenance direct DELETE unexpectedly succeeded")
+	}
+	if _, err := maintenance.Exec(t.Context(), `SELECT * FROM audit.query_event_retention_floor`); err == nil {
+		t.Fatal("maintenance floor table read unexpectedly succeeded")
+	}
+	before := time.Now().UTC().Add(time.Hour)
+	result, err := NewMaintenance(maintenance).Prune(t.Context(), before, 2)
+	if err != nil {
+		t.Fatalf("maintenance bounded prune: %v", err)
+	}
+	if result.Removed != 2 {
+		t.Fatalf("removed = %d, want 2", result.Removed)
+	}
+	if result.Before.IsZero() || result.Cutoff.IsZero() || result.FloorAt.IsZero() || result.Cutoff.After(before) || result.FloorAt.After(result.Cutoff) {
+		t.Fatalf("invalid retention evidence: %#v", result)
+	}
+	if !result.FloorAt.Before(result.Cutoff) {
+		t.Fatalf("retention floor advanced with a remaining backlog: %#v", result)
+	}
+	var remaining int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.query_event`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("remaining events = %d, want 1", remaining)
+	}
+	resultFinal, err := NewMaintenance(maintenance).Prune(t.Context(), before, 2)
+	if err != nil {
+		t.Fatalf("final maintenance prune: %v", err)
+	}
+	if resultFinal.Removed != 1 || !resultFinal.FloorAt.After(result.FloorAt) {
+		t.Fatalf("final retention evidence = %#v, want one removal and an advanced floor", resultFinal)
+	}
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM audit.query_event`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 0 {
+		t.Fatalf("remaining events after final drain = %d, want 0", remaining)
+	}
+	var storedFloor time.Time
+	if err := admin.QueryRow(t.Context(), `SELECT floor_at FROM audit.query_event_retention_floor WHERE singleton=true`).Scan(&storedFloor); err != nil {
+		t.Fatal(err)
+	}
+	if !storedFloor.UTC().Equal(resultFinal.FloorAt) {
+		t.Fatalf("stored floor = %s, result floor = %s", storedFloor.UTC(), resultFinal.FloorAt)
+	}
+	if _, err := NewMaintenance(maintenance).Prune(t.Context(), before, MaxPruneBatch+1); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("oversized maintenance batch = %v, want invalid", err)
+	}
+	if _, err := NewMaintenance(maintenance).Prune(t.Context(), time.Time{}, 1); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing maintenance cutoff = %v, want invalid", err)
+	}
+	if err := New(admin).RecordQueryEvent(t.Context(), queryEventInput("01900000-0000-7000-8000-000000000799")); err != nil {
+		t.Fatal(err)
+	}
+
+	// A forged capability setting cannot bypass append-only protection: the
+	// trigger additionally requires the authenticated maintenance session.
+	capabilityTx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := capabilityTx.Exec(t.Context(), `SELECT set_config('audit.capability','maintenance',false)`); err != nil {
+		_ = capabilityTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := capabilityTx.Exec(t.Context(), `DELETE FROM audit.query_event`); err == nil {
+		_ = capabilityTx.Rollback(t.Context())
+		t.Fatal("forged audit capability bypassed append-only trigger")
+	}
+	_ = capabilityTx.Rollback(t.Context())
+}

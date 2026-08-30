@@ -30,6 +30,18 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated retention pool. It intentionally has the same pgx method set
+// as DBTX so pools and caller-owned transactions need no adapter; PostgreSQL
+// role grants remain the enforcement boundary.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
+type beginner interface {
+	Begin(context.Context) (pgx.Tx, error)
+}
+
 // Tx is the strict caller-owned PostgreSQL transaction surface. Pools satisfy
 // DBTX for standalone operations but intentionally cannot satisfy Tx.
 type Tx interface {
@@ -53,6 +65,7 @@ const (
 	MaxFilterValues   = 256
 	MaxPageSize       = 1000
 	DefaultPageSize   = 100
+	MaxPruneBatch     = 1000
 )
 
 //go:embed schema.sql
@@ -83,10 +96,29 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 type Repository struct{ db DBTX }
 
+// Maintenance owns destructive retention work. It is deliberately separate
+// from Repository so request-serving code has no prune method to call by
+// accident; the database role may execute only the bounded owner function.
+type Maintenance struct{ db MaintenanceDBTX }
+
+// PruneResult is the durable evidence returned by one retention batch. Before
+// records the requested policy boundary; Cutoff is PostgreSQL's effective
+// (future-capped) boundary; Removed is the exact number of events deleted.
+type PruneResult struct {
+	Before  time.Time
+	Cutoff  time.Time
+	FloorAt time.Time
+	Removed int64
+}
+
 var _ queryaudit.Repository = (*Repository)(nil)
 
 func New(db DBTX) *Repository           { return &Repository{db: db} }
 func NewRepository(db DBTX) *Repository { return New(db) }
+
+// NewMaintenance constructs the bounded query-audit retention facade for a
+// separately authenticated maintenance connection pool.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
 type storedEvent struct {
 	ID                                                                             uuid.UUID
@@ -381,6 +413,68 @@ func (r *Repository) ListQueryEventFilterOptions(ctx context.Context, field, sea
 		}
 	}
 	return options, nil
+}
+
+// Prune removes at most limit query-audit events at or before before. The
+// operation runs through the SECURITY DEFINER owner function on a separate
+// maintenance connection and commits one bounded batch. A zero cutoff is
+// rejected so callers must make the retention policy's time range explicit.
+func (m *Maintenance) Prune(ctx context.Context, before time.Time, limit int) (PruneResult, error) {
+	var result PruneResult
+	if m == nil || m.db == nil {
+		return result, ErrInvalid
+	}
+	if limit < 1 || limit > MaxPruneBatch || before.IsZero() {
+		return result, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	b, ok := m.db.(beginner)
+	if !ok {
+		return result, errors.New("query audit maintenance requires a pgx transaction-capable DB")
+	}
+	tx, err := b.Begin(ctx)
+	if err != nil {
+		return result, err
+	}
+	result, err = m.PruneTx(ctx, tx, before, limit)
+	if err != nil {
+		_ = tx.Rollback(context.Background())
+		return PruneResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		_ = tx.Rollback(context.Background())
+		return PruneResult{}, err
+	}
+	return result, nil
+}
+
+// PruneTx executes one bounded retention batch on a caller-owned transaction.
+// It does not commit or roll back, allowing maintenance orchestration to write
+// its own retention evidence in the same transaction when needed.
+func (m *Maintenance) PruneTx(ctx context.Context, tx Tx, before time.Time, limit int) (PruneResult, error) {
+	if m == nil || tx == nil {
+		return PruneResult{}, ErrInvalid
+	}
+	if limit < 1 || limit > MaxPruneBatch || before.IsZero() {
+		return PruneResult{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	before = before.UTC()
+	row, err := auditdb.New(tx).PruneQueryEvents(ctx, auditdb.PruneQueryEventsParams{
+		Before: pgtype.Timestamptz{Time: before, Valid: true},
+		Batch:  int32(limit),
+	})
+	if err != nil {
+		return PruneResult{}, err
+	}
+	if !row.Cutoff.Valid || !row.FloorAt.Valid || row.Removed < 0 || row.Removed > int64(limit) {
+		return PruneResult{}, fmt.Errorf("%w: invalid query-event prune evidence", ErrConflict)
+	}
+	return PruneResult{Before: before, Cutoff: row.Cutoff.Time.UTC(), FloorAt: row.FloorAt.Time.UTC(), Removed: row.Removed}, nil
 }
 
 func toEvent(stored storedEvent) (queryaudit.Event, error) {

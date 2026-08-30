@@ -1,5 +1,11 @@
 -- Static PostgreSQL query leaves for query-audit persistence.
 
+-- name: PruneQueryEvents :one
+SELECT prune.cutoff::timestamptz AS cutoff,
+       prune.floor_at::timestamptz AS floor_at,
+       prune.removed::bigint AS removed
+FROM audit.prune_query_events(sqlc.arg(before)::timestamptz, sqlc.arg(batch)::integer) AS prune(cutoff, floor_at, removed);
+
 -- name: InsertQueryEvent :one
 INSERT INTO audit.query_event (
     event_id, retry_identity, project_id, principal_id, surface, operation,

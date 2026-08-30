@@ -90,6 +90,14 @@ BEGIN
         NEW.search_document := to_tsvector('simple', concat_ws(' ', NEW.target, NEW.sql_text, NEW.plan_text, NEW.error, NEW.query_json::text));
         RETURN NEW;
     END IF;
+    -- Retention is the only controlled exception to append-only history. The
+    -- owner function below sets this capability only for the duration of its
+    -- invocation; direct UPDATE remains forbidden even to maintenance.
+    IF TG_OP = 'DELETE'
+       AND current_setting('audit.capability', true) = 'maintenance'
+       AND session_user = 'leapview_control_maintenance' THEN
+        RETURN OLD;
+    END IF;
     RAISE EXCEPTION 'query audit history is append-only';
 END;
 $$;
@@ -103,12 +111,81 @@ CREATE TRIGGER query_event_database_time
     BEFORE INSERT ON audit.query_event
     FOR EACH ROW EXECUTE FUNCTION audit.enforce_query_event();
 
+-- The floor is durable evidence of the latest fully drained retention
+-- boundary applied to query activity. It advances monotonically only after a
+-- batch proves that no eligible rows remain at that boundary.
+CREATE TABLE IF NOT EXISTS audit.query_event_retention_floor (
+    singleton boolean PRIMARY KEY DEFAULT true CHECK (singleton),
+    floor_at timestamptz NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO audit.query_event_retention_floor (singleton) VALUES (true)
+ON CONFLICT (singleton) DO NOTHING;
+
+-- Retention cleanup is a bounded SECURITY DEFINER surface. Query events are
+-- immutable evidence; no hold table or hold column exists in this capability,
+-- so the only eligible rows are events at or before the reported cutoff. The
+-- ordered, SKIP LOCKED batch lets operators drain a backlog without holding a
+-- long transaction or exposing DELETE to request-serving roles.
+CREATE OR REPLACE FUNCTION audit.prune_query_events(p_before timestamptz, p_limit integer)
+RETURNS TABLE(cutoff timestamptz, floor_at timestamptz, removed bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit
+SET audit.capability = 'maintenance'
+AS $$
+BEGIN
+    IF p_before IS NULL THEN
+        RAISE EXCEPTION 'query event prune cutoff is required';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'query event prune limit must be between 1 and 1000';
+    END IF;
+    -- Never let a caller-supplied future cutoff remove events that have not
+    -- reached their retention boundary yet. Returning this effective cutoff
+    -- gives the retention job durable evidence of the time range applied.
+    cutoff := LEAST(p_before, clock_timestamp());
+    SELECT f.floor_at INTO STRICT floor_at
+    FROM audit.query_event_retention_floor AS f
+    WHERE f.singleton = true
+    FOR UPDATE;
+    WITH doomed AS (
+        SELECT event_id
+        FROM audit.query_event
+        WHERE created_at <= cutoff
+        ORDER BY created_at, event_id
+        FOR UPDATE SKIP LOCKED
+        LIMIT p_limit
+    )
+    DELETE FROM audit.query_event AS event_row
+    USING doomed
+    WHERE event_row.event_id = doomed.event_id;
+    GET DIAGNOSTICS removed = ROW_COUNT;
+    -- Keep the floor at its previous value while this boundary still has a
+    -- backlog. This makes the reported floor a truthful replay/retention
+    -- proof rather than evidence that only one batch happened to run.
+    IF cutoff > floor_at
+       AND NOT EXISTS (
+           SELECT 1 FROM audit.query_event AS remaining
+           WHERE remaining.created_at <= cutoff
+       ) THEN
+        UPDATE audit.query_event_retention_floor AS f
+        SET floor_at = cutoff, updated_at = clock_timestamp()
+        WHERE f.singleton = true;
+        floor_at := cutoff;
+    END IF;
+    RETURN NEXT;
+END;
+$$;
+
 -- The owner/migrator applies grants for its deployment roles.  Revoking the
 -- PUBLIC defaults here prevents an accidentally broad role from mutating or
 -- reading query evidence; explicit runtime grants remain deployment-owned.
 REVOKE ALL ON SCHEMA audit FROM PUBLIC;
 REVOKE ALL ON TABLE audit.query_event FROM PUBLIC;
+REVOKE ALL ON TABLE audit.query_event_retention_floor FROM PUBLIC;
 REVOKE ALL ON FUNCTION audit.enforce_query_event() FROM PUBLIC;
+REVOKE ALL ON FUNCTION audit.prune_query_events(timestamptz, integer) FROM PUBLIC;
 
 -- Least-privilege role grants are conditional so the standalone conformance
 -- schema works before deployment role provisioning.  The runtime may append
@@ -121,11 +198,22 @@ BEGIN
 	END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
 		GRANT ALL ON audit.query_event TO leapview_control_migrator;
+		GRANT ALL ON audit.query_event_retention_floor TO leapview_control_migrator;
+	END IF;
+	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
+		GRANT ALL ON audit.query_event_retention_floor TO leapview_control_owner;
 	END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA audit TO leapview_control_runtime;
         GRANT SELECT, INSERT ON audit.query_event TO leapview_control_runtime;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit.query_event FROM leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION audit.prune_query_events(timestamptz, integer) FROM leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA audit TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION audit.prune_query_events(timestamptz, integer) TO leapview_control_maintenance;
+        REVOKE ALL ON audit.query_event FROM leapview_control_maintenance;
+        REVOKE ALL ON audit.query_event_retention_floor FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA audit TO leapview_control_readonly;
