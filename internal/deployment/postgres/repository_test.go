@@ -212,6 +212,13 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if first.Replay || first.Pointer.ActiveGenerationID != ids["generation"] || first.Publication.ResultTargetRevision != 2 {
 		t.Fatalf("unexpected activation result: %#v", first)
 	}
+	activeGeneration, err := r.ActiveGeneration(ctx, "target_sales_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if activeGeneration.GenerationID != ids["generation"] || activeGeneration.TargetID != "target_sales_prod" {
+		t.Fatalf("active generation = %#v, want generation %q on target_sales_prod", activeGeneration, ids["generation"])
+	}
 	if replayedGeneration, err := r.CreateGeneration(ctx, generationInput); err != nil || replayedGeneration.GenerationID != ids["generation"] {
 		t.Fatalf("post-activation generation replay = %#v, %v", replayedGeneration, err)
 	}
@@ -320,6 +327,16 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 	if _, err := r.Activate(ctx, ActivationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], ExpectedTargetRevision: 1, RequestDigest: testDigest('4'), ActorID: "other", LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("actor mismatch = %v", err)
+	}
+}
+
+func TestPostgresActiveGenerationReturnsNotFoundWithoutPointer(t *testing.T) {
+	r := New(deliveryTestDB(t))
+	if _, err := r.CreateTarget(t.Context(), TargetInput{TargetID: "target_without_active", ProjectID: "project_without_active", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ActiveGeneration(t.Context(), "target_without_active"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("active generation without pointer = %v, want ErrNotFound", err)
 	}
 }
 

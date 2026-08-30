@@ -687,6 +687,44 @@ func (r *Repository) LoadTarget(ctx context.Context, id string) (DeliveryTarget,
 	return r.Target(ctx, id)
 }
 
+// ActiveGeneration resolves the generation selected by a target's durable
+// active pointer. The pointer and generation are read through the generated
+// query layer and the generation's target identity is checked before it is
+// returned. An absent pointer is reported as ErrNotFound; callers must not
+// infer an active generation from recency or from a caller-provided ID.
+func (r *Repository) ActiveGeneration(ctx context.Context, targetID string) (DeliveryGeneration, error) {
+	db, err := requireDB(r)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	targetID, err = textID(targetID, "target id")
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	activeID, err := depdb.New(db).GetActiveGeneration(contextOrBackground(ctx), targetID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeliveryGeneration{}, ErrNotFound
+		}
+		return DeliveryGeneration{}, err
+	}
+	if strings.TrimSpace(activeID) == "" {
+		return DeliveryGeneration{}, ErrNotFound
+	}
+	activeID, err = uuidID(activeID, "active generation id", false)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	generation, err := loadGeneration(contextOrBackground(ctx), db, activeID, GenerationInput{})
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if generation.GenerationID != activeID || generation.TargetID != targetID {
+		return DeliveryGeneration{}, fmt.Errorf("%w: active generation target identity differs", ErrConflict)
+	}
+	return generation, nil
+}
+
 func loadTarget(ctx context.Context, db DBTX, id string) (DeliveryTarget, error) {
 	id, err := textID(id, "target id")
 	if err != nil {
