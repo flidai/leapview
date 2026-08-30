@@ -13,6 +13,7 @@ import (
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	"github.com/flidai/leapview/internal/app/agentaudit"
 	"github.com/flidai/leapview/internal/app/agentevents"
@@ -37,9 +38,12 @@ import (
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/flidai/leapview/internal/release"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 )
 
 // PostgresAuthorityGraph is the application-owned native control-plane graph.
@@ -73,6 +77,23 @@ type PostgresAuthorityGraph struct {
 	QueryAudit        *queryauditpostgres.Repository
 	Cache             *cachepostgres.Repository
 	Lineage           *lineagepostgres.Repository
+
+	// PhysicalPool is the control-database identity/admission authority for a
+	// DuckLake physical namespace. DuckLake remains authoritative for table and
+	// object membership; this repository stores only stable identity and
+	// immutable conformance evidence.
+	PhysicalPool *physicalpoolpostgres.Repository
+	// ServingState stores immutable serving-generation evidence and reader
+	// leases. Delivery remains the sole mutable activation authority.
+	ServingState *servingstatepostgres.Repository
+	// Refresh stores durable schedules, runs, attempts, publications and data
+	// versions. Queue admission is delegated to the canonical Jobs authority.
+	Refresh *refreshpostgres.Repository
+	// RefreshJobs and RefreshCancelAudit are composition-owned bridges. They
+	// retain the exact Refresh, Jobs and Access audit repository identities so
+	// refresh transactions cannot silently split across sibling authorities.
+	RefreshJobs        *refreshmodule.PostgresJobsAdapter
+	RefreshCancelAudit *refreshmodule.PostgresCancelAuditWriterAdapter
 
 	Release        *releasepostgres.Repository
 	ReleaseCatalog *releasemodule.PostgresCatalog
@@ -129,6 +150,20 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 	binding, err := connectionbindingpostgres.NewProduction(runtime, connectionbindingaudit.New())
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL connection-binding authority: %w", err)
+	}
+
+	// These capability schemas are all part of leapview_control. In
+	// particular, the DuckLake package's broader repository is intentionally
+	// not constructed here: its attempt/retention/lease methods duplicate the
+	// canonical delivery and serving-state authorities. A future migration-only
+	// facade may be added once that package exposes a narrow port.
+	physicalPool := physicalpoolpostgres.New(runtime)
+	servingState := servingstatepostgres.New(runtime)
+	refresh := refreshpostgres.New(runtime)
+	refreshJobs := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
+	refreshCancelAudit, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(audit)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL refresh cancellation audit authority: %w", err)
 	}
 
 	deploymentPersistence, err := NewDeploymentPostgresPersistence(runtime, DeploymentPostgresAuthorities{
@@ -191,6 +226,8 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 		Idempotency:   idempotencypostgres.NewStore(runtime),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorsigningpostgres.NewMaintenance(maintenance),
 		ConnectionBinding: binding, QueryAudit: queryauditpostgres.New(runtime), Cache: cachepostgres.New(runtime), Lineage: lineagepostgres.New(runtime),
+		PhysicalPool: physicalPool, ServingState: servingState, Refresh: refresh,
+		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseCatalog: releaseCatalog,
 		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
 		AgentRepository: agentRepository, AgentPersistence: &agentPersistence,
@@ -272,6 +309,8 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
 		{"connection-binding authority", g.ConnectionBinding}, {"query-audit authority", g.QueryAudit}, {"cache authority", g.Cache}, {"lineage authority", g.Lineage},
+		{"physical-pool authority", g.PhysicalPool}, {"serving-state authority", g.ServingState},
+		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
 		{"release authority", g.Release}, {"release catalog authority", g.ReleaseCatalog},
 		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
 		{"agent repository", g.AgentRepository}, {"agent persistence", g.AgentPersistence},
@@ -293,6 +332,15 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if !g.ConnectionBinding.Configured() || !g.ConnectionBinding.AuditCapable() {
 		return errors.New("PostgreSQL authority graph connection-binding authority is not audit-capable")
+	}
+	if !g.ServingState.Configured() {
+		return errors.New("PostgreSQL authority graph serving-state authority is not configured")
+	}
+	if !refreshJobsMatches(g.Jobs, g.Refresh, g.RefreshJobs) {
+		return errors.New("PostgreSQL authority graph refresh jobs adapter does not preserve sibling repository identity")
+	}
+	if !refreshCancelAuditMatches(g.AccessAudit, g.RefreshCancelAudit) {
+		return errors.New("PostgreSQL authority graph refresh cancellation audit adapter does not preserve access audit identity")
 	}
 	if !g.Release.Configured() || !g.Release.AuditCapable() || !g.Release.EventCapable() || !g.Release.WorkflowCapable() {
 		return errors.New("PostgreSQL authority graph release authority is not fully configured")
@@ -321,6 +369,14 @@ func deploymentPersistenceMatches(repository *deploymentpostgres.Repository, per
 
 func agentPersistenceMatches(repository *agentpostgres.Repository, persistence *agentmodule.Persistence) bool {
 	return repository != nil && persistence != nil && persistence.Repository == repository
+}
+
+func refreshJobsMatches(jobs *jobspostgres.Repository, refresh *refreshpostgres.Repository, adapter *refreshmodule.PostgresJobsAdapter) bool {
+	return jobs != nil && refresh != nil && adapter != nil && adapter.Jobs == jobs && adapter.Refresh == refresh
+}
+
+func refreshCancelAuditMatches(audit *accesspostgres.AuditRepository, adapter *refreshmodule.PostgresCancelAuditWriterAdapter) bool {
+	return audit != nil && adapter != nil && adapter.Audit == audit
 }
 
 func isNilAuthority(value any) bool {

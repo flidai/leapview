@@ -6,10 +6,14 @@ import (
 	"strings"
 	"testing"
 
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
+	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/flidai/leapview/internal/release"
 )
 
@@ -89,5 +93,34 @@ func TestPostgresAuthorityGraphDeploymentPersistenceUsesSameRepository(t *testin
 	other := deploymentpostgres.New(nil)
 	if deploymentPersistenceMatches(other, persistence) {
 		t.Fatal("different deployment repository identity was accepted")
+	}
+}
+
+func TestPostgresAuthorityGraphRefreshAdaptersPreserveRepositoryIdentity(t *testing.T) {
+	jobs := jobspostgres.New(nil)
+	refresh := refreshpostgres.New(nil)
+	audit := accesspostgres.New()
+	jobsAdapter := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
+	auditAdapter, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(audit)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !refreshJobsMatches(jobs, refresh, jobsAdapter) {
+		t.Fatal("refresh jobs adapter did not retain exact Jobs and Refresh repository identities")
+	}
+	if !refreshCancelAuditMatches(audit, auditAdapter) {
+		t.Fatal("refresh cancellation audit adapter did not retain exact Access audit identity")
+	}
+	if _, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(nil); err == nil {
+		t.Fatal("refresh cancellation audit adapter accepted a nil Access audit authority")
+	}
+	if refreshJobsMatches(jobspostgres.New(nil), refresh, jobsAdapter) {
+		t.Fatal("refresh jobs adapter accepted a different Jobs repository")
+	}
+	if refreshJobsMatches(jobs, refreshpostgres.New(nil), jobsAdapter) {
+		t.Fatal("refresh jobs adapter accepted a different Refresh repository")
+	}
+	if refreshJobsMatches(jobs, refresh, nil) || refreshCancelAuditMatches(audit, nil) {
+		t.Fatal("nil refresh adapter was accepted")
 	}
 }
