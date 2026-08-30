@@ -222,7 +222,7 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 	if _, err := pool.Exec(ctx, `UPDATE jobs.job SET error = '{"tampered":true}'::jsonb WHERE id = $1`, winner.ID); err == nil {
 		t.Fatal("terminal job accepted a direct mutation")
 	}
-	if removed, err := repo.Prune(ctx, time.Now().UTC().Add(time.Second), 10); err != nil || removed < 1 {
+	if removed, err := NewMaintenance(pool).Prune(ctx, time.Now().UTC().Add(time.Second), 10); err != nil || removed < 1 {
 		t.Fatalf("bounded terminal prune removed=%d err=%v", removed, err)
 	}
 	if _, err := repo.Get(ctx, winner.ID); !errors.Is(err, jobs.ErrNotFound) {

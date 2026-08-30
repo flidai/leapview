@@ -22,11 +22,22 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated retention connection. Runtime repositories do not retain or
+// expose this destructive capability.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 type Tx interface {
 	DBTX
 	Commit(context.Context) error
 	Rollback(context.Context) error
 }
+
+// Maintenance owns bounded viewer-day retention. Repository remains limited
+// to recording and reading usage on the serving path.
+type Maintenance struct{ db MaintenanceDBTX }
 
 var ErrUnavailable = errors.New("dashboard PostgreSQL usage store is unavailable")
 
@@ -84,23 +95,6 @@ func (r *Repository) RecordView(ctx context.Context, view usage.View) error {
 	return nil
 }
 
-// DeleteBefore removes at most batchSize viewer-day rows older than cutoff.
-// Retention is a bounded maintenance operation; callers should schedule it
-// outside the hot RecordView write path and repeat until the returned count is
-// less than batchSize.
-func (r *Repository) DeleteBefore(ctx context.Context, cutoff time.Time, batchSize int) (int64, error) {
-	if r == nil || r.db == nil {
-		return 0, ErrUnavailable
-	}
-	if cutoff.IsZero() {
-		return 0, fmt.Errorf("dashboard usage retention cutoff is required")
-	}
-	if batchSize <= 0 || batchSize > maxRetentionBatch {
-		return 0, fmt.Errorf("dashboard usage retention batch size must be between 1 and %d", maxRetentionBatch)
-	}
-	return db.New(r.db).DeleteBefore(ctxOrBackground(ctx), db.DeleteBeforeParams{CutoffDate: cutoff.UTC(), BatchSize: int32(batchSize)})
-}
-
 func (r *Repository) ListSummaries(ctx context.Context, cutoff time.Time) ([]usage.Summary, error) {
 	if r == nil || r.db == nil {
 		return nil, ErrUnavailable
@@ -134,4 +128,3 @@ func ctxOrBackground(ctx context.Context) context.Context {
 
 var _ usage.Recorder = (*Repository)(nil)
 var _ usage.Reader = (*Repository)(nil)
-var _ usage.Retainer = (*Repository)(nil)

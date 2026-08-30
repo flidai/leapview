@@ -21,12 +21,16 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated session-retention connection. Runtime Store values never
+// retain this destructive capability.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 var ErrUnavailable = errors.New("dashboard PostgreSQL session store is unavailable")
 
-const (
-	defaultExpiredBatch = 1000
-	maxExpiredBatch     = 10000
-)
+const maxExpiredBatch = 1000
 
 type Tx interface {
 	DBTX
@@ -53,6 +57,13 @@ type Store struct {
 	ttl    time.Duration
 	clock  func() time.Time
 	native bool
+}
+
+// Maintenance owns bounded expiry cleanup. Expired rows remain filtered from
+// runtime reads even before this facade physically removes them.
+type Maintenance struct {
+	db    MaintenanceDBTX
+	clock func() time.Time
 }
 
 func New(db DBTX) (*Store, error) { return NewWithTTL(db, 5*time.Minute) }
@@ -159,24 +170,6 @@ func (s *Store) Touch(ctx context.Context, key session.Key) error {
 		return session.ErrNotFound
 	}
 	return nil
-}
-
-func (s *Store) DeleteExpired(ctx context.Context) error {
-	_, err := s.DeleteExpiredBatch(ctx, defaultExpiredBatch)
-	return err
-}
-
-// DeleteExpiredBatch removes at most batchSize expired sessions and returns
-// the number removed. Maintenance callers should repeat until the count is
-// less than batchSize; request paths never invoke this operation.
-func (s *Store) DeleteExpiredBatch(ctx context.Context, batchSize int) (int64, error) {
-	if s == nil || s.db == nil {
-		return 0, ErrUnavailable
-	}
-	if batchSize <= 0 || batchSize > maxExpiredBatch {
-		return 0, fmt.Errorf("dashboard session expiry batch size must be between 1 and %d", maxExpiredBatch)
-	}
-	return db.New(s.db).DeleteExpired(ctxOrBackground(ctx), db.DeleteExpiredParams{Now: s.clock().UTC(), BatchSize: int32(batchSize)})
 }
 
 func (s *Store) expiry() time.Time { return s.clock().UTC().Add(s.ttl) }

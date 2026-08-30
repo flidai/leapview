@@ -341,7 +341,7 @@ func TestRepositoryPruneUsesOneTotalBudget(t *testing.T) {
 	if _, err := p.Exec(ctx, `UPDATE cache.cache_fill_lease SET acquired_at=clock_timestamp()-interval '2 seconds',expires_at=clock_timestamp()-interval '1 second' WHERE lease_id=$1`, lease.LeaseID); err != nil {
 		t.Fatal(err)
 	}
-	stats, err := repo.Prune(ctx, PruneOptions{Before: time.Now().Add(time.Hour), Limit: 1})
+	stats, err := NewMaintenance(p).Prune(ctx, PruneOptions{Before: time.Now().Add(time.Hour), Limit: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

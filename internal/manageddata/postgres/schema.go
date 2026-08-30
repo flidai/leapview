@@ -16,6 +16,13 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated managed-data retention connection. Runtime repositories do
+// not retain this destructive capability.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 // Tx is the strict native transaction surface accepted by managed-data
 // mutation side-effect ports. Commit and rollback are included in the shape
 // so a pool or connection cannot be passed where one atomic boundary is

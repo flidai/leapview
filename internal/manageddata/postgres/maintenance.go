@@ -19,7 +19,6 @@ import (
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgtype"
 )
 
 // ReachabilitySource is the PostgreSQL maintenance adapter for managed-data
@@ -409,21 +408,4 @@ func (r *Repository) RecordReconciliationEvidence(ctx context.Context, evidence 
 	}
 	evidence.EvidenceID, evidence.ProjectID, evidence.Environment, evidence.ObjectKey, evidence.ObservedState, evidence.Action, evidence.Evidence, evidence.ObservedAt = row.EvidenceID, row.ProjectID, row.Environment, row.ObjectKey, row.ObservedState, row.Action, append([]byte(nil), row.Evidence...), row.ObservedAt.Time
 	return evidence, nil
-}
-
-// PruneUploadSessions invokes the bounded SECURITY DEFINER maintenance
-// function. Runtime callers cannot delete rows directly.
-func (r *Repository) PruneUploadSessions(ctx context.Context, before time.Time, limit int) (int64, error) {
-	db, err := requireDB(r)
-	if err != nil {
-		return 0, err
-	}
-	if limit < 1 || limit > 1000 {
-		return 0, ErrInvalid
-	}
-	cutoff := pgtype.Timestamptz{}
-	if !before.IsZero() {
-		cutoff = pgtype.Timestamptz{Time: before.UTC(), Valid: true}
-	}
-	return manageddb.New(db).PruneUploadSessions(contextOrBackground(ctx), manageddb.PruneUploadSessionsParams{Cutoff: cutoff, PLimit: int32(limit)})
 }

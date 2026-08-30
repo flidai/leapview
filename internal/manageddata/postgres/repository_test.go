@@ -204,10 +204,11 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	if err != nil || !containsString(providerIDs, "provider_orders") {
 		t.Fatalf("provider IDs before cleanup: %v %#v", err, providerIDs)
 	}
-	if _, err := r.PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err == nil {
+	if _, err := p.Exec(t.Context(), `SELECT managed_data.prune_upload_sessions(clock_timestamp(), 100)`); err == nil {
 		t.Fatal("runtime role unexpectedly has prune capability")
 	}
-	if n, err := New(maintenance).PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err != nil || n != 0 {
+	maintenanceFacade := NewMaintenance(maintenance)
+	if n, err := maintenanceFacade.PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err != nil || n != 0 {
 		t.Fatalf("maintenance prune before cleanup marker removed evidence: n=%d err=%v", n, err)
 	}
 	providerIDs, err = r.ListS3MultipartProviderIDsByDigest(t.Context(), manifest.Files[0].SHA256)
@@ -220,7 +221,7 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	if err := New(maintenance).MarkUploadCleanupComplete(t.Context(), s.ID); err != nil {
 		t.Fatalf("bounded cleanup marker: %v", err)
 	}
-	if n, err := New(maintenance).PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err != nil || n == 0 {
+	if n, err := maintenanceFacade.PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err != nil || n == 0 {
 		t.Fatalf("maintenance prune after cleanup marker: n=%d err=%v", n, err)
 	}
 	if _, err := p.Exec(t.Context(), `UPDATE managed_data.upload_session SET cleanup_completed_at=clock_timestamp() WHERE upload_id='upload_orders'`); err == nil {

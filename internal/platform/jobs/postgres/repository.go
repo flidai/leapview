@@ -36,6 +36,14 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated maintenance connection. It intentionally mirrors DBTX so a
+// pool or caller-owned transaction can invoke only the bounded maintenance
+// facade; runtime repositories never retain this capability.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 // Tx is the native transaction surface accepted by caller-owned workflow
 // methods. Requiring commit/rollback prevents a pool or connection from being
 // passed accidentally and silently splitting an atomic workflow.
@@ -50,6 +58,11 @@ type beginner interface {
 }
 
 type Repository struct{ db DBTX }
+
+// Maintenance owns destructive job retention. Keeping this capability out of
+// Repository prevents serving-role code from accidentally invoking the prune
+// leaf; PostgreSQL role grants remain the enforcement boundary.
+type Maintenance struct{ db MaintenanceDBTX }
 
 func queries(db DBTX) *jobdb.Queries { return jobdb.New(db) }
 
@@ -84,6 +97,9 @@ func NewRepository(db DBTX) *Repository { return &Repository{db: db} }
 // New is a concise constructor alias for callers that keep one repository per
 // capability package.
 func New(db DBTX) *Repository { return NewRepository(db) }
+
+// NewMaintenance constructs the bounded job-retention facade.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
 // ApplySchema applies the capability-owned DDL on a caller-owned transaction.
 // It is useful for clean conformance databases and deliberately performs no
@@ -819,20 +835,6 @@ func (r *Repository) ListEvents(ctx context.Context, resourceKind, resourceID st
 		result = append(result, event)
 	}
 	return result, nil
-}
-
-// Prune removes at most limit terminal jobs whose database completion time is
-// at or before before.  Deletion is performed by the SECURITY DEFINER
-// capability function, so runtime callers never receive table DELETE access.
-func (r *Repository) Prune(ctx context.Context, before time.Time, limit int) (int64, error) {
-	if before.IsZero() || limit < 1 || limit > 1000 {
-		return 0, fmt.Errorf("job prune cutoff and limit are required")
-	}
-	removed, err := queries(r.db).Prune(ctx, jobdb.PruneParams{Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, BatchLimit: int32(limit)})
-	if err != nil {
-		return 0, err
-	}
-	return removed, nil
 }
 
 // Observe returns bounded queue-health rows without exposing payloads. The

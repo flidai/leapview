@@ -124,16 +124,21 @@ func TestStorePostgreSQL18ExpiredCleanupIsBounded(t *testing.T) {
 		}
 	}
 	store.clock = func() time.Time { return base.Add(10 * time.Minute) }
-	if deleted, err := store.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 2 {
+	maintenance := NewMaintenance(store.db)
+	maintenance.clock = store.clock
+	if deleted, err := maintenance.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 2 {
 		t.Fatalf("bounded expiry batch = %d (%v), want 2", deleted, err)
 	}
-	if deleted, err := store.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 1 {
+	if deleted, err := maintenance.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 1 {
 		t.Fatalf("second expiry batch = %d (%v), want 1", deleted, err)
 	}
-	if deleted, err := store.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 0 {
+	if deleted, err := maintenance.DeleteExpiredBatch(t.Context(), 2); err != nil || deleted != 0 {
 		t.Fatalf("empty expiry batch = %d (%v), want 0", deleted, err)
 	}
-	if _, err := store.DeleteExpiredBatch(t.Context(), 0); err == nil {
+	if _, err := maintenance.DeleteExpiredBatch(t.Context(), 0); err == nil {
 		t.Fatal("unbounded expiry batch was accepted")
+	}
+	if _, err := maintenance.DeleteExpiredBatch(t.Context(), 1001); err == nil {
+		t.Fatal("oversized expiry batch was accepted")
 	}
 }

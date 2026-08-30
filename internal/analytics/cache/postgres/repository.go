@@ -35,6 +35,14 @@ type DBTX interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
+// MaintenanceDBTX is the native PostgreSQL surface for the separately
+// authenticated maintenance connection. It mirrors DBTX so pools and
+// caller-owned transactions can invoke the bounded facade without adapters;
+// runtime repositories never retain this value.
+type MaintenanceDBTX interface {
+	DBTX
+}
+
 type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
@@ -44,6 +52,10 @@ type Tx interface {
 	Commit(context.Context) error
 	Rollback(context.Context) error
 }
+
+// Maintenance owns destructive cache-coordination retention. Runtime
+// Repository intentionally has no prune method.
+type Maintenance struct{ db MaintenanceDBTX }
 
 var (
 	ErrInvalid    = errors.New("invalid cache input")
@@ -336,6 +348,9 @@ type Repository struct {
 	db    DBTX
 	lease time.Duration
 }
+
+// NewMaintenance constructs the bounded cache-retention facade.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
 func dbUUID(id uuid.UUID) pgtype.UUID { return pgtype.UUID{Bytes: id, Valid: true} }
 
@@ -987,30 +1002,6 @@ func (r *Repository) ReconcileInvalidations(ctx context.Context, opts ReconcileO
 // hint and persist only the event cursor.
 func (r *Repository) Reconcile(ctx context.Context, opts ReconcileOptions) ([]Invalidation, error) {
 	return r.ReconcileInvalidations(ctx, opts)
-}
-
-// Prune removes only durable coordination rows that are outside the caller's
-// retention boundary. Manifest rows remain lifecycle evidence and are never
-// deleted by this method. A bounded batch keeps vacuum and lock impact small.
-func (r *Repository) Prune(ctx context.Context, opts PruneOptions) (PruneStats, error) {
-	if r == nil || r.db == nil || opts.Before.IsZero() {
-		return PruneStats{}, ErrInvalid
-	}
-	limit := opts.Limit
-	if limit == 0 {
-		limit = maxPruneBatch
-	}
-	if limit < 1 || limit > maxPruneBatch {
-		return PruneStats{}, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	row, err := cachedb.New(r.db).PruneCoordination(ctx, cachedb.PruneCoordinationParams{Before: dbTime(&opts.Before), LimitCount: int32(limit)})
-	if err != nil {
-		return PruneStats{}, err
-	}
-	return PruneStats{Invalidations: row.Invalidations, ExpiredLeases: row.ExpiredLeases}, nil
 }
 
 func (r *Repository) Stats(ctx context.Context) (CacheStats, error) {

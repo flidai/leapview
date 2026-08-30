@@ -67,16 +67,17 @@ func TestRepositoryPostgreSQL18ViewerDaySemanticsAndRetention(t *testing.T) {
 	if err := repository.RecordView(t.Context(), usage.View{ProjectID: "project:usage", DashboardID: "dashboard:new", PageID: "overview", PrincipalID: "principal:a", ViewedAt: base}); err != nil {
 		t.Fatal(err)
 	}
-	if deleted, err := repository.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 10); err != nil || deleted != 1 {
+	maintenance := NewMaintenance(repository.db)
+	if deleted, err := maintenance.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 10); err != nil || deleted != 1 {
 		t.Fatalf("retention deleted = %d (%v), want 1", deleted, err)
 	}
-	if _, err := repository.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 0); err == nil {
+	if _, err := maintenance.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 0); err == nil {
 		t.Fatal("unbounded retention batch was accepted")
 	}
-	if _, err := repository.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 10001); err == nil {
+	if _, err := maintenance.DeleteBefore(t.Context(), base.Add(-usage.RetentionWindow), 10001); err == nil {
 		t.Fatal("oversized retention batch was accepted")
 	}
-	if _, err := repository.DeleteBefore(t.Context(), time.Time{}, 10); err == nil {
+	if _, err := maintenance.DeleteBefore(t.Context(), time.Time{}, 10); err == nil {
 		t.Fatal("zero retention cutoff was accepted")
 	}
 	if got, err := repository.ListSummaries(t.Context(), old.Add(-time.Hour)); err != nil {
