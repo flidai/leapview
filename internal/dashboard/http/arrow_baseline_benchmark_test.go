@@ -625,6 +625,9 @@ func (r *dashboardBaselineDataRuntime) Distribution(ctx context.Context, request
 func (r *dashboardBaselineDataRuntime) ExecuteDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Result, error) {
 	return r.core.ExecuteDataQuery(ctx, request)
 }
+func (r *dashboardBaselineDataRuntime) ExecuteDataQueryBundle(ctx context.Context, requests []dataquery.BundleRequest) (dataquery.BundleResult, error) {
+	return r.core.ExecuteDataQueryBundle(ctx, requests)
+}
 func (r *dashboardBaselineDataRuntime) Refresh(ctx context.Context) error { return r.core.Refresh(ctx) }
 func (r *dashboardBaselineDataRuntime) Close() error                      { return r.core.Close() }
 func (r *dashboardBaselineDataRuntime) LastRefresh() time.Time            { return r.core.LastRefresh() }
@@ -649,10 +652,11 @@ type dashboardBaselinePhysicalSnapshot struct {
 }
 
 type dashboardBaselineDatabase struct {
-	rows     int
-	queries  atomic.Int64
-	mu       sync.Mutex
-	physical dashboardBaselinePhysicalSnapshot
+	rows             int
+	evidenceMetadata bool
+	queries          atomic.Int64
+	mu               sync.Mutex
+	physical         dashboardBaselinePhysicalSnapshot
 }
 
 func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {
@@ -662,20 +666,52 @@ func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanti
 	if countOnly {
 		rowCount = 1
 	}
+	bundleBranches := dashboardBaselineBundleBranches(plan.Columns)
+	if bundleBranches > 0 {
+		rowCount = d.rows * bundleBranches
+	}
 	fields := make([]arrow.Field, len(plan.Columns))
 	arrays := make([]arrow.Array, len(plan.Columns))
 	totalNulls := 0
 	for index, column := range plan.Columns {
-		fields[index] = dashboardBaselineArrowField(column, index, countOnly)
+		logicalColumn := column
+		if _, logical, ok := dashboardBaselineBundlePhysicalColumn(column); ok {
+			logicalColumn = logical
+		}
+		fields[index] = dashboardBaselineArrowField(logicalColumn, index, countOnly)
+		fields[index].Name = column
+		if d.evidenceMetadata {
+			fields[index].Metadata = arrow.NewMetadata([]string{"fai.fixture.column"}, []string{column})
+		}
 		builder := array.NewBuilder(memory.DefaultAllocator, fields[index].Type)
 		for row := 0; row < rowCount; row++ {
-			valid := countOnly || column == "row_group" || column == "column_group" || column == "value" || (row+index)%13 != 0
+			valueRow := row
+			valid := countOnly || logicalColumn == "row_group" || logicalColumn == "column_group" || logicalColumn == "value" || (row+index)%13 != 0
+			if bundleBranches > 0 {
+				branch, branchRow := row/d.rows, row%d.rows
+				valueRow = branchRow
+				switch column {
+				case "__bundle_branch", "__bundle_row":
+					valid = true
+				default:
+					ordinal, _, physical := dashboardBaselineBundlePhysicalColumn(column)
+					valid = physical && ordinal == branch && (logicalColumn == "value" || (branchRow+index)%13 != 0)
+				}
+			}
 			if !valid {
 				builder.AppendNull()
 				totalNulls++
 				continue
 			}
-			if err := appendDashboardBaselineArrowValue(builder, column, row, index, countOnly, d.rows); err != nil {
+			if bundleBranches > 0 && column == "__bundle_branch" {
+				builder.(*array.Int64Builder).Append(int64(row / d.rows))
+				continue
+			}
+			if bundleBranches > 0 && column == "__bundle_row" {
+				builder.(*array.Int64Builder).Append(int64(valueRow + 1))
+				continue
+			}
+			if err := appendDashboardBaselineArrowValue(builder, logicalColumn, valueRow, index, countOnly, d.rows); err != nil {
 				builder.Release()
 				for _, values := range arrays[:index] {
 					values.Release()
@@ -691,7 +727,13 @@ func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanti
 			values.Release()
 		}
 	}()
-	schema := arrow.NewSchema(fields, nil)
+	var schema *arrow.Schema
+	if d.evidenceMetadata {
+		metadata := arrow.NewMetadata([]string{"fai.fixture"}, []string{"dashboard-arrow-evidence"})
+		schema = arrow.NewSchema(fields, &metadata)
+	} else {
+		schema = arrow.NewSchema(fields, nil)
+	}
 	if !countOnly && len(fields) >= dashboardBaselineNarrowFields {
 		types := make([]arrow.Type, len(fields))
 		for index, field := range fields {
@@ -712,6 +754,31 @@ func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanti
 	return sink.WriteRecord(record)
 }
 
+func dashboardBaselineBundleBranches(columns []string) int {
+	branches := 0
+	for _, column := range columns {
+		if ordinal, _, ok := dashboardBaselineBundlePhysicalColumn(column); ok {
+			branches = max(branches, ordinal+1)
+		}
+	}
+	return branches
+}
+
+func dashboardBaselineBundlePhysicalColumn(column string) (int, string, bool) {
+	if !strings.HasPrefix(column, "__bundle_") || column == "__bundle_branch" || column == "__bundle_row" {
+		return 0, "", false
+	}
+	parts := strings.SplitN(strings.TrimPrefix(column, "__bundle_"), "_", 2)
+	if len(parts) != 2 {
+		return 0, "", false
+	}
+	ordinal, err := strconv.Atoi(parts[0])
+	if err != nil || ordinal < 0 || parts[1] == "" {
+		return 0, "", false
+	}
+	return ordinal, parts[1], true
+}
+
 func (d *dashboardBaselineDatabase) physicalSnapshot() dashboardBaselinePhysicalSnapshot {
 	d.mu.Lock()
 	defer d.mu.Unlock()
@@ -729,10 +796,20 @@ func dashboardBaselineArrowField(column string, fallback int, countOnly bool) ar
 		return field
 	}
 	switch column {
+	case "__bundle_branch", "__bundle_row":
+		field.Type = arrow.PrimitiveTypes.Int64
+		return field
+	case "label":
+		field.Type = arrow.BinaryTypes.String
+		return field
 	case "row_group", "column_group":
 		field.Type = arrow.BinaryTypes.String
 		return field
 	case "value":
+		field.Type = &arrow.Decimal128Type{Precision: 38, Scale: 3}
+		return field
+	}
+	if strings.HasPrefix(column, "value_") {
 		field.Type = &arrow.Decimal128Type{Precision: 38, Scale: 3}
 		return field
 	}
@@ -777,12 +854,20 @@ func appendDashboardBaselineArrowValue(builder array.Builder, column string, row
 		builder.(*array.StringBuilder).Append("row-" + strconv.Itoa(row))
 		return nil
 	}
+	if column == "label" {
+		builder.(*array.StringBuilder).Append("category-" + strconv.Itoa(row%97))
+		return nil
+	}
 	if column == "column_group" {
 		builder.(*array.StringBuilder).Append("column-" + strconv.Itoa(row%4))
 		return nil
 	}
 	if column == "value" {
 		builder.(*array.Decimal128Builder).Append(decimal128.FromI64(int64(row+1) * 1_000))
+		return nil
+	}
+	if strings.HasPrefix(column, "value_") {
+		builder.(*array.Decimal128Builder).Append(decimal128.FromI64(int64(row+fallback+1) * 1_000))
 		return nil
 	}
 	index := dashboardBaselineFieldIndex(column, fallback)
@@ -833,7 +918,7 @@ func dashboardBaselineModel() *semanticmodel.Model {
 		semanticDimensions[name] = semanticmodel.SemanticDimension{Name: name, Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{dashboardBaselineDatasetID: {Field: "orders." + name}}}
 		columns[name] = semanticmodel.ModelColumn{Name: name, Field: name, Type: "string", Datatype: semanticmodel.DataTypeString}
 	}
-	return &semanticmodel.Model{
+	model := &semanticmodel.Model{
 		Name: dashboardBaselineModelID.String(),
 		Tables: map[string]semanticmodel.Table{dashboardBaselineDatasetID: {
 			ModelName: dashboardBaselineDatasetID, Columns: columns, Dimensions: tableDimensions,
@@ -846,6 +931,8 @@ func dashboardBaselineModel() *semanticmodel.Model {
 			Input: &semanticmodel.MetricInput{Field: "orders.field_06"}, Empty: "zero",
 		}},
 	}
+	dashboardWarmCacheExtendModel(model)
+	return model
 }
 
 func dashboardBaselineLogicalDataType(index int) semanticmodel.LogicalDataType {
@@ -904,8 +991,15 @@ func dashboardBaselineDefinition(model *semanticmodel.Model) (*dashboardruntime.
 		return nil, err
 	}
 	visualizations["pivot"] = pivot
+	warmVisualizations, err := dashboardWarmCacheVisualDefinitions()
+	if err != nil {
+		return nil, err
+	}
+	for id, definition := range warmVisualizations {
+		visualizations[id] = definition
+	}
 	pageVisuals := make([]dashboard.PageVisual, 0, len(visualizations))
-	for _, id := range []string{"detail_narrow", "detail_wide", "matrix", "pivot"} {
+	for _, id := range []string{"detail_narrow", "detail_wide", "matrix", "pivot", "warm_kpi", "warm_wide_chart", "warm_bundle_chart_0", "warm_bundle_chart_1", "warm_bundle_chart_2", "warm_bundle_chart_3"} {
 		pageVisuals = append(pageVisuals, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id})
 	}
 	compiled, err := dashboarddefinition.New(dashboardBaselineDashboardID, "FAI-540 Dashboard Baseline", "", dashboardBaselineModelID.String(), []dashboard.Page{{ID: dashboardBaselinePageID, Title: "Overview", Visuals: pageVisuals}}, visualizations)
