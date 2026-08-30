@@ -46,7 +46,7 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 			request = got
 			return nil, nil
 		}),
-		ProjectID: projectID, CandidateID: "candidate-1", AuthorizationFingerprint: "auth-1", BindingFingerprint: "binding-1", SkipInitialRefresh: true,
+		ProjectID: projectID, CandidateID: "candidate-1", AuthorizationFingerprint: "auth-1", BindingFingerprint: "binding-1", RelationNamespace: "_candidate_namespace", SkipInitialRefresh: true,
 		DependencyEvidence: map[string]resultidentity.Evidence{"semantic:sales": evidence},
 	})
 	if _, err := factory.OpenDashboardProjectDataRuntimes(context.Background(), dashboardruntime.ProjectDataRuntimeConfig{Definition: definition}); err != nil {
@@ -57,6 +57,9 @@ func TestSkipInitialRefreshPropagatesToProjectRequest(t *testing.T) {
 	}
 	if request.CandidateID != "candidate-1" || request.AuthorizationFingerprint != "auth-1" || request.BindingFingerprint != "binding-1" {
 		t.Fatalf("project request lost candidate cache/auth identity: %#v", request)
+	}
+	if request.RelationNamespace != "_candidate_namespace" {
+		t.Fatalf("project request lost relation namespace: %q", request.RelationNamespace)
 	}
 	if !request.DependencyEvidence["semantic:sales"].Available() {
 		t.Fatal("project request lost dependency evidence")

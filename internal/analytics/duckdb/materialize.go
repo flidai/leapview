@@ -742,7 +742,7 @@ func OpenProjectMaterializeRuntime(ctx context.Context, config ProjectRuntimeCon
 		viewConfig:              config,
 	}
 	if config.SnapshotID > 0 {
-		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID); err != nil {
+		if err := discoverSnapshotModelSchemas(ctx, db, config.Models, config.SnapshotID, config.RelationNamespace); err != nil {
 			return nil, errors.Join(err, runtime.Close())
 		}
 		runtime.lastSnapshotID = config.SnapshotID
@@ -777,7 +777,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 				return "", fmt.Errorf("physical table %q: %w", physical, err)
 			}
 			if config.SnapshotID > 0 {
-				return analyticsducklake.QualifiedSnapshotRelation(config.SnapshotID, physical)
+				return analyticsducklake.QualifiedSnapshotRelationInNamespace(config.SnapshotID, config.RelationNamespace, physical)
 			}
 			return "model." + physical, nil
 		}
@@ -813,7 +813,7 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 // immutable DuckLake snapshot. Snapshot activation deliberately does not
 // inspect authored sources: source connections and credentials may no longer
 // be available when a committed serving generation is reopened.
-func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64) error {
+func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresource.SessionProvider, models map[string]*semanticmodel.Model, snapshotID int64, relationNamespace string) error {
 	if provider == nil {
 		return fmt.Errorf("snapshot schema discovery requires a DuckDB database")
 	}
@@ -849,7 +849,7 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 			if err != nil {
 				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
 			}
-			relation, err := analyticsducklake.QualifiedSnapshotRelation(snapshotID, physical)
+			relation, err := analyticsducklake.QualifiedSnapshotRelationInNamespace(snapshotID, relationNamespace, physical)
 			if err != nil {
 				return fmt.Errorf("snapshot schema discovery semantic model %q table %q: %w", modelID, tableName, err)
 			}

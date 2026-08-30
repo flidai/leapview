@@ -145,4 +145,29 @@ func TestNativeSnapshotClosureEvidencePreservesEmptyArrayCanonicalDocuments(t *t
 	if strings.Contains(canonical, `"relations":null`) || strings.Contains(canonical, `"objects":null`) {
 		t.Fatalf("canonical envelope contains null arrays: %s", canonical)
 	}
+	if err := VerifyNativeSnapshotClosureEvidence(evidence); err == nil || !strings.Contains(err.Error(), "relation manifest is empty") {
+		t.Fatalf("empty native closure verification error = %v", err)
+	}
+}
+
+func TestVerifyNativeSnapshotClosureEvidenceRejectsSelfConsistentNonCanonicalValues(t *testing.T) {
+	root := "/var/lib/leapview/data"
+	relation := BaseTable{Schema: "_candidate", Table: "orders"}
+	for name, test := range map[string]struct {
+		relations []BaseTable
+		objects   []NativeSnapshotObject
+	}{
+		"duplicate relation": {relations: []BaseTable{relation, relation}},
+		"out of root object": {relations: []BaseTable{relation}, objects: []NativeSnapshotObject{{Kind: DataFile, Path: "/var/lib/other/orders.parquet"}}},
+	} {
+		t.Run(name, func(t *testing.T) {
+			evidence, err := newNativeSnapshotClosureEvidence("catalog", 42, root, "_candidate", test.relations, test.objects)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := VerifyNativeSnapshotClosureEvidence(evidence); err == nil {
+				t.Fatal("self-consistent non-canonical evidence was accepted")
+			}
+		})
+	}
 }

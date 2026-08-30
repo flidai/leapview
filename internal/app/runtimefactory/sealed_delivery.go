@@ -299,6 +299,12 @@ func validatePostgresCandidateTuple(targetID string, plan deploymentpostgres.Del
 	if attempt.AttemptID == "" || seal.AttemptID != attempt.AttemptID || attempt.CandidateID != candidate.CandidateID || attempt.PlanID != candidate.PlanID || attempt.State != deploymentpostgres.AttemptCommitted || attempt.PhysicalPoolID != seal.PhysicalPoolID || attempt.SnapshotID != seal.DuckLakeSnapshotID || attempt.RequestDigest != seal.RequestDigest || attempt.PlanDigest != seal.PlanDigest || attempt.Namespace != seal.RelationNamespace || attempt.FencingEpoch <= 0 || len(attempt.CommitMarker) == 0 {
 		return fmt.Errorf("%w: snapshot seal is not backed by exact committed build-attempt evidence", ErrSealedRootMismatch)
 	}
+	expectedNamespace, err := deployment.DeriveRelationNamespace(deployment.RelationNamespaceInput{
+		CandidateID: candidate.CandidateID, AttemptID: attempt.AttemptID, FencingEpoch: attempt.FencingEpoch,
+	})
+	if err != nil || seal.RelationNamespace != expectedNamespace {
+		return fmt.Errorf("%w: snapshot seal relation namespace differs from candidate attempt fence", ErrSealedRootMismatch)
+	}
 	if seal.QualifiedAt.IsZero() || seal.PhysicalPoolID == "" || seal.CatalogDatabase == "" || seal.CatalogID == "" || seal.CatalogUUID == "" || seal.RelationNamespace == "" || seal.ObjectRoot == "" || seal.ArtifactRoot == "" || seal.TenantDomain == "" || seal.Region == "" || seal.EncryptionDomain == "" || seal.ObjectNamespace == "" || seal.CatalogVersion <= 0 || seal.DuckLakeSnapshotID <= 0 || seal.ClosureDigest == "" || seal.RuntimeVersion == "" {
 		return fmt.Errorf("%w: PostgreSQL snapshot-seal identity is incomplete", ErrSealedRootUnavailable)
 	}

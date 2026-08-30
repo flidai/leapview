@@ -7,6 +7,7 @@ package ducklake
 // have a catalog.duckdb artifact to include in this evidence.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -194,7 +195,14 @@ func (e *Environment) NativeSnapshotClosureEvidence(ctx context.Context, request
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
-	return newNativeSnapshotClosureEvidence(request.CatalogID, request.SnapshotID, expectedRoot, request.RelationNamespace, relations, objects)
+	evidence, err := newNativeSnapshotClosureEvidence(request.CatalogID, request.SnapshotID, expectedRoot, request.RelationNamespace, relations, objects)
+	if err != nil {
+		return NativeSnapshotClosureEvidence{}, err
+	}
+	if err := VerifyNativeSnapshotClosureEvidence(evidence); err != nil {
+		return NativeSnapshotClosureEvidence{}, err
+	}
+	return evidence, nil
 }
 
 func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, objectRoot, relationNamespace string, relations []BaseTable, objects []NativeSnapshotObject) (NativeSnapshotClosureEvidence, error) {
@@ -255,6 +263,66 @@ func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, object
 	}
 	evidence.CanonicalJSON = append(json.RawMessage(nil), envelope...)
 	return evidence, nil
+}
+
+// VerifyNativeSnapshotClosureEvidence re-canonicalizes value evidence at a
+// package boundary. Callers must not trust an implementation merely because
+// its JSON and digests are internally self-consistent: relation sets must be
+// sorted, unique, namespace-bound, and object paths must remain under the
+// admitted root. A native materialization request always contains at least one
+// model table, so an empty relation manifest is not qualifying evidence.
+func VerifyNativeSnapshotClosureEvidence(evidence NativeSnapshotClosureEvidence) error {
+	if len(evidence.Relations) == 0 {
+		return fmt.Errorf("DuckLake native relation manifest is empty")
+	}
+	relations, err := canonicalNativeRelations(evidence.Relations, evidence.RelationNamespace)
+	if err != nil {
+		return err
+	}
+	if len(relations) != len(evidence.Relations) {
+		return fmt.Errorf("DuckLake native relation manifest is not a canonical set")
+	}
+	for index := range relations {
+		if relations[index] != evidence.Relations[index] {
+			return fmt.Errorf("DuckLake native relation manifest is not canonically ordered")
+		}
+	}
+	files := CatalogFileSet{CatalogID: evidence.CatalogID}
+	for _, object := range evidence.Objects {
+		switch object.Kind {
+		case DataFile:
+			files.DataFiles = append(files.DataFiles, object.Path)
+		case DeleteFile:
+			files.DeleteFiles = append(files.DeleteFiles, object.Path)
+		default:
+			return fmt.Errorf("DuckLake native object kind %q is invalid", object.Kind)
+		}
+	}
+	objects, err := canonicalNativeObjects(evidence.ObjectRoot, files)
+	if err != nil {
+		return err
+	}
+	if len(objects) != len(evidence.Objects) {
+		return fmt.Errorf("DuckLake native object manifest is not a canonical set")
+	}
+	for index := range objects {
+		if objects[index] != evidence.Objects[index] {
+			return fmt.Errorf("DuckLake native object manifest is not canonically ordered")
+		}
+	}
+	expected, err := newNativeSnapshotClosureEvidence(evidence.CatalogID, evidence.SnapshotID, evidence.ObjectRoot, evidence.RelationNamespace, relations, objects)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(evidence.RelationManifestJSON, expected.RelationManifestJSON) ||
+		!bytes.Equal(evidence.ClosureJSON, expected.ClosureJSON) ||
+		!bytes.Equal(evidence.CanonicalJSON, expected.CanonicalJSON) ||
+		evidence.RelationManifestDigest != expected.RelationManifestDigest ||
+		evidence.ClosureDigest != expected.ClosureDigest ||
+		evidence.ObjectRootDigest != expected.ObjectRootDigest {
+		return fmt.Errorf("DuckLake native snapshot closure evidence differs from canonical values")
+	}
+	return nil
 }
 
 func nativeSnapshotDigest(value []byte) string {

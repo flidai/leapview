@@ -32,6 +32,7 @@ import (
 // PostgreSQL-backed DuckLake writer and must not expose a catalog file.
 type NativePhysicalBuildEnvironment interface {
 	analyticsmaterialization.Executor
+	CatalogID() string
 	SnapshotSealEvidence(context.Context, int64) (ducklake.PostgresSnapshotSealEvidence, error)
 	NativeSnapshotClosureEvidence(context.Context, ducklake.NativeSnapshotClosureRequest) (ducklake.NativeSnapshotClosureEvidence, error)
 	Close() error
@@ -64,6 +65,7 @@ func (f NativePhysicalBuildEnvironmentFactoryFunc) Open(ctx context.Context, mar
 // function factory above in tests.
 type DuckLakePhysicalBuildEnvironmentFactory struct {
 	Config              ducklake.Config
+	CatalogID           string
 	MaterializerFactory func(*ducklake.Environment) (analyticsmaterialization.Executor, error)
 }
 
@@ -76,6 +78,9 @@ func (f DuckLakePhysicalBuildEnvironmentFactory) Open(ctx context.Context, marke
 	}
 	if f.MaterializerFactory == nil {
 		return nil, fmt.Errorf("%w: native physical build materializer factory is not configured", deploymentnative.ErrInvalid)
+	}
+	if err := validateTextField(f.CatalogID, "DuckLake catalog id", ducklake.MaxCommitMarkerFieldBytes); err != nil {
+		return nil, err
 	}
 	config := f.Config
 	postgres := *config.PostgresCatalog
@@ -94,15 +99,23 @@ func (f DuckLakePhysicalBuildEnvironmentFactory) Open(ctx context.Context, marke
 	if materializer == nil {
 		return nil, errors.Join(fmt.Errorf("%w: native physical build materializer factory returned nil executor", deploymentnative.ErrInvalid), environment.Close())
 	}
-	return &duckLakePhysicalBuildEnvironment{environment: environment, materializer: materializer}, nil
+	return &duckLakePhysicalBuildEnvironment{environment: environment, materializer: materializer, catalogID: f.CatalogID}, nil
 }
 
 type duckLakePhysicalBuildEnvironment struct {
 	environment  *ducklake.Environment
 	materializer analyticsmaterialization.Executor
+	catalogID    string
 }
 
 var _ NativePhysicalBuildEnvironment = (*duckLakePhysicalBuildEnvironment)(nil)
+
+func (e *duckLakePhysicalBuildEnvironment) CatalogID() string {
+	if e == nil {
+		return ""
+	}
+	return e.catalogID
+}
 
 func (e *duckLakePhysicalBuildEnvironment) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
 	if e == nil || e.environment == nil || e.materializer == nil {
@@ -198,6 +211,9 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 			}
 		}
 	}()
+	if environment.CatalogID() != normalized.CatalogID {
+		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: native physical build environment catalog identity differs", deploymentnative.ErrConflict)
+	}
 
 	snapshotID, materializeErr := environment.Materialize(ctx, normalized.Request)
 	if materializeErr != nil {
@@ -385,6 +401,9 @@ func verifyNativePhysicalEvidence(seal ducklake.PostgresSnapshotSealEvidence, cl
 	}
 	if closure.CatalogID != input.CatalogID || closure.SnapshotID != snapshotID || closure.ObjectRoot != canonicalRoot || closure.RelationNamespace != input.Attempt.Namespace {
 		return fmt.Errorf("%w: native snapshot closure catalog/object/snapshot evidence differs", deploymentnative.ErrConflict)
+	}
+	if err := ducklake.VerifyNativeSnapshotClosureEvidence(closure); err != nil {
+		return fmt.Errorf("%w: native snapshot closure evidence is not canonical: %v", deploymentnative.ErrConflict, err)
 	}
 	for _, relation := range closure.Relations {
 		if relation.Schema != input.Attempt.Namespace {

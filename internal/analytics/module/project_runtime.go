@@ -86,6 +86,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		ProjectID: request.ProjectID, Environment: request.Environment,
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SourceDataDigest:   request.SourceDataDigest,
+		RelationNamespace:  request.RelationNamespace,
 		DependencyEvidence: request.DependencyEvidence,
 		RequiredExtensions: request.RequiredExtensions,
 		SkipInitialRefresh: request.SkipInitialRefresh,

@@ -22,6 +22,7 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -261,6 +262,18 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 			return nil, fmt.Errorf("%w: PostgreSQL %s identity is not normalized", ErrSealedRootMismatch, name)
 		}
 	}
+	if err := ducklake.ValidateRelationNamespace(root.RelationNamespace); err != nil {
+		return nil, fmt.Errorf("%w: PostgreSQL relation namespace is invalid: %v", ErrSealedRootMismatch, err)
+	}
+	expectedNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: root.CandidateID, AttemptID: root.AttemptID, FencingEpoch: root.FencingEpoch,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("%w: derive PostgreSQL relation namespace: %v", ErrSealedRootMismatch, err)
+	}
+	if root.RelationNamespace != expectedNamespace {
+		return nil, fmt.Errorf("%w: PostgreSQL relation namespace differs from candidate attempt fence", ErrSealedRootMismatch)
+	}
 	compatibilityDigest, err := poolContract.Tuple.Digest()
 	if err != nil {
 		return nil, err
@@ -331,7 +344,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		_ = leaseHandle.Close()
 		return nil, err
 	}
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env)
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env, root.RelationNamespace)
 	if err != nil {
 		_ = env.Close()
 		_ = leaseHandle.Close()

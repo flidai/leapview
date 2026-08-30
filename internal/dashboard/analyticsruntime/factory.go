@@ -34,6 +34,7 @@ type Options struct {
 	CandidateID              string
 	AuthorizationFingerprint string
 	BindingFingerprint       string
+	RelationNamespace        string
 	SkipInitialRefresh       bool
 	DependencyEvidence       map[string]resultidentity.Evidence
 }
@@ -62,6 +63,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		SemanticDigest: options.SemanticModelDigest, ArtifactDigest: options.ArtifactDigest, SourceDataDigest: options.SourceDataDigest,
 		CandidateID: options.CandidateID, AuthorizationFingerprint: options.AuthorizationFingerprint,
 		BindingFingerprint: options.BindingFingerprint,
+		RelationNamespace:  options.RelationNamespace,
 		DependencyEvidence: options.DependencyEvidence,
 		SkipInitialRefresh: options.SkipInitialRefresh,
 	})

@@ -801,8 +801,19 @@ func secureDuckDBCatalogFiles(path string) error {
 var physicalTablePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 func QualifiedSnapshotRelation(snapshotID int64, table string) (string, error) {
+	return QualifiedSnapshotRelationInNamespace(snapshotID, "model", table)
+}
+
+// QualifiedSnapshotRelationInNamespace returns a DuckLake relation qualified
+// to one immutable snapshot and physical schema. The legacy helper above
+// remains pinned to the model schema for callers that do not carry serving
+// namespace authority.
+func QualifiedSnapshotRelationInNamespace(snapshotID int64, relationNamespace, table string) (string, error) {
 	if snapshotID <= 0 {
 		return "", fmt.Errorf("snapshot id must be positive")
+	}
+	if err := ValidateRelationNamespace(relationNamespace); err != nil {
+		return "", err
 	}
 	if !physicalTablePattern.MatchString(table) {
 		return "", fmt.Errorf("invalid physical table name %q", table)
@@ -810,7 +821,16 @@ func QualifiedSnapshotRelation(snapshotID int64, table string) (string, error) {
 	// DuckLake's AT VERSION table syntax cannot be followed directly by an
 	// alias. A parenthesized FROM-first subquery preserves normal planner alias
 	// handling and is inlined by DuckDB.
-	return fmt.Sprintf("(FROM %s.model.%s AT (VERSION => %d))", catalogAlias, table, snapshotID), nil
+	return fmt.Sprintf("(FROM %s.%s.%s AT (VERSION => %d))", catalogAlias, relationNamespace, table, snapshotID), nil
+}
+
+// ValidateRelationNamespace enforces the shared DuckLake schema boundary for
+// authority-derived candidate and sealed-serving relations.
+func ValidateRelationNamespace(relationNamespace string) error {
+	if !physicalTablePattern.MatchString(relationNamespace) || relationNamespace != strings.ToLower(relationNamespace) || len(relationNamespace) > 63 {
+		return fmt.Errorf("invalid relation namespace %q", relationNamespace)
+	}
+	return nil
 }
 
 func SnapshotRelation(snapshotID int64, table string) string {

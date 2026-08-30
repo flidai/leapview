@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -158,9 +159,20 @@ func (f servingStateRuntimeFactory) Prepare(ctx context.Context, input runtimeho
 // prepareDashboard is the common sealed path project-artifact loader. The
 // catalog environment is supplied by the caller after durable lease/fence
 // acquisition; this helper never opens or writes a DuckLake catalog itself.
-func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment) (*dashboardRuntimeWithGraph, error) {
+func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace string) (*dashboardRuntimeWithGraph, error) {
 	if builder == nil || environment == nil {
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
+	}
+	// PostgreSQL serving roots carry the exact candidate schema selected by
+	// durable delivery state. Never allow the downstream runtime to fall back
+	// to the legacy model schema for this path.
+	if environment.IsPostgresCatalog() {
+		if relationNamespace == "" || relationNamespace != strings.TrimSpace(relationNamespace) {
+			return nil, fmt.Errorf("%w: PostgreSQL relation namespace is unavailable", ErrSealedRootUnavailable)
+		}
+		if err := ducklake.ValidateRelationNamespace(relationNamespace); err != nil {
+			return nil, fmt.Errorf("%w: PostgreSQL relation namespace: %v", ErrSealedRootUnavailable, err)
+		}
 	}
 	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.runtimeDir)
 	targetDir := filepath.Join(runtimeDir, runtimeExtractionIdentity(input)+"-"+shortDigest(input.Artifact.Digest))
@@ -238,6 +250,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	// existing state-driven behavior.
 	if environment.IsPostgresCatalog() {
 		runtimeInput.SnapshotID = environment.PostgresSnapshotVersion()
+		runtimeInput.RelationNamespace = relationNamespace
 	}
 	if input.Candidate != nil {
 		runtimeInput.CandidateID = input.Candidate.CandidateID

@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -259,14 +260,17 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	}
 	stateID := servingstate.ID("state-postgres")
 	artifactDigest := runtimeFactoryDigest("artifact")
+	candidateID := "0198f2c0-7c7a-7f00-8a11-000000000101"
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000102"
+	relationNamespace := runtimeFactoryRelationNamespace(t, candidateID, attemptID, 3)
 	root := SealedServingRoot{
-		GenerationID: "generation", CandidateID: "candidate", AttemptID: "attempt", ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
+		GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
 		SealID: "seal", QualificationDigest: runtimeFactoryDigest("qualification"), ClosureDigest: runtimeFactoryDigest("closure"),
 		PhysicalPoolID: contract.Pool.ID.String(), PoolContract: contract, Compatibility: contract.Tuple,
 		CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogMetadataSchema: ducklake.MetadataSchemaForPool(contract.Pool.ID.String()),
 		CatalogSnapshotID: 7, DeliveryID: "delivery", FencingEpoch: 3, DataPath: dataPath,
 		CompatibilityDigest: compatibilityDigest, RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
-		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
+		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
 	}
 	leases := &leaseProbe{}
 	authorized := false
@@ -341,14 +345,17 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 	}
 	stateID := servingstate.ID("state-postgres-adversarial")
 	artifactDigest := runtimeFactoryDigest("artifact")
+	candidateID := "0198f2c0-7c7a-7f00-8a11-000000000201"
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000202"
+	relationNamespace := runtimeFactoryRelationNamespace(t, candidateID, attemptID, 3)
 	baseRoot := SealedServingRoot{
-		GenerationID: "generation", CandidateID: "candidate", AttemptID: "attempt", ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
+		GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
 		SealID: "seal", QualificationDigest: runtimeFactoryDigest("qualification"), ClosureDigest: runtimeFactoryDigest("closure"),
 		PhysicalPoolID: contract.Pool.ID.String(), PoolContract: contract, Compatibility: contract.Tuple,
 		CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogMetadataSchema: ducklake.MetadataSchemaForPool(contract.Pool.ID.String()),
 		CatalogSnapshotID: 7, DeliveryID: "delivery", FencingEpoch: 3, DataPath: dataPath,
 		CompatibilityDigest: compatibilityDigest, RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
-		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
+		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
 	}
 	input := runtimehost.RuntimeInput{State: servingstate.State{ID: stateID, ProjectID: "project", Environment: "prod", DuckLakeSnapshotID: 7}, Artifact: servingstate.Artifact{ID: "artifact", ServingStateID: stateID, Digest: artifactDigest}}
 	cases := []struct {
@@ -362,6 +369,7 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 		{"catalog UUID", func(r *SealedServingRoot) { r.CatalogUUID = "not-a-uuid" }},
 		{"catalog version cross-binding", func(r *SealedServingRoot) { r.CatalogVersionNumber = 2 }},
 		{"relation namespace", func(r *SealedServingRoot) { r.RelationNamespace = "" }},
+		{"relation namespace identity drift", func(r *SealedServingRoot) { r.RelationNamespace = "_other_namespace" }},
 		{"relation manifest digest", func(r *SealedServingRoot) { r.RelationManifestDigest = "invalid" }},
 		{"object root", func(r *SealedServingRoot) { r.ObjectRoot = "" }},
 		{"object root digest", func(r *SealedServingRoot) { r.ObjectRootDigest = "invalid" }},
@@ -417,6 +425,17 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 func runtimeFactoryDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func runtimeFactoryRelationNamespace(t *testing.T, candidateID, attemptID string, fence int64) string {
+	t.Helper()
+	namespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: fence,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return namespace
 }
 
 type leaseProbe struct {

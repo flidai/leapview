@@ -286,7 +286,7 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 	closeReader := func() error { return reader.Close() }
 	// Reuse the normal project artifact extraction and authorization compiler,
 	// but direct dashboard query runtimes at this reader's immutable catalog.
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment())
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment(), "")
 	if err != nil {
 		_ = closeReader()
 		return nil, err

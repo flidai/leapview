@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -51,6 +52,10 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	candidateID := "33333333-3333-4333-8333-333333333333"
 	attemptID := "44444444-4444-4444-8444-444444444444"
 	sealID := "55555555-5555-4555-8555-555555555555"
+	relationNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
 	requestDigest := testPostgresResolverDigest('1')
 	planDigest := testPostgresResolverDigest('2')
 	graphDigest := testPostgresResolverDigest('3')
@@ -113,7 +118,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	attempt, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{
 		AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "resolver-test-owner",
 		PhysicalPoolID: pool.ID.String(), FencingEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest,
-		Namespace: "relation_namespace", SessionIdentity: "resolver-session", LeaseExpiresAt: time.Now().UTC().Add(10 * time.Minute),
+		Namespace: relationNamespace, SessionIdentity: "resolver-session", LeaseExpiresAt: time.Now().UTC().Add(10 * time.Minute),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +148,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool.ID.String(),
 		TenantDomain: "tenant-preview", Region: "us-east-1", EncryptionDomain: "kms-preview", ObjectNamespace: "objects-preview",
 		CatalogDatabase: "catalog_preview", CatalogID: "catalog-id", CatalogUUID: "66666666-6666-4666-8666-666666666666", CatalogVersion: 3, DuckLakeSnapshotID: 42,
-		RelationNamespace: "relation_namespace", RelationManifestDigest: relationDigest, ClosureDigest: closureDigest,
+		RelationNamespace: relationNamespace, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest,
 		ObjectRoot: "objects/root", ObjectRootDigest: objectDigest, ArtifactRoot: "artifacts/root", ArtifactRootDigest: artifactRootDigest,
 		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest, SecurityDomainFingerprint: securityDigest,
 		RequestDigest: requestDigest, PlanDigest: planDigest, CompatibilityDigest: compatibilityDigest,
