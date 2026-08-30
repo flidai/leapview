@@ -5,7 +5,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -74,6 +76,81 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("runAdmission error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestTrivyOperationalFailureDiagnosticsAreBoundedAndSanitized(t *testing.T) {
+	policyPath, _ := testPolicy(t)
+	for _, test := range []struct {
+		name       string
+		mode       string
+		exitStatus string
+		exitCode   int
+		want       []string
+		forbidden  []string
+		truncated  bool
+	}{
+		{
+			name:       "operational failure",
+			mode:       "unavailable",
+			exitStatus: "exit status 70",
+			exitCode:   70,
+			want:       []string{"failed to download vulnerability database", "no space left on device"},
+		},
+		{
+			name:       "credential-bearing failure",
+			mode:       "secret-stderr",
+			exitStatus: "exit status 71",
+			exitCode:   71,
+			want:       []string{"registry authentication failed", "[REDACTED]"},
+			forbidden:  []string{"registry-password", "scanner-token", "bearer-secret", "AKIAIOSFODNN7EXAMPLE"},
+		},
+		{
+			name:       "oversized failure",
+			mode:       "oversized-stderr",
+			exitStatus: "exit status 72",
+			exitCode:   72,
+			want:       []string{"database download chunk 0000", truncatedDiagnostic},
+			truncated:  true,
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bin := liveTools(t)
+			env := testEnv(map[string]string{
+				"PATH": bin + ":/usr/bin:/bin", "GH_TOKEN": "fixture-token",
+				"GITHUB_REPOSITORY": repositoryIdentity, "OCI_TEST_MODE": test.mode,
+			})
+			var output bytes.Buffer
+			err := runAdmission(liveArgs(policyPath), env, &output, &output)
+			if err == nil {
+				t.Fatal("runAdmission succeeded during a Trivy operational failure")
+			}
+			diagnostic := err.Error()
+			if !strings.Contains(diagnostic, "pinned vulnerability scan could not complete") || !strings.Contains(diagnostic, test.exitStatus) {
+				t.Fatalf("runAdmission error = %q, want failure class and %q", diagnostic, test.exitStatus)
+			}
+			var exitError *exec.ExitError
+			if !errors.As(err, &exitError) || exitError.ExitCode() != test.exitCode {
+				t.Fatalf("runAdmission exit error = %#v, want status %d", exitError, test.exitCode)
+			}
+			for _, want := range test.want {
+				if !strings.Contains(diagnostic, want) {
+					t.Fatalf("runAdmission error = %q, want %q", diagnostic, want)
+				}
+			}
+			for _, forbidden := range test.forbidden {
+				if strings.Contains(diagnostic, forbidden) {
+					t.Fatalf("runAdmission error exposed %q: %s", forbidden, diagnostic)
+				}
+			}
+			if test.truncated {
+				prefix := "pinned vulnerability scan could not complete: " + test.exitStatus + ": "
+				bounded, ok := strings.CutPrefix(diagnostic, prefix)
+				if !ok || len(bounded) > trivyDiagnosticLimit {
+					t.Fatalf("bounded diagnostic length = %d, want at most %d: %s", len(bounded), trivyDiagnosticLimit, diagnostic)
+				}
 			}
 		})
 	}
@@ -276,7 +353,7 @@ func liveTools(t *testing.T) string {
 	dir := t.TempDir()
 	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nrepository='https://github.com/"+repositoryIdentity+"'\nworkflow='https://github.com/"+testWorkflow+"@refs/heads/main'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-repository ] && repository='https://github.com/attacker/example'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='https://github.com/flidai/leapview/.github/workflows/untrusted.yml@refs/heads/main'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryURI\":\"%s\",\"buildSignerURI\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$repository\" \"$workflow\" \"$revision\"\n")
 	writeTool(t, filepath.Join(dir, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *'imagetools inspect'*)\n    [ \"$OCI_TEST_MODE\" = missing-sbom ] && printf '{}\\n' || printf '{\"SPDX\":{\"SPDXID\":\"SPDXRef-DOCUMENT\"}}\\n';;\n  *) exit 64;;\nesac\n")
-	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\n[ \"$OCI_TEST_MODE\" = unavailable ] && exit 70\n[ \"$OCI_TEST_MODE\" = vulnerable ] && printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n' || printf '{\"Results\":[]}\\n'\n")
+	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\ncase \"$OCI_TEST_MODE\" in\n  unavailable) printf 'failed to download vulnerability database: no space left on device\\n' >&2; exit 70;;\n  secret-stderr) printf 'registry authentication failed for https://scanner:registry-password@registry.example; {\"token\":\"scanner-token\"}; Authorization: Bearer bearer-secret; AWS_ACCESS_KEY_ID=AKIAIOSFODNN7EXAMPLE\\n' >&2; exit 71;;\n  oversized-stderr) i=0; while [ \"$i\" -lt 2000 ]; do printf 'database download chunk %04d could not be extracted\\n' \"$i\" >&2; i=$((i + 1)); done; exit 72;;\n  vulnerable) printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n';;\n  *) printf '{\"Results\":[]}\\n';;\nesac\n")
 	return dir
 }
 

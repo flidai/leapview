@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -11,6 +13,13 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/app/securitypolicy"
+	"github.com/flidai/leapview/internal/platform/safetext"
+)
+
+const (
+	trivyStderrCaptureLimit = 16 * 1024
+	trivyDiagnosticLimit    = 4 * 1024
+	truncatedDiagnostic     = " [truncated]"
 )
 
 type commandRunner struct {
@@ -69,9 +78,9 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 		args = append(args, "--ignore-unfixed")
 	}
 	args = append(args, opts.image)
-	trivyJSON, err := r.runCommandParts(args)
+	trivyJSON, err := r.runCommandPartsWithDiagnostics(args)
 	if err != nil {
-		return errors.New("pinned vulnerability scan could not complete")
+		return fmt.Errorf("pinned vulnerability scan could not complete: %w", err)
 	}
 	unresolved, err := unresolvedCount(trivyJSON, contract)
 	if err != nil {
@@ -133,6 +142,74 @@ func (r commandRunner) runCommandParts(parts []string) ([]byte, error) {
 		return nil, errors.New("empty command")
 	}
 	return r.run(parts[0], parts[1:], "")
+}
+
+func (r commandRunner) runCommandPartsWithDiagnostics(parts []string) ([]byte, error) {
+	if len(parts) == 0 {
+		return nil, errors.New("empty command")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Env = r.env
+	stderr := boundedDiagnosticBuffer{limit: trivyStderrCaptureLimit}
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	if err != nil {
+		return output, commandDiagnosticError{cause: err, diagnostic: stderr.Diagnostic()}
+	}
+	return output, nil
+}
+
+type boundedDiagnosticBuffer struct {
+	buffer    bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (buffer *boundedDiagnosticBuffer) Write(contents []byte) (int, error) {
+	written := len(contents)
+	remaining := buffer.limit - buffer.buffer.Len()
+	if remaining <= 0 {
+		buffer.truncated = buffer.truncated || written > 0
+		return written, nil
+	}
+	if len(contents) > remaining {
+		contents = contents[:remaining]
+		buffer.truncated = true
+	}
+	_, _ = buffer.buffer.Write(contents)
+	return written, nil
+}
+
+func (buffer *boundedDiagnosticBuffer) Diagnostic() string {
+	diagnostic := safetext.BoundedSummary(buffer.buffer.String(), 0)
+	if !buffer.truncated && len(diagnostic) <= trivyDiagnosticLimit {
+		return diagnostic
+	}
+	limit := trivyDiagnosticLimit - len(truncatedDiagnostic)
+	diagnostic = safetext.BoundedSummary(diagnostic, limit)
+	return strings.TrimSpace(diagnostic) + truncatedDiagnostic
+}
+
+type commandDiagnosticError struct {
+	cause      error
+	diagnostic string
+}
+
+func (failure commandDiagnosticError) Error() string {
+	status := safetext.BoundedSummary(failure.cause.Error(), 256)
+	if failure.diagnostic == "" {
+		return status
+	}
+	return status + ": " + failure.diagnostic
+}
+
+func (failure commandDiagnosticError) Unwrap() error {
+	return failure.cause
 }
 
 func (r commandRunner) loadExceptionContract(policyPath string) (*securitypolicy.Exceptions, error) {
