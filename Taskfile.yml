@@ -618,6 +618,11 @@ tasks:
 
   db:prepare:
     desc: Prepare every PostgreSQL sqlc query against the clean PostgreSQL 18 baseline
+    # The baseline package composes capability schemas whose domain packages
+    # consume APIGen types. A clean checkout must create those independent Go
+    # build inputs before compiling the PostgreSQL 18 prepare harness.
+    deps:
+      - api:generate
     cmds:
       - >-
         LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=true
