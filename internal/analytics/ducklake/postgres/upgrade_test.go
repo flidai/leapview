@@ -32,7 +32,7 @@ func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 	}
 	adminRepo := New(admin)
 	const poolID, catalogID = "upgrade-pool", "upgrade-catalog"
-	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "catalog-v1"}); err != nil {
+	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000011", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "catalog-v1"}); err != nil {
 		t.Fatal(err)
 	}
 	migratorDB, err := pgxpool.New(t.Context(), db.URL(migratorRole))
@@ -179,7 +179,7 @@ func TestPostgres18MigrationFenceConcurrencyAndGlobalExclusion(t *testing.T) {
 	}
 	adminRepo := New(admin)
 	const poolID, catalogID = "concurrent-pool", "concurrent-catalog"
-	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000012", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	firstDB, err := pgxpool.New(t.Context(), db.URL(migratorRole))
@@ -379,7 +379,7 @@ func TestPostgres18UpgradeAuthorityAdversarialSQLAndTupleCycle(t *testing.T) {
 	}
 	adminRepo := New(admin)
 	const poolID, catalogID = "adversarial-pool", "adversarial-catalog"
-	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000013", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
 		t.Fatal(err)
 	}
 	migratorDB, err := pgxpool.New(t.Context(), db.URL(migratorRole))

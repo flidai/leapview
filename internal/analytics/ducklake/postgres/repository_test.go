@@ -17,6 +17,8 @@ import (
 
 func digest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
+const testCatalogUUID = "0198f2c0-7c7a-7f00-8a11-000000000001"
+
 // sqliteSnapshotLookup adapts a tiny in-memory SQL fixture to DuckLake's
 // SnapshotLookup interface. Rewriting only the DuckLake table-function names
 // keeps the production resolver's query shape intact while exercising its
@@ -74,10 +76,32 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	}
 	r := New(p)
 	const poolID, catalogID = "pool-1", "catalog-1"
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	identity := CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}
+	registered, err := r.RegisterCatalog(t.Context(), identity)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: "pool-2", CatalogID: "catalog-2", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	loaded, err := r.LoadCatalog(t.Context(), poolID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.CatalogDatabase != identity.CatalogDatabase || loaded.CatalogUUID != identity.CatalogUUID || !sameCatalog(loaded, identity) {
+		t.Fatalf("catalog identity round trip = %#v, want %#v", loaded, identity)
+	}
+	if registered.CatalogDatabase != identity.CatalogDatabase || registered.CatalogUUID != identity.CatalogUUID {
+		t.Fatalf("registered catalog identity = %#v, want database/uuid %q/%q", registered, identity.CatalogDatabase, identity.CatalogUUID)
+	}
+	for label, mutate := range map[string]func(*CatalogIdentity){
+		"database": func(v *CatalogIdentity) { v.CatalogDatabase = "other_ducklake" },
+		"uuid":     func(v *CatalogIdentity) { v.CatalogUUID = "0198f2c0-7c7a-7f00-8a11-000000000099" },
+	} {
+		conflict := identity
+		mutate(&conflict)
+		if _, err := r.RegisterCatalog(t.Context(), conflict); !errors.Is(err, ErrConflict) {
+			t.Fatalf("immutable catalog %s replay error = %v, want ErrConflict", label, err)
+		}
+	}
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: "pool-2", CatalogDatabase: "ducklake", CatalogID: "catalog-2", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000002", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.CreateSnapshotRoot(t.Context(), SnapshotRootInput{RootID: "0198f2c0-7c7a-7f00-8a11-000000000005", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 500, Kind: RootCandidate}); !errors.Is(err, ErrNotFound) {
@@ -254,7 +278,7 @@ func TestReconcileRequiresPositiveTerminationEvidence(t *testing.T) {
 	}
 	r := New(p)
 	const poolID, catalogID = "pool-reconcile", "catalog-reconcile"
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatal(err)
 	}
 	lookupDB, err := sql.Open("sqlite", "file:ducklake_reconcile_lookup?mode=memory&cache=shared")
@@ -322,7 +346,7 @@ func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
 	}
 	r := New(p)
 	const poolID, catalogID = "cleanup-pool", "cleanup-catalog"
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatal(err)
 	}
 	ref := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77}
@@ -403,7 +427,7 @@ func TestPostgres18OrphanCleanupClaimFencesStaleWorkers(t *testing.T) {
 	}
 	r := New(p)
 	const poolID, catalogID = "orphan-cleanup-pool", "orphan-cleanup-catalog"
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatal(err)
 	}
 	const orphanID = "0198f2c0-7c7a-7f00-8a11-000000000077"
@@ -497,7 +521,7 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	t.Cleanup(runtimeDB.Close)
 	runtime := New(runtimeDB)
 	const poolID, catalogID = "role-grant-pool", "role-grant-catalog"
-	if _, err := runtime.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	if _, err := runtime.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
 		t.Fatalf("runtime repository path: %v", err)
 	}
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000099"
@@ -527,7 +551,7 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	if _, err := readonly.LoadCatalog(t.Context(), poolID); err != nil {
 		t.Fatalf("readonly catalog select: %v", err)
 	}
-	if _, err := readonlyDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_id,metadata_schema,compatibility_digest,catalog_schema_version) VALUES ('readonly-pool','readonly-catalog','lake',$1,'ducklake-v1')`, digest('d')); err == nil {
+	if _, err := readonlyDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,compatibility_digest,catalog_schema_version) VALUES ('readonly-pool','ducklake','readonly-catalog','0198f2c0-7c7a-7f00-8a11-000000000010','lake',$1,'ducklake-v1')`, digest('d')); err == nil {
 		t.Fatal("readonly catalog insert unexpectedly succeeded")
 	}
 }

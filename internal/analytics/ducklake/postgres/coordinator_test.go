@@ -488,7 +488,7 @@ func TestUpgradeCoordinatorRunSequencingAndRecovery(t *testing.T) {
 	setup := func(t *testing.T, suffix string) {
 		t.Helper()
 		poolID, catalogID := "coord-"+suffix, "catalog-"+suffix
-		if _, err := New(admin).RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogID: catalogID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID), CompatibilityDigest: current.CompatibilityDigest, CatalogSchemaVersion: current.CatalogSchemaVersion}); err != nil {
+		if _, err := New(admin).RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB.Name, CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000014", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), CompatibilityDigest: current.CompatibilityDigest, CatalogSchemaVersion: current.CatalogSchemaVersion}); err != nil {
 			t.Fatal(err)
 		}
 		for _, snapshotID := range []int64{1, 2} {

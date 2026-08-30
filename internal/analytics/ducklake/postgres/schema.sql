@@ -9,7 +9,12 @@ CREATE SCHEMA IF NOT EXISTS ducklake;
 
 CREATE TABLE IF NOT EXISTS ducklake.catalog_identity (
     physical_pool_id       text PRIMARY KEY,
+    catalog_database       text NOT NULL
+        CHECK (catalog_database = btrim(catalog_database) AND octet_length(catalog_database) BETWEEN 1 AND 255),
     catalog_id             text NOT NULL,
+    catalog_uuid           text NOT NULL
+        CHECK (catalog_uuid = btrim(catalog_uuid)
+            AND catalog_uuid ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
     metadata_schema        text NOT NULL,
     compatibility_digest   text NOT NULL
         CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),

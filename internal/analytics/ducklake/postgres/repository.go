@@ -58,7 +58,9 @@ const (
 
 type CatalogIdentity struct {
 	PhysicalPoolID       string
+	CatalogDatabase      string
 	CatalogID            string
+	CatalogUUID          string
 	MetadataSchema       string
 	CompatibilityDigest  string
 	CatalogSchemaVersion string
@@ -391,13 +393,13 @@ func RegisterCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity) (Ca
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	err := querygen(tx).InsertCatalogIdentity(ctx, dbgen.InsertCatalogIdentityParams{PhysicalPoolID: identity.PhysicalPoolID, CatalogID: identity.CatalogID, MetadataSchema: identity.MetadataSchema, CompatibilityDigest: identity.CompatibilityDigest, CatalogSchemaVersion: identity.CatalogSchemaVersion})
+	err := querygen(tx).InsertCatalogIdentity(ctx, dbgen.InsertCatalogIdentityParams{PhysicalPoolID: identity.PhysicalPoolID, CatalogDatabase: identity.CatalogDatabase, CatalogID: identity.CatalogID, CatalogUuid: identity.CatalogUUID, MetadataSchema: identity.MetadataSchema, CompatibilityDigest: identity.CompatibilityDigest, CatalogSchemaVersion: identity.CatalogSchemaVersion})
 	if err != nil {
 		return CatalogIdentity{}, err
 	}
 	var got CatalogIdentity
 	row, err := querygen(tx).GetCatalogIdentity(ctx, identity.PhysicalPoolID)
-	got = CatalogIdentity{PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, MetadataSchema: row.MetadataSchema, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion, CreatedAt: tsTime(row.CreatedAt)}
+	got = CatalogIdentity{PhysicalPoolID: row.PhysicalPoolID, CatalogDatabase: row.CatalogDatabase, CatalogID: row.CatalogID, CatalogUUID: row.CatalogUuid, MetadataSchema: row.MetadataSchema, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion, CreatedAt: tsTime(row.CreatedAt)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CatalogIdentity{}, ErrNotFound
 	}
@@ -422,7 +424,7 @@ func LoadCatalog(ctx context.Context, db DBTX, poolID string) (CatalogIdentity, 
 		return CatalogIdentity{}, ErrInvalid
 	}
 	row, err := querygen(db).GetCatalogIdentity(ctx, poolID)
-	got := CatalogIdentity{PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, MetadataSchema: row.MetadataSchema, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion, CreatedAt: tsTime(row.CreatedAt)}
+	got := CatalogIdentity{PhysicalPoolID: row.PhysicalPoolID, CatalogDatabase: row.CatalogDatabase, CatalogID: row.CatalogID, CatalogUUID: row.CatalogUuid, MetadataSchema: row.MetadataSchema, CompatibilityDigest: row.CompatibilityDigest, CatalogSchemaVersion: row.CatalogSchemaVersion, CreatedAt: tsTime(row.CreatedAt)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return CatalogIdentity{}, ErrNotFound
 	}
@@ -1910,7 +1912,7 @@ func validateCatalog(c CatalogIdentity) error {
 			return ErrInvalid
 		}
 	}
-	if !validSchema(c.MetadataSchema) || !validID(c.CatalogSchemaVersion) || !validDigest(c.CompatibilityDigest) {
+	if !validCatalogDatabase(c.CatalogDatabase) || !validCatalogUUID(c.CatalogUUID) || !validSchema(c.MetadataSchema) || !validID(c.CatalogSchemaVersion) || !validDigest(c.CompatibilityDigest) {
 		return ErrInvalid
 	}
 	return nil
@@ -1963,6 +1965,15 @@ func validateBeginAt(in BeginAttemptInput, now time.Time) error {
 
 func validID(value string) bool {
 	return value == strings.TrimSpace(value) && value != "" && len(value) <= maxID && !strings.ContainsRune(value, '\x00')
+}
+
+func validCatalogDatabase(value string) bool {
+	return validID(value) && !strings.ContainsAny(value, "\r\n")
+}
+
+func validCatalogUUID(value string) bool {
+	u, err := uuid.Parse(value)
+	return err == nil && u.String() == value
 }
 
 func validSchema(value string) bool {
@@ -2034,7 +2045,7 @@ func canonicalOptionalEvidence(raw json.RawMessage) (string, error) {
 }
 
 func sameCatalog(a, b CatalogIdentity) bool {
-	return a.PhysicalPoolID == b.PhysicalPoolID && a.CatalogID == b.CatalogID && a.MetadataSchema == b.MetadataSchema && a.CompatibilityDigest == b.CompatibilityDigest && a.CatalogSchemaVersion == b.CatalogSchemaVersion
+	return a.PhysicalPoolID == b.PhysicalPoolID && a.CatalogDatabase == b.CatalogDatabase && a.CatalogID == b.CatalogID && a.CatalogUUID == b.CatalogUUID && a.MetadataSchema == b.MetadataSchema && a.CompatibilityDigest == b.CompatibilityDigest && a.CatalogSchemaVersion == b.CatalogSchemaVersion
 }
 
 func sameBinding(a, b GenerationBinding) bool {
