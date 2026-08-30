@@ -543,6 +543,180 @@ func TestRecoveryLifecycleChronologyRejectsImpossibleEvidence(t *testing.T) {
 	}
 }
 
+func TestRecoveryScheduleCatchupDistributesLimitedBatchAcrossOwners(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	base := time.Date(2026, 8, 25, 0, 30, 0, 0, time.UTC)
+	now := time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC)
+	operations := []string{
+		recovery.OperationBackup,
+		recovery.OperationRestore,
+		recovery.OperationUpgrade,
+		recovery.OperationRollback,
+	}
+	for _, operation := range operations {
+		definition := recovery.Definition{
+			ScheduleID: "hourly-" + operation, Scenario: "managed-instance", Operation: operation,
+			PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256,
+			TargetScope: "release:candidate", ArtifactIdentity: recoveryArtifact,
+			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 24 * time.Hour, Enabled: true,
+		}
+		if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	due, err := repository.EnqueueDue(t.Context(), now, len(operations))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(due) != len(operations) {
+		t.Fatalf("catch-up occurrences = %d, want %d", len(due), len(operations))
+	}
+	counts := map[string]int{}
+	for _, occurrence := range due {
+		counts[occurrence.Operation]++
+	}
+	for _, operation := range operations {
+		if counts[operation] != 1 {
+			t.Fatalf("catch-up occurrence count for %s = %d, want 1: %v", operation, counts[operation], counts)
+		}
+	}
+}
+
+func TestRecoveryScheduleCatchupDoesNotStarveRecentlyDueOwners(t *testing.T) {
+	repository, closeStore := openRecoveryRepository(t)
+	defer closeStore()
+	now := time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC)
+	operations := []string{
+		recovery.OperationBackup,
+		recovery.OperationRestore,
+		recovery.OperationUpgrade,
+		recovery.OperationRollback,
+	}
+	for _, operation := range operations {
+		base := now.Add(-35 * time.Minute)
+		if operation == recovery.OperationBackup {
+			base = now.Add(-5 * 24 * time.Hour)
+		}
+		definition := recovery.Definition{
+			ScheduleID: "owner-" + operation, Scenario: "managed-instance", Operation: operation,
+			PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256,
+			TargetScope: "release:candidate", ArtifactIdentity: recoveryArtifact,
+			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 30 * 24 * time.Hour, Enabled: true,
+		}
+		if err := repository.ReconcileSchedule(t.Context(), definition, base); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	wantOrder := []string{
+		recovery.OperationBackup,
+		recovery.OperationRestore,
+		recovery.OperationRollback,
+		recovery.OperationUpgrade,
+	}
+	for pass := range 3 {
+		due, err := repository.EnqueueDue(t.Context(), now.Add(time.Duration(pass)*time.Hour), len(operations))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(due) != len(wantOrder) {
+			t.Fatalf("catch-up pass %d occurrences = %d, want %d", pass, len(due), len(wantOrder))
+		}
+		for index, occurrence := range due {
+			if occurrence.Operation != wantOrder[index] {
+				t.Fatalf("catch-up pass %d operation %d = %s, want %s", pass, index, occurrence.Operation, wantOrder[index])
+			}
+		}
+	}
+}
+
+func TestRecoveryScheduleCatchupRotatesAcrossLimitedBatches(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "platform.db")
+	store, err := platform.Open(t.Context(), path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	repository := NewRepository(store.SQLDB())
+	defer func() {
+		if err := store.Close(); err != nil {
+			t.Fatal(err)
+		}
+	}()
+	now := time.Date(2026, 8, 25, 4, 5, 0, 0, time.UTC)
+	scheduleIDs := []string{
+		"fairness-a",
+		"fairness-b",
+		"fairness-c",
+		"fairness-d",
+		"fairness-e",
+	}
+	operations := []string{
+		recovery.OperationBackup,
+		recovery.OperationRestore,
+		recovery.OperationUpgrade,
+		recovery.OperationRollback,
+		recovery.OperationBackup,
+	}
+	for index, scheduleID := range scheduleIDs {
+		definition := recovery.Definition{
+			ScheduleID: scheduleID, Scenario: "managed-instance", Operation: operations[index],
+			PolicyVersion: "ubdr-v1", PolicySHA256: recoveryPolicySHA256,
+			TargetScope: "release:candidate", ArtifactIdentity: recoveryArtifact,
+			Cron: "0 * * * *", Timezone: "UTC", StaleAfter: 60 * 24 * time.Hour, Enabled: true,
+		}
+		if err := repository.ReconcileSchedule(t.Context(), definition, now.Add(-30*24*time.Hour)); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	counts := make(map[string]int, len(scheduleIDs))
+	for pass := range 10 {
+		due, err := repository.EnqueueDue(t.Context(), now, 4)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(due) != 4 {
+			t.Fatalf("catch-up pass %d occurrences = %d, want 4", pass, len(due))
+		}
+		for _, occurrence := range due {
+			counts[occurrence.ScheduleID]++
+		}
+		if pass == 0 {
+			assertRecoveryScheduleOrder(t, due, scheduleIDs[:4])
+			if err := store.Close(); err != nil {
+				t.Fatal(err)
+			}
+			store, err = platform.Open(t.Context(), path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			repository = NewRepository(store.SQLDB())
+		}
+		if pass == 1 {
+			assertRecoveryScheduleOrder(t, due, []string{"fairness-e", "fairness-a", "fairness-b", "fairness-c"})
+		}
+	}
+	for _, scheduleID := range scheduleIDs {
+		if counts[scheduleID] != 8 {
+			t.Fatalf("catch-up count for %s = %d, want 8: %v", scheduleID, counts[scheduleID], counts)
+		}
+	}
+}
+
+func assertRecoveryScheduleOrder(t *testing.T, occurrences []recovery.Occurrence, want []string) {
+	t.Helper()
+	if len(occurrences) != len(want) {
+		t.Fatalf("occurrence count = %d, want %d", len(occurrences), len(want))
+	}
+	for index, occurrence := range occurrences {
+		if occurrence.ScheduleID != want[index] {
+			t.Fatalf("occurrence %d schedule = %s, want %s", index, occurrence.ScheduleID, want[index])
+		}
+	}
+}
+
 func TestRecoveryStatusSnapshotIsConsistentDuringConcurrentEnqueue(t *testing.T) {
 	repository, closeStore := openRecoveryRepository(t)
 	defer closeStore()
