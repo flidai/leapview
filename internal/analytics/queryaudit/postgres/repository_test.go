@@ -378,6 +378,12 @@ func TestMaintenanceRoleBoundaryAndRetentionFloor(t *testing.T) {
 	if _, err := maintenance.Exec(t.Context(), `SELECT * FROM audit.query_event_retention_floor`); err == nil {
 		t.Fatal("maintenance floor table read unexpectedly succeeded")
 	}
+	if _, err := maintenance.Exec(t.Context(), `SELECT * FROM audit.prune_query_events(NULL::timestamptz,1)`); err == nil {
+		t.Fatal("maintenance NULL cutoff unexpectedly accepted")
+	}
+	if _, err := maintenance.Exec(t.Context(), `SELECT * FROM audit.prune_query_events(clock_timestamp(),1001)`); err == nil {
+		t.Fatal("maintenance oversized function batch unexpectedly accepted")
+	}
 	before := time.Now().UTC().Add(time.Hour)
 	result, err := NewMaintenance(maintenance).Prune(t.Context(), before, 2)
 	if err != nil {
