@@ -877,6 +877,12 @@ tasks:
     cmds:
       - task: ci:pr
 
+  observability:check:
+    desc: Validate all repository-owned Prometheus rules and fixtures
+    cmds:
+      - task: observability:alerts:check
+      - task: observability:sli:check
+
   observability:alerts:check:
     desc: Validate repository-owned Prometheus alert rules and fixtures
     cmds:
