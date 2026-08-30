@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
@@ -36,7 +35,7 @@ func TestPostgresSealedFactoryRequiresTargetCapabilities(t *testing.T) {
 func TestPostgresLeaseHandleReportsStaleFenceAndReleases(t *testing.T) {
 	repo := &leaseProbe{renewErr: errors.New("stale fence")}
 	failed := make(chan error, 1)
-	h := newPostgresLeaseHandle(repo, ducklakepostgres.SnapshotLease{LeaseID: "lease", OwnerID: "owner", FencingEpoch: 1, ExpiresAt: time.Now().Add(20 * time.Millisecond)}, func(err error) {
+	h := newPostgresLeaseHandle(repo, "lease", time.Now().Add(20*time.Millisecond), func(err error) {
 		if err != nil {
 			failed <- err
 		}
@@ -53,6 +52,9 @@ func TestPostgresLeaseHandleReportsStaleFenceAndReleases(t *testing.T) {
 	if h.Err() == nil {
 		t.Fatal("lease handle did not retain renewal error")
 	}
+	if repo.renewedID != "lease" {
+		t.Fatalf("renewal lease ID=%q, want canonical ID lease", repo.renewedID)
+	}
 	if err := h.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -62,6 +64,9 @@ func TestPostgresLeaseHandleReportsStaleFenceAndReleases(t *testing.T) {
 	if repo.releaseCtx == nil {
 		t.Fatal("lease release did not receive a context")
 	}
+	if repo.releasedID != "lease" {
+		t.Fatalf("release lease ID=%q, want canonical ID lease", repo.releasedID)
+	}
 	if _, ok := repo.releaseCtx.Deadline(); !ok {
 		t.Fatal("lease release context is unbounded")
 	}
@@ -70,7 +75,7 @@ func TestPostgresLeaseHandleReportsStaleFenceAndReleases(t *testing.T) {
 func TestPostgresLeaseHandleRetriesTransientFailureBeforeExpiry(t *testing.T) {
 	callback := make(chan error, 2)
 	repo := &sequenceLeaseProbe{results: []error{errors.New("provider timeout"), nil}}
-	h := newPostgresLeaseHandle(repo, ducklakepostgres.SnapshotLease{LeaseID: "lease", OwnerID: "owner", FencingEpoch: 1, ExpiresAt: time.Now().UTC().Add(120 * time.Millisecond)}, func(err error) {
+	h := newPostgresLeaseHandle(repo, "lease", time.Now().UTC().Add(120*time.Millisecond), func(err error) {
 		callback <- err
 	})
 	defer h.Close()
@@ -85,6 +90,9 @@ func TestPostgresLeaseHandleRetriesTransientFailureBeforeExpiry(t *testing.T) {
 	if calls := repo.Calls(); calls < 2 {
 		t.Fatalf("renewal calls=%d, want transient retry", calls)
 	}
+	if id := repo.LastID(); id != "lease" {
+		t.Fatalf("renewal lease ID=%q, want canonical ID lease", id)
+	}
 	if err := h.Err(); err != nil {
 		t.Fatalf("lease health after successful retry=%v, want nil", err)
 	}
@@ -95,7 +103,7 @@ func TestPostgresLeaseHandleBoundsBlockedRenewalByExpiry(t *testing.T) {
 	callback := make(chan error, 1)
 	repo := &blockingLeaseProbe{started: started}
 	leaseStart := time.Now().UTC()
-	h := newPostgresLeaseHandle(repo, ducklakepostgres.SnapshotLease{LeaseID: "lease", OwnerID: "owner", FencingEpoch: 1, ExpiresAt: leaseStart.Add(60 * time.Millisecond)}, func(err error) {
+	h := newPostgresLeaseHandle(repo, "lease", leaseStart.Add(60*time.Millisecond), func(err error) {
 		if err != nil {
 			callback <- err
 		}
@@ -145,13 +153,18 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	}
 	leases := &leaseProbe{}
 	authorized := false
+	var authorization PostgresServingAuthorizationInput
 	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
 		Resolve: func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) { return root, nil },
 		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
 			return nil, errors.New("unexpected dashboard access")
 		},
 		PoolContract: contract, SnapshotLeases: leases,
-		Authorize:       func(context.Context, PostgresServingAuthorizationInput) error { authorized = true; return nil },
+		Authorize: func(_ context.Context, in PostgresServingAuthorizationInput) error {
+			authorized = true
+			authorization = in
+			return nil
+		},
 		CatalogDatabase: "ducklake", CatalogID: "catalog", LeaseHolder: "runtime",
 		RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: root.SecurityDomainFingerprint,
 		CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
@@ -168,8 +181,23 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	if !authorized {
 		t.Fatalf("authorization callback was not invoked after lease acquisition (err=%v)", err)
 	}
+	if got := leases.createInput.ServingStateID; got != stateID {
+		t.Fatalf("lease serving state ID=%q, want requested state %q", got, stateID)
+	}
+	if got := leases.createInput.DuckLakeSnapshotID; got != root.CatalogSnapshotID {
+		t.Fatalf("lease snapshot=%d, want exact root snapshot %d", got, root.CatalogSnapshotID)
+	}
+	if got := leases.createInput.OwnerID; got != "runtime" {
+		t.Fatalf("lease owner=%q, want configured owner runtime", got)
+	}
+	if authorization.LeaseID != leases.leaseID || authorization.OwnerID != leases.createInput.OwnerID || authorization.Fence != root.FencingEpoch {
+		t.Fatalf("authorization lease identity=%+v, want lease=%q owner=%q fence=%d", authorization, leases.leaseID, leases.createInput.OwnerID, root.FencingEpoch)
+	}
 	if leases.released != 1 {
 		t.Fatalf("lease release calls=%d, want 1 after attach failure", leases.released)
+	}
+	if leases.releasedID != leases.leaseID {
+		t.Fatalf("release lease ID=%q, want returned canonical ID %q", leases.releasedID, leases.leaseID)
 	}
 }
 
@@ -257,25 +285,33 @@ func runtimeFactoryDigest(value string) string {
 }
 
 type leaseProbe struct {
-	lease      ducklakepostgres.SnapshotLease
-	acquired   int
-	renewErr   error
-	released   int
-	releaseCtx context.Context
+	leaseID        string
+	acquired       int
+	createInput    servingstate.SnapshotLeaseInput
+	renewErr       error
+	renewedID      string
+	renewedExpires time.Time
+	released       int
+	releasedID     string
+	releaseCtx     context.Context
 }
 
-func (p *leaseProbe) AcquireSnapshotLease(_ context.Context, in ducklakepostgres.AcquireLeaseInput) (ducklakepostgres.SnapshotLease, error) {
+func (p *leaseProbe) CreateQuerySnapshotLease(_ context.Context, in servingstate.SnapshotLeaseInput) (string, error) {
 	p.acquired++
-	if p.lease.LeaseID == "" {
-		p.lease = ducklakepostgres.SnapshotLease{LeaseID: in.LeaseID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, ExpiresAt: time.Now().Add(time.Minute)}
+	p.createInput = in
+	if p.leaseID == "" {
+		p.leaseID = "canonical-lease"
 	}
-	return p.lease, nil
+	return p.leaseID, nil
 }
-func (p *leaseProbe) RenewSnapshotLease(context.Context, ducklakepostgres.LeaseFence, time.Time) error {
+func (p *leaseProbe) ExtendQuerySnapshotLease(_ context.Context, id string, expires time.Time) error {
+	p.renewedID = id
+	p.renewedExpires = expires
 	return p.renewErr
 }
-func (p *leaseProbe) ReleaseSnapshotLease(ctx context.Context, _ ducklakepostgres.LeaseFence) error {
+func (p *leaseProbe) ReleaseQuerySnapshotLease(ctx context.Context, id string) error {
 	p.releaseCtx = ctx
+	p.releasedID = id
 	p.released++
 	return nil
 }
@@ -284,16 +320,18 @@ type sequenceLeaseProbe struct {
 	mu      sync.Mutex
 	results []error
 	calls   int
+	lastID  string
 }
 
-func (p *sequenceLeaseProbe) AcquireSnapshotLease(context.Context, ducklakepostgres.AcquireLeaseInput) (ducklakepostgres.SnapshotLease, error) {
-	return ducklakepostgres.SnapshotLease{}, errors.New("unexpected acquire")
+func (p *sequenceLeaseProbe) CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error) {
+	return "", errors.New("unexpected acquire")
 }
 
-func (p *sequenceLeaseProbe) RenewSnapshotLease(context.Context, ducklakepostgres.LeaseFence, time.Time) error {
+func (p *sequenceLeaseProbe) ExtendQuerySnapshotLease(_ context.Context, id string, _ time.Time) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.calls++
+	p.lastID = id
 	if len(p.results) == 0 {
 		return nil
 	}
@@ -302,7 +340,7 @@ func (p *sequenceLeaseProbe) RenewSnapshotLease(context.Context, ducklakepostgre
 	return err
 }
 
-func (p *sequenceLeaseProbe) ReleaseSnapshotLease(context.Context, ducklakepostgres.LeaseFence) error {
+func (p *sequenceLeaseProbe) ReleaseQuerySnapshotLease(context.Context, string) error {
 	return nil
 }
 
@@ -312,13 +350,19 @@ func (p *sequenceLeaseProbe) Calls() int {
 	return p.calls
 }
 
-type blockingLeaseProbe struct{ started chan<- struct{} }
-
-func (p *blockingLeaseProbe) AcquireSnapshotLease(context.Context, ducklakepostgres.AcquireLeaseInput) (ducklakepostgres.SnapshotLease, error) {
-	return ducklakepostgres.SnapshotLease{}, errors.New("unexpected acquire")
+func (p *sequenceLeaseProbe) LastID() string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.lastID
 }
 
-func (p *blockingLeaseProbe) RenewSnapshotLease(ctx context.Context, _ ducklakepostgres.LeaseFence, _ time.Time) error {
+type blockingLeaseProbe struct{ started chan<- struct{} }
+
+func (p *blockingLeaseProbe) CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error) {
+	return "", errors.New("unexpected acquire")
+}
+
+func (p *blockingLeaseProbe) ExtendQuerySnapshotLease(ctx context.Context, _ string, _ time.Time) error {
 	select {
 	case p.started <- struct{}{}:
 	default:
@@ -327,6 +371,6 @@ func (p *blockingLeaseProbe) RenewSnapshotLease(ctx context.Context, _ ducklakep
 	return ctx.Err()
 }
 
-func (p *blockingLeaseProbe) ReleaseSnapshotLease(context.Context, ducklakepostgres.LeaseFence) error {
+func (p *blockingLeaseProbe) ReleaseQuerySnapshotLease(context.Context, string) error {
 	return nil
 }

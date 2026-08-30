@@ -17,10 +17,10 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/runtimehost"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 var (
@@ -37,7 +37,7 @@ type PostgresSealedFactoryConfig struct {
 	Resolve                   SealedRootResolver
 	BuildRuntime              SealedDashboardRuntimeBuilder
 	PoolContract              *ducklake.PoolContract
-	SnapshotLeases            PostgresSnapshotLeaseRepository
+	SnapshotLeases            runtimehost.SnapshotLeaseRepository
 	Authorize                 func(context.Context, PostgresServingAuthorizationInput) error
 	CatalogDatabase           string
 	CatalogID                 string
@@ -55,7 +55,7 @@ type postgresSealedFactory struct {
 	resolve             SealedRootResolver
 	buildRuntime        SealedDashboardRuntimeBuilder
 	poolContract        *ducklake.PoolContract
-	snapshotLeases      PostgresSnapshotLeaseRepository
+	snapshotLeases      runtimehost.SnapshotLeaseRepository
 	authorize           func(context.Context, PostgresServingAuthorizationInput) error
 	catalogDatabase     string
 	catalogID           string
@@ -66,14 +66,6 @@ type postgresSealedFactory struct {
 	extensionAdmission  extension.Admission
 	duckLakeSecret      string
 	postgresSecret      string
-}
-
-// PostgresSnapshotLeaseRepository is the target DuckLake retention seam. It
-// protects a live snapshot independently of deployment artifact/object roots.
-type PostgresSnapshotLeaseRepository interface {
-	AcquireSnapshotLease(context.Context, ducklakepostgres.AcquireLeaseInput) (ducklakepostgres.SnapshotLease, error)
-	RenewSnapshotLease(context.Context, ducklakepostgres.LeaseFence, time.Time) error
-	ReleaseSnapshotLease(context.Context, ducklakepostgres.LeaseFence) error
 }
 
 // PostgresServingAuthorizationInput carries the exact immutable root and
@@ -185,19 +177,21 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	if snapshotID != input.State.DuckLakeSnapshotID {
 		return nil, fmt.Errorf("%w: PostgreSQL snapshot does not match serving state", ErrSealedRootMismatch)
 	}
-	leaseID := uuid.NewString()
-	ownerID := firstNonEmpty(f.leaseHolder, "runtimehost")
+	leaseOwner := firstNonEmpty(f.leaseHolder, "runtimehost")
 	now := time.Now().UTC()
-	lease, err := f.snapshotLeases.AcquireSnapshotLease(ctx, ducklakepostgres.AcquireLeaseInput{
-		LeaseID: leaseID, DeliveryID: root.DeliveryID, GenerationID: root.GenerationID,
-		PhysicalPoolID: root.PhysicalPoolID, CatalogID: root.CatalogID, SnapshotID: snapshotID,
-		OwnerID: ownerID, FencingEpoch: root.FencingEpoch, ExpiresAt: now.Add(30 * time.Minute), AcquiredAt: now,
+	expiresAt := now.Add(30 * time.Minute)
+	leaseID, err := f.snapshotLeases.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
+		ServingStateID: input.State.ID, DuckLakeSnapshotID: snapshotID,
+		OwnerID: leaseOwner, ExpiresAt: expiresAt,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("acquire PostgreSQL DuckLake snapshot lease: %w", err)
 	}
-	leaseHandle := newPostgresLeaseHandle(f.snapshotLeases, lease, input.OnLeaseRenewalFailure)
-	if err := f.authorize(ctx, PostgresServingAuthorizationInput{Root: root, LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, Fence: lease.FencingEpoch}); err != nil {
+	if strings.TrimSpace(leaseID) == "" || strings.TrimSpace(leaseID) != leaseID {
+		return nil, fmt.Errorf("acquire PostgreSQL DuckLake snapshot lease: empty or unnormalized lease ID")
+	}
+	leaseHandle := newPostgresLeaseHandle(f.snapshotLeases, leaseID, expiresAt, input.OnLeaseRenewalFailure)
+	if err := f.authorize(ctx, PostgresServingAuthorizationInput{Root: root, LeaseID: leaseID, OwnerID: leaseOwner, Fence: root.FencingEpoch}); err != nil {
 		_ = leaseHandle.Close()
 		return nil, err
 	}
@@ -254,8 +248,8 @@ func (r *postgresPreparedRuntime) LeaseRenewalError() error {
 }
 
 type postgresLeaseHandle struct {
-	repo        PostgresSnapshotLeaseRepository
-	fence       ducklakepostgres.LeaseFence
+	repo        runtimehost.SnapshotLeaseRepository
+	leaseID     string
 	cancel      context.CancelFunc
 	done        chan struct{}
 	mu          sync.RWMutex
@@ -267,10 +261,10 @@ type postgresLeaseHandle struct {
 	releaseErr  error
 }
 
-func newPostgresLeaseHandle(repo PostgresSnapshotLeaseRepository, lease ducklakepostgres.SnapshotLease, onFail func(error)) *postgresLeaseHandle {
+func newPostgresLeaseHandle(repo runtimehost.SnapshotLeaseRepository, leaseID string, expiresAt time.Time, onFail func(error)) *postgresLeaseHandle {
 	ctx, cancel := context.WithCancel(context.Background())
-	h := &postgresLeaseHandle{repo: repo, fence: ducklakepostgres.LeaseFence{LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}, cancel: cancel, done: make(chan struct{}), leaseExpiry: lease.ExpiresAt, onFail: onFail}
-	interval := time.Until(lease.ExpiresAt) / 3
+	h := &postgresLeaseHandle{repo: repo, leaseID: leaseID, cancel: cancel, done: make(chan struct{}), leaseExpiry: expiresAt, onFail: onFail}
+	interval := time.Until(expiresAt) / 3
 	if interval <= 0 || interval > 10*time.Minute {
 		interval = 10 * time.Minute
 	}
@@ -296,7 +290,7 @@ func (h *postgresLeaseHandle) heartbeat(ctx context.Context, interval time.Durat
 		case <-timer.C:
 			renewCtx, cancel := context.WithDeadline(ctx, deadline)
 			expires := time.Now().UTC().Add(30 * time.Minute)
-			err := h.repo.RenewSnapshotLease(renewCtx, h.fence, expires)
+			err := h.repo.ExtendQuerySnapshotLease(renewCtx, h.leaseID, expires)
 			cancel()
 			if err == nil && !time.Now().UTC().Before(deadline) {
 				err = context.DeadlineExceeded
@@ -360,7 +354,7 @@ func (h *postgresLeaseHandle) Close() error {
 		h.releaseOnce.Do(func() {
 			releaseCtx, cancel := context.WithTimeout(context.Background(), postgresLeaseReleaseTimeout)
 			defer cancel()
-			h.releaseErr = h.repo.ReleaseSnapshotLease(releaseCtx, h.fence)
+			h.releaseErr = h.repo.ReleaseQuerySnapshotLease(releaseCtx, h.leaseID)
 		})
 	})
 	return h.releaseErr
