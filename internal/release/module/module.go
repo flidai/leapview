@@ -71,8 +71,12 @@ type Config struct {
 	// Deployments is optional for native authorities that expose deployment
 	// linkage through the legacy cross-capability contract. SQLite composition
 	// derives it from the selected repository.
-	Deployments          release.DeploymentLinkage
-	States               ServingStateRepository
+	Deployments release.DeploymentLinkage
+	// States is the immutable serving-state authority used by native
+	// production composition. Legacy SQLite composition additionally requires
+	// this value to implement ServingStateRepository below, but native paths
+	// never receive that mutable lifecycle contract.
+	States               ServingStateReader
 	ManagedDataPins      ManagedDataPins
 	ManagedDataHook      validate.Hook
 	ArtifactDirectory    string
@@ -136,6 +140,15 @@ type ServingStateRepository interface {
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
 }
 
+// ServingStateReader is the read-only serving-state/artifact boundary used by
+// persisted native releases. It intentionally excludes candidate creation,
+// validation promotion, and failure mutation methods owned by the legacy
+// SQLite lifecycle.
+type ServingStateReader interface {
+	ByID(context.Context, servingstate.ID) (servingstate.State, error)
+	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
+}
+
 type ManagedDataPins interface {
 	release.PinValidator
 	ResolveCandidatePins(context.Context, projectgraph.ResourceID, []projectgraph.ResourceID, string) (map[projectgraph.ResourceID]string, error)
@@ -176,6 +189,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			if !ok || !deployments.Configured() {
 				return nil, errors.New("production release module requires configured native PostgreSQL deployments")
 			}
+		}
+		if config.States == nil {
+			return nil, errors.New("production release module requires immutable serving-state reader")
 		}
 	} else if native != nil {
 		return nil, errors.New("native PostgreSQL persistence requires production release mode")
@@ -238,12 +254,35 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if deployments == nil && native == nil {
 		return nil, errors.New("release deployment linkage repository is required")
 	}
-	store := releasefilesystem.NewArtifactStore(config.ArtifactDirectory)
-	hooks := []validate.Hook{}
-	if config.ManagedDataHook != nil {
-		hooks = append(hooks, config.ManagedDataHook)
+	var (
+		store              release.ArtifactStore
+		validator          release.ArtifactValidator
+		candidateArtifacts *candidateArtifactService
+	)
+	if native != nil {
+		// Native serving state is immutable and already persisted by the graph
+		// authority. The verifier only reads the admitted state and artifact;
+		// there is deliberately no upload/materialization service in this mode.
+		validator = immutableArtifactValidator{reader: config.States}
+	} else {
+		legacyStates, ok := config.States.(ServingStateRepository)
+		if !ok || legacyStates == nil {
+			return nil, errors.New("SQLite release build requires mutable serving-state repository")
+		}
+		legacyStore := releasefilesystem.NewArtifactStore(config.ArtifactDirectory)
+		store = legacyStore
+		hooks := []validate.Hook{}
+		if config.ManagedDataHook != nil {
+			hooks = append(hooks, config.ManagedDataHook)
+		}
+		legacyValidator := validate.NewService(legacyStates, legacyStore, releasefilesystem.Validator{}, hooks...)
+		validator = legacyValidator
+		candidateArtifacts = &candidateArtifactService{
+			states: legacyStates, artifacts: legacyStore, validator: legacyValidator,
+			environment: environment, extensionPreparation: config.ExtensionPreparation,
+			pins: config.ManagedDataPins, provenance: servingProvenance,
+		}
 	}
-	validator := validate.NewService(config.States, store, releasefilesystem.Validator{}, hooks...)
 	service, err := release.NewService(release.ServiceOptions{
 		Releases: releases, Finalization: finalization,
 		Artifacts: store, Validator: validator, Pins: config.ManagedDataPins, Environment: environment,
@@ -257,15 +296,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		logger = slog.Default()
 	}
 	module := &Module{
-		service: service,
-		candidateArtifacts: &candidateArtifactService{
-			states:    config.States,
-			artifacts: store, validator: validator,
-			environment:          environment,
-			extensionPreparation: config.ExtensionPreparation,
-			pins:                 config.ManagedDataPins, provenance: servingProvenance,
-		},
-		catalog: catalog, deployments: deployments, servingProvenance: servingProvenance,
+		service:            service,
+		candidateArtifacts: candidateArtifacts,
+		catalog:            catalog, deployments: deployments, servingProvenance: servingProvenance,
 		searchCatalog: config.API.ProjectSearchCatalog,
 		environment:   string(environment), api: config.API, logger: logger,
 		finalizeExecution: finalizeExecution, auditIntentConfigured: auditIntentConfigured,

@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/release"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
+	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/google/uuid"
 )
 
@@ -93,6 +95,18 @@ type nativeCatalogStub struct {
 	configured bool
 }
 
+// nativeServingStateReaderStub models the immutable graph-owned authority
+// injected by production composition. It intentionally has no lifecycle
+// mutation methods from the legacy SQLite repository.
+type nativeServingStateReaderStub struct{}
+
+func (nativeServingStateReaderStub) ByID(context.Context, servingstate.ID) (servingstate.State, error) {
+	return servingstate.State{}, servingstate.ErrNotFound
+}
+func (nativeServingStateReaderStub) ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error) {
+	return servingstate.Artifact{}, servingstate.ErrNotFound
+}
+
 func (nativeCatalogStub) PostgreSQLAuthority() {}
 func (s nativeCatalogStub) Configured() bool   { return s.configured }
 
@@ -131,7 +145,7 @@ func TestBuildProductionRejectsUnconfiguredNativeAuthority(t *testing.T) {
 
 func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
-	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, Environment: "dev"})
+	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, States: nativeServingStateReaderStub{}, Environment: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -140,6 +154,26 @@ func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
 	}
 	if module.DeploymentLinkage() != nil {
 		t.Fatal("native module exposed deployment linkage before deployment-owned adapter injection")
+	}
+}
+
+func TestBuildNativeLeavesLegacyArtifactLifecycleUnavailable(t *testing.T) {
+	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
+	module, err := Build(t.Context(), Config{
+		Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true},
+		States: nativeServingStateReaderStub{}, Environment: "dev",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module.candidateArtifacts != nil {
+		t.Fatal("native module exposed candidate artifact lifecycle")
+	}
+	if _, err := module.PrepareCandidateArtifacts(t.Context(), release.CandidateArtifactRequest{}); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
+		t.Fatalf("native candidate preparation error = %v", err)
+	}
+	if _, err := module.service.UploadArtifact(t.Context(), "project", "release", "", nil); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
+		t.Fatalf("native artifact upload error = %v", err)
 	}
 }
 
@@ -161,7 +195,7 @@ func TestBuildProductionRejectsUnmarkedDeploymentAuthority(t *testing.T) {
 
 func TestBuildProductionAcceptsConfiguredDeploymentAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
-	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, Deployments: deploymentStub{configured: true}, Environment: "dev"})
+	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, Deployments: deploymentStub{configured: true}, States: nativeServingStateReaderStub{}, Environment: "dev"})
 	if err != nil {
 		t.Fatal(err)
 	}
