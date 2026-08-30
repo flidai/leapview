@@ -35,6 +35,19 @@ type CandidateAuthoredConnection struct {
 	Access        semanticmodel.ConnectionAccess
 }
 
+// NativeArtifactObjectEvidence is the value-only immutable object metadata
+// retained for a native serving artifact. Locator is the provider object key
+// (and the serving-admission locator); it is never a host filesystem path.
+// Created-at and other provider/runtime handles intentionally do not cross
+// the release boundary.
+type NativeArtifactObjectEvidence struct {
+	Locator               string
+	StorageSecurityDomain string
+	ContentType           string
+	MetadataDigest        string
+	SizeBytes             int64
+}
+
 type CandidateRestriction struct {
 	ID             string
 	ObjectID       projectgraph.ResourceID
@@ -59,8 +72,18 @@ type CandidateGenerationArtifact struct {
 	// materialization/hydration from the bundle itself so serving admission can
 	// persist the exact manifest without re-deriving it from compiler evidence.
 	BundleManifestJSON string
-	DataRevision       string
-	DataMode           GenerationDataMode
+	// NativeArtifact is populated only by native materialization/hydration from
+	// the exact immutable object metadata returned by put/open. Legacy
+	// filesystem artifacts leave it zero-valued.
+	NativeArtifact NativeArtifactObjectEvidence
+	// These canonical policy documents are snapshots from the immutable
+	// compiled manifest. Native serving admission persists them verbatim;
+	// legacy artifact paths leave them zero-valued.
+	AccessPolicyJSON          string
+	DashboardPublicationsJSON string
+	DashboardAppearancesJSON  string
+	DataRevision              string
+	DataMode                  GenerationDataMode
 	// Deterministic is an explicit compiler/runtime declaration. Zero means
 	// unknown and therefore fail-closed for physical reuse.
 	Deterministic       bool

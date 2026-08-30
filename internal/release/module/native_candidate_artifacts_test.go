@@ -13,12 +13,14 @@ import (
 	"strings"
 	"testing"
 
+	dashboardpublication "github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/extension"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/google/uuid"
 )
@@ -245,19 +247,81 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	if materialized.Generation.BundleManifestJSON == "" || materialized.Generation.BundleManifestJSON != validation.ManifestJSON {
 		t.Fatalf("materialized bundle manifest = %q, validated = %q", materialized.Generation.BundleManifestJSON, validation.ManifestJSON)
 	}
+	accessJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(inspected.Compiler.Artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if materialized.Generation.AccessPolicyJSON != accessJSON || materialized.Generation.DashboardPublicationsJSON != publicationsJSON || materialized.Generation.DashboardAppearancesJSON != appearancesJSON {
+		t.Fatalf("materialized serving documents = %#v, want access=%q publications=%q appearances=%q", materialized.Generation, accessJSON, publicationsJSON, appearancesJSON)
+	}
+	if materialized.Generation.NativeArtifact.Locator != object.Info.Key || materialized.Generation.NativeArtifact.StorageSecurityDomain != object.Info.StorageSecurityDomain || materialized.Generation.NativeArtifact.ContentType != object.Info.ContentType || materialized.Generation.NativeArtifact.MetadataDigest != object.Info.MetadataDigest || materialized.Generation.NativeArtifact.SizeBytes != object.Info.SizeBytes {
+		t.Fatalf("materialized native object evidence = %#v, object info = %#v", materialized.Generation.NativeArtifact, object.Info)
+	}
 	hydrated, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hydrated.Generation.Identity != materialized.Generation.Identity || hydrated.Compiler.Artifact.Digest() != inspected.Compiler.Artifact.Digest() || hydrated.Artifact.ContentDigest != materialized.Artifact.ContentDigest || hydrated.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON {
+	if hydrated.Generation.Identity != materialized.Generation.Identity || hydrated.Compiler.Artifact.Digest() != inspected.Compiler.Artifact.Digest() || hydrated.Artifact.ContentDigest != materialized.Artifact.ContentDigest || hydrated.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON || hydrated.Generation.NativeArtifact != materialized.Generation.NativeArtifact || hydrated.Generation.AccessPolicyJSON != materialized.Generation.AccessPolicyJSON || hydrated.Generation.DashboardPublicationsJSON != materialized.Generation.DashboardPublicationsJSON || hydrated.Generation.DashboardAppearancesJSON != materialized.Generation.DashboardAppearancesJSON {
 		t.Fatalf("hydrated set drifted: %#v", hydrated.Generation)
 	}
 	replayed, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, materialized)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replayed.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON {
-		t.Fatalf("materialized replay changed bundle manifest: %q != %q", replayed.Generation.BundleManifestJSON, materialized.Generation.BundleManifestJSON)
+	if replayed.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON || replayed.Generation.NativeArtifact != materialized.Generation.NativeArtifact || replayed.Generation.AccessPolicyJSON != materialized.Generation.AccessPolicyJSON || replayed.Generation.DashboardPublicationsJSON != materialized.Generation.DashboardPublicationsJSON || replayed.Generation.DashboardAppearancesJSON != materialized.Generation.DashboardAppearancesJSON {
+		t.Fatalf("materialized replay changed serving evidence: %#v != %#v", replayed.Generation, materialized.Generation)
+	}
+}
+
+func TestNativeCandidateServingDocumentsAreCanonicalAndBounded(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Generation.AccessPolicyJSON != "{}" || inspected.Generation.DashboardPublicationsJSON != "{}" || inspected.Generation.DashboardAppearancesJSON != "{}" {
+		t.Fatalf("empty manifest serving documents = %#v, want canonical empty objects", inspected.Generation)
+	}
+	if err := validateNativeServingDocument(` {}`, "test"); err == nil {
+		t.Fatal("non-canonical serving document was accepted")
+	}
+	if err := validateNativeServingDocument(`{"z":1,"a":2}`, "test"); err == nil {
+		t.Fatal("non-canonical serving document key order was accepted")
+	}
+	if err := validateNativeServingDocument(`{"x":1,"x":2}`, "test"); err == nil {
+		t.Fatal("duplicate serving document key was accepted")
+	}
+	oversized := `{"x":"` + strings.Repeat("a", int(maxNativeServingDocumentBytes)) + `"}`
+	if err := validateNativeServingDocument(oversized, "test"); err == nil {
+		t.Fatal("oversized serving document was accepted")
+	}
+}
+
+func TestNativeCandidateServingDocumentsCanonicalizeNonEmptyManifestObjects(t *testing.T) {
+	manifest := projectmanifest.Project{
+		Access: projectmanifest.AccessPolicy{Grants: map[string]projectmanifest.Grant{
+			"grant": {ID: "grant", Name: "Grant", Object: projectmanifest.SecurableRef{Kind: "dashboard", ID: "dashboard:test"}, Subject: projectmanifest.Subject{Kind: "principal", PrincipalID: "alice"}, Capability: "read"},
+		}},
+		Publications: map[string]dashboardpublication.Definition{
+			"public": {Name: "public", Dashboard: "dashboard:test", DefaultPage: "overview", DependencyAssetIDs: []string{"dashboard:test"}, ConfigurationDigest: testNativeDigest("publication")},
+		},
+	}
+	access, publications, appearances, err := nativeServingDocumentsFromManifest(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if access == "{}" || publications == "{}" || appearances != "{}" {
+		t.Fatalf("canonical serving documents = access=%q publications=%q appearances=%q", access, publications, appearances)
+	}
+	for label, value := range map[string]string{"access": access, "publications": publications, "appearances": appearances} {
+		if err := validateNativeServingDocument(value, label); err != nil {
+			t.Fatalf("%s document is not canonical: %v", label, err)
+		}
+	}
+	if !strings.HasPrefix(access, `{"grants":`) || !strings.HasPrefix(publications, `{"public":`) {
+		t.Fatalf("serving documents are not deterministically key ordered: access=%q publications=%q", access, publications)
 	}
 }
 
@@ -358,6 +422,12 @@ func TestNativeCandidateHydrateRejectsForgedObjectMetadata(t *testing.T) {
 	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: baseStore, openErr: errors.New("object store unavailable")}
 	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
 		t.Fatalf("unavailable serving object error = %v", err)
+	}
+	tampered := materialized
+	tampered.Generation.NativeArtifact.MetadataDigest = testNativeDigest("forged")
+	service.artifacts = baseStore
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, tampered, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("tampered retained object evidence error = %v", err)
 	}
 	identity.ServingStateID = "not-a-uuid"
 	service.artifacts = baseStore

@@ -22,8 +22,10 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 )
 
@@ -49,6 +51,7 @@ const (
 	nativeServingArtifactContentType       = projectbundle.BundleContentType
 	nativeServingArtifactPrefix            = "serving-artifacts/"
 	nativeServingArtifactSuffix            = ".tar.gz"
+	maxNativeServingDocumentBytes    int64 = 1 << 20
 )
 
 func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
@@ -110,7 +113,14 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	legacy := &candidateArtifactService{pins: service.pins, extensionPreparation: service.extensionPreparation}
-	return legacy.inspectCandidateProjectPlan(ctx, request, compiledProject, plan, base)
+	result, err := legacy.inspectCandidateProjectPlan(ctx, request, compiledProject, plan, base)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
+	}
+	if err := retainNativeServingDocuments(&result.Generation, compiledProject); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	return result, nil
 }
 
 func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
@@ -151,6 +161,13 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 		}
 	}
+	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiledProject)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	expectedGenerationID := nativeCandidateGenerationID(request, digest).String()
 	existingIdentity := inspected.Generation.Identity
 	if existingIdentity.GenerationID != "" || existingIdentity.ProjectID != "" || existingIdentity.Environment != "" {
@@ -174,6 +191,10 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	if err := validateNativeServingArtifactInfo(info, key, metadata); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	objectEvidence := nativeArtifactObjectEvidence(info)
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	generationID := nativeCandidateGenerationID(request, digest)
 	identity, err := projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, generationID.String())
 	if err != nil {
@@ -182,6 +203,10 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	result := inspected
 	result.Artifact.ContentDigest = digest
 	result.Generation.BundleManifestJSON = manifestJSON
+	result.Generation.AccessPolicyJSON = accessPolicyJSON
+	result.Generation.DashboardPublicationsJSON = publicationsJSON
+	result.Generation.DashboardAppearancesJSON = appearancesJSON
+	result.Generation.NativeArtifact = objectEvidence
 	result.Generation.Identity = identity
 	result.Generation.ServingArtifactID = nativeServingArtifactID(digest)
 	result.Generation.ArtifactDigest = digest
@@ -238,6 +263,10 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if err := validateNativeServingArtifactInfo(object.Info, key, metadata); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	objectEvidence := nativeArtifactObjectEvidence(object.Info)
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -253,6 +282,13 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	}
 	if compiled.GraphDigest != inspected.Compiler.Graph.Digest() || !sameNativeJSON(compiled.Plan, inspected.Compiler.Plan) || !sameNativeJSON(compiled.Manifest, inspected.Compiler.Manifest) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving artifact compiler evidence mismatch"))
+	}
+	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocumentsFromManifest(compiled.Manifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	canonicalProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
 	if err != nil || canonicalProject.ProjectID() != request.Scope.ProjectID || canonicalProject.Digest() != request.Source.ProjectDigest {
@@ -272,6 +308,10 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	result := inspected
 	result.Artifact.ContentDigest = identity.ServingArtifactDigest
 	result.Generation.BundleManifestJSON = validation.ManifestJSON
+	result.Generation.AccessPolicyJSON = accessPolicyJSON
+	result.Generation.DashboardPublicationsJSON = publicationsJSON
+	result.Generation.DashboardAppearancesJSON = appearancesJSON
+	result.Generation.NativeArtifact = objectEvidence
 	result.Compiler.Graph = compiled.Graph
 	result.Compiler.Manifest = compiled.Manifest
 	result.Compiler.Plan = compiled.Plan
@@ -292,6 +332,126 @@ func sameNativeJSON(left, right any) bool {
 	leftBytes, leftErr := json.Marshal(left)
 	rightBytes, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && bytes.Equal(leftBytes, rightBytes)
+}
+
+// retainNativeServingDocuments derives serving policy snapshots from the
+// immutable compiled artifact. It deliberately does not inspect source paths
+// or any mutable authoring state.
+func retainNativeServingDocuments(generation *release.CandidateGenerationArtifact, compiled projectartifact.Project) error {
+	if generation == nil {
+		return errors.New("native serving generation evidence is nil")
+	}
+	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiled)
+	if err != nil {
+		return err
+	}
+	generation.AccessPolicyJSON = accessPolicyJSON
+	generation.DashboardPublicationsJSON = publicationsJSON
+	generation.DashboardAppearancesJSON = appearancesJSON
+	return nil
+}
+
+func nativeServingDocuments(compiled projectartifact.Project) (string, string, string, error) {
+	return nativeServingDocumentsFromManifest(compiled.Manifest())
+}
+
+func nativeServingDocumentsFromManifest(manifest projectmanifest.Project) (string, string, string, error) {
+	access := manifest.Access
+	publications := manifest.Publications
+	accessJSON, err := canonicalNativeServingDocument(access, "access policy")
+	if err != nil {
+		return "", "", "", err
+	}
+	publicationsJSON, err := canonicalNativeServingDocument(publications, "dashboard publications")
+	if err != nil {
+		return "", "", "", err
+	}
+	// Dashboard appearances currently have no authored source in the compiled
+	// manifest. Persist the canonical empty object until that source exists.
+	appearancesJSON := "{}"
+	return accessJSON, publicationsJSON, appearancesJSON, nil
+}
+
+func canonicalNativeServingDocument(value any, label string) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", fmt.Errorf("encode native serving %s: %w", label, err)
+	}
+	if bytes.Equal(encoded, []byte("null")) {
+		encoded = []byte("{}")
+	}
+	if len(encoded) == 0 || int64(len(encoded)) > maxNativeServingDocumentBytes {
+		return "", fmt.Errorf("native serving %s exceeds bounded document size", label)
+	}
+	canonical, err := canonicalNativeServingObject(encoded, label)
+	if err != nil {
+		return "", err
+	}
+	return string(canonical), nil
+}
+
+func canonicalNativeServingObject(encoded []byte, label string) ([]byte, error) {
+	var object map[string]any
+	if err := strictjson.DecodeWithOptions(encoded, &object, strictjson.Options{MaxBytes: maxNativeServingDocumentBytes, MaxDepth: 32, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: true}); err != nil {
+		return nil, fmt.Errorf("native serving %s: %w", label, err)
+	}
+	if object == nil {
+		return nil, fmt.Errorf("native serving %s must be a JSON object", label)
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize native serving %s: %w", label, err)
+	}
+	if int64(len(canonical)) > maxNativeServingDocumentBytes {
+		return nil, fmt.Errorf("native serving %s exceeds bounded document size", label)
+	}
+	return canonical, nil
+}
+
+func validateNativeServingDocument(value, label string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return fmt.Errorf("native serving %s must be canonical JSON", label)
+	}
+	canonical, err := canonicalNativeServingObject([]byte(value), label)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal([]byte(value), canonical) {
+		return fmt.Errorf("native serving %s is not canonical JSON", label)
+	}
+	return nil
+}
+
+func validateNativeServingDocuments(generation release.CandidateGenerationArtifact, accessPolicyJSON, publicationsJSON, appearancesJSON string) error {
+	if err := validateNativeServingDocument(generation.AccessPolicyJSON, "access policy"); err != nil {
+		return err
+	}
+	if err := validateNativeServingDocument(generation.DashboardPublicationsJSON, "dashboard publications"); err != nil {
+		return err
+	}
+	if err := validateNativeServingDocument(generation.DashboardAppearancesJSON, "dashboard appearances"); err != nil {
+		return err
+	}
+	if generation.AccessPolicyJSON != accessPolicyJSON || generation.DashboardPublicationsJSON != publicationsJSON || generation.DashboardAppearancesJSON != appearancesJSON {
+		return errors.New("inspected native serving policy evidence changed")
+	}
+	return nil
+}
+
+func nativeArtifactObjectEvidence(info platformobjectstore.ObjectInfo) release.NativeArtifactObjectEvidence {
+	return release.NativeArtifactObjectEvidence{Locator: info.Key, StorageSecurityDomain: info.StorageSecurityDomain, ContentType: info.ContentType, MetadataDigest: info.MetadataDigest, SizeBytes: info.SizeBytes}
+}
+
+func validateNativeArtifactObjectEvidence(inspected, observed release.NativeArtifactObjectEvidence) error {
+	if inspected == (release.NativeArtifactObjectEvidence{}) {
+		// The read-only inspect phase has no serving-object metadata yet; hydrate
+		// fills it from the exact object returned by open.
+		return nil
+	}
+	if inspected != observed {
+		return errors.New("inspected native serving artifact object evidence changed")
+	}
+	return nil
 }
 
 // nativeBundleManifestJSON is the release-side representation of the
@@ -366,6 +526,9 @@ func validateNativeBundleManifestJSON(value string) error {
 func validateNativeInspectedEvidence(request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) error {
 	if inspected.Artifact.SourceDigest != request.ArtifactDigest || inspected.Artifact.ProjectDigest != request.Source.ProjectDigest || inspected.Compiler.Artifact.ProjectID() != request.Scope.ProjectID || inspected.Compiler.Artifact.Digest() != request.Source.ProjectDigest || inspected.Compiler.Graph.ProjectID() != request.Scope.ProjectID || inspected.Compiler.Plan.Project != request.Scope.ProjectID.String() {
 		return candidateArtifactInvalid(errors.New("inspected native compiler evidence does not match request"))
+	}
+	if !sameNativeJSON(inspected.Compiler.Manifest, inspected.Compiler.Artifact.Manifest()) {
+		return candidateArtifactInvalid(errors.New("inspected native compiler manifest differs from immutable artifact"))
 	}
 	if inspected.Generation.Identity.ProjectID != request.Scope.ProjectID || inspected.Generation.Identity.Environment != request.Scope.Environment || inspected.Generation.Identity.Validate() != nil {
 		return candidateArtifactInvalid(errors.New("inspected native serving scope does not match request"))
