@@ -775,6 +775,13 @@ func sourceDigest(projectID, projectFile string, entries []SourceSnapshotEntryIn
 	}
 	return "sha256:" + hex.EncodeToString(h.Sum(nil))
 }
+
+// CanonicalSourceDigest returns the exact source identity enforced by snapshot
+// admission. Application coordinators use this helper so the pre-object-write
+// digest cannot drift from the repository's final transaction check.
+func CanonicalSourceDigest(projectID, projectFile string, entries []SourceSnapshotEntryInput) string {
+	return sourceDigest(projectID, projectFile, entries)
+}
 func sha256Identity(b []byte) string {
 	sum := sha256.Sum256(b)
 	return "sha256:" + hex.EncodeToString(sum[:])
