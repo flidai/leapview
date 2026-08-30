@@ -133,6 +133,10 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	if err := validateNativeInspectRequest(request, service.environment); err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
+	generationID, err := validateNativeGenerationID(request.GenerationID, true)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	if err := validateNativeInspectedEvidence(request, inspected); err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
@@ -168,11 +172,10 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	if err := validateNativeServingDocuments(inspected.Generation, accessPolicyJSON, publicationsJSON, appearancesJSON); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	expectedGenerationID := nativeCandidateGenerationID(request, digest).String()
 	existingIdentity := inspected.Generation.Identity
 	if existingIdentity.GenerationID != "" || existingIdentity.ProjectID != "" || existingIdentity.Environment != "" {
 		expectedInspectID := "inspect-" + shortCandidateDigest(request.CandidateID)
-		if existingIdentity.GenerationID != expectedInspectID && existingIdentity.GenerationID != expectedGenerationID || existingIdentity.ProjectID != request.Scope.ProjectID || existingIdentity.Environment != request.Scope.Environment {
+		if (existingIdentity.GenerationID != expectedInspectID && existingIdentity.GenerationID != generationID.String()) || existingIdentity.ProjectID != request.Scope.ProjectID || existingIdentity.Environment != request.Scope.Environment {
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving state identity changed"))
 		}
 	}
@@ -195,7 +198,6 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, inspected.Generation.ServingArtifactID == "" && inspected.Generation.ArtifactDigest == "" && inspected.Artifact.ContentDigest == ""); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	generationID := nativeCandidateGenerationID(request, digest)
 	identity, err := projectgraph.NewServingIdentity(request.Scope.ProjectID, request.Scope.Environment, generationID.String())
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -226,19 +228,24 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if err := validateNativeInspectRequest(request, service.environment); err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
+	generationID, err := validateNativeGenerationID(request.GenerationID, true)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
 	if err := validateNativeInspectedEvidence(request, inspected); err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
 	if err := validateNativeArtifactIdentity(identity); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if identity.ServingStateID != nativeCandidateGenerationID(request, identity.ServingArtifactDigest).String() {
+	if identity.ServingStateID != generationID.String() {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving state identity does not match candidate artifact"))
 	}
 	if inspected.Artifact.ContentDigest != "" && inspected.Artifact.ContentDigest != identity.ServingArtifactDigest || inspected.Generation.ArtifactDigest != "" && inspected.Generation.ArtifactDigest != identity.ServingArtifactDigest || inspected.Generation.ServingArtifactID != "" && inspected.Generation.ServingArtifactID != identity.ServingArtifactID {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving artifact identity changed"))
 	}
-	if parsedGenerationID, parseErr := uuid.Parse(inspected.Generation.Identity.GenerationID); parseErr == nil && parsedGenerationID != uuid.Nil && inspected.Generation.Identity.GenerationID != identity.ServingStateID {
+	expectedInspectID := "inspect-" + shortCandidateDigest(request.CandidateID)
+	if inspected.Generation.Identity.GenerationID != expectedInspectID && inspected.Generation.Identity.GenerationID != identity.ServingStateID {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving state identity changed"))
 	}
 	key := nativeServingArtifactKey(identity.ServingArtifactDigest)
@@ -633,17 +640,6 @@ func validNativeStorageDomain(value string) bool {
 	return true
 }
 
-func nativeCandidateGenerationID(request release.CandidateArtifactRequest, digest string) uuid.UUID {
-	sum := sha256.Sum256([]byte("leapview-native-candidate-serving-state\x00" + request.CandidateID + "\x00" + request.Scope.ProjectID.String() + "\x00" + request.Scope.Environment + "\x00" + digest))
-	var id uuid.UUID
-	copy(id[:], sum[:16])
-	// UUIDv5-shaped deterministic identity is always parseable by native
-	// serving-state authorities.
-	id[6] = (id[6] & 0x0f) | 0x50
-	id[8] = (id[8] & 0x3f) | 0x80
-	return id
-}
-
 var errNativeInspectLimit = errors.New("native candidate inspect input exceeds bounded limit")
 var errNativeInspectSize = errors.New("native candidate inspect object size mismatch")
 
@@ -678,7 +674,26 @@ func validateNativeInspectRequest(request release.CandidateArtifactRequest, envi
 	if !nativeInspectLogicalPath(request.Source.ProjectFile) {
 		return candidateArtifactInvalid(errors.New("retained source project file is not canonical"))
 	}
+	if request.GenerationID != "" {
+		if _, err := validateNativeGenerationID(request.GenerationID, false); err != nil {
+			return candidateArtifactInvalid(err)
+		}
+	}
 	return nil
+}
+
+func validateNativeGenerationID(value string, required bool) (uuid.UUID, error) {
+	if value == "" {
+		if required {
+			return uuid.Nil, errors.New("native generation identity is required")
+		}
+		return uuid.Nil, nil
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.String() != value || parsed.Version() != 7 || parsed.Variant() != uuid.RFC4122 {
+		return uuid.Nil, errors.New("native generation identity must be a canonical UUIDv7")
+	}
+	return parsed, nil
 }
 
 func (service *nativeCandidateArtifactPhases) readSourceObjects(ctx context.Context, scope project.CandidateSourceScope, source project.CandidateSourceSnapshot) (map[string][]byte, error) {

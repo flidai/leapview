@@ -138,6 +138,22 @@ func TestNativeCandidateInspectRejectsForgedArtifactIdentity(t *testing.T) {
 	}
 }
 
+func TestNativeCandidateInspectGenerationIDIsOptionalButValidatedWhenSupplied(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+
+	request := fixture.request
+	request.GenerationID = ""
+	if _, err := service.InspectCandidateArtifacts(t.Context(), request); err != nil {
+		t.Fatalf("inspection without generation ID: %v", err)
+	}
+	request.GenerationID = uuid.NewString()
+	if _, err := service.InspectCandidateArtifacts(t.Context(), request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("inspection with non-v7 generation ID error = %v", err)
+	}
+}
+
 func TestNativeCandidateInspectRejectsCorruptArtifact(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	reader := &nativeInspectReaderStub{artifact: []byte("not-an-artifact"), refs: fixture.refs, objects: fixture.objects}
@@ -223,8 +239,12 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := uuid.Parse(materialized.Generation.Identity.GenerationID); err != nil {
-		t.Fatalf("generation id = %q is not UUID: %v", materialized.Generation.Identity.GenerationID, err)
+	if materialized.Generation.Identity.GenerationID != fixture.request.GenerationID {
+		t.Fatalf("generation id = %q, want caller-supplied %q", materialized.Generation.Identity.GenerationID, fixture.request.GenerationID)
+	}
+	parsedGenerationID, err := uuid.Parse(materialized.Generation.Identity.GenerationID)
+	if err != nil || parsedGenerationID.Version() != 7 {
+		t.Fatalf("generation id = %q is not UUIDv7: %v", materialized.Generation.Identity.GenerationID, err)
 	}
 	if materialized.Generation.Identity.GenerationID == materialized.Generation.ServingArtifactID {
 		t.Fatal("serving state and artifact identities must remain distinct")
@@ -270,6 +290,41 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	}
 	if replayed.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON || replayed.Generation.NativeArtifact != materialized.Generation.NativeArtifact || replayed.Generation.AccessPolicyJSON != materialized.Generation.AccessPolicyJSON || replayed.Generation.DashboardPublicationsJSON != materialized.Generation.DashboardPublicationsJSON || replayed.Generation.DashboardAppearancesJSON != materialized.Generation.DashboardAppearancesJSON {
 		t.Fatalf("materialized replay changed serving evidence: %#v != %#v", replayed.Generation, materialized.Generation)
+	}
+}
+
+func TestNativeCandidateMaterializeAndHydrateRequireExactGenerationID(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	otherGenerationID := "018f0e4e-6f2a-7abd-8def-0123456789ab"
+	request := fixture.request
+	request.GenerationID = otherGenerationID
+	if _, err := service.MaterializeCandidateArtifacts(t.Context(), request, materialized); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("materialize generation mismatch error = %v", err)
+	}
+	identity := release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID}
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), request, materialized, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("hydrate generation mismatch error = %v", err)
+	}
+	request.GenerationID = ""
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), request, materialized, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("hydrate missing generation ID error = %v", err)
+	}
+	if _, err := service.MaterializeCandidateArtifacts(t.Context(), request, inspected); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("materialize missing generation ID error = %v", err)
 	}
 }
 
@@ -534,7 +589,7 @@ spec:
 	// relevant to the object-backed reader contract.
 	projectDigest := compiled.Digest()
 	sourceDigest := testNativeDigest("source-snapshot")
-	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", Scope: projectgraph.CandidateScope{ProjectID: "project:test", Environment: "dev"}, OwnerID: "owner-1", ArtifactDigest: sourceDigest, Source: project.CandidateSourceSnapshot{ProjectID: "project:test", ArtifactDigest: sourceDigest, ProjectFile: "leapview.yaml", ProjectDigest: projectDigest}}
+	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", GenerationID: "018f0e4e-6f2a-7abc-8def-0123456789ab", Scope: projectgraph.CandidateScope{ProjectID: "project:test", Environment: "dev"}, OwnerID: "owner-1", ArtifactDigest: sourceDigest, Source: project.CandidateSourceSnapshot{ProjectID: "project:test", ArtifactDigest: sourceDigest, ProjectFile: "leapview.yaml", ProjectDigest: projectDigest}}
 	return nativeInspectFixtureValue{request: request, artifact: compiled.Canonical(), refs: refs, objects: objects}
 }
 

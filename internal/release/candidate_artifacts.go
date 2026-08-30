@@ -99,7 +99,11 @@ type CandidateGenerationArtifact struct {
 }
 
 type CandidateArtifactRequest struct {
-	CandidateID    string
+	CandidateID string
+	// GenerationID is the caller-owned serving-generation identity for native
+	// materialization/hydration. Read-only inspection may omit it; native
+	// materialization and hydration require a canonical UUIDv7 value.
+	GenerationID   string
 	Scope          projectgraph.CandidateScope
 	OwnerID        string
 	ArtifactDigest string
