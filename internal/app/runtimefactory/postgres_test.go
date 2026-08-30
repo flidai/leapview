@@ -12,12 +12,19 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
+
+type duckLakeRuntimeAttachCheckerFunc func(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error)
+
+func (f duckLakeRuntimeAttachCheckerFunc) CheckRuntimeAttachEligibility(ctx context.Context, input ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+	return f(ctx, input)
+}
 
 func TestPostgresSealedFactoryRequiresTargetCapabilities(t *testing.T) {
 	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{})
@@ -29,6 +36,116 @@ func TestPostgresSealedFactoryRequiresTargetCapabilities(t *testing.T) {
 	}
 	if _, err := sealed.PrepareSealed(context.Background(), runtimehost.RuntimeInput{}); err == nil || !strings.Contains(err.Error(), "resolver") {
 		t.Fatalf("error=%v, want missing capability error", err)
+	}
+}
+
+func TestPostgresSealedFactoryRejectsMissingRuntimeAttachCheckerBeforeResolveOrLease(t *testing.T) {
+	contract := deliveryCredentialTestContract(t)
+	leases := &leaseProbe{}
+	resolved := false
+	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
+		Resolve: func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) {
+			resolved = true
+			return SealedServingRoot{}, nil
+		},
+		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+			return nil, errors.New("unexpected dashboard access")
+		},
+		PoolContract: contract, SnapshotLeases: leases,
+		Authorize: func(context.Context, PostgresServingAuthorizationInput) error {
+			return nil
+		},
+		CatalogDatabase: "ducklake", CatalogID: "catalog", RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
+		CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
+		ExtensionAdmission:  extensionfixture.New(t, "ducklake").Admission,
+		DuckLakeSecret:      "lake_secret", PostgresSecret: "pg_secret",
+	})
+	sealed := factory.(interface {
+		PrepareSealed(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error)
+	})
+	_, err := sealed.PrepareSealed(context.Background(), runtimehost.RuntimeInput{})
+	if !errors.Is(err, ErrPostgresRuntimeAttachProbeUnavailable) {
+		t.Fatalf("error=%v, want missing runtime attach checker", err)
+	}
+	if resolved {
+		t.Fatal("resolver was called before checking runtime attach checker")
+	}
+	if leases.acquired != 0 {
+		t.Fatalf("lease acquired=%d before checking runtime attach checker", leases.acquired)
+	}
+}
+
+func TestCheckPostgresRuntimeAttachEligibility(t *testing.T) {
+	root := SealedServingRoot{
+		PhysicalPoolID:           "pool-serving",
+		CatalogID:                "catalog-serving",
+		DuckDBVersion:            "duckdb:1.5",
+		DuckLakeExtensionVersion: "ducklake:0.3",
+		DuckLakeSpecVersion:      "ducklake:v1",
+		CompatibilityDigest:      runtimeFactoryDigest("compatibility"),
+		CatalogSchemaVersion:     "catalog-v1",
+	}
+	input, err := postgresRuntimeAttachInputFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	eligible := ducklakepostgres.RuntimeAttachEligibility{
+		Eligible: true,
+		Reason:   "qualified",
+		Current: ducklakepostgres.CatalogRuntimeCompatibility{
+			PhysicalPoolID:       input.PhysicalPoolID,
+			CatalogID:            input.CatalogID,
+			RuntimeCompatibility: input.Compatibility,
+			CurrentMigrationID:   "0198f2c0-7c7a-7f00-8a11-000000000009",
+		},
+	}
+	tests := []struct {
+		name      string
+		checker   DuckLakeRuntimeAttachChecker
+		want      error
+		wantMatch string
+	}{
+		{
+			name: "eligible",
+			checker: duckLakeRuntimeAttachCheckerFunc(func(_ context.Context, got ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+				if got != input {
+					t.Fatalf("attach input=%+v, want %+v", got, input)
+				}
+				return eligible, nil
+			}),
+		},
+		{
+			name: "identity and version mismatch",
+			checker: duckLakeRuntimeAttachCheckerFunc(func(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+				mismatch := eligible
+				mismatch.Current.CatalogID = "catalog-other"
+				mismatch.Current.DuckDBRuntime = "duckdb:1.6"
+				return mismatch, nil
+			}),
+			want:      ducklakepostgres.ErrRuntimeAttachIneligible,
+			wantMatch: "identity/version compatibility mismatch",
+		},
+		{
+			name: "unavailable probe",
+			want: ErrPostgresRuntimeAttachProbeUnavailable,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := checkPostgresRuntimeAttachEligibility(t.Context(), test.checker, root)
+			if test.want == nil {
+				if err != nil {
+					t.Fatalf("check() error=%v", err)
+				}
+				return
+			}
+			if err == nil || !errors.Is(err, test.want) {
+				t.Fatalf("check() error=%v, want errors.Is(..., %v)", err, test.want)
+			}
+			if test.wantMatch != "" && !strings.Contains(err.Error(), test.wantMatch) {
+				t.Fatalf("check() error=%v, want substring %q", err, test.wantMatch)
+			}
+		})
 	}
 }
 
@@ -153,10 +270,13 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	}
 	leases := &leaseProbe{}
 	authorized := false
+	buildCalled := false
+	bootstrapCalled := false
 	var authorization PostgresServingAuthorizationInput
 	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
 		Resolve: func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) { return root, nil },
 		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+			buildCalled = true
 			return nil, errors.New("unexpected dashboard access")
 		},
 		PoolContract: contract, SnapshotLeases: leases,
@@ -165,11 +285,17 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 			authorization = in
 			return nil
 		},
+		RuntimeAttachChecker: duckLakeRuntimeAttachCheckerFunc(func(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+			return ducklakepostgres.RuntimeAttachEligibility{}, errors.New("runtime attach probe unavailable")
+		}),
 		CatalogDatabase: "ducklake", CatalogID: "catalog", LeaseHolder: "runtime",
 		RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: root.SecurityDomainFingerprint,
-		CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
-		ExtensionAdmission:  extensionfixture.New(t, "ducklake").Admission,
-		DuckLakeSecret:      "lake_secret", PostgresSecret: "pg_secret",
+		CredentialBootstrap: func(context.Context, driver.ExecerContext) error {
+			bootstrapCalled = true
+			return nil
+		},
+		ExtensionAdmission: extensionfixture.New(t, "ducklake").Admission,
+		DuckLakeSecret:     "lake_secret", PostgresSecret: "pg_secret",
 	})
 	sealed := factory.(interface {
 		PrepareSealed(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error)
@@ -198,6 +324,9 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	}
 	if leases.releasedID != leases.leaseID {
 		t.Fatalf("release lease ID=%q, want returned canonical ID %q", leases.releasedID, leases.leaseID)
+	}
+	if buildCalled || bootstrapCalled {
+		t.Fatalf("DuckLake attach/build reached after eligibility failure: build=%t bootstrap=%t", buildCalled, bootstrapCalled)
 	}
 }
 
@@ -260,7 +389,13 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 					return nil, errors.New("unexpected dashboard access")
 				},
 				PoolContract: contract, SnapshotLeases: leases,
-				Authorize:       func(context.Context, PostgresServingAuthorizationInput) error { return nil },
+				Authorize: func(context.Context, PostgresServingAuthorizationInput) error { return nil },
+				RuntimeAttachChecker: duckLakeRuntimeAttachCheckerFunc(func(_ context.Context, got ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+					return ducklakepostgres.RuntimeAttachEligibility{Eligible: true, Current: ducklakepostgres.CatalogRuntimeCompatibility{
+						PhysicalPoolID: got.PhysicalPoolID, CatalogID: got.CatalogID, RuntimeCompatibility: got.Compatibility,
+						CurrentMigrationID: "0198f2c0-7c7a-7f00-8a11-000000000009",
+					}}, nil
+				}),
 				CatalogDatabase: "ducklake", CatalogID: "catalog", RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: baseRoot.SecurityDomainFingerprint,
 				CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
 				ExtensionAdmission:  extensionfixture.New(t, "ducklake").Admission,

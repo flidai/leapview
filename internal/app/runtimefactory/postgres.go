@@ -17,6 +17,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -24,9 +25,18 @@ import (
 )
 
 var (
-	ErrPostgresLeaseRenewal     = errors.New("PostgreSQL DuckLake snapshot lease renewal failed")
-	postgresLeaseReleaseTimeout = 5 * time.Second
+	ErrPostgresLeaseRenewal                  = errors.New("PostgreSQL DuckLake snapshot lease renewal failed")
+	ErrPostgresRuntimeAttachProbeUnavailable = errors.New("PostgreSQL DuckLake runtime attach eligibility probe is unavailable")
+	postgresLeaseReleaseTimeout              = 5 * time.Second
 )
+
+// DuckLakeRuntimeAttachChecker is the narrow, read-only authority required
+// immediately before a PostgreSQL-backed DuckLake serving attachment. The
+// checker implementation owns the DuckLake runtime pool; serving composition
+// never receives the broader migration/owner repository.
+type DuckLakeRuntimeAttachChecker interface {
+	CheckRuntimeAttachEligibility(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error)
+}
 
 // PostgresSealedFactoryConfig supplies only target-owned capabilities. The
 // resolver must return the exact catalog identity and snapshot selected by
@@ -39,6 +49,7 @@ type PostgresSealedFactoryConfig struct {
 	PoolContract              *ducklake.PoolContract
 	SnapshotLeases            runtimehost.SnapshotLeaseRepository
 	Authorize                 func(context.Context, PostgresServingAuthorizationInput) error
+	RuntimeAttachChecker      DuckLakeRuntimeAttachChecker
 	CatalogDatabase           string
 	CatalogID                 string
 	LeaseHolder               string
@@ -51,21 +62,22 @@ type PostgresSealedFactoryConfig struct {
 }
 
 type postgresSealedFactory struct {
-	base                servingStateRuntimeFactory
-	resolve             SealedRootResolver
-	buildRuntime        SealedDashboardRuntimeBuilder
-	poolContract        *ducklake.PoolContract
-	snapshotLeases      runtimehost.SnapshotLeaseRepository
-	authorize           func(context.Context, PostgresServingAuthorizationInput) error
-	catalogDatabase     string
-	catalogID           string
-	leaseHolder         string
-	runtimeVersion      string
-	securityFingerprint string
-	credentialBootstrap ducklake.CredentialBootstrap
-	extensionAdmission  extension.Admission
-	duckLakeSecret      string
-	postgresSecret      string
+	base                 servingStateRuntimeFactory
+	resolve              SealedRootResolver
+	buildRuntime         SealedDashboardRuntimeBuilder
+	poolContract         *ducklake.PoolContract
+	snapshotLeases       runtimehost.SnapshotLeaseRepository
+	authorize            func(context.Context, PostgresServingAuthorizationInput) error
+	runtimeAttachChecker DuckLakeRuntimeAttachChecker
+	catalogDatabase      string
+	catalogID            string
+	leaseHolder          string
+	runtimeVersion       string
+	securityFingerprint  string
+	credentialBootstrap  ducklake.CredentialBootstrap
+	extensionAdmission   extension.Admission
+	duckLakeSecret       string
+	postgresSecret       string
 }
 
 // PostgresServingAuthorizationInput carries the exact immutable root and
@@ -88,9 +100,77 @@ func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.Ru
 		credentialBootstrap: config.CredentialBootstrap, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
 		snapshotLeases: config.SnapshotLeases, authorize: config.Authorize,
-		catalogDatabase: config.CatalogDatabase, catalogID: config.CatalogID, leaseHolder: config.LeaseHolder,
+		runtimeAttachChecker: config.RuntimeAttachChecker,
+		catalogDatabase:      config.CatalogDatabase, catalogID: config.CatalogID, leaseHolder: config.LeaseHolder,
 		runtimeVersion: config.RuntimeVersion, securityFingerprint: config.SecurityDomainFingerprint,
 	}
+}
+
+// postgresRuntimeAttachInputFromRoot projects only the exact identity and
+// version evidence required by the DuckLake PostgreSQL attach gate. The
+// projection is deliberately sourced from the sealed serving root; it never
+// reads a current catalog row and therefore cannot self-assert an upgrade.
+func postgresRuntimeAttachInputFromRoot(root SealedServingRoot) (ducklakepostgres.RuntimeAttachInput, error) {
+	values := map[string]string{
+		"physical pool ID":               root.PhysicalPoolID,
+		"catalog ID":                     root.CatalogID,
+		"DuckDB version":                 root.DuckDBVersion,
+		"DuckLake extension version":     root.DuckLakeExtensionVersion,
+		"DuckLake specification version": root.DuckLakeSpecVersion,
+		"compatibility digest":           root.CompatibilityDigest,
+		"catalog schema version":         root.CatalogSchemaVersion,
+	}
+	for name, value := range values {
+		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
+			return ducklakepostgres.RuntimeAttachInput{}, fmt.Errorf("%w: sealed serving root %s is unavailable", ErrPostgresRuntimeAttachProbeUnavailable, name)
+		}
+	}
+	return ducklakepostgres.RuntimeAttachInput{
+		PhysicalPoolID: root.PhysicalPoolID,
+		CatalogID:      root.CatalogID,
+		Compatibility: ducklakepostgres.RuntimeCompatibility{
+			RuntimeTuple: ducklakepostgres.RuntimeTuple{
+				DuckDBRuntime:     root.DuckDBVersion,
+				DuckLakeExtension: root.DuckLakeExtensionVersion,
+				CatalogFormat:     root.DuckLakeSpecVersion,
+			},
+			CompatibilityDigest:  root.CompatibilityDigest,
+			CatalogSchemaVersion: root.CatalogSchemaVersion,
+		},
+	}, nil
+}
+
+// checkPostgresRuntimeAttachEligibility runs the existing PostgreSQL DuckLake
+// gate against the exact root selected for serving. It also verifies the
+// evidence returned by the checker at this boundary so an adapter cannot
+// report an unrelated catalog as eligible.
+func checkPostgresRuntimeAttachEligibility(ctx context.Context, checker DuckLakeRuntimeAttachChecker, root SealedServingRoot) error {
+	if checker == nil {
+		return ErrPostgresRuntimeAttachProbeUnavailable
+	}
+	input, err := postgresRuntimeAttachInputFromRoot(root)
+	if err != nil {
+		return err
+	}
+	eligibility, err := checker.CheckRuntimeAttachEligibility(ctx, input)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ducklakepostgres.ErrRuntimeAttachIneligible, err)
+	}
+	if !eligibility.Eligible {
+		reason := strings.TrimSpace(eligibility.Reason)
+		if reason == "" {
+			reason = "checker reported ineligible"
+		}
+		return fmt.Errorf("%w: %s", ducklakepostgres.ErrRuntimeAttachIneligible, reason)
+	}
+	current := eligibility.Current
+	if current.PhysicalPoolID != input.PhysicalPoolID || current.CatalogID != input.CatalogID || current.RuntimeCompatibility != input.Compatibility || current.CurrentMigrationID == "" {
+		return fmt.Errorf("%w: identity/version compatibility mismatch", ducklakepostgres.ErrRuntimeAttachIneligible)
+	}
+	if _, err := uuid.Parse(current.CurrentMigrationID); err != nil {
+		return fmt.Errorf("%w: identity/version compatibility mismatch", ducklakepostgres.ErrRuntimeAttachIneligible)
+	}
+	return nil
 }
 
 func (f postgresSealedFactory) Prepare(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
@@ -105,6 +185,9 @@ func (f postgresSealedFactory) PinnedSnapshotSealed() {}
 func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
 	if f.resolve == nil || f.buildRuntime == nil || f.poolContract == nil || f.snapshotLeases == nil || f.authorize == nil || f.credentialBootstrap == nil || f.extensionAdmission == nil {
 		return nil, fmt.Errorf("PostgreSQL sealed serving resolver, pool admission, snapshot leases, authorization, credentials, extension admission, and dashboard builder are required")
+	}
+	if f.runtimeAttachChecker == nil {
+		return nil, ErrPostgresRuntimeAttachProbeUnavailable
 	}
 	if strings.TrimSpace(f.catalogDatabase) == "" || strings.TrimSpace(f.catalogID) == "" || strings.TrimSpace(f.runtimeVersion) == "" || strings.TrimSpace(f.securityFingerprint) == "" {
 		return nil, fmt.Errorf("PostgreSQL sealed serving catalog database, catalog ID, runtime version, and security fingerprint are required")
@@ -194,6 +277,10 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	if err := f.authorize(ctx, PostgresServingAuthorizationInput{Root: root, LeaseID: leaseID, OwnerID: leaseOwner, Fence: root.FencingEpoch}); err != nil {
 		_ = leaseHandle.Close()
 		return nil, err
+	}
+	if err := checkPostgresRuntimeAttachEligibility(ctx, f.runtimeAttachChecker, root); err != nil {
+		_ = leaseHandle.Close()
+		return nil, fmt.Errorf("verify PostgreSQL DuckLake runtime attach eligibility: %w", err)
 	}
 	catalog := ducklake.PostgresCatalogConfig{
 		PhysicalPoolID: root.PhysicalPoolID, DuckLakeSecret: duckLakeSecret, PostgresSecret: postgresSecret,
