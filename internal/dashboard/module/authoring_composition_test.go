@@ -74,6 +74,16 @@ func TestBuildAuthoringNativeUsesSuppliedRepositoryWithoutSQLiteAuditRecorder(t 
 	if application == nil || application.PublishedCompilationReader() != repository {
 		t.Fatalf("native composition did not preserve supplied repository: application=%#v", application)
 	}
+	if !application.MatchesRepository(repository) {
+		t.Fatal("native composition did not match its exact authoring repository")
+	}
+	otherRepository, err := authoringpostgres.New(nativeCompositionDB{}, nativeCompositionAudit{}, nativeCompositionEvents{}, nativeCompositionFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if application.MatchesRepository(otherRepository) || application.MatchesRepository(nil) {
+		t.Fatal("native composition matched a substituted or nil authoring repository")
+	}
 	for name, generate := range map[string]func() (string, error){
 		"dashboard": func() (string, error) { id, err := authoringpostgres.NewDashboardID(); return string(id), err },
 		"draft":     func() (string, error) { id, err := authoringpostgres.NewDraftID(); return string(id), err },

@@ -26,6 +26,7 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -159,12 +160,15 @@ type httpPolicy struct {
 }
 
 type persistenceInputs struct {
-	agentSettings    agentmodule.Settings
-	servingStateRepo servingStateRepository
-	accessRepo       access.Repository
-	auditRecorder    access.AuditIntentRecorder
-	product          *adminmodule.ProductService
-	productStatus    adminmodule.ProductStatus
+	agentSettings          agentmodule.Settings
+	servingStateRepo       servingStateRepository
+	accessRepo             access.Repository
+	auditRecorder          access.AuditIntentRecorder
+	product                *adminmodule.ProductService
+	productStatus          adminmodule.ProductStatus
+	dashboardPersistence   *dashboardmodule.NativePersistence
+	dashboardAuthoring     *dashboardauthoringpostgres.Repository
+	requireNativeDashboard bool
 }
 
 type workflowInputs struct {
@@ -230,6 +234,16 @@ type dataAssemblyInputs struct {
 	// activation path. When configured it takes precedence over Database;
 	// callers must not provide a SQLite handle as a production fallback.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
+	// DashboardPersistence is the complete native PostgreSQL dashboard
+	// authority bundle. It is mutually exclusive with Database/AdminDatabase.
+	DashboardPersistence *dashboardmodule.NativePersistence
+	// DashboardAuthoring is the exact native repository used to compose the
+	// browser-facing authoring application.
+	DashboardAuthoring *dashboardauthoringpostgres.Repository
+	// RequireNativeDashboard selects the fail-closed native dashboard path.
+	// When enabled, the persistence bundle, authoring repository/application,
+	// and publication reconciler must all be supplied.
+	RequireNativeDashboard bool
 	// RequireExplicitAPIProtocol prevents a production assembly from silently
 	// selecting the process-local or SQLite protocol implementations.
 	RequireExplicitAPIProtocol bool
@@ -473,6 +487,50 @@ func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool,
 	return nil
 }
 
+// dashboardNativeInputsPresent identifies any native dashboard authority in
+// the assembly bag. A partial native bundle must never silently fall back to
+// the legacy SQLite dashboard path.
+func dashboardNativeInputsPresent(data dataAssemblyInputs) bool {
+	return data.RequireNativeDashboard || data.DashboardPersistence != nil ||
+		data.DashboardAuthoring != nil || data.DashboardPublicationReconciler != nil
+}
+
+// validateDashboardAssemblyInputs is the runtime-router admission gate for
+// native dashboard composition. The native path is deliberately all-or-
+// nothing: it requires the complete opaque persistence bundle, the exact
+// authoring repository/application pair, and the native activation
+// reconciler, while rejecting every database/sql (SQLite) input.
+func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs) error {
+	if !dashboardNativeInputsPresent(data) {
+		return nil
+	}
+	if data.Database != nil || data.AdminDatabase != nil {
+		return errors.New("native dashboard composition rejects database/sql (SQLite) inputs")
+	}
+	if data.AuditRuntime != nil {
+		return errors.New("native dashboard composition rejects the legacy SQLite audit runtime")
+	}
+	if data.DashboardPersistence == nil {
+		return errors.New("native dashboard composition requires a dashboard persistence bundle")
+	}
+	if data.DashboardAuthoring == nil {
+		return errors.New("native dashboard composition requires a dashboard authoring repository")
+	}
+	if data.DashboardPublicationReconciler == nil {
+		return errors.New("native dashboard composition requires a dashboard publication reconciler")
+	}
+	if !data.DashboardPersistence.MatchesAuthoringRepository(data.DashboardAuthoring) {
+		return errors.New("native dashboard composition authoring repository does not match persistence bundle")
+	}
+	if capabilities.Authoring == nil {
+		return errors.New("native dashboard composition requires a dashboard authoring application")
+	}
+	if !data.DashboardPersistence.MatchesAuthoringApplication(capabilities.Authoring) {
+		return errors.New("native dashboard composition authoring application does not match persistence bundle")
+	}
+	return nil
+}
+
 func buildApplicationSurfaces(
 	ctx context.Context,
 	metrics QueryMetrics,
@@ -485,6 +543,10 @@ func buildApplicationSurfaces(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if err := validateDashboardAssemblyInputs(data, capabilities); err != nil {
+		return nil, nil, nil, nil, err
+	}
+	requireNativeDashboard := dashboardNativeInputsPresent(data)
 	telemetry := observability.New()
 	dashboardTelemetry := dashboardmodule.NewTelemetry(telemetry.Registry())
 	if capabilities.AnalyticsModule != nil {
@@ -580,6 +642,9 @@ func buildApplicationSurfaces(
 	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
+	persistence.dashboardPersistence = data.DashboardPersistence
+	persistence.dashboardAuthoring = data.DashboardAuthoring
+	persistence.requireNativeDashboard = requireNativeDashboard
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
@@ -854,6 +919,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if persistence.requireNativeDashboard {
+		if database != nil {
+			return errors.New("native dashboard composition rejects database/sql (SQLite) inputs")
+		}
+		if persistence.dashboardPersistence == nil {
+			return errors.New("native dashboard composition requires a dashboard persistence bundle")
+		}
+		if persistence.dashboardAuthoring == nil {
+			return errors.New("native dashboard composition requires a dashboard authoring repository")
+		}
+		if runtime.dashboardPublicationReconciler == nil {
+			return errors.New("native dashboard composition requires a dashboard publication reconciler")
+		}
+		if !persistence.dashboardPersistence.MatchesAuthoringRepository(persistence.dashboardAuthoring) {
+			return errors.New("native dashboard composition authoring repository does not match persistence bundle")
+		}
+		if routes.dashboardAuthoring == nil || !persistence.dashboardPersistence.MatchesAuthoringApplication(routes.dashboardAuthoring) {
+			return errors.New("native dashboard composition authoring application does not match persistence bundle")
+		}
+	}
 	var connectionAdministration analyticsmodule.ConnectionBindingAdministration
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
@@ -1108,13 +1193,21 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
+		dashboardDatabase := database
+		if persistence.requireNativeDashboard {
+			dashboardDatabase = nil
+		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database: database,
-			// Runtime-router composition still uses the legacy SQLite dashboard
-			// authorities until native PostgreSQL bundle wiring lands. Keep this
-			// fallback explicit so production-native mode cannot infer it.
-			LegacySQLite:        database != nil,
+			Database:                 dashboardDatabase,
+			NativePersistence:        persistence.dashboardPersistence,
+			RequireNativePersistence: persistence.requireNativeDashboard,
+			RequireAuthoring:         persistence.requireNativeDashboard,
+			RequirePublication:       persistence.requireNativeDashboard,
+			// Legacy dashboard authorities remain explicit for development and
+			// migration-only callers. Native production admission cannot infer or
+			// mix this fallback.
+			LegacySQLite:        !persistence.requireNativeDashboard && database != nil,
 			Authoring:           routes.dashboardAuthoring,
 			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{

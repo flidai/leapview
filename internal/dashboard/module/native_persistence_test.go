@@ -168,6 +168,21 @@ func TestNativePersistenceMatchesExactAuthorities(t *testing.T) {
 	}
 }
 
+func TestNativePersistenceMatchesOnlyItsAuthoringRepository(t *testing.T) {
+	options := validNativePersistenceOptions(t)
+	bundle, err := dashboardmodule.NewNativePersistence(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.MatchesAuthoringRepository(options.Authoring) {
+		t.Fatal("native persistence did not match its exact authoring repository")
+	}
+	other := validNativePersistenceOptions(t)
+	if bundle.MatchesAuthoringRepository(other.Authoring) || bundle.MatchesAuthoringRepository(nil) {
+		t.Fatal("native persistence matched a substituted or nil authoring repository")
+	}
+}
+
 func TestBuildRequiresExplicitNativeDashboardAuthorities(t *testing.T) {
 	_, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{RequireNativePersistence: true})
 	if err == nil {

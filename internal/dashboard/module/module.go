@@ -159,6 +159,20 @@ func (p *NativePersistence) Matches(options NativePersistenceOptions) bool {
 		nativeBroker == options.Broker
 }
 
+// MatchesAuthoringRepository reports whether p owns the exact native
+// authoring repository supplied by application composition. The repository
+// remains opaque; callers can validate identity without reading p's private
+// authority fields.
+func (p *NativePersistence) MatchesAuthoringRepository(repository *dashboardauthoringpostgres.Repository) bool {
+	return p.valid() && repository != nil && p.authoring == repository
+}
+
+// MatchesAuthoringApplication reports whether the supplied transport-facing
+// authoring application was composed with p's exact native repository.
+func (p *NativePersistence) MatchesAuthoringApplication(application *AuthoringApplication) bool {
+	return p.valid() && application != nil && application.MatchesRepository(p.authoring)
+}
+
 // NewNativePersistence validates the complete dashboard persistence bundle.
 // Production composition should construct this only from native PostgreSQL
 // repositories; legacy SQLite and memory stores are intentionally rejected.
