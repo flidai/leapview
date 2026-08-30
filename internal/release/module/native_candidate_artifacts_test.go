@@ -429,6 +429,14 @@ func TestNativeCandidateHydrateRejectsForgedObjectMetadata(t *testing.T) {
 	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, tampered, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
 		t.Fatalf("tampered retained object evidence error = %v", err)
 	}
+	missingEvidence := materialized
+	missingEvidence.Generation.NativeArtifact = release.NativeArtifactObjectEvidence{}
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, missingEvidence, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("missing retained object evidence error = %v", err)
+	}
+	if _, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, missingEvidence); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("missing replay object evidence error = %v", err)
+	}
 	identity.ServingStateID = "not-a-uuid"
 	service.artifacts = baseStore
 	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {

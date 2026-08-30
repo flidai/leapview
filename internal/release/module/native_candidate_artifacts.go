@@ -192,7 +192,7 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	objectEvidence := nativeArtifactObjectEvidence(info)
-	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence); err != nil {
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, inspected.Generation.ServingArtifactID == "" && inspected.Generation.ArtifactDigest == "" && inspected.Artifact.ContentDigest == ""); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	generationID := nativeCandidateGenerationID(request, digest)
@@ -264,7 +264,7 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	objectEvidence := nativeArtifactObjectEvidence(object.Info)
-	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence); err != nil {
+	if err := validateNativeArtifactObjectEvidence(inspected.Generation.NativeArtifact, objectEvidence, inspected.Generation.ServingArtifactID == "" && inspected.Generation.ArtifactDigest == "" && inspected.Artifact.ContentDigest == ""); err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
@@ -442,10 +442,14 @@ func nativeArtifactObjectEvidence(info platformobjectstore.ObjectInfo) release.N
 	return release.NativeArtifactObjectEvidence{Locator: info.Key, StorageSecurityDomain: info.StorageSecurityDomain, ContentType: info.ContentType, MetadataDigest: info.MetadataDigest, SizeBytes: info.SizeBytes}
 }
 
-func validateNativeArtifactObjectEvidence(inspected, observed release.NativeArtifactObjectEvidence) error {
+func validateNativeArtifactObjectEvidence(inspected, observed release.NativeArtifactObjectEvidence, allowEmpty bool) error {
 	if inspected == (release.NativeArtifactObjectEvidence{}) {
-		// The read-only inspect phase has no serving-object metadata yet; hydrate
-		// fills it from the exact object returned by open.
+		// The read-only inspect phase has no serving-object metadata yet;
+		// materialize/hydrate fill it from exact put/open responses. Once a
+		// serving identity is already present, a missing value is tampering.
+		if !allowEmpty {
+			return errors.New("inspected native serving artifact object evidence is missing")
+		}
 		return nil
 	}
 	if inspected != observed {
