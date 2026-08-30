@@ -1,4 +1,8 @@
-package app
+// Package deploymentpostgres composes Deployment's native PostgreSQL
+// persistence from process-owned capability authorities. Keeping concrete
+// adapters at this application composition boundary lets the deployment
+// module consume only its contract and persistence surfaces.
+package deploymentpostgres
 
 import (
 	"errors"
@@ -10,27 +14,27 @@ import (
 	deploymentoperation "github.com/flidai/leapview/internal/app/deploymentoperation"
 	deploymentworkflow "github.com/flidai/leapview/internal/app/deploymentworkflow"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
-	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	deploymentpostgresql "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 )
 
-// DeploymentPostgresAuthorities contains the already-composed sibling
-// capability authorities needed by the deployment native PostgreSQL
-// persistence. Every adapter forwards the deployment transaction unchanged.
-type DeploymentPostgresAuthorities struct {
+// Authorities contains the already-composed sibling capability authorities
+// needed by Deployment's native PostgreSQL persistence. Every adapter forwards
+// the deployment transaction unchanged.
+type Authorities struct {
 	Access     *accesspostgres.AuditRepository
 	Events     *eventspostgres.Repository
 	Jobs       *jobspostgres.Repository
 	Operations *operationpostgres.Repository
 }
 
-// NewDeploymentPostgresPersistence constructs the native deployment
-// persistence and all of its transactional consequence adapters from one
-// control-plane database handle. It does not begin a transaction or perform
-// schema work; callers retain lifecycle ownership of control.
-func NewDeploymentPostgresPersistence(control deploymentpostgres.DBTX, authorities DeploymentPostgresAuthorities) (deploymentmodule.Persistence, error) {
+// NewPersistence constructs native Deployment persistence and all of its
+// transactional consequence adapters from one control-plane database handle.
+// It does not begin a transaction or perform schema work; callers retain
+// lifecycle ownership of control.
+func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) (deploymentmodule.Persistence, error) {
 	if control == nil {
 		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL control pool is required")
 	}
@@ -48,7 +52,7 @@ func NewDeploymentPostgresPersistence(control deploymentpostgres.DBTX, authoriti
 	}
 
 	activationAudit := deploymentaudit.NewWithRepository(authorities.Access)
-	repository := deploymentpostgres.NewWithActivationAudit(control, activationAudit)
+	repository := deploymentpostgresql.NewWithActivationAudit(control, activationAudit)
 	persistence, err := deploymentmodule.NewPostgresPersistenceWithCapabilities(repository, deploymentmodule.NativePersistenceCapabilities{
 		Events:     deploymentevents.NewWithRepository(authorities.Events),
 		Audit:      deploymentaudit.NewWithRepository(authorities.Access),

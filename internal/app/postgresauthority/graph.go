@@ -1,4 +1,4 @@
-package app
+package postgresauthority
 
 import (
 	"context"
@@ -15,8 +15,7 @@ import (
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
-	"github.com/flidai/leapview/internal/app/agentaudit"
-	"github.com/flidai/leapview/internal/app/agentevents"
+	agentcomposition "github.com/flidai/leapview/internal/app/agentpostgres"
 	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
@@ -25,6 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/app/dashboardgenerationfence"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationevents"
+	deploymentcomposition "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	manageddataaudit "github.com/flidai/leapview/internal/app/manageddataaudit"
 	manageddataworkflow "github.com/flidai/leapview/internal/app/manageddataworkflow"
 	"github.com/flidai/leapview/internal/app/productaudit"
@@ -50,6 +50,7 @@ import (
 	idempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
@@ -154,8 +155,8 @@ type PostgresAuthorityGraphOptions struct {
 // retained by postgresControlPlaneLifecycle. It performs no network I/O and
 // does not change lifecycle ownership. Callers should invoke Validate before
 // exposing any handlers.
-func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options PostgresAuthorityGraphOptions) (*PostgresAuthorityGraph, error) {
-	if lifecycle == nil || lifecycle.pools == nil || lifecycle.pools.Runtime == nil || lifecycle.pools.Maintenance == nil {
+func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, options PostgresAuthorityGraphOptions) (*PostgresAuthorityGraph, error) {
+	if runtime == nil || maintenance == nil {
 		return nil, errors.New("PostgreSQL authority graph requires initialized runtime and maintenance pools")
 	}
 	if strings.TrimSpace(options.TargetID) == "" {
@@ -164,9 +165,6 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 	if len(options.FingerprintKey) < 32 {
 		return nil, errors.New("PostgreSQL authority graph fingerprint key must be at least 32 bytes")
 	}
-	runtime := lifecycle.pools.Runtime
-	maintenance := lifecycle.pools.Maintenance
-
 	bootstrap := platformbootstrappostgres.New(runtime)
 	operations := operationpostgres.New(runtime)
 	operationMaintenance := operationpostgres.NewMaintenance(maintenance)
@@ -201,7 +199,7 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 		return nil, fmt.Errorf("construct PostgreSQL refresh cancellation audit authority: %w", err)
 	}
 
-	deploymentPersistence, err := NewDeploymentPostgresPersistence(runtime, DeploymentPostgresAuthorities{
+	deploymentPersistence, err := deploymentcomposition.NewPersistence(runtime, deploymentcomposition.Authorities{
 		Access: audit, Events: events, Jobs: jobs, Operations: operations,
 	})
 	if err != nil {
@@ -263,16 +261,15 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL dashboard persistence: %w", err)
 	}
-	agentRepository, err := agentpostgres.NewProduction(runtime, agentpostgres.Options{
-		Workflow: jobs, Jobs: jobs,
-		Audit: agentaudit.NewWithRepository(audit), Domain: agentevents.NewWithRepository(events),
+	agentPersistence, err := agentcomposition.NewPersistence(runtime, agentcomposition.Authorities{
+		Access: audit, Events: events, Jobs: jobs,
 	})
 	if err != nil {
-		return nil, fmt.Errorf("construct PostgreSQL agent authority: %w", err)
-	}
-	agentPersistence, err := agentmodule.NewPostgresPersistence(agentRepository)
-	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL agent persistence: %w", err)
+	}
+	agentRepository, ok := agentPersistence.Repository.(*agentpostgres.Repository)
+	if !ok || agentRepository == nil {
+		return nil, errors.New("construct PostgreSQL agent persistence: native repository is unavailable")
 	}
 	managedDataRepository := manageddatapostgres.NewWithOptions(runtime, manageddatapostgres.Options{
 		Workflow: manageddataworkflow.New(jobs), Audit: manageddataaudit.New(),

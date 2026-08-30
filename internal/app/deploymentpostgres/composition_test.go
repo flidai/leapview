@@ -1,4 +1,4 @@
-package app
+package deploymentpostgres
 
 import (
 	"context"
@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
@@ -24,15 +25,15 @@ func (deploymentPostgresDBStub) Query(context.Context, string, ...any) (pgx.Rows
 func (deploymentPostgresDBStub) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
 func (deploymentPostgresDBStub) Begin(context.Context) (pgx.Tx, error)            { return nil, nil }
 
-func deploymentPostgresAuthorities() DeploymentPostgresAuthorities {
-	return DeploymentPostgresAuthorities{
+func deploymentPostgresAuthorities() Authorities {
+	return Authorities{
 		Access: accesspostgres.New(), Events: eventspostgres.New(),
 		Jobs: jobspostgres.NewRepository(nil), Operations: operationpostgres.New(nil),
 	}
 }
 
-func TestNewDeploymentPostgresPersistenceBuildsNativeBundle(t *testing.T) {
-	persistence, err := NewDeploymentPostgresPersistence(deploymentPostgresDBStub{}, deploymentPostgresAuthorities())
+func TestNewPersistenceBuildsNativeBundle(t *testing.T) {
+	persistence, err := NewPersistence(deploymentPostgresDBStub{}, deploymentPostgresAuthorities())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,19 +43,23 @@ func TestNewDeploymentPostgresPersistenceBuildsNativeBundle(t *testing.T) {
 	if !persistence.Repository.Configured() {
 		t.Fatal("native deployment repository is not configured")
 	}
+
+	// Keep this test tied to the module's public persistence contract rather
+	// than to the concrete repository implementation details.
+	var _ deploymentmodule.Persistence = persistence
 }
 
-func TestNewDeploymentPostgresPersistenceRejectsMissingAuthority(t *testing.T) {
+func TestNewPersistenceRejectsMissingAuthority(t *testing.T) {
 	base := deploymentPostgresAuthorities()
 	cases := []struct {
 		name string
-		edit func(*DeploymentPostgresAuthorities)
+		edit func(*Authorities)
 	}{
-		{name: "control", edit: func(_ *DeploymentPostgresAuthorities) {}},
-		{name: "access", edit: func(a *DeploymentPostgresAuthorities) { a.Access = nil }},
-		{name: "event", edit: func(a *DeploymentPostgresAuthorities) { a.Events = nil }},
-		{name: "jobs", edit: func(a *DeploymentPostgresAuthorities) { a.Jobs = nil }},
-		{name: "operation", edit: func(a *DeploymentPostgresAuthorities) { a.Operations = nil }},
+		{name: "control", edit: func(_ *Authorities) {}},
+		{name: "access", edit: func(a *Authorities) { a.Access = nil }},
+		{name: "event", edit: func(a *Authorities) { a.Events = nil }},
+		{name: "jobs", edit: func(a *Authorities) { a.Jobs = nil }},
+		{name: "operation", edit: func(a *Authorities) { a.Operations = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -62,13 +67,12 @@ func TestNewDeploymentPostgresPersistenceRejectsMissingAuthority(t *testing.T) {
 			tc.edit(&authorities)
 			control := deploymentPostgresDBStub{}
 			if tc.name == "control" {
-				control = deploymentPostgresDBStub{}
-				if _, err := NewDeploymentPostgresPersistence(nil, authorities); err == nil || !strings.Contains(err.Error(), "control pool") {
+				if _, err := NewPersistence(nil, authorities); err == nil || !strings.Contains(err.Error(), "control pool") {
 					t.Fatalf("missing control error = %v", err)
 				}
 				return
 			}
-			if _, err := NewDeploymentPostgresPersistence(control, authorities); err == nil || !strings.Contains(err.Error(), tc.name) {
+			if _, err := NewPersistence(control, authorities); err == nil || !strings.Contains(err.Error(), tc.name) {
 				t.Fatalf("missing %s error = %v", tc.name, err)
 			}
 		})

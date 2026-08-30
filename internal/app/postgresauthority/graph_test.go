@@ -1,4 +1,4 @@
-package app
+package postgresauthority
 
 import (
 	"context"
@@ -32,7 +32,18 @@ import (
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+type graphDBStub struct{}
+
+func (graphDBStub) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (graphDBStub) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
+func (graphDBStub) QueryRow(context.Context, string, ...any) pgx.Row        { return nil }
+func (graphDBStub) Begin(context.Context) (pgx.Tx, error)                   { return nil, nil }
 
 type releaseListFake struct {
 	rows []release.Release
@@ -73,12 +84,12 @@ func TestPostgresAuthorityGraphValidateRejectsNilAndPartialGraphs(t *testing.T) 
 	}
 }
 
-func TestNewPostgresAuthorityGraphRejectsMissingLifecycleAndOptions(t *testing.T) {
+func TestNewPostgresAuthorityGraphRejectsMissingPoolsAndOptions(t *testing.T) {
 	key := []byte(strings.Repeat("k", 32))
-	if _, err := NewPostgresAuthorityGraph(nil, PostgresAuthorityGraphOptions{TargetID: "target", FingerprintKey: key}); err == nil || !strings.Contains(err.Error(), "initialized runtime and maintenance pools") {
-		t.Fatalf("nil lifecycle error = %v, want lifecycle rejection", err)
+	if _, err := NewPostgresAuthorityGraph(nil, nil, PostgresAuthorityGraphOptions{TargetID: "target", FingerprintKey: key}); err == nil || !strings.Contains(err.Error(), "initialized runtime and maintenance pools") {
+		t.Fatalf("nil pools error = %v, want pool rejection", err)
 	}
-	if _, err := NewPostgresAuthorityGraph(&postgresControlPlaneLifecycle{}, PostgresAuthorityGraphOptions{TargetID: "target", FingerprintKey: key}); err == nil || !strings.Contains(err.Error(), "initialized runtime and maintenance pools") {
+	if _, err := NewPostgresAuthorityGraph(&platformpostgres.Pool{}, nil, PostgresAuthorityGraphOptions{TargetID: "target", FingerprintKey: key}); err == nil || !strings.Contains(err.Error(), "initialized runtime and maintenance pools") {
 		t.Fatalf("partial lifecycle error = %v, want pool rejection", err)
 	}
 }
@@ -143,7 +154,7 @@ func TestPostgresAuthorityGraphRefreshAdaptersPreserveRepositoryIdentity(t *test
 }
 
 func TestPostgresAuthorityGraphDashboardPersistencePreservesSiblingIdentity(t *testing.T) {
-	db := deploymentPostgresDBStub{}
+	db := graphDBStub{}
 	audit := accesspostgres.New()
 	events := eventspostgres.New()
 
@@ -229,7 +240,7 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 	t.Cleanup(maintenance.Close)
 
 	graph, err := NewPostgresAuthorityGraph(
-		&postgresControlPlaneLifecycle{pools: &platformpostgres.ControlPlanePools{Runtime: runtime, Maintenance: maintenance}},
+		runtime, maintenance,
 		PostgresAuthorityGraphOptions{TargetID: "target-prod", FingerprintKey: []byte(strings.Repeat("k", 32))},
 	)
 	if err != nil {

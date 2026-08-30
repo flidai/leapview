@@ -1,4 +1,4 @@
-package app
+package app_test
 
 import (
 	"errors"
@@ -8,6 +8,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/agent"
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
+	appagentpostgres "github.com/flidai/leapview/internal/app/agentpostgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -45,7 +46,7 @@ func TestAgentPostgresPersistenceComposesOneTransactionalBoundary(t *testing.T) 
 	}
 
 	jobsAuthority := jobspostgres.New(db)
-	persistence, err := NewAgentPostgresPersistence(db, AgentPostgresAuthorities{
+	persistence, err := appagentpostgres.NewPersistence(db, appagentpostgres.Authorities{
 		Access: accesspostgres.New(), Events: eventspostgres.New(), Jobs: jobsAuthority,
 	})
 	if err != nil {

@@ -174,6 +174,25 @@ func (l *postgresControlPlaneLifecycle) MaintenancePool() *platformpostgres.Pool
 	return l.pools.Maintenance
 }
 
+// RuntimePool exposes the retained ordinary control-plane pool to the
+// application-owned authority graph. The lifecycle remains the sole owner and
+// closes it during Stop.
+func (l *postgresControlPlaneLifecycle) RuntimePool() *platformpostgres.Pool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	return l.pools.Runtime
+}
+
+// DuckLakePool exposes the separately authenticated DuckLake catalog pool to
+// native runtime composition without transferring lifecycle ownership.
+func (l *postgresControlPlaneLifecycle) DuckLakePool() *platformpostgres.Pool {
+	if l == nil {
+		return nil
+	}
+	return l.ducklake
+}
+
 // Stop closes all serving pools and is idempotent.  It deliberately accepts a
 // context to satisfy app.Lifecycle; pgxpool close itself is synchronous and
 // does not require a cancellation path.
