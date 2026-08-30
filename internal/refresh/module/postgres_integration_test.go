@@ -10,8 +10,10 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -118,6 +120,14 @@ func concreteModulePostgresDB(t *testing.T) *pgxpool.Pool {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(t.Context(), eventspostgres.SchemaSQL()); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := deploymentpostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -218,7 +228,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	deliveryPlan, generationID, poolID, catalogDB, catalogUUID := seedConcreteDelivery(t, db, plan)
-	delivery := deploymentpostgres.New(db)
+	delivery := deploymentpostgres.NewWithActivationAudit(db, deploymentaudit.NewWithRepository(accesspostgres.New()))
 	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
 	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})
 	if err != nil {
@@ -253,7 +263,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatalf("pipeline plan identity does not match delivery evidence: %#v", plan)
 	}
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	verifier, err := NewPostgresCanonicalVerifierAdapter(deploymentpostgres.New(db), poolID, "catalog-concrete", catalogDB, catalogUUID)
+	verifier, err := NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-concrete", catalogDB, catalogUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +286,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
 		t.Fatal(err)
 	}
-	wrongCatalogVerifier, err := NewPostgresCanonicalVerifierAdapter(deploymentpostgres.New(db), poolID, "catalog-wrong", catalogDB, catalogUUID)
+	wrongCatalogVerifier, err := NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-wrong", catalogDB, catalogUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
