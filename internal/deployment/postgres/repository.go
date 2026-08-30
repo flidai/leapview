@@ -1564,6 +1564,21 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 	if err != nil {
 		return DeliveryGeneration{}, err
 	}
+	expected := in
+	expected.GenerationID = id
+	expected.TargetID = target
+	expected.CandidateID = candidate
+	expected.SnapshotSealID = seal
+	expected.PlanID = plan
+	// Generation identity is immutable and caller-owned. Resolve an exact
+	// replay before inspecting the candidate's current lifecycle state: after
+	// successful activation the candidate is admitted, but retrying the
+	// already-committed generation must still return the original evidence.
+	if existing, lookupErr := loadGeneration(ctx, db, id, expected); lookupErr == nil {
+		return existing, nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return DeliveryGeneration{}, lookupErr
+	}
 	cr, err := depdb.New(db).GetCandidateStatus(ctx, dbUUID(candidate))
 	cstatus, ct, cp, cs := cr.Status, cr.TargetID, cr.PlanID, cr.SnapshotSealID
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -1593,9 +1608,17 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 	}
 	err = depdb.New(db).InsertGeneration(ctx, depdb.InsertGenerationParams{GenerationID: dbUUID(id), TargetID: target, CandidateID: dbUUID(candidate), SnapshotSealID: dbUUID(seal), PlanID: dbUUID(plan), PlanDigest: in.PlanDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, ServingArtifactDigest: in.ServingArtifactDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, GenerationRevision: in.GenerationRevision})
 	if err != nil {
+		// A concurrent exact creator may have committed while this insert was
+		// blocked on the primary key. Re-read the immutable row and accept only
+		// byte-for-byte domain evidence; otherwise retain the original failure.
+		if existing, lookupErr := loadGeneration(ctx, db, id, expected); lookupErr == nil {
+			return existing, nil
+		} else if !errors.Is(lookupErr, ErrNotFound) {
+			return DeliveryGeneration{}, lookupErr
+		}
 		return DeliveryGeneration{}, err
 	}
-	return loadGeneration(ctx, db, id, in)
+	return loadGeneration(ctx, db, id, expected)
 }
 func loadGeneration(ctx context.Context, db DBTX, id string, expected GenerationInput) (DeliveryGeneration, error) {
 	var g DeliveryGeneration

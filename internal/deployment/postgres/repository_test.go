@@ -187,7 +187,8 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: approvalID, CandidateID: ids["candidate"], Decision: "denied", Evidence: json.RawMessage(`{"review":"ok"}`)}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("approval identity mismatch = %v", err)
 	}
-	if _, err := r.CreateGeneration(ctx, GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: testDigest('a'), ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}); err != nil {
+	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: testDigest('a'), ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
+	if _, err := r.CreateGeneration(ctx, generationInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator", RequestDigest: testDigest('4')}); err != nil {
@@ -207,6 +208,14 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 	if first.Replay || first.Pointer.ActiveGenerationID != ids["generation"] || first.Publication.ResultTargetRevision != 2 {
 		t.Fatalf("unexpected activation result: %#v", first)
+	}
+	if replayedGeneration, err := r.CreateGeneration(ctx, generationInput); err != nil || replayedGeneration.GenerationID != ids["generation"] {
+		t.Fatalf("post-activation generation replay = %#v, %v", replayedGeneration, err)
+	}
+	mismatchedGeneration := generationInput
+	mismatchedGeneration.GenerationRevision++
+	if _, err := r.CreateGeneration(ctx, mismatchedGeneration); !errors.Is(err, ErrConflict) {
+		t.Fatalf("post-activation generation mismatch = %v", err)
 	}
 	replayedPublication, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator", RequestDigest: testDigest('4')})
 	if err != nil || replayedPublication.PublicationID != ids["publication"] || replayedPublication.ExpectedBaseGenerationID != "" {
