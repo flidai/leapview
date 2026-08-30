@@ -69,6 +69,29 @@ FROM project.source_sync_plan_entry
 WHERE plan_id = $1
 ORDER BY ordinal;
 
+-- name: ListSourceSyncPlanObjectRefs :many
+-- Keep this as one capability-owned leaf: callers lock and validate the plan
+-- before reading this complete plan-entry/object projection.  A left join
+-- preserves entries whose blob was not admitted so the repository can report
+-- a missing blob distinctly from a missing plan.
+SELECT p.plan_id, p.project_id, p.storage_security_domain,
+       e.path, e.digest, e.size_bytes, e.ordinal,
+       COALESCE(b.project_id, '') AS blob_project_id,
+       COALESCE(b.storage_security_domain, '') AS blob_storage_security_domain,
+       COALESCE(b.digest, '') AS blob_digest,
+       COALESCE(b.size_bytes, CAST(-1 AS bigint)) AS blob_size_bytes,
+       COALESCE(b.object_key, '') AS object_key,
+       COALESCE(b.content_type, '') AS content_type,
+       COALESCE(b.metadata_digest, '') AS metadata_digest
+FROM project.source_sync_plan p
+JOIN project.source_sync_plan_entry e ON e.plan_id = p.plan_id
+LEFT JOIN project.source_blob b
+  ON b.project_id = p.project_id
+ AND b.storage_security_domain = p.storage_security_domain
+ AND b.digest = e.digest
+WHERE p.plan_id = $1
+ORDER BY e.ordinal;
+
 -- name: ListMissingSourceBlobDigests :many
 SELECT requested.digest::text AS digest
 FROM unnest($3::text[]) AS requested(digest)

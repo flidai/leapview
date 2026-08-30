@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,157 @@ func sourceTestDB(t *testing.T) *pgxpool.Pool {
 }
 
 func sourceTestDigest(ch string) string { return "sha256:" + strings.Repeat(ch, 64) }
+
+func sourceObjectRefsPlan(t *testing.T, db *pgxpool.Pool, r *Repository, expiresAt time.Time) (SyncPlan, []SourceSyncPlanEntryInput) {
+	t.Helper()
+	entries := []SourceSyncPlanEntryInput{
+		// Deliberately provide these out of order; plan admission canonicalizes
+		// ordinal order by logical source path.
+		{Path: "z-model.yaml", Digest: sourceTestDigest("a"), SizeBytes: 3},
+		{Path: "a-source.yaml", Digest: sourceTestDigest("b"), SizeBytes: 4},
+	}
+	canonical := append([]SourceSyncPlanEntryInput(nil), entries...)
+	sort.Slice(canonical, func(i, j int) bool { return canonical[i].Path < canonical[j].Path })
+	source := sourceDigest("project:object-refs", "leapview.yaml", snapshotEntries(canonical))
+	input := SyncPlanInput{PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:object-refs", StorageSecurityDomain: "runtime", OwnerID: "object-owner", CandidateKey: "candidate-" + uuid.NewString(), SourceDigest: source, ProjectFile: "leapview.yaml", RequestDigest: sourceTestDigest("c"), ExpiresAt: expiresAt, Entries: entries}
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := r.CreateSyncPlanTx(t.Context(), tx, input)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	return plan, entries
+}
+
+func admitSourceObjectRefBlob(t *testing.T, db *pgxpool.Pool, r *Repository, plan SyncPlan, entry SourceSyncPlanEntry) {
+	t.Helper()
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.InsertSourceBlobTx(t.Context(), tx, SourceBlobInput{ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, Digest: entry.Digest, SizeBytes: entry.SizeBytes, ObjectKey: "sources/" + strings.TrimPrefix(entry.Digest, "sha256:"), ContentType: "text/plain", MetadataDigest: sourceTestDigest("d"), PlanID: plan.PlanID, OwnerID: plan.OwnerID}); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPlanSourceObjectRefsTx(t *testing.T) {
+	db := sourceTestDB(t)
+	r := New(db)
+	plan, _ := sourceObjectRefsPlan(t, db, r, time.Now().Add(2*time.Minute))
+	for _, entry := range plan.Entries {
+		admitSourceObjectRefBlob(t, db, r, plan, entry)
+	}
+
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs, err := r.PlanSourceObjectRefsTx(t.Context(), tx, plan.PlanID, plan.OwnerID)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("plan object refs: %v", err)
+	}
+	if len(refs) != len(plan.Entries) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("plan object refs len=%d, want %d", len(refs), len(plan.Entries))
+	}
+	for i, ref := range refs {
+		entry := plan.Entries[i]
+		wantKey := "sources/" + strings.TrimPrefix(entry.Digest, "sha256:")
+		if ref.PlanID != plan.PlanID || ref.ProjectID != plan.ProjectID || ref.StorageSecurityDomain != plan.StorageSecurityDomain || ref.Path != entry.Path || ref.Digest != entry.Digest || ref.SizeBytes != entry.SizeBytes || ref.Ordinal != i || ref.ObjectKey != wantKey || ref.ContentType != "text/plain" || ref.MetadataDigest != sourceTestDigest("d") {
+			_ = tx.Rollback(t.Context())
+			t.Fatalf("plan object ref[%d]=%#v", i, ref)
+		}
+	}
+	// The repository must leave the caller-owned transaction usable and open.
+	if _, err := tx.Exec(t.Context(), "SELECT 1"); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("caller transaction after plan object refs: %v", err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatalf("caller rollback: %v", err)
+	}
+
+	if _, err := r.PlanSourceObjectRefsTx(t.Context(), nil, uuid.New(), plan.OwnerID); !errors.Is(err, ErrSourceInvalid) {
+		t.Fatalf("non-transaction source object refs err=%v, want ErrSourceInvalid", err)
+	}
+	wrongTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.PlanSourceObjectRefsTx(t.Context(), wrongTx, plan.PlanID, "other-owner"); !errors.Is(err, ErrSourceWrongOwner) {
+		_ = wrongTx.Rollback(t.Context())
+		t.Fatalf("wrong owner source object refs err=%v, want ErrSourceWrongOwner", err)
+	}
+	_ = wrongTx.Rollback(t.Context())
+
+	missingPlanTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.PlanSourceObjectRefsTx(t.Context(), missingPlanTx, uuid.New(), plan.OwnerID); !errors.Is(err, ErrSourceNotFound) {
+		_ = missingPlanTx.Rollback(t.Context())
+		t.Fatalf("missing plan source object refs err=%v, want ErrSourceNotFound", err)
+	}
+	_ = missingPlanTx.Rollback(t.Context())
+}
+
+func TestPlanSourceObjectRefsTxMissingBlob(t *testing.T) {
+	db := sourceTestDB(t)
+	r := New(db)
+	plan, _ := sourceObjectRefsPlan(t, db, r, time.Now().Add(2*time.Minute))
+	admitSourceObjectRefBlob(t, db, r, plan, plan.Entries[0])
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.PlanSourceObjectRefsTx(t.Context(), tx, plan.PlanID, plan.OwnerID)
+	if !errors.Is(err, ErrSourceConflict) || !strings.Contains(err.Error(), plan.Entries[1].Digest) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("missing blob source object refs err=%v, want digest conflict", err)
+	}
+	_ = tx.Rollback(t.Context())
+}
+
+func TestPlanSourceObjectRefsTxExpiredAndNonOpen(t *testing.T) {
+	db := sourceTestDB(t)
+	r := New(db)
+	expired, _ := sourceObjectRefsPlan(t, db, r, time.Now().Add(100*time.Millisecond))
+	time.Sleep(250 * time.Millisecond)
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.PlanSourceObjectRefsTx(t.Context(), tx, expired.PlanID, expired.OwnerID); !errors.Is(err, ErrSourceExpired) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("expired source object refs err=%v, want ErrSourceExpired", err)
+	}
+	_ = tx.Rollback(t.Context())
+
+	committed, _ := sourceObjectRefsPlan(t, db, r, time.Now().Add(2*time.Minute))
+	if _, err := db.Exec(t.Context(), `UPDATE project.source_sync_plan SET state='committed' WHERE plan_id=$1`, committed.PlanID); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.PlanSourceObjectRefsTx(t.Context(), tx, committed.PlanID, committed.OwnerID); !errors.Is(err, ErrSourceConflict) {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("non-open source object refs err=%v, want ErrSourceConflict", err)
+	}
+	_ = tx.Rollback(t.Context())
+}
 
 func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 	db := sourceTestDB(t)

@@ -100,6 +100,23 @@ type SourceSyncPlanEntry struct {
 	Ordinal   int
 }
 
+// SourceSyncPlanObjectRef identifies one admitted source plan entry and its
+// immutable object-store metadata. Path is the authored logical source
+// identity; it is always canonical relative input and is never a host
+// filesystem path or a materialized local file.
+type SourceSyncPlanObjectRef struct {
+	PlanID                uuid.UUID
+	ProjectID             string
+	StorageSecurityDomain string
+	Path                  string
+	Digest                string
+	SizeBytes             int64
+	Ordinal               int
+	ObjectKey             string
+	ContentType           string
+	MetadataDigest        string
+}
+
 type SyncPlan struct {
 	PlanID, OperationID   uuid.UUID
 	ProjectID             string
@@ -294,6 +311,78 @@ func (r *Repository) ListMissingPlanSourceBlobDigestsTx(ctx context.Context, tx 
 		digests[i] = entry.Digest
 	}
 	return listMissingSourceBlobDigests(ctx, tx, plan.ProjectID, plan.StorageSecurityDomain, digests)
+}
+
+// PlanSourceObjectRefsTx locks one caller-owned synchronization plan, checks
+// its exact owner/open/unexpired identity, and returns every plan entry joined
+// to its already-admitted source object metadata in ordinal order. The method
+// performs no transaction control; the caller retains commit/rollback
+// ownership for tx.
+func (r *Repository) PlanSourceObjectRefsTx(ctx context.Context, tx SourceTx, planID uuid.UUID, ownerID string) ([]SourceSyncPlanObjectRef, error) {
+	if tx == nil || planID == uuid.Nil {
+		return nil, ErrSourceInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	q := projectdb.New(tx)
+	plan, err := q.GetSourceSyncPlanForUpdate(ctx, dbUUID(planID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrSourceNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if !plan.PlanID.Valid || uuidFromDB(plan.PlanID) != planID {
+		return nil, ErrSourceConflict
+	}
+	if plan.OwnerID != strings.TrimSpace(ownerID) {
+		return nil, ErrSourceWrongOwner
+	}
+	if plan.State != "open" {
+		return nil, fmt.Errorf("%w: synchronization plan state %q is not open", ErrSourceConflict, plan.State)
+	}
+	active, err := q.SourceSyncPlanActive(ctx, dbUUID(planID))
+	if err != nil {
+		return nil, err
+	}
+	if !active.Valid || !active.Bool {
+		return nil, ErrSourceExpired
+	}
+	// The plan row is immutable except for its state transition, but validate
+	// all shared identity fields before trusting the joined projection. Any
+	// impossible/mutated row is a repository conflict, not caller input.
+	if _, _, identityErr := normalizeSourceReadIdentity(plan.ProjectID, plan.StorageSecurityDomain); identityErr != nil || !canonicalSourcePath(plan.ProjectFile) || digest.ValidateSHA256Identity(plan.SourceDigest) != nil || digest.ValidateSHA256Identity(plan.RequestDigest) != nil || !plan.ExpiresAt.Valid {
+		return nil, ErrSourceConflict
+	}
+	rows, err := q.ListSourceSyncPlanObjectRefs(ctx, dbUUID(planID))
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, fmt.Errorf("%w: synchronization plan has no entries", ErrSourceConflict)
+	}
+	out := make([]SourceSyncPlanObjectRef, len(rows))
+	entries := make([]SourceSnapshotEntryInput, len(rows))
+	for i, row := range rows {
+		rowPlanID := uuidFromDB(row.PlanID)
+		if !row.PlanID.Valid || rowPlanID != planID || row.ProjectID != plan.ProjectID || row.StorageSecurityDomain != plan.StorageSecurityDomain || row.Ordinal != int32(i) || !canonicalSourcePath(row.Path) || digest.ValidateSHA256Identity(row.Digest) != nil || row.SizeBytes < 0 || row.SizeBytes > maxSourceBlobBytes {
+			return nil, ErrSourceConflict
+		}
+		// source_blob.digest is constrained to a canonical non-empty identity;
+		// the COALESCE projection uses an empty digest only for a missing LEFT
+		// JOIN row, preserving a typed sqlc result without nullable wrappers.
+		if row.BlobDigest == "" {
+			return nil, fmt.Errorf("%w: missing source blob %s", ErrSourceConflict, row.Digest)
+		}
+		if row.BlobProjectID != plan.ProjectID || row.BlobStorageSecurityDomain != plan.StorageSecurityDomain || row.Digest != row.BlobDigest || row.SizeBytes != row.BlobSizeBytes || !validObjectKey(row.ObjectKey) || row.ContentType == "" || strings.TrimSpace(row.ContentType) != row.ContentType || digest.ValidateSHA256Identity(row.MetadataDigest) != nil || row.BlobSizeBytes < 0 || row.BlobSizeBytes > maxSourceBlobBytes {
+			return nil, ErrSourceConflict
+		}
+		entries[i] = SourceSnapshotEntryInput{Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal)}
+		out[i] = SourceSyncPlanObjectRef{PlanID: rowPlanID, ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal), ObjectKey: row.ObjectKey, ContentType: row.ContentType, MetadataDigest: row.MetadataDigest}
+	}
+	if sourceDigest(plan.ProjectID, plan.ProjectFile, entries) != plan.SourceDigest {
+		return nil, fmt.Errorf("%w: source digest does not match canonical plan entries", ErrSourceConflict)
+	}
+	return out, nil
 }
 
 // ListMissingSourceBlobDigestsTx checks an explicit project/security-domain
