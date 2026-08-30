@@ -320,6 +320,151 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 }
 
+func TestPostgresDeliveryCallerOwnedMutationTransactions(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := t.Context()
+	ids := map[string]string{
+		"plan":          "0198f2c0-7c7a-7f00-8a11-000000000101",
+		"candidate":     "0198f2c0-7c7a-7f00-8a11-000000000102",
+		"attempt":       "0198f2c0-7c7a-7f00-8a11-000000000103",
+		"abort":         "0198f2c0-7c7a-7f00-8a11-000000000104",
+		"indeterminate": "0198f2c0-7c7a-7f00-8a11-000000000105",
+		"seal":          "0198f2c0-7c7a-7f00-8a11-000000000106",
+		"generation":    "0198f2c0-7c7a-7f00-8a11-000000000107",
+		"publication":   "0198f2c0-7c7a-7f00-8a11-000000000108",
+	}
+	targetID := "target_tx_mutations"
+	planDigest, artifactDigest := testDigest('a'), testDigest('e')
+	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: targetID, ProjectID: "project_tx", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: artifactDigest, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: targetID, PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
+		t.Fatal(err)
+	}
+	beginAttempt := func(id, owner, namespace string) {
+		t.Helper()
+		if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: id, PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: owner, PhysicalPoolID: "pool-tx", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: namespace, SessionIdentity: "session-" + owner, LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	rollback := func(tx Tx) {
+		t.Helper()
+		if err := tx.Rollback(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	beginAttempt(ids["attempt"], "builder-commit", "candidate/tx-commit")
+	commitMarker := testCommitMarker(ids["attempt"], "pool-tx", testDigest('f'), planDigest)
+	tx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.CommitBuildAttemptTx(ctx, tx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-commit", FencingEpoch: 1, SnapshotID: 42, CommitMarker: commitMarker}); err != nil || got.State != AttemptCommitted {
+		rollback(tx)
+		t.Fatalf("CommitBuildAttemptTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if got, err := r.BuildAttempt(ctx, ids["attempt"]); err != nil || got.State != AttemptRunning {
+		t.Fatalf("commit rollback state = %#v, %v", got, err)
+	}
+	if got, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-commit", FencingEpoch: 1, SnapshotID: 42, CommitMarker: commitMarker}); err != nil || got.State != AttemptCommitted {
+		t.Fatalf("existing CommitBuildAttempt = %#v, %v", got, err)
+	}
+
+	beginAttempt(ids["abort"], "builder-abort", "candidate/tx-abort")
+	tx, err = p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.AbortBuildAttemptTx(ctx, tx, TerminateAttemptInput{AttemptID: ids["abort"], OwnerID: "builder-abort", FencingEpoch: 1, Evidence: []byte(`{"reason":"rollback"}`)}); err != nil || got.State != AttemptAborted {
+		rollback(tx)
+		t.Fatalf("AbortBuildAttemptTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if got, err := r.BuildAttempt(ctx, ids["abort"]); err != nil || got.State != AttemptRunning {
+		t.Fatalf("abort rollback state = %#v, %v", got, err)
+	}
+	if got, err := r.AbortBuildAttempt(ctx, TerminateAttemptInput{AttemptID: ids["abort"], OwnerID: "builder-abort", FencingEpoch: 1, Evidence: []byte(`{"reason":"done"}`)}); err != nil || got.State != AttemptAborted {
+		t.Fatalf("existing AbortBuildAttempt = %#v, %v", got, err)
+	}
+
+	beginAttempt(ids["indeterminate"], "builder-indeterminate", "candidate/tx-indeterminate")
+	tx, err = p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.MarkAttemptIndeterminateTx(ctx, tx, TerminateAttemptInput{AttemptID: ids["indeterminate"], OwnerID: "builder-indeterminate", FencingEpoch: 1, Evidence: []byte(`{"reason":"rollback"}`)}); err != nil || got.State != AttemptIndeterminate {
+		rollback(tx)
+		t.Fatalf("MarkAttemptIndeterminateTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if got, err := r.BuildAttempt(ctx, ids["indeterminate"]); err != nil || got.State != AttemptRunning {
+		t.Fatalf("indeterminate rollback state = %#v, %v", got, err)
+	}
+	if got, err := r.MarkAttemptIndeterminate(ctx, TerminateAttemptInput{AttemptID: ids["indeterminate"], OwnerID: "builder-indeterminate", FencingEpoch: 1, Evidence: []byte(`{"reason":"done"}`)}); err != nil || got.State != AttemptIndeterminate {
+		t.Fatalf("existing MarkAttemptIndeterminate = %#v, %v", got, err)
+	}
+
+	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-tx", TenantDomain: "tenant-tx", Region: "us-east", EncryptionDomain: "enc-tx", ObjectNamespace: "objects/tx", CatalogDatabase: "ducklake", CatalogID: "catalog-tx", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000109", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/tx-commit", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/tx/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + artifactDigest, ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: planDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-tx", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
+	tx, err = p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.CreateSnapshotSealTx(ctx, tx, sealInput); err != nil || got.SealID != ids["seal"] {
+		rollback(tx)
+		t.Fatalf("CreateSnapshotSealTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if _, err := r.SnapshotSeal(ctx, ids["seal"]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("seal rollback lookup = %v", err)
+	}
+	if got, err := r.CreateSnapshotSeal(ctx, sealInput); err != nil || got.SealID != ids["seal"] {
+		t.Fatalf("existing CreateSnapshotSeal = %#v, %v", got, err)
+	}
+	if _, err := r.QualifyCandidate(ctx, ids["candidate"], ids["seal"], testDigest('3')); err != nil {
+		t.Fatal(err)
+	}
+
+	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: targetID, CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: planDigest, ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: artifactDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
+	tx, err = p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.CreateGenerationTx(ctx, tx, generationInput); err != nil || got.GenerationID != ids["generation"] {
+		rollback(tx)
+		t.Fatalf("CreateGenerationTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if _, err := r.Generation(ctx, ids["generation"]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("generation rollback lookup = %v", err)
+	}
+	if got, err := r.CreateGeneration(ctx, generationInput); err != nil || got.GenerationID != ids["generation"] {
+		t.Fatalf("existing CreateGeneration = %#v, %v", got, err)
+	}
+
+	publicationInput := PublicationInput{PublicationID: ids["publication"], TargetID: targetID, GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator-tx", RequestDigest: testDigest('4')}
+	tx, err = p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.CreatePublicationTx(ctx, tx, publicationInput); err != nil || got.PublicationID != ids["publication"] {
+		rollback(tx)
+		t.Fatalf("CreatePublicationTx = %#v, %v", got, err)
+	}
+	rollback(tx)
+	if _, err := r.Publication(ctx, ids["publication"]); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("publication rollback lookup = %v", err)
+	}
+	if got, err := r.CreatePublication(ctx, publicationInput); err != nil || got.PublicationID != ids["publication"] {
+		t.Fatalf("existing CreatePublication = %#v, %v", got, err)
+	}
+}
+
 func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
 	p := deliveryTestDB(t)
 	r := New(p)

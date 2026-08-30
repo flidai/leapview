@@ -984,6 +984,17 @@ func (r *Repository) CommitBuildAttempt(ctx context.Context, in CommitAttemptInp
 	}
 	return r.transitionAttempt(contextOrBackground(ctx), in, AttemptCommitted)
 }
+
+// CommitBuildAttemptTx commits a build attempt through a caller-owned
+// PostgreSQL transaction. The caller retains ownership of tx and must commit
+// or roll it back after composing any related control-plane mutations.
+func (r *Repository) CommitBuildAttemptTx(ctx context.Context, tx Tx, in CommitAttemptInput) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	return transitionAttemptTx(contextOrBackground(ctx), tx, in, AttemptCommitted)
+}
+
 func (r *Repository) AbortBuildAttempt(ctx context.Context, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
 	_, err := requireDB(r)
 	if err != nil {
@@ -991,6 +1002,16 @@ func (r *Repository) AbortBuildAttempt(ctx context.Context, in TerminateAttemptI
 	}
 	return r.transitionAttempt(contextOrBackground(ctx), CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
 }
+
+// AbortBuildAttemptTx aborts a build attempt through a caller-owned
+// PostgreSQL transaction. It does not commit or roll back tx.
+func (r *Repository) AbortBuildAttemptTx(ctx context.Context, tx Tx, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptAborted)
+}
+
 func (r *Repository) MarkAttemptIndeterminate(ctx context.Context, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
 	_, err := requireDB(r)
 	if err != nil {
@@ -998,6 +1019,16 @@ func (r *Repository) MarkAttemptIndeterminate(ctx context.Context, in TerminateA
 	}
 	return r.transitionAttempt(contextOrBackground(ctx), CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
 }
+
+// MarkAttemptIndeterminateTx marks a build attempt indeterminate through a
+// caller-owned PostgreSQL transaction. It does not commit or roll back tx.
+func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in TerminateAttemptInput) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	return transitionAttemptTx(contextOrBackground(ctx), tx, CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, CommitMarker: in.Evidence}, AttemptIndeterminate)
+}
+
 func (r *Repository) transitionAttempt(ctx context.Context, in CommitAttemptInput, state BuildAttemptState) (DeliveryBuildAttempt, error) {
 	tx, err := r.begin(ctx)
 	if err != nil {
@@ -1165,6 +1196,17 @@ func (r *Repository) CreateSnapshotSeal(ctx context.Context, in SnapshotSealInpu
 	}
 	return createSeal(contextOrBackground(ctx), db, in)
 }
+
+// CreateSnapshotSealTx creates (or exactly replays) a snapshot seal through a
+// caller-owned PostgreSQL transaction. It deliberately does not commit or
+// roll back tx so callers can compose seal creation with adjacent mutations.
+func (r *Repository) CreateSnapshotSealTx(ctx context.Context, tx Tx, in SnapshotSealInput) (SnapshotSeal, error) {
+	if tx == nil {
+		return SnapshotSeal{}, ErrInvalid
+	}
+	return createSeal(contextOrBackground(ctx), tx, in)
+}
+
 func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSeal, error) {
 	id, err := uuidID(in.SealID, "seal id", true)
 	if err != nil {
@@ -1529,6 +1571,17 @@ func (r *Repository) CreateGeneration(ctx context.Context, in GenerationInput) (
 	}
 	return createGeneration(contextOrBackground(ctx), db, in)
 }
+
+// CreateGenerationTx creates (or exactly replays) a serving generation
+// through a caller-owned PostgreSQL transaction. It does not commit or roll
+// back tx.
+func (r *Repository) CreateGenerationTx(ctx context.Context, tx Tx, in GenerationInput) (DeliveryGeneration, error) {
+	if tx == nil {
+		return DeliveryGeneration{}, ErrInvalid
+	}
+	return createGeneration(contextOrBackground(ctx), tx, in)
+}
+
 func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (DeliveryGeneration, error) {
 	id, err := uuidID(in.GenerationID, "generation id", true)
 	if err != nil {
@@ -1708,6 +1761,16 @@ func (r *Repository) CreatePublication(ctx context.Context, in PublicationInput)
 	}
 	return createPublication(contextOrBackground(ctx), db, in)
 }
+
+// CreatePublicationTx records a pending publication through a caller-owned
+// PostgreSQL transaction. It does not commit or roll back tx.
+func (r *Repository) CreatePublicationTx(ctx context.Context, tx Tx, in PublicationInput) (DeliveryPublication, error) {
+	if tx == nil {
+		return DeliveryPublication{}, ErrInvalid
+	}
+	return createPublication(contextOrBackground(ctx), tx, in)
+}
+
 func createPublication(ctx context.Context, db DBTX, in PublicationInput) (DeliveryPublication, error) {
 	id, err := uuidID(in.PublicationID, "publication id", true)
 	if err != nil {
