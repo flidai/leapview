@@ -36,6 +36,39 @@ func TestOperationAdapterFailsClosed(t *testing.T) {
 	if err := New(nil).MarkIndeterminateTx(context.Background(), nil, deploymentmodule.NativeOperationLease{}, []byte(`{"ok":true}`)); !errors.Is(err, deploymentpostgres.ErrInvalid) {
 		t.Fatalf("nil authority indeterminate error = %v, want deployment.ErrInvalid", err)
 	}
+	if _, err := New(nil).ReconcileAttemptTx(context.Background(), nil, deploymentmodule.NativeOperationReconcileAttemptInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {
+		t.Fatalf("nil authority reconcile error = %v, want deployment.ErrInvalid", err)
+	}
+}
+
+func TestNormalizeReconcileAttemptInputValidation(t *testing.T) {
+	base := deploymentmodule.NativeOperationReconcileAttemptInput{
+		Scope: "target", IdempotencyKey: "operation-1", AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000601",
+		AttemptIdentity: "external-1", State: deploymentmodule.NativeOperationStateCompleted,
+		Outcome: []byte(` { "committed": true } `), Evidence: []byte(` { "commit_id": "c1" } `),
+	}
+	cases := []struct {
+		name   string
+		mutate func(*deploymentmodule.NativeOperationReconcileAttemptInput)
+	}{
+		{"scope", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) { in.Scope = " target" }},
+		{"attempt id", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) { in.AttemptID = "not-a-uuid" }},
+		{"attempt identity", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) { in.AttemptIdentity = " external-1" }},
+		{"state", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) {
+			in.State = deploymentmodule.NativeOperationStateIndeterminate
+		}},
+		{"outcome", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) { in.Outcome = nil }},
+		{"evidence", func(in *deploymentmodule.NativeOperationReconcileAttemptInput) { in.Evidence = []byte(`{}`) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			input := base
+			tc.mutate(&input)
+			if _, _, _, err := normalizeReconcileAttemptInput(input); !errors.Is(err, deploymentmodule.ErrNativeOperationInvalid) {
+				t.Fatalf("invalid reconciliation input error = %v, want native operation invalid", err)
+			}
+		})
+	}
 }
 
 func TestOperationAdapterUsesCallerTransactionAndReplay(t *testing.T) {
@@ -269,6 +302,43 @@ func TestOperationAdapterIndeterminateProjectionAndEvidence(t *testing.T) {
 		t.Fatalf("empty indeterminate evidence error = %v, want native operation invalid", err)
 	}
 	_ = validationTx.Rollback(t.Context())
+
+	reconcileInput := deploymentmodule.NativeOperationReconcileAttemptInput{
+		Scope: input.Scope, IdempotencyKey: input.IdempotencyKey, AttemptID: bound.AttemptID, AttemptIdentity: bound.AttemptIdentity,
+		State: deploymentmodule.NativeOperationStateCompleted, Outcome: []byte(` { "committed": true } `), Evidence: []byte(` { "commit_id": "c1" } `),
+	}
+	reconcileTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reconciled, err := adapter.ReconcileAttemptTx(t.Context(), reconcileTx, reconcileInput)
+	if err != nil {
+		_ = reconcileTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if reconciled.Operation.State != deploymentmodule.NativeOperationStateCompleted || reconciled.Operation.Scope != input.Scope || reconciled.Operation.IdempotencyKey != input.IdempotencyKey || reconciled.Operation.AttemptID != bound.AttemptID || reconciled.Operation.AttemptIdentity != bound.AttemptIdentity || string(reconciled.Operation.Outcome) != `{"committed":true}` || string(reconciled.Operation.ResolutionEvidence) != `{"commit_id":"c1"}` {
+		_ = reconcileTx.Rollback(t.Context())
+		t.Fatalf("reconciled operation projection = %+v", reconciled.Operation)
+	}
+	if err := reconcileTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	looked, found, err = adapter.Lookup(t.Context(), input)
+	if err != nil || !found || looked.State != deploymentmodule.NativeOperationStateCompleted || string(looked.ResolutionEvidence) != `{"commit_id":"c1"}` {
+		t.Fatalf("resolved operation lookup = %+v found=%v err=%v", looked, found, err)
+	}
+	replayTx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := adapter.ReconcileAttemptTx(t.Context(), replayTx, reconcileInput)
+	if err != nil || replayed.Operation.State != deploymentmodule.NativeOperationStateCompleted || string(replayed.Operation.Outcome) != `{"committed":true}` {
+		_ = replayTx.Rollback(t.Context())
+		t.Fatalf("reconciliation replay = %+v err=%v", replayed, err)
+	}
+	if err := replayTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestValidateAcquireResultRejectsOperationLeaseAttemptDrift(t *testing.T) {

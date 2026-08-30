@@ -351,6 +351,99 @@ func (a *Adapter) BeginAttemptTx(ctx context.Context, tx deploymentmodule.Native
 	return deploymentmodule.NativeOperationAttempt{AttemptID: attempt.AttemptID, AttemptIdentity: attempt.AttemptIdentity, Lease: lease}, nil
 }
 
+// ReconcileAttemptTx resolves an indeterminate operation through the
+// caller-owned transaction. The adapter validates the storage-neutral request,
+// canonicalizes JSON, and projects the returned platform operation without
+// exposing platform-owned values across the deployment boundary.
+func (a *Adapter) ReconcileAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, input deploymentmodule.NativeOperationReconcileAttemptInput) (deploymentmodule.NativeOperationReconcileAttemptResult, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	platformInput, outcome, evidence, err := normalizeReconcileAttemptInput(input)
+	if err != nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, err
+	}
+	stored, err := a.operations.ReconcileAttemptTx(ctx, tx, platformInput)
+	if err != nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, mapError(err)
+	}
+	record, err := projectOperationRecord(stored)
+	if err != nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, err
+	}
+	if err := validateReconcileAttemptResult(record, input, outcome, evidence); err != nil {
+		return deploymentmodule.NativeOperationReconcileAttemptResult{}, err
+	}
+	return deploymentmodule.NativeOperationReconcileAttemptResult{Operation: record}, nil
+}
+
+func normalizeReconcileAttemptInput(input deploymentmodule.NativeOperationReconcileAttemptInput) (operationpostgres.ReconcileAttemptInput, []byte, []byte, error) {
+	if input.Scope == "" || input.Scope != strings.TrimSpace(input.Scope) || len(input.Scope) > 255 || input.IdempotencyKey == "" || input.IdempotencyKey != strings.TrimSpace(input.IdempotencyKey) || len(input.IdempotencyKey) > 512 {
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, fmt.Errorf("%w: reconciliation operation identity is invalid", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if err := validateUUIDv7(input.AttemptID, "attempt id"); err != nil {
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, err
+	}
+	if input.AttemptIdentity == "" || input.AttemptIdentity != strings.TrimSpace(input.AttemptIdentity) || len(input.AttemptIdentity) > 512 {
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, fmt.Errorf("%w: reconciliation attempt identity is invalid", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	state, err := reconcileState(input.State)
+	if err != nil {
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, err
+	}
+	// Reconciliation outcomes may be an empty object, matching the platform
+	// authority's canonicalObjectJSON semantics, but the request itself must
+	// contain an actual JSON value.
+	outcome, err := canonicalObjectJSON(input.Outcome, false)
+	if err != nil || len(outcome) == 0 {
+		if err == nil {
+			err = errors.New("object JSON is required")
+		}
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, fmt.Errorf("%w: reconciliation outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	evidence, err := canonicalObjectJSON(input.Evidence, true)
+	if err != nil {
+		return operationpostgres.ReconcileAttemptInput{}, nil, nil, fmt.Errorf("%w: reconciliation evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	return operationpostgres.ReconcileAttemptInput{
+		Scope: input.Scope, IdempotencyKey: input.IdempotencyKey, AttemptID: input.AttemptID,
+		AttemptIdentity: input.AttemptIdentity, State: state, Outcome: outcome, Evidence: evidence,
+	}, outcome, evidence, nil
+}
+
+func reconcileState(state deploymentmodule.NativeOperationState) (operationpostgres.State, error) {
+	switch state {
+	case deploymentmodule.NativeOperationStateCompleted:
+		return operationpostgres.StateCompleted, nil
+	case deploymentmodule.NativeOperationStateFailed:
+		return operationpostgres.StateFailed, nil
+	default:
+		return "", fmt.Errorf("%w: reconciliation state must be completed or failed", deploymentmodule.ErrNativeOperationInvalid)
+	}
+}
+
+func validateReconcileAttemptResult(record deploymentmodule.NativeOperationRecord, input deploymentmodule.NativeOperationReconcileAttemptInput, outcome, evidence []byte) error {
+	if input.State != deploymentmodule.NativeOperationStateCompleted && input.State != deploymentmodule.NativeOperationStateFailed {
+		return fmt.Errorf("%w: reconciliation state must be completed or failed", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if record.Scope != input.Scope || record.IdempotencyKey != input.IdempotencyKey || record.AttemptID != input.AttemptID || record.AttemptIdentity != input.AttemptIdentity {
+		return fmt.Errorf("%w: operation authority returned a mismatched reconciliation identity", deploymentmodule.ErrNativeOperationConflict)
+	}
+	if record.State != input.State {
+		return fmt.Errorf("%w: operation authority returned a mismatched reconciliation state", deploymentmodule.ErrNativeOperationConflict)
+	}
+	if len(record.ResolutionEvidence) == 0 || string(record.ResolutionEvidence) != string(evidence) {
+		return fmt.Errorf("%w: operation authority returned mismatched reconciliation evidence", deploymentmodule.ErrNativeOperationConflict)
+	}
+	if string(record.Outcome) != string(outcome) {
+		return fmt.Errorf("%w: operation authority returned mismatched reconciliation outcome", deploymentmodule.ErrNativeOperationConflict)
+	}
+	return nil
+}
+
 // RenewLeaseTx extends an operation lease through the caller-owned
 // transaction. A positive duration is required and the platform authority
 // enforces the maximum bounded lease window.

@@ -202,6 +202,26 @@ type NativeOperationAttempt struct {
 	Lease           NativeOperationLease
 }
 
+// NativeOperationReconcileAttemptInput resolves an indeterminate operation
+// using the exact external attempt identity and positive evidence. State must
+// be completed or failed; outcome and evidence are canonical object JSON
+// owned by the operation authority.
+type NativeOperationReconcileAttemptInput struct {
+	Scope           string
+	IdempotencyKey  string
+	AttemptID       string
+	AttemptIdentity string
+	State           NativeOperationState
+	Outcome         json.RawMessage
+	Evidence        json.RawMessage
+}
+
+// NativeOperationReconcileAttemptResult is the storage-neutral projection of
+// the reconciled durable operation.
+type NativeOperationReconcileAttemptResult struct {
+	Operation NativeOperationRecord
+}
+
 // These sentinels let adapters translate their own storage errors without
 // leaking a concrete operation package into deployment.
 var (
@@ -228,6 +248,7 @@ type NativeBuildOperationAuthority interface {
 	NativeOperationAuthority
 	Lookup(context.Context, NativeOperationAcquireInput) (NativeOperationRecord, bool, error)
 	BeginAttemptTx(context.Context, NativeOperationTx, NativeOperationBeginAttemptInput) (NativeOperationAttempt, error)
+	ReconcileAttemptTx(context.Context, NativeOperationTx, NativeOperationReconcileAttemptInput) (NativeOperationReconcileAttemptResult, error)
 	RenewLeaseTx(context.Context, NativeOperationTx, NativeOperationLease, time.Duration) (NativeOperationLease, error)
 	FailTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
 	MarkIndeterminateTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
