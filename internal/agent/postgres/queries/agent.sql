@@ -1,6 +1,19 @@
 -- Agent persistence leaves. All writes remain in the caller's transaction
 -- when a workflow or audit side effect is present.
 
+-- name: PruneArchivedAgentHistory :one
+SELECT prune.requested_cutoff::timestamptz AS requested_cutoff,
+       prune.cutoff::timestamptz AS cutoff,
+       prune.requested_limit::integer AS requested_limit,
+       prune.conversations_removed::bigint AS conversations_removed,
+       prune.messages_removed::bigint AS messages_removed,
+       prune.runs_removed::bigint AS runs_removed,
+       prune.run_events_removed::bigint AS run_events_removed,
+       prune.conversations_floor::timestamptz AS conversations_floor,
+       prune.run_events_floor::timestamptz AS run_events_floor
+FROM agent.prune_archived_agent_history(sqlc.arg(requested_cutoff)::timestamptz, sqlc.arg(batch_limit)::integer)
+    AS prune(requested_cutoff, cutoff, requested_limit, conversations_removed, messages_removed, runs_removed, run_events_removed, conversations_floor, run_events_floor);
+
 -- name: CreateAgentConversation :one
 INSERT INTO agent.conversations (id, principal_id, title, status, metadata_json, transcript_json)
 VALUES (sqlc.arg(id), sqlc.arg(principal_id), sqlc.arg(title), sqlc.arg(status), sqlc.arg(metadata_json)::jsonb, sqlc.arg(transcript_json)::jsonb)
@@ -30,7 +43,7 @@ RETURNING id, principal_id, title, status, metadata_json::text, transcript_json:
 -- name: UpdateAgentConversationTranscript :one
 UPDATE agent.conversations
 SET transcript_json = sqlc.arg(transcript_json)::jsonb, updated_at = clock_timestamp()
-WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id)
+WHERE id = sqlc.arg(id) AND principal_id = sqlc.arg(principal_id) AND status = 'active'
 RETURNING id, principal_id, title, status, metadata_json::text, transcript_json::text,
           created_at, updated_at, archived_at;
 
@@ -50,6 +63,7 @@ SELECT sqlc.arg(id), c.id, NULLIF(sqlc.arg(run_id), ''),
        sqlc.arg(tool_call_id), sqlc.arg(tool_name), sqlc.arg(is_error)
 FROM agent.conversations c
 WHERE c.id = sqlc.arg(conversation_id) AND c.principal_id = sqlc.arg(principal_id)
+  AND c.status = 'active'
 RETURNING id, conversation_id, run_id, sequence, role, content_text,
           content_json::text, tool_call_id, tool_name, is_error, created_at;
 

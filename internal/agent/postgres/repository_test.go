@@ -420,6 +420,178 @@ func TestPostgreSQL18AgentRuntimeLeastPrivilege(t *testing.T) {
 	}
 }
 
+func TestPostgreSQL18AgentRetentionMaintenanceBoundary(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Login: true, Password: "runtime-secret"})
+	maintenanceRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Login: true, Password: "maintenance-secret"})
+	database := h.NewDatabase(t, "agent_retention_roles")
+	h.GrantDatabase(t, database.Name, runtimeRole, "CONNECT")
+	h.GrantDatabase(t, database.Name, maintenanceRole, "CONNECT")
+	admin, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	if _, err := admin.Exec(t.Context(), SchemaSQL()); err != nil {
+		t.Fatal(err)
+	}
+
+	var runtimeDelete, runtimeExecute, maintenanceDelete, maintenanceFloor, maintenanceExecute bool
+	if err := admin.QueryRow(t.Context(), `SELECT
+		has_table_privilege($1, 'agent.events', 'DELETE'),
+		has_function_privilege($1, 'agent.prune_archived_agent_history(timestamptz,integer)', 'EXECUTE'),
+		has_table_privilege($2, 'agent.events', 'DELETE'),
+		has_table_privilege($2, 'agent.retention_floor', 'SELECT'),
+		has_function_privilege($2, 'agent.prune_archived_agent_history(timestamptz,integer)', 'EXECUTE')`, runtimeRole.Name, maintenanceRole.Name).
+		Scan(&runtimeDelete, &runtimeExecute, &maintenanceDelete, &maintenanceFloor, &maintenanceExecute); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeDelete || runtimeExecute || maintenanceDelete || maintenanceFloor || !maintenanceExecute {
+		t.Fatalf("agent retention grants runtime_delete=%v runtime_execute=%v maintenance_delete=%v maintenance_floor=%v maintenance_execute=%v", runtimeDelete, runtimeExecute, maintenanceDelete, maintenanceFloor, maintenanceExecute)
+	}
+
+	runtimeDB, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT agent.prune_archived_agent_history(clock_timestamp(), 1)`); err == nil {
+		t.Fatal("runtime retention function unexpectedly executable")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM agent.events`); err == nil {
+		t.Fatal("runtime event DELETE unexpectedly succeeded")
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `SELECT set_config('agent.retention', 'on', false)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `DELETE FROM agent.events`); err == nil {
+		t.Fatal("runtime forged retention marker bypassed event trigger")
+	}
+
+	base := NewRepository(admin)
+	seedArchived := func(id string, events int, running bool) {
+		t.Helper()
+		conversation, seedErr := base.CreateConversation(t.Context(), agent.ConversationInput{PrincipalID: "retention", MetadataJSON: `{}`})
+		if seedErr != nil {
+			t.Fatal(seedErr)
+		}
+		run, seedErr := base.CreateRun(t.Context(), agent.RunInput{PrincipalID: "retention", ConversationID: conversation.ID, RunID: id, Status: agent.RunStatusRunning, MetadataJSON: `{}`})
+		if seedErr != nil {
+			t.Fatal(seedErr)
+		}
+		for i := 0; i < events; i++ {
+			if _, seedErr = base.AppendEvent(t.Context(), agent.EventInput{PrincipalID: "retention", RunID: run.ID, Sequence: int64(i + 1), EventType: "agent.run.output", PayloadJSON: `{}`}); seedErr != nil {
+				t.Fatal(seedErr)
+			}
+		}
+		for i := 0; i < 2; i++ {
+			if _, seedErr = base.AppendMessage(t.Context(), agent.MessageInput{PrincipalID: "retention", ConversationID: conversation.ID, RunID: run.ID, Role: agent.MessageRoleUser, ContentJSON: `{}`}); seedErr != nil {
+				t.Fatal(seedErr)
+			}
+		}
+		if !running {
+			if _, seedErr = base.FinishRun(t.Context(), agent.RunFinish{PrincipalID: "retention", ConversationID: conversation.ID, RunID: run.ID, Status: agent.RunStatusCompleted, MetadataJSON: `{}`}); seedErr != nil {
+				t.Fatal(seedErr)
+			}
+		}
+		if _, seedErr = base.ArchiveConversation(t.Context(), "retention", conversation.ID); seedErr != nil {
+			t.Fatal(seedErr)
+		}
+	}
+	seedArchived("run-retention-a", 2, false)
+	seedArchived("run-retention-b", 1, false)
+	seedArchived("run-retention-active", 1, true)
+	if _, err := admin.Exec(t.Context(), `SELECT set_config('agent.retention', 'on', false); DELETE FROM agent.events`); err == nil {
+		t.Fatal("forged retention marker bypassed owner trigger")
+	}
+
+	maintenanceDB, err := pgxpool.New(t.Context(), database.URL(maintenanceRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	if _, err := maintenanceDB.Exec(t.Context(), `DELETE FROM agent.conversations`); err == nil {
+		t.Fatal("maintenance direct conversation DELETE unexpectedly succeeded")
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT * FROM agent.retention_floor`); err == nil {
+		t.Fatal("maintenance retention-floor read unexpectedly succeeded")
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT agent.prune_archived_agent_history(NULL::timestamptz, 1)`); err == nil {
+		t.Fatal("NULL cutoff unexpectedly accepted")
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT agent.prune_archived_agent_history(clock_timestamp(), 1001)`); err == nil {
+		t.Fatal("oversized retention batch unexpectedly accepted")
+	}
+
+	maintenance := NewMaintenance(maintenanceDB)
+	physicalRows := func() int {
+		t.Helper()
+		var count int
+		if err := admin.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM agent.conversations) + (SELECT count(*) FROM agent.runs) + (SELECT count(*) FROM agent.messages) + (SELECT count(*) FROM agent.events)`).Scan(&count); err != nil {
+			t.Fatal(err)
+		}
+		return count
+	}
+	rollbackBefore := physicalRows()
+	rollbackTx, err := maintenanceDB.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenance.PruneTx(t.Context(), rollbackTx, time.Now().UTC().Add(time.Hour), 1); err != nil {
+		_ = rollbackTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := rollbackTx.Rollback(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if rollbackAfter := physicalRows(); rollbackAfter != rollbackBefore {
+		t.Fatalf("caller-owned retention rollback changed physical rows from %d to %d", rollbackBefore, rollbackAfter)
+	}
+	beforePhysical := physicalRows()
+	first, err := maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstRemoved := first.ConversationsDeleted + first.MessagesDeleted + first.RunsDeleted + first.RunEventsDeleted
+	if firstRemoved != 1 {
+		t.Fatalf("global retention batch removed %d rows, want 1: %#v", firstRemoved, first)
+	}
+	if !first.ConversationsFloorAt.Equal(time.Unix(0, 0).UTC()) || !first.RunEventsFloorAt.Equal(time.Unix(0, 0).UTC()) {
+		t.Fatalf("retention floor advanced across a limited backlog: %#v", first)
+	}
+	if removed := beforePhysical - physicalRows(); removed > 1 {
+		t.Fatalf("first physical retention batch removed %d rows, want <=1", removed)
+	}
+	beforePhysical = physicalRows()
+	second, err := maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), 3)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.RunEventsDeleted == 0 || second.MessagesDeleted == 0 {
+		t.Fatalf("maintenance did not drain terminal evidence: %#v", second)
+	}
+	if removed := beforePhysical - physicalRows(); removed > 3 || second.ConversationsDeleted+second.MessagesDeleted+second.RunsDeleted+second.RunEventsDeleted > 3 {
+		t.Fatalf("global retention batch exceeded limit: physical=%d result=%#v", removed, second)
+	}
+	if _, err := maintenance.Prune(t.Context(), time.Now().UTC().Add(time.Hour), MaxRetentionBatch); err != nil {
+		t.Fatal(err)
+	}
+	var activeCount int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM agent.conversations c JOIN agent.runs r ON r.conversation_id=c.id WHERE r.id='run-retention-active'`).Scan(&activeCount); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 {
+		t.Fatal("archived conversation with nonterminal run was pruned")
+	}
+	var activeMessages int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM agent.messages m JOIN agent.runs r ON r.id=m.run_id WHERE r.id='run-retention-active'`).Scan(&activeMessages); err != nil {
+		t.Fatal(err)
+	}
+	if activeMessages != 2 {
+		t.Fatalf("messages for archived conversation with nonterminal run were pruned: %d", activeMessages)
+	}
+}
+
 type recordingAudit struct {
 	mu    sync.Mutex
 	count int
