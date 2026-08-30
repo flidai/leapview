@@ -10,6 +10,63 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
         values: '0+10x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 1
+
+  - name: low-volume partial history remains explicit
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 5
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -31,6 +88,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="partial",route="/updates",request_id="req-partial",trace_id="trace-partial",user_id="user-partial",project_id="project-partial",resource_id="resource-partial"}'
         values: '0+2x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -52,6 +129,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="other",outcome="other"}'
         values: '0+1x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -71,6 +168,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
         values: '0+100x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 25
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -86,10 +203,30 @@ tests:
     interval: 1m
     input_series:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
-        values: '0 4 8 12 16 20 0 4 8 12 16'
+        values: '0 4 8 12 16 20 24 0 4 8 12'
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="error"}'
-        values: '0 4 8 12 16 20 0 4 8 12 16'
+        values: '0 4 8 12 16 20 24 0 4 8 12'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 30
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 15
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 72
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 36
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -101,14 +238,32 @@ tests:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
 
-  - name: zero eligible traffic produces no ratio
+  - name: cancellation-only traffic produces zero volume and no ratio
     interval: 1m
     input_series:
-      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
-        values: '0x10'
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
         values: '0+10x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples: []
@@ -120,6 +275,18 @@ tests:
     interval: 1m
     input_series: []
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
         eval_time: 10m
         exp_samples: []
