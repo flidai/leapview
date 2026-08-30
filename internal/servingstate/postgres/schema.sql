@@ -8,21 +8,24 @@ CREATE TABLE IF NOT EXISTS serving_state.bundle (
     generation_id uuid PRIMARY KEY REFERENCES delivery.delivery_generation(generation_id) ON DELETE RESTRICT,
     project_id text NOT NULL CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255 AND project_id ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
     environment text NOT NULL CHECK (environment = btrim(environment) AND octet_length(environment) BETWEEN 1 AND 128 AND environment ~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$'),
-    artifact_id text NOT NULL UNIQUE CHECK (artifact_id = btrim(artifact_id) AND octet_length(artifact_id) BETWEEN 1 AND 255),
+    artifact_id text NOT NULL CHECK (artifact_id = btrim(artifact_id) AND artifact_id = 'artifact-' || substr(artifact_digest, 8) AND octet_length(artifact_id) BETWEEN 1 AND 255),
     artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     compiled_graph_digest text NOT NULL CHECK (compiled_graph_digest ~ '^sha256:[0-9a-f]{64}$'),
-    artifact_format text NOT NULL CHECK (artifact_format = btrim(artifact_format) AND octet_length(artifact_format) BETWEEN 1 AND 64),
+    artifact_format text NOT NULL CHECK (artifact_format = 'tar.gz'),
     -- Immutable object-storage key/locator. This is deliberately not a
-    -- production filesystem path; legacy filesystem paths never enter this
+    -- production filesystem path; filesystem paths never enter this native
     -- schema.
-    artifact_locator text NOT NULL CHECK (artifact_locator = btrim(artifact_locator) AND octet_length(artifact_locator) BETWEEN 1 AND 2048 AND artifact_locator !~ '^/' AND artifact_locator !~ '^[A-Za-z]:[\\/]'),
+    artifact_locator text NOT NULL CHECK (artifact_locator = btrim(artifact_locator) AND artifact_locator = 'serving-artifacts/' || substr(artifact_digest, 8) || '.tar.gz' AND octet_length(artifact_locator) BETWEEN 1 AND 2048),
+    storage_security_domain text NOT NULL CHECK (storage_security_domain = btrim(storage_security_domain) AND octet_length(storage_security_domain) BETWEEN 1 AND 512 AND storage_security_domain !~ '[[:cntrl:]]'),
+    artifact_content_type text NOT NULL CHECK (artifact_content_type = 'application/gzip'),
+    artifact_metadata_digest text NOT NULL CHECK (artifact_metadata_digest ~ '^sha256:[0-9a-f]{64}$'),
     manifest_json jsonb NOT NULL CHECK (jsonb_typeof(manifest_json) = 'object' AND octet_length(manifest_json::text) <= 1048576),
     project_digest text NOT NULL CHECK (project_digest ~ '^sha256:[0-9a-f]{64}$'),
     access_policy_json jsonb NOT NULL CHECK (jsonb_typeof(access_policy_json) = 'object' AND octet_length(access_policy_json::text) <= 1048576),
     dashboard_publications_json jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(dashboard_publications_json) = 'object' AND octet_length(dashboard_publications_json::text) <= 1048576),
     dashboard_appearances_json jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(dashboard_appearances_json) = 'object' AND octet_length(dashboard_appearances_json::text) <= 1048576),
-    size_bytes bigint NOT NULL DEFAULT 0 CHECK (size_bytes >= 0),
-    created_by text NOT NULL DEFAULT '' CHECK (octet_length(created_by) <= 255),
+    size_bytes bigint NOT NULL CHECK (size_bytes BETWEEN 1 AND 67108864),
+    created_by text NOT NULL CHECK (created_by = btrim(created_by) AND octet_length(created_by) BETWEEN 1 AND 255 AND created_by !~ '[[:cntrl:]]'),
     created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (generation_id, project_id, environment)
 );

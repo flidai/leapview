@@ -46,7 +46,7 @@ const (
 	maxNativeInspectArtifactBytes    int64 = 64 << 20
 	maxNativeInspectSourceBytes      int64 = 64 << 20
 	maxNativeInspectSourceFiles            = 10_000
-	nativeServingArtifactContentType       = "application/gzip"
+	nativeServingArtifactContentType       = projectbundle.BundleContentType
 	nativeServingArtifactPrefix            = "serving-artifacts/"
 	nativeServingArtifactSuffix            = ".tar.gz"
 )
@@ -142,7 +142,8 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	expectedGenerationID := nativeCandidateGenerationID(request, digest).String()
 	existingIdentity := inspected.Generation.Identity
 	if existingIdentity.GenerationID != "" || existingIdentity.ProjectID != "" || existingIdentity.Environment != "" {
-		if existingIdentity.GenerationID != expectedGenerationID || existingIdentity.ProjectID != request.Scope.ProjectID || existingIdentity.Environment != request.Scope.Environment {
+		expectedInspectID := "inspect-" + shortCandidateDigest(request.CandidateID)
+		if existingIdentity.GenerationID != expectedInspectID && existingIdentity.GenerationID != expectedGenerationID || existingIdentity.ProjectID != request.Scope.ProjectID || existingIdentity.Environment != request.Scope.Environment {
 			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving state identity changed"))
 		}
 	}

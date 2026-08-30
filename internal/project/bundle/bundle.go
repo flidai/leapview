@@ -25,10 +25,12 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 const (
-	BundleFormat           = "tar.gz"
+	BundleFormat           = servingstate.ArtifactBundleFormat
+	BundleContentType      = servingstate.ArtifactBundleContentType
 	ProjectFile            = "leapview.yaml"
 	CompiledProjectFile    = "compiled/project.json"
 	projectBundleVersion   = 1
@@ -38,7 +40,7 @@ const (
 	// MaxBundleBytes bounds the complete compressed tar.gz artifact.  It is
 	// deliberately aligned with the project artifact storage limit so a
 	// reader cannot admit a value that the release/object stores cannot retain.
-	MaxBundleBytes int64 = 64 << 20
+	MaxBundleBytes = servingstate.MaxArtifactBundleBytes
 	// MaxBundleUncompressedBytes bounds the sum of regular-file payloads in a
 	// bundle.  Keeping a separate expanded limit prevents small compressed
 	// archives from becoming unbounded memory allocations during validation.

@@ -8,12 +8,15 @@ import (
 	"context"
 	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -54,6 +57,7 @@ type Bundle struct {
 	ProjectID                                                                                          projectgraph.ResourceID
 	Environment                                                                                        servingstate.Environment
 	ArtifactID, ArtifactDigest, CompiledGraphDigest, ArtifactFormat, ArtifactLocator                   string
+	StorageSecurityDomain, ArtifactContentType, ArtifactMetadataDigest                                 string
 	ManifestJSON, ProjectDigest, AccessPolicyJSON, DashboardPublicationsJSON, DashboardAppearancesJSON string
 	SizeBytes                                                                                          int64
 	DuckLakeSnapshotID                                                                                 int64
@@ -68,6 +72,9 @@ type GenerationBundleInput struct {
 	// ArtifactLocator is the immutable object-storage key and is required for
 	// native admission; legacy filesystem path fields are not consulted.
 	ArtifactLocator           string
+	StorageSecurityDomain     string
+	ArtifactContentType       string
+	ArtifactMetadataDigest    string
 	ProjectDigest             string
 	AccessPolicyJSON          string
 	DashboardPublicationsJSON string
@@ -98,11 +105,23 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 		return Bundle{}, errors.New("environment must be canonical")
 	}
 	locator := strings.TrimSpace(input.ArtifactLocator)
-	if input.Artifact.ServingStateID != servingstate.ID(input.GenerationID) || input.Artifact.ID == "" || input.Artifact.ID != strings.TrimSpace(input.Artifact.ID) || input.Artifact.Format == "" || locator == "" || strings.HasPrefix(locator, "/") || (len(locator) >= 3 && locator[1] == ':' && (locator[2] == '/' || locator[2] == '\\')) || input.Artifact.SizeBytes < 0 {
-		return Bundle{}, errors.New("artifact identity is invalid")
+	if err := validateArtifactIdentity(input.Artifact, input.GenerationID, locator); err != nil {
+		return Bundle{}, err
 	}
-	if input.Artifact.Digest == "" || !strings.HasPrefix(input.Artifact.Digest, "sha256:") || len(input.Artifact.Digest) != 71 || input.ProjectDigest == "" || !strings.HasPrefix(input.ProjectDigest, "sha256:") || len(input.ProjectDigest) != 71 {
-		return Bundle{}, errors.New("bundle digests must be SHA-256 identities")
+	if !isCanonicalDigest(input.ProjectDigest) {
+		return Bundle{}, errors.New("project digest must be a canonical SHA-256 identity")
+	}
+	if !isCanonicalDigest(input.ArtifactMetadataDigest) {
+		return Bundle{}, errors.New("artifact metadata digest must be a canonical SHA-256 identity")
+	}
+	if err := validateStorageSecurityDomain(input.StorageSecurityDomain); err != nil {
+		return Bundle{}, err
+	}
+	if input.ArtifactContentType != servingstate.ArtifactBundleContentType {
+		return Bundle{}, fmt.Errorf("artifact content type must be %q", servingstate.ArtifactBundleContentType)
+	}
+	if err := validateCreatedBy(input.CreatedBy); err != nil {
+		return Bundle{}, err
 	}
 	manifest, err := canonicalObject(input.Artifact.ManifestJSON)
 	if err != nil {
@@ -137,7 +156,7 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 	if evidence.ProjectID != input.ProjectID.String() || evidence.Environment != string(input.Environment) || evidence.ServingArtifactDigest != input.Artifact.Digest || evidence.CompiledGraphDigest != graph.Digest() {
 		return Bundle{}, fmt.Errorf("%w: serving bundle does not match delivery generation", ErrConflict)
 	}
-	tagRows, err := querySet(tx).InsertBundle(ctx, servingdb.InsertBundleParams{Column1: genUUID, ProjectID: input.ProjectID.String(), Environment: string(input.Environment), ArtifactID: input.Artifact.ID, ArtifactDigest: input.Artifact.Digest, CompiledGraphDigest: graph.Digest(), ArtifactFormat: input.Artifact.Format, ArtifactLocator: locator, Column9: []byte(manifest), ProjectDigest: input.ProjectDigest, Column11: []byte(access), Column12: []byte(pub), Column13: []byte(appearance), SizeBytes: input.Artifact.SizeBytes, CreatedBy: input.CreatedBy})
+	tagRows, err := querySet(tx).InsertBundle(ctx, servingdb.InsertBundleParams{GenerationID: genUUID, ProjectID: input.ProjectID.String(), Environment: string(input.Environment), ArtifactID: input.Artifact.ID, ArtifactDigest: input.Artifact.Digest, CompiledGraphDigest: graph.Digest(), ArtifactFormat: input.Artifact.Format, ArtifactLocator: locator, StorageSecurityDomain: input.StorageSecurityDomain, ArtifactContentType: input.ArtifactContentType, ArtifactMetadataDigest: input.ArtifactMetadataDigest, ManifestJson: []byte(manifest), ProjectDigest: input.ProjectDigest, AccessPolicyJson: []byte(access), DashboardPublicationsJson: []byte(pub), DashboardAppearancesJson: []byte(appearance), SizeBytes: input.Artifact.SizeBytes, CreatedBy: input.CreatedBy})
 	if err != nil {
 		return Bundle{}, err
 	}
@@ -146,7 +165,7 @@ func AdmitGenerationBundleTx(ctx context.Context, tx Tx, input GenerationBundleI
 		if readErr != nil {
 			return Bundle{}, readErr
 		}
-		if stored.ArtifactID != input.Artifact.ID || stored.ArtifactDigest != input.Artifact.Digest || stored.CompiledGraphDigest != graph.Digest() || stored.ArtifactFormat != input.Artifact.Format || stored.ArtifactLocator != locator || stored.SizeBytes != input.Artifact.SizeBytes || !jsonEquivalent(stored.ManifestJSON, manifest) || stored.ProjectDigest != input.ProjectDigest || !jsonEquivalent(stored.AccessPolicyJSON, access) || !jsonEquivalent(stored.DashboardPublicationsJSON, pub) || !jsonEquivalent(stored.DashboardAppearancesJSON, appearance) || stored.CreatedBy != input.CreatedBy {
+		if stored.ArtifactID != input.Artifact.ID || stored.ArtifactDigest != input.Artifact.Digest || stored.CompiledGraphDigest != graph.Digest() || stored.ArtifactFormat != input.Artifact.Format || stored.ArtifactLocator != locator || stored.StorageSecurityDomain != input.StorageSecurityDomain || stored.ArtifactContentType != input.ArtifactContentType || stored.ArtifactMetadataDigest != input.ArtifactMetadataDigest || stored.SizeBytes != input.Artifact.SizeBytes || !jsonEquivalent(stored.ManifestJSON, manifest) || stored.ProjectDigest != input.ProjectDigest || !jsonEquivalent(stored.AccessPolicyJSON, access) || !jsonEquivalent(stored.DashboardPublicationsJSON, pub) || !jsonEquivalent(stored.DashboardAppearancesJSON, appearance) || stored.CreatedBy != input.CreatedBy {
 			return Bundle{}, fmt.Errorf("generation bundle replay differs: %w", ErrConflict)
 		}
 		if err := verifyGraphProjection(ctx, tx, input.GenerationID, graph); err != nil {
@@ -289,6 +308,59 @@ func (r *Repository) dbOrErr() (DBTX, error) {
 	}
 	return r.db, nil
 }
+
+func isCanonicalDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	hexPart := value[len("sha256:"):]
+	if _, err := hex.DecodeString(hexPart); err != nil {
+		return false
+	}
+	return strings.ToLower(hexPart) == hexPart
+}
+
+func validateArtifactIdentity(artifact servingstate.Artifact, generationID, locator string) error {
+	if artifact.ServingStateID != servingstate.ID(generationID) {
+		return errors.New("artifact serving-state identity does not match generation")
+	}
+	if artifact.Path != "" {
+		return errors.New("artifact filesystem path must be empty")
+	}
+	if !isCanonicalDigest(artifact.Digest) {
+		return errors.New("artifact digest must be a canonical SHA-256 identity")
+	}
+	wantID := "artifact-" + strings.TrimPrefix(artifact.Digest, "sha256:")
+	if artifact.ID != wantID || artifact.ID != strings.TrimSpace(artifact.ID) {
+		return errors.New("artifact id must be artifact-<digesthex>")
+	}
+	if artifact.Format != servingstate.ArtifactBundleFormat {
+		return fmt.Errorf("artifact format must be %q", servingstate.ArtifactBundleFormat)
+	}
+	if artifact.SizeBytes < 1 || artifact.SizeBytes > servingstate.MaxArtifactBundleBytes {
+		return fmt.Errorf("artifact size must be between 1 and %d bytes", servingstate.MaxArtifactBundleBytes)
+	}
+	wantLocator := "serving-artifacts/" + strings.TrimPrefix(artifact.Digest, "sha256:") + ".tar.gz"
+	if locator != wantLocator || locator != strings.TrimSpace(locator) {
+		return errors.New("artifact locator must be serving-artifacts/<digesthex>.tar.gz")
+	}
+	return nil
+}
+
+func validateStorageSecurityDomain(value string) error {
+	if value == "" || !utf8.ValidString(value) || value != strings.TrimSpace(value) || len(value) > 512 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return errors.New("storage security domain must be trimmed, 1..512 bytes, and contain no control characters")
+	}
+	return nil
+}
+
+func validateCreatedBy(value string) error {
+	if value == "" || !utf8.ValidString(value) || value != strings.TrimSpace(value) || len(value) > 255 || strings.IndexFunc(value, unicode.IsControl) >= 0 {
+		return errors.New("created by must be trimmed, non-empty, and at most 255 bytes")
+	}
+	return nil
+}
+
 func canonicalObject(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "null" {
@@ -337,7 +409,7 @@ func bundleFromGetRow(row servingdb.GetBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
+	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
 }
 
 func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
@@ -345,13 +417,13 @@ func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
+	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
 }
 func bundleToState(b Bundle, status servingstate.Status) servingstate.State {
 	return servingstate.State{ID: servingstate.ID(b.GenerationID), ProjectID: b.ProjectID, Environment: b.Environment, Status: status, Source: servingstate.SourcePublish, Digest: b.ArtifactDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, DuckLakeSnapshotID: b.DuckLakeSnapshotID}
 }
 func bundleArtifact(b Bundle) servingstate.Artifact {
-	return servingstate.Artifact{ID: b.ArtifactID, ServingStateID: servingstate.ID(b.GenerationID), Digest: b.ArtifactDigest, Format: b.ArtifactFormat, Path: b.ArtifactLocator, ManifestJSON: b.ManifestJSON, SizeBytes: b.SizeBytes, CreatedAt: b.CreatedAt}
+	return servingstate.Artifact{ID: b.ArtifactID, ServingStateID: servingstate.ID(b.GenerationID), Digest: b.ArtifactDigest, Format: b.ArtifactFormat, Locator: b.ArtifactLocator, StorageSecurityDomain: b.StorageSecurityDomain, ContentType: b.ArtifactContentType, MetadataDigest: b.ArtifactMetadataDigest, ManifestJSON: b.ManifestJSON, SizeBytes: b.SizeBytes, CreatedAt: b.CreatedAt}
 }
 
 func (r *Repository) ByID(ctx context.Context, id servingstate.ID) (servingstate.State, error) {

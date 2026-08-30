@@ -5,7 +5,8 @@
 -- name: GetBundle :one
 SELECT b.generation_id::text, b.project_id, b.environment, b.artifact_id,
        b.artifact_digest, b.compiled_graph_digest, b.artifact_format,
-       b.artifact_locator, b.manifest_json::text, b.project_digest,
+       b.artifact_locator, b.storage_security_domain, b.artifact_content_type,
+       b.artifact_metadata_digest, b.manifest_json::text, b.project_digest,
        b.access_policy_json::text, b.dashboard_publications_json::text,
        b.dashboard_appearances_json::text, b.size_bytes, b.created_by,
        b.created_at, s.ducklake_snapshot_id
@@ -17,7 +18,8 @@ WHERE b.generation_id = $1::uuid;
 -- name: GetActiveBundle :one
 SELECT b.generation_id::text, b.project_id, b.environment, b.artifact_id,
        b.artifact_digest, b.compiled_graph_digest, b.artifact_format,
-       b.artifact_locator, b.manifest_json::text, b.project_digest,
+       b.artifact_locator, b.storage_security_domain, b.artifact_content_type,
+       b.artifact_metadata_digest, b.manifest_json::text, b.project_digest,
        b.access_policy_json::text, b.dashboard_publications_json::text,
        b.dashboard_appearances_json::text, b.size_bytes, b.created_by,
        b.created_at, s.ducklake_snapshot_id
@@ -31,11 +33,21 @@ WHERE t.project_id = $1 AND t.environment = $2;
 -- name: InsertBundle :execrows
 INSERT INTO serving_state.bundle (
     generation_id, project_id, environment, artifact_id, artifact_digest,
-    compiled_graph_digest, artifact_format, artifact_locator, manifest_json,
+    compiled_graph_digest, artifact_format, artifact_locator,
+    storage_security_domain, artifact_content_type, artifact_metadata_digest,
+    manifest_json,
     project_digest, access_policy_json, dashboard_publications_json,
     dashboard_appearances_json, size_bytes, created_by
-) VALUES ($1::uuid, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10,
-          $11::jsonb, $12::jsonb, $13::jsonb, $14, $15)
+) VALUES (sqlc.arg(generation_id)::uuid, sqlc.arg(project_id),
+          sqlc.arg(environment), sqlc.arg(artifact_id),
+          sqlc.arg(artifact_digest), sqlc.arg(compiled_graph_digest),
+          sqlc.arg(artifact_format), sqlc.arg(artifact_locator),
+          sqlc.arg(storage_security_domain), sqlc.arg(artifact_content_type),
+          sqlc.arg(artifact_metadata_digest), sqlc.arg(manifest_json)::jsonb,
+          sqlc.arg(project_digest), sqlc.arg(access_policy_json)::jsonb,
+          sqlc.arg(dashboard_publications_json)::jsonb,
+          sqlc.arg(dashboard_appearances_json)::jsonb,
+          sqlc.arg(size_bytes), sqlc.arg(created_by))
 ON CONFLICT (generation_id) DO NOTHING;
 
 -- name: InsertAsset :execrows

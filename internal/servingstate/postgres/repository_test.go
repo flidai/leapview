@@ -97,7 +97,7 @@ func seedGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, publi
 
 func seedBundle(t *testing.T, admin *pgxpool.Pool, generation, digest, graphDigest string) {
 	t.Helper()
-	_, err := admin.Exec(t.Context(), `INSERT INTO serving_state.bundle(generation_id,project_id,environment,artifact_id,artifact_digest,compiled_graph_digest,artifact_format,artifact_locator,manifest_json,project_digest,access_policy_json,created_by) VALUES($1::uuid,'project_demo','prod',$2,$3,$4,'json','objects/artifact.json','{}'::jsonb,$5,'{}'::jsonb,'test')`, generation, "artifact_"+generation, digest, graphDigest, "sha256:"+strings.Repeat("b", 64))
+	_, err := admin.Exec(t.Context(), `INSERT INTO serving_state.bundle(generation_id,project_id,environment,artifact_id,artifact_digest,compiled_graph_digest,artifact_format,artifact_locator,storage_security_domain,artifact_content_type,artifact_metadata_digest,manifest_json,project_digest,access_policy_json,dashboard_publications_json,dashboard_appearances_json,size_bytes,created_by) VALUES($1::uuid,'project_demo','prod','artifact-'||substr($2,8),$2,$3,'tar.gz','serving-artifacts/'||substr($2,8)||'.tar.gz','runtime','application/gzip',$4,'{}'::jsonb,$5,'{}'::jsonb,'{}'::jsonb,'{}'::jsonb,1,'test')`, generation, digest, graphDigest, "sha256:"+strings.Repeat("9", 64), "sha256:"+strings.Repeat("b", 64))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -264,7 +264,7 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("b", 64), ArtifactLocator: "objects/artifact.tar.gz", Artifact: servingstate.Artifact{ID: "artifact_demo", ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{"name":"demo"}`}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
+	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("b", 64), ArtifactLocator: "serving-artifacts/" + strings.Repeat("a", 64) + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: "application/gzip", ArtifactMetadataDigest: "sha256:" + strings.Repeat("9", 64), Artifact: servingstate.Artifact{ID: "artifact-" + strings.Repeat("a", 64), ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{"name":"demo"}`, SizeBytes: 1}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
 	if _, err := AdmitGenerationBundleTx(t.Context(), tx, input, testGraph(t)); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -276,7 +276,7 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.ID != servingstate.ID(generation) || artifact.ID != "artifact_demo" {
+	if state.ID != servingstate.ID(generation) || artifact.ID != "artifact-"+strings.Repeat("a", 64) || artifact.Path != "" || artifact.Locator != input.ArtifactLocator || artifact.StorageSecurityDomain != "runtime" || artifact.ContentType != "application/gzip" || artifact.MetadataDigest != input.ArtifactMetadataDigest {
 		t.Fatalf("active=%#v %#v", state, artifact)
 	}
 	tx, err = pool.Begin(t.Context())
@@ -385,6 +385,25 @@ func TestRecordDuckLakeSnapshotVerifiesImmutableSealedEvidence(t *testing.T) {
 	}
 }
 
+func TestServingBundleArtifactCanBeReusedAcrossGenerations(t *testing.T) {
+	admin, _, _ := servingDB(t)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	graphDigest := testGraph(t).Digest()
+	first := "21212121-2121-2121-2121-212121212121"
+	second := "22222222-2222-2222-2222-222222222222"
+	seedGeneration(t, admin, first, "target_reuse_first", "23232323-2323-2323-2323-232323232323", "24242424-2424-2424-2424-242424242424", "25252525-2525-2525-2525-252525252525", digest, graphDigest, 21)
+	seedGeneration(t, admin, second, "target_reuse_second", "26262626-2626-2626-2626-262626262626", "27272727-2727-2727-2727-272727272727", "28282828-2828-2828-2828-282828282828", digest, graphDigest, 22)
+	seedBundle(t, admin, first, digest, graphDigest)
+	seedBundle(t, admin, second, digest, graphDigest)
+	var count int
+	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM serving_state.bundle WHERE artifact_id='artifact-'||substr($1,8)`, digest).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("content-addressed artifact generation references = %d, want 2", count)
+	}
+}
+
 func TestSchemaHasNoMutableServingAuthority(t *testing.T) {
 	admin, pool, _ := servingDB(t)
 	var count int
@@ -405,7 +424,7 @@ func TestConflictingReplayCommitsWithoutWritingIncomingChildren(t *testing.T) {
 	digest := "sha256:" + strings.Repeat("b", 64)
 	stored := testGraph(t)
 	seedGeneration(t, admin, generation, "target_demo", "17171717-1717-1717-1717-171717171717", "18181818-1818-1818-1818-181818181818", "19191919-1919-1919-1919-191919191919", digest, stored.Digest(), 19)
-	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("c", 64), ArtifactLocator: "objects/conflict.tar.gz", Artifact: servingstate.Artifact{ID: "artifact_conflict", ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{}`}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
+	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("c", 64), ArtifactLocator: "serving-artifacts/" + strings.Repeat("b", 64) + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: "application/gzip", ArtifactMetadataDigest: "sha256:" + strings.Repeat("9", 64), Artifact: servingstate.Artifact{ID: "artifact-" + strings.Repeat("b", 64), ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{}`, SizeBytes: 1}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -454,7 +473,7 @@ func TestAdmissionIsCallerOwnedAndRollbackable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("d", 64), ArtifactLocator: "objects/artifact.tar.gz", Artifact: servingstate.Artifact{ID: "artifact_rollback", ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{}`}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
+	input := GenerationBundleInput{GenerationID: generation, ProjectID: "project_demo", Environment: "prod", ProjectDigest: "sha256:" + strings.Repeat("d", 64), ArtifactLocator: "serving-artifacts/" + strings.Repeat("c", 64) + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: "application/gzip", ArtifactMetadataDigest: "sha256:" + strings.Repeat("9", 64), Artifact: servingstate.Artifact{ID: "artifact-" + strings.Repeat("c", 64), ServingStateID: servingstate.ID(generation), Digest: digest, Format: "tar.gz", ManifestJSON: `{}`, SizeBytes: 1}, AccessPolicyJSON: `{}`, CreatedBy: "test"}
 	if _, ok := any(pool).(Tx); ok {
 		t.Fatal("pool unexpectedly satisfies caller-owned transaction surface")
 	}
