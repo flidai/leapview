@@ -329,7 +329,7 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: project", deployment.ErrDeliveryInvalid))
 			return
 		}
-		nativeRequest := NativeDeliveryBuildRequest{ProjectID: projectID, PlanID: parsedPlanID, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
+		nativeRequest := NativeDeliveryBuildRequest{ProjectID: projectID, TargetID: m.instanceID, Environment: m.handlerEnvironment(), PlanID: parsedPlanID, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
 		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
 			m.writeDeliveryMutationError(w, r, err)
 			return

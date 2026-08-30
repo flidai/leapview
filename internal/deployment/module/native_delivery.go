@@ -81,6 +81,8 @@ type NativeDeliveryPlan struct {
 // creation; no text-ID generation is performed by the module.
 type NativeDeliveryBuildRequest struct {
 	ProjectID      projectgraph.ResourceID
+	TargetID       string
+	Environment    string
 	PlanID         uuid.UUID
 	PrincipalID    string
 	IdempotencyKey string
@@ -244,12 +246,14 @@ func (r NativeDeliveryBuildRequest) validate(environment string) error {
 	if r.PlanID == uuid.Nil || r.PlanID.String() != strings.TrimSpace(r.PlanID.String()) {
 		return fmt.Errorf("%w: plan identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
 	}
-	for label, value := range map[string]string{"principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
+	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
 		if value == "" || value != strings.TrimSpace(value) {
 			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
 		}
 	}
-	_ = environment
+	if environment != "" && r.Environment != environment {
+		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
+	}
 	return nil
 }
 

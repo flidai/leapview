@@ -417,6 +417,15 @@ func validateNativeQualificationRequest(request NativeQualificationRequest) erro
 	if build.Marker.AttemptID != build.AttemptID || build.Marker.PhysicalPoolID == "" || build.Seal.SnapshotID != build.SnapshotID || build.Seal.CatalogType != "postgres" || build.Seal.CommitMarker == "" {
 		return fmt.Errorf("%w: physical build identity evidence does not match", ErrNativeQualificationInvalid)
 	}
+	if build.Seal.MetadataSchema != ducklake.MetadataSchemaForPool(build.Marker.PhysicalPoolID) {
+		return fmt.Errorf("%w: physical build metadata schema does not match the admitted pool", ErrNativeQualificationInvalid)
+	}
+	buildCatalogVersion, buildCatalogErr := canonicalCatalogVersion(build.Seal.CatalogVersion)
+	expectedCatalogVersion, expectedCatalogErr := canonicalCatalogVersion(request.Compatibility.CatalogFormat)
+	buildExtension, buildExtensionErr := canonicalRuntimeComponent("ducklake", build.Seal.ExtensionVersion)
+	if buildCatalogErr != nil || expectedCatalogErr != nil || buildCatalogVersion != expectedCatalogVersion || buildExtensionErr != nil || buildExtension != request.Compatibility.DuckLakeExtension {
+		return fmt.Errorf("%w: physical build runtime versions do not match admitted compatibility", ErrNativeQualificationInvalid)
+	}
 	markerJSON, err := build.Marker.CanonicalJSON()
 	if err != nil || len(build.CanonicalMarkerJSON) == 0 || string(build.CanonicalMarkerJSON) != markerJSON || build.Seal.CommitMarker != markerJSON {
 		return fmt.Errorf("%w: physical build commit marker evidence is not canonical", ErrNativeQualificationInvalid)

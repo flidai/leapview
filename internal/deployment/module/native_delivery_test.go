@@ -19,6 +19,7 @@ import (
 func nativeDeliveryHandlerModule(port NativeDeliveryMutationPort) *Module {
 	return &Module{
 		nativeDeliveryMutations: port,
+		instanceID:              "target",
 		handler: deploymenthttp.NewHandler(deploymenthttp.Options{
 			InstanceEnvironment: "prod",
 			CurrentPrincipal: func(*http.Request) (deploymenthttp.Principal, bool) {
@@ -82,7 +83,7 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 	called := false
 	port := NativeDeliveryMutationFuncs{Build: func(_ context.Context, request NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
 		called = true
-		if request.ProjectID != projectID || request.PlanID != planID || request.PrincipalID != "operator" || request.IdempotencyKey != "build-key" {
+		if request.ProjectID != projectID || request.TargetID != "target" || request.Environment != "prod" || request.PlanID != planID || request.PrincipalID != "operator" || request.IdempotencyKey != "build-key" {
 			t.Fatalf("native build request = %#v", request)
 		}
 		now := time.Now().UTC()
