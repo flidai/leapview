@@ -161,7 +161,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 		err := gateError("preflight", outcome, ErrGateBounds, nil)
 		return finishFailure(evidence, nil, err)
 	}
-	remaining := time.Duration(bounds.MaxMillis-input.PreflightMillis) * time.Millisecond
+	remaining := durationFromMillis(bounds.MaxMillis - input.PreflightMillis)
 	ctx, cancel := context.WithTimeout(ctx, remaining)
 	defer cancel()
 	evidence := release.GateEvidence{Version: evidenceVersion, CandidateID: input.CandidateID, SourceDigest: input.SourceDigest, BindingGeneration: input.BindingGeneration, RuntimeVersion: input.RuntimeVersion, DuckDBVersion: input.DuckDBVersion, EvaluatedAt: input.Now, Bounds: release.GateBounds{MaxRows: bounds.MaxRows, MaxQueries: bounds.MaxQueries, MaxMillis: bounds.MaxMillis}}
@@ -298,8 +298,12 @@ func finish(evidence release.GateEvidence, state *budget) (release.GateEvidence,
 	if state != nil {
 		evidence.Queries = state.Queries
 		evidence.ObservedRows = state.Rows
-		elapsed := state.PreflightMillis + time.Since(state.Started).Milliseconds()
-		if elapsed > state.Bounds.MaxMillis {
+		runtimeMillis := time.Since(state.Started).Milliseconds()
+		if runtimeMillis < 0 {
+			runtimeMillis = 0
+		}
+		elapsed, ok := addNonNegativeInt64(state.PreflightMillis, runtimeMillis)
+		if !ok || elapsed >= state.Bounds.MaxMillis {
 			evidence.DurationExceeded = true
 			elapsed = state.Bounds.MaxMillis
 		}
@@ -607,15 +611,21 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			// itself returns one scalar row. Replace that scalar in the shared
 			// row budget with the bounded count so aggregate evidence accounts
 			// for the same rows as this check without double-counting it.
-			state.Rows += count - int64(len(rows))
-			if state.Rows < 0 {
-				state.Rows = 0
-			}
-			if state.Rows > state.Bounds.MaxRows {
+			scalarRows := int64(len(rows))
+			if state.Rows < scalarRows {
 				state.RowsExceeded = true
 				result.Outcome = release.GateUnavailable
 				return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
 			}
+			state.Rows -= scalarRows
+			totalRows, ok := addNonNegativeInt64(state.Rows, count)
+			if !ok || totalRows > state.Bounds.MaxRows {
+				state.Rows = state.Bounds.MaxRows
+				state.RowsExceeded = true
+				result.Outcome = release.GateUnavailable
+				return result, gateError(identity, release.GateUnavailable, ErrGateBounds, nil)
+			}
+			state.Rows = totalRows
 			result.ObservedRows = count
 			result.ObservationDigest = digest(rows)
 			if check.Minimum != nil && count < *check.Minimum {
@@ -701,12 +711,29 @@ func runPlan(ctx context.Context, state *budget, sql string, args []any) (semant
 	if err != nil {
 		return nil, err
 	}
-	state.Rows += int64(len(rows))
-	if state.Rows > state.Bounds.MaxRows {
+	totalRows, ok := addNonNegativeInt64(state.Rows, int64(len(rows)))
+	if !ok || totalRows > state.Bounds.MaxRows {
+		state.Rows = state.Bounds.MaxRows
 		state.RowsExceeded = true
 		return nil, ErrGateBounds
 	}
+	state.Rows = totalRows
 	return rows, nil
+}
+
+func addNonNegativeInt64(total, delta int64) (int64, bool) {
+	if total < 0 || delta < 0 || delta > int64(1<<63-1)-total {
+		return int64(1<<63 - 1), false
+	}
+	return total + delta, true
+}
+
+func durationFromMillis(milliseconds int64) time.Duration {
+	const maxDurationMillis = int64(1<<63-1) / int64(time.Millisecond)
+	if milliseconds >= maxDurationMillis {
+		return time.Duration(1<<63 - 1)
+	}
+	return time.Duration(milliseconds) * time.Millisecond
 }
 
 func currentQuery(ctx context.Context, state *budget, sql string, args []any) (semanticquery.Rows, error) {

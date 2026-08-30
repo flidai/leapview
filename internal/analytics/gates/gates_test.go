@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -294,6 +295,48 @@ func TestEvaluateAggregateOutcomeAndOverflowEvidence(t *testing.T) {
 	}
 	if err := duration.Validate(); err != nil {
 		t.Fatalf("duration overflow evidence validation = %v", err)
+	}
+}
+
+func TestEvaluateRejectsRowCountBudgetArithmeticOverflow(t *testing.T) {
+	maximum := int64(1 << 62)
+	input := baseInput(rowsQuery(semanticquery.Rows{{"count": maximum}}))
+	input.Bounds = Bounds{MaxQueries: 4, MaxRows: math.MaxInt64, MaxMillis: 1000}
+	input.PreflightRows = maximum
+	input.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{ModelName: "model-1", Checks: []semanticmodel.ModelCheck{{Type: "row_count", Maximum: &maximum}}}}}
+
+	evidence, err := Evaluate(context.Background(), input)
+	var evaluationErr *EvaluationError
+	if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != release.GateUnavailable || !errors.Is(err, ErrGateBounds) {
+		t.Fatalf("row-count arithmetic overflow error=%v evidence=%#v", err, evidence)
+	}
+	if !evidence.RowsExceeded || evidence.ObservedRows != math.MaxInt64 || evidence.Outcome != release.GateUnavailable {
+		t.Fatalf("row-count arithmetic overflow evidence=%#v", evidence)
+	}
+	if err := evidence.Validate(); err != nil {
+		t.Fatalf("row-count arithmetic overflow evidence invalid: %v", err)
+	}
+}
+
+func TestEvaluateSaturatesElapsedBudgetArithmeticOverflow(t *testing.T) {
+	input := baseInput(func(context.Context, semanticquery.Plan) (semanticquery.Rows, error) {
+		time.Sleep(time.Millisecond)
+		return nil, nil
+	})
+	input.Bounds = Bounds{MaxQueries: 2, MaxRows: 10, MaxMillis: math.MaxInt64}
+	input.PreflightMillis = math.MaxInt64 - 1
+	input.Models = []ModelInput{{ID: "model-1", Model: semanticmodel.Table{ModelName: "model-1", Checks: []semanticmodel.ModelCheck{{Type: "non_null", Field: "id"}}}}}
+
+	evidence, err := Evaluate(context.Background(), input)
+	var evaluationErr *EvaluationError
+	if !errors.As(err, &evaluationErr) || evaluationErr.Outcome != release.GateTimeout {
+		t.Fatalf("elapsed arithmetic overflow error=%v evidence=%#v", err, evidence)
+	}
+	if !evidence.DurationExceeded || evidence.DurationMillis != math.MaxInt64 || evidence.Outcome != release.GateTimeout {
+		t.Fatalf("elapsed arithmetic overflow evidence=%#v", evidence)
+	}
+	if err := evidence.Validate(); err != nil {
+		t.Fatalf("elapsed arithmetic overflow evidence invalid: %v", err)
 	}
 }
 
