@@ -9,32 +9,39 @@ import (
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/sourcedataidentity"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
 const resultIdentityRelationDigestDomain = "flid.resultidentity.relation.v1"
 
-// RelationExecutionContexts derives the target-bound, relation-scoped context
-// consumed by RelationExecutionDigestsByContext. Managed revisions and
-// connector kinds are selected only for sources reachable from each physical
-// model relation. Unknown lineage fails safe by including all source and
-// connection evidence.
-func (p Project) RelationExecutionContexts(revisions, bindingKinds map[string]string) (map[string]string, error) {
-	return p.relationExecutionContexts(revisions, bindingKinds,
-		func(value semanticmodel.Source) any { return value },
-		func(value semanticmodel.Connection) any { return value },
-	)
+type relationReferenceSet struct {
+	sources     map[string]struct{}
+	connections map[string]struct{}
+	unknown     bool
+	incomplete  bool
 }
 
-func (p Project) relationExecutionContexts(
-	revisions, bindingKinds map[string]string,
-	projectSource func(semanticmodel.Source) any,
-	projectConnection func(semanticmodel.Connection) any,
-) (map[string]string, error) {
+type relationReferenceProjection uint8
+
+const (
+	legacyRelationReferences relationReferenceProjection = iota
+	resultIdentityRelationReferences
+)
+
+// relationReferences is the single artifact-owned lineage implementation with
+// two explicit projections. The legacy projection preserves the historical
+// deployment/materialization contract based on SourceDependencies. Result
+// identity additionally consumes direct-source and persisted SQL-analysis
+// evidence so missing lineage cannot authorize result reuse.
+func (p Project) relationReferences(projection relationReferenceProjection) (map[string]relationReferenceSet, error) {
 	manifest := p.Manifest()
 	modelNames := make(map[string]string)
 	sourceNames := make(map[string]string)
 	connectionNames := make(map[string]string)
+	allSources := make(map[string]struct{}, len(manifest.Sources))
+	allConnections := make(map[string]struct{}, len(manifest.Connections))
 	for _, resource := range p.Graph().Resources() {
 		switch resource.Kind {
 		case projectgraph.KindModel:
@@ -43,37 +50,36 @@ func (p Project) relationExecutionContexts(
 		case projectgraph.KindSource:
 			sourceNames[resource.ID.String()] = resource.ID.String()
 			sourceNames[resource.Name] = resource.ID.String()
+			if projection == resultIdentityRelationReferences {
+				addRelationReferenceAlias(sourceNames, projectmanifest.RuntimeSourceAlias(resource.Name), resource.ID.String())
+			}
+			allSources[resource.ID.String()] = struct{}{}
 		case projectgraph.KindConnection:
 			connectionNames[resource.ID.String()] = resource.ID.String()
 			connectionNames[resource.Name] = resource.ID.String()
+			allConnections[resource.ID.String()] = struct{}{}
 		}
 	}
-	allSources := make(map[string]any, len(manifest.Sources))
-	for id, source := range manifest.Sources {
-		allSources[id] = projectSource(source)
-	}
-	allConnections := make(map[string]any, len(manifest.Connections))
-	for id, connection := range manifest.Connections {
-		allConnections[id] = projectConnection(connection)
-	}
 
-	type relationRefs struct {
-		sources     map[string]struct{}
-		connections map[string]struct{}
-		unknown     bool
-	}
-	var collect func(string, map[string]bool) (relationRefs, error)
-	collect = func(modelID string, visiting map[string]bool) (relationRefs, error) {
+	var collect func(string, map[string]bool) (relationReferenceSet, error)
+	collect = func(modelID string, visiting map[string]bool) (relationReferenceSet, error) {
 		if visiting[modelID] {
-			return relationRefs{}, fmt.Errorf("relation context dependency cycle at %q", modelID)
+			return relationReferenceSet{}, fmt.Errorf("relation context dependency cycle at %q", modelID)
 		}
 		table, ok := manifest.Models[modelID]
 		if !ok {
-			return relationRefs{}, fmt.Errorf("relation context model %q is missing", modelID)
+			return relationReferenceSet{}, fmt.Errorf("relation context model %q is missing", modelID)
 		}
 		visiting[modelID] = true
-		refs := relationRefs{sources: make(map[string]struct{}), connections: make(map[string]struct{})}
-		for _, reference := range table.SourceDependencies {
+		refs := relationReferenceSet{sources: make(map[string]struct{}), connections: make(map[string]struct{})}
+		sourceDependencies := table.SourceDependencies
+		modelDependencies := table.ModelDependencies
+		primarySource := ""
+		if projection == resultIdentityRelationReferences {
+			primarySource = table.Execution.Source
+			refs.incomplete = !completePersistedSQLLineage(table, sourceNames, modelNames)
+		}
+		for _, reference := range uniqueManifestReferences(primarySource, sourceDependencies, nil) {
 			reference = strings.TrimSpace(reference)
 			if reference == "" {
 				continue
@@ -84,7 +90,7 @@ func (p Project) relationExecutionContexts(
 				refs.unknown = true
 			}
 		}
-		for _, dependency := range table.ModelDependencies {
+		for _, dependency := range modelDependencies {
 			dependencyID := modelNames[strings.TrimSpace(dependency)]
 			if dependencyID == "" {
 				refs.unknown = true
@@ -92,7 +98,7 @@ func (p Project) relationExecutionContexts(
 			}
 			dependencyRefs, err := collect(dependencyID, visiting)
 			if err != nil {
-				return relationRefs{}, err
+				return relationReferenceSet{}, err
 			}
 			for source := range dependencyRefs.sources {
 				refs.sources[source] = struct{}{}
@@ -101,6 +107,7 @@ func (p Project) relationExecutionContexts(
 				refs.connections[connection] = struct{}{}
 			}
 			refs.unknown = refs.unknown || dependencyRefs.unknown
+			refs.incomplete = refs.incomplete || dependencyRefs.incomplete
 		}
 		for sourceID := range refs.sources {
 			source, exists := manifest.Sources[sourceID]
@@ -119,22 +126,116 @@ func (p Project) relationExecutionContexts(
 		return refs, nil
 	}
 
-	contexts := make(map[string]string, len(manifest.Models))
+	result := make(map[string]relationReferenceSet, len(manifest.Models))
 	for modelID := range manifest.Models {
 		refs, err := collect(modelID, map[string]bool{})
 		if err != nil {
 			return nil, err
 		}
-		sources, connections := make(map[string]any), make(map[string]any)
 		if refs.unknown {
-			sources, connections = allSources, allConnections
-		} else {
-			for sourceID := range refs.sources {
-				sources[sourceID] = projectSource(manifest.Sources[sourceID])
-			}
-			for connectionID := range refs.connections {
-				connections[connectionID] = projectConnection(manifest.Connections[connectionID])
-			}
+			refs.sources = cloneStringSet(allSources)
+			refs.connections = cloneStringSet(allConnections)
+		}
+		result[modelID] = refs
+	}
+	return result, nil
+}
+
+func addRelationReferenceAlias(aliases map[string]string, alias, id string) {
+	if alias == "" {
+		return
+	}
+	if existing, ok := aliases[alias]; ok && existing != id {
+		aliases[alias] = ""
+		return
+	}
+	aliases[alias] = id
+}
+
+func completePersistedSQLLineage(table semanticmodel.Table, sourceNames, modelNames map[string]string) bool {
+	if strings.TrimSpace(table.Execution.SQL) == "" {
+		return true
+	}
+	evidence := table.SQLAnalysisEvidence
+	if evidence == nil || !evidence.Validated || strings.TrimSpace(table.Execution.Source) != "" {
+		return false
+	}
+	evidenceSources, sourcesOK := canonicalRelationReferences(evidence.SourceRefs, sourceNames)
+	evidenceModels, modelsOK := canonicalRelationReferences(evidence.ModelRefs, modelNames)
+	dependencySources, sourceDependenciesOK := canonicalRelationReferences(table.SourceDependencies, sourceNames)
+	dependencyModels, modelDependenciesOK := canonicalRelationReferences(table.ModelDependencies, modelNames)
+	if !sourcesOK || !modelsOK || !sourceDependenciesOK || !modelDependenciesOK || len(evidenceSources)+len(evidenceModels) == 0 {
+		return false
+	}
+	return equalRelationReferenceSets(evidenceSources, dependencySources) && equalRelationReferenceSets(evidenceModels, dependencyModels)
+}
+
+func canonicalRelationReferences(values []string, aliases map[string]string) (map[string]struct{}, bool) {
+	result := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		id := aliases[strings.TrimSpace(value)]
+		if id == "" {
+			return nil, false
+		}
+		result[id] = struct{}{}
+	}
+	return result, true
+}
+
+func equalRelationReferenceSets(left, right map[string]struct{}) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	for value := range left {
+		if _, ok := right[value]; !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func cloneStringSet(values map[string]struct{}) map[string]struct{} {
+	result := make(map[string]struct{}, len(values))
+	for value := range values {
+		result[value] = struct{}{}
+	}
+	return result
+}
+
+// RelationExecutionContexts derives the target-bound, relation-scoped context
+// consumed by RelationExecutionDigestsByContext. Managed revisions and
+// connector kinds are selected only for sources reachable from each physical
+// model relation. Unknown lineage fails safe by including all source and
+// connection evidence.
+func (p Project) RelationExecutionContexts(revisions, bindingKinds map[string]string) (map[string]string, error) {
+	return p.relationExecutionContexts(revisions, bindingKinds, nil, legacyRelationReferences,
+		func(value semanticmodel.Source) any { return value },
+		func(value semanticmodel.Connection) any { return value },
+	)
+}
+
+func (p Project) relationExecutionContexts(
+	revisions, bindingKinds map[string]string,
+	sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence,
+	referenceProjection relationReferenceProjection,
+	projectSource func(semanticmodel.Source) any,
+	projectConnection func(semanticmodel.Connection) any,
+) (map[string]string, error) {
+	manifest := p.Manifest()
+	references, err := p.relationReferences(referenceProjection)
+	if err != nil {
+		return nil, err
+	}
+
+	contexts := make(map[string]string, len(manifest.Models))
+	for modelID := range manifest.Models {
+		refs := references[modelID]
+		sources, connections := make(map[string]any), make(map[string]any)
+		for sourceID := range refs.sources {
+			sources[sourceID] = projectSource(manifest.Sources[sourceID])
+		}
+		for connectionID := range refs.connections {
+			connections[connectionID] = projectConnection(manifest.Connections[connectionID])
 		}
 		pins := make([]relationRevision, 0, len(connections))
 		bindings := make(map[string]string)
@@ -147,15 +248,31 @@ func (p Project) relationExecutionContexts(
 			}
 		}
 		sort.Slice(pins, func(i, j int) bool { return pins[i].ConnectionID < pins[j].ConnectionID })
+		var sourceIdentity []relationSourceDataEvidence
+		for sourceID := range refs.sources {
+			resourceID := projectgraph.ResourceID(sourceID)
+			evidence, ok := sourceDataEvidence[resourceID]
+			if !ok || !evidence.Available() || evidence.SourceID() != resourceID {
+				continue
+			}
+			sourceIdentity = append(sourceIdentity, relationSourceDataEvidence{
+				SourceID: sourceID, EquivalenceDigest: evidence.EquivalenceDigest(),
+			})
+		}
+		sort.Slice(sourceIdentity, func(i, j int) bool { return sourceIdentity[i].SourceID < sourceIdentity[j].SourceID })
 		if len(bindings) == 0 {
 			bindings = nil
 		}
 		encoded, err := json.Marshal(struct {
-			Pins        []relationRevision `json:"pins"`
-			Sources     map[string]any     `json:"sources"`
-			Connections map[string]any     `json:"connections"`
-			Bindings    map[string]string  `json:"bindings,omitempty"`
-		}{Pins: pins, Sources: sources, Connections: connections, Bindings: bindings})
+			Pins               []relationRevision           `json:"pins"`
+			SourceDataEvidence []relationSourceDataEvidence `json:"sourceDataEvidence,omitempty"`
+			Sources            map[string]any               `json:"sources"`
+			Connections        map[string]any               `json:"connections"`
+			Bindings           map[string]string            `json:"bindings,omitempty"`
+		}{
+			Pins: pins, SourceDataEvidence: sourceIdentity, Sources: sources,
+			Connections: connections, Bindings: bindings,
+		})
 		if err != nil {
 			return nil, fmt.Errorf("encode relation context %q: %w", modelID, err)
 		}
@@ -175,9 +292,10 @@ func (p Project) RelationExecutionDigestsForInputs(revisions, bindingKinds map[s
 	return p.RelationExecutionDigestsByContext(contexts)
 }
 
-func (p Project) resultIdentityRelationExecutionDigestsForInputs(revisions, bindingKinds map[string]string) (map[string]string, error) {
+func (p Project) resultIdentityRelationExecutionDigestsForInputs(sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) (map[string]string, error) {
 	contexts, err := p.relationExecutionContexts(
-		revisions, bindingKinds, resultIdentitySourceProjection, resultIdentityConnectionProjection,
+		nil, bindingKinds, sourceDataEvidence, resultIdentityRelationReferences,
+		resultIdentitySourceProjection, resultIdentityConnectionProjection,
 	)
 	if err != nil {
 		return nil, err
@@ -309,6 +427,11 @@ type relationRevision struct {
 	RevisionID   string `json:"revisionId"`
 }
 
+type relationSourceDataEvidence struct {
+	SourceID          string `json:"sourceId"`
+	EquivalenceDigest string `json:"equivalenceDigest"`
+}
+
 // DatasetRelationEvidence maps one semantic dataset alias to the exact
 // physical model relation identity already computed by the artifact contract.
 type DatasetRelationEvidence struct {
@@ -320,8 +443,10 @@ type DatasetRelationEvidence struct {
 // SemanticModelRelationEvidence projects artifact-owned relation execution
 // evidence into the aliases consumed by query planning. It is the only place
 // that resolves authored Model names to graph.ResourceID values for result
-// dependency derivation.
-func (p Project) SemanticModelRelationEvidence(semanticModelID projectgraph.ResourceID, revisions, bindingKinds map[string]string) ([]DatasetRelationEvidence, error) {
+// dependency derivation. Datasets whose complete source-data or connector
+// evidence is unavailable are omitted; consumers must treat that absence as a
+// cache-reuse bypass while allowing normal execution to proceed.
+func (p Project) SemanticModelRelationEvidence(semanticModelID projectgraph.ResourceID, sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) ([]DatasetRelationEvidence, error) {
 	if err := semanticModelID.Validate(); err != nil {
 		return nil, fmt.Errorf("semantic model ID: %w", err)
 	}
@@ -329,24 +454,11 @@ func (p Project) SemanticModelRelationEvidence(semanticModelID projectgraph.Reso
 	if model == nil {
 		return nil, fmt.Errorf("semantic model %q is missing", semanticModelID)
 	}
-	activations, err := p.ConnectionActivations()
+	references, err := p.relationReferences(resultIdentityRelationReferences)
 	if err != nil {
 		return nil, err
 	}
-	for _, activation := range activations {
-		kind := bindingKinds[activation.LogicalConnectionID]
-		if kind == "" || kind != strings.TrimSpace(kind) {
-			return nil, fmt.Errorf("connection %q has no canonical binding kind evidence", activation.LogicalConnectionID)
-		}
-		if activation.Mode != ManagedActivation {
-			continue
-		}
-		revision := revisions[activation.LogicalConnectionID]
-		if revision == "" || revision != strings.TrimSpace(revision) {
-			return nil, fmt.Errorf("managed connection %q has no canonical revision evidence", activation.LogicalConnectionID)
-		}
-	}
-	digests, err := p.resultIdentityRelationExecutionDigestsForInputs(revisions, bindingKinds)
+	digests, err := p.resultIdentityRelationExecutionDigestsForInputs(sourceDataEvidence, bindingKinds)
 	if err != nil {
 		return nil, err
 	}
@@ -370,14 +482,38 @@ func (p Project) SemanticModelRelationEvidence(semanticModelID projectgraph.Reso
 		if relationID == "" {
 			return nil, fmt.Errorf("semantic model %q dataset %q references unknown Model %q", semanticModelID, dataset, modelName)
 		}
+		refs, ok := references[relationID.String()]
+		if !ok {
+			return nil, fmt.Errorf("semantic model %q dataset %q relation %q has no lineage projection", semanticModelID, dataset, relationID)
+		}
+		if !completeRelationSourceDataEvidence(refs, sourceDataEvidence, bindingKinds) {
+			continue
+		}
 		digest := digests[relationID.String()]
 		if digest == "" {
 			return nil, fmt.Errorf("semantic model %q dataset %q has no relation execution digest", semanticModelID, dataset)
 		}
 		result = append(result, DatasetRelationEvidence{Dataset: dataset, RelationID: relationID, ExecutionDigest: digest})
 	}
-	if len(result) == 0 {
-		return nil, fmt.Errorf("semantic model %q has no dataset relation evidence", semanticModelID)
-	}
 	return result, nil
+}
+
+func completeRelationSourceDataEvidence(refs relationReferenceSet, sourceDataEvidence map[projectgraph.ResourceID]sourcedataidentity.Evidence, bindingKinds map[string]string) bool {
+	if refs.incomplete || len(refs.sources) == 0 || len(refs.connections) == 0 {
+		return false
+	}
+	for connectionID := range refs.connections {
+		kind := bindingKinds[connectionID]
+		if kind == "" || kind != strings.TrimSpace(kind) {
+			return false
+		}
+	}
+	for sourceID := range refs.sources {
+		resourceID := projectgraph.ResourceID(sourceID)
+		evidence, ok := sourceDataEvidence[resourceID]
+		if !ok || !evidence.Available() || evidence.SourceID() != resourceID {
+			return false
+		}
+	}
+	return true
 }

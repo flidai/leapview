@@ -1,0 +1,42 @@
+groups:
+  - name: leapview-dashboard-refresh-reliability
+    rules:
+      - record: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+              or
+              (rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m]) * 0)
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m])
+            ) > 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+              or
+              (rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d]) * 0)
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d])
+            ) > 0
+          )

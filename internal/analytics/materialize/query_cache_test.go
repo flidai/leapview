@@ -225,7 +225,7 @@ func (c *queryResultCache) execute(ctx context.Context, request dataquery.Query,
 	if cached, ok := c.get(key); ok {
 		return cached, nil
 	}
-	value, shared, err := c.scope.Coalesce(ctx, fmt.Sprintf("test-query:%d:%s", generation, key), func() (any, error) {
+	value, shared, err := c.execution.Coalesce(ctx, fmt.Sprintf("test-query:%d:%s", generation, key), func(context.Context) (any, error) {
 		if cached, ok := c.get(key); ok {
 			return cached, nil
 		}
@@ -437,6 +437,233 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 	_, found, err := second.LookupImmutableBytes("tile")
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestGenerationExecutionScopesDoNotCoalesceColdMissesButReuseCompletedEntries(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 16, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 2 << 20})
+	require.NoError(t, err)
+	defer pool.Close()
+	firstScope, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	secondScope, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	firstBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "generation-one"})
+	require.NoError(t, err)
+	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "generation-two"})
+	require.NoError(t, err)
+	first := newQueryResultCacheWithScopes(firstScope, firstBytes)
+	second := newQueryResultCacheWithScopes(secondScope, secondBytes)
+	defer first.close()
+	defer second.close()
+	request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders", Operation: dataquery.OperationDashboardFilterOptions}
+
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var executions atomic.Int32
+	execute := func() (dataquery.Result, error) {
+		executions.Add(1)
+		started <- struct{}{}
+		<-release
+		return dataquery.Result{Rows: []dataquery.Row{{"value": int64(1)}}}, nil
+	}
+	type response struct {
+		result dataquery.Result
+		err    error
+	}
+	responses := make(chan response, 2)
+	go func() {
+		result, err := first.execute(context.Background(), request, execute)
+		responses <- response{result, err}
+	}()
+	go func() {
+		result, err := second.execute(context.Background(), request, execute)
+		responses <- response{result, err}
+	}()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("different generation cold misses shared one execution")
+		}
+	}
+	close(release)
+	for range 2 {
+		response := <-responses
+		require.NoError(t, response.err)
+		require.Equal(t, dataquery.CacheMiss, response.result.CacheOutcome)
+	}
+	require.Equal(t, int32(2), executions.Load())
+
+	cached, err := second.execute(context.Background(), request, func() (dataquery.Result, error) {
+		executions.Add(1)
+		return dataquery.Result{}, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheHit, cached.CacheOutcome)
+	require.Equal(t, int32(2), executions.Load())
+}
+
+func TestGenerationExecutionScopeStillCoalescesSameGenerationMisses(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		cache := newQueryResultCache(16)
+		defer cache.close()
+		request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders", Operation: dataquery.OperationDashboardFilterOptions}
+		started := make(chan struct{})
+		release := make(chan struct{})
+		var calls atomic.Int32
+		execute := func() (dataquery.Result, error) {
+			if calls.Add(1) == 1 {
+				close(started)
+			}
+			<-release
+			return dataquery.Result{Rows: []dataquery.Row{{"value": int64(1)}}}, nil
+		}
+		results := make(chan dataquery.Result, 2)
+		errs := make(chan error, 2)
+		go func() {
+			result, err := cache.execute(context.Background(), request, execute)
+			results <- result
+			errs <- err
+		}()
+		<-started
+		go func() {
+			result, err := cache.execute(context.Background(), request, execute)
+			results <- result
+			errs <- err
+		}()
+		synctest.Wait()
+		require.Equal(t, int32(1), calls.Load())
+		close(release)
+		for range 2 {
+			require.NoError(t, <-errs)
+			<-results
+		}
+		require.Equal(t, int32(1), calls.Load())
+	})
+}
+
+func TestImmutableByteFlightUsesExecutionScopeCancellationAndDrainsBeforeCacheRelease(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 4, RuntimeBytes: 1 << 20, NodeEntries: 8, NodeBytes: 2 << 20})
+	require.NoError(t, err)
+	defer pool.Close()
+	stable, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	bytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "generation-one"})
+	require.NoError(t, err)
+	execution := resultcache.NewExecutionScope()
+	cache := newQueryResultCacheWithExecutionScope(stable, bytes, execution, true)
+	cache.ownScope()
+
+	started := make(chan struct{})
+	scopesOpen := make(chan error, 1)
+	flightDone := make(chan error, 1)
+	go func() {
+		_, flightErr := cache.coalesceBytes(context.Background(), "spatial-metatile", func(executionCtx context.Context) error {
+			close(started)
+			<-executionCtx.Done()
+			if _, _, _, lookupErr := stable.LookupArrow("missing"); lookupErr != nil {
+				scopesOpen <- lookupErr
+				return executionCtx.Err()
+			}
+			if _, _, _, lookupErr := bytes.LookupBytes("missing"); lookupErr != nil {
+				scopesOpen <- lookupErr
+				return executionCtx.Err()
+			}
+			scopesOpen <- nil
+			return executionCtx.Err()
+		})
+		flightDone <- flightErr
+	}()
+	<-started
+
+	closed := make(chan error, 1)
+	go func() { closed <- cache.close() }()
+	select {
+	case closeErr := <-closed:
+		require.NoError(t, closeErr)
+	case <-time.After(2 * time.Second):
+		t.Fatal("cache close did not cancel and drain immutable-byte owner")
+	}
+	require.NoError(t, <-scopesOpen, "cache scopes closed before immutable-byte owner drained")
+	require.ErrorIs(t, <-flightDone, resultcache.ErrExecutionScopeClosed)
+	_, _, _, err = stable.LookupArrow("missing")
+	require.Error(t, err, "stable cache handle remained open after generation close")
+	_, _, _, err = bytes.LookupBytes("missing")
+	require.Error(t, err, "immutable byte cache remained open after generation close")
+}
+
+func TestInvalidationDuringGenerationFlightStillRejectsStaleStore(t *testing.T) {
+	cache := newQueryResultCache(16)
+	defer cache.close()
+	request := dataquery.Query{ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders", Operation: dataquery.OperationDashboardFilterOptions}
+	started := make(chan struct{})
+	release := make(chan struct{})
+	var executions atomic.Int32
+	done := make(chan error, 1)
+	go func() {
+		_, err := cache.execute(context.Background(), request, func() (dataquery.Result, error) {
+			executions.Add(1)
+			close(started)
+			<-release
+			return dataquery.Result{Rows: []dataquery.Row{{"value": int64(1)}}}, nil
+		})
+		done <- err
+	}()
+	<-started
+	cache.clear()
+	close(release)
+	require.NoError(t, <-done)
+	_, _, _, hit, err := cache.lookup(request)
+	require.NoError(t, err)
+	require.False(t, hit)
+
+	_, err = cache.execute(context.Background(), request, func() (dataquery.Result, error) {
+		executions.Add(1)
+		return dataquery.Result{Rows: []dataquery.Row{{"value": int64(2)}}}, nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, int32(2), executions.Load())
+}
+
+func TestBundleFlightsAreIsolatedByGenerationExecutionScope(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 16, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 2 << 20})
+	require.NoError(t, err)
+	defer pool.Close()
+	firstScope, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	secondScope, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	firstBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "bundle-generation-one"})
+	require.NoError(t, err)
+	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "bundle-generation-two"})
+	require.NoError(t, err)
+	first := newQueryResultCacheWithScopes(firstScope, firstBytes)
+	second := newQueryResultCacheWithScopes(secondScope, secondBytes)
+	defer first.close()
+	defer second.close()
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var executions atomic.Int32
+	execute := func(context.Context) (any, error) {
+		executions.Add(1)
+		started <- struct{}{}
+		<-release
+		return "bundle", nil
+	}
+	done := make(chan error, 2)
+	go func() { _, _, err := first.coalesce(context.Background(), "same-bundle", execute); done <- err }()
+	go func() { _, _, err := second.coalesce(context.Background(), "same-bundle", execute); done <- err }()
+	for range 2 {
+		select {
+		case <-started:
+		case <-time.After(2 * time.Second):
+			t.Fatal("different generation bundle flights shared one execution")
+		}
+	}
+	close(release)
+	require.NoError(t, <-done)
+	require.NoError(t, <-done)
+	require.Equal(t, int32(2), executions.Load())
 }
 
 func TestRuntimeInvalidDependencyEvidenceBypassesResultReuseAndRetainsCurrentPlanSQL(t *testing.T) {
@@ -956,7 +1183,7 @@ func TestQueryResultCacheLiveWaiterRetriesCanceledFlightAndCachesResult(t *testi
 		releaseCanceledFlight := make(chan struct{})
 		ownerContext, cancelOwner := context.WithCancel(context.Background())
 		go func() {
-			_, _, _ = cache.scope.Coalesce(ownerContext, fmt.Sprintf("query:%d:%s", generation, key), func() (any, error) {
+			_, _, _ = cache.execution.Coalesce(ownerContext, fmt.Sprintf("test-query:%d:%s", generation, key), func(context.Context) (any, error) {
 				close(flightStarted)
 				<-releaseCanceledFlight
 				return dataquery.Result{}, resultcache.OwnerCanceled(ownerContext.Err())
@@ -1314,13 +1541,13 @@ func TestQueryResultCacheCoalescesExactBundleFlightsAndRetriesCanceledOwner(t *t
 	}
 	ownerDone := make(chan error, 1)
 	go func() {
-		_, _, err := cache.coalesce(ownerCtx, "exact-bundle", func() (any, error) { return execute(ownerCtx) })
+		_, _, err := cache.coalesce(ownerCtx, "exact-bundle", func(executionCtx context.Context) (any, error) { return execute(executionCtx) })
 		ownerDone <- err
 	}()
 	<-started
 	waiterDone := make(chan error, 1)
 	go func() {
-		result, _, err := cache.coalesce(context.Background(), "exact-bundle", func() (any, error) { return execute(context.Background()) })
+		result, _, err := cache.coalesce(context.Background(), "exact-bundle", func(executionCtx context.Context) (any, error) { return execute(executionCtx) })
 		if err == nil && result != "fresh" {
 			err = fmt.Errorf("coalesced result = %v", result)
 		}

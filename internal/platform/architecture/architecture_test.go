@@ -233,6 +233,39 @@ func TestResultIdentityPackageIsAnAnalyticsContract(t *testing.T) {
 	}
 }
 
+func TestSourceDataIdentityPackageIsAnEngineIndependentAnalyticsContract(t *testing.T) {
+	const path = "internal/analytics/sourcedataidentity"
+	rule, ok := ClassifyPackage(path)
+	if !ok {
+		t.Fatalf("%s is not classified", path)
+	}
+	if rule.Capability != "analytics" || rule.Layer != LayerContract {
+		t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+	}
+	if !IsPublicContractImport("analytics", path) {
+		t.Fatalf("%s is not published as an analytics contract", path)
+	}
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != path {
+			continue
+		}
+		for _, imported := range file.imports {
+			for _, forbidden := range []string{
+				modulePath + "/internal/analytics/connectors",
+				modulePath + "/internal/analytics/materialize",
+				modulePath + "/internal/analytics/model",
+				modulePath + "/internal/analytics/resultcache",
+				modulePath + "/internal/deployment",
+				modulePath + "/internal/release",
+			} {
+				if imported == forbidden || strings.HasPrefix(imported, forbidden+"/") {
+					t.Errorf("%s imports forbidden implementation dependency %s", file.path, imported)
+				}
+			}
+		}
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2959,6 +2992,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			}
 		}
 	}
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesCI, want) {
+			t.Fatalf("PR Go package validation missing observability check %q", want)
+		}
+	}
 	for _, forbidden := range []string{
 		"push:",
 		"Build and qualify the production image remotely",
@@ -3000,6 +3041,24 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	if strings.Contains(mergeText, "group: merge-validation-${{ github.repository }}") {
 		t.Fatal("merge validation concurrency must not cancel distinct merge-queue candidates")
+	}
+	goPackagesMerge := workflowJobBlock(t, mergeText, "go-packages-validation")
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesMerge, want) {
+			t.Fatalf("merge-queue Go package validation missing observability check %q", want)
+		}
+	}
+	for _, want := range []string{
+		"observability:check:",
+		"task: observability:alerts:check",
+		"task: observability:sli:check",
+	} {
+		if !strings.Contains(string(taskfile), want) {
+			t.Fatalf("Taskfile missing aggregate observability check %q", want)
+		}
 	}
 	artifactText := string(artifactWorkflow)
 	for _, want := range []string{

@@ -15,18 +15,21 @@ import (
 )
 
 // queryResultCache retains the materialization-specific key contract while the
-// resultcache scope owns retention, hierarchy, invalidation, and coalescing.
+// stable result scope owns retention and invalidation, the byte scope owns
+// generation-bound immutable values, and the execution scope owns flights.
 type queryResultCache struct {
-	mu           sync.Mutex
-	pool         *resultcache.Pool
-	scope        *resultcache.Scope
-	byteScope    *resultcache.Scope
-	owned        bool
-	scopeOwned   bool
-	capacity     int
-	maxBytes     int64
-	currentBytes int64
-	generation   uint64
+	mu             sync.Mutex
+	pool           *resultcache.Pool
+	scope          *resultcache.Scope
+	byteScope      *resultcache.Scope
+	execution      *resultcache.ExecutionScope
+	owned          bool
+	scopeOwned     bool
+	executionOwned bool
+	capacity       int
+	maxBytes       int64
+	currentBytes   int64
+	generation     uint64
 }
 
 type arrowQueryExecution struct {
@@ -35,7 +38,7 @@ type arrowQueryExecution struct {
 	summary  dataquery.Result
 }
 
-func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, execute func() (arrowQueryExecution, error)) (dataquery.Result, error) {
+func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
 	key, generation, err := c.cacheKey(request, partition, dependency)
 	if err != nil {
 		return dataquery.Result{}, err
@@ -44,7 +47,7 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		return cached, err
 	}
 	var ownerSummary dataquery.Result
-	flight, status, err := c.scope.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", generation, key), func() (resultcache.ArrowFlightValue, error) {
+	flight, status, err := c.execution.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", generation, key), func(flightCtx context.Context) (resultcache.ArrowFlightValue, error) {
 		if entry, _, ok, lookupErr := c.scope.LookupArrow(key); lookupErr != nil {
 			return resultcache.ArrowFlightValue{}, lookupErr
 		} else if ok {
@@ -56,13 +59,13 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 			}
 			return resultcache.ArrowFlightValue{Data: base, Metadata: metadata, Cached: true}, nil
 		}
-		execution, executeErr := execute()
+		execution, executeErr := execute(flightCtx)
 		ownerSummary = execution.summary
 		if execution.data != nil {
 			defer execution.data.Release()
 		}
-		if ownerErr := ctx.Err(); ownerErr != nil {
-			return resultcache.ArrowFlightValue{}, canceledQueryCacheFlightError{err: ownerErr}
+		if ownerErr := flightCtx.Err(); ownerErr != nil {
+			return resultcache.ArrowFlightValue{}, ownerErr
 		}
 		if executeErr != nil {
 			return resultcache.ArrowFlightValue{}, executeErr
@@ -152,14 +155,18 @@ func newQueryResultCacheWithLimits(capacity int, maxBytes int64) *queryResultCac
 	if err != nil {
 		panic(err)
 	}
-	return &queryResultCache{pool: pool, scope: scope, byteScope: scope, owned: true, capacity: capacity, maxBytes: maxBytes}
+	return &queryResultCache{pool: pool, scope: scope, byteScope: scope, execution: resultcache.NewExecutionScope(), owned: true, executionOwned: true, capacity: capacity, maxBytes: maxBytes}
 }
 
 func newQueryResultCacheWithScopes(scope, byteScope *resultcache.Scope) *queryResultCache {
+	return newQueryResultCacheWithExecutionScope(scope, byteScope, resultcache.NewExecutionScope(), true)
+}
+
+func newQueryResultCacheWithExecutionScope(scope, byteScope *resultcache.Scope, execution *resultcache.ExecutionScope, executionOwned bool) *queryResultCache {
 	if byteScope == nil {
 		byteScope = scope
 	}
-	return &queryResultCache{scope: scope, byteScope: byteScope}
+	return &queryResultCache{scope: scope, byteScope: byteScope, execution: execution, executionOwned: executionOwned}
 }
 
 func (c *queryResultCache) ownScope() {
@@ -168,14 +175,8 @@ func (c *queryResultCache) ownScope() {
 	}
 }
 
-func (c *queryResultCache) coalesce(ctx context.Context, key string, execute func() (any, error)) (any, bool, error) {
-	return c.scope.Coalesce(ctx, "bundle:"+key, func() (any, error) {
-		result, err := execute()
-		if ownerErr := ctx.Err(); ownerErr != nil {
-			return nil, canceledQueryCacheFlightError{err: ownerErr}
-		}
-		return result, err
-	})
+func (c *queryResultCache) coalesce(ctx context.Context, key string, execute func(context.Context) (any, error)) (any, bool, error) {
+	return c.execution.Coalesce(ctx, "bundle:"+key, execute)
 }
 
 func (c *queryResultCache) lookupBytes(key string) ([]byte, bool, error) {
@@ -202,12 +203,12 @@ func (c *queryResultCache) storeBytes(key string, value []byte) resultcache.Stor
 	return outcome
 }
 
-func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execute func() error) (bool, error) {
+func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execute func(context.Context) error) (bool, error) {
 	if c == nil || c.byteScope == nil {
 		return false, fmt.Errorf("result cache scope is required")
 	}
-	_, shared, err := c.byteScope.Coalesce(ctx, "immutable-bytes:"+key, func() (any, error) {
-		return struct{}{}, execute()
+	_, shared, err := c.execution.Coalesce(ctx, "immutable-bytes:"+key, func(executionCtx context.Context) (any, error) {
+		return struct{}{}, execute(executionCtx)
 	})
 	return shared, err
 }
@@ -229,7 +230,11 @@ func (c *queryResultCache) cacheKey(request dataquery.Query, partition resultide
 	if err != nil {
 		return "", 0, err
 	}
-	key, err := resultcacheidentity.NewKey(resultcacheidentity.KeyInput{Partition: partition, Dependency: dependency, EffectivePolicyFingerprint: request.EffectivePolicyFingerprint, CanonicalQueryDigest: queryDigest})
+	key, err := resultcacheidentity.NewKey(resultcacheidentity.KeyInput{
+		Partition: partition, Dependency: dependency,
+		EffectivePolicyFingerprint: request.EffectivePolicyFingerprint,
+		CanonicalQueryDigest:       queryDigest,
+	})
 	if err != nil {
 		return "", 0, err
 	}
@@ -261,11 +266,6 @@ func queryCacheIdentityAvailable(request dataquery.Query, partition resultidenti
 	}
 }
 
-type canceledQueryCacheFlightError struct{ err error }
-
-func (e canceledQueryCacheFlightError) Error() string { return e.err.Error() }
-func (e canceledQueryCacheFlightError) Unwrap() error { return e.err }
-
 func (c *queryResultCache) clear() {
 	c.scope.Clear()
 	if c.byteScope != nil && c.byteScope != c.scope {
@@ -281,18 +281,21 @@ func (c *queryResultCache) close() error {
 	if c == nil {
 		return nil
 	}
+	var executionErr error
+	if c.executionOwned && c.execution != nil {
+		executionErr = c.execution.Close()
+	}
 	if c.scopeOwned {
 		var byteErr error
 		if c.byteScope != nil && c.byteScope != c.scope {
-			c.byteScope.Clear()
 			byteErr = c.byteScope.Close()
 		}
-		return errors.Join(c.scope.Close(), byteErr)
+		return errors.Join(executionErr, byteErr, c.scope.Close())
 	}
 	if !c.owned {
-		return nil
+		return executionErr
 	}
-	return errors.Join(c.scope.Close(), c.pool.Close())
+	return errors.Join(executionErr, c.scope.Close(), c.pool.Close())
 }
 
 func (c *queryResultCache) syncStats() {

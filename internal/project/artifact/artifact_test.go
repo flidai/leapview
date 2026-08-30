@@ -10,6 +10,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
+	"github.com/flidai/leapview/internal/analytics/sourcedataidentity"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
@@ -196,9 +197,12 @@ func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.
 	}
 
 	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
+	sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+	}, map[string]string{"connection:warehouse": "managed"})
 	projection, err := project.SemanticModelRelationEvidence(
 		semanticID,
-		map[string]string{"connection:warehouse": "revision-a"},
+		sourceEvidence,
 		map[string]string{"connection:warehouse": "managed"},
 	)
 	if err != nil {
@@ -207,8 +211,118 @@ func TestRelationExecutionDigestsForInputsReuseExactArtifactEvidence(t *testing.
 	if len(projection) != 1 || projection[0].Dataset != "orders" || projection[0].RelationID != "model:orders" || projection[0].ExecutionDigest == "" {
 		t.Fatalf("semantic relation projection = %#v", projection)
 	}
-	if _, err := project.SemanticModelRelationEvidence(semanticID, nil, map[string]string{"connection:warehouse": "managed"}); err == nil {
-		t.Fatal("SemanticModelRelationEvidence() accepted missing managed revision")
+	missing, err := project.SemanticModelRelationEvidence(semanticID, nil, map[string]string{"connection:warehouse": "managed"})
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("SemanticModelRelationEvidence() missing evidence = %#v, %v; want empty fail-closed projection", missing, err)
+	}
+}
+
+func TestLegacyRelationContextPreservesSourceDependenciesProjection(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	projectManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders_model"},
+	}
+	table := projectManifest.Models["model:orders"]
+	table.SourceDependencies = nil
+	projectManifest.Models["model:orders"] = table
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	contexts, err := project.RelationExecutionContexts(
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const legacyContext = `{"pins":[],"sources":{},"connections":{}}`
+	if got := contexts["model:orders"]; got != legacyContext {
+		t.Fatalf("legacy relation context = %s, want %s", got, legacyContext)
+	}
+	digests, err := project.RelationExecutionDigestsForInputs(
+		map[string]string{"connection:warehouse": "revision-a"},
+		map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantDigests, err := project.RelationExecutionDigestsByContext(map[string]string{"model:orders": legacyContext})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digests["model:orders"] != wantDigests["model:orders"] {
+		t.Fatal("legacy relation digest changed when only Execution.Source supplied lineage")
+	}
+
+	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
+	missing, err := project.SemanticModelRelationEvidence(
+		semanticID, nil, map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil || len(missing) != 0 {
+		t.Fatalf("result identity accepted missing direct-source evidence: %#v, %v", missing, err)
+	}
+	sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+	}, map[string]string{"connection:warehouse": "managed"})
+	available, err := project.SemanticModelRelationEvidence(
+		semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"},
+	)
+	if err != nil || len(available) != 1 {
+		t.Fatalf("result identity direct-source projection = %#v, %v; want one evidenced relation", available, err)
+	}
+}
+
+func TestResultIdentitySQLLineageRequiresValidatedCompleteEvidence(t *testing.T) {
+	graphValue, baseManifest := projectFixture(t)
+	baseManifest.SemanticModels["semantic:sales"].Datasets = map[string]semanticmodel.SemanticDatasetSpec{
+		"orders": {Model: "orders_model"},
+	}
+	semanticID, _ := projectgraph.NewResourceID("semantic:sales")
+
+	projectEvidence := func(t *testing.T, table semanticmodel.Table) []DatasetRelationEvidence {
+		t.Helper()
+		projectManifest := cloneRelationIdentityManifest(baseManifest)
+		projectManifest.Models["model:orders"] = table
+		project, err := NewProject(graphValue, projectManifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sourceEvidence := mustSourceDataIdentityEvidence(t, project, map[string]string{
+			"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+		}, map[string]string{"connection:warehouse": "managed"})
+		relations, err := project.SemanticModelRelationEvidence(
+			semanticID, sourceEvidence, map[string]string{"connection:warehouse": "managed"},
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return relations
+	}
+
+	table := baseManifest.Models["model:orders"]
+	table.Execution = semanticmodel.ExecutionDefinition{SQL: "SELECT * FROM orders"}
+	table.SourceDependencies = nil
+	table.SQLAnalysisEvidence = nil
+	if got := projectEvidence(t, table); len(got) != 0 {
+		t.Fatalf("SQL model with missing lineage produced relation evidence: %#v", got)
+	}
+
+	table.SourceDependencies = []string{"source:orders"}
+	table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: false, SourceRefs: []string{"orders"}}
+	if got := projectEvidence(t, table); len(got) != 0 {
+		t.Fatalf("SQL model with unvalidated lineage produced relation evidence: %#v", got)
+	}
+
+	table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true}
+	if got := projectEvidence(t, table); len(got) != 0 {
+		t.Fatalf("SQL model with empty validated lineage produced relation evidence: %#v", got)
+	}
+
+	table.SQLAnalysisEvidence = &semanticmodel.SQLAnalysisEvidence{Validated: true, SourceRefs: []string{"orders"}}
+	if got := projectEvidence(t, table); len(got) != 1 {
+		t.Fatalf("SQL model with complete managed lineage = %#v, want one relation", got)
 	}
 }
 
@@ -238,7 +352,9 @@ func TestResultIdentityRelationEvidenceIgnoresPresentationAndRotatesOnExecution(
 		}
 		evidence, err := project.SemanticModelRelationEvidence(
 			semanticID,
-			map[string]string{"connection:warehouse": "revision-a"},
+			mustSourceDataIdentityEvidence(t, project, map[string]string{
+				"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+			}, map[string]string{"connection:warehouse": "managed"}),
 			map[string]string{"connection:warehouse": "managed"},
 		)
 		if err != nil || len(evidence) != 1 {
@@ -356,6 +472,87 @@ func TestConnectionActivationCarriesCanonicalAccessPolicy(t *testing.T) {
 	if activations[0].Access == omittedActivations[0].Access {
 		t.Fatal("public and omitted activation access collapsed")
 	}
+}
+
+func TestSourceDataIdentityEvidenceAdaptsOnlyManagedContentRevisions(t *testing.T) {
+	graphValue, projectManifest := projectFixture(t)
+	project, err := NewProject(graphValue, projectManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := mustSourceDataIdentityEvidence(t, project, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("a", 64),
+	}, map[string]string{"connection:warehouse": "managed"})
+	evidence := first["source:orders"]
+	if !evidence.Available() || evidence.SourceID() != "source:orders" {
+		t.Fatalf("managed source evidence = %#v, want available source:orders", evidence)
+	}
+	second := mustSourceDataIdentityEvidence(t, project, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("b", 64),
+	}, map[string]string{"connection:warehouse": "managed"})
+	if second["source:orders"].EquivalenceDigest() == evidence.EquivalenceDigest() {
+		t.Fatal("managed manifest revision did not rotate source-data identity")
+	}
+	if got := mustSourceDataIdentityEvidence(t, project, nil, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
+		t.Fatalf("missing managed revision produced fallback evidence: %#v", got)
+	}
+	if got := mustSourceDataIdentityEvidence(t, project, map[string]string{"connection:warehouse": "revision-a"}, map[string]string{"connection:warehouse": "managed"}); len(got) != 0 {
+		t.Fatalf("malformed managed revision produced fallback evidence: %#v", got)
+	}
+	if got := mustSourceDataIdentityEvidence(t, project, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("c", 64),
+	}, map[string]string{"connection:warehouse": "sqlite"}); len(got) != 0 {
+		t.Fatalf("connector binding mismatch produced source evidence: %#v", got)
+	}
+
+	externalManifest := project.Manifest()
+	externalManifest.Connections["connection:warehouse"] = semanticmodel.Connection{Kind: "http"}
+	pathLocation := &projectcontracts.PathSourceLocation{Value: &projectcontracts.CSVPathSourceLocation{
+		PathSourceLocationBase: projectcontracts.PathSourceLocationBase{
+			Type: "path", Path: "https://example.test/orders.csv", Format: "csv",
+		},
+		Format: "csv",
+	}}
+	source := externalManifest.Sources["source:orders"]
+	source.Path = "https://example.test/orders.csv"
+	source.Format = "csv"
+	source.PathLocation = pathLocation
+	source.EffectivePathLocation = pathLocation
+	externalManifest.Sources["source:orders"] = source
+	external, err := NewProject(graphValue, externalManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := mustSourceDataIdentityEvidence(t, external, map[string]string{
+		"connection:warehouse": "sha256:" + strings.Repeat("c", 64),
+	}, map[string]string{"connection:warehouse": "http"}); len(got) != 0 {
+		t.Fatalf("unsupported external connector accepted digest-shaped fallback evidence: %#v", got)
+	}
+}
+
+func TestSourceDataIdentityAliasCapacityRejectsOverflow(t *testing.T) {
+	t.Parallel()
+
+	if got, err := sourceDataIdentityAliasCapacity(3); err != nil || got != 6 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(3) = %d, %v; want 6, nil", got, err)
+	}
+	maximumInt := int(^uint(0) >> 1)
+	maximumSafe := maximumInt / 2
+	if got, err := sourceDataIdentityAliasCapacity(maximumSafe); err != nil || got != maximumSafe*2 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(maximumSafe) = %d, %v; want %d, nil", got, err, maximumSafe*2)
+	}
+	if got, err := sourceDataIdentityAliasCapacity(maximumSafe + 1); err == nil || got != 0 {
+		t.Fatalf("sourceDataIdentityAliasCapacity(overflow) = %d, %v; want 0, error", got, err)
+	}
+}
+
+func mustSourceDataIdentityEvidence(t *testing.T, project Project, revisions, bindingKinds map[string]string) map[projectgraph.ResourceID]sourcedataidentity.Evidence {
+	t.Helper()
+	evidence, err := project.SourceDataIdentityEvidence(revisions, bindingKinds)
+	if err != nil {
+		t.Fatalf("SourceDataIdentityEvidence() error = %v", err)
+	}
+	return evidence
 }
 
 func TestProjectArtifactRoundTripPreservesLoweredSemanticModelBinding(t *testing.T) {

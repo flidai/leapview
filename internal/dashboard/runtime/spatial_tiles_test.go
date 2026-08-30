@@ -191,8 +191,8 @@ func (cache *memoryImmutableByteCache) StoreImmutableBytes(key string, value []b
 	return true
 }
 
-func (cache *memoryImmutableByteCache) CoalesceImmutableBytes(_ context.Context, _ string, execute func() error) (bool, error) {
-	return false, execute()
+func (cache *memoryImmutableByteCache) CoalesceImmutableBytes(ctx context.Context, _ string, execute func(context.Context) error) (bool, error) {
+	return false, execute(ctx)
 }
 
 func TestSpatialChildTileByteCacheRoundTripsEmptyAndRawTiles(t *testing.T) {

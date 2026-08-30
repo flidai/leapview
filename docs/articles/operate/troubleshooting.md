@@ -67,6 +67,18 @@ leapview admin storage cleanup
 
 Review protected serving states and query leases, then use `--apply` only under the approved maintenance procedure. Do not delete catalog rows or Parquet objects manually.
 
+## Recovery qualification freshness alerts fire
+
+Inspect the bounded ledger projection with the service stopped or from the same controlled maintenance environment used for other offline Admin commands:
+
+```sh
+leapview admin recovery status
+```
+
+For a ledger scrape failure, check the application logs for ledger read errors or the two-second collection timeout and confirm the protected metrics endpoint still scrapes successfully. For an overdue qualification, distinguish a schedule occurrence that was not materialized from pending work or an expired execution lease; the configured staleness policy has already elapsed. For failed evidence publication, check the private evidence destination, service-account access, capacity, and retry worker without printing credentials, signed URLs, evidence content, or failure payloads.
+
+Correct the underlying scheduler, worker, ledger, or publication dependency and let normal reconciliation or persisted publication backoff recover the current state. Do not delete ledger rows or rerun a destructive recovery scenario merely to clear an alert. Preserve occurrence and evidence identities in the restricted incident record, then confirm `leapview_recovery_qualification_scrape_error`, `leapview_recovery_qualification_overdue`, or `leapview_recovery_qualification_evidence{state="failed"}` returns to zero and the alert resolves on the next rule evaluation.
+
 ## Gather a useful incident record
 
 Record impact, start time, last known good deployment/image/revision, failing identities, relevant metrics and logs, attempted actions, and whether active state changed. Redact secrets but keep stable digests and IDs.

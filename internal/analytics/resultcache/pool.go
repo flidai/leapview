@@ -1,24 +1,24 @@
-// Package resultcache owns node-wide retention and coalescing for governed
-// analytical query results.
+// Package resultcache owns node-wide retained analytical results and
+// generation-scoped execution coalescing through separate lifetimes.
 package resultcache
 
 import (
 	"container/list"
-	"context"
-	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
 
 	"github.com/flidai/leapview/pkg/arrowresult"
-	"golang.org/x/sync/singleflight"
 )
 
 type Constraint string
 
 const (
 	ConstraintPartition Constraint = "partition"
-	ConstraintNode      Constraint = "node"
+	// ConstraintRuntime is retained as a compatibility alias for the former
+	// per-runtime budget name.
+	ConstraintRuntime Constraint = ConstraintPartition
+	ConstraintNode    Constraint = "node"
 )
 
 type StoreOutcome string
@@ -35,25 +35,34 @@ type Limits struct {
 	PartitionBytes   int64
 	NodeEntries      int
 	NodeBytes        int64
+	// RuntimeEntries/RuntimeBytes are compatibility aliases for the former
+	// per-runtime limits. New callers should use PartitionEntries/Bytes.
+	RuntimeEntries int
+	RuntimeBytes   int64
 }
 
 func (l Limits) Validate() error {
-	if l.PartitionEntries <= 0 || l.NodeEntries <= 0 || l.PartitionBytes <= 0 || l.NodeBytes <= 0 {
+	partitionEntries, partitionBytes := l.PartitionEntries, l.PartitionBytes
+	if partitionEntries == 0 {
+		partitionEntries = l.RuntimeEntries
+	}
+	if partitionBytes == 0 {
+		partitionBytes = l.RuntimeBytes
+	}
+	if partitionEntries <= 0 || l.NodeEntries <= 0 || partitionBytes <= 0 || l.NodeBytes <= 0 {
 		return fmt.Errorf("query cache limits must be positive")
 	}
-	if l.PartitionEntries > l.NodeEntries {
+	if partitionEntries > l.NodeEntries {
 		return fmt.Errorf("query cache entry limits must satisfy partition <= node")
 	}
-	if l.PartitionBytes > l.NodeBytes {
+	if partitionBytes > l.NodeBytes {
 		return fmt.Errorf("query cache byte limits must satisfy partition <= node")
 	}
 	return nil
 }
 
 type ScopeID struct {
-	RuntimeID string
-	// PartitionID identifies the stable production or isolated candidate
-	// namespace. It is required for every scope.
+	RuntimeID   string
 	PartitionID string
 }
 type Token uint64
@@ -64,18 +73,16 @@ type ScopeProvider interface {
 }
 
 type Pool struct {
-	mu           sync.Mutex
-	limits       Limits
-	closed       bool
-	entries      map[string]*list.Element
-	lru          *list.List
-	scopes       map[string]*scopeState
-	partitions   map[string]*usage
-	bytes        int64
-	evictions    map[Constraint]uint64
-	stores       map[StoreOutcome]uint64
-	group        singleflight.Group
-	arrowFlights map[string]*arrowFlight
+	mu         sync.Mutex
+	limits     Limits
+	closed     bool
+	entries    map[string]*list.Element
+	lru        *list.List
+	scopes     map[string]*scopeState
+	partitions map[string]*usage
+	bytes      int64
+	evictions  map[Constraint]uint64
+	stores     map[StoreOutcome]uint64
 }
 
 type Scope struct {
@@ -87,6 +94,8 @@ type scopeState struct {
 	id         ScopeID
 	generation Token
 	closed     bool
+	shared     bool
+	references int
 	entries    map[string]struct{}
 }
 type usage struct {
@@ -163,15 +172,6 @@ func (l *ArrowFlightLease) Release() {
 	l.data = nil
 }
 
-type arrowFlight struct {
-	done     chan struct{}
-	waiters  int
-	shared   bool
-	complete bool
-	value    ArrowFlightValue
-	err      error
-}
-
 func (l *EntryLease) Data() *arrowresult.Lease {
 	if l == nil {
 		return nil
@@ -233,7 +233,13 @@ func New(limits Limits) (*Pool, error) {
 	if err := limits.Validate(); err != nil {
 		return nil, err
 	}
-	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, partitions: map[string]*usage{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}, arrowFlights: map[string]*arrowFlight{}}, nil
+	if limits.PartitionEntries == 0 {
+		limits.PartitionEntries = limits.RuntimeEntries
+	}
+	if limits.PartitionBytes == 0 {
+		limits.PartitionBytes = limits.RuntimeBytes
+	}
+	return &Pool{limits: limits, entries: map[string]*list.Element{}, lru: list.New(), scopes: map[string]*scopeState{}, partitions: map[string]*usage{}, evictions: map[Constraint]uint64{}, stores: map[StoreOutcome]uint64{}}, nil
 }
 
 func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
@@ -244,7 +250,9 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 		return nil, fmt.Errorf("result cache runtime ID is required")
 	}
 	if id.PartitionID == "" {
-		return nil, fmt.Errorf("result cache partition ID is required")
+		// Compatibility with pre-partition callers. New serving code supplies an
+		// explicit stable partition identity.
+		id.PartitionID = id.RuntimeID
 	}
 	key := id.RuntimeID
 	p.mu.Lock()
@@ -255,7 +263,37 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	if existing := p.scopes[key]; existing != nil && !existing.closed {
 		return nil, fmt.Errorf("result cache scope already exists")
 	}
-	p.scopes[key] = &scopeState{id: id, entries: map[string]struct{}{}}
+	p.scopes[key] = &scopeState{id: id, references: 1, entries: map[string]struct{}{}}
+	return &Scope{pool: p, key: key}, nil
+}
+
+// OpenSharedScope acquires one handle to a stable cache partition. It is kept
+// for compatibility with callers that explicitly share one partition scope;
+// generation runtimes should use OpenScope with distinct RuntimeID values.
+func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
+	if p == nil {
+		return nil, fmt.Errorf("result cache pool is required")
+	}
+	if id.RuntimeID == "" {
+		return nil, fmt.Errorf("result cache runtime ID is required")
+	}
+	if id.PartitionID == "" {
+		id.PartitionID = id.RuntimeID
+	}
+	key := id.RuntimeID
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.closed {
+		return nil, fmt.Errorf("result cache pool is closed")
+	}
+	if existing := p.scopes[key]; existing != nil && !existing.closed {
+		if !existing.shared {
+			return nil, fmt.Errorf("result cache scope already exists")
+		}
+		existing.references++
+		return &Scope{pool: p, key: key}, nil
+	}
+	p.scopes[key] = &scopeState{id: id, shared: true, references: 1, entries: map[string]struct{}{}}
 	return &Scope{pool: p, key: key}, nil
 }
 
@@ -270,18 +308,6 @@ func (s *Scope) openStateLocked() *scopeState {
 	return state
 }
 
-func (s *Scope) requireOpen() error {
-	if s == nil || s.pool == nil {
-		return fmt.Errorf("result cache scope is required")
-	}
-	s.pool.mu.Lock()
-	defer s.pool.mu.Unlock()
-	if s.openStateLocked() == nil {
-		return fmt.Errorf("result cache scope is closed")
-	}
-	return nil
-}
-
 func (s *Scope) Generation() Token {
 	if s == nil || s.pool == nil {
 		return 0
@@ -292,10 +318,6 @@ func (s *Scope) Generation() Token {
 		return state.generation
 	}
 	return 0
-}
-
-func (s *Scope) flightKey(key string) string {
-	return s.key + "\x00" + key
 }
 
 func entryCompositeLocked(state *scopeState, key string) string {
@@ -527,7 +549,7 @@ func (p *Pool) partitionUsageLocked(partition string) *usage {
 }
 
 // Fence advances this scope's write generation without evicting stable
-// partition entries. Use Clear for an explicit partition-wide eviction.
+// partition entries. A subsequent store using the prior token is rejected.
 func (s *Scope) Fence() {
 	if s == nil || s.pool == nil {
 		return
@@ -543,9 +565,7 @@ func (s *Scope) Fence() {
 }
 
 // Clear explicitly removes every retained entry in this stable partition and
-// advances its generation. Fence and Close intentionally leave compatible
-// entries available to another runtime scope; Clear is the destructive cache
-// operation used by an explicit operator/request action.
+// advances its generation.
 func (s *Scope) Clear() {
 	if s == nil || s.pool == nil {
 		return
@@ -568,6 +588,9 @@ func (s *Scope) Clear() {
 	state.generation++
 }
 
+// Invalidate is the destructive legacy spelling of Clear.
+func (s *Scope) Invalidate() { s.Clear() }
+
 func (s *Scope) Close() error {
 	if s == nil || s.pool == nil {
 		return nil
@@ -582,144 +605,24 @@ func (s *Scope) Close() error {
 	if state == nil || state.closed {
 		return nil
 	}
+	if state.shared && state.references > 1 {
+		state.references--
+		return nil
+	}
+	if state.shared {
+		partition := state.id.PartitionID
+		for element := p.lru.Back(); element != nil; {
+			previous := element.Prev()
+			if element.Value.(entry).partition == partition {
+				p.removeLocked(element, "")
+			}
+			element = previous
+		}
+	}
 	state.closed = true
 	state.generation++
 	delete(p.scopes, s.key)
 	return nil
-}
-
-type canceledFlight struct{ err error }
-
-func (e canceledFlight) Error() string { return e.err.Error() }
-func (e canceledFlight) Unwrap() error { return e.err }
-
-// OwnerCanceled marks a coalesced execution whose owning context was canceled,
-// allowing a still-live waiter to replace that flight.
-func OwnerCanceled(err error) error { return canceledFlight{err: err} }
-
-func (s *Scope) Coalesce(ctx context.Context, key string, execute func() (any, error)) (any, bool, error) {
-	if err := s.requireOpen(); err != nil {
-		return nil, false, err
-	}
-	flightKey := s.flightKey(key)
-	for {
-		ch := s.pool.group.DoChan(flightKey, func() (any, error) {
-			value, err := execute()
-			if ownerErr := ctx.Err(); ownerErr != nil {
-				return nil, canceledFlight{ownerErr}
-			}
-			return value, err
-		})
-		select {
-		case <-ctx.Done():
-			return nil, false, ctx.Err()
-		case call := <-ch:
-			if call.Err != nil {
-				var canceled canceledFlight
-				if ctx.Err() == nil && errors.As(call.Err, &canceled) {
-					continue
-				}
-				return nil, call.Shared, call.Err
-			}
-			return call.Val, call.Shared, nil
-		}
-	}
-}
-
-// CoalesceArrow runs one Arrow-producing execution and gives every live caller
-// an independently retained lease. Canceled callers are removed without
-// releasing buffers still needed by other waiters. If the owning execution was
-// canceled, a live waiter starts a replacement flight.
-func (s *Scope) CoalesceArrow(ctx context.Context, key string, execute func() (ArrowFlightValue, error)) (*ArrowFlightLease, ArrowFlightStatus, error) {
-	if err := s.requireOpen(); err != nil {
-		return nil, ArrowFlightStatus{}, err
-	}
-	flightKey := s.flightKey(key)
-	for {
-		flight, owner := s.joinArrowFlight(flightKey, ctx, execute)
-		select {
-		case <-ctx.Done():
-			s.leaveArrowFlight(flight)
-			return nil, ArrowFlightStatus{}, ctx.Err()
-		case <-flight.done:
-		}
-
-		s.pool.mu.Lock()
-		flightErr := flight.err
-		shared := flight.shared
-		value := flight.value
-		s.pool.mu.Unlock()
-		if flightErr != nil {
-			s.leaveArrowFlight(flight)
-			var canceled canceledFlight
-			if ctx.Err() == nil && errors.As(flightErr, &canceled) {
-				continue
-			}
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, flightErr
-		}
-		if value.Data == nil {
-			s.leaveArrowFlight(flight)
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, fmt.Errorf("coalesced Arrow execution returned no data")
-		}
-		lease, err := value.Data.Acquire()
-		s.leaveArrowFlight(flight)
-		if err != nil {
-			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, err
-		}
-		return &ArrowFlightLease{data: lease, metadata: cloneMetadata(value.Metadata), cached: value.Cached}, ArrowFlightStatus{Owner: owner, Shared: shared}, nil
-	}
-}
-
-func (s *Scope) joinArrowFlight(key string, ctx context.Context, execute func() (ArrowFlightValue, error)) (*arrowFlight, bool) {
-	p := s.pool
-	p.mu.Lock()
-	if existing := p.arrowFlights[key]; existing != nil {
-		existing.waiters++
-		existing.shared = true
-		p.mu.Unlock()
-		return existing, false
-	}
-	flight := &arrowFlight{done: make(chan struct{}), waiters: 1}
-	p.arrowFlights[key] = flight
-	p.mu.Unlock()
-	go func() {
-		value, err := execute()
-		if ownerErr := ctx.Err(); ownerErr != nil {
-			err = canceledFlight{ownerErr}
-		}
-		p.mu.Lock()
-		flight.value, flight.err, flight.complete = value, err, true
-		delete(p.arrowFlights, key)
-		close(flight.done)
-		release := flight.waiters == 0 && flight.value.Data != nil
-		if release {
-			flight.value.Data = nil
-		}
-		p.mu.Unlock()
-		if release {
-			value.Data.Release()
-		}
-	}()
-	return flight, true
-}
-
-func (s *Scope) leaveArrowFlight(flight *arrowFlight) {
-	if flight == nil {
-		return
-	}
-	p := s.pool
-	p.mu.Lock()
-	flight.waiters--
-	release := flight.waiters == 0 && flight.complete && flight.value.Data != nil
-	var data *arrowresult.Lease
-	if release {
-		data = flight.value.Data
-		flight.value.Data = nil
-	}
-	p.mu.Unlock()
-	if data != nil {
-		data.Release()
-	}
 }
 
 func (p *Pool) Stats() Snapshot {
@@ -732,11 +635,11 @@ func (p *Pool) Stats() Snapshot {
 	for key, state := range p.scopes {
 		usage := p.partitions[state.id.PartitionID]
 		var entries int
-		var byteCount int64
+		var bytes int64
 		if usage != nil {
-			entries, byteCount = usage.entries, usage.bytes
+			entries, bytes = usage.entries, usage.bytes
 		}
-		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: entries, Bytes: byteCount, Generation: state.generation}
+		result.Scopes[key] = ScopeSnapshot{ScopeID: state.id, Entries: entries, Bytes: bytes, Generation: state.generation}
 	}
 	for key, value := range p.evictions {
 		result.Evictions[key] = value

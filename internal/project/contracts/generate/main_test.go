@@ -28,8 +28,8 @@ func TestDerivePathFormatOptionsRejectsUnpairedReaderModel(t *testing.T) {
 			"csv":  {Schema: schemaRef{Ref: "CSVReaderOptions"}},
 			"json": {Schema: schemaRef{Ref: "JSONReaderOptions"}},
 		}},
-		"CSVReaderOptions":  {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"csv","scanKind":"table_function","defaults":{}}`)}},
-		"JSONReaderOptions": {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"json","scanKind":"table_function","defaults":{}}`)}},
+		"CSVReaderOptions":  {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"csv","scanKind":"table_function","sourceDataIdentityCapability":"unavailable","defaults":{}}`)}},
+		"JSONReaderOptions": {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"json","scanKind":"table_function","sourceDataIdentityCapability":"unavailable","defaults":{}}`)}},
 	}}
 	if _, err := derivePathFormatOptions(doc); err == nil {
 		t.Fatal("unpaired ReaderDefaults json model was accepted")
@@ -45,14 +45,14 @@ func TestDerivePathFormatOptionsPreservesIROrderAndReferences(t *testing.T) {
 			"csv":  {Schema: schemaRef{Ref: "CSVReaderOptions"}},
 			"json": {Schema: schemaRef{Ref: "JSONReaderOptions"}},
 		}},
-		"CSVReaderOptions":  {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"csv","scanKind":"table_function","defaults":{}}`)}},
-		"JSONReaderOptions": {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"json","scanKind":"table_function","defaults":{}}`)}},
+		"CSVReaderOptions":  {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"csv","scanKind":"table_function","sourceDataIdentityCapability":"unavailable","defaults":{}}`)}},
+		"JSONReaderOptions": {Extensions: map[string]json.RawMessage{"x-leapview-format": json.RawMessage(`{"name":"json","scanKind":"table_function","sourceDataIdentityCapability":"unavailable","defaults":{}}`)}},
 	}}
 	pairs, err := derivePathFormatOptions(doc)
 	if err != nil {
 		t.Fatalf("derive path format options: %v", err)
 	}
-	if len(pairs) != 2 || pairs[0].Format != "json" || pairs[0].Model != "JSONReaderOptions" || pairs[1].Format != "csv" || pairs[1].Model != "CSVReaderOptions" || !reflect.DeepEqual(pairs[0].Defaults, map[string]any{}) || !reflect.DeepEqual(pairs[1].Defaults, map[string]any{}) {
+	if len(pairs) != 2 || pairs[0].Format != "json" || pairs[0].Model != "JSONReaderOptions" || pairs[1].Format != "csv" || pairs[1].Model != "CSVReaderOptions" || pairs[0].SourceDataIdentityCapability != "unavailable" || pairs[1].SourceDataIdentityCapability != "unavailable" || !reflect.DeepEqual(pairs[0].Defaults, map[string]any{}) || !reflect.DeepEqual(pairs[1].Defaults, map[string]any{}) {
 		t.Fatalf("pairs = %#v, want IR order and refs", pairs)
 	}
 }

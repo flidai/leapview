@@ -2,11 +2,14 @@ package duckdb
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	materialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/resultcache"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -49,5 +52,62 @@ func TestProjectRuntimeRejectsEmptyOrMismatchedProjectQueries(t *testing.T) {
 		if _, err := runtime.ExecuteDataQueryBundle(context.Background(), []dataquery.BundleRequest{{ID: "invalid", Query: query}}); err == nil || !strings.Contains(err.Error(), "project id") {
 			t.Fatalf("bundle query %#v error = %v, want project identity rejection", query, err)
 		}
+	}
+}
+
+func TestProjectRuntimeCloseDrainsExecutionBeforeCacheScopes(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{RuntimeEntries: 4, RuntimeBytes: 1 << 20, NodeEntries: 8, NodeBytes: 2 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	stable, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "generation-one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execution := resultcache.NewExecutionScope()
+	runtime := &ProjectRuntime{
+		views: map[string]*materialize.Runtime{}, executionScope: execution,
+		queryResultCacheScope: stable, immutableByteCacheScope: bytes,
+	}
+	started := make(chan struct{})
+	scopeCheck := make(chan error, 1)
+	flightDone := make(chan error, 1)
+	go func() {
+		_, _, flightErr := execution.Coalesce(context.Background(), "query", func(ctx context.Context) (any, error) {
+			close(started)
+			<-ctx.Done()
+			if _, _, _, lookupErr := stable.LookupArrow("missing"); lookupErr != nil {
+				scopeCheck <- lookupErr
+				return nil, ctx.Err()
+			}
+			if _, _, _, lookupErr := bytes.LookupBytes("missing"); lookupErr != nil {
+				scopeCheck <- lookupErr
+				return nil, ctx.Err()
+			}
+			scopeCheck <- nil
+			return nil, ctx.Err()
+		})
+		flightDone <- flightErr
+	}()
+	<-started
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-scopeCheck; err != nil {
+		t.Fatalf("cache scope closed before execution drained: %v", err)
+	}
+	if err := <-flightDone; !errors.Is(err, resultcache.ErrExecutionScopeClosed) {
+		t.Fatalf("flight error = %v, want execution scope close", err)
+	}
+	if _, _, _, err := stable.LookupArrow("missing"); err == nil {
+		t.Fatal("stable cache handle remained open after project runtime close")
+	}
+	if _, _, _, err := bytes.LookupBytes("missing"); err == nil {
+		t.Fatal("generation byte cache remained open after project runtime close")
 	}
 }

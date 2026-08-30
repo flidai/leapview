@@ -84,6 +84,10 @@ func buildDependencyEvidence(
 	if err != nil {
 		return nil, err
 	}
+	sourceDataEvidence, err := artifact.SourceDataIdentityEvidence(revisions, activation.BindingKinds)
+	if err != nil {
+		return nil, fmt.Errorf("source data identity evidence: %w", err)
+	}
 	result := make(map[string]resultidentity.Evidence, len(compiled.Manifest.SemanticModels))
 	for id, model := range compiled.Manifest.SemanticModels {
 		semanticID, err := projectgraph.NewResourceID(id)
@@ -94,9 +98,12 @@ func buildDependencyEvidence(
 		if err != nil {
 			return nil, fmt.Errorf("semantic model %q dependency digest: %w", id, err)
 		}
-		relations, err := artifact.SemanticModelRelationEvidence(semanticID, revisions, activation.BindingKinds)
+		relations, err := artifact.SemanticModelRelationEvidence(semanticID, sourceDataEvidence, activation.BindingKinds)
 		if err != nil {
 			return nil, err
+		}
+		if len(relations) == 0 {
+			continue
 		}
 		datasetRelations := make([]resultidentity.DatasetRelation, len(relations))
 		for index, relation := range relations {
