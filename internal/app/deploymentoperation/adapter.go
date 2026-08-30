@@ -7,10 +7,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
+	"time"
 
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 )
 
@@ -20,6 +23,7 @@ type Adapter struct {
 }
 
 var _ deploymentmodule.NativeOperationAuthority = (*Adapter)(nil)
+var _ deploymentmodule.NativeBuildOperationAuthority = (*Adapter)(nil)
 
 // Lookup performs a non-locking exact-idempotency read. Native planners use
 // it only to bypass remote source inspection for an already-terminal replay;
@@ -38,11 +42,11 @@ func (a *Adapter) Lookup(ctx context.Context, input deploymentmodule.NativeOpera
 	if stored.Scope != input.Scope || stored.OperationType != input.OperationType || stored.IdempotencyKey != input.IdempotencyKey || stored.RequestDigest != input.RequestDigest {
 		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: operation identity differs", deploymentmodule.ErrNativeOperationConflict)
 	}
-	return deploymentmodule.NativeOperationRecord{
-		Scope: stored.Scope, OperationType: stored.OperationType, IdempotencyKey: stored.IdempotencyKey,
-		RequestDigest: stored.RequestDigest, OwnerID: stored.OwnerID, OperationID: stored.OperationID,
-		Outcome: append(json.RawMessage(nil), stored.Outcome...),
-	}, true, nil
+	record, err := projectOperationRecord(stored)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, false, err
+	}
+	return record, true, nil
 }
 
 // New returns an adapter backed by the supplied operation authority.
@@ -74,21 +78,161 @@ func (a *Adapter) AcquireTx(ctx context.Context, tx deploymentmodule.NativeOpera
 	if err := validateAcquireResult(result, status, input); err != nil {
 		return deploymentmodule.NativeOperationAcquireResult{}, err
 	}
-	return deploymentmodule.NativeOperationAcquireResult{
-		Status: status,
-		Operation: deploymentmodule.NativeOperationRecord{
-			Scope: result.Operation.Scope, OperationType: result.Operation.OperationType,
-			IdempotencyKey: result.Operation.IdempotencyKey, RequestDigest: result.Operation.RequestDigest,
-			OwnerID: result.Operation.OwnerID, OperationID: result.Operation.OperationID,
-			Outcome: append(json.RawMessage(nil), result.Operation.Outcome...),
-		},
-		Lease: deploymentmodule.NativeOperationLease{
-			Scope: result.Lease.Scope, IdempotencyKey: result.Lease.IdempotencyKey,
-			OperationID: result.Lease.OperationID, OwnerID: result.Lease.OwnerID,
-			FencingGeneration: result.Lease.FencingGeneration, LeaseExpiresAt: result.Lease.LeaseExpiresAt,
-			AttemptID: result.Lease.AttemptID, AttemptIdentity: result.Lease.AttemptIdentity,
-		},
+	record, err := projectOperationRecord(result.Operation)
+	if err != nil {
+		return deploymentmodule.NativeOperationAcquireResult{}, err
+	}
+	var lease deploymentmodule.NativeOperationLease
+	if status == deploymentmodule.NativeOperationAcquired {
+		lease, err = projectLease(result.Lease)
+		if err != nil {
+			return deploymentmodule.NativeOperationAcquireResult{}, err
+		}
+	}
+	return deploymentmodule.NativeOperationAcquireResult{Status: status, Operation: record, Lease: lease}, nil
+}
+
+func projectOperationRecord(stored operationpostgres.Operation) (deploymentmodule.NativeOperationRecord, error) {
+	state, err := mapState(stored.State)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, err
+	}
+	if err := validateUUIDv7(stored.OperationID, "operation id"); err != nil {
+		return deploymentmodule.NativeOperationRecord{}, err
+	}
+	if stored.Scope == "" || stored.Scope != strings.TrimSpace(stored.Scope) || stored.OperationType == "" || stored.OperationType != strings.TrimSpace(stored.OperationType) || stored.IdempotencyKey == "" || stored.IdempotencyKey != strings.TrimSpace(stored.IdempotencyKey) || stored.RequestDigest == "" || stored.RequestDigest != strings.TrimSpace(stored.RequestDigest) || stored.OwnerID == "" || stored.OwnerID != strings.TrimSpace(stored.OwnerID) || stored.FencingGeneration <= 0 || stored.LeaseExpiresAt.IsZero() {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned incomplete operation identity", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if (stored.AttemptID == "") != (stored.AttemptIdentity == "") {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned an incomplete attempt identity", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if stored.AttemptID != "" {
+		if err := validateUUIDv7(stored.AttemptID, "attempt id"); err != nil {
+			return deploymentmodule.NativeOperationRecord{}, err
+		}
+		if stored.AttemptIdentity != strings.TrimSpace(stored.AttemptIdentity) || len(stored.AttemptIdentity) > 512 {
+			return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned an invalid attempt identity", deploymentmodule.ErrNativeOperationInvalid)
+		}
+	}
+	outcome, err := canonicalObjectJSON(stored.Outcome, state != deploymentmodule.NativeOperationStatePending)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned invalid outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	var attemptEvidence, resolutionEvidence []byte
+	if len(stored.AttemptEvidence) > 0 {
+		attemptEvidence, err = canonicalObjectJSON(stored.AttemptEvidence, state == deploymentmodule.NativeOperationStateIndeterminate)
+		if err != nil {
+			return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned invalid attempt evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+		}
+	}
+	if len(stored.ResolutionEvidence) > 0 {
+		resolutionEvidence, err = canonicalObjectJSON(stored.ResolutionEvidence, false)
+		if err != nil {
+			return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned invalid resolution evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+		}
+	}
+	if state == deploymentmodule.NativeOperationStateIndeterminate && (stored.AttemptID == "" || len(attemptEvidence) == 0) {
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: indeterminate operation is missing attempt identity or evidence", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	return deploymentmodule.NativeOperationRecord{
+		Scope: stored.Scope, OperationType: stored.OperationType, IdempotencyKey: stored.IdempotencyKey,
+		RequestDigest: stored.RequestDigest, OwnerID: stored.OwnerID, OperationID: stored.OperationID,
+		State: state, FencingGeneration: stored.FencingGeneration, LeaseExpiresAt: stored.LeaseExpiresAt,
+		AttemptID: stored.AttemptID, AttemptIdentity: stored.AttemptIdentity,
+		AttemptEvidence: append(json.RawMessage(nil), attemptEvidence...), ResolutionEvidence: append(json.RawMessage(nil), resolutionEvidence...),
+		Outcome: append(json.RawMessage(nil), outcome...),
 	}, nil
+}
+
+func projectLease(stored operationpostgres.Lease) (deploymentmodule.NativeOperationLease, error) {
+	lease := deploymentmodule.NativeOperationLease{
+		Scope: stored.Scope, IdempotencyKey: stored.IdempotencyKey, OperationID: stored.OperationID,
+		OwnerID: stored.OwnerID, FencingGeneration: stored.FencingGeneration, LeaseExpiresAt: stored.LeaseExpiresAt,
+		AttemptID: stored.AttemptID, AttemptIdentity: stored.AttemptIdentity,
+	}
+	if err := validateNativeLease(lease, false); err != nil {
+		return deploymentmodule.NativeOperationLease{}, err
+	}
+	return lease, nil
+}
+
+func nativeLease(lease deploymentmodule.NativeOperationLease) operationpostgres.Lease {
+	return operationpostgres.Lease{
+		Scope: lease.Scope, IdempotencyKey: lease.IdempotencyKey, OperationID: lease.OperationID,
+		OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, LeaseExpiresAt: lease.LeaseExpiresAt,
+		AttemptID: lease.AttemptID, AttemptIdentity: lease.AttemptIdentity,
+	}
+}
+
+func validateNativeLease(lease deploymentmodule.NativeOperationLease, requireAttempt bool) error {
+	if lease.Scope == "" || lease.Scope != strings.TrimSpace(lease.Scope) || lease.IdempotencyKey == "" || lease.IdempotencyKey != strings.TrimSpace(lease.IdempotencyKey) || lease.OwnerID == "" || lease.OwnerID != strings.TrimSpace(lease.OwnerID) || lease.FencingGeneration <= 0 || lease.LeaseExpiresAt.IsZero() {
+		return fmt.Errorf("%w: operation lease identity is incomplete", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if err := validateUUIDv7(lease.OperationID, "operation id"); err != nil {
+		return err
+	}
+	if (lease.AttemptID == "") != (lease.AttemptIdentity == "") || (requireAttempt && lease.AttemptID == "") {
+		return fmt.Errorf("%w: operation attempt identity is incomplete", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if lease.AttemptID != "" {
+		if err := validateUUIDv7(lease.AttemptID, "attempt id"); err != nil {
+			return err
+		}
+		if lease.AttemptIdentity != strings.TrimSpace(lease.AttemptIdentity) || len(lease.AttemptIdentity) > 512 {
+			return fmt.Errorf("%w: operation attempt identity is invalid", deploymentmodule.ErrNativeOperationInvalid)
+		}
+	}
+	return nil
+}
+
+func validateUUIDv7(value, label string) error {
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.String() != value || parsed.Version() != 7 {
+		return fmt.Errorf("%w: %s must be a canonical UUIDv7", deploymentmodule.ErrNativeOperationInvalid, label)
+	}
+	return nil
+}
+
+func mapState(state operationpostgres.State) (deploymentmodule.NativeOperationState, error) {
+	switch state {
+	case operationpostgres.StatePending:
+		return deploymentmodule.NativeOperationStatePending, nil
+	case operationpostgres.StateCompleted:
+		return deploymentmodule.NativeOperationStateCompleted, nil
+	case operationpostgres.StateFailed:
+		return deploymentmodule.NativeOperationStateFailed, nil
+	case operationpostgres.StateIndeterminate:
+		return deploymentmodule.NativeOperationStateIndeterminate, nil
+	default:
+		return "", fmt.Errorf("%w: unknown operation state %q", deploymentmodule.ErrNativeOperationInvalid, state)
+	}
+}
+
+func canonicalObjectJSON(raw []byte, required bool) ([]byte, error) {
+	if len(raw) == 0 {
+		if required {
+			return nil, errors.New("object JSON is required")
+		}
+		return nil, nil
+	}
+	var object map[string]json.RawMessage
+	if err := strictjson.DecodeWithOptions(raw, &object, strictjson.Options{MaxBytes: 32768, MaxDepth: 100, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: true}); err != nil || object == nil {
+		if err == nil {
+			err = errors.New("JSON value must be an object")
+		}
+		return nil, err
+	}
+	if required && len(object) == 0 {
+		return nil, errors.New("object JSON must not be empty")
+	}
+	canonical, err := json.Marshal(object)
+	if err != nil || len(canonical) > 32768 {
+		if err == nil {
+			err = errors.New("object JSON exceeds bounded size")
+		}
+		return nil, err
+	}
+	return canonical, nil
 }
 
 func validateAcquireResult(result operationpostgres.AcquireResult, status deploymentmodule.NativeOperationStatus, input deploymentmodule.NativeOperationAcquireInput) error {
@@ -98,6 +242,24 @@ func validateAcquireResult(result operationpostgres.AcquireResult, status deploy
 	}
 	if result.Operation.Scope != input.Scope || result.Operation.OperationType != input.OperationType || result.Operation.IdempotencyKey != input.IdempotencyKey || result.Operation.RequestDigest != input.RequestDigest {
 		return fmt.Errorf("%w: operation authority returned a mismatched operation identity", deploymentmodule.ErrNativeOperationConflict)
+	}
+	state, stateErr := mapState(result.Operation.State)
+	if stateErr != nil {
+		return stateErr
+	}
+	switch status {
+	case deploymentmodule.NativeOperationAcquired, deploymentmodule.NativeOperationBusy:
+		if state != deploymentmodule.NativeOperationStatePending {
+			return fmt.Errorf("%w: operation authority returned an invalid pending disposition", deploymentmodule.ErrNativeOperationConflict)
+		}
+	case deploymentmodule.NativeOperationReplay:
+		if state != deploymentmodule.NativeOperationStateCompleted && state != deploymentmodule.NativeOperationStateFailed {
+			return fmt.Errorf("%w: operation authority returned an invalid replay state", deploymentmodule.ErrNativeOperationConflict)
+		}
+	case deploymentmodule.NativeOperationIndeterminate:
+		if state != deploymentmodule.NativeOperationStateIndeterminate {
+			return fmt.Errorf("%w: operation authority returned an invalid indeterminate state", deploymentmodule.ErrNativeOperationConflict)
+		}
 	}
 	if status == deploymentmodule.NativeOperationAcquired {
 		if result.Lease.Scope != input.Scope || result.Lease.IdempotencyKey != input.IdempotencyKey || result.Lease.OperationID != result.Operation.OperationID || result.Lease.OwnerID != input.OwnerID || result.Lease.FencingGeneration <= 0 || result.Lease.LeaseExpiresAt.IsZero() {
@@ -129,12 +291,128 @@ func (a *Adapter) CompleteTx(ctx context.Context, tx deploymentmodule.NativeOper
 	if tx == nil {
 		return fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
 	}
-	err := a.operations.CompleteTx(ctx, tx, operationpostgres.Lease{
-		Scope: lease.Scope, IdempotencyKey: lease.IdempotencyKey, OperationID: lease.OperationID,
-		OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration,
-		LeaseExpiresAt: lease.LeaseExpiresAt, AttemptID: lease.AttemptID, AttemptIdentity: lease.AttemptIdentity,
-	}, append(json.RawMessage(nil), outcome...))
+	if err := validateNativeLease(lease, false); err != nil {
+		return err
+	}
+	canonical, err := canonicalObjectJSON(outcome, true)
+	if err != nil {
+		return fmt.Errorf("%w: operation outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	err = a.operations.CompleteTx(ctx, tx, nativeLease(lease), canonical)
 	return mapError(err)
+}
+
+// BeginAttemptTx binds an external attempt to an operation through the
+// caller-owned transaction. No transaction lifecycle method is called here.
+func (a *Adapter) BeginAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, input deploymentmodule.NativeOperationBeginAttemptInput) (deploymentmodule.NativeOperationAttempt, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(input.Lease, false); err != nil {
+		return deploymentmodule.NativeOperationAttempt{}, err
+	}
+	if input.AttemptID != "" {
+		if err := validateUUIDv7(input.AttemptID, "attempt id"); err != nil {
+			return deploymentmodule.NativeOperationAttempt{}, err
+		}
+	}
+	if input.AttemptIdentity == "" || input.AttemptIdentity != strings.TrimSpace(input.AttemptIdentity) || len(input.AttemptIdentity) > 512 {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: attempt identity is invalid", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	attempt, err := a.operations.BeginAttemptTx(ctx, tx, operationpostgres.BeginAttemptInput{
+		Lease: nativeLease(input.Lease), AttemptID: input.AttemptID, AttemptIdentity: input.AttemptIdentity,
+	})
+	if err != nil {
+		return deploymentmodule.NativeOperationAttempt{}, mapError(err)
+	}
+	lease, err := projectLease(attempt.Lease)
+	if err != nil {
+		return deploymentmodule.NativeOperationAttempt{}, err
+	}
+	if attempt.AttemptID == "" || attempt.AttemptID != strings.TrimSpace(attempt.AttemptID) {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: operation authority returned an invalid attempt id", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	if err := validateUUIDv7(attempt.AttemptID, "attempt id"); err != nil {
+		return deploymentmodule.NativeOperationAttempt{}, err
+	}
+	if attempt.AttemptIdentity != input.AttemptIdentity {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: operation authority returned a mismatched attempt identity", deploymentmodule.ErrNativeOperationConflict)
+	}
+	if lease.Scope != input.Lease.Scope || lease.IdempotencyKey != input.Lease.IdempotencyKey || lease.OperationID != input.Lease.OperationID || lease.OwnerID != input.Lease.OwnerID || lease.FencingGeneration != input.Lease.FencingGeneration || !lease.LeaseExpiresAt.Equal(input.Lease.LeaseExpiresAt) || lease.AttemptID != attempt.AttemptID || lease.AttemptIdentity != attempt.AttemptIdentity {
+		return deploymentmodule.NativeOperationAttempt{}, fmt.Errorf("%w: operation authority returned a mismatched attempt lease", deploymentmodule.ErrNativeOperationConflict)
+	}
+	return deploymentmodule.NativeOperationAttempt{AttemptID: attempt.AttemptID, AttemptIdentity: attempt.AttemptIdentity, Lease: lease}, nil
+}
+
+// RenewLeaseTx extends an operation lease through the caller-owned
+// transaction. A positive duration is required and the platform authority
+// enforces the maximum bounded lease window.
+func (a *Adapter) RenewLeaseTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, duration time.Duration) (deploymentmodule.NativeOperationLease, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationLease{}, fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return deploymentmodule.NativeOperationLease{}, fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, false); err != nil {
+		return deploymentmodule.NativeOperationLease{}, err
+	}
+	if duration <= 0 {
+		return deploymentmodule.NativeOperationLease{}, fmt.Errorf("%w: lease renewal duration must be positive", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	renewed, err := a.operations.RenewLeaseTx(ctx, tx, nativeLease(lease), duration)
+	if err != nil {
+		return deploymentmodule.NativeOperationLease{}, mapError(err)
+	}
+	projected, err := projectLease(renewed)
+	if err != nil {
+		return deploymentmodule.NativeOperationLease{}, err
+	}
+	if projected.Scope != lease.Scope || projected.IdempotencyKey != lease.IdempotencyKey || projected.OperationID != lease.OperationID || projected.OwnerID != lease.OwnerID || projected.FencingGeneration != lease.FencingGeneration || projected.AttemptID != lease.AttemptID || projected.AttemptIdentity != lease.AttemptIdentity || !projected.LeaseExpiresAt.After(lease.LeaseExpiresAt) {
+		return deploymentmodule.NativeOperationLease{}, fmt.Errorf("%w: operation authority returned a mismatched renewed lease", deploymentmodule.ErrNativeOperationConflict)
+	}
+	return projected, nil
+}
+
+// FailTx transitions an operation to a deterministic failed terminal state
+// through the caller-owned transaction.
+func (a *Adapter) FailTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, outcome json.RawMessage) error {
+	if a == nil || a.operations == nil {
+		return fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, false); err != nil {
+		return err
+	}
+	canonical, err := canonicalObjectJSON(outcome, true)
+	if err != nil {
+		return fmt.Errorf("%w: operation failure outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	return mapError(a.operations.FailTx(ctx, tx, nativeLease(lease), canonical))
+}
+
+// MarkIndeterminateTx records bounded evidence that an external attempt may
+// have committed while transitioning the operation to indeterminate.
+func (a *Adapter) MarkIndeterminateTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, evidence json.RawMessage) error {
+	if a == nil || a.operations == nil {
+		return fmt.Errorf("%w: deployment operation adapter is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if tx == nil {
+		return fmt.Errorf("%w: deployment operation transaction is required", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, true); err != nil {
+		return err
+	}
+	canonical, err := canonicalObjectJSON(evidence, true)
+	if err != nil {
+		return fmt.Errorf("%w: operation indeterminate evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	return mapError(a.operations.MarkIndeterminateTx(ctx, tx, nativeLease(lease), canonical))
 }
 
 func mapStatus(status operationpostgres.AcquireStatus) (deploymentmodule.NativeOperationStatus, error) {

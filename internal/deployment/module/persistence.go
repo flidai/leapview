@@ -141,6 +141,19 @@ const (
 	NativeOperationIndeterminate NativeOperationStatus = "indeterminate"
 )
 
+// NativeOperationState is the durable state of one idempotent operation. It
+// is kept separate from NativeOperationStatus because acquisition also has
+// transient dispositions (busy/indeterminate) while the stored row has a
+// stable state used for replay and recovery decisions.
+type NativeOperationState string
+
+const (
+	NativeOperationStatePending       NativeOperationState = "pending"
+	NativeOperationStateCompleted     NativeOperationState = "completed"
+	NativeOperationStateFailed        NativeOperationState = "failed"
+	NativeOperationStateIndeterminate NativeOperationState = "indeterminate"
+)
+
 // NativeOperationAcquireInput is the minimal idempotency request projection.
 // Request bytes are deliberately absent: the coordinator supplies the
 // canonical digest after validating the HTTP request.
@@ -151,6 +164,11 @@ type NativeOperationAcquireInput struct {
 type NativeOperationRecord struct {
 	Scope, OperationType, IdempotencyKey, RequestDigest, OwnerID string
 	OperationID                                                  string
+	State                                                        NativeOperationState
+	FencingGeneration                                            int64
+	LeaseExpiresAt                                               time.Time
+	AttemptID, AttemptIdentity                                   string
+	AttemptEvidence, ResolutionEvidence                          json.RawMessage
 	Outcome                                                      json.RawMessage
 }
 
@@ -165,6 +183,23 @@ type NativeOperationAcquireResult struct {
 	Status    NativeOperationStatus
 	Operation NativeOperationRecord
 	Lease     NativeOperationLease
+}
+
+// NativeOperationBeginAttemptInput binds one external attempt to an acquired
+// operation. AttemptID may be empty to request an authority-generated
+// UUIDv7; AttemptIdentity is the caller's stable external identity.
+type NativeOperationBeginAttemptInput struct {
+	Lease           NativeOperationLease
+	AttemptID       string
+	AttemptIdentity string
+}
+
+// NativeOperationAttempt is the value-only attempt projection returned by an
+// operation authority after binding an external attempt.
+type NativeOperationAttempt struct {
+	AttemptID       string
+	AttemptIdentity string
+	Lease           NativeOperationLease
 }
 
 // These sentinels let adapters translate their own storage errors without
@@ -182,6 +217,20 @@ var (
 type NativeOperationAuthority interface {
 	AcquireTx(context.Context, NativeOperationTx, NativeOperationAcquireInput) (NativeOperationAcquireResult, error)
 	CompleteTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
+}
+
+// NativeBuildOperationAuthority extends the short operation surface used by
+// publication/create mutations with the attempt and terminal transitions
+// required by long-running physical builds. Keeping this separate avoids
+// forcing unrelated native callers and test doubles to implement recovery
+// methods they never invoke.
+type NativeBuildOperationAuthority interface {
+	NativeOperationAuthority
+	Lookup(context.Context, NativeOperationAcquireInput) (NativeOperationRecord, bool, error)
+	BeginAttemptTx(context.Context, NativeOperationTx, NativeOperationBeginAttemptInput) (NativeOperationAttempt, error)
+	RenewLeaseTx(context.Context, NativeOperationTx, NativeOperationLease, time.Duration) (NativeOperationLease, error)
+	FailTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
+	MarkIndeterminateTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
 }
 
 type persistenceBackend uint8
