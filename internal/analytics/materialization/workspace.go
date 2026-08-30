@@ -14,6 +14,7 @@ type Request struct {
 	Models                           map[string]*semanticmodel.Model
 	ModelTables                      map[string]semanticmodel.Table
 	Identity                         projectgraph.ServingIdentity
+	CandidateID                      string
 	ConnectionEvidenceServingStateID servingstate.ID
 	Environment                      servingstate.Environment
 	TargetType                       string
