@@ -311,6 +311,175 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 }
 
+func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := context.Background()
+	target := TargetInput{TargetID: "target_atomic_admission", ProjectID: "project_atomic", Environment: "prod"}
+	plan := PlanInput{
+		PlanID:                    "0198f2c0-7c7a-7f00-8a11-000000000101",
+		TargetID:                  target.TargetID,
+		PlanRevision:              1,
+		PlanDigest:                testDigest('a'),
+		CompiledGraphDigest:       testDigest('b'),
+		CompiledConfigDigest:      testDigest('c'),
+		SecurityDomainFingerprint: testDigest('d'),
+		ArtifactDigest:            testDigest('e'),
+		Evidence:                  []byte(`{"source":"retained"}`),
+	}
+	tx, err := r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	createdTarget, createdPlan, err := r.CreateTargetAndPlanTx(ctx, tx, target, plan)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("create target and plan: %v", err)
+	}
+	if createdTarget.TargetID != target.TargetID || createdPlan.PlanID != plan.PlanID {
+		t.Fatalf("created target/plan = %#v / %#v", createdTarget, createdPlan)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replaying both rows through a new caller-owned transaction must return
+	// the exact durable identities without allocating another revision.
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedTarget, replayedPlan, err := r.CreateTargetAndPlanTx(ctx, tx, target, plan)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("replay target and plan: %v", err)
+	}
+	if replayedTarget != createdTarget || replayedPlan.PlanID != createdPlan.PlanID || replayedPlan.PlanRevision != createdPlan.PlanRevision {
+		t.Fatalf("replayed target/plan drifted: %#v / %#v", replayedTarget, replayedPlan)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// A plan/target scope conflict leaves the newly inserted target only in
+	// the caller transaction; rolling back proves no partial admission escaped.
+	conflictingTarget := TargetInput{TargetID: "target_atomic_rollback", ProjectID: "project_atomic_other", Environment: "stage"}
+	conflictingPlan := plan
+	conflictingPlan.PlanID = "0198f2c0-7c7a-7f00-8a11-000000000102"
+	conflictingPlan.TargetID = target.TargetID
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := r.CreateTargetAndPlanTx(ctx, tx, conflictingTarget, conflictingPlan); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("target/plan scope conflict = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Target(ctx, conflictingTarget.TargetID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back target lookup = %v", err)
+	}
+}
+
+func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := context.Background()
+	target := TargetInput{TargetID: "target_atomic_build", ProjectID: "project_atomic_build", Environment: "prod"}
+	if _, err := r.CreateTarget(ctx, target); err != nil {
+		t.Fatal(err)
+	}
+	plan := PlanInput{
+		PlanID:                    "0198f2c0-7c7a-7f00-8a11-000000000103",
+		TargetID:                  target.TargetID,
+		PlanRevision:              1,
+		PlanDigest:                testDigest('a'),
+		CompiledGraphDigest:       testDigest('b'),
+		CompiledConfigDigest:      testDigest('c'),
+		SecurityDomainFingerprint: testDigest('d'),
+		ArtifactDigest:            testDigest('e'),
+	}
+	if _, err := r.CreatePlan(ctx, plan); err != nil {
+		t.Fatal(err)
+	}
+
+	leaseID := "0198f2c0-7c7a-7f00-8a11-000000000104"
+	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000105"
+	expiresAt := time.Now().UTC().Add(time.Hour)
+	tx, err := r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, attempt, err := r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
+		LeaseInput{LeaseID: leaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: expiresAt},
+		BuildAttemptInput{
+			AttemptID: attemptID, PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			RequestDigest: testDigest('f'), PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
+		},
+	)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("acquire lease and begin attempt: %v", err)
+	}
+	if lease.FencingEpoch <= 0 || attempt.FencingEpoch != lease.FencingEpoch || attempt.State != AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+		t.Fatalf("lease/attempt identity = %#v / %#v", lease, attempt)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Replaying the same lease/attempt identity through another transaction is
+	// idempotent and preserves the original fencing epoch.
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedLease, replayedAttempt, err := r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
+		LeaseInput{LeaseID: leaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: lease.ExpiresAt},
+		BuildAttemptInput{
+			AttemptID: attemptID, PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			RequestDigest: testDigest('f'), PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
+		},
+	)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("replay lease and attempt: %v", err)
+	}
+	if replayedLease.FencingEpoch != lease.FencingEpoch || replayedAttempt.AttemptID != attempt.AttemptID {
+		t.Fatalf("replayed lease/attempt drifted: %#v / %#v", replayedLease, replayedAttempt)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invalid attempt evidence must be rolled back together with the newly
+	// acquired lease; the caller-owned transaction is the atomic boundary.
+	failedLeaseID := "0198f2c0-7c7a-7f00-8a11-000000000106"
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
+		LeaseInput{LeaseID: failedLeaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: time.Now().UTC().Add(time.Hour)},
+		BuildAttemptInput{
+			AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000107", PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			RequestDigest: "invalid", PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
+		},
+	)
+	if !errors.Is(err, ErrInvalid) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("invalid attempt evidence = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Lease(ctx, failedLeaseID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back lease lookup = %v", err)
+	}
+}
+
 func TestDeploymentSchemaContainsNoEventOrAuditDDL(t *testing.T) {
 	schema := strings.ToLower(SchemaSQL())
 	for _, forbidden := range []string{"create schema if not exists event", "create schema if not exists audit", "create table if not exists event.", "create table if not exists audit.", "event.event_log", "audit.audit_event"} {

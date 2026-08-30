@@ -597,6 +597,17 @@ func (r *Repository) CreateTarget(ctx context.Context, in TargetInput) (Delivery
 	return createTarget(contextOrBackground(ctx), db, in)
 }
 
+// CreateTargetTx creates (or exactly replays) one project/environment target
+// through a caller-owned PostgreSQL transaction.  The method deliberately
+// does not commit or roll back tx so callers can compose target admission with
+// the first plan and their own audit/workflow consequences.
+func (r *Repository) CreateTargetTx(ctx context.Context, tx Tx, in TargetInput) (DeliveryTarget, error) {
+	if tx == nil {
+		return DeliveryTarget{}, ErrInvalid
+	}
+	return createTarget(contextOrBackground(ctx), tx, in)
+}
+
 func createTarget(ctx context.Context, db DBTX, in TargetInput) (DeliveryTarget, error) {
 	id, err := textID(in.TargetID, "target id")
 	if err != nil {
@@ -669,6 +680,40 @@ func (r *Repository) CreatePlan(ctx context.Context, in PlanInput) (DeliveryPlan
 		return DeliveryPlan{}, err
 	}
 	return createPlan(contextOrBackground(ctx), db, in)
+}
+
+// CreatePlanTx persists (or exactly replays) immutable compiler and
+// governance identity through a caller-owned PostgreSQL transaction.  It is
+// intended to run in the same transaction as CreateTargetTx when a fresh
+// target is admitted for its first plan.
+func (r *Repository) CreatePlanTx(ctx context.Context, tx Tx, in PlanInput) (DeliveryPlan, error) {
+	if tx == nil {
+		return DeliveryPlan{}, ErrInvalid
+	}
+	return createPlan(contextOrBackground(ctx), tx, in)
+}
+
+// CreateTargetAndPlanTx atomically creates (or exactly replays) a target and
+// its immutable plan through a caller-owned PostgreSQL transaction.  The
+// caller owns the final commit/rollback; on any error no mutation is
+// committed by this method.
+func (r *Repository) CreateTargetAndPlanTx(ctx context.Context, tx Tx, target TargetInput, plan PlanInput) (DeliveryTarget, DeliveryPlan, error) {
+	if tx == nil {
+		return DeliveryTarget{}, DeliveryPlan{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	createdTarget, err := createTarget(ctx, tx, target)
+	if err != nil {
+		return DeliveryTarget{}, DeliveryPlan{}, err
+	}
+	if plan.TargetID != createdTarget.TargetID {
+		return DeliveryTarget{}, DeliveryPlan{}, fmt.Errorf("%w: plan target differs from target", ErrConflict)
+	}
+	createdPlan, err := createPlan(ctx, tx, plan)
+	if err != nil {
+		return DeliveryTarget{}, DeliveryPlan{}, err
+	}
+	return createdTarget, createdPlan, nil
 }
 func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
 	id, err := uuidID(in.PlanID, "plan id", true)
@@ -767,6 +812,59 @@ func (r *Repository) BeginBuildAttempt(ctx context.Context, in BuildAttemptInput
 	}
 	return beginBuildAttempt(contextOrBackground(ctx), db, in)
 }
+
+// BeginBuildAttemptTx records (or exactly replays) a build attempt through a
+// caller-owned PostgreSQL transaction.  This is the transaction-bound form
+// used when lease acquisition and attempt admission must share one commit
+// boundary; it never commits or rolls back tx.
+func (r *Repository) BeginBuildAttemptTx(ctx context.Context, tx Tx, in BuildAttemptInput) (DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryBuildAttempt{}, ErrInvalid
+	}
+	return beginBuildAttempt(contextOrBackground(ctx), tx, in)
+}
+
+// AcquireLeaseAndBeginBuildAttemptTx atomically acquires a target writer
+// lease and records the corresponding build attempt through a caller-owned
+// PostgreSQL transaction.  The attempt inherits the durable lease fencing
+// epoch and expiry when those fields are left zero, while explicitly supplied
+// values must match the acquired lease.  The caller owns the final
+// commit/rollback, so a failed attempt admission can roll back the lease as
+// well.
+func (r *Repository) AcquireLeaseAndBeginBuildAttemptTx(
+	ctx context.Context,
+	tx Tx,
+	leaseInput LeaseInput,
+	attemptInput BuildAttemptInput,
+) (DeliveryLease, DeliveryBuildAttempt, error) {
+	if tx == nil {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	if attemptInput.OwnerID != leaseInput.OwnerID {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, fmt.Errorf("%w: lease and build attempt owners differ", ErrConflict)
+	}
+	lease, err := acquireLease(ctx, tx, leaseInput)
+	if err != nil {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, err
+	}
+	if attemptInput.FencingEpoch == 0 {
+		attemptInput.FencingEpoch = lease.FencingEpoch
+	} else if attemptInput.FencingEpoch != lease.FencingEpoch {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, fmt.Errorf("%w: build attempt fencing epoch differs from lease", ErrConflict)
+	}
+	if attemptInput.LeaseExpiresAt.IsZero() {
+		attemptInput.LeaseExpiresAt = lease.ExpiresAt
+	} else if !attemptInput.LeaseExpiresAt.UTC().Truncate(time.Microsecond).Equal(lease.ExpiresAt.UTC().Truncate(time.Microsecond)) {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, fmt.Errorf("%w: build attempt lease expiry differs from lease", ErrConflict)
+	}
+	attempt, err := beginBuildAttempt(ctx, tx, attemptInput)
+	if err != nil {
+		return DeliveryLease{}, DeliveryBuildAttempt{}, err
+	}
+	return lease, attempt, nil
+}
+
 func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (DeliveryBuildAttempt, error) {
 	id, err := uuidID(in.AttemptID, "attempt id", true)
 	if err != nil {
