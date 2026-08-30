@@ -127,6 +127,18 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)
 );
 
+-- A build artifact binding is the immutable hand-off from a durable build
+-- attempt to the serving-state artifact that was produced by that attempt.
+-- The attempt UUID is the sole identity: a retry may replay the exact row,
+-- but can never replace its artifact or serving-state identity.
+CREATE TABLE IF NOT EXISTS delivery.delivery_build_artifact_binding (
+    attempt_id uuid PRIMARY KEY REFERENCES delivery.delivery_build_attempt(attempt_id) ON DELETE RESTRICT,
+    serving_artifact_id text NOT NULL CHECK (serving_artifact_id = btrim(serving_artifact_id) AND octet_length(serving_artifact_id) BETWEEN 1 AND 255 AND serving_artifact_id ~ '^[A-Za-z0-9._:/-]+$'),
+    serving_artifact_digest text NOT NULL CHECK (serving_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    serving_state_id text NOT NULL CHECK (serving_state_id = btrim(serving_state_id) AND octet_length(serving_state_id) BETWEEN 1 AND 255 AND serving_state_id ~ '^[A-Za-z0-9._:/-]+$'),
+    bound_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+
 CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     seal_id uuid PRIMARY KEY,
     attempt_id uuid NOT NULL REFERENCES delivery.delivery_build_attempt(attempt_id),
@@ -399,6 +411,18 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_build_artifact_binding_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'delivery build artifact binding is immutable';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS delivery_build_artifact_binding_immutable ON delivery.delivery_build_artifact_binding;
+CREATE TRIGGER delivery_build_artifact_binding_immutable
+BEFORE UPDATE OR DELETE ON delivery.delivery_build_artifact_binding
+FOR EACH ROW EXECUTE FUNCTION delivery.reject_build_artifact_binding_mutation();
 
 CREATE OR REPLACE FUNCTION delivery.reject_publication_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$

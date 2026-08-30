@@ -165,6 +165,9 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: ids["attempt"], ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), ServingStateID: "generation-test", OwnerID: "builder-a", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	marker := testCommitMarker(ids["attempt"], "pool-sales", testDigest('f'), testDigest('a'))
 	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-a", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
@@ -359,6 +362,9 @@ func TestPostgresDeliveryCallerOwnedMutationTransactions(t *testing.T) {
 	}
 
 	beginAttempt(ids["attempt"], "builder-commit", "candidate/tx-commit")
+	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: ids["attempt"], ServingArtifactID: "artifact-tx", ServingArtifactDigest: artifactDigest, ServingStateID: "generation-test", OwnerID: "builder-commit", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	commitMarker := testCommitMarker(ids["attempt"], "pool-tx", testDigest('f'), planDigest)
 	tx, err := p.Begin(ctx)
 	if err != nil {

@@ -3,6 +3,7 @@ package postgres
 import (
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
@@ -20,6 +21,14 @@ func newCompleteBuildFixture(t *testing.T, r *Repository) completeBuildFixture {
 }
 
 func newCompleteBuildFixtureWithSuffix(t *testing.T, r *Repository, suffix string) completeBuildFixture {
+	return newCompleteBuildFixtureWithSuffixBindingAndLifetime(t, r, suffix, true, time.Hour)
+}
+
+func newCompleteBuildFixtureWithoutBinding(t *testing.T, r *Repository, suffix string) completeBuildFixture {
+	return newCompleteBuildFixtureWithSuffixBindingAndLifetime(t, r, suffix, false, time.Hour)
+}
+
+func newCompleteBuildFixtureWithSuffixBindingAndLifetime(t *testing.T, r *Repository, suffix string, bind bool, leaseLifetime time.Duration) completeBuildFixture {
 	t.Helper()
 	ctx := t.Context()
 	f := completeBuildFixture{
@@ -42,7 +51,7 @@ func newCompleteBuildFixtureWithSuffix(t *testing.T, r *Repository, suffix strin
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: f.CandidateID, TargetID: f.TargetID, PlanID: f.PlanID, CandidateRevision: 1, ArtifactDigest: f.ArtifactDigest}); err != nil {
 		t.Fatal(err)
 	}
-	expires := time.Now().UTC().Add(time.Hour)
+	expires := time.Now().UTC().Add(leaseLifetime)
 	tx, err := r.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -61,6 +70,11 @@ func newCompleteBuildFixtureWithSuffix(t *testing.T, r *Repository, suffix strin
 	f.Commit = CommitAttemptInput{AttemptID: f.AttemptID, OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch, SnapshotID: 42, CommitMarker: testCommitMarker(f.AttemptID, "pool-complete", f.RequestDigest, f.PlanDigest)}
 	f.Seal = SnapshotSealInput{
 		SealID: f.SealID, AttemptID: f.AttemptID, CandidateID: f.CandidateID, PhysicalPoolID: "pool-complete", TenantDomain: "tenant-complete", Region: "us-east", EncryptionDomain: "enc-complete", ObjectNamespace: "objects/complete", CatalogDatabase: "ducklake", CatalogID: "catalog-complete", CatalogUUID: fmt.Sprintf("0198f2c0-7c7a-7f00-0000-00000000%s006", suffix), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/complete", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/complete/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/complete", ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-complete", ServingArtifactDigest: f.ArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`),
+	}
+	if bind {
+		if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: f.AttemptID, ServingArtifactID: f.Seal.ServingArtifactID, ServingArtifactDigest: f.Seal.ServingArtifactDigest, ServingStateID: "generation-test", OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	return f
 }
@@ -196,5 +210,146 @@ func TestPostgresCompleteBuildTxRollbackLeavesBuildOpen(t *testing.T) {
 	}
 	if lease.State != "active" {
 		t.Fatalf("rolled-back lease state = %s", lease.State)
+	}
+}
+
+func TestPostgresBuildArtifactBindingReplayFenceAndTerminalRules(t *testing.T) {
+	r := New(deliveryTestDB(t))
+	f := newCompleteBuildFixtureWithoutBinding(t, r, "4")
+	ctx := t.Context()
+	in := BuildArtifactBindingInput{
+		AttemptID: f.AttemptID, ServingArtifactID: f.Seal.ServingArtifactID,
+		ServingArtifactDigest: f.Seal.ServingArtifactDigest, ServingStateID: "generation-test",
+		OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch,
+	}
+	first, err := r.BindBuildArtifact(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed, err := r.BindBuildArtifact(ctx, in)
+	if err != nil || replayed.AttemptID != first.AttemptID || replayed.ServingArtifactID != first.ServingArtifactID || replayed.ServingStateID != first.ServingStateID {
+		t.Fatalf("binding replay = %#v, %v", replayed, err)
+	}
+	conflict := in
+	conflict.ServingArtifactID = "artifact-other"
+	if _, err := r.BindBuildArtifact(ctx, conflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("foreign binding identity = %v", err)
+	}
+	wrongOwner := in
+	wrongOwner.OwnerID = "another-builder"
+	if _, err := r.BindBuildArtifact(ctx, wrongOwner); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("owner fence validation = %v", err)
+	}
+	rollbackFixture := newCompleteBuildFixtureWithoutBinding(t, r, "5")
+	rollbackInput := in
+	rollbackInput.AttemptID = rollbackFixture.AttemptID
+	rollbackInput.OwnerID = rollbackFixture.Lease.OwnerID
+	rollbackInput.FencingEpoch = rollbackFixture.Lease.FencingEpoch
+	tx, err := r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.BindBuildArtifactTx(ctx, tx, rollbackInput); err != nil || got.AttemptID != rollbackInput.AttemptID {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("caller-owned binding = %#v, %v", got, err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BuildArtifactBinding(ctx, rollbackFixture.AttemptID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back binding = %v", err)
+	}
+
+	// Once the attempt is terminal, the exact binding remains replayable while
+	// a foreign identity is still rejected.
+	if _, err := r.CommitBuildAttempt(ctx, f.Commit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindBuildArtifact(ctx, in); err != nil {
+		t.Fatalf("terminal exact binding replay = %v", err)
+	}
+	terminalConflict := in
+	terminalConflict.ServingStateID = "generation-other"
+	if _, err := r.BindBuildArtifact(ctx, terminalConflict); !errors.Is(err, ErrConflict) {
+		t.Fatalf("terminal foreign identity = %v", err)
+	}
+
+	terminalUnbound := newCompleteBuildFixtureWithoutBinding(t, r, "6")
+	if _, err := r.CommitBuildAttempt(ctx, terminalUnbound.Commit); err != nil {
+		t.Fatal(err)
+	}
+	terminalUnboundInput := in
+	terminalUnboundInput.AttemptID = terminalUnbound.AttemptID
+	terminalUnboundInput.OwnerID = terminalUnbound.Lease.OwnerID
+	terminalUnboundInput.FencingEpoch = terminalUnbound.Lease.FencingEpoch
+	if _, err := r.BindBuildArtifact(ctx, terminalUnboundInput); !errors.Is(err, ErrConflict) {
+		t.Fatalf("terminal first binding = %v", err)
+	}
+
+	expired := newCompleteBuildFixtureWithSuffixBindingAndLifetime(t, r, "7", false, 2*time.Second)
+	time.Sleep(2100 * time.Millisecond)
+	expiredInput := in
+	expiredInput.AttemptID = expired.AttemptID
+	expiredInput.OwnerID = expired.Lease.OwnerID
+	expiredInput.FencingEpoch = expired.Lease.FencingEpoch
+	if _, err := r.BindBuildArtifact(ctx, expiredInput); !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("expired first binding = %v", err)
+	}
+
+	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: "0198f2c0-7c7a-7f00-0000-00000000f003", ServingArtifactID: "artifact", ServingArtifactDigest: testDigest('a'), ServingStateID: "state", OwnerID: "owner", FencingEpoch: 1}); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("missing attempt binding = %v", err)
+	}
+	invalid := in
+	invalid.ServingArtifactDigest = "not-a-digest"
+	if _, err := r.BindBuildArtifact(ctx, invalid); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid binding digest = %v", err)
+	}
+	invalid = in
+	invalid.ServingStateID = "state with spaces"
+	if _, err := r.BindBuildArtifact(ctx, invalid); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("invalid serving-state identity = %v", err)
+	}
+
+	if _, err := r.db.Exec(ctx, "UPDATE delivery.delivery_build_artifact_binding SET serving_state_id = 'changed' WHERE attempt_id = $1::uuid", f.AttemptID); err == nil {
+		t.Fatal("immutable binding update succeeded")
+	}
+	if _, err := r.db.Exec(ctx, "DELETE FROM delivery.delivery_build_artifact_binding WHERE attempt_id = $1::uuid", f.AttemptID); err == nil {
+		t.Fatal("immutable binding delete succeeded")
+	}
+}
+
+func TestPostgresBuildCompletionRequiresArtifactBindingIdentity(t *testing.T) {
+	ctx := t.Context()
+	r := New(deliveryTestDB(t))
+
+	missing := newCompleteBuildFixtureWithoutBinding(t, r, "3")
+	if _, err := r.CommitBuildAttempt(ctx, missing.Commit); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateSnapshotSeal(ctx, missing.Seal); !errors.Is(err, ErrNotQualified) {
+		t.Fatalf("missing binding seal = %v", err)
+	}
+
+	mismatch := newCompleteBuildFixture(t, r)
+	wrongMarker := mismatch.Commit
+	wrongMarker.CommitMarker = []byte(strings.Replace(string(wrongMarker.CommitMarker), `"generation-test"`, `"generation-other"`, 1))
+	tx, err := r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CompleteBuildTx(ctx, tx, wrongMarker, mismatch.Seal, testDigest('3'), mismatch.fence()); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("mismatched marker generation = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CommitBuildAttempt(ctx, mismatch.Commit); err != nil {
+		t.Fatal(err)
+	}
+	wrongSeal := mismatch.Seal
+	wrongSeal.ServingArtifactID = "artifact-other"
+	if _, err := r.CreateSnapshotSeal(ctx, wrongSeal); !errors.Is(err, ErrConflict) {
+		t.Fatalf("mismatched binding artifact = %v", err)
 	}
 }

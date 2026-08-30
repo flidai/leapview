@@ -87,6 +87,16 @@ SELECT attempt_id::text FROM delivery.delivery_build_attempt WHERE attempt_id=sq
 -- name: BuildAttemptLeaseActive :one
 SELECT lease_expires_at > clock_timestamp() FROM delivery.delivery_build_attempt WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 
+-- name: InsertBuildArtifactBinding :exec
+INSERT INTO delivery.delivery_build_artifact_binding(attempt_id,serving_artifact_id,serving_artifact_digest,serving_state_id)
+VALUES(sqlc.arg(attempt_id)::uuid,sqlc.arg(serving_artifact_id),sqlc.arg(serving_artifact_digest),sqlc.arg(serving_state_id))
+ON CONFLICT(attempt_id) DO NOTHING;
+
+-- name: GetBuildArtifactBinding :one
+SELECT attempt_id::text,serving_artifact_id,serving_artifact_digest,serving_state_id,bound_at
+FROM delivery.delivery_build_artifact_binding
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
+
 -- name: CommitBuildAttempt :execrows
 UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
 WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);

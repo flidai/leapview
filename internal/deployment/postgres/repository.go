@@ -16,7 +16,7 @@ import (
 	"strings"
 	"time"
 
-	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/catalogartifact"
 	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
@@ -130,6 +130,26 @@ type BuildAttemptInput struct {
 	LeaseExpiresAt                 time.Time
 }
 type DeliveryBuildAttemptInput = BuildAttemptInput
+
+// BuildArtifactBinding is the immutable artifact hand-off for one build
+// attempt. An attempt can have at most one binding; retries may only replay
+// the exact artifact and serving-state identity.
+type BuildArtifactBinding struct {
+	AttemptID             string
+	ServingArtifactID     string
+	ServingArtifactDigest string
+	ServingStateID        string
+	BoundAt               time.Time
+}
+
+type BuildArtifactBindingInput struct {
+	AttemptID             string
+	ServingArtifactID     string
+	ServingArtifactDigest string
+	ServingStateID        string
+	OwnerID               string
+	FencingEpoch          int64
+}
 
 type CommitAttemptInput struct {
 	AttemptID, OwnerID string
@@ -1117,6 +1137,183 @@ func (r *Repository) LoadBuildAttempt(ctx context.Context, id string) (DeliveryB
 	return r.BuildAttempt(ctx, id)
 }
 
+// BindBuildArtifact records the immutable artifact produced by an
+// attempt. It owns a short transaction so the lock, lease check, insert, and
+// replay read share one atomic boundary.
+func (r *Repository) BindBuildArtifact(ctx context.Context, in BuildArtifactBindingInput) (BuildArtifactBinding, error) {
+	tx, err := r.begin(contextOrBackground(ctx))
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	out, err := r.BindBuildArtifactTx(ctx, tx, in)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	committed = true
+	return out, nil
+}
+
+// BindBuildArtifactTx records (or exactly replays) a binding using a
+// caller-owned transaction. The transaction is never committed or rolled
+// back by this method.
+func (r *Repository) BindBuildArtifactTx(ctx context.Context, tx Tx, in BuildArtifactBindingInput) (BuildArtifactBinding, error) {
+	if tx == nil {
+		return BuildArtifactBinding{}, ErrInvalid
+	}
+	return bindBuildArtifact(contextOrBackground(ctx), tx, in)
+}
+
+func canonicalBuildArtifactBindingInput(in BuildArtifactBindingInput) (attempt, artifactID, artifactDigest, servingState, owner string, fence int64, err error) {
+	attempt, err = uuidID(in.AttemptID, "attempt id", false)
+	if err != nil {
+		return "", "", "", "", "", 0, err
+	}
+	artifactID, err = textID(in.ServingArtifactID, "serving artifact id")
+	if err != nil || !validBuildArtifactIdentity(artifactID) {
+		if err == nil {
+			err = fmt.Errorf("%w: serving artifact id is invalid", ErrInvalid)
+		}
+		return "", "", "", "", "", 0, err
+	}
+	artifactDigest, err = digest(in.ServingArtifactDigest, "serving artifact digest")
+	if err != nil {
+		return "", "", "", "", "", 0, err
+	}
+	servingState, err = textID(in.ServingStateID, "serving state id")
+	if err != nil || !validBuildArtifactIdentity(servingState) {
+		if err == nil {
+			err = fmt.Errorf("%w: serving state id is invalid", ErrInvalid)
+		}
+		return "", "", "", "", "", 0, err
+	}
+	owner, err = textID(in.OwnerID, "owner id")
+	if err != nil {
+		return "", "", "", "", "", 0, err
+	}
+	if in.FencingEpoch <= 0 {
+		return "", "", "", "", "", 0, ErrInvalid
+	}
+	return attempt, artifactID, artifactDigest, servingState, owner, in.FencingEpoch, nil
+}
+
+func validBuildArtifactIdentity(value string) bool {
+	for _, char := range value {
+		if (char >= 'a' && char <= 'z') || (char >= 'A' && char <= 'Z') ||
+			(char >= '0' && char <= '9') || strings.ContainsRune("._:/-", char) {
+			continue
+		}
+		return false
+	}
+	return value != ""
+}
+
+func loadBuildArtifactBinding(ctx context.Context, db DBTX, attempt string) (BuildArtifactBinding, error) {
+	row, err := depdb.New(db).GetBuildArtifactBinding(ctx, dbUUID(attempt))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BuildArtifactBinding{}, ErrNotFound
+	}
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	return BuildArtifactBinding{
+		AttemptID: row.AttemptID, ServingArtifactID: row.ServingArtifactID, ServingArtifactDigest: row.ServingArtifactDigest,
+		ServingStateID: row.ServingStateID, BoundAt: dbTime(row.BoundAt),
+	}, nil
+}
+
+func bindBuildArtifact(ctx context.Context, db DBTX, in BuildArtifactBindingInput) (BuildArtifactBinding, error) {
+	attempt, artifactID, artifactDigest, servingState, owner, fence, err := canonicalBuildArtifactBindingInput(in)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	// Lock the attempt before checking existing binding state. This serializes
+	// a first bind against terminal transition and makes replay deterministic.
+	if _, lockErr := depdb.New(db).LockBuildAttempt(ctx, dbUUID(attempt)); errors.Is(lockErr, pgx.ErrNoRows) {
+		return BuildArtifactBinding{}, ErrNotFound
+	} else if lockErr != nil {
+		return BuildArtifactBinding{}, lockErr
+	}
+	at, err := loadAttempt(ctx, db, attempt)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if at.OwnerID != owner || at.FencingEpoch != fence {
+		return BuildArtifactBinding{}, ErrStaleFence
+	}
+
+	existing, existingErr := loadBuildArtifactBinding(ctx, db, attempt)
+	if existingErr == nil {
+		if existing.ServingArtifactID != artifactID || existing.ServingArtifactDigest != artifactDigest || existing.ServingStateID != servingState {
+			return BuildArtifactBinding{}, ErrConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(existingErr, ErrNotFound) {
+		return BuildArtifactBinding{}, existingErr
+	}
+	if at.State != AttemptRunning {
+		return BuildArtifactBinding{}, fmt.Errorf("%w: build attempt is terminal and has no artifact binding", ErrConflict)
+	}
+	leaseActive, err := depdb.New(db).BuildAttemptLeaseActive(ctx, dbUUID(attempt))
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if !leaseActive {
+		return BuildArtifactBinding{}, ErrLeaseExpired
+	}
+	if err := depdb.New(db).InsertBuildArtifactBinding(ctx, depdb.InsertBuildArtifactBindingParams{
+		AttemptID: dbUUID(attempt), ServingArtifactID: artifactID, ServingArtifactDigest: artifactDigest, ServingStateID: servingState,
+	}); err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	bound, err := loadBuildArtifactBinding(ctx, db, attempt)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if bound.ServingArtifactID != artifactID || bound.ServingArtifactDigest != artifactDigest || bound.ServingStateID != servingState {
+		return BuildArtifactBinding{}, ErrConflict
+	}
+	return bound, nil
+}
+
+// BuildArtifactBinding reads the immutable binding through the repository's
+// standalone database handle.
+func (r *Repository) BuildArtifactBinding(ctx context.Context, attemptID string) (BuildArtifactBinding, error) {
+	db, err := requireDB(r)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	attemptID, err = uuidID(attemptID, "attempt id", false)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	return loadBuildArtifactBinding(contextOrBackground(ctx), db, attemptID)
+}
+
+func (r *Repository) BuildArtifactBindingTx(ctx context.Context, tx Tx, attemptID string) (BuildArtifactBinding, error) {
+	if tx == nil {
+		return BuildArtifactBinding{}, ErrInvalid
+	}
+	attemptID, err := uuidID(attemptID, "attempt id", false)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	return loadBuildArtifactBinding(contextOrBackground(ctx), tx, attemptID)
+}
+
+func (r *Repository) LoadBuildArtifactBinding(ctx context.Context, attemptID string) (BuildArtifactBinding, error) {
+	return r.BuildArtifactBinding(ctx, attemptID)
+}
+
 func (r *Repository) CommitBuildAttempt(ctx context.Context, in CommitAttemptInput) (DeliveryBuildAttempt, error) {
 	_, err := requireDB(r)
 	if err != nil {
@@ -1224,7 +1421,7 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 	// complete marker schema even on idempotent retries; accepting a sparse or
 	// unknown-field marker here would make the retry path weaker than the
 	// initial commit path.
-	var inputMarker ducklake.CommitMarker
+	var inputMarker catalogartifact.CommitMarker
 	var inputMarkerCanonical []byte
 	if state == AttemptCommitted {
 		inputMarker, inputMarkerCanonical, err = decodeCommitMarker(in.CommitMarker, true)
@@ -1291,7 +1488,7 @@ func markerMatches(raw []byte, attempt, physicalPool, request, plan string, fenc
 	return err == nil && markerIdentityMatches(m, attempt, physicalPool, request, plan, fence)
 }
 
-func markerIdentityMatches(m ducklake.CommitMarker, attempt, physicalPool, request, plan string, fence int64) bool {
+func markerIdentityMatches(m catalogartifact.CommitMarker, attempt, physicalPool, request, plan string, fence int64) bool {
 	return m.AttemptID == attempt && m.PhysicalPoolID == physicalPool && m.RequestDigest == request && m.PlanDigest == plan && m.LeaseEpoch == fence
 }
 
@@ -1301,28 +1498,24 @@ func markerIdentityMatches(m ducklake.CommitMarker, attempt, physicalPool, reque
 // the normalized value semantically. The initial commit input is required to
 // use DuckLake's canonical byte ordering because that exact string is written
 // to commit_extra_info by the DuckLake writer.
-func decodeCommitMarker(raw []byte, requireCanonical bool) (ducklake.CommitMarker, []byte, error) {
+func decodeCommitMarker(raw []byte, requireCanonical bool) (catalogartifact.CommitMarker, []byte, error) {
 	if len(raw) == 0 {
-		return ducklake.CommitMarker{}, nil, errors.New("commit marker is empty")
+		return catalogartifact.CommitMarker{}, nil, errors.New("commit marker is empty")
 	}
-	if len(raw) > ducklake.MaxCommitMarkerBytes {
-		return ducklake.CommitMarker{}, nil, fmt.Errorf("commit marker exceeds %d bytes", ducklake.MaxCommitMarkerBytes)
+	if len(raw) > catalogartifact.MaxCommitMarkerBytes {
+		return catalogartifact.CommitMarker{}, nil, fmt.Errorf("commit marker exceeds %d bytes", catalogartifact.MaxCommitMarkerBytes)
 	}
-	var marker ducklake.CommitMarker
-	if err := strictjson.DecodeWithOptions(raw, &marker, strictjson.Options{MaxBytes: ducklake.MaxCommitMarkerBytes}); err != nil {
-		return ducklake.CommitMarker{}, nil, err
-	}
-	normalized, err := marker.Normalize()
+	normalized, err := catalogartifact.DecodeCommitMarker(raw)
 	if err != nil {
-		return ducklake.CommitMarker{}, nil, err
+		return catalogartifact.CommitMarker{}, nil, err
 	}
 	canonical, err := normalized.CanonicalJSON()
 	if err != nil {
-		return ducklake.CommitMarker{}, nil, err
+		return catalogartifact.CommitMarker{}, nil, err
 	}
 	canonicalBytes := []byte(canonical)
 	if requireCanonical && !bytes.Equal(raw, canonicalBytes) {
-		return ducklake.CommitMarker{}, nil, errors.New("commit marker is not canonical JSON")
+		return catalogartifact.CommitMarker{}, nil, errors.New("commit marker is not canonical JSON")
 	}
 	return normalized, canonicalBytes, nil
 }
@@ -1413,6 +1606,23 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	}
 	if !markerMatches(at.CommitMarker, attempt, at.PhysicalPoolID, in.RequestDigest, in.PlanDigest, at.FencingEpoch) {
 		return SnapshotSeal{}, fmt.Errorf("%w: commit marker is incomplete", ErrNotQualified)
+	}
+	marker, _, markerErr := decodeCommitMarker(at.CommitMarker, false)
+	if markerErr != nil {
+		return SnapshotSeal{}, fmt.Errorf("%w: commit marker is incomplete", ErrNotQualified)
+	}
+	binding, bindingErr := loadBuildArtifactBinding(ctx, db, attempt)
+	if errors.Is(bindingErr, ErrNotFound) {
+		return SnapshotSeal{}, fmt.Errorf("%w: build artifact binding is missing", ErrNotQualified)
+	}
+	if bindingErr != nil {
+		return SnapshotSeal{}, bindingErr
+	}
+	if binding.ServingArtifactID != in.ServingArtifactID || binding.ServingArtifactDigest != in.ServingArtifactDigest {
+		return SnapshotSeal{}, fmt.Errorf("%w: build artifact binding differs", ErrConflict)
+	}
+	if binding.ServingStateID != marker.GenerationID {
+		return SnapshotSeal{}, fmt.Errorf("%w: serving state differs from commit marker generation", ErrConflict)
 	}
 	ci, err := depdb.New(db).GetCandidateIdentity(ctx, dbUUID(candidate))
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -2785,6 +2995,30 @@ func validateCompleteBuildPreflight(
 	}
 	if attemptCandidateID != candidateID {
 		return "", fmt.Errorf("%w: attempt and seal candidates differ", ErrConflict)
+	}
+	// The binding must be present before the completion transition and must
+	// agree with the canonical generation identity carried by the commit
+	// marker. This prevents a caller from committing an artifact without a
+	// serving-state hand-off, while still permitting exact terminal replays.
+	marker, _, markerErr := decodeCommitMarker(commit.CommitMarker, true)
+	if markerErr != nil {
+		return "", fmt.Errorf("%w: invalid commit marker: %v", ErrInvalid, markerErr)
+	}
+	if !markerIdentityMatches(marker, attemptID, attempt.PhysicalPoolID, attempt.RequestDigest, attempt.PlanDigest, attempt.FencingEpoch) {
+		return "", fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
+	}
+	binding, bindingErr := loadBuildArtifactBinding(ctx, tx, attemptID)
+	if errors.Is(bindingErr, ErrNotFound) {
+		return "", fmt.Errorf("%w: build artifact binding is missing", ErrNotQualified)
+	}
+	if bindingErr != nil {
+		return "", bindingErr
+	}
+	if binding.ServingArtifactID != seal.ServingArtifactID || binding.ServingArtifactDigest != seal.ServingArtifactDigest {
+		return "", fmt.Errorf("%w: build artifact binding differs", ErrConflict)
+	}
+	if binding.ServingStateID != marker.GenerationID {
+		return "", fmt.Errorf("%w: serving state differs from commit marker generation", ErrConflict)
 	}
 	candidate, err := loadCandidate(ctx, tx, candidateID, CandidateInput{})
 	if err != nil {

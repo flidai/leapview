@@ -212,6 +212,9 @@ func TestPostgresGenerationRevisionAllocationReplayRollbackAndConcurrency(t *tes
 	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-generation", PhysicalPoolID: "pool-generation", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/generation", SessionIdentity: "session-generation", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-generation", ServingArtifactDigest: artifactDigest, ServingStateID: "generation-test", OwnerID: "builder-generation", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-generation", FencingEpoch: 1, SnapshotID: 42, CommitMarker: testCommitMarker(attemptID, "pool-generation", testDigest('f'), planDigest)}); err != nil {
 		t.Fatal(err)
 	}
