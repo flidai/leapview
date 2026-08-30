@@ -94,6 +94,37 @@ func TestInfisicalRuntimeConfigurationIsAllOrNoneAndHTTPS(t *testing.T) {
 	}
 }
 
+func TestObjectStoreRuntimeConfigurationIsComplete(t *testing.T) {
+	base := map[string]any{
+		"LEAPVIEW_OBJECT_STORE_BACKEND":                    "s3",
+		"LEAPVIEW_OBJECT_STORE_S3_BUCKET":                  "leapview-objects",
+		"LEAPVIEW_OBJECT_STORE_S3_REGION":                  "eu-west-1",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE":         "AES256",
+		"LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID":           "",
+		"LEAPVIEW_OBJECT_STORE_S3_SECRET_ACCESS_KEY":       "",
+		"LEAPVIEW_OBJECT_STORE_S3_SESSION_TOKEN":           "",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF":      "",
+		"LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY": "",
+	}
+	if err := configspec.Validate(base); err != nil {
+		t.Fatalf("valid S3 object-store configuration rejected: %v", err)
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID"] = "only-access"
+	if err := configspec.Validate(base); err == nil {
+		t.Fatal("partial static object-store credentials were accepted")
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ACCESS_KEY_ID"] = ""
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_MODE"] = "aws:kms"
+	if err := configspec.Validate(base); err == nil {
+		t.Fatal("SSE-KMS without key identities was accepted")
+	}
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_KEY_REF"] = "logical-ref"
+	base["LEAPVIEW_OBJECT_STORE_S3_ENCRYPTION_PROVIDER_KEY"] = "provider-key"
+	if err := configspec.Validate(base); err != nil {
+		t.Fatalf("complete SSE-KMS object-store configuration rejected: %v", err)
+	}
+}
+
 func TestListenAddressUsesExplicitLeapViewSetting(t *testing.T) {
 	t.Setenv("ADDR", "127.0.0.1:9002")
 	t.Setenv("PORT", "9003")
