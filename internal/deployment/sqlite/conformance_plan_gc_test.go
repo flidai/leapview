@@ -221,7 +221,7 @@ func TestPlanToGCLifecycleConformance(t *testing.T) {
 				_, rootRaceErr = repo.ReleaseQueryLease(ctx, rootRaceLease.ID, now.Add(3*time.Hour))
 			}
 			clock = now.Add(3 * time.Hour)
-			firstGC, err := (deploymentgc.Collector{Control: repo, Store: &conformanceGCStore{objects}, Inspector: inspector, Quarantiner: repo, Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "gc-conformance", CycleID: "gc-conformance-race", Now: func() time.Time { return clock }, BatchSize: 1, OrphanGrace: time.Minute, ReaderGrace: time.Hour}}).Run(ctx)
+			firstGC, err := (deploymentgc.Collector{Control: repo, Store: &conformanceGCStore{objects}, Inspector: inspector, Quarantiner: repo, Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "gc-conformance", CycleID: "0198f2c0-7c7a-7f00-8a11-000000000121", Now: func() time.Time { return clock }, BatchSize: 1, OrphanGrace: time.Minute, ReaderGrace: time.Hour}}).Run(ctx)
 			if rootRaceErr != nil || !errors.Is(err, deploymentgc.ErrGCStale) || firstGC.Deleted != 1 {
 				t.Fatalf("stale-root GC result=%#v err=%v rootRaceErr=%v", firstGC, err, rootRaceErr)
 			}
@@ -237,7 +237,7 @@ func TestPlanToGCLifecycleConformance(t *testing.T) {
 			}
 			clock = now.Add(6 * time.Hour)
 			objects.onDelete = nil
-			finalGC, err := (deploymentgc.Collector{Control: repo, Store: &conformanceGCStore{objects}, Inspector: inspector, Quarantiner: repo, Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "gc-conformance-final", CycleID: "gc-conformance-final", Now: func() time.Time { return clock }, OrphanGrace: time.Minute, ReaderGrace: time.Hour}}).Run(ctx)
+			finalGC, err := (deploymentgc.Collector{Control: repo, Store: &conformanceGCStore{objects}, Inspector: inspector, Quarantiner: repo, Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "gc-conformance-final", CycleID: "0198f2c0-7c7a-7f00-8a11-000000000122", Now: func() time.Time { return clock }, OrphanGrace: time.Minute, ReaderGrace: time.Hour}}).Run(ctx)
 			if err != nil {
 				t.Fatal(err)
 			}

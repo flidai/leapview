@@ -395,7 +395,7 @@ func TestEnumerateRootsWithGraceRetainsExpiredReaderUntilDrainWindow(t *testing.
 	inspector := sealedLeaseGCInspector{candidate.CatalogObjectKey: {CatalogKey: candidate.CatalogObjectKey, CatalogDigest: candidate.CatalogDigest, DataFiles: []string{dataKey}}}
 	withinResult, err := (deploymentgc.Collector{
 		Control: repo, Store: objects, Inspector: inspector,
-		Config: deploymentgc.Config{PhysicalPoolID: candidate.PhysicalPoolID, HolderID: "grace-gc", CycleID: "grace-gc-cycle", Now: func() time.Time { return now.Add(15 * time.Minute) }, OrphanGrace: time.Minute, ReaderGrace: 10 * time.Minute},
+		Config: deploymentgc.Config{PhysicalPoolID: candidate.PhysicalPoolID, HolderID: "grace-gc", CycleID: "0198f2c0-7c7a-7f00-8a11-000000000123", Now: func() time.Time { return now.Add(15 * time.Minute) }, OrphanGrace: time.Minute, ReaderGrace: 10 * time.Minute},
 	}).Run(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -405,7 +405,7 @@ func TestEnumerateRootsWithGraceRetainsExpiredReaderUntilDrainWindow(t *testing.
 	}
 	afterResult, err := (deploymentgc.Collector{
 		Control: repo, Store: objects, Inspector: inspector,
-		Config: deploymentgc.Config{PhysicalPoolID: candidate.PhysicalPoolID, HolderID: "grace-gc-after", CycleID: "grace-gc-after-cycle", Now: func() time.Time { return now.Add(21 * time.Minute) }, OrphanGrace: time.Minute, ReaderGrace: 10 * time.Minute},
+		Config: deploymentgc.Config{PhysicalPoolID: candidate.PhysicalPoolID, HolderID: "grace-gc-after", CycleID: "0198f2c0-7c7a-7f00-8a11-000000000124", Now: func() time.Time { return now.Add(21 * time.Minute) }, OrphanGrace: time.Minute, ReaderGrace: 10 * time.Minute},
 	}).Run(ctx)
 	if err != nil {
 		t.Fatal(err)

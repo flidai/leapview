@@ -224,7 +224,7 @@ func TestCollectorResumesPendingIntentAndUsesProviderVersion(t *testing.T) {
 	now := time.Now().UTC()
 	control := &fakeControl{rootSet: deployment.RootSet{PhysicalPoolID: "pool", Revision: 1}}
 	store := &fakeStore{objects: map[string]Object{"orphan": {Key: "orphan", Digest: digest("o"), Version: "v1", CreatedAt: now.Add(-time.Hour)}}, failDelete: true}
-	c := Collector{Control: control, Store: store, Inspector: fakeInspector{}, Config: Config{PhysicalPoolID: "pool", HolderID: "holder", CycleID: "retry-cycle", Now: func() time.Time { return now }}}
+	c := Collector{Control: control, Store: store, Inspector: fakeInspector{}, Config: Config{PhysicalPoolID: "pool", HolderID: "holder", CycleID: testUUIDv7, Now: func() time.Time { return now }}}
 	if _, err := c.Run(context.Background()); !errors.Is(err, ErrDeleteUncertain) {
 		t.Fatalf("first run err=%v", err)
 	}

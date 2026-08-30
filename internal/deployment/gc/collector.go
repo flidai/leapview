@@ -8,7 +8,6 @@ package gc
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -22,6 +21,7 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/google/uuid"
 )
 
 var (
@@ -131,10 +131,14 @@ type Revalidator interface {
 }
 
 type Config struct {
-	PhysicalPoolID    string
-	HolderID          string
-	LeaseID           string
-	CycleID           string
+	PhysicalPoolID string
+	HolderID       string
+	LeaseID        string
+	CycleID        string
+	// IDGenerator supplies run-scoped control-plane identities. A nil
+	// generator uses the default cryptographically-random UUIDv7 generator.
+	// Generated values must be canonical UUIDv7 strings.
+	IDGenerator       func() (string, error)
 	Now               func() time.Time
 	LeaseDuration     time.Duration
 	BatchSize         int
@@ -192,14 +196,13 @@ func (c Collector) validate() error {
 	if err := deployment.ValidateDeliveryID(c.Config.HolderID); err != nil {
 		return fmt.Errorf("%w: holder: %v", ErrInvalidConfig, err)
 	}
-	if c.Config.LeaseID == "" {
-		c.Config.LeaseID = c.Config.HolderID + "-gc"
-	}
-	if err := deployment.ValidateDeliveryID(c.Config.LeaseID); err != nil {
-		return fmt.Errorf("%w: lease: %v", ErrInvalidConfig, err)
+	if c.Config.LeaseID != "" {
+		if _, err := canonicalUUIDv7(c.Config.LeaseID); err != nil {
+			return fmt.Errorf("%w: lease: %v", ErrInvalidConfig, err)
+		}
 	}
 	if c.Config.CycleID != "" {
-		if err := deployment.ValidateDeliveryID(c.Config.CycleID); err != nil {
+		if _, err := canonicalUUIDv7(c.Config.CycleID); err != nil {
 			return fmt.Errorf("%w: cycle: %v", ErrInvalidConfig, err)
 		}
 	}
@@ -240,12 +243,45 @@ func (c Collector) validate() error {
 	return nil
 }
 
-func newID(prefix string) string {
-	var b [12]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		return prefix + "-fallback"
+func generateUUIDv7() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", fmt.Errorf("generate UUIDv7 identity: %w", err)
 	}
-	return prefix + "-" + hex.EncodeToString(b[:])
+	return id.String(), nil
+}
+
+func canonicalUUIDv7(value string) (string, error) {
+	if value == "" || value != strings.TrimSpace(value) {
+		return "", fmt.Errorf("UUIDv7 identity must be canonical")
+	}
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("parse UUIDv7 identity: %w", err)
+	}
+	if id.String() != value {
+		return "", fmt.Errorf("UUIDv7 identity must use canonical lowercase RFC 4122 form")
+	}
+	if id.Version() != uuid.Version(7) || id.Variant() != uuid.RFC4122 {
+		return "", fmt.Errorf("identity must be an RFC 4122 UUIDv7")
+	}
+	return value, nil
+}
+
+func (c Collector) newID() (string, error) {
+	generator := c.Config.IDGenerator
+	if generator == nil {
+		generator = generateUUIDv7
+	}
+	value, err := generator()
+	if err != nil {
+		return "", fmt.Errorf("generate GC identity: %w", err)
+	}
+	value, err = canonicalUUIDv7(value)
+	if err != nil {
+		return "", fmt.Errorf("generate GC identity: %w", err)
+	}
+	return value, nil
 }
 
 // Run executes or resumes one bounded cycle. A corrupt or unavailable rooted
@@ -263,7 +299,11 @@ func (c Collector) Run(ctx context.Context) (Result, error) {
 		c.Config.LeaseDuration = 15 * time.Minute
 	}
 	if c.Config.LeaseID == "" {
-		c.Config.LeaseID = newID("gc")
+		leaseID, err := c.newID()
+		if err != nil {
+			return Result{}, err
+		}
+		c.Config.LeaseID = leaseID
 	}
 	if err := c.validate(); err != nil {
 		return Result{}, err
@@ -298,8 +338,16 @@ func (c Collector) Run(ctx context.Context) (Result, error) {
 		// Keep the durable database owner as the authorization root, but use a
 		// fresh holder identity for each run so a crashed/restarted worker cannot
 		// accidentally treat a stale lease as its own.
-		leaseOwnerID = leaseOwnerID + "/" + newID("gc-holder")
-		holderID = holderID + "/" + newID("gc-fence")
+		holderIdentity, identityErr := c.newID()
+		if identityErr != nil {
+			return Result{}, identityErr
+		}
+		fenceIdentity, identityErr := c.newID()
+		if identityErr != nil {
+			return Result{}, identityErr
+		}
+		leaseOwnerID = leaseOwnerID + "/" + holderIdentity
+		holderID = holderID + "/" + fenceIdentity
 		leaseToken, leaseErr = c.Config.DeletionLease.AcquireNamespaceDeletionLease(ctx, leaseOwnerID, c.Config.LeaseDuration)
 		if leaseErr != nil {
 			return Result{}, fmt.Errorf("%w: %v", physicalpool.ErrDeletionLeaseConflict, leaseErr)
@@ -329,7 +377,10 @@ func (c Collector) Run(ctx context.Context) (Result, error) {
 	}
 	cycleID := c.Config.CycleID
 	if cycleID == "" {
-		cycleID = newID("gc-cycle")
+		cycleID, err = c.newID()
+		if err != nil {
+			return Result{}, err
+		}
 	}
 	cycle, err := c.Control.CreateGCCycle(ctx, deployment.DeliveryGCCycle{ID: cycleID, ActorID: c.Config.HolderID, PhysicalPoolID: c.Config.PhysicalPoolID, Epoch: fence.Epoch, RootRevision: roots.Revision, CreatedAt: now})
 	if err != nil {
@@ -459,7 +510,11 @@ func (c Collector) Run(ctx context.Context) (Result, error) {
 			if _, already := processed[object.Key]; already {
 				continue
 			}
-			intent := deployment.DeliveryGCDeleteIntent{ID: newID("gc-delete"), CycleID: cycle.ID, PhysicalPoolID: c.Config.PhysicalPoolID, ObjectKey: object.Key, ObjectDigest: object.Digest, ObjectVersion: object.Version, CreatedAt: c.Config.Now().UTC()}
+			intentID, identityErr := c.newID()
+			if identityErr != nil {
+				return result, identityErr
+			}
+			intent := deployment.DeliveryGCDeleteIntent{ID: intentID, CycleID: cycle.ID, PhysicalPoolID: c.Config.PhysicalPoolID, ObjectKey: object.Key, ObjectDigest: object.Digest, ObjectVersion: object.Version, CreatedAt: c.Config.Now().UTC()}
 			intent, err = c.Control.CreateGCDeleteIntent(ctx, intent)
 			if err != nil {
 				return result, err

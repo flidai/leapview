@@ -297,7 +297,7 @@ func TestSealedCatalogLeaseAdapterKeepsOldLeaseAcrossPublication(t *testing.T) {
 	}
 	gcResult, err := (deploymentgc.Collector{
 		Control: repo2, Store: gcStore, Inspector: gcInspector, Quarantiner: repo2,
-		Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "sealed-reader-gc", CycleID: "sealed-reader-gc-cycle", Now: func() time.Time { return gcNow }, OrphanGrace: time.Minute, ReaderGrace: time.Hour},
+		Config: deploymentgc.Config{PhysicalPoolID: pool, HolderID: "sealed-reader-gc", CycleID: "0198f2c0-7c7a-7f00-8a11-000000000125", Now: func() time.Time { return gcNow }, OrphanGrace: time.Minute, ReaderGrace: time.Hour},
 	}).Run(ctx)
 	if err != nil {
 		t.Fatalf("GC with long-held reader root: %v", err)
