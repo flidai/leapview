@@ -166,16 +166,74 @@ END; $$;
 DROP TRIGGER IF EXISTS reader_lease_mutation ON serving_state.reader_lease;
 CREATE TRIGGER reader_lease_mutation BEFORE INSERT OR UPDATE ON serving_state.reader_lease FOR EACH ROW EXECUTE FUNCTION serving_state.validate_reader_lease_mutation();
 
+-- Expired query-lease release is an operational capability, not
+-- request-serving authority. Delivery owns retention-root lifecycle and this
+-- capability deliberately does not mutate those roots or immutable delivery
+-- evidence. A maintenance batch only advances reader-lease release markers
+-- in a bounded, deterministic order.
+CREATE OR REPLACE FUNCTION serving_state.release_expired_query_snapshot_leases(
+    p_environment text,
+    p_limit integer
+)
+RETURNS bigint
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, serving_state, delivery
+AS $$
+DECLARE
+    removed bigint := 0;
+BEGIN
+    IF p_environment IS NULL OR p_environment <> btrim(p_environment)
+       OR octet_length(p_environment) < 1 OR octet_length(p_environment) > 128
+       OR p_environment !~ '^[A-Za-z0-9][A-Za-z0-9_.:-]*$' THEN
+        RAISE EXCEPTION 'serving-state retention environment is invalid';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'serving-state retention limit must be between 1 and 1000';
+    END IF;
+    WITH doomed AS (
+        SELECT l.lease_id
+        FROM serving_state.reader_lease l
+        JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+        JOIN delivery.delivery_target t ON t.target_id = g.target_id
+        WHERE t.environment = p_environment
+          AND l.released_at IS NULL
+          AND l.expires_at <= clock_timestamp()
+        ORDER BY l.expires_at, l.lease_id
+        LIMIT p_limit
+        FOR UPDATE OF l SKIP LOCKED
+    )
+    UPDATE serving_state.reader_lease l
+       SET released_at = clock_timestamp()
+      FROM doomed d
+     WHERE l.lease_id = d.lease_id;
+    GET DIAGNOSTICS removed = ROW_COUNT;
+    RETURN removed;
+END;
+$$;
+
 REVOKE ALL ON SCHEMA serving_state FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA serving_state FROM PUBLIC;
 REVOKE ALL ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid,bigint) FROM PUBLIC;
 REVOKE ALL ON FUNCTION serving_state.validate_reader_lease_mutation() FROM PUBLIC;
+REVOKE ALL ON FUNCTION serving_state.release_expired_query_snapshot_leases(text,integer) FROM PUBLIC;
 DO $$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_owner') THEN
+        GRANT ALL ON FUNCTION serving_state.release_expired_query_snapshot_leases(text,integer) TO leapview_control_owner;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_migrator') THEN
+        GRANT ALL ON FUNCTION serving_state.release_expired_query_snapshot_leases(text,integer) TO leapview_control_migrator;
+    END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA serving_state TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid,bigint) TO leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION serving_state.release_expired_query_snapshot_leases(text,integer) FROM leapview_control_runtime;
         GRANT SELECT, INSERT ON serving_state.bundle, serving_state.asset, serving_state.asset_edge TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON serving_state.reader_lease TO leapview_control_runtime;
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA serving_state TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION serving_state.release_expired_query_snapshot_leases(text,integer) TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA serving_state TO leapview_control_readonly;

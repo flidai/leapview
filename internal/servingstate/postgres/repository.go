@@ -42,6 +42,11 @@ type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
+// Retention batches are deliberately small enough to keep row locks and
+// transaction latency bounded. Callers can invoke the maintenance methods
+// repeatedly to drain a larger backlog.
+const retentionBatchLimit = 1000
+
 // Bundle is the immutable serving evidence admitted for one delivery
 // generation. JSON strings are canonical object documents returned by the DB.
 type Bundle struct {
@@ -593,9 +598,40 @@ func (r *Repository) ReleaseExpiredQuerySnapshotLeases(ctx context.Context, e st
 	if err != nil {
 		return err
 	}
-	_, err = querySet(db).ReleaseExpiredLeases(contextOrBackground(ctx), e)
+	b, ok := db.(beginner)
+	if !ok {
+		return errors.New("expired reader lease reconciliation requires a PostgreSQL transaction-capable database")
+	}
+	tx, err := b.Begin(contextOrBackground(ctx))
+	if err != nil {
+		return err
+	}
+	if err := r.ReleaseExpiredQuerySnapshotLeasesTx(ctx, tx, e); err != nil {
+		_ = tx.Rollback(contextOrBackground(ctx))
+		return err
+	}
+	return tx.Commit(contextOrBackground(ctx))
+}
+
+// ReleaseExpiredQuerySnapshotLeasesTx runs one bounded expired-lease batch on
+// the caller-owned PostgreSQL transaction. It intentionally does not commit or
+// roll back, so maintenance orchestration can compose it with other control
+// mutations. Runtime roles have no EXECUTE privilege on this maintenance
+// function; request paths should use ReleaseQuerySnapshotLease instead.
+func (r *Repository) ReleaseExpiredQuerySnapshotLeasesTx(ctx context.Context, tx Tx, e string) error {
+	if tx == nil {
+		return errors.New("serving-state transaction is required")
+	}
+	if _, ok := tx.(pgx.Tx); !ok {
+		return errors.New("expired reader lease reconciliation requires a caller-owned PostgreSQL transaction")
+	}
+	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
+		return err
+	}
+	_, err := querySet(tx).ReleaseExpiredLeases(contextOrBackground(ctx), servingdb.ReleaseExpiredLeasesParams{Environment: e, BatchLimit: retentionBatchLimit})
 	return err
 }
+
 func (r *Repository) LeasedDuckLakeSnapshots(ctx context.Context, e string) ([]int64, error) {
 	if err := servingstate.ValidateEnvironment(servingstate.Environment(e)); err != nil {
 		return nil, err

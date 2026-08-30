@@ -13,10 +13,11 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
+func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *pgxpool.Pool) {
 	t.Helper()
 	h := postgrestest.Start(t)
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "serving-runtime", Login: true})
+	maintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "serving-maintenance", Login: true})
 	db := h.NewDatabase(t, "")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -27,7 +28,7 @@ func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz);`); err != nil {
+	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),retired_at timestamptz,expired_at timestamptz);`); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -51,7 +52,18 @@ func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool) {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Close)
-	return admin, p
+	m, err := pgxpool.New(t.Context(), db.URL(maintenance))
+	if err != nil {
+		p.Close()
+		t.Fatal(err)
+	}
+	if err := m.Ping(t.Context()); err != nil {
+		m.Close()
+		p.Close()
+		t.Fatal(err)
+	}
+	t.Cleanup(m.Close)
+	return admin, p, m
 }
 
 func seedGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, publication, attempt, seal, digest, graphDigest string, snapshot int64) {
@@ -91,8 +103,151 @@ func testGraph(t *testing.T) projectgraph.ProjectGraph {
 	return g
 }
 
+func TestRetentionMaintenanceRoleBoundary(t *testing.T) {
+	admin, runtime, maintenance := servingDB(t)
+	ctx := t.Context()
+
+	var runtimeExecute, maintenanceExecute bool
+	if err := admin.QueryRow(ctx, `
+		SELECT has_function_privilege('leapview_control_runtime', 'serving_state.release_expired_query_snapshot_leases(text, integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_maintenance', 'serving_state.release_expired_query_snapshot_leases(text, integer)', 'EXECUTE')`).Scan(&runtimeExecute, &maintenanceExecute); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeExecute {
+		t.Fatal("runtime role has serving-state retention EXECUTE privilege")
+	}
+	if !maintenanceExecute {
+		t.Fatal("maintenance role is missing serving-state retention EXECUTE privilege")
+	}
+
+	if err := New(runtime).ReleaseExpiredQuerySnapshotLeases(ctx, "prod"); err == nil {
+		t.Fatal("runtime expired lease reconciliation unexpectedly succeeded")
+	}
+	if err := New(maintenance).ReleaseExpiredQuerySnapshotLeases(ctx, "prod"); err != nil {
+		t.Fatalf("maintenance expired lease reconciliation: %v", err)
+	}
+}
+
+func TestExpiredLeaseMaintenancePreservesLiveRootAndImmutableEvidence(t *testing.T) {
+	admin, runtime, maintenance := servingDB(t)
+	ctx := t.Context()
+	generation := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seal := "cccccccc-cccc-cccc-cccc-cccccccccccc"
+	seedGeneration(t, admin, generation, "target_retention", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "dddddddd-dddd-dddd-dddd-dddddddddddd", seal, digest, testGraph(t).Digest(), 41)
+	lease, err := New(runtime).CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
+		ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 41,
+		OwnerID: "retention-reader", ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	liveLease, err := New(runtime).CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
+		ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 41,
+		OwnerID: "live-reader", ExpiresAt: time.Now().Add(10 * time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generations, seals int
+	if err := admin.QueryRow(ctx, `SELECT (SELECT count(*) FROM delivery.delivery_generation), (SELECT count(*) FROM delivery.delivery_snapshot_seal)`).Scan(&generations, &seals); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `ALTER TABLE serving_state.reader_lease DISABLE TRIGGER reader_lease_mutation`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE serving_state.reader_lease SET acquired_at=clock_timestamp()-interval '2 minutes', expires_at=clock_timestamp()-interval '1 minute' WHERE lease_id=$1`, lease); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `ALTER TABLE serving_state.reader_lease ENABLE TRIGGER reader_lease_mutation`); err != nil {
+		t.Fatal(err)
+	}
+	if err := New(maintenance).ReleaseExpiredQuerySnapshotLeases(ctx, "prod"); err != nil {
+		t.Fatalf("maintenance expired lease reconciliation: %v", err)
+	}
+	var released bool
+	if err := admin.QueryRow(ctx, `SELECT released_at IS NOT NULL FROM serving_state.reader_lease WHERE lease_id=$1`, lease).Scan(&released); err != nil {
+		t.Fatal(err)
+	}
+	if !released {
+		t.Fatal("expired reader lease was not released")
+	}
+	if err := admin.QueryRow(ctx, `SELECT released_at IS NOT NULL FROM serving_state.reader_lease WHERE lease_id=$1`, liveLease).Scan(&released); err != nil {
+		t.Fatal(err)
+	}
+	if released {
+		t.Fatal("live reader lease was released by expired-lease maintenance")
+	}
+	var rootState string
+	if err := admin.QueryRow(ctx, `SELECT state FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, generation).Scan(&rootState); err != nil {
+		t.Fatal(err)
+	}
+	if rootState != "live" {
+		t.Fatalf("maintenance changed live delivery root state to %q", rootState)
+	}
+	var generationsAfter, sealsAfter int
+	if err := admin.QueryRow(ctx, `SELECT (SELECT count(*) FROM delivery.delivery_generation), (SELECT count(*) FROM delivery.delivery_snapshot_seal)`).Scan(&generationsAfter, &sealsAfter); err != nil {
+		t.Fatal(err)
+	}
+	if generationsAfter != generations || sealsAfter != seals {
+		t.Fatalf("maintenance mutated immutable delivery evidence: generations=%d/%d seals=%d/%d", generationsAfter, generations, sealsAfter, seals)
+	}
+}
+
+func TestExpiredLeaseMaintenanceSkipsLockedRows(t *testing.T) {
+	admin, runtime, maintenance := servingDB(t)
+	ctx := t.Context()
+	generation := "12121212-1212-1212-1212-121212121212"
+	digest := "sha256:" + strings.Repeat("b", 64)
+	seedGeneration(t, admin, generation, "target_retention_locked", "13131313-1313-1313-1313-131313131313", "14141414-1414-1414-1414-141414141414", "15151515-1515-1515-1515-151515151515", digest, testGraph(t).Digest(), 51)
+	reader := New(runtime)
+	first, err := reader.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 51, OwnerID: "locked-reader", ExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := reader.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 51, OwnerID: "free-reader", ExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `ALTER TABLE serving_state.reader_lease DISABLE TRIGGER reader_lease_mutation`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE serving_state.reader_lease SET acquired_at=clock_timestamp()-interval '2 minutes', expires_at=clock_timestamp()-interval '1 minute' WHERE lease_id IN ($1,$2)`, first, second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `ALTER TABLE serving_state.reader_lease ENABLE TRIGGER reader_lease_mutation`); err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(ctx)
+	if _, err := lockTx.Exec(ctx, `SELECT lease_id FROM serving_state.reader_lease WHERE lease_id=$1 FOR UPDATE`, first); err != nil {
+		t.Fatal(err)
+	}
+	maintenanceCtx, cancel := context.WithTimeout(ctx, 500*time.Millisecond)
+	defer cancel()
+	if err := New(maintenance).ReleaseExpiredQuerySnapshotLeases(maintenanceCtx, "prod"); err != nil {
+		t.Fatalf("maintenance blocked on locked lease: %v", err)
+	}
+	var firstReleased, secondReleased bool
+	if err := admin.QueryRow(ctx, `SELECT released_at IS NOT NULL FROM serving_state.reader_lease WHERE lease_id=$1`, first).Scan(&firstReleased); err != nil {
+		t.Fatal(err)
+	}
+	if err := admin.QueryRow(ctx, `SELECT released_at IS NOT NULL FROM serving_state.reader_lease WHERE lease_id=$1`, second).Scan(&secondReleased); err != nil {
+		t.Fatal(err)
+	}
+	if firstReleased {
+		t.Fatal("maintenance changed an expired lease held by another transaction")
+	}
+	if !secondReleased {
+		t.Fatal("maintenance did not process an unlocked expired lease")
+	}
+}
+
 func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "11111111-1111-1111-1111-111111111111"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	seedGeneration(t, admin, generation, "target_demo", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", digest, testGraph(t).Digest(), 7)
@@ -194,7 +349,7 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 }
 
 func TestSchemaHasNoMutableServingAuthority(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	var count int
 	if err := admin.QueryRow(t.Context(), `SELECT count(*) FROM information_schema.tables WHERE table_schema='serving_state' AND table_name IN ('state','active_pointer','query_snapshot_lease')`).Scan(&count); err != nil {
 		t.Fatal(err)
@@ -208,7 +363,7 @@ func TestSchemaHasNoMutableServingAuthority(t *testing.T) {
 }
 
 func TestConflictingReplayCommitsWithoutWritingIncomingChildren(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "16161616-1616-1616-1616-161616161616"
 	digest := "sha256:" + strings.Repeat("b", 64)
 	stored := testGraph(t)
@@ -253,7 +408,7 @@ func TestConflictingReplayCommitsWithoutWritingIncomingChildren(t *testing.T) {
 }
 
 func TestAdmissionIsCallerOwnedAndRollbackable(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "55555555-5555-5555-5555-555555555555"
 	digest := "sha256:" + strings.Repeat("c", 64)
 	graph := testGraph(t)
@@ -283,7 +438,7 @@ func TestAdmissionIsCallerOwnedAndRollbackable(t *testing.T) {
 }
 
 func TestRetentionGuardRequiresCallerTransaction(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "12121212-1212-1212-1212-121212121212"
 	seedGeneration(t, admin, generation, "target_demo", "13131313-1313-1313-1313-131313131313", "14141414-1414-1414-1414-141414141414", "15151515-1515-1515-1515-151515151515", "sha256:"+strings.Repeat("a", 64), testGraph(t).Digest(), 17)
 	if _, ok := any(pool).(Tx); ok {
@@ -292,7 +447,7 @@ func TestRetentionGuardRequiresCallerTransaction(t *testing.T) {
 }
 
 func TestRetentionGuardSerializesRetirement(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "99999999-9999-9999-9999-999999999999"
 	digest := "sha256:" + strings.Repeat("e", 64)
 	seedGeneration(t, admin, generation, "target_demo", "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb", "cccccccc-cccc-cccc-cccc-cccccccccccc", digest, testGraph(t).Digest(), 11)
@@ -324,7 +479,7 @@ func TestRetentionGuardSerializesRetirement(t *testing.T) {
 }
 
 func TestLeaseExtensionSerializesRetirement(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "abababab-abab-abab-abab-abababababab"
 	digest := "sha256:" + strings.Repeat("f", 64)
 	seedGeneration(t, admin, generation, "target_demo", "acacacac-acac-acac-acac-acacacacacac", "adadadad-adad-adad-adad-adadadadadad", "aeaeaeae-aeae-aeae-aeae-aeaeaeaeaeae", digest, testGraph(t).Digest(), 13)
@@ -360,7 +515,7 @@ func TestLeaseExtensionSerializesRetirement(t *testing.T) {
 }
 
 func TestReaderLeaseBindsSnapshotAndDBClock(t *testing.T) {
-	admin, pool := servingDB(t)
+	admin, pool, _ := servingDB(t)
 	generation := "11111111-1111-1111-1111-111111111111"
 	digest := "sha256:" + strings.Repeat("a", 64)
 	seedGeneration(t, admin, generation, "target_demo", "22222222-2222-2222-2222-222222222222", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", digest, testGraph(t).Digest(), 7)

@@ -124,13 +124,10 @@ SELECT generation_id::text, ducklake_snapshot_id
 FROM serving_state.reader_lease
 WHERE lease_id = $1 AND released_at IS NULL AND expires_at > clock_timestamp();
 
--- name: ReleaseExpiredLeases :execrows
-UPDATE serving_state.reader_lease l
-SET released_at = clock_timestamp()
-FROM delivery.delivery_generation g
-JOIN delivery.delivery_target t ON t.target_id = g.target_id
-WHERE g.generation_id = l.generation_id AND t.environment = $1
-  AND l.released_at IS NULL AND l.expires_at <= clock_timestamp();
+-- name: ReleaseExpiredLeases :one
+SELECT serving_state.release_expired_query_snapshot_leases(
+    sqlc.arg(environment), sqlc.arg(batch_limit)
+);
 
 -- name: LeasedSnapshots :many
 SELECT DISTINCT l.ducklake_snapshot_id
