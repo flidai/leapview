@@ -49,7 +49,13 @@ func prepareV010QualificationProject(runDirectory string) error {
 		}
 		target := filepath.Join(runDirectory, relative)
 		if entry.IsDir() {
-			return os.MkdirAll(target, 0o755)
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			// MkdirAll applies the process umask. The fixture is intentionally
+			// bind-mounted into an unprivileged released image, so enforce the
+			// reviewed traversal mode after creation.
+			return os.Chmod(target, 0o755)
 		}
 		document, err := v010QualificationProject.ReadFile(path)
 		if err != nil {
@@ -57,6 +63,11 @@ func prepareV010QualificationProject(runDirectory string) error {
 		}
 		if err := os.WriteFile(target, document, 0o444); err != nil {
 			return fmt.Errorf("write v0.1 qualification fixture %s: %w", relative, err)
+		}
+		// WriteFile also applies the process umask; force the checked-in,
+		// non-secret fixture to the read-only mode required by the container.
+		if err := os.Chmod(target, 0o444); err != nil {
+			return fmt.Errorf("set v0.1 qualification fixture mode %s: %w", relative, err)
 		}
 		return nil
 	})
