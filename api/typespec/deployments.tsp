@@ -158,6 +158,7 @@ model CandidatePublishRequest {
 model CandidateSourceArtifact {
   path: string;
   digest: string;
+  sizeBytes: int64;
 }
 
 model CandidateSourceRevision {
@@ -180,6 +181,7 @@ model CandidateSynchronizationRequest {
 }
 
 model CandidateSynchronizationPlanResponse {
+  planId: string;
   artifactDigest: string;
   missingDigests: string[];
 }
@@ -679,6 +681,20 @@ model CandidateSourceBlobAuditPayload {
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model CandidateSourceSyncPlannedAuditPayload {
+  @apigen.auditInternal
+  operationId: string;
+  @apigen.auditPublic
+  surface: string;
+  @apigen.auditInternal
+  projectId: ResourceId;
+  @apigen.auditInternal
+  sourceDigest: string;
+  @apigen.auditInternal
+  planId: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model CandidateSourceRetainedAuditPayload {
   @apigen.auditInternal
   operationId: string;
@@ -728,7 +744,7 @@ model ApprovalForbiddenFailure {}
   kind: "audit_unavailable",
   statusCode: 503,
   code: "AUDIT_UNAVAILABLE",
-  publicDetail: "Candidate source blob audit is temporarily unavailable.",
+  publicDetail: "Candidate source audit is temporarily unavailable.",
 })
 model AuditUnavailableFailure {}
 
@@ -1263,11 +1279,15 @@ op cancelProjectCandidateByKey(@path @apigen.target project: ResourceId, @path c
 @apigen.commandDefaults(#{ guarantee: "best-effort" })
 interface CandidateSynchronization {
   @summary("Plan content-addressed synchronization for the current author's private candidate")
-  @doc("Query classification: reports missing immutable blobs without uploading or committing source state.")
   @route("/plan")
   @post
   @extension("x-leapview-object-scope", "project")
-  @apigen.query
+  @apigen.command(#{ auditAction: "candidate.source_sync_planned" })
+  @apigen.auditPayload(CandidateSourceSyncPlannedAuditPayload)
+  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateConflictFailure)
+  @apigen.failsWith(InvalidCandidateFailure)
+  @apigen.failsWith(AuditUnavailableFailure)
   planProjectCandidateSynchronization(
     @path project: ResourceId,
     @header("Idempotency-Key") idempotencyKey: IdempotencyKey,
@@ -1284,7 +1304,7 @@ interface CandidateSynchronization {
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.command(#{ auditAction: "candidate.source_retained" })
   @apigen.auditPayload(CandidateSourceRetainedAuditPayload)
-  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): CreatedJson<CandidateSourceSnapshotResponse> | CommonErrors;
+  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: CandidateSynchronizationRequest): CreatedJson<CandidateSourceSnapshotResponse> | CommonErrors;
 
   @summary("Upload a missing immutable private-candidate source blob")
   @route("/blobs/{digest}")
@@ -1300,7 +1320,7 @@ interface CandidateSynchronization {
   })
   @apigen.auditPayload(CandidateSourceBlobAuditPayload)
   @apigen.manual
-  uploadProjectCandidateSourceBlob(@path @apigen.target project: ResourceId, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
+  uploadProjectCandidateSourceBlob(@path @apigen.target project: ResourceId, @path digest: string, @header contentType: "application/octet-stream", @header("Content-Digest") contentDigest: string, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: bytes): CreatedJson<CandidateSourceBlobResponse> | CommonErrors;
 
   @summary("Atomically commit a complete source snapshot to the current author's private candidate")
   @route("/commit")
@@ -1314,7 +1334,7 @@ interface CandidateSynchronization {
     auditAction: "candidate.ready",
   })
   @apigen.auditPayload(CandidateAuditPayload)
-  commitProjectCandidateSynchronization(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
+  commitProjectCandidateSynchronization(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: CandidateSynchronizationRequest): OkJson<CandidateResponse> | CommonErrors;
 }
 
 @apigen.failureDefinition(#{

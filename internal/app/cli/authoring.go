@@ -82,6 +82,7 @@ func (transport *candidateSynchronizationTransport) Plan(
 	if err != nil {
 		return projectdevloop.SynchronizationPlan{}, err
 	}
+	request.IdempotencyKey = idempotencyKey
 	response, err := transport.client.PlanProjectCandidateSynchronization(
 		ctx,
 		deploymentgen.GenPlanProjectCandidateSynchronizationClientRequest{
@@ -99,6 +100,7 @@ func (transport *candidateSynchronizationTransport) Plan(
 		return projectdevloop.SynchronizationPlan{}, fmt.Errorf("target synchronization plan does not match requested artifact")
 	}
 	return projectdevloop.SynchronizationPlan{
+		PlanID:         response.Body.PlanId,
 		MissingDigests: append([]string(nil), response.Body.MissingDigests...),
 	}, nil
 }
@@ -116,8 +118,9 @@ func (transport *candidateSynchronizationTransport) Upload(
 		deploymentgen.GenUploadProjectCandidateSourceBlobClientRequest{
 			Project: request.ProjectID.String(), Digest: artifact.Digest,
 			Headers: deploymentgen.GenUploadProjectCandidateSourceBlobClientHeaders{
-				ContentType:   "application/octet-stream",
-				ContentDigest: standardCandidateContentDigest(artifact.Digest),
+				ContentType:               "application/octet-stream",
+				ContentDigest:             standardCandidateContentDigest(artifact.Digest),
+				SourceSynchronizationPlan: request.PlanID,
 			},
 			Body: append([]byte(nil), artifact.Content...),
 		},
@@ -151,7 +154,8 @@ func (transport *candidateSynchronizationTransport) Commit(
 		deploymentgen.GenCommitProjectCandidateSynchronizationClientRequest{
 			Project: request.ProjectID.String(),
 			Headers: deploymentgen.GenCommitProjectCandidateSynchronizationClientHeaders{
-				IdempotencyKey: idempotencyKey,
+				IdempotencyKey:            idempotencyKey,
+				SourceSynchronizationPlan: request.PlanID,
 			},
 			Body: body,
 		},
@@ -192,7 +196,7 @@ func (transport *candidateSynchronizationTransport) RetainSource(
 	}
 	response, err := transport.client.RetainProjectCandidateSource(ctx, deploymentgen.GenRetainProjectCandidateSourceClientRequest{
 		Project: request.ProjectID.String(),
-		Headers: deploymentgen.GenRetainProjectCandidateSourceClientHeaders{IdempotencyKey: idempotencyKey},
+		Headers: deploymentgen.GenRetainProjectCandidateSourceClientHeaders{IdempotencyKey: idempotencyKey, SourceSynchronizationPlan: request.PlanID},
 		Body:    body,
 	})
 	if err != nil {
@@ -243,7 +247,7 @@ func candidateSynchronizationBody(
 	}
 	for index, artifact := range request.Artifacts {
 		body.Artifacts[index] = deploymentgen.CandidateSourceArtifact{
-			Path: artifact.Path, Digest: artifact.Digest,
+			Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
 		}
 	}
 	return body

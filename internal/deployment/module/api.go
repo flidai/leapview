@@ -697,8 +697,8 @@ func (m *Module) DispatchAPIGenOperation(operationID string, logger *slog.Logger
 
 type deploymentAPIGenHandler struct{ *Module }
 
-func (h deploymentAPIGenHandler) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
-	h.Module.RetainProjectCandidateSource(w, r, project, idempotencyKey)
+func (h deploymentAPIGenHandler) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, idempotencyKey, sourceSynchronizationPlan string) {
+	h.Module.RetainProjectCandidateSource(w, r, project, idempotencyKey, sourceSynchronizationPlan)
 }
 
 func (h deploymentAPIGenHandler) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {

@@ -303,7 +303,7 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 	case deploymentgen.GenOperationPlanProjectCandidateSynchronization:
 		transport.planCalls++
 		body := request.Body.(deploymentgen.CandidateSynchronizationRequest)
-		response = deploymentgen.CandidateSynchronizationPlanResponse{ArtifactDigest: body.ArtifactDigest}
+		response = deploymentgen.CandidateSynchronizationPlanResponse{PlanId: "plan-delivery", ArtifactDigest: body.ArtifactDigest}
 	case deploymentgen.GenOperationRetainProjectCandidateSource:
 		transport.retainCalls++
 		status = http.StatusCreated

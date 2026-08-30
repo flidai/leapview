@@ -15,9 +15,10 @@ import (
 )
 
 type Artifact struct {
-	Path    string
-	Digest  string
-	Content []byte
+	Path      string
+	Digest    string
+	SizeBytes int64
+	Content   []byte
 }
 
 // SourceRevision is optional vendor-neutral change evidence. It deliberately
@@ -168,8 +169,14 @@ func normalizeSnapshot(snapshot Snapshot) (Snapshot, error) {
 		artifact := &snapshot.Artifacts[index]
 		artifact.Path = strings.TrimSpace(artifact.Path)
 		artifact.Digest = strings.TrimSpace(artifact.Digest)
-		if artifact.Path == "" || len(artifact.Content) == 0 {
-			return Snapshot{}, fmt.Errorf("project snapshot artifact requires path and content")
+		if artifact.SizeBytes == 0 {
+			artifact.SizeBytes = int64(len(artifact.Content))
+		}
+		if artifact.Path == "" {
+			return Snapshot{}, fmt.Errorf("project snapshot artifact requires path")
+		}
+		if artifact.SizeBytes != int64(len(artifact.Content)) {
+			return Snapshot{}, fmt.Errorf("project artifact %q size does not match content", artifact.Path)
 		}
 		if !canonicalArtifactPath(artifact.Path) {
 			return Snapshot{}, fmt.Errorf("project artifact path %q is not a canonical relative path", artifact.Path)
@@ -238,9 +245,9 @@ func cloneSnapshot(snapshot Snapshot) Snapshot {
 	}
 	for index, artifact := range snapshot.Artifacts {
 		out.Artifacts[index] = Artifact{
-			Path:    artifact.Path,
-			Digest:  artifact.Digest,
-			Content: append([]byte(nil), artifact.Content...),
+			Path: artifact.Path, Digest: artifact.Digest,
+			SizeBytes: artifact.SizeBytes,
+			Content:   append([]byte(nil), artifact.Content...),
 		}
 	}
 	return out

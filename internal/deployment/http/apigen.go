@@ -10,9 +10,9 @@ import (
 )
 
 type APIGenHandler interface {
-	UploadProjectCandidateSourceBlob(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string)
-	CommitProjectCandidateSynchronization(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	PlanProjectCandidateSynchronization(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	UploadProjectCandidateSourceBlob(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string, string)
+	CommitProjectCandidateSynchronization(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
+	PlanProjectCandidateSynchronization(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	StartProjectCandidate(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	GetProjectCandidate(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	ReplaceProjectCandidateArtifact(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
@@ -39,7 +39,7 @@ type APIGenHandler interface {
 // embedding surface of APIGenHandler while generated delivery operations are
 // rolled out. Production deployment modules implement both interfaces.
 type DeliveryAPIGenHandler interface {
-	RetainProjectCandidateSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
+	RetainProjectCandidateSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
 	CreateDeliveryPlan(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	BuildDeliveryPlan(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
 	PublishDeliveryCandidate(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
@@ -60,24 +60,24 @@ type DeliveryAPIGenHandler interface {
 
 func (d *APIGenDispatcher) RetainProjectCandidateSource(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers deploymentgen.GenRetainProjectCandidateSourceHeaders) {
 	if handler, ok := d.handler.(interface {
-		RetainProjectCandidateSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
+		RetainProjectCandidateSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
 	}); ok {
-		handler.RetainProjectCandidateSource(w, r, project, headers.IdempotencyKey)
+		handler.RetainProjectCandidateSource(w, r, project, headers.IdempotencyKey, headers.SourceSynchronizationPlan)
 		return
 	}
 	apitransport.WriteProblem(w, r, stdhttp.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate source retention is unavailable", nil)
 }
 
 func (d *APIGenDispatcher) UploadProjectCandidateSourceBlob(w stdhttp.ResponseWriter, r *stdhttp.Request, project, digest string, headers deploymentgen.GenUploadProjectCandidateSourceBlobHeaders) {
-	d.handler.UploadProjectCandidateSourceBlob(w, r, project, digest, headers.ContentType, headers.ContentDigest)
+	d.handler.UploadProjectCandidateSourceBlob(w, r, project, digest, headers.ContentType, headers.ContentDigest, headers.SourceSynchronizationPlan)
 }
 
 func (d *APIGenDispatcher) CommitProjectCandidateSynchronization(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers deploymentgen.GenCommitProjectCandidateSynchronizationHeaders) {
-	d.handler.CommitProjectCandidateSynchronization(w, r, project, headers.IdempotencyKey)
+	d.handler.CommitProjectCandidateSynchronization(w, r, project, headers.IdempotencyKey, headers.SourceSynchronizationPlan)
 }
 
-func (d *APIGenDispatcher) PlanProjectCandidateSynchronization(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, _ deploymentgen.GenPlanProjectCandidateSynchronizationHeaders) {
-	d.handler.PlanProjectCandidateSynchronization(w, r, project)
+func (d *APIGenDispatcher) PlanProjectCandidateSynchronization(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers deploymentgen.GenPlanProjectCandidateSynchronizationHeaders) {
+	d.handler.PlanProjectCandidateSynchronization(w, r, project, headers.IdempotencyKey)
 }
 
 type APIGenDispatcher struct{ handler APIGenHandler }

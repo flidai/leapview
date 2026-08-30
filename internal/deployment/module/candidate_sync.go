@@ -29,42 +29,57 @@ import (
 
 const maxCandidateSourceBlobBytes = 16 << 20
 
-func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *http.Request, project string) {
+func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
+	operationID := deploymentgen.GenCommandOperationPlanProjectCandidateSynchronization()
 	request, ok := m.decodeCandidateSynchronizationRequest(w, r)
 	if !ok {
 		return
 	}
-	principalID, ok := m.candidateSynchronizationPrincipal(w, r, nil)
+	principalID, ok := m.candidateSynchronizationPrincipal(w, r, deploymentCommandOperation(operationID))
 	if !ok {
 		return
 	}
 	projectID, err := projectgraph.NewResourceID(project)
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, operationID, err)
 		return
 	}
+	request.IdempotencyKey = strings.TrimSpace(idempotencyKey)
 	// Planning is the first CLI side effect: claim the exact project and
 	// environment before reporting missing blobs. The durable singleton claim
 	// is idempotent for the same project and fails closed for a race with a
 	// different project.
 	if m.candidates != nil {
 		if err := m.candidates.ClaimProject(r.Context(), projectID, principalID); err != nil {
-			writeCandidateAPIError(w, r, err)
+			m.writeCandidateCommandFailure(w, r, operationID, err)
 			return
 		}
 	}
-	if !m.validateExpectedCandidate(w, r, project, principalID, request, nil) {
+	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
 	}
-	missing, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
+	plan, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
 		ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey,
 	}, request)
 	if err != nil {
-		writeCandidateAPIError(w, r, err)
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
+	}
+	plan.PlanID = strings.TrimSpace(plan.PlanID)
+	if plan.PlanID == "" {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("candidate_conflict", "candidate source synchronization plan did not return an identity"))
+		return
+	}
+	if plan.ArtifactDigest != request.ArtifactDigest {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("candidate_conflict", "candidate source synchronization plan is bound to a different source digest"))
+		return
+	}
+	if err := m.executeCandidateSourcePlanAudit(r, principalID, project, plan.ArtifactDigest, plan.PlanID); err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("audit_unavailable", "Candidate source synchronization audit is temporarily unavailable"))
 		return
 	}
 	apitransport.WriteJSON(w, http.StatusOK, deploymentapi.CandidateSynchronizationPlanResponse{
-		ArtifactDigest: request.ArtifactDigest, MissingDigests: missing,
+		PlanID: plan.PlanID, ArtifactDigest: plan.ArtifactDigest, MissingDigests: plan.MissingDigests,
 	})
 }
 
@@ -72,7 +87,7 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 // delivery planning. It deliberately does not create a candidate, acquire a
 // preparation lease, invoke DeliveryCandidateBuilder, or touch physical
 // credentials/catalog state. BuildDeliveryPlan is the first writer boundary.
-func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, _ string) {
+func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Request, project, _, sourceSynchronizationPlan string) {
 	request, ok := m.decodeCandidateSynchronizationRequest(w, r)
 	if !ok {
 		return
@@ -92,6 +107,7 @@ func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Req
 		return
 	}
 	request.SourceOnly = true
+	request.PlanID = strings.TrimSpace(sourceSynchronizationPlan)
 	source, err := m.candidateSources.Commit(r.Context(), deployment.CandidateSourceScope{ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey}, request)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, operationID, err)
@@ -115,7 +131,7 @@ func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Req
 func (m *Module) UploadProjectCandidateSourceBlob(
 	w http.ResponseWriter,
 	r *http.Request,
-	project, identity, contentType, contentDigest string,
+	project, identity, contentType, contentDigest, sourceSynchronizationPlan string,
 ) {
 	operationID := deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob()
 	principalID, ok := m.candidateSynchronizationPrincipal(w, r, deploymentCommandOperation(operationID))
@@ -134,12 +150,16 @@ func (m *Module) UploadProjectCandidateSourceBlob(
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), apigenfailure.New("source_blob_invalid", "Candidate source blob headers do not match the canonical content identity"))
 		return
 	}
+	if strings.TrimSpace(sourceSynchronizationPlan) == "" {
+		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("candidate_invalid", "Source-Synchronization-Plan header is required"))
+		return
+	}
 	counter := &candidateSourceCountingReader{source: http.MaxBytesReader(
 		w, r.Body, maxCandidateSourceBlobBytes,
 	)}
 	if err := m.candidateSources.Upload(r.Context(), deployment.CandidateSourceScope{
 		ProjectID: projectID, OwnerID: principalID,
-	}, identity, counter); err != nil {
+	}, sourceSynchronizationPlan, identity, counter); err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationUploadProjectCandidateSourceBlob(), err)
 		return
 	}
@@ -183,6 +203,23 @@ func (m *Module) executeCandidateSourceAudit(
 	})
 }
 
+func (m *Module) executeCandidateSourcePlanAudit(r *http.Request, principalID, projectID, sourceDigest, planID string) error {
+	logger := m.logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
+	if err != nil {
+		return err
+	}
+	return executor.Execute(r.Context(), string(deploymentgen.GenOperationPlanProjectCandidateSynchronization), apigencommand.Execution{
+		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
+			return m.recordCandidateSourcePlanAudit(ctx, r, contract, principalID, projectID, sourceDigest, planID)
+		},
+		LogMessage: "candidate source synchronization plan audit failed",
+	})
+}
+
 func (m *Module) recordCandidateSourceAudit(
 	ctx context.Context,
 	r *http.Request,
@@ -197,7 +234,9 @@ func (m *Module) recordCandidateSourceAudit(
 		return errors.New("required candidate source command audit contract is unavailable")
 	}
 	auditSink := m.candidateSourceAudit
-	if auditSink == nil {
+	if contract.OperationID == string(deploymentgen.GenOperationUploadProjectCandidateSourceBlob) && m.candidateSourceBlobAudit != nil {
+		auditSink = m.candidateSourceBlobAudit
+	} else if auditSink == nil {
 		auditSink = m.candidateSourceBlobAudit
 	}
 	if auditSink == nil {
@@ -246,6 +285,40 @@ func (m *Module) recordCandidateSourceAudit(
 	})
 }
 
+func (m *Module) recordCandidateSourcePlanAudit(ctx context.Context, r *http.Request, contract apigencommand.Contract, principalID, projectID, sourceDigest, planID string) error {
+	if m == nil || (m.candidateSourceAudit == nil && m.candidateSourceBlobAudit == nil) {
+		return errors.New("required candidate source audit sink is unavailable")
+	}
+	parsedProjectID, err := projectgraph.NewResourceID(projectID)
+	if err != nil {
+		return err
+	}
+	capability, err := access.ParseCapability(contract.Privilege)
+	if err != nil {
+		return err
+	}
+	surface := "api"
+	if strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Invocation-Surface")), "cli") || strings.EqualFold(strings.TrimSpace(r.Header.Get("X-LeapView-Client")), "cli") {
+		surface = "cli"
+	}
+	metadata, err := deploymentgen.EncodeGenPlanProjectCandidateSynchronizationAuditPayload(deploymentgen.GenSchemaCandidateSourceSyncPlannedAuditPayload{
+		OperationId: contract.OperationID, Surface: surface, ProjectId: parsedProjectID.String(), SourceDigest: sourceDigest, PlanId: planID,
+	})
+	if err != nil {
+		return err
+	}
+	auditSink := m.candidateSourceAudit
+	if auditSink == nil {
+		auditSink = m.candidateSourceBlobAudit
+	}
+	requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
+	correlationID := strings.TrimSpace(r.Header.Get("X-Correlation-ID"))
+	if correlationID == "" {
+		correlationID = requestID
+	}
+	return auditSink(ctx, CandidateSourceAuditEvent{PrincipalID: principalID, ProjectID: parsedProjectID, Digest: sourceDigest, Action: contract.AuditAction, Capability: capability, Status: "success", RequestID: requestID, CorrelationID: correlationID, MetadataJSON: metadata})
+}
+
 func (m *Module) recordCandidateSourceBlobAudit(
 	r *http.Request,
 	principalID, projectID, identity string,
@@ -261,7 +334,7 @@ func (m *Module) recordCandidateSourceBlobAudit(
 func (m *Module) CommitProjectCandidateSynchronization(
 	w http.ResponseWriter,
 	r *http.Request,
-	project, _ string,
+	project, _, sourceSynchronizationPlan string,
 ) {
 	request, ok := m.decodeCandidateSynchronizationRequest(w, r)
 	if !ok {
@@ -277,6 +350,7 @@ func (m *Module) CommitProjectCandidateSynchronization(
 		m.writeCandidateCommandFailure(w, r, operationID, err)
 		return
 	}
+	request.PlanID = strings.TrimSpace(sourceSynchronizationPlan)
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
 	}
@@ -774,7 +848,7 @@ func (m *Module) decodeCandidateSynchronizationRequest(
 	}
 	for index, artifact := range body.Artifacts {
 		request.Artifacts[index] = deployment.CandidateSourceArtifact{
-			Path: artifact.Path, Digest: artifact.Digest,
+			Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
 		}
 	}
 	return request, true

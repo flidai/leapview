@@ -60,7 +60,7 @@ func TestGeneratedCandidateSynchronizationTransportMapsTypedProtocol(t *testing.
 		ExpectedArtifactDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
 		CandidateKey:           "github:pull/42",
 		Artifacts: []projectdevloop.ArtifactReference{{
-			Path: "leapview.yaml", Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			Path: "leapview.yaml", Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SizeBytes: 6,
 		}},
 		SourceRevision: &projectdevloop.SourceRevision{
 			Revision: "commit-a", Repository: "https://code.example/acme/analytics",
@@ -73,6 +73,7 @@ func TestGeneratedCandidateSynchronizationTransportMapsTypedProtocol(t *testing.
 		plan.MissingDigests[0] != request.Artifacts[0].Digest {
 		t.Fatalf("plan = %#v, %v", plan, err)
 	}
+	request.PlanID = plan.PlanID
 	if err := transport.Upload(t.Context(), request, projectdevloop.Artifact{
 		Path: request.Artifacts[0].Path, Digest: request.Artifacts[0].Digest, Content: []byte("source"),
 	}); err != nil {
@@ -90,8 +91,11 @@ func TestGeneratedCandidateSynchronizationTransportMapsTypedProtocol(t *testing.
 	}
 	if len(generic.requests) != 3 ||
 		generic.requests[0].Headers.Get("Idempotency-Key") == "" ||
+		generic.requests[0].Body.(deploymentgen.CandidateSynchronizationRequest).Artifacts[0].SizeBytes != 6 ||
 		generic.requests[1].Headers.Get("Content-Digest") != standardCandidateContentDigest(request.Artifacts[0].Digest) ||
+		generic.requests[1].Headers.Get("Source-Synchronization-Plan") != request.PlanID ||
 		generic.requests[2].Headers.Get("Idempotency-Key") == "" ||
+		generic.requests[2].Headers.Get("Source-Synchronization-Plan") != request.PlanID ||
 		string(generic.requests[1].Body.([]byte)) != "source" {
 		t.Fatalf("generated requests = %#v", generic.requests)
 	}
@@ -120,13 +124,15 @@ func TestCandidateSynchronizationIdempotencyKeysBindExpectedPredecessor(t *testi
 		CandidateKey:           "github:pull/42",
 		Artifacts: []projectdevloop.ArtifactReference{{
 			Path:   "leapview.yaml",
-			Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+			Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SizeBytes: 6,
 		}},
 	}
 
-	if _, err := transport.Plan(t.Context(), request); err != nil {
+	plan, err := transport.Plan(t.Context(), request)
+	if err != nil {
 		t.Fatal(err)
 	}
+	request.PlanID = plan.PlanID
 	if _, err := transport.Commit(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
@@ -204,7 +210,7 @@ func (stub *candidateSyncTransportStub) DoAPIGen(
 	case deploymentgen.GenOperationPlanProjectCandidateSynchronization:
 		body := request.Body.(deploymentgen.CandidateSynchronizationRequest)
 		response = deploymentgen.CandidateSynchronizationPlanResponse{
-			ArtifactDigest: body.ArtifactDigest,
+			PlanId: "plan-test", ArtifactDigest: body.ArtifactDigest,
 			MissingDigests: []string{body.Artifacts[0].Digest},
 		}
 	case deploymentgen.GenOperationUploadProjectCandidateSourceBlob:

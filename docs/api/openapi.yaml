@@ -25355,6 +25355,12 @@ paths:
           schema:
             type: string
           example: example
+        - name: Source-Synchronization-Plan
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
       responses:
         '201':
           description: The request has succeeded and a new resource has been created as a result.
@@ -25638,7 +25644,7 @@ paths:
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
-            public_detail: Candidate source blob audit is temporarily unavailable.
+            public_detail: Candidate source audit is temporarily unavailable.
             status_code: !!float 503
           - code: CANDIDATE_CONFLICT
             kind: candidate_conflict
@@ -25687,6 +25693,12 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+          example: example
+        - name: Source-Synchronization-Plan
+          in: header
+          required: true
+          schema:
+            type: string
           example: example
       responses:
         '200':
@@ -25960,6 +25972,7 @@ paths:
               artifacts:
                 - digest: example
                   path: example
+                  sizeBytes: 1
               candidateKey: example
               expectedArtifactDigest: example
               expectedCandidateId: example
@@ -26032,7 +26045,6 @@ paths:
     post:
       operationId: planProjectCandidateSynchronization
       summary: Plan content-addressed synchronization for the current author's private candidate
-      description: 'Query classification: reports missing immutable blobs without uploading or committing source state.'
       parameters:
         - name: project
           in: path
@@ -26062,6 +26074,7 @@ paths:
                 artifactDigest: example
                 missingDigests:
                   - example
+                planId: example
         '400':
           description: The server could not understand the request due to invalid syntax.
           content:
@@ -26309,6 +26322,7 @@ paths:
               artifacts:
                 - digest: example
                   path: example
+                  sizeBytes: 1
               candidateKey: example
               expectedArtifactDigest: example
               expectedCandidateId: example
@@ -26319,7 +26333,52 @@ paths:
                 ref: example
                 repository: example
                 revision: example
-      x-apigen-operation-kind: query
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: best-effort
+          payload:
+            fields:
+              - name: operationId
+                sensitivity: internal
+              - name: planId
+                sensitivity: internal
+              - name: projectId
+                sensitivity: internal
+              - name: sourceDigest
+                sensitivity: internal
+              - name: surface
+                sensitivity: public
+            retention: security
+            schema:
+              ref: CandidateSourceSyncPlannedAuditPayload
+            schema_version: !!float 1
+          required: true
+          success_action: candidate.source_sync_planned
+        authz_mode: privilege
+        failures:
+          - code: AUDIT_UNAVAILABLE
+            kind: audit_unavailable
+            public_detail: Candidate source audit is temporarily unavailable.
+            status_code: !!float 503
+          - code: CANDIDATE_CONFLICT
+            kind: candidate_conflict
+            public_detail: The candidate conflicts with its current state.
+            status_code: !!float 409
+          - code: INVALID_CANDIDATE
+            kind: candidate_invalid
+            public_detail: The candidate request is invalid.
+            status_code: !!float 422
+          - code: CANDIDATE_SERVICE_UNAVAILABLE
+            kind: candidate_unavailable
+            public_detail: Candidate service is unavailable.
+            status_code: !!float 503
+        idempotency: required
+        owner: LeapViewAPI.Deployment
+        target:
+          parameter: project
+          type: project
+        privilege: RESOURCE_EDIT
       x-authz:
         mode: privilege
         privilege: RESOURCE_EDIT
@@ -26346,6 +26405,12 @@ paths:
             type: string
             minLength: 1
             maxLength: 200
+          example: example
+        - name: Source-Synchronization-Plan
+          in: header
+          required: true
+          schema:
+            type: string
           example: example
       responses:
         '201':
@@ -26613,6 +26678,7 @@ paths:
               artifacts:
                 - digest: example
                   path: example
+                  sizeBytes: 1
               candidateKey: example
               expectedArtifactDigest: example
               expectedCandidateId: example
@@ -64535,6 +64601,7 @@ components:
       required:
         - path
         - digest
+        - sizeBytes
       properties:
         path:
           type: string
@@ -64542,9 +64609,14 @@ components:
         digest:
           type: string
           example: example
+        sizeBytes:
+          type: integer
+          format: int64
+          example: 1
       example:
         digest: example
         path: example
+        sizeBytes: 1
     CandidateSourceBlobAuditPayload:
       type: object
       required:
@@ -64680,6 +64752,39 @@ components:
         sourceAttestationDigest: example
         sourceDigest: example
         targetId: example
+    CandidateSourceSyncPlannedAuditPayload:
+      type: object
+      required:
+        - operationId
+        - surface
+        - projectId
+        - sourceDigest
+        - planId
+      properties:
+        operationId:
+          type: string
+          example: example
+        surface:
+          type: string
+          example: example
+        projectId:
+          type: string
+          minLength: 1
+          maxLength: 200
+          pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example: example
+        sourceDigest:
+          type: string
+          example: example
+        planId:
+          type: string
+          example: example
+      example:
+        operationId: example
+        planId: example
+        projectId: example
+        sourceDigest: example
+        surface: example
     CandidateStartRequest:
       type: object
       required:
@@ -64706,9 +64811,13 @@ components:
     CandidateSynchronizationPlanResponse:
       type: object
       required:
+        - planId
         - artifactDigest
         - missingDigests
       properties:
+        planId:
+          type: string
+          example: example
         artifactDigest:
           type: string
           example: example
@@ -64722,6 +64831,7 @@ components:
         artifactDigest: example
         missingDigests:
           - example
+        planId: example
     CandidateSynchronizationRequest:
       type: object
       required:
@@ -64757,11 +64867,13 @@ components:
           example:
             - digest: example
               path: example
+              sizeBytes: 1
       example:
         artifactDigest: example
         artifacts:
           - digest: example
             path: example
+            sizeBytes: 1
         candidateKey: example
         expectedArtifactDigest: example
         expectedCandidateId: example

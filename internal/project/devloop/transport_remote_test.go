@@ -123,7 +123,7 @@ func (transport *recordingSyncTransport) Plan(
 	transport.mu.Lock()
 	defer transport.mu.Unlock()
 	transport.plan = request
-	return SynchronizationPlan{MissingDigests: append([]string(nil), transport.missing...)}, nil
+	return SynchronizationPlan{PlanID: "plan-transport", MissingDigests: append([]string(nil), transport.missing...)}, nil
 }
 
 func (transport *recordingSyncTransport) Upload(

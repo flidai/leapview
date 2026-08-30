@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -184,13 +185,40 @@ func TestTargetStoreCannotCommitWithMissingBlobs(t *testing.T) {
 	}
 }
 
+func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T) {
+	store, err := NewTargetStore(t.TempDir())
+	require.NoError(t, err)
+	snapshot, err := (FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	require.NoError(t, err)
+	request := planRequestForSnapshot(snapshot)
+	request.PlanID = "ephemeral-plan"
+	request.IdempotencyKey = "retry-key"
+	request.SourceOnly = true
+	request.CandidateKey = "branch"
+	request.ExpectedCandidateID = "candidate"
+	request.ExpectedArtifactDigest = "sha256:" + strings.Repeat("a", 64)
+	for _, artifact := range snapshot.Artifacts {
+		require.NoError(t, store.Put(t.Context(), artifact.Digest, bytes.NewReader(artifact.Content)))
+	}
+	_, err = store.Commit(t.Context(), request)
+	require.NoError(t, err)
+	manifestPath := filepath.Join(store.snapshots, digestHex(snapshot.Digest), "manifest.json")
+	content, err := os.ReadFile(manifestPath)
+	require.NoError(t, err)
+	for _, forbidden := range []string{"planId", "idempotencyKey", "sourceOnly", "candidateKey", "expectedCandidateId", "sourceRevision"} {
+		if bytes.Contains(content, []byte(forbidden)) {
+			t.Fatalf("retained source manifest contains protocol field %q: %s", forbidden, content)
+		}
+	}
+}
+
 func planRequestForSnapshot(snapshot Snapshot) SynchronizationPlanRequest {
 	request := SynchronizationPlanRequest{
 		ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile,
 		ArtifactDigest: snapshot.Digest, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)),
 	}
 	for index, artifact := range snapshot.Artifacts {
-		request.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
+		request.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}
 	}
 	return request
 }

@@ -43,10 +43,8 @@ type StoredSnapshot struct {
 	ProjectPath             string
 	ProjectDigest           string
 	ProjectArtifactPath     string
-	// SourceRevision is retained in the immutable manifest alongside the
-	// source bytes. It is deliberately not part of the byte-set digest, but a
-	// revision change for the same bytes must conflict rather than silently
-	// replacing provenance on a restarted target.
+	// SourceRevision is carried only when resolving an exact source attestation;
+	// the portable retained byte manifest deliberately omits revision provenance.
 	SourceRevision *SourceRevision
 }
 
@@ -57,6 +55,23 @@ type StoredSnapshot struct {
 type sourceAttestation struct {
 	SourceDigest   string          `json:"sourceDigest"`
 	SourceRevision *SourceRevision `json:"sourceRevision,omitempty"`
+}
+
+// retainedSourceManifest is the portable immutable source identity. Protocol
+// retry, candidate-concurrency, and operation fields are intentionally absent.
+type retainedSourceManifest struct {
+	ProjectID      projectgraph.ResourceID `json:"projectId"`
+	ProjectFile    string                  `json:"projectFile"`
+	ArtifactDigest string                  `json:"artifactDigest"`
+	Artifacts      []ArtifactReference     `json:"artifacts"`
+}
+
+func sourceManifest(request SynchronizationPlanRequest) retainedSourceManifest {
+	return retainedSourceManifest{ProjectID: request.ProjectID, ProjectFile: request.ProjectFile, ArtifactDigest: request.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), request.Artifacts...)}
+}
+
+func sourceManifestRequest(manifest retainedSourceManifest) SynchronizationPlanRequest {
+	return SynchronizationPlanRequest{ProjectID: manifest.ProjectID, ProjectFile: manifest.ProjectFile, ArtifactDigest: manifest.ArtifactDigest, Artifacts: append([]ArtifactReference(nil), manifest.Artifacts...)}
 }
 
 // Snapshot returns one previously committed immutable snapshot by digest. The
@@ -85,15 +100,15 @@ func (store *TargetStore) snapshot(ctx context.Context, projectID projectgraph.R
 		return StoredSnapshot{}, err
 	}
 	directory := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
-	manifest, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	manifestBytes, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	var retained SynchronizationPlanRequest
-	if err := json.Unmarshal(manifest, &retained); err != nil {
+	var manifest retainedSourceManifest
+	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		return StoredSnapshot{}, fmt.Errorf("decode retained project snapshot manifest: %w", err)
 	}
-	retained, err = normalizePlanRequest(retained)
+	retained, err := normalizePlanRequest(sourceManifestRequest(manifest))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -119,6 +134,12 @@ func (store *TargetStore) snapshot(ctx context.Context, projectID projectgraph.R
 	}
 	if attestationDigest != "" && stored.SourceAttestationDigest != attestationDigest {
 		return StoredSnapshot{}, fmt.Errorf("retained source attestation does not match requested digest")
+	}
+	if attestationDigest == "" {
+		// A byte-digest lookup is intentionally provenance-neutral. Callers that
+		// need revision evidence must resolve an exact SnapshotAttestation.
+		stored.SourceAttestationDigest = ""
+		stored.SourceRevision = nil
 	}
 	return stored, nil
 }
@@ -165,7 +186,7 @@ func (store *TargetStore) Missing(
 			continue
 		}
 		seen[reference.Digest] = struct{}{}
-		if err := verifyBlob(store.blobPath(reference.Digest), reference.Digest); err != nil {
+		if err := verifyBlob(store.blobPath(reference.Digest), reference.Digest, reference.SizeBytes); err != nil {
 			if os.IsNotExist(err) {
 				missing = append(missing, reference.Digest)
 				continue
@@ -287,7 +308,7 @@ func (store *TargetStore) Commit(
 		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
 			return StoredSnapshot{}, err
 		}
-		size, err := copyRetainedBlob(store.blobPath(reference.Digest), target, reference.Digest)
+		size, err := copyRetainedBlob(store.blobPath(reference.Digest), target, reference.Digest, reference.SizeBytes)
 		if err != nil {
 			return StoredSnapshot{}, err
 		}
@@ -313,7 +334,7 @@ func (store *TargetStore) Commit(
 	); err != nil {
 		return StoredSnapshot{}, err
 	}
-	manifest, err := json.Marshal(request)
+	manifest, err := json.Marshal(sourceManifest(request))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -348,13 +369,13 @@ func (store *TargetStore) verifyStoredSnapshot(
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	var manifestRequest SynchronizationPlanRequest
+	var manifest retainedSourceManifest
 	decoder := json.NewDecoder(bytes.NewReader(manifestBytes))
 	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&manifestRequest); err != nil {
+	if err := decoder.Decode(&manifest); err != nil {
 		return StoredSnapshot{}, fmt.Errorf("decode retained project snapshot manifest: %w", err)
 	}
-	manifestRequest, err = normalizePlanRequest(manifestRequest)
+	manifestRequest, err := normalizePlanRequest(sourceManifestRequest(manifest))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -369,6 +390,7 @@ func (store *TargetStore) verifyStoredSnapshot(
 		if err := verifyBlob(
 			filepath.Join(sourceRoot, filepath.FromSlash(reference.Path)),
 			reference.Digest,
+			reference.SizeBytes,
 		); err != nil {
 			return StoredSnapshot{}, fmt.Errorf("verify stored project source %q: %w", reference.Path, err)
 		}
@@ -397,9 +419,6 @@ func (store *TargetStore) verifyStoredSnapshot(
 	}
 	if string(retainedArtifact) != string(compiled.Canonical()) {
 		return StoredSnapshot{}, fmt.Errorf("retained project artifact does not match synchronized sources")
-	}
-	if _, err := resolveSourceAttestation(directory, manifestRequest, ""); err != nil {
-		return StoredSnapshot{}, err
 	}
 	return storedSnapshot(request, directory, compiled.Digest()), nil
 }
@@ -528,6 +547,9 @@ func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPl
 		reference := &request.Artifacts[index]
 		reference.Path = strings.TrimSpace(reference.Path)
 		reference.Digest = strings.TrimSpace(reference.Digest)
+		if reference.SizeBytes < 0 || reference.SizeBytes > maxTargetBlobBytes {
+			return SynchronizationPlanRequest{}, fmt.Errorf("project source %q size is invalid", reference.Path)
+		}
 		if !canonicalArtifactPath(reference.Path) {
 			return SynchronizationPlanRequest{}, fmt.Errorf("project source path %q is unsafe", reference.Path)
 		}
@@ -538,7 +560,7 @@ func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPl
 		if err := digest.ValidateSHA256Identity(reference.Digest); err != nil {
 			return SynchronizationPlanRequest{}, fmt.Errorf("project source %q digest is invalid: %w", reference.Path, err)
 		}
-		artifacts[index] = Artifact{Path: reference.Path, Digest: reference.Digest}
+		artifacts[index] = Artifact{Path: reference.Path, Digest: reference.Digest, SizeBytes: reference.SizeBytes}
 	}
 	if _, exists := seen[request.ProjectFile]; !exists {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project entrypoint is absent from synchronization manifest")
@@ -560,7 +582,7 @@ func digestHex(identity string) string {
 	return strings.TrimPrefix(strings.TrimSpace(identity), "sha256:")
 }
 
-func verifyBlob(path, identity string) error {
+func verifyBlob(path, identity string, expectedSize ...int64) error {
 	source, err := os.Open(path)
 	if err != nil {
 		return err
@@ -573,6 +595,9 @@ func verifyBlob(path, identity string) error {
 	if !info.Mode().IsRegular() || info.Size() > maxTargetBlobBytes {
 		return fmt.Errorf("project source blob is not a bounded regular file")
 	}
+	if len(expectedSize) > 0 && info.Size() != expectedSize[0] {
+		return fmt.Errorf("project source blob size does not match manifest")
+	}
 	hash := sha256.New()
 	if _, err := io.Copy(hash, source); err != nil {
 		return err
@@ -583,8 +608,8 @@ func verifyBlob(path, identity string) error {
 	return nil
 }
 
-func copyRetainedBlob(sourcePath, targetPath, identity string) (int64, error) {
-	if err := verifyBlob(sourcePath, identity); err != nil {
+func copyRetainedBlob(sourcePath, targetPath, identity string, expectedSize ...int64) (int64, error) {
+	if err := verifyBlob(sourcePath, identity, expectedSize...); err != nil {
 		return 0, err
 	}
 	source, err := os.Open(sourcePath)

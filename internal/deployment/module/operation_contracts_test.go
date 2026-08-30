@@ -36,6 +36,7 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		"retainProjectCandidateSource":          {"candidate.source_retained", "RESOURCE_EDIT", "required", "best-effort"},
 		"uploadProjectCandidateSourceBlob":      {"candidate.source_blob_uploaded", "RESOURCE_EDIT", "", "best-effort"},
 		"commitProjectCandidateSynchronization": {"candidate.ready", "RESOURCE_EDIT", "required", "best-effort"},
+		"planProjectCandidateSynchronization":   {"candidate.source_sync_planned", "RESOURCE_EDIT", "required", "best-effort"},
 		"createDeliveryPlan":                    {"delivery.plan.created", "RESOURCE_READ", "required", "transactional"},
 		"buildDeliveryPlan":                     {"delivery.build.sealed", "RESOURCE_USE", "required", "transactional"},
 		"publishDeliveryCandidate":              {"delivery.publication.requested", "RESOURCE_PUBLISH", "required", "transactional"},
@@ -78,20 +79,19 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		}
 	}
 	queryPrivileges := map[string]string{
-		"listDeployments":                     "RESOURCE_READ",
-		"getDeployment":                       "RESOURCE_READ",
-		"listDeploymentEvents":                "RESOURCE_READ",
-		"getProjectCandidate":                 "RESOURCE_EDIT",
-		"reviewProjectCandidate":              "RESOURCE_EDIT",
-		"planProjectCandidateSynchronization": "RESOURCE_EDIT",
-		"getDeliveryPlanPreview":              "RESOURCE_READ",
-		"getDeliveryBuildStatus":              "RESOURCE_READ",
-		"getDeliverySealStatus":               "RESOURCE_READ",
-		"getDeliveryCandidateStatus":          "RESOURCE_READ",
-		"getDeliveryGenerationStatus":         "RESOURCE_READ",
-		"getDeliveryPublicationEvidence":      "RESOURCE_READ",
-		"getDeliveryPublicationApproval":      "RESOURCE_READ",
-		"getDeliveryOperatorSnapshot":         "PROJECT_ADMIN",
+		"listDeployments":                "RESOURCE_READ",
+		"getDeployment":                  "RESOURCE_READ",
+		"listDeploymentEvents":           "RESOURCE_READ",
+		"getProjectCandidate":            "RESOURCE_EDIT",
+		"reviewProjectCandidate":         "RESOURCE_EDIT",
+		"getDeliveryPlanPreview":         "RESOURCE_READ",
+		"getDeliveryBuildStatus":         "RESOURCE_READ",
+		"getDeliverySealStatus":          "RESOURCE_READ",
+		"getDeliveryCandidateStatus":     "RESOURCE_READ",
+		"getDeliveryGenerationStatus":    "RESOURCE_READ",
+		"getDeliveryPublicationEvidence": "RESOURCE_READ",
+		"getDeliveryPublicationApproval": "RESOURCE_READ",
+		"getDeliveryOperatorSnapshot":    "PROJECT_ADMIN",
 	}
 	for operationID, wantPrivilege := range queryPrivileges {
 		contract, ok := contracts[operationID]

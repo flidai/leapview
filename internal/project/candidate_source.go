@@ -15,8 +15,9 @@ var (
 )
 
 type CandidateSourceArtifact struct {
-	Path   string
-	Digest string
+	Path      string
+	Digest    string
+	SizeBytes int64
 }
 
 type CandidateSourceRevision struct {
@@ -36,6 +37,8 @@ type CandidateSynchronizationRequest struct {
 	CandidateKey           string
 	ExpectedCandidateID    string
 	ExpectedArtifactDigest string
+	PlanID                 string
+	IdempotencyKey         string
 	Artifacts              []CandidateSourceArtifact
 	SourceRevision         *CandidateSourceRevision
 }
@@ -59,9 +62,18 @@ type CandidateSourceSnapshot struct {
 // CandidateSourceSynchronizer owns target-side retention and compiler
 // validation for environment-neutral project sources.
 type CandidateSourceSynchronizer interface {
-	Plan(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) ([]string, error)
-	Upload(context.Context, CandidateSourceScope, string, io.Reader) error
+	Plan(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) (CandidateSynchronizationPlan, error)
+	Upload(context.Context, CandidateSourceScope, string, string, io.Reader) error
 	Commit(context.Context, CandidateSourceScope, CandidateSynchronizationRequest) (CandidateSourceSnapshot, error)
+}
+
+// CandidateSynchronizationPlan is the durable target-owned synchronization
+// command result. PlanID is opaque and must be presented on every subsequent
+// upload, retention, or commit operation.
+type CandidateSynchronizationPlan struct {
+	PlanID         string
+	ArtifactDigest string
+	MissingDigests []string
 }
 
 // CandidateSourceSnapshotReader resolves one already-retained immutable

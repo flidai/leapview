@@ -11,8 +11,9 @@ import (
 )
 
 type ArtifactReference struct {
-	Path   string
-	Digest string
+	Path      string
+	Digest    string
+	SizeBytes int64
 }
 
 type SynchronizationPlanRequest struct {
@@ -25,11 +26,14 @@ type SynchronizationPlanRequest struct {
 	CandidateKey           string
 	ExpectedCandidateID    string
 	ExpectedArtifactDigest string
+	PlanID                 string
+	IdempotencyKey         string
 	Artifacts              []ArtifactReference
 	SourceRevision         *SourceRevision
 }
 
 type SynchronizationPlan struct {
+	PlanID         string
 	MissingDigests []string
 }
 
@@ -91,7 +95,7 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 	}
 	artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
 	for index, artifact := range snapshot.Artifacts {
-		planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
+		planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}
 		if _, exists := artifactsByDigest[artifact.Digest]; !exists {
 			artifactsByDigest[artifact.Digest] = artifact
 		}
@@ -100,6 +104,10 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 	if err != nil {
 		return Candidate{}, fmt.Errorf("plan project synchronization: %w", err)
 	}
+	if strings.TrimSpace(plan.PlanID) == "" {
+		return Candidate{}, fmt.Errorf("target synchronization plan did not return a plan id")
+	}
+	planRequest.PlanID = strings.TrimSpace(plan.PlanID)
 	missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
 	if err != nil {
 		return Candidate{}, err
@@ -140,7 +148,7 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		planRequest := SynchronizationPlanRequest{ProjectID: snapshot.ProjectID, ProjectFile: snapshot.ProjectFile, ArtifactDigest: snapshot.Digest, SourceOnly: true, CandidateKey: snapshot.CandidateKey, Artifacts: make([]ArtifactReference, len(snapshot.Artifacts)), SourceRevision: snapshot.SourceRevision}
 		artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
 		for index, artifact := range snapshot.Artifacts {
-			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest}
+			planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}
 			if _, exists := artifactsByDigest[artifact.Digest]; !exists {
 				artifactsByDigest[artifact.Digest] = artifact
 			}
@@ -149,6 +157,10 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		if err != nil {
 			return RetainedSource{}, fmt.Errorf("plan project source retention: %w", err)
 		}
+		if strings.TrimSpace(plan.PlanID) == "" {
+			return RetainedSource{}, fmt.Errorf("target source retention plan did not return a plan id")
+		}
+		planRequest.PlanID = strings.TrimSpace(plan.PlanID)
 		missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
 		if err != nil {
 			return RetainedSource{}, err

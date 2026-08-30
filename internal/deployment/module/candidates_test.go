@@ -31,6 +31,7 @@ import (
 
 func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing.T) {
 	module := testCandidateModule(t, "principal_1")
+	module.candidateSourceAudit = func(context.Context, CandidateSourceAuditEvent) error { return nil }
 	module.candidateAdmission = candidatePreparationAdmitterStub{}
 	digest := "sha256:" + strings.Repeat("a", 64)
 	blobDigest := "sha256:" + strings.Repeat("b", 64)
@@ -57,20 +58,20 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 		`,"artifacts":[{"path":"leapview.yaml","digest":"` + blobDigest + `"}]}`
 
 	planned := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", body, func(w http.ResponseWriter, r *http.Request) {
-		module.PlanProjectCandidateSynchronization(w, r, "finance")
+		module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
 	})
 	if planned.Code != http.StatusOK || !strings.Contains(planned.Body.String(), blobDigest) {
 		t.Fatalf("plan response = %d %s", planned.Code, planned.Body.String())
 	}
 	contentDigest := standardContentDigest(t, blobDigest)
 	uploaded := callCandidateAPI(t, http.MethodPut, "/api/v1/projects/finance/candidate-sync/blobs/"+blobDigest, "blob", func(w http.ResponseWriter, r *http.Request) {
-		module.UploadProjectCandidateSourceBlob(w, r, "finance", blobDigest, "application/octet-stream", contentDigest)
+		module.UploadProjectCandidateSourceBlob(w, r, "finance", blobDigest, "application/octet-stream", contentDigest, "plan-test")
 	})
 	if uploaded.Code != http.StatusCreated || string(sources.uploaded) != "blob" {
 		t.Fatalf("upload response = %d %s bytes=%q", uploaded.Code, uploaded.Body.String(), sources.uploaded)
 	}
 	committed := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/commit", body, func(w http.ResponseWriter, r *http.Request) {
-		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-1")
+		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-1", "plan-test")
 	})
 	var candidate candidateAPIResponse
 	decodeCandidateResponse(t, committed, &candidate)
@@ -96,7 +97,7 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 		`,"expectedCandidateId":"` + candidate.ID + `","expectedArtifactDigest":"` + digest +
 		`","artifacts":[{"path":"leapview.yaml","digest":"` + blobDigest + `"}]}`
 	replaced := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/commit", replacementBody, func(w http.ResponseWriter, r *http.Request) {
-		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-2")
+		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-2", "plan-test")
 	})
 	var replacement candidateAPIResponse
 	decodeCandidateResponse(t, replaced, &replacement)
@@ -112,7 +113,7 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 		`,"expectedCandidateId":"` + replacement.ID + `","expectedArtifactDigest":"` + nextDigest +
 		`","artifacts":[{"path":"leapview.yaml","digest":"` + blobDigest + `"}]}`
 	advanced := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/commit", sameContentBody, func(w http.ResponseWriter, r *http.Request) {
-		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-3")
+		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-3", "plan-test")
 	})
 	var sameContent candidateAPIResponse
 	decodeCandidateResponse(t, advanced, &sameContent)
@@ -129,7 +130,7 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 		`","sourceRevision":{"revision":"commit-c","repository":"https://code.example/acme/analytics","ref":"refs/pull/42/head","changeId":"pull/42"}` +
 		`,"artifacts":[{"path":"leapview.yaml","digest":"` + blobDigest + `"}]}`
 	replayed := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/commit", replayBody, func(w http.ResponseWriter, r *http.Request) {
-		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-4")
+		module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-4", "plan-test")
 	})
 	var replay candidateAPIResponse
 	decodeCandidateResponse(t, replayed, &replay)
@@ -143,6 +144,7 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 
 func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *testing.T) {
 	module := testCandidateModule(t, "principal_1")
+	module.candidateSourceAudit = func(context.Context, CandidateSourceAuditEvent) error { return nil }
 	blobDigest := "sha256:" + strings.Repeat("b", 64)
 	sources := &candidateSourceSynchronizerStub{}
 	module.candidateSources = sources
@@ -167,7 +169,7 @@ func TestCandidateSourceBlobUploadPersistsGeneratedCommandAuditExactlyOnce(t *te
 		"finance",
 		blobDigest,
 		"application/octet-stream",
-		standardContentDigest(t, blobDigest),
+		standardContentDigest(t, blobDigest), "plan-test",
 	)
 
 	if response.Code != http.StatusCreated || string(sources.uploaded) != "blob" {
@@ -224,7 +226,7 @@ func TestCandidateSourceBlobUploadPreservesSuccessWhenBestEffortAuditFails(t *te
 				"finance",
 				blobDigest,
 				"application/octet-stream",
-				standardContentDigest(t, blobDigest),
+				standardContentDigest(t, blobDigest), "plan-test",
 			)
 		},
 	)
@@ -269,7 +271,7 @@ func TestCandidateSourceRetentionPersistsGeneratedCommandAudit(t *testing.T) {
 	request.Header.Set("X-Correlation-ID", "corr-source-retain")
 	request.Header.Set("X-LeapView-Invocation-Surface", "cli")
 	response := httptest.NewRecorder()
-	module.RetainProjectCandidateSource(response, request, "finance", "retain-1")
+	module.RetainProjectCandidateSource(response, request, "finance", "retain-1", "plan-test")
 
 	if response.Code != http.StatusCreated {
 		t.Fatalf("source retention response = %d %s", response.Code, response.Body.String())
@@ -319,7 +321,7 @@ func TestCandidateSourceRetentionCompletesGeneratedCommandGuard(t *testing.T) {
 	).WithContext(ctx)
 	request.Header.Set("Content-Type", "application/json")
 	response := httptest.NewRecorder()
-	module.RetainProjectCandidateSource(response, request, "finance", "retain-guard")
+	module.RetainProjectCandidateSource(response, request, "finance", "retain-guard", "plan-test")
 	if response.Code != http.StatusCreated {
 		t.Fatalf("source retention response = %d %s", response.Code, response.Body.String())
 	}
@@ -349,7 +351,7 @@ func TestCandidateSynchronizationNeverMarksReadyBeforeProvenanceIsRetained(t *te
 		"/api/v1/projects/finance/candidate-sync/commit",
 		body,
 		func(w http.ResponseWriter, r *http.Request) {
-			module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-1")
+			module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-1", "plan-test")
 		},
 	)
 	if response.Code == http.StatusOK {
@@ -398,7 +400,7 @@ func TestCandidateSynchronizationRejectsReadyCandidateWithInvalidProvenance(t *t
 		"/api/v1/projects/finance/candidate-sync/commit",
 		body,
 		func(w http.ResponseWriter, r *http.Request) {
-			module.CommitProjectCandidateSynchronization(w, r, "finance", "rebuild-legacy")
+			module.CommitProjectCandidateSynchronization(w, r, "finance", "rebuild-legacy", "plan-test")
 		},
 	)
 	require.Equal(t, http.StatusUnprocessableEntity, response.Code, response.Body.String())
@@ -484,7 +486,7 @@ func TestCandidateSynchronizationPreservesReadyCandidateWhenPreparationFails(t *
 		"/api/v1/projects/finance/candidate-sync/commit",
 		body,
 		func(w http.ResponseWriter, r *http.Request) {
-			module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-2")
+			module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-2", "plan-test")
 		},
 	)
 	if response.Code != http.StatusServiceUnavailable {
@@ -505,7 +507,7 @@ func TestCandidateSynchronizationRejectsBlobHeaderMismatchBeforeStorage(t *testi
 	module.candidateSources = sources
 	digest := "sha256:" + strings.Repeat("a", 64)
 	response := callCandidateAPI(t, http.MethodPut, "/api/v1/projects/finance/candidate-sync/blobs/"+digest, "blob", func(w http.ResponseWriter, r *http.Request) {
-		module.UploadProjectCandidateSourceBlob(w, r, "finance", digest, "application/octet-stream", "sha-256=:wrong:")
+		module.UploadProjectCandidateSourceBlob(w, r, "finance", digest, "application/octet-stream", "sha-256=:wrong:", "plan-test")
 	})
 	if response.Code != http.StatusUnprocessableEntity || len(sources.uploaded) != 0 {
 		t.Fatalf("mismatched upload response = %d %s", response.Code, response.Body.String())
@@ -531,7 +533,7 @@ func TestCandidateSynchronizationMapsProjectSourceErrors(t *testing.T) {
 			"/api/v1/projects/finance/candidate-sync/plan",
 			`{"projectFile":"leapview.yaml","artifactDigest":"sha256:`+strings.Repeat("a", 64)+`","artifacts":[]}`,
 			func(w http.ResponseWriter, r *http.Request) {
-				module.PlanProjectCandidateSynchronization(w, r, "finance")
+				module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
 			},
 		)
 		if response.Code != test.status || !strings.Contains(response.Body.String(), test.code) {
@@ -821,16 +823,17 @@ type candidateSourceSynchronizerStub struct {
 }
 
 func (stub *candidateSourceSynchronizerStub) Plan(
-	context.Context,
-	deployment.CandidateSourceScope,
-	deployment.CandidateSynchronizationRequest,
-) ([]string, error) {
-	return append([]string(nil), stub.missing...), stub.planErr
+	_ context.Context,
+	_ deployment.CandidateSourceScope,
+	request deployment.CandidateSynchronizationRequest,
+) (project.CandidateSynchronizationPlan, error) {
+	return project.CandidateSynchronizationPlan{PlanID: "plan-test", ArtifactDigest: request.ArtifactDigest, MissingDigests: append([]string(nil), stub.missing...)}, stub.planErr
 }
 
 func (stub *candidateSourceSynchronizerStub) Upload(
 	_ context.Context,
 	_ deployment.CandidateSourceScope,
+	_ string,
 	_ string,
 	source io.Reader,
 ) error {

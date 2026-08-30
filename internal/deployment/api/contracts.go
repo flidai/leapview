@@ -27,8 +27,9 @@ type CandidatePublishRequest struct {
 }
 
 type CandidateSourceArtifact struct {
-	Path   string `json:"path"`
-	Digest string `json:"digest"`
+	Path      string `json:"path"`
+	Digest    string `json:"digest"`
+	SizeBytes int64  `json:"sizeBytes"`
 }
 
 type CandidateSourceRevision struct {
@@ -50,6 +51,7 @@ type CandidateSynchronizationRequest struct {
 }
 
 type CandidateSynchronizationPlanResponse struct {
+	PlanID         string   `json:"planId"`
 	ArtifactDigest string   `json:"artifactDigest"`
 	MissingDigests []string `json:"missingDigests"`
 }

@@ -74,13 +74,13 @@ func TestAPIGenDispatcherMapsCandidateOperationsAndIdempotency(t *testing.T) {
 		t.Fatalf("sync plan mapping = %q", handler.operation)
 	}
 	dispatcher.UploadProjectCandidateSourceBlob(recorder, request, "p1", "sha256:blob", deploymentgen.GenUploadProjectCandidateSourceBlobHeaders{
-		ContentType: "application/octet-stream", ContentDigest: "sha-256=:blob:",
+		ContentType: "application/octet-stream", ContentDigest: "sha-256=:blob:", SourceSynchronizationPlan: "plan-1",
 	})
 	if handler.operation != "sync-upload:p1:sha256:blob" {
 		t.Fatalf("sync upload mapping = %q", handler.operation)
 	}
 	dispatcher.CommitProjectCandidateSynchronization(recorder, request, "p1", deploymentgen.GenCommitProjectCandidateSynchronizationHeaders{
-		IdempotencyKey: "sync-1",
+		IdempotencyKey: "sync-1", SourceSynchronizationPlan: "plan-1",
 	})
 	if handler.operation != "sync-commit:p1" || handler.idempotencyKey != "sync-1" {
 		t.Fatalf("sync commit mapping = operation:%q key:%q", handler.operation, handler.idempotencyKey)
@@ -116,13 +116,13 @@ func (h *recordingDeploymentHandler) PublishProjectCandidate(_ stdhttp.ResponseW
 func (h *recordingDeploymentHandler) ReviewProjectCandidate(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, candidate string) {
 	h.operation = "review:" + project + ":" + candidate
 }
-func (h *recordingDeploymentHandler) PlanProjectCandidateSynchronization(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project string) {
-	h.operation = "sync-plan:" + project
+func (h *recordingDeploymentHandler) PlanProjectCandidateSynchronization(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, key string) {
+	h.operation, h.idempotencyKey = "sync-plan:"+project, key
 }
-func (h *recordingDeploymentHandler) UploadProjectCandidateSourceBlob(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, digest, _, _ string) {
+func (h *recordingDeploymentHandler) UploadProjectCandidateSourceBlob(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, digest, _, _, _ string) {
 	h.operation = "sync-upload:" + project + ":" + digest
 }
-func (h *recordingDeploymentHandler) CommitProjectCandidateSynchronization(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, key string) {
+func (h *recordingDeploymentHandler) CommitProjectCandidateSynchronization(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project, key, _ string) {
 	h.operation, h.idempotencyKey = "sync-commit:"+project, key
 }
 
