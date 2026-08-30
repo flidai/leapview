@@ -54,7 +54,7 @@ func TestBaselineMetadata(t *testing.T) {
 		t.Fatalf("baseline metadata = revision %d, id %q", BaselineRevision, BaselineMigrationID)
 	}
 	sql := BaselineSQL()
-	for _, marker := range []string{"platform.schema_revision", "platform.reject_schema_revision_mutation", "leapview_control_owner", "leapview_control_backup"} {
+	for _, marker := range []string{"platform.schema_revision", "platform.reject_schema_revision_mutation", "leapview_control_owner", "leapview_control_maintenance", "leapview_control_backup", ")) <> 6"} {
 		if !strings.Contains(sql, marker) {
 			t.Errorf("foundation missing required contract marker %q", marker)
 		}

@@ -9,9 +9,9 @@ DO $$
 BEGIN
     IF (SELECT count(*) FROM pg_roles WHERE rolname IN (
         'leapview_control_owner', 'leapview_control_migrator',
-        'leapview_control_runtime', 'leapview_control_readonly',
-        'leapview_control_backup'
-    )) <> 5 THEN
+        'leapview_control_runtime', 'leapview_control_maintenance',
+        'leapview_control_readonly', 'leapview_control_backup'
+    )) <> 6 THEN
         RAISE EXCEPTION 'PostgreSQL control roles must be provisioned before applying the baseline';
     END IF;
 END
