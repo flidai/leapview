@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
@@ -49,6 +50,16 @@ func (graphDBStub) Exec(context.Context, string, ...any) (pgconn.CommandTag, err
 func (graphDBStub) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
 func (graphDBStub) QueryRow(context.Context, string, ...any) pgx.Row        { return nil }
 func (graphDBStub) Begin(context.Context) (pgx.Tx, error)                   { return nil, nil }
+
+type graphDBNoBeginStub struct{}
+
+func (graphDBNoBeginStub) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (graphDBNoBeginStub) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+func (graphDBNoBeginStub) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
 
 type releaseListFake struct {
 	rows []release.Release
@@ -261,6 +272,18 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 	}) {
 		t.Fatal("constructed graph did not preserve dashboard target and persistence identities")
 	}
+	if graph.DuckLakeControlLedger == nil || !graph.DuckLakeControlLedger.Configured() || !graph.DuckLakeControlLedger.TransactionCapable() {
+		t.Fatal("constructed graph did not expose a transaction-capable DuckLake control ledger")
+	}
+	if graph.DuckLakeControlLedger.DB() != runtime {
+		t.Fatal("DuckLake control ledger is not configured from the control runtime pool")
+	}
+	if graph.DuckLakeControlLedger.DB() == maintenance {
+		t.Fatal("DuckLake control ledger is incorrectly configured from the maintenance pool")
+	}
+	if graph.DuckLakeControlLedger.DB() != graph.DeploymentRepository.DB() {
+		t.Fatal("DuckLake control ledger is not transaction-compatible with the delivery control pool")
+	}
 	if !graph.ProductAudit.Matches(graph.AccessAudit) ||
 		!graph.ConnectionBindingAudit.Matches(graph.AccessAudit) ||
 		!graph.ManagedDataAudit.Matches(graph.AccessAudit) ||
@@ -308,4 +331,14 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "generation fence") {
 		t.Fatalf("mismatched dashboard target error = %v", err)
 	}
+	graph.DashboardTargetID = "target-prod"
+	originalLedger := graph.DuckLakeControlLedger
+	graph.DuckLakeControlLedger = ducklakepostgres.New(maintenance)
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "control runtime pool") {
+		t.Fatalf("DuckLake ledger pool mismatch error = %v", err)
+	}
+	if ducklakepostgres.New(graphDBNoBeginStub{}).TransactionCapable() {
+		t.Fatal("DuckLake ledger reported transaction capability for a DBTX without Begin")
+	}
+	graph.DuckLakeControlLedger = originalLedger
 }

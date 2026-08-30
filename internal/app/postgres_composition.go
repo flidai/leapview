@@ -180,8 +180,10 @@ func (l *postgresControlPlaneLifecycle) RuntimePool() *platformpostgres.Pool {
 	return l.pools.Runtime
 }
 
-// DuckLakePool exposes the separately authenticated DuckLake catalog pool to
-// native runtime composition without transferring lifecycle ownership.
+// DuckLakePool exposes only the separately authenticated external
+// leapview_ducklake catalog pool to native runtime attach composition without
+// transferring lifecycle ownership. It must not be used to construct
+// PostgresAuthorityGraph or its control-plane DuckLake ledger.
 func (l *postgresControlPlaneLifecycle) DuckLakePool() *platformpostgres.Pool {
 	if l == nil {
 		return nil

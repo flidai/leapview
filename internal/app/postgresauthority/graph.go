@@ -13,6 +13,7 @@ import (
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	agentcomposition "github.com/flidai/leapview/internal/app/agentpostgres"
@@ -104,6 +105,12 @@ type PostgresAuthorityGraph struct {
 	// object membership; this repository stores only stable identity and
 	// immutable conformance evidence.
 	PhysicalPool *physicalpoolpostgres.Repository
+	// DuckLakeControlLedger stores application-owned DuckLake attempt,
+	// generation, and retention evidence in the leapview_control baseline. It
+	// is deliberately backed by the control RuntimePool; the separately
+	// authenticated leapview_ducklake pool remains a runtime catalog/attach
+	// authority and is not part of this graph.
+	DuckLakeControlLedger *ducklakepostgres.Repository
 	// ServingState stores immutable serving-generation evidence and reader
 	// leases. Delivery remains the sole mutable activation authority.
 	ServingState *servingstatepostgres.Repository
@@ -158,6 +165,9 @@ type PostgresAuthorityGraph struct {
 	AccessAuditMaintenance     *accesspostgres.Maintenance
 	AccessAuthStateMaintenance *accesspostgres.Maintenance
 	Retention                  *postgresmaintenance.Coordinator
+	// controlRuntime is retained only for composition identity checks. Pool
+	// lifecycle remains owned by postgresControlPlaneLifecycle.
+	controlRuntime *platformpostgres.Pool
 }
 
 // PostgresAuthorityGraphOptions supplies values that are not persisted in the
@@ -206,12 +216,12 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		return nil, fmt.Errorf("construct PostgreSQL connection-binding authority: %w", err)
 	}
 
-	// These capability schemas are all part of leapview_control. In
-	// particular, the DuckLake package's broader repository is intentionally
-	// not constructed here: its attempt/retention/lease methods duplicate the
-	// canonical delivery and serving-state authorities. A future migration-only
-	// facade may be added once that package exposes a narrow port.
+	// These capability schemas are all part of leapview_control, including the
+	// DuckLake attempt/generation/retention ledger. The external
+	// leapview_ducklake catalog is intentionally absent from this graph and is
+	// supplied only to runtime attach composition by the application lifecycle.
 	physicalPool := physicalpoolpostgres.New(runtime)
+	duckLakeControlLedger := ducklakepostgres.New(runtime)
 	servingState := servingstatepostgres.New(runtime)
 	refresh := refreshpostgres.New(runtime)
 	refreshJobs := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
@@ -360,7 +370,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		Idempotency:   idempotencypostgres.NewStore(runtime),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorSigningMaintenance,
 		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Cache: cachepostgres.New(runtime), CacheMaintenance: cacheMaintenance, Lineage: lineagepostgres.New(runtime),
-		PhysicalPool: physicalPool, ServingState: servingState, Refresh: refresh,
+		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
 		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
@@ -373,6 +383,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		DashboardPublication: dashboardPublication, DashboardPublicationAudit: dashboardPublicationAudit, DashboardPublicationEvents: dashboardPublicationEvents,
 		DashboardStreams: dashboardStreams, DashboardStreamsMaintenance: dashboardStreamsMaintenance, DashboardBroker: dashboardBroker, DashboardPersistence: dashboardPersistence,
 		AccessAuditMaintenance: accessAuditMaintenance, AccessAuthStateMaintenance: accessAuthStateMaintenance, Retention: retention,
+		controlRuntime: runtime,
 	}
 	if err := graph.Validate(); err != nil {
 		return nil, err
@@ -450,7 +461,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
 		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"query-audit maintenance authority", g.QueryAuditMaintenance}, {"cache authority", g.Cache}, {"cache maintenance authority", g.CacheMaintenance}, {"lineage authority", g.Lineage},
-		{"physical-pool authority", g.PhysicalPool}, {"serving-state authority", g.ServingState},
+		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},
 		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
 		{"release authority", g.Release}, {"release audit authority", g.ReleaseAudit}, {"release event authority", g.ReleaseEvents}, {"release catalog authority", g.ReleaseCatalog},
 		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
@@ -494,6 +505,12 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if !g.ServingState.Configured() {
 		return errors.New("PostgreSQL authority graph serving-state authority is not configured")
+	}
+	if !g.DuckLakeControlLedger.Configured() || !g.DuckLakeControlLedger.TransactionCapable() {
+		return errors.New("PostgreSQL authority graph DuckLake control ledger is not transaction-capable")
+	}
+	if g.controlRuntime == nil || g.DuckLakeControlLedger.DB() != g.controlRuntime {
+		return errors.New("PostgreSQL authority graph DuckLake control ledger must use the control runtime pool")
 	}
 	if !refreshJobsMatches(g.Jobs, g.Refresh, g.RefreshJobs) {
 		return errors.New("PostgreSQL authority graph refresh jobs adapter does not preserve sibling repository identity")

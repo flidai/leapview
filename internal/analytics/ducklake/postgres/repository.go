@@ -1,7 +1,8 @@
-// Package postgres owns the control-plane identity and lifecycle records for
-// a PostgreSQL-backed DuckLake catalog.  DuckDB remains the local data-plane:
-// this package never opens a DuckDB connection, stores catalog bytes, or
-// guesses a snapshot from catalog recency.
+// Package postgres owns the application control-plane DuckLake ledger. Its
+// schema is installed in the leapview_control baseline; it is not the
+// separately provisioned leapview_ducklake catalog database. DuckDB remains
+// the local data-plane: this package never opens a DuckDB connection, stores
+// catalog bytes, or guesses a snapshot from catalog recency.
 package postgres
 
 import (
@@ -29,6 +30,10 @@ type DBTX interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	Query(context.Context, string, ...any) (pgx.Rows, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type beginner interface {
+	Begin(context.Context) (pgx.Tx, error)
 }
 
 type Tx = DBTX
@@ -345,11 +350,32 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
+// DB exposes the configured native control-database handle to composition
+// checks. It never opens a connection or transfers lifecycle ownership.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 // Configured reports whether the repository has a native PostgreSQL handle.
 // Transaction ownership remains with the application composition layer: the
 // Tx methods below deliberately operate on the caller's transaction rather
 // than opening a second one.
 func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
+// TransactionCapable reports whether the configured control-database handle
+// can begin a caller-owned PostgreSQL transaction. The ledger's Tx methods
+// never begin or commit that transaction themselves, allowing delivery and
+// serving authorities to share one control-plane transaction.
+func (r *Repository) TransactionCapable() bool {
+	if r == nil || r.db == nil {
+		return false
+	}
+	_, ok := r.db.(beginner)
+	return ok
+}
 
 // BeginAttemptTx persists an exact running-attempt identity through a
 // caller-owned transaction. It never begins, commits, or rolls back tx; app
@@ -371,6 +397,28 @@ func (r *Repository) CommitAttemptTx(ctx context.Context, tx Tx, in CommitAttemp
 		return AttemptEvidence{}, ErrInvalid
 	}
 	return CommitAttempt(ctx, tx, in)
+}
+
+// AbortAttemptTx records positive no-commit/terminated evidence through a
+// caller-owned control-plane transaction. It never begins, commits, or rolls
+// back tx; application composition uses it alongside the delivery ledger so
+// both schemas commit atomically in leapview_control.
+func (r *Repository) AbortAttemptTx(ctx context.Context, tx Tx, in TerminateAttemptInput) (AttemptEvidence, error) {
+	if r == nil || tx == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	return TerminateAttempt(ctx, tx, in, AttemptAborted)
+}
+
+// MarkAttemptIndeterminateTx records bounded evidence that an attempt's
+// external outcome cannot be established. It operates on the caller-owned
+// transaction and therefore composes with the delivery ledger without ever
+// touching the external DuckLake catalog database.
+func (r *Repository) MarkAttemptIndeterminateTx(ctx context.Context, tx Tx, in TerminateAttemptInput) (AttemptEvidence, error) {
+	if r == nil || tx == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	return TerminateAttempt(ctx, tx, in, AttemptIndeterminate)
 }
 
 // BindGenerationTx records the immutable generation binding and its

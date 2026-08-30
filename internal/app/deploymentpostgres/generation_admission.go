@@ -7,7 +7,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -18,6 +21,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 )
@@ -149,10 +153,10 @@ var _ DuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 // physical commit cannot be admitted without its ledger, binding, and
 // retention evidence. It does not begin a transaction or perform schema work.
 func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority) (GenerationAdmission, error) {
-	if !delivery.Configured() || !serving.Configured() {
+	if delivery == nil || serving == nil || !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
 	}
-	if ducklake == nil || !ducklake.Configured() {
+	if !configuredDuckLakeAuthority(ducklake) {
 		return nil, errors.New("generation admission requires a configured DuckLake authority")
 	}
 	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake}, nil
@@ -163,7 +167,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // Every lower-level Tx method receives the exact same pgx transaction; this
 // method alone owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -189,21 +193,29 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	// caller-owned transaction still contains the running attempt. Any failure
 	// in the subsequent delivery, generation, or serving steps rolls back this
 	// evidence together with the rest of admission.
-	if _, err := a.ducklake.CommitAttemptTx(ctx, tx, ducklakepostgres.CommitAttemptInput{
+	duckAttempt, err := a.ducklake.CommitAttemptTx(ctx, tx, ducklakepostgres.CommitAttemptInput{
 		AttemptID:    normalized.Commit.AttemptID,
 		OwnerID:      normalized.Commit.OwnerID,
 		FencingEpoch: normalized.Commit.FencingEpoch,
 		Snapshot:     ducklakepostgres.SnapshotRef{PhysicalPoolID: normalized.Seal.PhysicalPoolID, CatalogID: normalized.Seal.CatalogID, SnapshotID: normalized.Commit.SnapshotID},
 		CommitMarker: string(normalized.Commit.CommitMarker),
-	}); err != nil {
+	})
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := verifyDuckLakeAttempt(duckAttempt, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 
-	if _, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
+	artifactBinding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
 		AttemptID: normalized.Commit.AttemptID, ServingArtifactID: normalized.Seal.ServingArtifactID,
 		ServingArtifactDigest: normalized.Seal.ServingArtifactDigest, ServingStateID: normalized.Generation.GenerationID,
 		OwnerID: normalized.Fence.OwnerID, FencingEpoch: normalized.Fence.FencingEpoch,
-	}); err != nil {
+	})
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := verifyArtifactBinding(artifactBinding, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	completed, err := a.delivery.CompleteBuildTx(ctx, tx, deploymentnative.CommitAttemptInput{
@@ -214,15 +226,24 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	if err != nil {
 		return GenerationAdmissionResult{}, err
 	}
+	if err := verifyCompletedBuild(completed, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 	generation, err := a.delivery.CreateGenerationAllocatedTx(ctx, tx, toNativeGeneration(normalized.Generation))
 	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := verifyGeneration(generation, normalized.Generation); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	bundle, err := a.serving.AdmitGenerationBundleTx(ctx, tx, toNativeBundle(normalized.Bundle), normalized.Graph)
 	if err != nil {
 		return GenerationAdmissionResult{}, err
 	}
-	if _, err := a.ducklake.BindGenerationTx(ctx, tx, ducklakepostgres.GenerationBinding{
+	if err := verifyBundle(bundle, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	duckBinding, err := a.ducklake.BindGenerationTx(ctx, tx, ducklakepostgres.GenerationBinding{
 		DeliveryID:             normalized.Commit.DeliveryID,
 		GenerationID:           normalized.Generation.GenerationID,
 		AttemptID:              normalized.Commit.AttemptID,
@@ -235,7 +256,11 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 		RequestDigest:          normalized.Seal.RequestDigest,
 		PlanDigest:             normalized.Seal.PlanDigest,
 		FencingEpoch:           normalized.Commit.FencingEpoch,
-	}); err != nil {
+	})
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := verifyDuckLakeBinding(duckBinding, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -246,6 +271,181 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 		AttemptID: completed.Attempt.AttemptID, SealID: completed.Seal.SealID, CandidateID: completed.Candidate.CandidateID,
 		Generation: fromNativeGeneration(generation), Bundle: fromNativeBundle(bundle),
 	}, nil
+}
+
+// configuredDuckLakeAuthority keeps interface-backed constructor checks safe
+// for typed nil implementations. Calling a method on a typed nil is legal in
+// Go but may panic in an implementation that does not guard its receiver.
+func configuredDuckLakeAuthority(authority DuckLakeAuthority) bool {
+	if authority == nil {
+		return false
+	}
+	v := reflect.ValueOf(authority)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return false
+		}
+	}
+	return authority.Configured()
+}
+
+func admissionEvidenceConflict(kind string) error {
+	return fmt.Errorf("%w: persisted %s evidence differs", deploymentnative.ErrConflict, kind)
+}
+
+func verifyArtifactBinding(got deploymentnative.BuildArtifactBinding, input GenerationAdmissionInput) error {
+	if got.AttemptID != input.Commit.AttemptID || got.ServingArtifactID != input.Seal.ServingArtifactID ||
+		got.ServingArtifactDigest != input.Seal.ServingArtifactDigest || got.ServingStateID != input.Generation.GenerationID || got.BoundAt.IsZero() {
+		return admissionEvidenceConflict("delivery artifact binding")
+	}
+	return nil
+}
+
+func verifyCompletedBuild(got deploymentnative.CompleteBuildResult, input GenerationAdmissionInput) error {
+	attempt := got.Attempt
+	if attempt.AttemptID != input.Commit.AttemptID || attempt.PlanID != input.Generation.PlanID || attempt.CandidateID != input.Generation.CandidateID ||
+		attempt.OwnerID != input.Commit.OwnerID || attempt.PhysicalPoolID != input.Seal.PhysicalPoolID || attempt.FencingEpoch != input.Commit.FencingEpoch ||
+		attempt.RequestDigest != input.Seal.RequestDigest || attempt.PlanDigest != input.Generation.PlanDigest || attempt.Namespace != input.Seal.RelationNamespace || attempt.State != deploymentnative.AttemptCommitted ||
+		attempt.SnapshotID != input.Commit.SnapshotID || attempt.SessionIdentity == "" || attempt.LeaseExpiresAt.IsZero() || attempt.CreatedAt.IsZero() || attempt.UpdatedAt.IsZero() || attempt.FinishedAt.IsZero() ||
+		len(attempt.TerminationEvidence) != 0 || !sameCommitMarker(attempt.CommitMarker, input.Commit.CommitMarker) {
+		return admissionEvidenceConflict("delivery build completion")
+	}
+	if !sameSnapshotSeal(got.Seal, input.Seal) {
+		return admissionEvidenceConflict("delivery snapshot seal")
+	}
+	candidate := got.Candidate
+	if candidate.CandidateID != input.Generation.CandidateID || candidate.TargetID != input.Generation.TargetID || candidate.PlanID != input.Generation.PlanID ||
+		candidate.AttemptID != input.Commit.AttemptID || candidate.SnapshotSealID != input.Seal.SealID || candidate.Status != "qualified" ||
+		candidate.CandidateRevision <= 0 || candidate.ArtifactDigest != input.Generation.ServingArtifactDigest || candidate.QualificationDigest != input.QualificationDigest ||
+		candidate.CreatedAt.IsZero() || candidate.QualifiedAt.IsZero() || !candidate.RetiredAt.IsZero() {
+		return admissionEvidenceConflict("delivery candidate")
+	}
+	lease := got.Lease
+	if lease.LeaseID != input.Fence.LeaseID || lease.TargetID != input.Fence.TargetID || lease.OwnerID != input.Fence.OwnerID ||
+		lease.FencingEpoch != input.Fence.FencingEpoch || lease.State != "released" || lease.ExpiresAt.IsZero() || lease.AcquiredAt.IsZero() || lease.ReleasedAt.IsZero() {
+		return admissionEvidenceConflict("delivery lease")
+	}
+	return nil
+}
+
+func sameSnapshotSeal(got deploymentnative.SnapshotSeal, want SnapshotSealEvidence) bool {
+	return got.SealID == want.SealID && got.AttemptID == want.AttemptID && got.CandidateID == want.CandidateID &&
+		got.PhysicalPoolID == want.PhysicalPoolID && got.TenantDomain == want.TenantDomain && got.Region == want.Region && got.EncryptionDomain == want.EncryptionDomain &&
+		got.ObjectNamespace == want.ObjectNamespace && got.CatalogDatabase == want.CatalogDatabase && got.CatalogID == want.CatalogID && got.CatalogUUID == want.CatalogUUID &&
+		got.CatalogVersion == want.CatalogVersion && got.DuckLakeSnapshotID == want.DuckLakeSnapshotID && got.RelationNamespace == want.RelationNamespace &&
+		got.ObjectRoot == want.ObjectRoot && got.ObjectRootDigest == want.ObjectRootDigest && got.ArtifactRoot == want.ArtifactRoot && got.ArtifactRootDigest == want.ArtifactRootDigest &&
+		got.RelationManifestDigest == want.RelationManifestDigest && got.ClosureDigest == want.ClosureDigest && got.CompiledGraphDigest == want.CompiledGraphDigest &&
+		got.CompiledConfigDigest == want.CompiledConfigDigest && got.SecurityDomainFingerprint == want.SecurityDomainFingerprint && got.RequestDigest == want.RequestDigest &&
+		got.PlanDigest == want.PlanDigest && got.CompatibilityDigest == want.CompatibilityDigest && got.ServingArtifactID == want.ServingArtifactID &&
+		got.ServingArtifactDigest == want.ServingArtifactDigest && got.DuckDBVersion == want.DuckDBVersion && got.RuntimeVersion == want.RuntimeVersion &&
+		got.DuckLakeExtensionVersion == want.DuckLakeExtensionVersion && got.DuckLakeSpecVersion == want.DuckLakeSpecVersion && got.CatalogSchemaVersion == want.CatalogSchemaVersion &&
+		!got.QualifiedAt.IsZero() && sameJSON(got.QualificationEvidence, want.QualificationEvidence)
+}
+
+func verifyGeneration(got deploymentnative.DeliveryGeneration, want GenerationEvidence) error {
+	if got.GenerationID != want.GenerationID || got.TargetID != want.TargetID || got.CandidateID != want.CandidateID || got.SnapshotSealID != want.SnapshotSealID ||
+		got.PlanID != want.PlanID || got.PlanDigest != want.PlanDigest || got.ArtifactRoot != want.ArtifactRoot || got.ArtifactRootDigest != want.ArtifactRootDigest ||
+		got.ServingArtifactDigest != want.ServingArtifactDigest || got.CompiledGraphDigest != want.CompiledGraphDigest || got.CompiledConfigDigest != want.CompiledConfigDigest ||
+		got.SecurityDomainFingerprint != want.SecurityDomainFingerprint || got.GenerationRevision <= 0 || got.CreatedAt.IsZero() {
+		return admissionEvidenceConflict("delivery generation")
+	}
+	return nil
+}
+
+func verifyBundle(got servingnative.Bundle, input GenerationAdmissionInput) error {
+	want := input.Bundle
+	if got.GenerationID != want.GenerationID || got.ProjectID != want.ProjectID || got.Environment != want.Environment ||
+		got.ArtifactID != want.Artifact.ID || got.ArtifactDigest != want.Artifact.Digest || got.CompiledGraphDigest != input.Generation.CompiledGraphDigest ||
+		got.ArtifactFormat != want.Artifact.Format || got.ArtifactLocator != want.ArtifactLocator || got.StorageSecurityDomain != want.StorageSecurityDomain ||
+		got.ArtifactContentType != want.ArtifactContentType || got.ArtifactMetadataDigest != want.ArtifactMetadataDigest || got.SizeBytes != want.Artifact.SizeBytes ||
+		got.DuckLakeSnapshotID != input.Commit.SnapshotID || got.CreatedBy != want.CreatedBy || !validPersistedTimestamp(got.CreatedAt) ||
+		!sameJSON([]byte(got.ManifestJSON), []byte(want.Artifact.ManifestJSON)) || got.ProjectDigest != want.ProjectDigest ||
+		!sameBundleObject(got.AccessPolicyJSON, want.AccessPolicyJSON) || !sameBundleObject(got.DashboardPublicationsJSON, want.DashboardPublicationsJSON) ||
+		!sameBundleObject(got.DashboardAppearancesJSON, want.DashboardAppearancesJSON) {
+		return admissionEvidenceConflict("serving generation bundle")
+	}
+	return nil
+}
+
+func verifyDuckLakeAttempt(got ducklakepostgres.AttemptEvidence, input GenerationAdmissionInput) error {
+	if got.AttemptID != input.Commit.AttemptID || got.RequestDigest != input.Seal.RequestDigest || got.PlanDigest != input.Generation.PlanDigest ||
+		got.PhysicalPoolID != input.Seal.PhysicalPoolID || got.CatalogID != input.Seal.CatalogID || got.OwnerID != input.Commit.OwnerID ||
+		got.FencingEpoch != input.Commit.FencingEpoch || got.State != ducklakepostgres.AttemptCommitted || got.SnapshotID != input.Commit.SnapshotID ||
+		got.SessionIdentity == "" || got.LeaseExpiresAt.IsZero() || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.TerminalAt.IsZero() || !got.TerminalAt.Equal(got.UpdatedAt) || len(got.TerminationEvidence) != 0 || !sameCommitMarker([]byte(got.CommitMarker), input.Commit.CommitMarker) {
+		return admissionEvidenceConflict("DuckLake attempt ledger")
+	}
+	return nil
+}
+
+func verifyDuckLakeBinding(got ducklakepostgres.GenerationBinding, input GenerationAdmissionInput) error {
+	if got.DeliveryID != input.Commit.DeliveryID || got.GenerationID != input.Generation.GenerationID || got.AttemptID != input.Commit.AttemptID ||
+		got.PhysicalPoolID != input.Seal.PhysicalPoolID || got.CatalogID != input.Seal.CatalogID || got.SnapshotID != input.Commit.SnapshotID ||
+		got.RelationManifestDigest != input.Seal.RelationManifestDigest || got.CompatibilityDigest != input.Seal.CompatibilityDigest ||
+		got.ServingArtifactDigest != input.Seal.ServingArtifactDigest || got.RequestDigest != input.Seal.RequestDigest || got.PlanDigest != input.Seal.PlanDigest ||
+		got.FencingEpoch != input.Commit.FencingEpoch || got.BoundAt.IsZero() {
+		return admissionEvidenceConflict("DuckLake generation binding")
+	}
+	return nil
+}
+
+func sameCommitMarker(left, right []byte) bool {
+	l, err := catalogartifact.DecodeCommitMarker(left)
+	if err != nil {
+		return false
+	}
+	r, err := catalogartifact.DecodeCommitMarker(right)
+	return err == nil && l == r
+}
+
+func sameJSON(left, right []byte) bool {
+	var l, r any
+	if decodePreciseJSON(left, &l) != nil || decodePreciseJSON(right, &r) != nil {
+		return false
+	}
+	return reflect.DeepEqual(l, r)
+}
+
+func sameBundleObject(left, right string) bool {
+	left, right = strings.TrimSpace(left), strings.TrimSpace(right)
+	if left == "" || left == "null" {
+		left = "{}"
+	}
+	if right == "" || right == "null" {
+		right = "{}"
+	}
+	return sameJSON([]byte(left), []byte(right))
+}
+
+func decodePreciseJSON(raw []byte, target *any) error {
+	// strictjson performs bounded, duplicate-key and trailing-data validation;
+	// the second decode retains json.Number so large integer evidence cannot be
+	// rounded through float64 before comparison.
+	var validated json.RawMessage
+	if err := strictjson.DecodeWithOptions(raw, &validated, strictjson.Options{}); err != nil {
+		return err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(validated))
+	decoder.UseNumber()
+	if err := decoder.Decode(target); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("trailing JSON value")
+		}
+		return err
+	}
+	return nil
+}
+
+func validPersistedTimestamp(value string) bool {
+	if value == "" {
+		return false
+	}
+	timestamp, err := time.Parse(time.RFC3339Nano, value)
+	return err == nil && !timestamp.IsZero()
 }
 
 func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, error) {

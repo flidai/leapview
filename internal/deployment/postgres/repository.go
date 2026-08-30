@@ -1487,14 +1487,18 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 		}
 		return DeliveryBuildAttempt{}, ErrConflict
 	}
-	leaseActive, err := depdb.New(db).BuildAttemptLeaseActive(ctx, dbUUID(id))
-	if err != nil {
-		return DeliveryBuildAttempt{}, err
-	}
-	if !leaseActive {
-		return DeliveryBuildAttempt{}, ErrLeaseExpired
-	}
+	// A lease timeout is not termination evidence, but once the caller has
+	// supplied positive no-commit/session-terminated evidence it must still be
+	// possible to close the durable attempt. Only a commit requires an active
+	// lease; abort and indeterminate transitions remain fenced by owner/epoch.
 	if state == AttemptCommitted {
+		leaseActive, err := depdb.New(db).BuildAttemptLeaseActive(ctx, dbUUID(id))
+		if err != nil {
+			return DeliveryBuildAttempt{}, err
+		}
+		if !leaseActive {
+			return DeliveryBuildAttempt{}, ErrLeaseExpired
+		}
 		if in.SnapshotID <= 0 {
 			return DeliveryBuildAttempt{}, ErrInvalid
 		}

@@ -1,6 +1,7 @@
 package deploymentpostgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -93,6 +94,112 @@ func TestNormalizeGenerationAdmissionRejectsCrossFieldMismatches(t *testing.T) {
 				t.Fatalf("normalize error = %v, want native conflict/invalid", err)
 			}
 		})
+	}
+}
+
+type nilDuckLakeAuthority struct{}
+
+func (*nilDuckLakeAuthority) Configured() bool { return true }
+func (*nilDuckLakeAuthority) CommitAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.CommitAttemptInput) (ducklakepostgres.AttemptEvidence, error) {
+	return ducklakepostgres.AttemptEvidence{}, nil
+}
+func (*nilDuckLakeAuthority) BindGenerationTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.GenerationBinding) (ducklakepostgres.GenerationBinding, error) {
+	return ducklakepostgres.GenerationBinding{}, nil
+}
+
+type tamperingDuckLakeAuthority struct {
+	inner        DuckLakeAuthority
+	tamperCommit bool
+	tamperBind   bool
+}
+
+func (a *tamperingDuckLakeAuthority) Configured() bool {
+	return a != nil && a.inner != nil && a.inner.Configured()
+}
+
+func (a *tamperingDuckLakeAuthority) CommitAttemptTx(ctx context.Context, tx ducklakepostgres.Tx, in ducklakepostgres.CommitAttemptInput) (ducklakepostgres.AttemptEvidence, error) {
+	got, err := a.inner.CommitAttemptTx(ctx, tx, in)
+	if err == nil && a.tamperCommit {
+		got.OwnerID = "tampered-owner"
+	}
+	return got, err
+}
+
+func (a *tamperingDuckLakeAuthority) BindGenerationTx(ctx context.Context, tx ducklakepostgres.Tx, in ducklakepostgres.GenerationBinding) (ducklakepostgres.GenerationBinding, error) {
+	got, err := a.inner.BindGenerationTx(ctx, tx, in)
+	if err == nil && a.tamperBind {
+		got.GenerationID = "tampered-generation"
+	}
+	return got, err
+}
+
+func TestNewGenerationAdmissionRejectsNilAuthorities(t *testing.T) {
+	db := deploymentPostgresDBStub{}
+	configuredDelivery := deploymentnative.New(db)
+	configuredServing := servingnative.New(db)
+	configuredDuckLake := ducklakepostgres.New(db)
+	cases := []struct {
+		name     string
+		delivery *deploymentnative.Repository
+		serving  *servingnative.Repository
+		ducklake DuckLakeAuthority
+	}{
+		{name: "nil delivery", serving: configuredServing, ducklake: configuredDuckLake},
+		{name: "nil serving", delivery: configuredDelivery, ducklake: configuredDuckLake},
+		{name: "typed nil ducklake", delivery: configuredDelivery, serving: configuredServing, ducklake: (*nilDuckLakeAuthority)(nil)},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.ducklake); err == nil || got != nil {
+				t.Fatalf("NewGenerationAdmission() = (%v, %v), want nil capability and error", got, err)
+			}
+		})
+	}
+}
+
+func TestGenerationAdmissionRejectsTamperedDuckLakeEvidence(t *testing.T) {
+	input := validGenerationAdmissionInput(t)
+	now := time.Now().UTC()
+	attempt := ducklakepostgres.AttemptEvidence{
+		AttemptID: input.Commit.AttemptID, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Generation.PlanDigest,
+		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, OwnerID: input.Commit.OwnerID,
+		FencingEpoch: input.Commit.FencingEpoch, State: ducklakepostgres.AttemptCommitted, SnapshotID: input.Commit.SnapshotID,
+		LeaseExpiresAt: now.Add(time.Hour), SessionIdentity: "duckdb-session-test", CommitMarker: string(input.Commit.CommitMarker), CreatedAt: now, UpdatedAt: now, TerminalAt: now,
+	}
+	if err := verifyDuckLakeAttempt(attempt, input); err != nil {
+		t.Fatalf("verify valid DuckLake attempt: %v", err)
+	}
+	tampered := attempt
+	tampered.SnapshotID++
+	if err := verifyDuckLakeAttempt(tampered, input); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("verify tampered DuckLake attempt error = %v, want conflict", err)
+	}
+
+	binding := ducklakepostgres.GenerationBinding{
+		DeliveryID: input.Commit.DeliveryID, GenerationID: input.Generation.GenerationID, AttemptID: input.Commit.AttemptID,
+		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, SnapshotID: input.Commit.SnapshotID,
+		RelationManifestDigest: input.Seal.RelationManifestDigest, CompatibilityDigest: input.Seal.CompatibilityDigest,
+		ServingArtifactDigest: input.Seal.ServingArtifactDigest, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Seal.PlanDigest,
+		FencingEpoch: input.Commit.FencingEpoch, BoundAt: now,
+	}
+	if err := verifyDuckLakeBinding(binding, input); err != nil {
+		t.Fatalf("verify valid DuckLake binding: %v", err)
+	}
+	binding.GenerationID = "tampered-generation"
+	if err := verifyDuckLakeBinding(binding, input); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("verify tampered DuckLake binding error = %v, want conflict", err)
+	}
+}
+
+func TestGenerationAdmissionJSONEvidencePreservesIntegerPrecision(t *testing.T) {
+	if sameJSON([]byte(`{"value":9007199254740992}`), []byte(`{"value":9007199254740993}`)) {
+		t.Fatal("sameJSON equated distinct large integer evidence")
+	}
+	if !sameJSON([]byte(`{"value":9007199254740993}`), []byte(`{"value":9007199254740993}`)) {
+		t.Fatal("sameJSON rejected equal large integer evidence")
+	}
+	if sameJSON([]byte(`{"value":1,"value":1}`), []byte(`{"value":1}`)) {
+		t.Fatal("sameJSON accepted duplicate-key evidence")
 	}
 }
 
@@ -200,6 +307,18 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, ducklake, input)
+	tamperedCapability, err := NewGenerationAdmission(delivery, serving, &tamperingDuckLakeAuthority{inner: ducklake, tamperCommit: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tamperedCapability.CompleteBuildAndAdmit(t.Context(), input); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("tampered DuckLake authority error = %v, want conflict", err)
+	}
+	if attempt, err := ducklake.LoadAttempt(t.Context(), input.Commit.AttemptID); err != nil {
+		t.Fatalf("load rolled-back DuckLake attempt: %v", err)
+	} else if attempt.State != ducklakepostgres.AttemptRunning {
+		t.Fatalf("tampered authority changed DuckLake attempt state to %q", attempt.State)
+	}
 	first, err := capability.CompleteBuildAndAdmit(t.Context(), input)
 	if err != nil {
 		t.Fatalf("complete and admit: %v", err)
