@@ -354,13 +354,10 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 		RuntimeEntries: 16, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 2 << 20,
 	})
 	require.NoError(t, err)
+	defer pool.Close()
 	firstResults, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
 	require.NoError(t, err)
-	secondResults, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
-	require.NoError(t, err)
 	firstBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-one"})
-	require.NoError(t, err)
-	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-two"})
 	require.NoError(t, err)
 
 	model := func() *semanticmodel.Model {
@@ -373,10 +370,6 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 		modelID: "sales", model: model(), db: firstDB,
 		queryCache: newQueryResultCacheWithScopes(firstResults, firstBytes),
 	})
-	second := activatedCacheRuntime(t, &Runtime{
-		modelID: "sales", model: model(), db: secondDB,
-		queryCache: newQueryResultCacheWithScopes(secondResults, secondBytes),
-	})
 	bindPlanner := func(runtime *Runtime, snapshot string) {
 		planner, plannerErr := semanticquery.NewCompiledPlanner(runtime.model, semanticquery.WithTableRelation(func(table string) (string, error) {
 			return snapshot + "." + table, nil
@@ -385,7 +378,6 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 		runtime.planner = planner
 	}
 	bindPlanner(first, "snapshot_one")
-	bindPlanner(second, "snapshot_two")
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
 		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
@@ -408,8 +400,21 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 	})
 	require.True(t, first.StoreImmutableBytes("tile", []byte("generation-one")))
 
+	require.NoError(t, first.queryCache.close())
 	require.NoError(t, firstResults.Close())
 	require.NoError(t, firstBytes.Close())
+	secondResults, err := pool.OpenSharedScope(resultcache.ScopeID{RuntimeID: "partition-production"})
+	require.NoError(t, err)
+	defer secondResults.Close()
+	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-two"})
+	require.NoError(t, err)
+	defer secondBytes.Close()
+	second := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales", model: model(), db: secondDB,
+		queryCache: newQueryResultCacheWithScopes(secondResults, secondBytes),
+	})
+	defer second.queryCache.close()
+	bindPlanner(second, "snapshot_two")
 	secondResult, err := second.ExecuteDataQuery(context.Background(), request)
 	require.NoError(t, err)
 	require.Equal(t, dataquery.CacheHit, secondResult.CacheOutcome)
@@ -436,6 +441,53 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 	_, found, err := second.LookupImmutableBytes("tile")
 	require.NoError(t, err)
 	require.False(t, found)
+}
+
+func TestDormantSharedResultInvalidationBeforeCompatibleGenerationPreventsReuse(t *testing.T) {
+	pool, err := resultcache.New(resultcache.Limits{
+		RuntimeEntries: 16, RuntimeBytes: 1 << 20, NodeEntries: 32, NodeBytes: 2 << 20,
+	})
+	require.NoError(t, err)
+	defer pool.Close()
+	partitionID := resultcache.ScopeID{RuntimeID: "partition-production"}
+	firstScope, err := pool.OpenSharedScope(partitionID)
+	require.NoError(t, err)
+	firstBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-one"})
+	require.NoError(t, err)
+	first := newQueryResultCacheWithScopes(firstScope, firstBytes)
+	request := dataquery.Query{
+		ModelID: "sales", Kind: dataquery.KindSemanticAggregate, Target: "orders",
+		Operation: dataquery.OperationDashboardFilterOptions,
+	}
+	var executions atomic.Int32
+	execute := func() (dataquery.Result, error) {
+		value := executions.Add(1)
+		return dataquery.Result{Rows: []dataquery.Row{{"value": value}}}, nil
+	}
+	result, err := first.execute(context.Background(), request, execute)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+	require.NoError(t, first.close())
+	require.NoError(t, firstBytes.Close())
+	require.NoError(t, firstScope.Close())
+
+	invalidator, err := pool.OpenSharedScope(partitionID)
+	require.NoError(t, err)
+	invalidator.Invalidate()
+	require.NoError(t, invalidator.Close())
+
+	secondScope, err := pool.OpenSharedScope(partitionID)
+	require.NoError(t, err)
+	defer secondScope.Close()
+	secondBytes, err := pool.OpenScope(resultcache.ScopeID{RuntimeID: "serving-two"})
+	require.NoError(t, err)
+	defer secondBytes.Close()
+	second := newQueryResultCacheWithScopes(secondScope, secondBytes)
+	defer second.close()
+	result, err = second.execute(context.Background(), request, execute)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+	require.Equal(t, int32(2), executions.Load())
 }
 
 func TestGenerationExecutionScopesDoNotCoalesceColdMissesButReuseCompletedEntries(t *testing.T) {
