@@ -151,6 +151,9 @@ func TestBuildNativePhysicalSuccess(t *testing.T) {
 	if got.SnapshotID != 42 || got.CatalogID != in.CatalogID || got.ObjectRoot != "/tmp/native-objects" || string(got.CanonicalMarkerJSON) != canonical {
 		t.Fatalf("evidence = %#v", got)
 	}
+	if got.Closure.Relations == nil || got.Closure.Objects == nil {
+		t.Fatal("successful evidence collapsed canonical empty arrays to nil")
+	}
 	if env.closureReq.CatalogID != in.CatalogID || env.closureReq.SnapshotID != 42 || env.closureReq.ObjectRoot != "/tmp/native-objects" {
 		t.Fatalf("closure request = %#v", env.closureReq)
 	}

@@ -424,9 +424,19 @@ func canonicalNativeURLObjectPath(root, raw string) (string, error) {
 }
 
 func cloneBaseTables(input []BaseTable) []BaseTable {
-	return append([]BaseTable(nil), input...)
+	if input == nil {
+		return nil
+	}
+	result := make([]BaseTable, len(input))
+	copy(result, input)
+	return result
 }
 
 func cloneNativeObjects(input []NativeSnapshotObject) []NativeSnapshotObject {
-	return append([]NativeSnapshotObject(nil), input...)
+	if input == nil {
+		return nil
+	}
+	result := make([]NativeSnapshotObject, len(input))
+	copy(result, input)
+	return result
 }

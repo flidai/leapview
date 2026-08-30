@@ -436,8 +436,16 @@ func cloneSealEvidence(value ducklake.PostgresSnapshotSealEvidence) ducklake.Pos
 }
 
 func cloneClosureEvidence(value ducklake.NativeSnapshotClosureEvidence) ducklake.NativeSnapshotClosureEvidence {
-	value.Relations = append([]ducklake.BaseTable(nil), value.Relations...)
-	value.Objects = append([]ducklake.NativeSnapshotObject(nil), value.Objects...)
+	if value.Relations != nil {
+		relations := make([]ducklake.BaseTable, len(value.Relations))
+		copy(relations, value.Relations)
+		value.Relations = relations
+	}
+	if value.Objects != nil {
+		objects := make([]ducklake.NativeSnapshotObject, len(value.Objects))
+		copy(objects, value.Objects)
+		value.Objects = objects
+	}
 	value.RelationManifestJSON = append(json.RawMessage(nil), value.RelationManifestJSON...)
 	value.ClosureJSON = append(json.RawMessage(nil), value.ClosureJSON...)
 	value.CanonicalJSON = append(json.RawMessage(nil), value.CanonicalJSON...)

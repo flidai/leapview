@@ -106,3 +106,23 @@ func TestNativeSnapshotClosureEvidenceCanonicalDigestsAreStable(t *testing.T) {
 		t.Fatalf("canonical envelope omitted schema version: %s", one.CanonicalJSON)
 	}
 }
+
+func TestNativeSnapshotClosureEvidencePreservesEmptyArrayCanonicalDocuments(t *testing.T) {
+	evidence, err := newNativeSnapshotClosureEvidence("catalog-empty", 42, "/var/lib/leapview/data", []BaseTable{}, []NativeSnapshotObject{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(evidence.RelationManifestJSON) != `{"relations":[]}` {
+		t.Fatalf("relation manifest = %s, want empty array", evidence.RelationManifestJSON)
+	}
+	if string(evidence.ClosureJSON) != `{"objects":[]}` {
+		t.Fatalf("closure manifest = %s, want empty array", evidence.ClosureJSON)
+	}
+	canonical := string(evidence.CanonicalJSON)
+	if !strings.Contains(canonical, `"relations":[]`) || !strings.Contains(canonical, `"objects":[]`) {
+		t.Fatalf("canonical envelope does not preserve empty arrays: %s", canonical)
+	}
+	if strings.Contains(canonical, `"relations":null`) || strings.Contains(canonical, `"objects":null`) {
+		t.Fatalf("canonical envelope contains null arrays: %s", canonical)
+	}
+}
