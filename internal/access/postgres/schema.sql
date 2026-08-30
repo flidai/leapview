@@ -53,6 +53,17 @@ INSERT INTO audit.audit_retention_floor (retention_class)
 VALUES ('short'), ('standard'), ('security')
 ON CONFLICT (retention_class) DO NOTHING;
 
+-- Operational auth state has one monotonic floor. Audit events are final
+-- immutable inserts on PostgreSQL (there is no same-database outbox).
+CREATE TABLE IF NOT EXISTS access.access_retention_floor (
+    retention_class text PRIMARY KEY CHECK (retention_class = 'auth_state'),
+    floor_at timestamptz NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO access.access_retention_floor (retention_class)
+VALUES ('auth_state')
+ON CONFLICT (retention_class) DO NOTHING;
+
 -- Audit history is immutable to runtime callers.  A deletion can only be
 -- reached through the bounded SECURITY DEFINER function below, which sets a
 -- transaction-local marker and is itself executable only by maintenance.
@@ -184,6 +195,306 @@ BEGIN
 END;
 $$;
 REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
+
+-- Remove expired or explicitly revoked access credentials in one bounded
+-- batch. Every candidate is locked before deletion, so concurrent maintenance
+-- workers do not double-delete and a locked backlog keeps the durable floor
+-- below the requested boundary. Final audit events use their independent
+-- class-based retention function above; PostgreSQL has no audit outbox.
+CREATE OR REPLACE FUNCTION access.prune_auth_state(
+    p_requested_cutoff timestamptz,
+    p_batch_limit integer
+)
+RETURNS TABLE (
+    requested_cutoff timestamptz,
+    cutoff timestamptz,
+    requested_limit integer,
+    sessions_removed bigint,
+    oauth_sessions_removed bigint,
+    oauth_assertions_removed bigint,
+    desktop_codes_removed bigint,
+    device_authorizations_removed bigint,
+    api_tokens_removed bigint,
+    service_secrets_removed bigint,
+    authoring_sessions_removed bigint,
+    authoring_credentials_removed bigint,
+    auth_state_floor timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, access, audit
+AS $$
+DECLARE
+    v_auth_floor timestamptz;
+    v_target timestamptz;
+    v_total bigint := 0;
+    v_removed bigint := 0;
+    v_remaining integer;
+    v_auth_remaining boolean;
+BEGIN
+    IF session_user <> 'leapview_control_maintenance' THEN
+        RAISE EXCEPTION 'access retention requires the maintenance capability';
+    END IF;
+    IF p_requested_cutoff IS NULL THEN
+        RAISE EXCEPTION 'access retention cutoff is required';
+    END IF;
+    IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'access retention batch limit must be between 1 and 1000';
+    END IF;
+
+    SELECT floor_at INTO STRICT v_auth_floor
+      FROM access.access_retention_floor
+     WHERE retention_class = 'auth_state'
+     FOR UPDATE;
+    requested_cutoff := p_requested_cutoff;
+    requested_limit := p_batch_limit;
+    -- Database time is authoritative. A replay with an older requested
+    -- cutoff must not widen the deletion predicate to the already-advanced
+    -- floor; the floor itself remains monotonic as durable evidence.
+    v_target := LEAST(p_requested_cutoff, clock_timestamp());
+    cutoff := v_target;
+    PERFORM set_config('access.maintenance', 'on', true);
+
+    -- Inactive OAuth request state is opaque but no longer usable. Active
+    -- sessions are retained even when old so token replay evidence remains
+    -- available to the runtime verifier.
+    v_remaining := p_batch_limit;
+    WITH candidates AS (
+        SELECT s.kind, s.signature
+          FROM access.oauth_session s
+         WHERE s.created_at < v_target AND s.active = false
+         ORDER BY s.created_at, s.kind, s.signature
+         FOR UPDATE SKIP LOCKED
+         LIMIT v_remaining
+    ), deleted AS (
+        DELETE FROM access.oauth_session s USING candidates c
+         WHERE s.kind = c.kind AND s.signature = c.signature
+         RETURNING s.signature
+    )
+    SELECT count(*) INTO v_removed FROM deleted;
+    oauth_sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT a.jti
+              FROM access.oauth_client_assertion a
+             WHERE a.expires_at < v_target
+             ORDER BY a.expires_at, a.jti
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.oauth_client_assertion a USING candidates c
+             WHERE a.jti = c.jti
+             RETURNING a.jti
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    oauth_assertions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT c.code_hash
+              FROM access.desktop_authorization_code c
+             WHERE c.expires_at < v_target
+                OR (c.consumed_at IS NOT NULL AND c.consumed_at < v_target)
+             ORDER BY c.expires_at, c.code_hash
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.desktop_authorization_code c USING candidates d
+             WHERE c.code_hash = d.code_hash
+             RETURNING c.code_hash
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    desktop_codes_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT d.id
+              FROM access.device_authorization d
+             WHERE d.expires_at < v_target
+                OR (d.status = 'denied' AND d.denied_at IS NOT NULL AND d.denied_at < v_target)
+                OR (d.status = 'consumed' AND d.consumed_at IS NOT NULL AND d.consumed_at < v_target)
+             ORDER BY d.expires_at, d.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.device_authorization d USING candidates c
+             WHERE d.id = c.id
+             RETURNING d.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    device_authorizations_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT t.id
+              FROM access.api_token t
+             WHERE (t.expires_at < v_target)
+                OR (t.revoked_at IS NOT NULL AND t.revoked_at < v_target)
+             ORDER BY LEAST(t.expires_at, COALESCE(t.revoked_at, t.expires_at)), t.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.api_token t USING candidates c
+             WHERE t.id = c.id
+             RETURNING t.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    api_tokens_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.service_principal_secret s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.service_principal_secret s USING candidates c
+             WHERE s.id = c.id
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    service_secrets_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.session s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.session s USING candidates c
+             WHERE s.id = c.id
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    -- Credentials are children of authoring sessions and must drain first;
+    -- a revoked parent invalidates its credentials even when their refresh
+    -- expiry is still in the future.
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT c.id
+              FROM access.authoring_credential c
+              JOIN access.authoring_session s ON s.id = c.session_id
+             WHERE (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+                OR (c.replaced_at IS NOT NULL AND c.replaced_at < v_target)
+                OR (c.refresh_expires_at IS NOT NULL AND c.refresh_expires_at < v_target)
+                OR (c.refresh_expires_at IS NULL AND c.access_expires_at < v_target)
+             ORDER BY c.created_at, c.id
+             FOR UPDATE OF c SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.authoring_credential c USING candidates d
+             WHERE c.id = d.id
+             RETURNING c.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    authoring_credentials_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    IF v_total < p_batch_limit THEN
+        v_remaining := p_batch_limit - v_total::integer;
+        WITH candidates AS (
+            SELECT s.id
+              FROM access.authoring_session s
+             WHERE (s.expires_at < v_target)
+                OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+             ORDER BY LEAST(s.expires_at, COALESCE(s.revoked_at, s.expires_at)), s.id
+             FOR UPDATE SKIP LOCKED
+             LIMIT v_remaining
+        ), deleted AS (
+            DELETE FROM access.authoring_session s USING candidates c
+             WHERE s.id = c.id
+               AND NOT EXISTS (SELECT 1 FROM access.authoring_credential x WHERE x.session_id = s.id)
+             RETURNING s.id
+        )
+        SELECT count(*) INTO v_removed FROM deleted;
+    ELSE
+        v_removed := 0;
+    END IF;
+    authoring_sessions_removed := v_removed;
+    v_total := v_total + v_removed;
+
+    -- Floors only advance when no eligible row remains. This is deliberately
+    -- checked after the batch so a smaller limit or SKIP LOCKED row remains
+    -- visible as backlog evidence to the next invocation.
+    SELECT EXISTS (
+        SELECT 1 FROM access.session s
+         WHERE (s.expires_at < v_target) OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.oauth_session s WHERE s.created_at < v_target AND s.active = false
+        UNION ALL SELECT 1 FROM access.oauth_client_assertion a WHERE a.expires_at < v_target
+        UNION ALL SELECT 1 FROM access.desktop_authorization_code c WHERE c.expires_at < v_target OR (c.consumed_at IS NOT NULL AND c.consumed_at < v_target)
+        UNION ALL SELECT 1 FROM access.device_authorization d WHERE d.expires_at < v_target OR (d.status='denied' AND d.denied_at IS NOT NULL AND d.denied_at < v_target) OR (d.status='consumed' AND d.consumed_at IS NOT NULL AND d.consumed_at < v_target)
+        UNION ALL SELECT 1 FROM access.api_token t WHERE t.expires_at < v_target OR (t.revoked_at IS NOT NULL AND t.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.service_principal_secret s WHERE s.expires_at < v_target OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)
+        UNION ALL SELECT 1 FROM access.authoring_credential c JOIN access.authoring_session s ON s.id=c.session_id WHERE (s.revoked_at IS NOT NULL AND s.revoked_at < v_target) OR (c.replaced_at IS NOT NULL AND c.replaced_at < v_target) OR (c.refresh_expires_at IS NOT NULL AND c.refresh_expires_at < v_target) OR (c.refresh_expires_at IS NULL AND c.access_expires_at < v_target)
+        UNION ALL SELECT 1 FROM access.authoring_session s WHERE (s.expires_at < v_target OR (s.revoked_at IS NOT NULL AND s.revoked_at < v_target)) AND NOT EXISTS (SELECT 1 FROM access.authoring_credential c WHERE c.session_id=s.id)
+    ) INTO v_auth_remaining;
+    IF NOT v_auth_remaining AND v_target > v_auth_floor THEN
+        UPDATE access.access_retention_floor
+           SET floor_at = v_target, updated_at = clock_timestamp()
+         WHERE retention_class = 'auth_state';
+        v_auth_floor := v_target;
+    END IF;
+
+    cutoff := v_target;
+    sessions_removed := COALESCE(sessions_removed, 0);
+    oauth_sessions_removed := COALESCE(oauth_sessions_removed, 0);
+    oauth_assertions_removed := COALESCE(oauth_assertions_removed, 0);
+    desktop_codes_removed := COALESCE(desktop_codes_removed, 0);
+    device_authorizations_removed := COALESCE(device_authorizations_removed, 0);
+    api_tokens_removed := COALESCE(api_tokens_removed, 0);
+    service_secrets_removed := COALESCE(service_secrets_removed, 0);
+    authoring_sessions_removed := COALESCE(authoring_sessions_removed, 0);
+    authoring_credentials_removed := COALESCE(authoring_credentials_removed, 0);
+    auth_state_floor := v_auth_floor;
+    RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM PUBLIC;
 
 CREATE TABLE access.principal (
     id uuid PRIMARY KEY,
@@ -335,6 +646,18 @@ CREATE INDEX service_secret_principal_idx ON access.service_principal_secret(ser
 
 CREATE OR REPLACE FUNCTION access.reject_access_delete() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN RAISE EXCEPTION 'access history is append-only; revoke instead of delete'; END; $$;
+CREATE OR REPLACE FUNCTION access.allow_maintenance_delete() RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF current_setting('access.maintenance', true) = 'on'
+       AND session_user = 'leapview_control_maintenance' THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'access state deletion requires bounded maintenance';
+END;
+$$;
 CREATE OR REPLACE FUNCTION access.reject_revocation_clear() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN IF OLD.revoked_at IS NOT NULL AND (NEW.revoked_at IS NULL OR NEW.revoked_at < OLD.revoked_at) THEN RAISE EXCEPTION 'revocation is monotonic'; END IF; RETURN NEW; END; $$;
 CREATE OR REPLACE FUNCTION access.reject_principal_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
@@ -434,13 +757,13 @@ CREATE TRIGGER membership_revocation_monotonic BEFORE UPDATE ON access.principal
 CREATE TRIGGER role_no_delete BEFORE DELETE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER role_identity_immutable BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_role_identity_rewrite();
 CREATE TRIGGER role_revocation_monotonic BEFORE UPDATE ON access.platform_role_binding FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER session_no_delete BEFORE DELETE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER session_no_delete BEFORE DELETE ON access.session FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER session_identity_immutable BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_session_identity_rewrite();
 CREATE TRIGGER session_revocation_monotonic BEFORE UPDATE ON access.session FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER api_token_no_delete BEFORE DELETE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER api_token_no_delete BEFORE DELETE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER api_token_identity_immutable BEFORE UPDATE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_token_identity_rewrite();
 CREATE TRIGGER api_token_revocation_monotonic BEFORE UPDATE ON access.api_token FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER service_secret_no_delete BEFORE DELETE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER service_secret_no_delete BEFORE DELETE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER service_secret_identity_immutable BEFORE UPDATE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_service_secret_identity_rewrite();
 CREATE TRIGGER service_secret_revocation_monotonic BEFORE UPDATE ON access.service_principal_secret FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
 CREATE TRIGGER local_credential_no_delete BEFORE DELETE ON access.local_credential FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
@@ -711,9 +1034,9 @@ CREATE TRIGGER principal_preferences_no_delete BEFORE DELETE ON access.principal
 CREATE TRIGGER principal_preferences_revocation_monotonic BEFORE UPDATE ON access.principal_preferences FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
 CREATE TRIGGER principal_avatar_no_delete BEFORE DELETE ON access.principal_avatar FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
 CREATE TRIGGER principal_avatar_revocation_monotonic BEFORE UPDATE ON access.principal_avatar FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER desktop_authorization_code_no_delete BEFORE DELETE ON access.desktop_authorization_code FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
-CREATE TRIGGER device_authorization_no_delete BEFORE DELETE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
-CREATE TRIGGER authoring_session_no_delete BEFORE DELETE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER desktop_authorization_code_no_delete BEFORE DELETE ON access.desktop_authorization_code FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+CREATE TRIGGER device_authorization_no_delete BEFORE DELETE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
+CREATE TRIGGER authoring_session_no_delete BEFORE DELETE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE OR REPLACE FUNCTION access.reject_authoring_identity_rewrite() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_TABLE_NAME='desktop_authorization_code' THEN
@@ -730,7 +1053,7 @@ CREATE TRIGGER desktop_authorization_code_consumption_monotonic BEFORE UPDATE ON
 CREATE TRIGGER device_authorization_immutable BEFORE UPDATE ON access.device_authorization FOR EACH ROW EXECUTE FUNCTION access.reject_device_authorization_rewrite();
 CREATE TRIGGER authoring_session_immutable BEFORE UPDATE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_identity_rewrite();
 CREATE TRIGGER authoring_session_revocation_monotonic BEFORE UPDATE ON access.authoring_session FOR EACH ROW EXECUTE FUNCTION access.reject_revocation_clear();
-CREATE TRIGGER authoring_credential_no_delete BEFORE DELETE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_access_delete();
+CREATE TRIGGER authoring_credential_no_delete BEFORE DELETE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.allow_maintenance_delete();
 CREATE TRIGGER authoring_credential_immutable BEFORE UPDATE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_identity_rewrite();
 CREATE TRIGGER authoring_credential_transition BEFORE UPDATE ON access.authoring_credential FOR EACH ROW EXECUTE FUNCTION access.reject_authoring_credential_transition();
 
@@ -743,6 +1066,7 @@ BEGIN
     REVOKE ALL ON TABLE audit.audit_event, audit.audit_retention_floor FROM PUBLIC;
     REVOKE ALL ON FUNCTION audit.reject_audit_mutation() FROM PUBLIC;
     REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
+    REVOKE ALL ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM PUBLIC;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
@@ -752,11 +1076,16 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
         EXECUTE 'REVOKE DELETE ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_runtime';
         EXECUTE 'REVOKE EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM leapview_control_runtime';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION access.prune_auth_state(timestamptz, integer) FROM leapview_control_runtime';
+        EXECUTE 'REVOKE DELETE ON access.session, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_session, access.authoring_credential FROM leapview_control_runtime';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.access_retention_floor FROM leapview_control_runtime';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
-        EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_maintenance';
+        EXECUTE 'GRANT USAGE ON SCHEMA access, audit TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION access.prune_auth_state(timestamptz, integer) TO leapview_control_maintenance';
         EXECUTE 'REVOKE ALL ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_maintenance';
+        EXECUTE 'REVOKE ALL ON access.access_retention_floor FROM leapview_control_maintenance';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
@@ -764,5 +1093,6 @@ BEGIN
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON access.access_retention_floor FROM leapview_control_readonly';
     END IF;
 END $$;
