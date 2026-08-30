@@ -39,7 +39,7 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 	}
 	jobStore := jobsqlite.NewRepository(store.SQLDB())
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:contract"),
+		Database: store.SQLDB(), LegacySQLite: true, ProjectID: projectgraph.ResourceID("project:contract"),
 		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		Jobs:                jobStore,
 		Model:               ModelConfig{APIKey: "test", Model: "test"},

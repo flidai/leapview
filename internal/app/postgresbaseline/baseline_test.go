@@ -6,7 +6,7 @@ import (
 )
 
 func TestProductBaselineComponentOrder(t *testing.T) {
-	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "refresh", "lineage", "cache", "queryaudit"}
+	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "lineage", "cache", "queryaudit"}
 	components := Components()
 	if len(components) != len(want) {
 		t.Fatalf("component count = %d, want %d", len(components), len(want))
@@ -59,6 +59,21 @@ func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 	} {
 		if !strings.Contains(rolePolicySQL, required) {
 			t.Fatalf("role policy is missing maintenance boundary %q", required)
+		}
+	}
+}
+
+func TestProductRolePolicyNamesDashboardTablesExplicitly(t *testing.T) {
+	if strings.Contains(rolePolicySQL, "ALL TABLES IN SCHEMA dashboard") {
+		t.Fatal("dashboard role policy must not broaden future tables through ALL TABLES")
+	}
+	for _, required := range []string{
+		"dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_runtime",
+		"dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_readonly",
+		"dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_backup",
+	} {
+		if !strings.Contains(rolePolicySQL, required) {
+			t.Fatalf("dashboard role policy is missing explicit grant %q", required)
 		}
 	}
 }

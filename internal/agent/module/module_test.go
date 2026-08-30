@@ -19,7 +19,7 @@ func TestBuildConstructsAgentServiceAndPersistence(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test"),
+		Database: store.SQLDB(), LegacySQLite: true, ProjectID: projectgraph.ResourceID("project:agent-test"),
 		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
@@ -40,8 +40,22 @@ func TestBuildRejectsEnabledAgentCommandsWithoutAuditRecorder(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	if _, err := Build(t.Context(), Config{Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
+	if _, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
 		t.Fatal("agent module accepted an enabled command service without an audit recorder")
+	}
+}
+
+func TestBuildRequiresExplicitLegacySQLiteSelection(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "agent-legacy.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := Build(t.Context(), Config{Database: store.SQLDB(), ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
+		t.Fatal("database without LegacySQLite unexpectedly accepted")
+	}
+	if _, err := Build(t.Context(), Config{LegacySQLite: true, ProjectID: projectgraph.ResourceID("project:agent-test")}); err == nil {
+		t.Fatal("LegacySQLite without database unexpectedly accepted")
 	}
 }
 
@@ -54,7 +68,7 @@ func TestBuildAllowsUnboundProjectUntilActiveResolverBinds(t *testing.T) {
 
 	var active projectgraph.ResourceID
 	module, err := Build(t.Context(), Config{
-		Database:            store.SQLDB(),
+		Database: store.SQLDB(), LegacySQLite: true,
 		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) {
 			return active, nil

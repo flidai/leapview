@@ -1098,7 +1098,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		agentUICommands := routes.agentModule.UICommandBindings()
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database:            database,
+			Database: database,
+			// Runtime-router composition still uses the legacy SQLite dashboard
+			// authorities until native PostgreSQL bundle wiring lands. Keep this
+			// fallback explicit so production-native mode cannot infer it.
+			LegacySQLite:        database != nil,
 			Authoring:           routes.dashboardAuthoring,
 			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
@@ -1248,7 +1252,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		agentConfig := agentmodule.Config{
-			Database: database, Model: moduleWorkflow.agentConfig,
+			Database: database, LegacySQLite: database != nil, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,

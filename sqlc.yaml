@@ -197,6 +197,65 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
+    queries: "internal/agent/postgres/queries"
+    schema: "internal/agent/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/agent/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/session/postgres/queries"
+    schema: "internal/dashboard/session/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/session/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/usage/postgres/queries"
+    schema: "internal/dashboard/usage/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/usage/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+          - db_type: "date"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
+    queries: "internal/dashboard/appearance/postgres/queries"
+    schema: "internal/dashboard/appearance/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/dashboard/appearance/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
+        overrides:
+          - db_type: "timestamptz"
+            go_type: "time.Time"
+
+  - engine: "postgresql"
     queries: "internal/platform/operation/postgres/queries"
     schema: "internal/platform/operation/postgres/schema.sql"
     gen:

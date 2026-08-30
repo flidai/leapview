@@ -13,6 +13,8 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
@@ -22,11 +24,13 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	semanticapi "github.com/flidai/leapview/internal/dashboard/semanticapi"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
+	sessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardsessionsqlite "github.com/flidai/leapview/internal/dashboard/session/sqlite"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/usage"
+	usagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	dashboardusagesqlite "github.com/flidai/leapview/internal/dashboard/usage/sqlite"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -54,6 +58,7 @@ type Module struct {
 	runtimeMetrics             queryruntime.Metrics
 	coordinators               *dashboardstream.Registry
 	usageReader                usage.Reader
+	appearanceStore            dashboardappearance.Store
 	usageNow                   func() time.Time
 	lifecycleMu                sync.Mutex
 	lifecycleCancel            context.CancelFunc
@@ -62,6 +67,20 @@ type Module struct {
 
 type Config struct {
 	Database *sql.DB
+	// NativePersistence is the only accepted source of dashboard persistence
+	// when RequireNativePersistence is enabled. Its constructor checks that all
+	// authorities are the concrete PostgreSQL implementations, so callers cannot
+	// accidentally label a memory or SQLite store as production native state.
+	NativePersistence *NativePersistence
+	// SessionStore, UsageRecorder/UsageReader, and AppearanceStore are the
+	// product-owned persistence seams. Native production composition supplies
+	// PostgreSQL implementations; SQLite fallback is opt-in for legacy tests.
+	SessionStore             dashboardsession.Store
+	AppearanceStore          dashboardappearance.Store
+	LegacySQLite             bool
+	RequireNativePersistence bool
+	RequireAuthoring         bool
+	RequirePublication       bool
 	// Authoring is supplied by production composition. It remains optional at
 	// this module boundary so focused dashboard-module tests can exercise the
 	// read/render surface without constructing runtime-backed authoring ports.
@@ -80,6 +99,35 @@ type Config struct {
 	UsageReader         usage.Reader
 	UsageNow            func() time.Time
 	RuntimeMetrics      queryruntime.Metrics
+}
+
+// NativePersistence is an opaque, validated bundle of dashboard PostgreSQL
+// authorities. Fields remain private so a partial or forged bundle cannot be
+// supplied to production module composition.
+type NativePersistence struct {
+	session    *sessionpostgres.Store
+	usage      *usagepostgres.Repository
+	appearance *appearancepostgres.Repository
+}
+
+func (p *NativePersistence) valid() bool {
+	return p != nil && p.session != nil && p.session.IsNative() && p.usage != nil && p.usage.IsNative() && p.appearance != nil && p.appearance.IsNative()
+}
+
+// NewNativePersistence validates the complete dashboard persistence bundle.
+// Production composition should construct this only from native PostgreSQL
+// repositories; legacy SQLite and memory stores are intentionally rejected.
+func NewNativePersistence(sessionStore *sessionpostgres.Store, usageRepository *usagepostgres.Repository, appearanceStore *appearancepostgres.Repository) (*NativePersistence, error) {
+	if sessionStore == nil || !sessionStore.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL session store")
+	}
+	if usageRepository == nil || !usageRepository.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL usage repository")
+	}
+	if appearanceStore == nil || !appearanceStore.IsNative() {
+		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL appearance repository")
+	}
+	return &NativePersistence{session: sessionStore, usage: usageRepository, appearance: appearanceStore}, nil
 }
 
 type HTTPConfig struct {
@@ -156,6 +204,33 @@ type Telemetry interface {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if config.RequireNativePersistence {
+		if config.Database != nil {
+			return nil, fmt.Errorf("dashboard native persistence rejects the legacy SQLite database handle")
+		}
+		if config.LegacySQLite {
+			return nil, fmt.Errorf("dashboard native persistence rejects LegacySQLite mode")
+		}
+		if config.NativePersistence == nil {
+			return nil, fmt.Errorf("dashboard native persistence bundle is required")
+		}
+		if !config.NativePersistence.valid() {
+			return nil, fmt.Errorf("dashboard native persistence bundle is incomplete")
+		}
+		if config.SessionStore != nil || config.UsageRecorder != nil || config.UsageReader != nil || config.AppearanceStore != nil {
+			return nil, fmt.Errorf("dashboard native persistence rejects partial or legacy authority injection")
+		}
+	} else if config.NativePersistence != nil {
+		return nil, fmt.Errorf("dashboard native persistence bundle requires RequireNativePersistence")
+	} else if config.Database != nil && !config.LegacySQLite {
+		return nil, fmt.Errorf("dashboard database handle requires explicit LegacySQLite mode")
+	}
+	if config.RequireAuthoring && config.Authoring == nil {
+		return nil, fmt.Errorf("dashboard authoring authority is required")
+	}
+	if config.RequirePublication {
+		return nil, fmt.Errorf("dashboard publication native authority is not implemented")
+	}
 	publicationAuditConfigured := false
 	if config.Database != nil {
 		if config.AuditIntentRecorder == nil {
@@ -171,11 +246,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if _, err := rand.Read(optionCursorSecret); err != nil {
 		return nil, fmt.Errorf("generate dashboard option cursor secret: %w", err)
 	}
-	var sessionStore dashboardsession.Store = dashboardsession.NewMemoryStore()
-	if config.Database != nil {
+	var sessionStore dashboardsession.Store = config.SessionStore
+	usageRecorder, usageReader := config.UsageRecorder, config.UsageReader
+	var appearanceStore dashboardappearance.Store = config.AppearanceStore
+	if config.RequireNativePersistence {
+		sessionStore = config.NativePersistence.session
+		usageRecorder, usageReader = config.NativePersistence.usage, config.NativePersistence.usage
+		appearanceStore = config.NativePersistence.appearance
+	}
+	if sessionStore == nil && config.Database != nil {
 		sessionStore = dashboardsessionsqlite.NewStore(config.Database)
 	}
-	usageRecorder, usageReader := config.UsageRecorder, config.UsageReader
+	if sessionStore == nil {
+		sessionStore = dashboardsession.NewMemoryStore()
+	}
 	if config.Database != nil && (usageRecorder == nil || usageReader == nil) {
 		repository := dashboardusagesqlite.NewRepository(config.Database)
 		if usageRecorder == nil {
@@ -298,6 +382,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		runtimeMetrics: config.RuntimeMetrics,
 		coordinators:   coordinators,
 		usageReader:    usageReader, usageNow: usageNow,
+		appearanceStore: appearanceStore,
 	}
 	if config.Database != nil {
 		module.publications = publicationsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
@@ -342,6 +427,12 @@ func observeVisualizationFrame(telemetry DashboardTelemetry, event dashboardstre
 
 func (m *Module) HTTP() dashboardhttp.Handler      { return m.handler }
 func (m *Module) SemanticAPI() semanticapi.Handler { return m.semantic }
+func (m *Module) AppearanceStore() dashboardappearance.Store {
+	if m == nil {
+		return nil
+	}
+	return m.appearanceStore
+}
 func (m *Module) Authoring() *dashboardauthoringapplication.Application {
 	if m == nil {
 		return nil

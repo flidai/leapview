@@ -18,6 +18,7 @@ import (
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 	agentopenai "github.com/flidai/leapview/internal/agent/openai"
+	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	"github.com/flidai/leapview/internal/agent/productdocs"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/agent/ui"
@@ -84,7 +85,14 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database            *sql.DB
+	Database *sql.DB
+	// Persistence is the capability-owned storage selection. Production
+	// callers must provide a PostgreSQL persistence. LegacySQLite documents
+	// development/test use of the compatibility Database input.
+	Persistence         *Persistence
+	PostgresRepository  *agentpostgres.Repository
+	LegacySQLite        bool
+	Production          bool
 	Model               ModelConfig
 	Service             *agent.Service
 	Jobs                JobStore
@@ -179,10 +187,50 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, fmt.Errorf("agent active project: %w", err)
 		}
 	}
-	service := config.Service
 	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
-	if service == nil && config.Database != nil {
-		repository := newRepository(config.Database, workflow, config.AuditIntentRecorder)
+	if config.Persistence != nil && config.PostgresRepository != nil {
+		return nil, fmt.Errorf("agent persistence and PostgreSQL repository are mutually exclusive")
+	}
+	if config.PostgresRepository != nil {
+		persistence, err := NewPostgresPersistence(config.PostgresRepository)
+		if err != nil {
+			return nil, err
+		}
+		config.Persistence = &persistence
+	}
+	if config.Database != nil {
+		if config.Production {
+			return nil, fmt.Errorf("production agent persistence cannot use SQLite")
+		}
+		if !config.LegacySQLite {
+			return nil, fmt.Errorf("agent SQLite persistence requires LegacySQLite=true")
+		}
+		if config.Persistence != nil {
+			return nil, fmt.Errorf("agent database and persistence are mutually exclusive")
+		}
+		persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: config.Database, Workflow: workflow, AuditIntentRecorder: config.AuditIntentRecorder})
+		if err != nil {
+			return nil, err
+		}
+		config.Persistence = &persistence
+	} else if config.LegacySQLite {
+		return nil, fmt.Errorf("agent LegacySQLite requires a Database")
+	}
+	if config.Production {
+		if config.Persistence == nil || !config.Persistence.isPostgres() {
+			return nil, fmt.Errorf("agent production persistence must be PostgreSQL")
+		}
+		if err := config.Persistence.validate(); err != nil {
+			return nil, err
+		}
+	} else if config.Persistence != nil {
+		if err := config.Persistence.validate(); err != nil {
+			return nil, err
+		}
+	}
+	service := config.Service
+	if service == nil && config.Persistence != nil {
+		repository := config.Persistence.Repository
 		service = agent.NewService(repository, agent.Config{
 			APIKey: config.Model.APIKey, BaseURL: config.Model.BaseURL, Model: config.Model.Model,
 		})
@@ -191,7 +239,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.RecordAudit == nil {
 			return nil, fmt.Errorf("agent command audit recorder is required")
 		}
-		if config.Database != nil {
+		if config.Persistence != nil && config.Persistence.isSQLite() {
 			if err := service.ConfigureAuditIntentRecorder(config.AuditIntentRecorder); err != nil {
 				return nil, fmt.Errorf("configure transactional agent command audit: %w", err)
 			}
