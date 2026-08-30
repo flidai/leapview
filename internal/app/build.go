@@ -24,7 +24,7 @@ func Build(ctx context.Context, cfg config.Config) (*Application, error) {
 // BuildProduction is the production entrypoint used by the serve command.
 // It applies and validates the PostgreSQL control-plane baseline before
 // readiness, then refuses to construct the legacy SQLite-backed application
-// graph until every capability authority has a PostgreSQL adapter.  Keeping
+// graph until every capability authority has a PostgreSQL adapter. Keeping
 // this gate separate from Build preserves embedded SQLite fixtures used by
 // development and unit tests without making them a production fallback.
 func BuildProduction(ctx context.Context, cfg config.Config) (*Application, error) {
@@ -38,5 +38,5 @@ func BuildProduction(ctx context.Context, cfg config.Config) (*Application, erro
 		return nil, err
 	}
 	_ = bootstrap.Stop(context.Background())
-	return nil, fmt.Errorf("%w: next wiring: inject PostgreSQL access, project, deployment, jobs, protocol, refresh, release, and managed-data authorities into buildApplicationSurfaces", errPostgresProductionCompositionIncomplete)
+	return nil, fmt.Errorf("%w: next wiring: connect canonical plan/build/seal delivery and native retention before admitting the assembled PostgreSQL target graph", errPostgresProductionCompositionIncomplete)
 }

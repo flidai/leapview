@@ -1,0 +1,407 @@
+package app
+
+// Native PostgreSQL process composition.  This file intentionally keeps the
+// graph assembly separate from the legacy SQLite buildRuntime path: a
+// production process must never open database/sql or infer a fallback store.
+
+import (
+	"context"
+	"crypto/sha256"
+	"errors"
+	"fmt"
+	"log/slog"
+	"net/http"
+	"strings"
+	"sync"
+
+	"github.com/flidai/leapview/internal/access"
+	adminmodule "github.com/flidai/leapview/internal/admin/module"
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
+	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
+	"github.com/flidai/leapview/internal/app/config"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
+	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
+	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
+	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
+	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
+	"github.com/flidai/leapview/internal/deployment"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
+	"github.com/flidai/leapview/internal/platform/buildinfo"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
+	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmodule "github.com/flidai/leapview/internal/project/module"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	releasemodule "github.com/flidai/leapview/internal/release/module"
+	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
+	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
+	workloadmodule "github.com/flidai/leapview/internal/workload/module"
+)
+
+// buildPostgresProductionTarget assembles the native graph and HTTP surface
+// behind the production admission gate. The gate calls this only after
+// canonical delivery and retention prerequisites are connected. The retained
+// PostgreSQL lifecycle is an application component, so pool shutdown follows
+// worker/runtime-host shutdown on the reverse component path.
+func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*Application, error) {
+	cfg.Production = true
+	bootstrap, err := openPostgresControlPlane(ctx, cfg)
+	if err != nil {
+		return nil, err
+	}
+	var runtimeHost *runtimehostmodule.Module
+	var analytics *analyticsmodule.Module
+	var workloads workloadControl
+	var resourcesOnce sync.Once
+	var resourcesErr error
+	closeResources := func() error {
+		resourcesOnce.Do(func() {
+			if analytics != nil {
+				resourcesErr = errors.Join(resourcesErr, analytics.Close())
+			}
+			if workloads != nil {
+				workloads.Close()
+			}
+		})
+		return resourcesErr
+	}
+	var runtimeHostOnce sync.Once
+	var runtimeHostErr error
+	closeRuntimeHost := func() error {
+		runtimeHostOnce.Do(func() {
+			if runtimeHost != nil {
+				runtimeHostErr = runtimeHost.Close()
+			}
+		})
+		return runtimeHostErr
+	}
+	fail := func(cause error) (*Application, error) {
+		// Resource owners must close before the PostgreSQL pools they may still
+		// reference. The application lifecycle enforces this order on success;
+		// construction failures perform the same ordering explicitly.
+		runtimeErr := closeRuntimeHost()
+		resourceErr := closeResources()
+		poolErr := bootstrap.Stop(context.Background())
+		return nil, errors.Join(cause, runtimeErr, resourceErr, poolErr)
+	}
+
+	environment := servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(cfg.Environment))
+	if strings.TrimSpace(cfg.Environment) == "" {
+		environment = servingstatemodule.Environment("prod")
+	}
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return fail(err)
+	}
+	for _, dir := range []string{cfg.HomeDir, cfg.ArtifactDir(), cfg.DuckDBDirPath(), cfg.RuntimeDir(), cfg.DuckLakeDataDir()} {
+		if err := securefs.EnsurePrivateDir(dir); err != nil {
+			return fail(err)
+		}
+	}
+	assets := applicationAssets(cfg, true)
+	dashboardAssets, err := dashboardmodule.BuildAssets(ctx, cfg.MapAssetDir)
+	if err != nil {
+		return fail(err)
+	}
+	cookieSecure, err := cfg.CookieSecure()
+	if err != nil {
+		return fail(err)
+	}
+	allowedHosts, err := cfg.ProductionAllowedHosts()
+	if err != nil {
+		return fail(err)
+	}
+	publicURL := firstConfigured(cfg.PublicURL, configuredListenURL(cfg.ListenAddr()))
+	extensionSupply, err := loadExtensionSupply(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
+
+	// The instance identity is durable bootstrap state, not a configuration
+	// guess.  It is required before constructing any target-bound authority.
+	instanceID, err := postgresauthority.ResolveInstanceIdentity(ctx, bootstrap.RuntimePool(), string(environment))
+	if err != nil {
+		return fail(fmt.Errorf("read PostgreSQL instance identity: %w", err))
+	}
+	fingerprintKey := []byte(strings.TrimSpace(cfg.TokenHashKey))
+	if len(fingerprintKey) < 32 {
+		fingerprintKey = []byte(strings.TrimSpace(cfg.CSRFKey))
+	}
+	if len(fingerprintKey) < 32 {
+		return fail(errors.New("PostgreSQL access fingerprint key is required"))
+	}
+	graph, err := postgresauthority.NewPostgresAuthorityGraph(bootstrap.RuntimePool(), bootstrap.MaintenancePool(), postgresauthority.PostgresAuthorityGraphOptions{TargetID: instanceID, FingerprintKey: fingerprintKey})
+	if err != nil {
+		return fail(fmt.Errorf("build PostgreSQL authority graph: %w", err))
+	}
+	readClaim := readClaimedProject(graph.DeploymentRepository, environment)
+	claimedProject, found, err := readClaim(ctx)
+	if err != nil {
+		return fail(err)
+	}
+	projectID := projectgraph.ResourceID("")
+	if found {
+		projectID = claimedProject
+	}
+
+	// Access is built before runtimehost; all current-project callbacks remain
+	// late-bound and therefore work on a fresh target with no claim.
+	currentProject := func(ctx context.Context) (projectgraph.ResourceID, error) {
+		if runtimeHost == nil {
+			return "", errors.New("runtime host is unavailable")
+		}
+		lease, err := runtimeHost.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer lease.Release()
+		return lease.Identity().ProjectID, nil
+	}
+	avatarBlobs, err := profileImageBlobStore(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	var internalOAuth *appaccesspostgres.InternalOAuthConfig
+	if strings.TrimSpace(cfg.MCPOAuthIssuerURL) == "" {
+		secret := sha256.Sum256([]byte("leapview:mcp-oauth:" + cfg.CSRFKey))
+		internalOAuth = &appaccesspostgres.InternalOAuthConfig{IssuerURL: publicURL, ResourceURL: strings.TrimSuffix(publicURL, "/") + "/mcp", Secret: secret[:]}
+	}
+	accessPersistence, err := appaccesspostgres.NewPersistence(graph.Access, internalOAuth)
+	if err != nil {
+		return fail(err)
+	}
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: true, Auth: accessAuthConfig(cfg, true, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject})
+	if err != nil {
+		return fail(err)
+	}
+
+	jobsPersistence, err := jobsmodule.NewPostgresPersistence(graph.Jobs)
+	if err != nil {
+		return fail(err)
+	}
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: true, LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default(), Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
+	if err != nil {
+		return fail(err)
+	}
+	workloads = workloadBundle.Controller
+
+	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{ConnectionBindings: graph.ConnectionBinding, QueryAuditStore: graph.QueryAudit, Production: true, CredentialMode: analyticsmodule.CredentialModeNonSecret, CredentialTarget: instanceID, Environment: string(environment), RootDir: cfg.DuckDBDirPath(), DataPath: cfg.DuckLakeDataDir(), ExtensionSupply: extensionSupply, MaxConnections: cfg.WorkloadConfig().MaxRunning, MemoryMaxBytes: cfg.DuckDBNodeMemoryMaxBytes, TempMaxBytes: cfg.DuckDBNodeTempMaxBytes, MaxThreads: cfg.DuckDBNodeMaxThreads, TempDir: cfg.DuckDBTempDirPath(), DisableProcessEnv: true, RuntimeCacheItems: cfg.QueryCacheRuntimeMaxEntries, RuntimeCacheBytes: cfg.QueryCacheRuntimeMaxBytes, NodeCacheItems: cfg.QueryCacheNodeMaxEntries, NodeCacheBytes: cfg.QueryCacheNodeMaxBytes})
+	if err != nil {
+		return fail(err)
+	}
+	analytics = analyticsBundle.Module
+
+	managedPersistence := graph.ManagedDataPersistence
+	managedData, err := manageddatamodule.Build(ctx, manageddatamodule.Config{Persistence: managedPersistence, Production: true, Product: managedDataProductConfig(cfg), ServingStates: graph.ServingState, Environment: string(environment), CurrentPrincipal: func(r *http.Request) (manageddatamodule.Principal, bool) {
+		p, ok := accessBundle.Module.CurrentPrincipal(r)
+		return manageddatamodule.Principal{ID: p.ID, DevBypass: p.DevBypass}, ok
+	}, Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs, Worker: manageddatamodule.MaintenanceWorkerConfig{Interval: cfg.ManagedDataGCInterval, Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
+		return workloadBundle.Controller.Acquire(ctx, workloadmodule.MaintenanceRequest("managed_data.collect"))
+	}, Logger: slog.Default()}})
+	if err != nil {
+		return fail(fmt.Errorf("build managed-data module: %w", err))
+	}
+	managedResolver := appruntimefactory.NewManagedDataResolver(managedData.RuntimeResolution())
+
+	identityResolver, err := apprefreshpostgres.NewPostgresPublicationIdentityResolverAdapter(graph.DeploymentRepository, instanceID)
+	if err != nil {
+		return fail(err)
+	}
+	canonicalVerifier, err := apprefreshpostgres.NewPostgresCanonicalVerifierAdapter(graph.DeploymentRepository, instanceID)
+	if err != nil {
+		return fail(err)
+	}
+	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, CancelAuditWriter: graph.RefreshCancelAudit})
+	if err != nil {
+		return fail(fmt.Errorf("build refresh persistence: %w", err))
+	}
+
+	productBlobs, err := productLogoBlobStore(ctx, cfg)
+	if err != nil {
+		return fail(err)
+	}
+	product, err := adminmodule.NewProductServiceWithStorage(graph.Product, productBlobs)
+	if err != nil {
+		return fail(err)
+	}
+	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: graph.Release, Catalog: graph.ReleaseCatalog, Production: true, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ManagedDataHook: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, ArtifactDirectory: cfg.ArtifactDir(), Environment: environment, API: releasemodule.APIConfig{Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs}})
+	if err != nil {
+		return fail(fmt.Errorf("build release module: %w", err))
+	}
+
+	// Runtime factory resolution is entirely root-driven. No catalog database,
+	// pool ID, UUID, or snapshot is synthesized from configuration.
+	targetReader := appdeploymentpostgres.NewTargetReader(graph.DeploymentRepository)
+	attachChecker := ducklakepostgres.New(bootstrap.DuckLakePool())
+	// BuildRuntime uses the analytics module's factory against the immutable
+	// DuckLake environment opened by the sealed runtime factory.
+	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
+		Base:    appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), SealedLeaseHolder: instanceID},
+		Resolve: appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
+		LeaseHolder: instanceID, DuckLakeSecret: postgresDuckLakeSecret, PostgresSecret: postgresConnectionSecret, ExtensionAdmission: extensionSupply,
+		CredentialBootstrapFactory: func(ctx context.Context, contract *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+			return newPostgresDuckLakeCredentialBootstrap(cfg, contract, extensionSupply)
+		},
+		Authorize: func(ctx context.Context, input appruntimefactory.PostgresServingAuthorizationInput) error {
+			_, ok, err := readClaim(ctx)
+			if err != nil {
+				return err
+			}
+			if !ok || input.Root.GenerationID == "" {
+				return errors.New("sealed serving authorization evidence is unavailable")
+			}
+			return nil
+		},
+		BuildRuntime: func(ctx context.Context, input dashboardruntimefactory.Input, env *ducklake.Environment) (*dashboardruntime.Service, error) {
+			return dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment(env), MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes})(ctx, input)
+		},
+	})
+	runtimeHost, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
+		target, err := graph.DeploymentRepository.Target(ctx, instanceID)
+		if err != nil {
+			if errors.Is(err, deployment.ErrNotFound) {
+				return "", servingstate.ErrNotFound
+			}
+			return "", err
+		}
+		if strings.TrimSpace(target.ActiveGenerationID) == "" {
+			return "", servingstate.ErrNotFound
+		}
+		return servingstate.ID(target.ActiveGenerationID), nil
+	}})
+	if err != nil {
+		return fail(fmt.Errorf("build runtime host: %w", err))
+	}
+	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects})
+	if err != nil {
+		return fail(err)
+	}
+	release.SetProjectSearchCatalog(projectCatalogService)
+	if err := analytics.ConfigureActiveRuntimeBindings(activeConnectionEvidenceSource{releases: release, targetID: instanceID, environment: string(environment)}); err != nil {
+		return fail(err)
+	}
+	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{Persistence: graph.DashboardPersistence, AuthorizeResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
+		return authorizeProjectResources(ctx, accessBundle.Module, runtimeHost, principal, project, []access.ResourceRef{resource}, capability)
+	}, AuthorizeProjectCapability: func(ctx context.Context, principal string, project projectgraph.ResourceID, capability access.Capability) (bool, error) {
+		return authorizeProjectRole(ctx, accessBundle.Module, runtimeHost, principal, project, capability)
+	}, AcquireRuntime: runtimeHost.Acquire})
+	if err != nil {
+		return fail(err)
+	}
+	reconciler, err := NewNativeDashboardPublicationReconciler(NativeDashboardPublicationActivationConfig{Begin: bootstrap.RuntimePool(), Publications: graph.DashboardPublication, Project: graph.Project, Access: accessBundle.Module, GenerationFence: graph.DashboardGenerationFence})
+	if err != nil {
+		return fail(err)
+	}
+
+	// Native deployment has no legacy delivery reader/candidate builder yet;
+	// keep canonical refresh dispatch disabled while retaining durable refresh
+	// persistence. The HTTP module remains fully native and fail-closed.
+	deploymentConfig := deploymentmodule.Config{Persistence: graph.DeploymentPersistence, Production: true, Protected: true}
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: false, RefreshSourceDigest: nil, CanonicalRefreshExecutor: nil}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
+		lease, err := runtimeHost.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		defer lease.Release()
+		return lease.Identity().GenerationID, nil
+	}, DuckLakeCatalogPath: "", DuckLakeDataPath: "", DefaultEnvironment: string(environment), Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: true, SealedServing: true}, httpAssemblyInputs{PublicURL: publicURL, RateLimits: apihttpmiddleware.ProductionRateLimitConfig(), SecurityHeaders: apihttpmiddleware.SecurityHeaders(true), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
+	if err != nil {
+		return fail(err)
+	}
+	handler := Routes(routes, runtimeServices, platform, policy)
+
+	// Start/stop ordering is explicit: the bootstrap wrapper starts first and
+	// owns startup-failure cleanup; resource closure follows runtimehost and
+	// workers, and the pools close last.
+	runtimeLifecycle := newRuntimeLifecycle(platform.workers, analytics, workloadBundle.Controller)
+	resourceLifecycle := newPostgresResourceLifecycle(analytics, workloadBundle.Controller)
+	runtimeHostLifecycle := newRuntimeHostLifecycle(runtimeHost)
+	bootstrapLifecycle := newPostgresBootstrapLifecycle(bootstrap)
+	bootstrapLifecycle.onStartFailure = func() error {
+		return errors.Join(closeRuntimeHost(), closeResources())
+	}
+	components := []Lifecycle{bootstrapLifecycle, resourceLifecycle, runtimeHostLifecycle, runtimeLifecycle}
+	return newApplication(handler, components), nil
+}
+
+// postgresResourceLifecycle owns capability resources that are safe to start
+// during composition but must close after workers and runtimehost have
+// drained. Start is intentionally a no-op because construction already
+// completed all resource initialization.
+type postgresResourceLifecycle struct {
+	analytics postgresAnalyticsCloser
+	workloads workloadControl
+	stop      sync.Once
+	err       error
+}
+
+type postgresAnalyticsCloser interface {
+	Close() error
+}
+
+func newPostgresResourceLifecycle(analytics postgresAnalyticsCloser, workloads workloadControl) *postgresResourceLifecycle {
+	return &postgresResourceLifecycle{analytics: analytics, workloads: workloads}
+}
+
+func (l *postgresResourceLifecycle) Start(context.Context) error { return nil }
+
+func (l *postgresResourceLifecycle) Stop(_ context.Context) error {
+	if l == nil {
+		return nil
+	}
+	l.stop.Do(func() {
+		if l.workloads != nil {
+			l.workloads.Close()
+		}
+		if l.analytics != nil {
+			l.err = l.analytics.Close()
+		}
+	})
+	return l.err
+}
+
+// postgresBootstrapLifecycle wraps the pool owner so a failed startup ping
+// cannot leak serving pools: Application only marks a component started after
+// Start succeeds and therefore would otherwise skip its Stop method.
+type postgresBootstrapLifecycle struct {
+	owner          Lifecycle
+	onStartFailure func() error
+	stop           sync.Once
+	stopErr        error
+}
+
+func newPostgresBootstrapLifecycle(owner Lifecycle) *postgresBootstrapLifecycle {
+	return &postgresBootstrapLifecycle{owner: owner}
+}
+
+func (l *postgresBootstrapLifecycle) Start(ctx context.Context) error {
+	if l == nil || l.owner == nil {
+		return errors.New("PostgreSQL bootstrap lifecycle is not initialized")
+	}
+	if err := l.owner.Start(ctx); err != nil {
+		cleanupErr := error(nil)
+		if l.onStartFailure != nil {
+			cleanupErr = l.onStartFailure()
+		}
+		return errors.Join(err, cleanupErr, l.Stop(context.Background()))
+	}
+	return nil
+}
+
+func (l *postgresBootstrapLifecycle) Stop(ctx context.Context) error {
+	if l == nil || l.owner == nil {
+		return nil
+	}
+	l.stop.Do(func() {
+		l.stopErr = l.owner.Stop(ctx)
+	})
+	return l.stopErr
+}

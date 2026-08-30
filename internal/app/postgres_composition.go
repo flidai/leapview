@@ -12,9 +12,9 @@ import (
 )
 
 // errPostgresProductionCompositionIncomplete is intentionally stable so the
-// serve command can fail closed while the remaining capability adapters are
-// being migrated.  A production process must never fall back to the legacy
-// SQLite authority after PostgreSQL bootstrap has been requested.
+// serve command can fail closed while the remaining target-architecture
+// prerequisites are being connected. A production process must never fall
+// back to the legacy SQLite authority after PostgreSQL bootstrap is requested.
 var errPostgresProductionCompositionIncomplete = errors.New("production PostgreSQL control-plane adapters are not yet wired; refusing SQLite runtime")
 
 // postgresControlPlaneLifecycle owns the runtime, required maintenance, and
