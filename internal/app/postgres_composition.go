@@ -146,12 +146,8 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	if err := l.pools.Maintenance.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL control maintenance pool: %w", err)
 	}
-	revision, err := l.pools.Runtime.SchemaRevision(ctx, postgresbaseline.BaselineRevision)
-	if err != nil {
+	if err := postgresbaseline.Verify(ctx, l.pools.Runtime); err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
-	}
-	if revision.Revision != postgresbaseline.BaselineRevision || revision.MigrationID != postgresbaseline.BaselineMigrationID || revision.Checksum != postgresbaseline.Checksum() {
-		return fmt.Errorf("PostgreSQL control schema revision mismatch: got revision=%d migration=%q checksum=%q", revision.Revision, revision.MigrationID, revision.Checksum)
 	}
 	if l.pools.Readonly != nil {
 		if err := l.pools.Readonly.Ping(ctx); err != nil {

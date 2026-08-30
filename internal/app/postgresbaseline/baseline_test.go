@@ -1,9 +1,51 @@
 package postgresbaseline
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"testing"
+
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
+
+type verifyRevisionReader struct {
+	revision platformpostgres.SchemaRevision
+	err      error
+}
+
+func (reader verifyRevisionReader) SchemaRevision(context.Context, int64) (platformpostgres.SchemaRevision, error) {
+	return reader.revision, reader.err
+}
+
+func TestVerifyRequiresExactBaselineIdentity(t *testing.T) {
+	want := platformpostgres.SchemaRevision{
+		Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum(),
+	}
+	tests := []struct {
+		name     string
+		revision platformpostgres.SchemaRevision
+		err      error
+		wantErr  bool
+	}{
+		{name: "exact match", revision: want},
+		{name: "revision mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision + 1, MigrationID: want.MigrationID, Checksum: want.Checksum}, wantErr: true},
+		{name: "migration mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision, MigrationID: "tampered", Checksum: want.Checksum}, wantErr: true},
+		{name: "checksum mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision, MigrationID: want.MigrationID, Checksum: "tampered"}, wantErr: true},
+		{name: "reader error", err: errors.New("connection failed"), wantErr: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := Verify(t.Context(), verifyRevisionReader{revision: test.revision, err: test.err})
+			if test.wantErr && err == nil {
+				t.Fatal("Verify unexpectedly succeeded")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("Verify returned error: %v", err)
+			}
+		})
+	}
+}
 
 func TestProductBaselineComponentOrder(t *testing.T) {
 	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "dashboard.authoring", "dashboard.publication", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "lineage", "cache", "queryaudit"}

@@ -670,7 +670,11 @@ func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	}
 	for _, required := range []string{
 		modulePath + "/internal/admin/cli",
+		// Non-production Admin commands remain delegated to this compatibility
+		// composition while production maintenance is selected by the native
+		// wrapper below.
 		modulePath + "/internal/app/adminoffline",
+		modulePath + "/internal/app/adminpostgres",
 	} {
 		if !importListContains(adminFile.imports, required) {
 			t.Errorf("application CLI Admin composition is missing import %s", required)

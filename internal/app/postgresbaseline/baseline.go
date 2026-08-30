@@ -5,6 +5,8 @@ package postgresbaseline
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	adminproductpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
@@ -27,6 +29,7 @@ import (
 	cursorsigningpostgres "github.com/flidai/leapview/internal/platform/http/cursorsigning/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -83,6 +86,32 @@ func Components() []platformmigrations.Component {
 }
 
 func FoundationSQL() string { return platformmigrations.BaselineSQL() }
+
+// RevisionReader reads one platform schema revision from the authoritative
+// PostgreSQL control database. Keeping this interface here lets every
+// production entrypoint verify the same product baseline without importing
+// generated SQLC details or duplicating the comparison logic.
+type RevisionReader interface {
+	SchemaRevision(context.Context, int64) (platformpostgres.SchemaRevision, error)
+}
+
+// Verify checks the exact product baseline identity before a capability uses
+// the control database. A revision number by itself is insufficient: a
+// tampered migration ID or checksum must fail closed as well.
+func Verify(ctx context.Context, reader RevisionReader) error {
+	if reader == nil {
+		return errors.New("PostgreSQL baseline revision reader is required")
+	}
+	revision, err := reader.SchemaRevision(ctx, BaselineRevision)
+	if err != nil {
+		return fmt.Errorf("read PostgreSQL baseline revision: %w", err)
+	}
+	wantChecksum := Checksum()
+	if revision.Revision != BaselineRevision || revision.MigrationID != BaselineMigrationID || revision.Checksum != wantChecksum {
+		return fmt.Errorf("PostgreSQL baseline mismatch: got revision=%d migration=%q checksum=%q, want revision=%d migration=%q checksum=%q", revision.Revision, revision.MigrationID, revision.Checksum, BaselineRevision, BaselineMigrationID, wantChecksum)
+	}
+	return nil
+}
 
 // rolePolicySQL closes the privilege gaps left by schemas that are also
 // independently testable. Readonly never receives cursor secrets or job
