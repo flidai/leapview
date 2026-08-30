@@ -35,7 +35,7 @@ type DeploymentCoordinator interface {
 	Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error)
 	Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
 	Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error)
-	Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error)
+	CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error)
 }
 
 // JobConfig contains deployment-owned workflow ports. Authorization is a

@@ -399,10 +399,7 @@ func (*publishCoordinatorStub) Activate(
 	return apiadapter.Deployment{}, nil
 }
 
-func (*publishCoordinatorStub) Cancel(
-	context.Context,
-	apiadapter.Scope,
-) (apiadapter.Deployment, error) {
+func (*publishCoordinatorStub) CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error) {
 	return apiadapter.Deployment{}, nil
 }
 

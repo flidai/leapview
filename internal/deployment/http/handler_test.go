@@ -103,6 +103,6 @@ func (c *fakeCoordinator) Get(context.Context, apiadapter.Scope) (apiadapter.Dep
 func (c *fakeCoordinator) Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error) {
 	return c.response, c.err
 }
-func (c *fakeCoordinator) Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
+func (c *fakeCoordinator) CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error) {
 	return c.response, c.err
 }

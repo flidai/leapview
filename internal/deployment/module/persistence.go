@@ -3,17 +3,19 @@ package module
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
-	"fmt"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
-	"github.com/flidai/leapview/internal/deployment/apiadapter"
-	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
+	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 type ActivationHooks struct{}
@@ -69,9 +71,117 @@ type Persistence struct {
 	ProjectClaims  NativeProjectClaimRepository
 	DeliveryReader NativeDeliveryReader
 	Activation     NativeActivationRepository
+	Events         NativeDeliveryEventAppender
+	Audit          NativeDeliveryAuditAppender
+	Workflow       NativeDeliveryWorkflowRecorder
+	Operations     NativeOperationAuthority
 
 	native  *deploymentpostgres.Repository
 	backend persistenceBackend
+}
+
+// NativePersistenceCapabilities is the complete cross-capability dependency
+// set required by production HTTP mutations. Each port receives the same
+// caller-owned pgx transaction as the delivery repository.
+type NativePersistenceCapabilities struct {
+	Events     NativeDeliveryEventAppender
+	Audit      NativeDeliveryAuditAppender
+	Workflow   NativeDeliveryWorkflowRecorder
+	Operations NativeOperationAuthority
+}
+
+// NativeDeliveryEventInput is the capability-neutral event contract used by
+// native deployment mutations. The event appender owns UUIDv7 allocation and
+// exact keyed replay; deployment only supplies the immutable aggregate data.
+type NativeDeliveryEventInput struct {
+	EventID, ScopeID, AggregateType, AggregateID, EventType string
+	SchemaVersion                                           int64
+	CorrelationID                                           string
+	Payload                                                 json.RawMessage
+}
+
+type NativeDeliveryEventAppender interface {
+	AppendDeliveryEvent(context.Context, deploymentpostgres.Tx, NativeDeliveryEventInput) (deploymentpostgres.Event, error)
+}
+
+// NativeDeliveryAuditInput is the source-mutation projection consumed by the
+// Access audit adapter. AuditID and DomainEventID are UUIDv7 identities for a
+// fresh mutation and must be replayed exactly on a retry.
+type NativeDeliveryAuditInput struct {
+	AuditID, DomainEventID, ScopeID, ActorID, Action, ResourceKind, ResourceID string
+	Outcome, RequestDigest, CorrelationID, AggregateKey                        string
+	AggregateSequence                                                          int64
+	Metadata                                                                   json.RawMessage
+}
+
+type NativeDeliveryAuditAppender interface {
+	AppendMutationAudit(context.Context, deploymentpostgres.Tx, NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error)
+}
+
+type NativeDeliveryWorkflowRecorder interface {
+	RecordWorkflow(context.Context, deploymentpostgres.Tx, jobs.WorkflowIntent) error
+}
+
+// NativeOperationTx is the only operation-capability surface that crosses
+// the module boundary. It is intentionally structural: the application
+// adapter may back it with any transactional operation store without exposing
+// that store's DTOs or package to deployment.
+type NativeOperationTx interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type NativeOperationStatus string
+
+const (
+	NativeOperationAcquired      NativeOperationStatus = "acquired"
+	NativeOperationReplay        NativeOperationStatus = "replay"
+	NativeOperationBusy          NativeOperationStatus = "busy"
+	NativeOperationIndeterminate NativeOperationStatus = "indeterminate"
+)
+
+// NativeOperationAcquireInput is the minimal idempotency request projection.
+// Request bytes are deliberately absent: the coordinator supplies the
+// canonical digest after validating the HTTP request.
+type NativeOperationAcquireInput struct {
+	Scope, OperationType, IdempotencyKey, RequestDigest, OwnerID string
+}
+
+type NativeOperationRecord struct {
+	Scope, OperationType, IdempotencyKey, RequestDigest, OwnerID string
+	OperationID                                                  string
+	Outcome                                                      json.RawMessage
+}
+
+type NativeOperationLease struct {
+	Scope, IdempotencyKey, OperationID, OwnerID string
+	FencingGeneration                           int64
+	LeaseExpiresAt                              time.Time
+	AttemptID, AttemptIdentity                  string
+}
+
+type NativeOperationAcquireResult struct {
+	Status    NativeOperationStatus
+	Operation NativeOperationRecord
+	Lease     NativeOperationLease
+}
+
+// These sentinels let adapters translate their own storage errors without
+// leaking a concrete operation package into deployment.
+var (
+	ErrNativeOperationConflict        = errors.New("native operation conflict")
+	ErrNativeOperationBusy            = errors.New("native operation busy")
+	ErrNativeOperationStaleFence      = errors.New("native operation stale fence")
+	ErrNativeOperationLeaseExpired    = errors.New("native operation lease expired")
+	ErrNativeOperationAlreadyTerminal = errors.New("native operation already terminal")
+	ErrNativeOperationInvalid         = errors.New("native operation invalid")
+	ErrNativeOperationNotFound        = errors.New("native operation not found")
+)
+
+type NativeOperationAuthority interface {
+	AcquireTx(context.Context, NativeOperationTx, NativeOperationAcquireInput) (NativeOperationAcquireResult, error)
+	CompleteTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
 }
 
 type persistenceBackend uint8
@@ -153,6 +263,22 @@ func NewPostgresPersistence(repository *deploymentpostgres.Repository) (Persiste
 	}, nil
 }
 
+// NewPostgresPersistenceWithCapabilities constructs the production authority
+// bundle and fails closed when any transactional consequence port is absent.
+// The legacy constructor remains available for read/build-only tests; Build
+// applies the same strict check whenever Production is enabled.
+func NewPostgresPersistenceWithCapabilities(repository *deploymentpostgres.Repository, capabilities NativePersistenceCapabilities) (Persistence, error) {
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		return Persistence{}, err
+	}
+	if capabilities.Events == nil || capabilities.Audit == nil || capabilities.Workflow == nil || capabilities.Operations == nil {
+		return Persistence{}, errors.New("native PostgreSQL deployment consequence authorities are required")
+	}
+	persistence.Events, persistence.Audit, persistence.Workflow, persistence.Operations = capabilities.Events, capabilities.Audit, capabilities.Workflow, capabilities.Operations
+	return persistence, nil
+}
+
 func (p Persistence) isPostgres() bool {
 	return p.backend == backendPostgres && p.native != nil && p.Repository == p.native
 }
@@ -187,40 +313,3 @@ func (p Persistence) validate() error {
 	}
 	return nil
 }
-
-// ErrUnsupportedCapability identifies a deliberately unavailable native HTTP
-// surface.  Callers can use errors.As to distinguish this from malformed
-// persistence configuration and avoid silently falling back to SQLite.
-var ErrUnsupportedCapability = errors.New("deployment native capability is unsupported")
-
-type UnsupportedCapabilityError struct{ Capability string }
-
-func (e *UnsupportedCapabilityError) Error() string {
-	if e == nil || e.Capability == "" {
-		return ErrUnsupportedCapability.Error()
-	}
-	return fmt.Sprintf("%s: %s", ErrUnsupportedCapability, e.Capability)
-}
-
-func (e *UnsupportedCapabilityError) Unwrap() error { return ErrUnsupportedCapability }
-
-// unsupportedCoordinator keeps the native module's HTTP shell safe while the
-// legacy request/response coordinator is migrated to clean-slate value types.
-// Every operation fails closed with the same typed capability error; there is
-// no implicit SQLite fallback and no nil-interface panic in the handler.
-type unsupportedCoordinator struct{}
-
-func (unsupportedCoordinator) Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error) {
-	return apiadapter.Deployment{}, &UnsupportedCapabilityError{Capability: "deployment HTTP create over native PostgreSQL delivery"}
-}
-func (unsupportedCoordinator) Get(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
-	return apiadapter.Deployment{}, &UnsupportedCapabilityError{Capability: "deployment HTTP read over native PostgreSQL delivery"}
-}
-func (unsupportedCoordinator) Activate(context.Context, apiadapter.ActivateRequest) (apiadapter.Deployment, error) {
-	return apiadapter.Deployment{}, &UnsupportedCapabilityError{Capability: "deployment HTTP activation over native PostgreSQL delivery"}
-}
-func (unsupportedCoordinator) Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
-	return apiadapter.Deployment{}, &UnsupportedCapabilityError{Capability: "deployment HTTP cancellation over native PostgreSQL delivery"}
-}
-
-var _ deploymenthttp.Coordinator = unsupportedCoordinator{}

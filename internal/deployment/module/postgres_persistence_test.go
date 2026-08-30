@@ -2,11 +2,12 @@ package module
 
 import (
 	"context"
-	"errors"
+	"encoding/json"
 	"testing"
+	"time"
 
-	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	"github.com/flidai/leapview/internal/deployment/postgres"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -34,6 +35,33 @@ type activationAuditStub struct{}
 
 func (activationAuditStub) AppendActivationAudit(context.Context, postgres.Tx, postgres.ActivationAuditInput) (postgres.AuditEvent, error) {
 	return postgres.AuditEvent{}, nil
+}
+
+type nativeEventStub struct{}
+
+func (nativeEventStub) AppendDeliveryEvent(context.Context, postgres.Tx, NativeDeliveryEventInput) (postgres.Event, error) {
+	return postgres.Event{}, nil
+}
+
+type nativeAuditStub struct{}
+
+func (nativeAuditStub) AppendMutationAudit(context.Context, postgres.Tx, NativeDeliveryAuditInput) (postgres.AuditEvent, error) {
+	return postgres.AuditEvent{}, nil
+}
+
+type nativeWorkflowStub struct{}
+
+func (nativeWorkflowStub) RecordWorkflow(context.Context, postgres.Tx, jobs.WorkflowIntent) error {
+	return nil
+}
+
+type nativeOperationStub struct{}
+
+func (nativeOperationStub) AcquireTx(context.Context, NativeOperationTx, NativeOperationAcquireInput) (NativeOperationAcquireResult, error) {
+	return NativeOperationAcquireResult{}, nil
+}
+func (nativeOperationStub) CompleteTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error {
+	return nil
 }
 func (activationAuditStub) GetActivationAudit(context.Context, postgres.Tx, postgres.ActivationAuditInput) (postgres.AuditEvent, error) {
 	return postgres.AuditEvent{}, nil
@@ -72,16 +100,65 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true})
+	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if m.NativePersistence() != &persistence {
 		t.Fatal("module did not expose native persistence")
 	}
-	_, err = unsupportedCoordinator{}.Create(t.Context(), apiadapter.CreateRequest{})
-	var unsupported *UnsupportedCapabilityError
-	if !errors.As(err, &unsupported) {
-		t.Fatalf("native HTTP coordinator error = %v, want UnsupportedCapabilityError", err)
+	if _, ok := m.jobs.Coordinator.(*nativeCoordinator); !ok {
+		t.Fatalf("built production coordinator has type %T, want native coordinator", m.jobs.Coordinator)
+	}
+}
+
+func TestBuildProductionNativePersistenceRejectsMissingMutationAuthority(t *testing.T) {
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}}
+	checks := []struct {
+		name   string
+		mutate func(*Config)
+	}{
+		{"events", func(c *Config) { c.NativeDeliveryEvents = nil }},
+		{"audit", func(c *Config) { c.NativeDeliveryAudit = nil }},
+		{"workflow", func(c *Config) { c.NativeDeliveryWorkflow = nil }},
+		{"operations", func(c *Config) { c.NativeOperationAuthority = nil }},
+	}
+	for _, check := range checks {
+		t.Run(check.name, func(t *testing.T) {
+			config := base
+			check.mutate(&config)
+			if _, err := Build(t.Context(), config); err == nil {
+				t.Fatal("expected missing native mutation authority rejection")
+			}
+		})
+	}
+}
+
+func TestNativeOperationDispositionRejectsTamperedProjection(t *testing.T) {
+	input := NativeOperationAcquireInput{Scope: "target", OperationType: "deployment.create", IdempotencyKey: "key", RequestDigest: "sha256:" + "aabbccdd" + "aabbccdd" + "aabbccdd" + "aabbccdd" + "aabbccdd" + "aabbccdd" + "aabbccdd" + "aabbccdd", OwnerID: "actor"}
+	base := NativeOperationAcquireResult{Status: NativeOperationAcquired, Operation: NativeOperationRecord{Scope: input.Scope, OperationType: input.OperationType, IdempotencyKey: input.IdempotencyKey, RequestDigest: input.RequestDigest, OwnerID: input.OwnerID, OperationID: "0198f2c0-7c7a-7f00-8a11-000000000001"}, Lease: NativeOperationLease{Scope: input.Scope, IdempotencyKey: input.IdempotencyKey, OperationID: "0198f2c0-7c7a-7f00-8a11-000000000001", OwnerID: input.OwnerID, FencingGeneration: 1, LeaseExpiresAt: time.Now().Add(time.Minute)}}
+	cases := []struct {
+		name   string
+		mutate func(*NativeOperationAcquireResult)
+	}{
+		{"operation id", func(r *NativeOperationAcquireResult) { r.Operation.OperationID = "not-a-uuid" }},
+		{"lease scope", func(r *NativeOperationAcquireResult) { r.Lease.Scope = "other" }},
+		{"lease fence", func(r *NativeOperationAcquireResult) { r.Lease.FencingGeneration = 0 }},
+		{"lease expiry", func(r *NativeOperationAcquireResult) { r.Lease.LeaseExpiresAt = time.Time{} }},
+		{"replay outcome", func(r *NativeOperationAcquireResult) { r.Status = NativeOperationReplay }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			result := base
+			tc.mutate(&result)
+			if _, err := nativeOperationDisposition(result, input); err == nil {
+				t.Fatal("tampered operation projection was accepted")
+			}
+		})
 	}
 }

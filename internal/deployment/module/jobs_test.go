@@ -61,7 +61,7 @@ func (stub *activationCoordinatorStub) Activate(context.Context, apiadapter.Acti
 func (*activationCoordinatorStub) Create(context.Context, apiadapter.CreateRequest) (apiadapter.Deployment, error) {
 	return apiadapter.Deployment{}, nil
 }
-func (*activationCoordinatorStub) Cancel(context.Context, apiadapter.Scope) (apiadapter.Deployment, error) {
+func (*activationCoordinatorStub) CancelRequest(context.Context, apiadapter.CancelRequest) (apiadapter.Deployment, error) {
 	return apiadapter.Deployment{}, nil
 }
 

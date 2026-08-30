@@ -403,6 +403,24 @@ func NewWithActivationAudit(db DBTX, audit ActivationAuditPort) *Repository {
 	return &Repository{db: db, audit: audit}
 }
 
+// DB exposes the configured native PostgreSQL handle to composition-owned
+// adapters (for example Access audit and jobs workflow).  The returned handle
+// is never used to begin a second transaction by those adapters; callers must
+// pass the transaction returned by Begin to every side-effect port.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
+// Begin starts a caller-owned native control transaction.  Keeping the
+// transaction constructor on the authority prevents callers from silently
+// selecting another database or crossing into DuckLake.
+func (r *Repository) Begin(ctx context.Context) (Tx, error) {
+	return r.begin(ctx)
+}
+
 // PostgreSQLAuthority marks this repository as the clean-slate delivery
 // authority.  The marker is intentionally implemented only by this concrete
 // repository; module composition uses it together with Configured and
@@ -1674,6 +1692,71 @@ func (r *Repository) LoadPublication(ctx context.Context, id string) (DeliveryPu
 	return r.Publication(ctx, id)
 }
 
+// CancelPublication transitions a pending publication to the terminal
+// rejected state.  Publication history is append-only: cancellation never
+// deletes the row, and an exact replay returns the same terminal evidence.
+// The transition itself is fenced by the publication row lock and is
+// intentionally separate from event/audit/workflow appenders so the caller
+// can compose all control-plane writes in one transaction.
+func (r *Repository) CancelPublication(ctx context.Context, id string) (DeliveryPublication, error) {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	p, err := r.CancelPublicationTx(contextOrBackground(ctx), tx, id)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryPublication{}, err
+	}
+	committed = true
+	return p, nil
+}
+
+// CancelPublicationTx performs the fenced terminal transition using the
+// caller-owned transaction.  It does not append side effects or take
+// transaction ownership.
+func (r *Repository) CancelPublicationTx(ctx context.Context, tx Tx, id string) (DeliveryPublication, error) {
+	if tx == nil {
+		return DeliveryPublication{}, ErrInvalid
+	}
+	id, err := uuidID(id, "publication id", false)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	if _, err := depdb.New(tx).LockPublication(ctx, dbUUID(id)); errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryPublication{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryPublication{}, err
+	}
+	p, err := loadPublication(ctx, tx, id)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	if p.State == "rejected" {
+		return p, nil
+	}
+	if p.State != "pending" {
+		return DeliveryPublication{}, ErrConflict
+	}
+	rows, err := depdb.New(tx).CancelPublication(ctx, dbUUID(id))
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	if rows != 1 {
+		return DeliveryPublication{}, ErrConflict
+	}
+	p.State = "rejected"
+	return p, nil
+}
+
 // AcquireLease creates a persisted fencing token. Target row locking makes
 // concurrent owners serialize and ensures epochs are strictly increasing.
 func (r *Repository) AcquireLease(ctx context.Context, in LeaseInput) (DeliveryLease, error) {
@@ -1696,6 +1779,16 @@ func (r *Repository) AcquireLease(ctx context.Context, in LeaseInput) (DeliveryL
 	}
 	committed = true
 	return l, nil
+}
+
+// AcquireLeaseTx performs lease admission on a caller-owned transaction. It
+// is used by native HTTP coordinators that must fence activation and complete
+// operation idempotency on the same control-plane commit boundary.
+func (r *Repository) AcquireLeaseTx(ctx context.Context, tx Tx, in LeaseInput) (DeliveryLease, error) {
+	if tx == nil {
+		return DeliveryLease{}, ErrInvalid
+	}
+	return acquireLease(contextOrBackground(ctx), tx, in)
 }
 func acquireLease(ctx context.Context, db DBTX, in LeaseInput) (DeliveryLease, error) {
 	id, err := uuidID(in.LeaseID, "lease id", true)

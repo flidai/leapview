@@ -177,6 +177,10 @@ WHERE lease_id=sqlc.arg(lease_id)::uuid AND target_id=sqlc.arg(target_id) AND ow
 -- name: LockPublication :one
 SELECT publication_id FROM delivery.delivery_publication WHERE publication_id=sqlc.arg(publication_id)::uuid FOR UPDATE;
 
+-- name: CancelPublication :execrows
+UPDATE delivery.delivery_publication SET state='rejected'
+WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending';
+
 -- name: LockLeaseForActivation :one
 SELECT target_id,owner_id,fencing_epoch,state,(expires_at > clock_timestamp())::boolean AS lease_active FROM delivery.delivery_lease WHERE lease_id=sqlc.arg(lease_id)::uuid FOR UPDATE;
 

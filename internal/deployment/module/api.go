@@ -409,7 +409,8 @@ func (m *Module) CancelDeployment(w http.ResponseWriter, r *http.Request, projec
 		}
 		ctx = deployment.WithAuditIntent(ctx, intent)
 	}
-	row, err := m.jobs.Coordinator.Cancel(ctx, apiadapter.Scope{Project: project, DeploymentID: deploymentID})
+	var row apiadapter.Deployment
+	row, err = m.jobs.Coordinator.CancelRequest(ctx, apiadapter.CancelRequest{Scope: apiadapter.Scope{Project: project, DeploymentID: deploymentID}, Actor: principal.ID, IdempotencyKey: r.Header.Get("Idempotency-Key")})
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
 		return

@@ -72,6 +72,16 @@ type ActivateRequest struct {
 	IdempotencyKey string
 }
 
+// CancelRequest carries the complete immutable cancellation operation
+// identity. Cancellation is a state transition, never a row deletion, and
+// therefore uses the same actor/idempotency contract as create and activate.
+type CancelRequest struct {
+	Scope
+	Actor          string
+	IdempotencyKey string
+	Workflow       func(string) (jobs.WorkflowIntent, error)
+}
+
 type Deployment struct {
 	ID                  string
 	Project             string
@@ -106,11 +116,14 @@ func New(service Service) (*Adapter, error) {
 	return &Adapter{service: service}, nil
 }
 
-func (a *Adapter) Cancel(ctx context.Context, scope Scope) (Deployment, error) {
-	if err := validateScope(scope); err != nil {
+func (a *Adapter) CancelRequest(ctx context.Context, request CancelRequest) (Deployment, error) {
+	if request.Actor == "" || request.Actor != strings.TrimSpace(request.Actor) || request.IdempotencyKey == "" || request.IdempotencyKey != strings.TrimSpace(request.IdempotencyKey) {
+		return Deployment{}, fmt.Errorf("%w: actor and idempotency key are required", ErrInvalid)
+	}
+	if err := validateScope(request.Scope); err != nil {
 		return Deployment{}, err
 	}
-	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: graph.ResourceID(scope.Project), DeploymentID: scope.DeploymentID})
+	row, err := a.service.Cancel(ctx, deployment.Scope{ProjectID: graph.ResourceID(request.Project), DeploymentID: request.DeploymentID})
 	if err != nil {
 		return Deployment{}, err
 	}

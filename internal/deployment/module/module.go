@@ -250,6 +250,13 @@ type Config struct {
 	// When Database is configured, Build installs the SQLite repository by
 	// default; tests and alternate control stores may provide an implementation.
 	DeliveryReader deployment.DeliveryReader
+	// Native source-mutation capabilities are strict transaction-bound ports.
+	// Production PostgreSQL composition must provide all four; no SQLite or
+	// cross-connection fallback is permitted.
+	NativeDeliveryEvents     NativeDeliveryEventAppender
+	NativeDeliveryAudit      NativeDeliveryAuditAppender
+	NativeDeliveryWorkflow   NativeDeliveryWorkflowRecorder
+	NativeOperationAuthority NativeOperationAuthority
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
@@ -269,6 +276,23 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if config.Persistence != nil && !config.Production {
 		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
+	}
+	if config.Production && config.Persistence != nil {
+		if config.NativeDeliveryEvents == nil {
+			config.NativeDeliveryEvents = config.Persistence.Events
+		}
+		if config.NativeDeliveryAudit == nil {
+			config.NativeDeliveryAudit = config.Persistence.Audit
+		}
+		if config.NativeDeliveryWorkflow == nil {
+			config.NativeDeliveryWorkflow = config.Persistence.Workflow
+		}
+		if config.NativeOperationAuthority == nil {
+			config.NativeOperationAuthority = config.Persistence.Operations
+		}
+		if config.NativeDeliveryEvents == nil || config.NativeDeliveryAudit == nil || config.NativeDeliveryWorkflow == nil || config.NativeOperationAuthority == nil {
+			return nil, errors.New("production native deployment requires delivery event, audit, workflow, and operation authorities")
+		}
 	}
 	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
 		config.DeliveryCandidateBuilder = config.CanonicalDeliveryAdapter.CandidateDeliveryBuilder()
@@ -297,11 +321,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
 	if config.Persistence != nil {
-		// The clean-slate repository is exposed through Module.NativePersistence
-		// below. Its value types are intentionally not coerced into the legacy
-		// deployment coordinator; HTTP calls receive a typed, fail-closed
-		// unsupported-capability error instead of falling back to SQLite.
-		coordinator = unsupportedCoordinator{}
+		// Native production HTTP requests are coordinated directly against the
+		// canonical PostgreSQL delivery authority. No legacy service or SQLite
+		// adapter is introduced on this path.
+		var coordinatorErr error
+		coordinator, coordinatorErr = newNativeCoordinator(config.Persistence.Repository, config.InstanceID, config.InstanceEnvironment, nativeCoordinatorCapabilities{
+			events: config.NativeDeliveryEvents, audit: config.NativeDeliveryAudit, workflow: config.NativeDeliveryWorkflow, operations: config.NativeOperationAuthority,
+		})
+		if coordinatorErr != nil {
+			return nil, coordinatorErr
+		}
 	} else if config.Database != nil {
 		if config.AuditIntentRecorder == nil {
 			return nil, errors.New("deployment audit intent recorder is required")
