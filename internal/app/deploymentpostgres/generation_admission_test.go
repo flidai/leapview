@@ -8,6 +8,7 @@ import (
 	"time"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
@@ -40,7 +41,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	}
 	manifest := `{"version":1}`
 	return GenerationAdmissionInput{
-		Commit:              CommitEvidence{AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
+		Commit:              CommitEvidence{DeliveryID: "delivery-admission", AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
 		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/admission", RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
 		QualificationDigest: admissionDigest('3'),
 		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: "target-admission", OwnerID: "builder-admission", FencingEpoch: 1},
@@ -74,6 +75,9 @@ func TestNormalizeGenerationAdmissionRejectsCrossFieldMismatches(t *testing.T) {
 			marker := catalogartifact.CommitMarker{SchemaVersion: catalogartifact.CommitMarkerSchemaVersion, DeliveryID: "delivery-admission", GenerationID: "0198f2c0-7c7a-7f00-8a11-000000000106", AttemptID: in.Commit.AttemptID, LeaseEpoch: 1, RequestDigest: admissionDigest('f'), PlanDigest: in.Generation.PlanDigest, Project: "project_admission", Environment: "prod", PhysicalPoolID: "pool-admission"}
 			raw, _ := marker.CanonicalJSON()
 			in.Commit.CommitMarker = json.RawMessage(raw)
+		}},
+		{name: "commit marker delivery", mutate: func(in *GenerationAdmissionInput) {
+			in.Commit.DeliveryID = "delivery-other"
 		}},
 		{name: "locator", mutate: func(in *GenerationAdmissionInput) { in.Bundle.ArtifactLocator = "objects/not-the-digest.tar.gz" }},
 		{name: "artifact digest", mutate: func(in *GenerationAdmissionInput) { in.Bundle.Artifact.Digest = admissionDigest('4') }},
@@ -113,13 +117,17 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	return p
 }
 
-func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, input GenerationAdmissionInput) {
+func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, ducklake *ducklakepostgres.Repository, input GenerationAdmissionInput) {
 	t.Helper()
 	ctx := t.Context()
 	targetCreated := false
@@ -156,6 +164,20 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, in
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := ducklake.RegisterCatalog(ctx, ducklakepostgres.CatalogIdentity{
+		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogDatabase: input.Seal.CatalogDatabase,
+		CatalogID: input.Seal.CatalogID, CatalogUUID: input.Seal.CatalogUUID, MetadataSchema: "main",
+		CompatibilityDigest: input.Seal.CompatibilityDigest, CatalogSchemaVersion: input.Seal.CatalogSchemaVersion,
+	}); err != nil && !errors.Is(err, ducklakepostgres.ErrConflict) {
+		t.Fatal(err)
+	}
+	if _, err := ducklake.BeginAttempt(ctx, ducklakepostgres.BeginAttemptInput{
+		AttemptID: input.Commit.AttemptID, RequestDigest: input.Seal.RequestDigest, PlanDigest: input.Generation.PlanDigest,
+		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, OwnerID: input.Commit.OwnerID,
+		FencingEpoch: input.Commit.FencingEpoch, SessionIdentity: "duckdb-session-admission", LeaseExpiresAt: timeNowPlusHour(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func timeNowPlusHour() time.Time { return time.Now().UTC().Add(time.Hour) }
@@ -164,18 +186,56 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	p := generationAdmissionDB(t)
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
-	capability, err := NewGenerationAdmission(delivery, serving)
+	ducklake := ducklakepostgres.New(p)
+	if _, err := NewGenerationAdmission(delivery, serving, nil); err == nil {
+		t.Fatal("generation admission accepted a nil DuckLake authority")
+	}
+	var unconfigured *ducklakepostgres.Repository
+	if _, err := NewGenerationAdmission(delivery, serving, unconfigured); err == nil {
+		t.Fatal("generation admission accepted an unconfigured DuckLake authority")
+	}
+	capability, err := NewGenerationAdmission(delivery, serving, ducklake)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := validGenerationAdmissionInput(t)
-	seedGenerationAdmission(t, delivery, input)
+	seedGenerationAdmission(t, delivery, ducklake, input)
 	first, err := capability.CompleteBuildAndAdmit(t.Context(), input)
 	if err != nil {
 		t.Fatalf("complete and admit: %v", err)
 	}
 	if first.Generation.GenerationID != input.Generation.GenerationID || first.Generation.GenerationRevision != 1 || first.Bundle.ArtifactLocator != input.Bundle.ArtifactLocator {
 		t.Fatalf("admission result = %#v", first)
+	}
+	attemptEvidence, err := ducklake.LoadAttempt(t.Context(), input.Commit.AttemptID)
+	if err != nil {
+		t.Fatalf("load DuckLake attempt evidence: %v", err)
+	}
+	gotMarker, markerErr := catalogartifact.DecodeCommitMarker([]byte(attemptEvidence.CommitMarker))
+	wantMarker, wantMarkerErr := catalogartifact.DecodeCommitMarker(input.Commit.CommitMarker)
+	if markerErr != nil || wantMarkerErr != nil || gotMarker != wantMarker || attemptEvidence.State != ducklakepostgres.AttemptCommitted || attemptEvidence.SnapshotID != input.Commit.SnapshotID {
+		t.Fatalf("DuckLake attempt evidence = %#v", attemptEvidence)
+	}
+	binding, err := ducklake.LoadBinding(t.Context(), input.Commit.DeliveryID, input.Generation.GenerationID)
+	if err != nil {
+		t.Fatalf("load DuckLake generation binding: %v", err)
+	}
+	if binding.AttemptID != input.Commit.AttemptID || binding.PhysicalPoolID != input.Seal.PhysicalPoolID || binding.CatalogID != input.Seal.CatalogID || binding.SnapshotID != input.Commit.SnapshotID {
+		t.Fatalf("DuckLake generation binding = %#v", binding)
+	}
+	root, err := ducklake.LoadSnapshotRoot(t.Context(), input.Commit.AttemptID)
+	if err != nil {
+		t.Fatalf("load DuckLake generation retention root: %v", err)
+	}
+	if root.Kind != ducklakepostgres.RootGeneration || root.State != "live" || root.PhysicalPoolID != input.Seal.PhysicalPoolID || root.CatalogID != input.Seal.CatalogID || root.SnapshotID != input.Commit.SnapshotID {
+		t.Fatalf("DuckLake retention root = %#v", root)
+	}
+	retention, err := ducklake.LoadSnapshotRetention(t.Context(), ducklakepostgres.SnapshotRef{PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, SnapshotID: input.Commit.SnapshotID})
+	if err != nil {
+		t.Fatalf("load DuckLake retention state: %v", err)
+	}
+	if retention.State != ducklakepostgres.RetentionLive {
+		t.Fatalf("DuckLake retention state = %q", retention.State)
 	}
 	replayed, err := capability.CompleteBuildAndAdmit(t.Context(), input)
 	if err != nil {
@@ -211,7 +271,7 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 		t.Fatal(err)
 	}
 	rollbackInput.Commit.CommitMarker = json.RawMessage(raw)
-	seedGenerationAdmission(t, delivery, rollbackInput)
+	seedGenerationAdmission(t, delivery, ducklake, rollbackInput)
 	if _, err := p.Exec(t.Context(), `CREATE OR REPLACE FUNCTION serving_state.reject_test_bundle() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected serving admission conflict'; END; $$; CREATE TRIGGER reject_test_bundle BEFORE INSERT ON serving_state.bundle FOR EACH ROW EXECUTE FUNCTION serving_state.reject_test_bundle()`); err != nil {
 		t.Fatal(err)
 	}
@@ -228,11 +288,27 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if attemptState != string(deploymentnative.AttemptRunning) {
 		t.Fatalf("rollback left attempt state %q", attemptState)
 	}
+	ducklakeAttempt, err := ducklake.LoadAttempt(t.Context(), rollbackInput.Commit.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ducklakeAttempt.State != ducklakepostgres.AttemptRunning {
+		t.Fatalf("DuckLake rollback left attempt state %q", ducklakeAttempt.State)
+	}
 	var bindings, seals, generations, bundles int
 	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid)`, rollbackInput.Commit.AttemptID, rollbackInput.Seal.SealID, rollbackInput.Generation.GenerationID).Scan(&bindings, &seals, &generations, &bundles); err != nil {
 		t.Fatal(err)
 	}
 	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 {
 		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d", bindings, seals, generations, bundles)
+	}
+	if _, err := ducklake.LoadBinding(t.Context(), rollbackInput.Commit.DeliveryID, rollbackInput.Generation.GenerationID); !errors.Is(err, ducklakepostgres.ErrNotFound) {
+		t.Fatalf("rollback retained DuckLake generation binding, err=%v", err)
+	}
+	if _, err := ducklake.LoadSnapshotRoot(t.Context(), rollbackInput.Commit.AttemptID); !errors.Is(err, ducklakepostgres.ErrNotFound) {
+		t.Fatalf("rollback retained DuckLake generation root, err=%v", err)
+	}
+	if _, err := ducklake.LoadSnapshotRetention(t.Context(), ducklakepostgres.SnapshotRef{PhysicalPoolID: rollbackInput.Seal.PhysicalPoolID, CatalogID: rollbackInput.Seal.CatalogID, SnapshotID: rollbackInput.Commit.SnapshotID}); !errors.Is(err, ducklakepostgres.ErrNotFound) {
+		t.Fatalf("rollback retained DuckLake snapshot retention, err=%v", err)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -46,6 +47,9 @@ type GenerationAdmissionInput struct {
 // CommitEvidence is the immutable attempt completion proof written by the
 // DuckLake writer.
 type CommitEvidence struct {
+	// DeliveryID is the external idempotency identity. It must exactly match
+	// the commit marker and the DuckLake generation binding.
+	DeliveryID   string
 	AttemptID    string
 	OwnerID      string
 	FencingEpoch int64
@@ -124,18 +128,34 @@ type BundleEvidence struct {
 type generationAdmitter struct {
 	delivery *deploymentnative.Repository
 	serving  *servingnative.Repository
+	ducklake DuckLakeAuthority
+}
+
+// DuckLakeAuthority is the narrow app-composition surface needed to admit
+// the immutable external commit into DuckLake's PostgreSQL ledger. Both
+// methods operate on the caller-owned transaction; the authority must never
+// begin or commit a second transaction.
+type DuckLakeAuthority interface {
+	Configured() bool
+	CommitAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.CommitAttemptInput) (ducklakepostgres.AttemptEvidence, error)
+	BindGenerationTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.GenerationBinding) (ducklakepostgres.GenerationBinding, error)
 }
 
 var _ GenerationAdmission = (*generationAdmitter)(nil)
+var _ DuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 
-// NewGenerationAdmission constructs the native capability from the two
-// process-owned PostgreSQL authorities. It does not begin a transaction or
-// perform schema work.
-func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository) (GenerationAdmission, error) {
+// NewGenerationAdmission constructs the native capability from the three
+// process-owned PostgreSQL authorities. DuckLake is required so an external
+// physical commit cannot be admitted without its ledger, binding, and
+// retention evidence. It does not begin a transaction or perform schema work.
+func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority) (GenerationAdmission, error) {
 	if !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
 	}
-	return &generationAdmitter{delivery: delivery, serving: serving}, nil
+	if ducklake == nil || !ducklake.Configured() {
+		return nil, errors.New("generation admission requires a configured DuckLake authority")
+	}
+	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake}, nil
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
@@ -143,7 +163,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // Every lower-level Tx method receives the exact same pgx transaction; this
 // method alone owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil {
+	if a == nil || a.delivery == nil || a.serving == nil || a.ducklake == nil || !a.ducklake.Configured() {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -163,6 +183,20 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	}()
 	if _, ok := tx.(pgx.Tx); !ok {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+
+	// The DuckLake ledger is written before delivery completion while the
+	// caller-owned transaction still contains the running attempt. Any failure
+	// in the subsequent delivery, generation, or serving steps rolls back this
+	// evidence together with the rest of admission.
+	if _, err := a.ducklake.CommitAttemptTx(ctx, tx, ducklakepostgres.CommitAttemptInput{
+		AttemptID:    normalized.Commit.AttemptID,
+		OwnerID:      normalized.Commit.OwnerID,
+		FencingEpoch: normalized.Commit.FencingEpoch,
+		Snapshot:     ducklakepostgres.SnapshotRef{PhysicalPoolID: normalized.Seal.PhysicalPoolID, CatalogID: normalized.Seal.CatalogID, SnapshotID: normalized.Commit.SnapshotID},
+		CommitMarker: string(normalized.Commit.CommitMarker),
+	}); err != nil {
+		return GenerationAdmissionResult{}, err
 	}
 
 	if _, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
@@ -186,6 +220,22 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	}
 	bundle, err := a.serving.AdmitGenerationBundleTx(ctx, tx, toNativeBundle(normalized.Bundle), normalized.Graph)
 	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if _, err := a.ducklake.BindGenerationTx(ctx, tx, ducklakepostgres.GenerationBinding{
+		DeliveryID:             normalized.Commit.DeliveryID,
+		GenerationID:           normalized.Generation.GenerationID,
+		AttemptID:              normalized.Commit.AttemptID,
+		PhysicalPoolID:         normalized.Seal.PhysicalPoolID,
+		CatalogID:              normalized.Seal.CatalogID,
+		SnapshotID:             normalized.Commit.SnapshotID,
+		RelationManifestDigest: normalized.Seal.RelationManifestDigest,
+		CompatibilityDigest:    normalized.Seal.CompatibilityDigest,
+		ServingArtifactDigest:  normalized.Seal.ServingArtifactDigest,
+		RequestDigest:          normalized.Seal.RequestDigest,
+		PlanDigest:             normalized.Seal.PlanDigest,
+		FencingEpoch:           normalized.Commit.FencingEpoch,
+	}); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -307,8 +357,15 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	if err != nil {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: invalid commit marker: %v", deploymentnative.ErrInvalid, err)
 	}
+	deliveryID := ctx.Commit.DeliveryID
+	if deliveryID == "" || deliveryID != strings.TrimSpace(deliveryID) {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: commit delivery id is not canonical", deploymentnative.ErrInvalid)
+	}
+	if err := validateText(deliveryID, "delivery id", 255); err != nil {
+		return GenerationAdmissionInput{}, err
+	}
 	ctx.Commit.CommitMarker = canonical
-	if marker.GenerationID != genID || marker.AttemptID != ctx.Commit.AttemptID || marker.Project != ctx.Bundle.ProjectID.String() || marker.Environment != string(ctx.Bundle.Environment) || marker.PhysicalPoolID != ctx.Seal.PhysicalPoolID || marker.PlanDigest != ctx.Generation.PlanDigest || marker.RequestDigest != ctx.Seal.RequestDigest || marker.LeaseEpoch != ctx.Fence.FencingEpoch {
+	if marker.DeliveryID != deliveryID || marker.GenerationID != genID || marker.AttemptID != ctx.Commit.AttemptID || marker.Project != ctx.Bundle.ProjectID.String() || marker.Environment != string(ctx.Bundle.Environment) || marker.PhysicalPoolID != ctx.Seal.PhysicalPoolID || marker.PlanDigest != ctx.Generation.PlanDigest || marker.RequestDigest != ctx.Seal.RequestDigest || marker.LeaseEpoch != ctx.Fence.FencingEpoch {
 		return GenerationAdmissionInput{}, conflict("commit marker identity differs")
 	}
 	return ctx, nil

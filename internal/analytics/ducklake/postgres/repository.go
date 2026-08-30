@@ -345,6 +345,33 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
+// Configured reports whether the repository has a native PostgreSQL handle.
+// Transaction ownership remains with the application composition layer: the
+// Tx methods below deliberately operate on the caller's transaction rather
+// than opening a second one.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
+// CommitAttemptTx records the exact external DuckLake commit in a
+// caller-owned PostgreSQL transaction. It is the transaction-aware adapter
+// used by app composition when delivery, serving-state, and DuckLake control
+// evidence must commit atomically.
+func (r *Repository) CommitAttemptTx(ctx context.Context, tx Tx, in CommitAttemptInput) (AttemptEvidence, error) {
+	if r == nil || tx == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	return CommitAttempt(ctx, tx, in)
+}
+
+// BindGenerationTx records the immutable generation binding and its
+// retention root through a caller-owned transaction. It never commits or
+// rolls back tx.
+func (r *Repository) BindGenerationTx(ctx context.Context, tx Tx, in GenerationBinding) (GenerationBinding, error) {
+	if r == nil || tx == nil {
+		return GenerationBinding{}, ErrInvalid
+	}
+	return BindGeneration(ctx, tx, in)
+}
+
 func querygen(db DBTX) *dbgen.Queries { return dbgen.New(db) }
 
 func pgUUID(value string) pgtype.UUID {
