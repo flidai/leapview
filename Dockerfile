@@ -132,7 +132,10 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,id=leapview-go-mod,target=/go/pkg/mod,from=go-deps,source=/go/pkg/mod,sharing=locked \
     go run ./internal/app/tools/extensionsupply --out /out/extension-supply
 
-FROM debian:bookworm-slim@sha256:60eac759739651111db372c07be67863818726f754804b8707c90979bda511df AS runtime
+FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc AS runtime
+
+USER root
+SHELL ["/busybox/sh", "-c"]
 
 ARG BUILD_VERSION=development
 ARG BUILD_REVISION=unknown
@@ -150,18 +153,17 @@ LABEL org.opencontainers.image.title="LeapView" \
       dev.leapview.build.dirty="$BUILD_DIRTY" \
       dev.leapview.build.release="$BUILD_RELEASE"
 
-# The pinned Go builder supplies the bootstrap CA bundle. APT then resolves
-# every direct and transitive runtime package from one immutable Debian
-# snapshot and verifies the signed repository metadata and package hashes.
-COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt
-COPY deploy/container/debian-bookworm.sources /etc/apt/sources.list.d/debian.sources
-
-RUN apt-get update && \
-    apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata && \
-    rm -rf /var/lib/apt/lists/*
-
-RUN groupadd --system leapview && \
-    useradd --system --gid leapview --home-dir /var/lib/leapview --shell /usr/sbin/nologin leapview
+# Preserve the released runtime and volume identity. The pinned distroless
+# compatibility image supplies glibc, libstdc++, CA certificates, tzdata, and
+# BusyBox utilities used by backup and recovery qualification without carrying
+# the vulnerable Debian package-manager runtime.
+RUN printf '%s\n' 'leapview:x:999:' >> /etc/group && \
+    printf '%s\n' 'leapview:x:999:999::/var/lib/leapview:/sbin/nologin' >> /etc/passwd && \
+    test "$(id -u leapview)" = 999 && \
+    test "$(id -g leapview)" = 999 && \
+    for utility in sh env cat cp rm mkdir find du wc test stat readlink sha256sum tar gzip gunzip sync; do \
+      command -v "$utility" >/dev/null || exit 1; \
+    done
 
 WORKDIR /app
 
@@ -201,7 +203,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
     mkdir -p /var/lib/leapview && \
     chown -R leapview:leapview /var/lib/leapview /app
 
-USER leapview
+USER leapview:leapview
 
 ENV LEAPVIEW_ADDR=:8080 \
     LEAPVIEW_ENVIRONMENT=prod \

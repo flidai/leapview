@@ -168,6 +168,12 @@ func TestProductionImageCarriesPinnedOfflineExtensionSupply(t *testing.T) {
 	root := filepath.Join("..", "..")
 	dockerfile := read(t, filepath.Join(root, "Dockerfile"))
 	for _, required := range []string{
+		"FROM gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc AS runtime",
+		"USER leapview:leapview",
+		"leapview:x:999:999::/var/lib/leapview:/sbin/nologin",
+		"for utility in sh env cat cp rm mkdir find du wc test stat readlink sha256sum tar gzip gunzip sync; do",
+		"chown -R leapview:leapview /var/lib/leapview /app",
+		`VOLUME ["/var/lib/leapview"]`,
 		"FROM build AS extension-supply",
 		"./internal/app/tools/extensionsupply",
 		"COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions",

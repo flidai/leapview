@@ -3,67 +3,53 @@ package architecture
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
 
-func TestProductionRuntimeOSPackagesUseFrozenSignedSnapshot(t *testing.T) {
+func TestProductionRuntimeUsesPinnedDistrolessCompatibilityImage(t *testing.T) {
 	root := repoRoot(t)
 	dockerfileBytes, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
 	if err != nil {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
-	sourcesPath := filepath.Join("deploy", "container", "debian-bookworm.sources")
-	sourcesBytes, err := os.ReadFile(filepath.Join(root, sourcesPath))
+	coverageBytes, err := os.ReadFile(filepath.Join(root, ".security", "coverage.yaml"))
 	if err != nil {
-		t.Fatalf("read runtime package sources: %v", err)
+		t.Fatalf("read security coverage: %v", err)
 	}
 	dockerfile := string(dockerfileBytes)
-	sources := string(sourcesBytes)
-
-	copySources := "COPY " + filepath.ToSlash(sourcesPath) + " /etc/apt/sources.list.d/debian.sources"
+	coverage := string(coverageBytes)
+	const runtimeImage = "gcr.io/distroless/cc-debian12:debug-nonroot@sha256:923320b891f20d5f4bd43ed3a72eeee2f3323d481d6f4bd8d0b2c96d1c0758bc"
 	for _, required := range []string{
-		"FROM debian:bookworm-slim@sha256:",
-		"COPY --from=go-deps /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/ca-certificates.crt",
-		copySources,
-		"apt-get install -y --no-install-recommends ca-certificates libstdc++6 tzdata",
+		"FROM " + runtimeImage + " AS runtime",
+		`SHELL ["/busybox/sh", "-c"]`,
+		`printf '%s\n' 'leapview:x:999:' >> /etc/group`,
+		`printf '%s\n' 'leapview:x:999:999::/var/lib/leapview:/sbin/nologin' >> /etc/passwd`,
+		`test "$(id -u leapview)" = 999`,
+		`test "$(id -g leapview)" = 999`,
+		"for utility in sh env cat cp rm mkdir find du wc test stat readlink sha256sum tar gzip gunzip sync; do",
+		`command -v "$utility" >/dev/null || exit 1`,
+		"mkdir -p /var/lib/leapview",
+		"chown -R leapview:leapview /var/lib/leapview /app",
+		"USER leapview:leapview",
+		`VOLUME ["/var/lib/leapview"]`,
 	} {
 		if !strings.Contains(dockerfile, required) {
-			t.Fatalf("Dockerfile missing reproducible runtime package fragment %q", required)
+			t.Fatalf("Dockerfile missing distroless runtime compatibility fragment %q", required)
 		}
 	}
-	if copyAt, updateAt := strings.Index(dockerfile, copySources), strings.Index(dockerfile, "RUN apt-get update"); copyAt < 0 || updateAt < 0 || copyAt > updateAt {
-		t.Fatal("frozen Debian sources must replace the image defaults before apt-get update")
+	if !strings.Contains(coverage, "      - "+runtimeImage) {
+		t.Fatal("security coverage does not bind the exact distroless runtime image")
 	}
-
-	snapshotPattern := regexp.MustCompile(`/([0-9]{8}T[0-9]{6}Z)/`)
-	matches := snapshotPattern.FindAllStringSubmatch(sources, -1)
-	if len(matches) != 2 || matches[0][1] != matches[1][1] {
-		t.Fatalf("runtime sources must pin Debian and Debian security to one timestamp: %q", sources)
+	if strings.Contains(dockerfile, "FROM debian:bookworm-slim") || strings.Contains(dockerfile, "apt-get install") {
+		t.Fatal("production runtime still carries the vulnerable package-manager image path")
 	}
-	for _, required := range []string{
-		"URIs: https://snapshot.debian.org/archive/debian/" + matches[0][1] + "/",
-		"URIs: https://snapshot.debian.org/archive/debian-security/" + matches[0][1] + "/",
-		"Suites: bookworm bookworm-updates",
-		"Suites: bookworm-security",
-		"Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg",
-		"Check-Valid-Until: no",
-	} {
-		if !strings.Contains(sources, required) {
-			t.Fatalf("runtime package sources missing %q", required)
-		}
-	}
-	for _, movingSource := range []string{"deb.debian.org", "security.debian.org", "archive.ubuntu.com"} {
-		if strings.Contains(sources, movingSource) {
-			t.Fatalf("runtime package sources contain moving repository %q", movingSource)
-		}
-	}
-	if count := strings.Count(sources, "Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg"); count != 2 {
-		t.Fatalf("signed repository binding count = %d, want 2", count)
-	}
-	if count := strings.Count(sources, "Check-Valid-Until: no"); count != 2 {
-		t.Fatalf("snapshot validity override count = %d, want 2", count)
+	rootAt := strings.Index(dockerfile, "USER root")
+	runtimeAt := strings.Index(dockerfile, "USER leapview:leapview")
+	identityAt := strings.Index(dockerfile, "leapview:x:999:999")
+	ownershipAt := strings.Index(dockerfile, "chown -R leapview:leapview /var/lib/leapview /app")
+	if rootAt < 0 || identityAt < rootAt || ownershipAt < identityAt || runtimeAt < ownershipAt {
+		t.Fatal("runtime identity and persistent paths must be prepared as root before switching permanently to leapview")
 	}
 
 	siteDockerfile, err := os.ReadFile(filepath.Join(root, "Dockerfile.site"))
