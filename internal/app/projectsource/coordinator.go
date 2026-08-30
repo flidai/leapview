@@ -61,9 +61,9 @@ type SourceRepository interface {
 // BeginFunc adapts a native pgx pool/connection or a test transaction source.
 type BeginFunc func(context.Context) (Tx, error)
 
-// Compiler is an application-owned callback. It is called only after source
+// CompilerPort is an application-owned callback. It is called only after source
 // object admission transactions have closed.
-type Compiler interface {
+type CompilerPort interface {
 	Compile(context.Context, CompileInput) (CompileOutput, error)
 }
 
@@ -138,14 +138,14 @@ type Coordinator struct {
 	begin     BeginFunc
 	sources   SourceRepository
 	objects   objectstore.ImmutableStore
-	compiler  Compiler
+	compiler  CompilerPort
 	blobBatch int
 	now       func() time.Time
 }
 
 // New constructs a source admission coordinator over native project
 // persistence, immutable object storage, and a compiler callback.
-func New(begin BeginFunc, sources SourceRepository, objects objectstore.ImmutableStore, compiler Compiler) (*Coordinator, error) {
+func New(begin BeginFunc, sources SourceRepository, objects objectstore.ImmutableStore, compiler CompilerPort) (*Coordinator, error) {
 	if begin == nil || sources == nil || objects == nil || compiler == nil {
 		return nil, ErrInvalid
 	}
@@ -157,7 +157,7 @@ func New(begin BeginFunc, sources SourceRepository, objects objectstore.Immutabl
 // Begin(context.Context) (pgx.Tx, error) to New.
 func NewWithDatabase(db interface {
 	Begin(context.Context) (pgx.Tx, error)
-}, sources SourceRepository, objects objectstore.ImmutableStore, compiler Compiler) (*Coordinator, error) {
+}, sources SourceRepository, objects objectstore.ImmutableStore, compiler CompilerPort) (*Coordinator, error) {
 	if db == nil {
 		return nil, ErrInvalid
 	}

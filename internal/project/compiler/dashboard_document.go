@@ -2,7 +2,6 @@ package compiler
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard/document"
@@ -13,10 +12,14 @@ import (
 // boundary. YAML/JSON normalization, schema validation, and tagged-union
 // dispatch all happen through the generated document DTO.
 func LoadDashboardDocument(path string) (document.DashboardDocument, error) {
+	return LoadDashboardDocumentWithReader(osProjectReader{}, path)
+}
+
+func LoadDashboardDocumentWithReader(reader projectFileReader, path string) (document.DashboardDocument, error) {
 	if path == "" {
 		return document.DashboardDocument{}, fmt.Errorf("dashboard path is required")
 	}
-	content, err := os.ReadFile(path)
+	content, err := reader.ReadFile(path)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
@@ -33,11 +36,15 @@ func LoadDashboardDocument(path string) (document.DashboardDocument, error) {
 // need the authored DTO; project compilation must use this entry point so an
 // include-bearing document cannot silently compile with missing visuals/pages.
 func LoadDashboardDocumentForProject(path, projectRoot string) (document.DashboardDocument, error) {
-	value, err := LoadDashboardDocument(path)
+	return LoadDashboardDocumentForProjectWithReader(path, projectRoot, osProjectReader{})
+}
+
+func LoadDashboardDocumentForProjectWithReader(path, projectRoot string, reader projectFileReader) (document.DashboardDocument, error) {
+	value, err := LoadDashboardDocumentWithReader(reader, path)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}
-	expanded, err := document.ExpandDashboardFragments(value, path, projectRoot)
+	expanded, err := document.ExpandDashboardFragmentsWithReader(value, path, projectRoot, reader)
 	if err != nil {
 		return document.DashboardDocument{}, err
 	}

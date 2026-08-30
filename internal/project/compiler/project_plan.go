@@ -76,10 +76,24 @@ func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGrap
 	if err != nil {
 		return ProjectPlan{}, err
 	}
+	return planProjectAgainstGraph(project, active), nil
+}
+
+// PlanProjectFilesAgainstGraph is the in-memory counterpart to
+// PlanProjectAgainstGraph.
+func PlanProjectFilesAgainstGraph(files map[string][]byte, projectFile string, active projectgraph.ProjectGraph) (ProjectPlan, error) {
+	project, err := LoadProjectFiles(files, projectFile)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	return planProjectAgainstGraph(project, active), nil
+}
+
+func planProjectAgainstGraph(project Project, active projectgraph.ProjectGraph) ProjectPlan {
 	plan := planForProject(project)
 	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active)
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
-	return plan, nil
+	return plan
 }
 
 // PlanProjectAgainstArtifact compares authored definitions with the exact
@@ -91,6 +105,20 @@ func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Proje
 	if err != nil {
 		return ProjectPlan{}, err
 	}
+	return planProjectAgainstArtifact(project, active), nil
+}
+
+// PlanProjectFilesAgainstArtifact is the in-memory counterpart to
+// PlanProjectAgainstArtifact.
+func PlanProjectFilesAgainstArtifact(files map[string][]byte, projectFile string, active projectartifact.Project) (ProjectPlan, error) {
+	project, err := LoadProjectFiles(files, projectFile)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	return planProjectAgainstArtifact(project, active), nil
+}
+
+func planProjectAgainstArtifact(project Project, active projectartifact.Project) ProjectPlan {
 	plan := planForProject(project)
 	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active.Graph())
 	for _, materialization := range diffCompiledMaterialization(project, active) {
@@ -129,7 +157,7 @@ func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Proje
 		summary.MaterializationImpact = summary.MaterializationImpact || change.MaterializationImpact
 	}
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
-	return plan, nil
+	return plan
 }
 
 func diffCompiledMaterialization(project Project, active projectartifact.Project) []ProjectPlanChange {

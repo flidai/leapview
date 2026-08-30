@@ -48,6 +48,100 @@ type FragmentError struct {
 	Message string
 }
 
+// FragmentReader supplies the bounded source operations needed for dashboard
+// fragment expansion. Implementations may be backed by the host filesystem or
+// by an in-memory project source set.
+type FragmentReader interface {
+	ReadFile(string) ([]byte, error)
+	ValidateDashboardPath(projectRoot, dashboardPath string) (dashboardDir, relativeDashboard string, err error)
+	ResolveIncludePaths(projectRoot, dashboardDir, pattern string) ([]string, error)
+	CanonicalPath(string) (string, error)
+	RelativePath(projectRoot, target string) (string, error)
+	DisplayPath(projectRoot, target string) string
+}
+
+// OSFragmentReader preserves the original filesystem/symlink boundary.
+type OSFragmentReader struct{}
+
+func (OSFragmentReader) ReadFile(path string) ([]byte, error) { return os.ReadFile(path) }
+func (OSFragmentReader) ValidateDashboardPath(projectRoot, dashboardPath string) (string, string, error) {
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve project boundary: %w", err)
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve project boundary: %w", err)
+	}
+	dashboardPath, err = filepath.Abs(dashboardPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve dashboard path: %w", err)
+	}
+	canonicalDashboard, err := filepath.EvalSymlinks(dashboardPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve dashboard path: %w", err)
+	}
+	if info, statErr := os.Stat(canonicalDashboard); statErr != nil {
+		return "", "", fmt.Errorf("resolve dashboard path: %w", statErr)
+	} else if info.IsDir() {
+		return "", "", fmt.Errorf("dashboard path %q is a directory", dashboardPath)
+	}
+	relativeDashboard, err := filepath.Rel(root, canonicalDashboard)
+	if err != nil || filepath.IsAbs(relativeDashboard) || relativeDashboard == ".." || strings.HasPrefix(relativeDashboard, ".."+string(filepath.Separator)) {
+		return "", "", fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
+	}
+	return filepath.Dir(canonicalDashboard), filepath.ToSlash(relativeDashboard), nil
+}
+func (OSFragmentReader) ResolveIncludePaths(projectRoot, dashboardDir, pattern string) ([]string, error) {
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project boundary: %w", err)
+	}
+	return resolveFragmentPaths(root, dashboardDir, pattern)
+}
+func (OSFragmentReader) CanonicalPath(path string) (string, error) {
+	return filepath.EvalSymlinks(path)
+}
+func (OSFragmentReader) RelativePath(projectRoot, target string) (string, error) {
+	root, err := filepath.Abs(projectRoot)
+	if err != nil {
+		return "", err
+	}
+	root, err = filepath.EvalSymlinks(root)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.Abs(target)
+	if err != nil {
+		return "", err
+	}
+	canonical, err = filepath.EvalSymlinks(canonical)
+	if err != nil {
+		return "", err
+	}
+	relative, err := filepath.Rel(root, canonical)
+	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path resolves outside project boundary")
+	}
+	return filepath.ToSlash(relative), nil
+}
+func (OSFragmentReader) DisplayPath(projectRoot, target string) string {
+	root, rootErr := filepath.Abs(projectRoot)
+	if rootErr == nil {
+		root, rootErr = filepath.EvalSymlinks(root)
+	}
+	canonical, targetErr := filepath.Abs(target)
+	if targetErr == nil {
+		canonical, targetErr = filepath.EvalSymlinks(canonical)
+	}
+	if rootErr == nil && targetErr == nil {
+		if relative, err := filepath.Rel(root, canonical); err == nil && !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return filepath.ToSlash(relative)
+		}
+	}
+	return filepath.ToSlash(filepath.Base(target))
+}
+
 func (e *FragmentError) Error() string {
 	if e == nil {
 		return "dashboard fragment error"
@@ -86,6 +180,7 @@ type fragmentState struct {
 	projectRoot           string
 	dashboardDir          string
 	dashboardPath         string
+	reader                FragmentReader
 }
 
 type idOrigin struct {
@@ -99,38 +194,26 @@ type idOrigin struct {
 // Mapping collections are unioned by key and ordered collections concatenate;
 // no object is patched or deep-merged.
 func ExpandDashboardFragments(input DashboardDocument, dashboardPath, projectRoot string) (FragmentExpansion, error) {
+	return ExpandDashboardFragmentsWithReader(input, dashboardPath, projectRoot, OSFragmentReader{})
+}
+
+// ExpandDashboardFragmentsWithReader is the reader-backed variant used by
+// native source compilation.
+func ExpandDashboardFragmentsWithReader(input DashboardDocument, dashboardPath, projectRoot string, reader FragmentReader) (FragmentExpansion, error) {
+	if reader == nil {
+		return FragmentExpansion{}, fmt.Errorf("dashboard fragment reader is required")
+	}
 	document, err := cloneDashboardDocument(input)
 	if err != nil {
 		return FragmentExpansion{}, fmt.Errorf("clone canonical dashboard: %w", err)
 	}
-	root, err := filepath.Abs(projectRoot)
+	dashboardDir, relativeDashboard, err := reader.ValidateDashboardPath(projectRoot, dashboardPath)
 	if err != nil {
-		return FragmentExpansion{}, fmt.Errorf("resolve project boundary: %w", err)
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return FragmentExpansion{}, fmt.Errorf("resolve project boundary: %w", err)
-	}
-	dashboardPath, err = filepath.Abs(dashboardPath)
-	if err != nil {
-		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", err)
-	}
-	canonicalDashboard, err := filepath.EvalSymlinks(dashboardPath)
-	if err != nil {
-		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", err)
-	}
-	if info, statErr := os.Stat(canonicalDashboard); statErr != nil {
-		return FragmentExpansion{}, fmt.Errorf("resolve dashboard path: %w", statErr)
-	} else if info.IsDir() {
-		return FragmentExpansion{}, fmt.Errorf("dashboard path %q is a directory", dashboardPath)
-	}
-	relativeDashboard, err := filepath.Rel(root, canonicalDashboard)
-	if err != nil || filepath.IsAbs(relativeDashboard) || relativeDashboard == ".." || strings.HasPrefix(relativeDashboard, ".."+string(filepath.Separator)) {
-		return FragmentExpansion{}, fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
+		return FragmentExpansion{}, err
 	}
 	state := &fragmentState{
 		visuals: make(map[string]DashboardVisual), visualOrigins: make(map[string]idOrigin), components: make(map[string][]DashboardPageComponent), componentOrigins: make(map[string][]idOrigin), localComponentOrigins: make(map[string][]idOrigin), finalComponentOrigins: make(map[string][]idOrigin),
-		active: make(map[string]struct{}), projectRoot: root, dashboardDir: filepath.Dir(canonicalDashboard), dashboardPath: filepath.ToSlash(relativeDashboard),
+		active: make(map[string]struct{}), projectRoot: projectRoot, dashboardDir: dashboardDir, dashboardPath: filepath.ToSlash(relativeDashboard), reader: reader,
 	}
 	if document.Spec.Includes == nil {
 		return FragmentExpansion{Document: document}, state.validateExpandedIDs(document)
@@ -212,7 +295,7 @@ func includeStrings(values *[]string) []string {
 }
 
 func (state *fragmentState) expandPattern(pattern, expected string) error {
-	paths, err := resolveFragmentPaths(state.projectRoot, state.dashboardDir, pattern)
+	paths, err := state.reader.ResolveIncludePaths(state.projectRoot, state.dashboardDir, pattern)
 	if err != nil {
 		return err
 	}
@@ -225,7 +308,7 @@ func (state *fragmentState) expandPattern(pattern, expected string) error {
 }
 
 func (state *fragmentState) expandFile(path, expected string) error {
-	canonical, err := filepath.EvalSymlinks(path)
+	canonical, err := state.reader.CanonicalPath(path)
 	if err != nil {
 		return state.errorf(path, 0, "cannot resolve fragment: %v", err)
 	}
@@ -240,7 +323,7 @@ func (state *fragmentState) expandFile(path, expected string) error {
 	}
 	state.paths = appendUnique(state.paths, relativePath)
 	state.addLayout(expected, relativePath)
-	content, err := os.ReadFile(canonical)
+	content, err := state.reader.ReadFile(canonical)
 	if err != nil {
 		return state.errorf(canonical, 0, "read fragment: %v", err)
 	}
@@ -597,11 +680,11 @@ func collectionPageKeyLine(node *yaml.Node, pageID string) int {
 }
 
 func (state *fragmentState) relativePath(path string) (string, error) {
-	relative, err := filepath.Rel(state.projectRoot, path)
-	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+	relative, err := state.reader.RelativePath(state.projectRoot, path)
+	if err != nil {
 		return "", state.errorf(path, 0, "fragment resolves outside project boundary")
 	}
-	return filepath.ToSlash(relative), nil
+	return relative, nil
 }
 
 func resolveFragmentPaths(projectRoot, dashboardDir, pattern string) ([]string, error) {
@@ -616,10 +699,16 @@ func resolveFragmentPaths(projectRoot, dashboardDir, pattern string) ([]string, 
 		return nil, fmt.Errorf("dashboard fragment include pattern %q uses unsupported ** glob", pattern)
 	}
 	clean := filepath.Clean(filepath.FromSlash(pattern))
-	for _, part := range strings.Split(filepath.ToSlash(clean), "/") {
-		if part == ".." {
-			return nil, fmt.Errorf("dashboard fragment include pattern %q escapes the project boundary", pattern)
-		}
+	// Parent segments are allowed when the resolved glob remains inside the
+	// project root (for example, a nested dashboard including ../shared.yaml).
+	root, err := filepath.EvalSymlinks(projectRoot)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project boundary: %w", err)
+	}
+	resolvedPattern := filepath.Clean(filepath.Join(dashboardDir, clean))
+	patternRelative, relErr := filepath.Rel(root, resolvedPattern)
+	if relErr != nil || filepath.IsAbs(patternRelative) || patternRelative == ".." || strings.HasPrefix(patternRelative, ".."+string(filepath.Separator)) {
+		return nil, fmt.Errorf("dashboard fragment include pattern %q escapes the project boundary", pattern)
 	}
 	matches, err := filepath.Glob(filepath.Join(dashboardDir, clean))
 	if err != nil {
@@ -627,10 +716,6 @@ func resolveFragmentPaths(projectRoot, dashboardDir, pattern string) ([]string, 
 	}
 	if len(matches) == 0 {
 		return nil, fmt.Errorf("dashboard fragment include pattern %q matched no files", pattern)
-	}
-	root, err := filepath.EvalSymlinks(projectRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resolve project boundary: %w", err)
 	}
 	sort.Strings(matches)
 	result, seen := make([]string, 0, len(matches)), map[string]struct{}{}
@@ -677,10 +762,6 @@ func appendUnique(values []string, value string) []string {
 }
 
 func (state *fragmentState) errorf(path string, line int, format string, args ...any) error {
-	if filepath.IsAbs(path) {
-		if relative, err := filepath.Rel(state.projectRoot, path); err == nil && !filepath.IsAbs(relative) && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			path = filepath.ToSlash(relative)
-		}
-	}
+	path = state.reader.DisplayPath(state.projectRoot, path)
 	return &FragmentError{Path: path, Line: line, Message: fmt.Sprintf(format, args...)}
 }

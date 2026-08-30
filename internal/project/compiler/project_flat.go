@@ -6,7 +6,6 @@ package compiler
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -114,19 +113,19 @@ func flatResourceIdentity(project *Project, envelope resourceEnvelope, path, kin
 }
 
 func loadFlatModels(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Model" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Model", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := project.reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -153,19 +152,19 @@ func loadFlatModels(project *Project, includes []string) error {
 }
 
 func loadFlatSemanticModels(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "SemanticModel" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want SemanticModel", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := project.reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -189,19 +188,19 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 }
 
 func loadFlatPipelines(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
 		if envelope.Kind != "Pipeline" {
 			return resourceError(path, envelopeResourceID(envelope, ""), "kind", "%s kind = %q, want Pipeline", path, envelope.Kind)
 		}
-		content, err := os.ReadFile(path)
+		content, err := project.reader.ReadFile(path)
 		if err != nil {
 			return err
 		}
@@ -209,7 +208,7 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		pipeline, err := LoadRefreshPipeline(path)
+		pipeline, err := LoadRefreshPipelineWithReader(project.reader, path)
 		if err != nil {
 			return resourceError(path, id, "spec", "Pipeline %q: %v", name, err)
 		}
@@ -222,12 +221,12 @@ func loadFlatPipelines(project *Project, includes []string) error {
 }
 
 func loadFlatDashboards(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		document, err := LoadDashboardDocumentForProject(path, project.BaseDir)
+		document, err := LoadDashboardDocumentForProjectWithReader(path, project.BaseDir, project.reader)
 		if err != nil {
 			return err
 		}
@@ -259,12 +258,12 @@ func appearanceValidate(p dashboardappearance.Patch) error {
 }
 
 func loadFlatPublications(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
@@ -286,12 +285,12 @@ func loadFlatPublications(project *Project, includes []string) error {
 }
 
 func loadFlatAccess(project *Project, includes []string) error {
-	paths, err := expandIncludes(project.BaseDir, includes)
+	paths, err := project.reader.ExpandIncludes(project.BaseDir, includes)
 	if err != nil {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readEnvelopeWithReader(project.reader, path)
 		if err != nil {
 			return err
 		}
@@ -643,6 +642,12 @@ func flatResourceMetadata(envelope metadata, fallback string) projectgraph.Metad
 }
 
 func projectRelativePath(project *Project, path string) string {
+	if project != nil && project.reader != nil {
+		if relative, err := project.reader.RelativePath(project.BaseDir, path); err == nil {
+			return relative
+		}
+		return ""
+	}
 	base, err := filepath.Abs(project.BaseDir)
 	if err != nil {
 		return ""

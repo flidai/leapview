@@ -37,7 +37,7 @@ type NativeCandidateSourceConfig struct {
 	Begin                 BeginFunc
 	Sources               NativeSourceRepository
 	Objects               objectstore.ImmutableStore
-	Compiler              Compiler
+	Compiler              CompilerPort
 	StorageSecurityDomain string
 	Now                   func() time.Time
 	PlanLifetime          time.Duration
@@ -54,7 +54,7 @@ type NativeCandidateSourceSynchronizer struct {
 	begin         BeginFunc
 	sources       NativeSourceRepository
 	objects       objectstore.ImmutableStore
-	compiler      Compiler
+	compiler      CompilerPort
 	now           func() time.Time
 	planLifetime  time.Duration
 	storageDomain string
@@ -98,7 +98,7 @@ func NewNativeCandidateSourceSynchronizer(config NativeCandidateSourceConfig) (*
 
 // NewNativeCandidateSourceSynchronizerWithPorts is a convenience for callers
 // that already have the four narrow ports and do not need a config struct.
-func NewNativeCandidateSourceSynchronizerWithPorts(begin BeginFunc, sources NativeSourceRepository, objects objectstore.ImmutableStore, compiler Compiler, storageSecurityDomain string) (*NativeCandidateSourceSynchronizer, error) {
+func NewNativeCandidateSourceSynchronizerWithPorts(begin BeginFunc, sources NativeSourceRepository, objects objectstore.ImmutableStore, compiler CompilerPort, storageSecurityDomain string) (*NativeCandidateSourceSynchronizer, error) {
 	return NewNativeCandidateSourceSynchronizer(NativeCandidateSourceConfig{Begin: begin, Sources: sources, Objects: objects, Compiler: compiler, StorageSecurityDomain: storageSecurityDomain})
 }
 
