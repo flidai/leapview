@@ -331,10 +331,15 @@ func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	createdTarget, createdPlan, err := r.CreateTargetAndPlanTx(ctx, tx, target, plan)
+	createdTarget, err := r.CreateTargetTx(ctx, tx, target)
 	if err != nil {
 		_ = tx.Rollback(ctx)
-		t.Fatalf("create target and plan: %v", err)
+		t.Fatalf("create target: %v", err)
+	}
+	createdPlan, err := r.CreatePlanTx(ctx, tx, plan)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("create plan: %v", err)
 	}
 	if createdTarget.TargetID != target.TargetID || createdPlan.PlanID != plan.PlanID {
 		t.Fatalf("created target/plan = %#v / %#v", createdTarget, createdPlan)
