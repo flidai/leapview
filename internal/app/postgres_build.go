@@ -17,8 +17,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
@@ -29,8 +27,6 @@ import (
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
-	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
@@ -295,16 +291,15 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// Runtime factory resolution is entirely root-driven. No catalog database,
 	// pool ID, UUID, or snapshot is synthesized from configuration.
 	targetReader := appdeploymentpostgres.NewTargetReader(graph.DeploymentRepository)
-	attachChecker := ducklakepostgres.New(bootstrap.DuckLakePool())
+	attachChecker := appruntimefactory.NewPostgresRuntimeAttachChecker(bootstrap.DuckLakePool())
 	// BuildRuntime uses the analytics module's factory against the immutable
-	// DuckLake environment opened by the sealed runtime factory.
+	// DuckLake environment opened by the sealed runtime factory. The dashboard
+	// runtime implementation remains behind the app/runtimefactory seam.
 	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
 		Base:    appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), SealedLeaseHolder: instanceID},
 		Resolve: appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
 		LeaseHolder: instanceID, DuckLakeSecret: postgresDuckLakeSecret, PostgresSecret: postgresConnectionSecret, ExtensionAdmission: extensionSupply,
-		CredentialBootstrapFactory: func(ctx context.Context, contract *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
-			return newPostgresDuckLakeCredentialBootstrap(cfg, contract, extensionSupply)
-		},
+		CredentialBootstrapFactory: newPostgresDuckLakeCredentialBootstrapFactory(cfg, extensionSupply),
 		Authorize: func(ctx context.Context, input appruntimefactory.PostgresServingAuthorizationInput) error {
 			_, ok, err := readClaim(ctx)
 			if err != nil {
@@ -315,9 +310,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 			}
 			return nil
 		},
-		BuildRuntime: func(ctx context.Context, input dashboardruntimefactory.Input, env *ducklake.Environment) (*dashboardruntime.Service, error) {
-			return dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment(env), MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes})(ctx, input)
-		},
+		BuildRuntime: appruntimefactory.NewPostgresDashboardRuntimeBuilder(appruntimefactory.PostgresDashboardRuntimeConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment, MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes}),
 	})
 	runtimeHost, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
 		target, err := graph.DeploymentRepository.Target(ctx, instanceID)
@@ -359,7 +352,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		TargetID:    instanceID,
 		Environment: environment,
 		ReadClaim:   readClaim,
-		Delivery:    graph.DeploymentRepository,
+		Delivery:    appdeploymentpostgres.NewStartupReader(graph.DeploymentRepository),
 		Serving:     graph.ServingState,
 		Physical:    graph.PhysicalPool,
 	})

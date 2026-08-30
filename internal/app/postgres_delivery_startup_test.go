@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	"github.com/flidai/leapview/internal/deployment"
-	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 )
@@ -24,26 +24,26 @@ const (
 )
 
 type postgresDeliveryStartupAuthorityFake struct {
-	target         nativepostgres.DeliveryTarget
+	target         appdeploymentpostgres.StartupTarget
 	targetErr      error
-	generation     nativepostgres.DeliveryGeneration
+	generation     appdeploymentpostgres.StartupGeneration
 	generationErr  error
-	publication    nativepostgres.DeliveryPublication
+	publication    appdeploymentpostgres.StartupPublication
 	publicationErr error
-	seal           nativepostgres.SnapshotSeal
+	seal           appdeploymentpostgres.StartupSnapshotSeal
 	sealErr        error
 }
 
-func (f *postgresDeliveryStartupAuthorityFake) Target(context.Context, string) (nativepostgres.DeliveryTarget, error) {
+func (f *postgresDeliveryStartupAuthorityFake) Target(context.Context, string) (appdeploymentpostgres.StartupTarget, error) {
 	return f.target, f.targetErr
 }
-func (f *postgresDeliveryStartupAuthorityFake) Generation(context.Context, string) (nativepostgres.DeliveryGeneration, error) {
+func (f *postgresDeliveryStartupAuthorityFake) Generation(context.Context, string) (appdeploymentpostgres.StartupGeneration, error) {
 	return f.generation, f.generationErr
 }
-func (f *postgresDeliveryStartupAuthorityFake) Publication(context.Context, string) (nativepostgres.DeliveryPublication, error) {
+func (f *postgresDeliveryStartupAuthorityFake) Publication(context.Context, string) (appdeploymentpostgres.StartupPublication, error) {
 	return f.publication, f.publicationErr
 }
-func (f *postgresDeliveryStartupAuthorityFake) SnapshotSeal(context.Context, string) (nativepostgres.SnapshotSeal, error) {
+func (f *postgresDeliveryStartupAuthorityFake) SnapshotSeal(context.Context, string) (appdeploymentpostgres.StartupSnapshotSeal, error) {
 	return f.seal, f.sealErr
 }
 
@@ -71,7 +71,7 @@ func (f postgresDeliveryStartupPhysicalFake) LoadAdmissionContractByCompatibilit
 }
 
 func TestPostgresDeliveryStartupAllowsFreshUnclaimedTarget(t *testing.T) {
-	authority := &postgresDeliveryStartupAuthorityFake{targetErr: nativepostgres.ErrNotFound}
+	authority := &postgresDeliveryStartupAuthorityFake{targetErr: deployment.ErrNotFound}
 	check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 		TargetID: startupTarget, Environment: startupEnvironment,
 		ReadClaim: func(context.Context) (projectgraph.ResourceID, bool, error) { return "", false, nil },
@@ -89,7 +89,7 @@ func TestPostgresDeliveryStartupAllowsClaimedPrePublicationTarget(t *testing.T) 
 	check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 		TargetID: startupTarget, Environment: startupEnvironment,
 		ReadClaim: func(context.Context) (projectgraph.ResourceID, bool, error) { return startupProject, true, nil },
-		Delivery:  &postgresDeliveryStartupAuthorityFake{target: nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1}},
+		Delivery:  &postgresDeliveryStartupAuthorityFake{target: appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1}},
 		Serving:   &postgresDeliveryStartupServingFake{}, Physical: postgresDeliveryStartupPhysicalFake{},
 	})
 	if err != nil {
@@ -106,12 +106,12 @@ func TestPostgresDeliveryStartupRejectsClaimTargetPartialState(t *testing.T) {
 		claim     bool
 		targetErr error
 	}{
-		{name: "claim without target", claim: true, targetErr: nativepostgres.ErrNotFound},
+		{name: "claim without target", claim: true, targetErr: deployment.ErrNotFound},
 		{name: "target without claim", targetErr: nil},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			authority := &postgresDeliveryStartupAuthorityFake{
-				target:    nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1},
+				target:    appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1},
 				targetErr: test.targetErr,
 			}
 			check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
@@ -135,13 +135,13 @@ func TestPostgresDeliveryStartupRejectsClaimTargetPartialState(t *testing.T) {
 func TestPostgresDeliveryStartupRejectsTargetAndPointerIdentityDrift(t *testing.T) {
 	tests := []struct {
 		name   string
-		target nativepostgres.DeliveryTarget
+		target appdeploymentpostgres.StartupTarget
 		want   deployment.DeliveryStartupDiagnosticCode
 	}{
-		{name: "target id", target: nativepostgres.DeliveryTarget{TargetID: "other-target", ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1}, want: deployment.DeliveryStartupTargetIdentityMismatch},
-		{name: "target scope", target: nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: "other", Environment: string(startupEnvironment), TargetRevision: 1}, want: deployment.DeliveryStartupTargetIdentityMismatch},
-		{name: "generation without publication", target: nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1, ActiveGenerationID: startupGeneration}, want: deployment.DeliveryStartupActivePointerMismatch},
-		{name: "publication without generation", target: nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1, ActivePublicationID: startupPublication}, want: deployment.DeliveryStartupActivePointerMismatch},
+		{name: "target id", target: appdeploymentpostgres.StartupTarget{TargetID: "other-target", ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1}, want: deployment.DeliveryStartupTargetIdentityMismatch},
+		{name: "target scope", target: appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: "other", Environment: string(startupEnvironment), TargetRevision: 1}, want: deployment.DeliveryStartupTargetIdentityMismatch},
+		{name: "generation without publication", target: appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1, ActiveGenerationID: startupGeneration}, want: deployment.DeliveryStartupActivePointerMismatch},
+		{name: "publication without generation", target: appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 1, ActivePublicationID: startupPublication}, want: deployment.DeliveryStartupActivePointerMismatch},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -162,10 +162,10 @@ func TestPostgresDeliveryStartupRejectsTargetAndPointerIdentityDrift(t *testing.
 func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 	pool, admission := startupPhysicalPool(t)
 	baseAuthority := postgresDeliveryStartupAuthorityFake{
-		target:      nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
-		generation:  nativepostgres.DeliveryGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
-		publication: nativepostgres.DeliveryPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
-		seal:        nativepostgres.SnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		target:      appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
+		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		publication: appdeploymentpostgres.StartupPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
+		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 	}
 	for _, test := range []struct {
 		name string
@@ -173,16 +173,16 @@ func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 		want deployment.DeliveryStartupDiagnosticCode
 	}{
 		{name: "generation", make: func(a *postgresDeliveryStartupAuthorityFake, _ *postgresDeliveryStartupServingFake) {
-			a.generationErr = nativepostgres.ErrNotFound
+			a.generationErr = deployment.ErrNotFound
 		}, want: deployment.DeliveryStartupMissingServingGeneration},
 		{name: "publication", make: func(a *postgresDeliveryStartupAuthorityFake, _ *postgresDeliveryStartupServingFake) {
-			a.publicationErr = nativepostgres.ErrNotFound
+			a.publicationErr = deployment.ErrNotFound
 		}, want: deployment.DeliveryStartupMissingPublication},
 		{name: "serving state", make: func(_ *postgresDeliveryStartupAuthorityFake, s *postgresDeliveryStartupServingFake) {
 			s.stateErr = servingstate.ErrNotFound
 		}, want: deployment.DeliveryStartupMissingServingState},
 		{name: "seal", make: func(a *postgresDeliveryStartupAuthorityFake, _ *postgresDeliveryStartupServingFake) {
-			a.sealErr = nativepostgres.ErrNotFound
+			a.sealErr = deployment.ErrNotFound
 		}, want: deployment.DeliveryStartupMissingSeal},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -205,10 +205,10 @@ func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 func TestPostgresDeliveryStartupAcceptsExactActiveEvidenceAndChecksRevision(t *testing.T) {
 	pool, admission := startupPhysicalPool(t)
 	authority := &postgresDeliveryStartupAuthorityFake{
-		target:      nativepostgres.DeliveryTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
-		generation:  nativepostgres.DeliveryGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
-		publication: nativepostgres.DeliveryPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
-		seal:        nativepostgres.SnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		target:      appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
+		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		publication: appdeploymentpostgres.StartupPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
+		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 	}
 	serving := &postgresDeliveryStartupServingFake{
 		state:    servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: "artifact-digest", DuckLakeSnapshotID: 42},

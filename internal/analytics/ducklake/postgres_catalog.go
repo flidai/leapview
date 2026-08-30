@@ -13,26 +13,23 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"regexp"
 	"strings"
+
+	"github.com/flidai/leapview/internal/analytics/catalogartifact"
 )
 
-const (
-	// CommitMarkerSchemaVersion is the version of the persistent
-	// commit_extra_info marker written by LeapView materialization.
-	CommitMarkerSchemaVersion = 1
+// CommitMarker exposes the engine-neutral catalog commit contract at the
+// DuckLake writer boundary. Control-plane authorities depend on the contract
+// package directly rather than importing this adapter.
+type CommitMarker = catalogartifact.CommitMarker
 
-	// MaxCommitMarkerBytes bounds the JSON document stored in DuckLake's
-	// commit_extra_info column.  Markers are identity evidence, not a general
-	// metadata channel.
-	MaxCommitMarkerBytes = 4096
-	// MaxCommitMarkerFieldBytes prevents one identity from consuming the
-	// complete bounded metadata document.
-	MaxCommitMarkerFieldBytes = 512
+const (
+	CommitMarkerSchemaVersion = catalogartifact.CommitMarkerSchemaVersion
+	MaxCommitMarkerBytes      = catalogartifact.MaxCommitMarkerBytes
+	MaxCommitMarkerFieldBytes = catalogartifact.MaxCommitMarkerFieldBytes
 )
 
 var catalogIdentifierPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
@@ -243,135 +240,14 @@ func quoteCatalogIdentifier(value string) string {
 	return `"` + strings.ReplaceAll(value, `"`, `""`) + `"`
 }
 
-// CommitMarker is the durable identity written to DuckLake commit metadata.
-// Fields are deliberately relational-style scalar identities rather than an
-// unbounded metadata map.
-type CommitMarker struct {
-	SchemaVersion  int    `json:"schema_version"`
-	DeliveryID     string `json:"delivery_id"`
-	GenerationID   string `json:"generation_id"`
-	AttemptID      string `json:"attempt_id"`
-	LeaseEpoch     int64  `json:"lease_epoch"`
-	FencingToken   string `json:"fencing_token,omitempty"`
-	RequestDigest  string `json:"request_digest"`
-	PlanDigest     string `json:"plan_digest"`
-	Project        string `json:"project"`
-	Environment    string `json:"environment"`
-	PhysicalPoolID string `json:"physical_pool_id"`
-}
-
-// Normalize validates the marker without mutating the receiver.  It is also
-// used by snapshot reconciliation.
-func (m CommitMarker) Normalize() (CommitMarker, error) {
-	for name, value := range map[string]string{
-		"delivery_id": m.DeliveryID, "generation_id": m.GenerationID,
-		"attempt_id":     m.AttemptID,
-		"request_digest": m.RequestDigest,
-		"plan_digest":    m.PlanDigest, "project": m.Project,
-		"environment": m.Environment, "physical_pool_id": m.PhysicalPoolID,
-	} {
-		if err := validateMarkerValue(name, value); err != nil {
-			return CommitMarker{}, err
-		}
-	}
-	if m.LeaseEpoch <= 0 {
-		return CommitMarker{}, errors.New("commit marker lease_epoch must be positive")
-	}
-	if err := validatePlanDigest(m.PlanDigest); err != nil {
-		return CommitMarker{}, err
-	}
-	if err := validatePlanDigest(m.RequestDigest); err != nil {
-		return CommitMarker{}, fmt.Errorf("commit marker request_digest: %w", err)
-	}
-	if strings.TrimSpace(m.FencingToken) != "" {
-		if err := validateMarkerValue("fencing_token", m.FencingToken); err != nil {
-			return CommitMarker{}, err
-		}
-	}
-	if m.SchemaVersion != CommitMarkerSchemaVersion {
-		return CommitMarker{}, fmt.Errorf("unsupported commit marker schema version %d", m.SchemaVersion)
-	}
-	return m, nil
-}
-
-func validatePlanDigest(value string) error {
-	const prefix = "sha256:"
-	if !strings.HasPrefix(value, prefix) || len(value) != len(prefix)+64 {
-		return errors.New("commit marker plan_digest must be a sha256 digest")
-	}
-	if _, err := hex.DecodeString(strings.TrimPrefix(value, prefix)); err != nil {
-		return fmt.Errorf("commit marker plan_digest is not valid sha256: %w", err)
-	}
-	return nil
-}
-
-func validateMarkerValue(name, value string) error {
-	if strings.TrimSpace(value) == "" {
-		return fmt.Errorf("commit marker %s is required", name)
-	}
-	if value != strings.TrimSpace(value) || strings.ContainsRune(value, '\x00') {
-		return fmt.Errorf("commit marker %s is not normalized", name)
-	}
-	if len(value) > MaxCommitMarkerFieldBytes {
-		return fmt.Errorf("commit marker %s exceeds %d bytes", name, MaxCommitMarkerFieldBytes)
-	}
-	return nil
-}
-
-// CanonicalJSON returns the stable JSON representation used in
-// commit_extra_info.  Struct field order is intentional and stable; no map is
-// used for identity fields.
-func (m CommitMarker) CanonicalJSON() (string, error) {
-	normalized, err := m.Normalize()
-	if err != nil {
-		return "", err
-	}
-	encoded, err := json.Marshal(normalized)
-	if err != nil {
-		return "", fmt.Errorf("marshal DuckLake commit marker: %w", err)
-	}
-	if len(encoded) > MaxCommitMarkerBytes {
-		return "", fmt.Errorf("DuckLake commit marker is %d bytes, maximum is %d", len(encoded), MaxCommitMarkerBytes)
-	}
-	return string(encoded), nil
-}
-
-// ParseCommitMarker validates and normalizes a marker read from
-// commit_extra_info.  Unknown fields are rejected to avoid silently accepting
-// an unreviewed marker schema.
+// ParseCommitMarker validates the canonical marker returned by DuckLake
+// snapshot metadata.
 func ParseCommitMarker(raw string) (CommitMarker, error) {
-	if strings.TrimSpace(raw) == "" {
-		return CommitMarker{}, errors.New("DuckLake commit marker is empty")
-	}
-	marker, err := decodeCommitMarker(raw)
-	if err != nil {
-		return CommitMarker{}, err
-	}
-	canonical, err := marker.CanonicalJSON()
-	if err != nil {
-		return CommitMarker{}, err
-	}
-	if canonical != raw {
-		return CommitMarker{}, errors.New("DuckLake commit marker is not canonical JSON")
-	}
-	return marker.Normalize()
+	return catalogartifact.ParseCommitMarker(raw)
 }
 
 func decodeCommitMarker(raw string) (CommitMarker, error) {
-	var marker CommitMarker
-	decoder := json.NewDecoder(strings.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&marker); err != nil {
-		return CommitMarker{}, fmt.Errorf("decode DuckLake commit marker: %w", err)
-	}
-	// Reject trailing JSON values as well as trailing text. CanonicalJSON below
-	// catches whitespace for ParseCommitMarker; this check keeps the matcher
-	// from accepting concatenated marker documents.
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return CommitMarker{}, errors.New("DuckLake commit marker contains trailing data")
-	}
-	return marker.Normalize()
+	return catalogartifact.DecodeCommitMarker([]byte(raw))
 }
 
 // SetCommitMarker writes canonical commit_extra_info inside the caller's

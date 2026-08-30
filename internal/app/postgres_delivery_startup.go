@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
+	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	"github.com/flidai/leapview/internal/deployment"
-	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 )
@@ -17,13 +17,6 @@ import (
 // delivery authority needed to prove the active target pointer. Keeping this
 // interface local prevents readiness from acquiring a writer or from opening
 // a legacy database/sql repository.
-type postgresDeliveryStartupAuthority interface {
-	Target(context.Context, string) (nativepostgres.DeliveryTarget, error)
-	Generation(context.Context, string) (nativepostgres.DeliveryGeneration, error)
-	Publication(context.Context, string) (nativepostgres.DeliveryPublication, error)
-	SnapshotSeal(context.Context, string) (nativepostgres.SnapshotSeal, error)
-}
-
 // postgresDeliveryStartupServingStates is the immutable serving evidence
 // surface rooted at the delivery generation ID. It deliberately excludes
 // activation/mutation methods.
@@ -43,7 +36,7 @@ type postgresDeliveryStartupCheckConfig struct {
 	TargetID    string
 	Environment servingstate.Environment
 	ReadClaim   func(context.Context) (projectgraph.ResourceID, bool, error)
-	Delivery    postgresDeliveryStartupAuthority
+	Delivery    appdeploymentpostgres.StartupReader
 	Serving     postgresDeliveryStartupServingStates
 	Physical    postgresDeliveryStartupPhysicalPools
 }
@@ -189,7 +182,7 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 	}, nil
 }
 
-func postgresDeliveryStartupSealComplete(seal nativepostgres.SnapshotSeal, generation nativepostgres.DeliveryGeneration, artifact servingstate.Artifact, state servingstate.State) bool {
+func postgresDeliveryStartupSealComplete(seal appdeploymentpostgres.StartupSnapshotSeal, generation appdeploymentpostgres.StartupGeneration, artifact servingstate.Artifact, state servingstate.State) bool {
 	return seal.SealID == generation.SnapshotSealID &&
 		seal.CandidateID == generation.CandidateID &&
 		strings.TrimSpace(seal.PhysicalPoolID) != "" &&
@@ -226,5 +219,5 @@ func postgresDeliveryStartupDiagnostics(scope string, codes ...deployment.Delive
 }
 
 func postgresDeliveryStartupNotFound(err error) bool {
-	return errors.Is(err, nativepostgres.ErrNotFound) || errors.Is(err, deployment.ErrNotFound) || errors.Is(err, servingstate.ErrNotFound) || errors.Is(err, deployment.ErrProjectClaimNotFound)
+	return errors.Is(err, deployment.ErrNotFound) || errors.Is(err, servingstate.ErrNotFound) || errors.Is(err, deployment.ErrProjectClaimNotFound)
 }

@@ -25,6 +25,15 @@ const (
 	postgresConnectionSecret = "leapview_pg"
 )
 
+// newPostgresDuckLakeCredentialBootstrapFactory keeps the DuckLake-specific
+// callback type out of the process composition file while preserving the
+// existing validation and per-connector credential bootstrap behavior.
+func newPostgresDuckLakeCredentialBootstrapFactory(cfg config.Config, extensionAdmission extension.Admission) func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+	return func(ctx context.Context, contract *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+		return newPostgresDuckLakeCredentialBootstrap(cfg, contract, extensionAdmission)
+	}
+}
+
 // newPostgresDuckLakeCredentialBootstrap validates the configured catalog URL
 // once and returns a per-connector callback. The callback receives only the
 // DuckDB executor capability; credentials are never placed in a runtime

@@ -18,6 +18,10 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
+	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
+	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -36,6 +40,39 @@ var (
 // never receives the broader migration/owner repository.
 type DuckLakeRuntimeAttachChecker interface {
 	CheckRuntimeAttachEligibility(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error)
+}
+
+// NewPostgresRuntimeAttachChecker adapts the target-owned DuckLake PostgreSQL
+// runtime pool to the narrow checker consumed by the sealed factory. Keeping
+// construction here prevents process composition from depending on the
+// adapter package directly.
+func NewPostgresRuntimeAttachChecker(pool ducklakepostgres.DBTX) DuckLakeRuntimeAttachChecker {
+	if pool == nil {
+		return nil
+	}
+	return ducklakepostgres.New(pool)
+}
+
+// PostgresDashboardRuntimeConfig contains the module-owned inputs needed to
+// build a dashboard runtime over an immutable DuckLake environment.
+type PostgresDashboardRuntimeConfig struct {
+	Projects func(*ducklake.Environment) analyticsruntime.ProjectFactory
+	MaxRows  int
+	MaxBytes int64
+}
+
+// NewPostgresDashboardRuntimeBuilder projects the dashboard module builder
+// behind this composition seam. Callers do not need to import dashboard
+// runtime implementation or factory packages.
+func NewPostgresDashboardRuntimeBuilder(config PostgresDashboardRuntimeConfig) SealedDashboardRuntimeBuilder {
+	if config.Projects == nil {
+		return nil
+	}
+	return func(ctx context.Context, input dashboardruntimefactory.Input, environment *ducklake.Environment) (*dashboardruntime.Service, error) {
+		return dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{
+			Projects: config.Projects(environment), MaxRows: config.MaxRows, MaxBytes: config.MaxBytes,
+		})(ctx, input)
+	}
 }
 
 // PostgresSealedFactoryConfig supplies only target-owned capabilities. The
