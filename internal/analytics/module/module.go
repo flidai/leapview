@@ -442,6 +442,24 @@ func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
 	return duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
 }
 
+// ProjectMaterializerForEnvironment builds the governed project materializer
+// against one explicitly supplied DuckLake environment. The caller owns the
+// environment's lifetime; this method never falls back to the module's
+// process-wide environment. Credential and binding policy remain owned by the
+// module.
+func (m *Module) ProjectMaterializerForEnvironment(environment *analyticsducklake.Environment) (analyticsmaterialization.Executor, error) {
+	if m == nil {
+		return nil, fmt.Errorf("analytical runtime is unavailable")
+	}
+	if environment == nil {
+		return nil, fmt.Errorf("analytical runtime environment is unavailable")
+	}
+	if m.credentials == nil {
+		return nil, fmt.Errorf("analytical runtime credential resolver is unavailable")
+	}
+	return duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
+}
+
 func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
 	if m == nil {
 		return nil
