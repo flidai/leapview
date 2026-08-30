@@ -7,8 +7,12 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
+	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
+	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
+	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -53,13 +57,69 @@ func (nativeCompositionFence) ValidateActiveGeneration(context.Context, authorin
 	return nil
 }
 
+type nativeCompositionAppearanceAudit struct{}
+
+func (nativeCompositionAppearanceAudit) RecordAuditEvent(context.Context, dashboardappearancepostgres.Tx, dashboardappearancepostgres.AuditInput) error {
+	return nil
+}
+
+type nativeCompositionAppearanceEvents struct{}
+
+func (nativeCompositionAppearanceEvents) AppendEvent(_ context.Context, _ dashboardappearancepostgres.Tx, input dashboardappearancepostgres.EventInput) (dashboardappearancepostgres.Event, error) {
+	return dashboardappearancepostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, Revision: input.Revision, Patch: input.Patch, AggregateVersion: input.Revision}, nil
+}
+
+type nativeCompositionPublicationAudit struct{}
+
+func (nativeCompositionPublicationAudit) RecordAuditIntent(context.Context, dashboardpublicationpostgres.Tx, access.AuditIntent) error {
+	return nil
+}
+
+type nativeCompositionPublicationEvents struct{}
+
+func (nativeCompositionPublicationEvents) AppendEvent(_ context.Context, _ dashboardpublicationpostgres.Tx, input dashboardpublicationpostgres.EventInput) (dashboardpublicationpostgres.Event, error) {
+	return dashboardpublicationpostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, PublicationID: input.PublicationID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, ServingStateID: input.ServingStateID, Payload: input.Payload}, nil
+}
+
+func nativeCompositionPersistence(t *testing.T, authoring *authoringpostgres.Repository) *NativePersistence {
+	t.Helper()
+	db := nativeCompositionDB{}
+	session, err := dashboardsessionpostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := dashboardusagepostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appearance, err := dashboardappearancepostgres.New(db, dashboardappearancepostgres.Options{
+		Audit: nativeCompositionAppearanceAudit{}, Events: nativeCompositionAppearanceEvents{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication, err := dashboardpublicationpostgres.New(db, nativeCompositionPublicationAudit{}, nativeCompositionPublicationEvents{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := NewNativePersistence(NativePersistenceOptions{
+		Session: session, Usage: usage, Appearance: appearance, Authoring: authoring,
+		Publication: publication, Streams: dashboardpublicationpostgres.NewStreamRegistry(db),
+		Broker: dashboardpublicationpostgres.NewBroker(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return bundle
+}
+
 func TestBuildAuthoringNativeUsesSuppliedRepositoryWithoutSQLiteAuditRecorder(t *testing.T) {
 	repository, err := authoringpostgres.New(nativeCompositionDB{}, nativeCompositionAudit{}, nativeCompositionEvents{}, nativeCompositionFence{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	application, err := BuildAuthoring(AuthoringConfig{
-		NativeRepository: repository,
+		Persistence: nativeCompositionPersistence(t, repository),
 		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
 			return true, nil
 		},

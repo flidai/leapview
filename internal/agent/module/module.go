@@ -18,7 +18,6 @@ import (
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	agenthttp "github.com/flidai/leapview/internal/agent/http"
 	agentopenai "github.com/flidai/leapview/internal/agent/openai"
-	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	"github.com/flidai/leapview/internal/agent/productdocs"
 	agenttools "github.com/flidai/leapview/internal/agent/tools"
 	"github.com/flidai/leapview/internal/agent/ui"
@@ -90,7 +89,6 @@ type Config struct {
 	// callers must provide a PostgreSQL persistence. LegacySQLite documents
 	// development/test use of the compatibility Database input.
 	Persistence         *Persistence
-	PostgresRepository  *agentpostgres.Repository
 	LegacySQLite        bool
 	Production          bool
 	Model               ModelConfig
@@ -188,16 +186,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	}
 	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
-	if config.Persistence != nil && config.PostgresRepository != nil {
-		return nil, fmt.Errorf("agent persistence and PostgreSQL repository are mutually exclusive")
-	}
-	if config.PostgresRepository != nil {
-		persistence, err := NewPostgresPersistence(config.PostgresRepository)
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
-	}
 	if config.Database != nil {
 		if config.Production {
 			return nil, fmt.Errorf("production agent persistence cannot use SQLite")

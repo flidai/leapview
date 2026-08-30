@@ -26,7 +26,6 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
-	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -167,7 +166,6 @@ type persistenceInputs struct {
 	product                *adminmodule.ProductService
 	productStatus          adminmodule.ProductStatus
 	dashboardPersistence   *dashboardmodule.NativePersistence
-	dashboardAuthoring     *dashboardauthoringpostgres.Repository
 	requireNativeDashboard bool
 }
 
@@ -237,9 +235,6 @@ type dataAssemblyInputs struct {
 	// DashboardPersistence is the complete native PostgreSQL dashboard
 	// authority bundle. It is mutually exclusive with Database/AdminDatabase.
 	DashboardPersistence *dashboardmodule.NativePersistence
-	// DashboardAuthoring is the exact native repository used to compose the
-	// browser-facing authoring application.
-	DashboardAuthoring *dashboardauthoringpostgres.Repository
 	// RequireNativeDashboard selects the fail-closed native dashboard path.
 	// When enabled, the persistence bundle, authoring repository/application,
 	// and publication reconciler must all be supplied.
@@ -492,7 +487,7 @@ func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool,
 // the legacy SQLite dashboard path.
 func dashboardNativeInputsPresent(data dataAssemblyInputs) bool {
 	return data.RequireNativeDashboard || data.DashboardPersistence != nil ||
-		data.DashboardAuthoring != nil || data.DashboardPublicationReconciler != nil
+		data.DashboardPublicationReconciler != nil
 }
 
 // validateDashboardAssemblyInputs is the runtime-router admission gate for
@@ -513,14 +508,8 @@ func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capab
 	if data.DashboardPersistence == nil {
 		return errors.New("native dashboard composition requires a dashboard persistence bundle")
 	}
-	if data.DashboardAuthoring == nil {
-		return errors.New("native dashboard composition requires a dashboard authoring repository")
-	}
 	if data.DashboardPublicationReconciler == nil {
 		return errors.New("native dashboard composition requires a dashboard publication reconciler")
-	}
-	if !data.DashboardPersistence.MatchesAuthoringRepository(data.DashboardAuthoring) {
-		return errors.New("native dashboard composition authoring repository does not match persistence bundle")
 	}
 	if capabilities.Authoring == nil {
 		return errors.New("native dashboard composition requires a dashboard authoring application")
@@ -643,7 +632,6 @@ func buildApplicationSurfaces(
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	persistence.dashboardPersistence = data.DashboardPersistence
-	persistence.dashboardAuthoring = data.DashboardAuthoring
 	persistence.requireNativeDashboard = requireNativeDashboard
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
@@ -926,14 +914,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if persistence.dashboardPersistence == nil {
 			return errors.New("native dashboard composition requires a dashboard persistence bundle")
 		}
-		if persistence.dashboardAuthoring == nil {
-			return errors.New("native dashboard composition requires a dashboard authoring repository")
-		}
 		if runtime.dashboardPublicationReconciler == nil {
 			return errors.New("native dashboard composition requires a dashboard publication reconciler")
-		}
-		if !persistence.dashboardPersistence.MatchesAuthoringRepository(persistence.dashboardAuthoring) {
-			return errors.New("native dashboard composition authoring repository does not match persistence bundle")
 		}
 		if routes.dashboardAuthoring == nil || !persistence.dashboardPersistence.MatchesAuthoringApplication(routes.dashboardAuthoring) {
 			return errors.New("native dashboard composition authoring application does not match persistence bundle")

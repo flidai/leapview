@@ -15,14 +15,11 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
-	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
-	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -47,7 +44,7 @@ type workloadCapabilityBundle struct {
 
 type analyticsCapabilityConfig struct {
 	ConnectionBindings  connectionbinding.BindingCatalog
-	QueryAuditStore     queryaudit.Store
+	QueryAuditStore     analyticsmodule.QueryAuditStore
 	Database            *sql.DB
 	AuditIntentRecorder access.AuditIntentRecorder
 	Production          bool
@@ -101,7 +98,6 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 
 type accessCapabilityConfig struct {
 	Persistence    *accessmodule.Persistence
-	Postgres       *accesspostgres.Repository
 	Database       *sql.DB
 	Production     bool
 	Auth           accessmodule.AuthConfig
@@ -114,15 +110,15 @@ type accessCapabilityConfig struct {
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
-	if cfg.Database == nil && cfg.Persistence == nil && cfg.Postgres == nil {
+	if cfg.Database == nil && cfg.Persistence == nil {
 		return accessCapabilityBundle{}, errors.New("access persistence is required")
 	}
 	if cfg.CurrentProject == nil {
 		return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
 	}
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
-		Persistence: cfg.Persistence, PostgresRepository: cfg.Postgres,
-		Database: cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Persistence: cfg.Persistence,
+		Database:    cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
 		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID: cfg.CurrentProject,
@@ -144,7 +140,6 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 
 type workloadCapabilityConfig struct {
 	Persistence  *jobsmodule.Persistence
-	Postgres     *jobspostgres.Repository
 	Workload     workloadmodule.Config
 	Database     *sql.DB
 	Production   bool
@@ -153,7 +148,7 @@ type workloadCapabilityConfig struct {
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
-	if cfg.Database == nil && cfg.Persistence == nil && cfg.Postgres == nil {
+	if cfg.Database == nil && cfg.Persistence == nil {
 		return workloadCapabilityBundle{}, errors.New("jobs persistence is required")
 	}
 	if cfg.Logger == nil {
@@ -164,8 +159,8 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 		return workloadCapabilityBundle{}, fmt.Errorf("build workload capability: %w", err)
 	}
 	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
-		Persistence: cfg.Persistence, PostgresRepository: cfg.Postgres,
-		Database: cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Persistence: cfg.Persistence,
+		Database:    cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
 		Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
 	})
 	if err != nil {

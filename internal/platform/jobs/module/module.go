@@ -19,9 +19,6 @@ type Config struct {
 	// Persistence is the preferred capability-owned authority bundle. It must
 	// be constructed with NewPostgresPersistence for production composition.
 	Persistence *Persistence
-	// PostgresRepository is a convenience input for callers that already own
-	// the canonical repository. It is converted into Persistence by Build.
-	PostgresRepository *jobpostgres.Repository
 	// Database is retained only for explicit SQLite development/test callers.
 	Database *sql.DB
 	// LegacySQLite is an explicit opt-in for Database. Build never selects
@@ -46,18 +43,8 @@ type Module struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && (config.Database != nil || config.PostgresRepository != nil) {
+	if config.Persistence != nil && config.Database != nil {
 		return nil, errors.New("jobs persistence is mutually exclusive with database inputs")
-	}
-	if config.PostgresRepository != nil {
-		if config.Persistence != nil {
-			return nil, errors.New("PostgresRepository cannot be combined with Persistence")
-		}
-		persistence, err := NewPostgresPersistence(config.PostgresRepository)
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
 	}
 	if config.Production && config.Database != nil {
 		return nil, errors.New("production jobs build rejects SQLite database injection; use PostgreSQL persistence")

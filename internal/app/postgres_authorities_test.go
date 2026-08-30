@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/app/dashboardgenerationfence"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationevents"
+	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
 	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -117,7 +118,7 @@ func TestPostgresAuthorityGraphRefreshAdaptersPreserveRepositoryIdentity(t *test
 	refresh := refreshpostgres.New(nil)
 	audit := accesspostgres.New()
 	jobsAdapter := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
-	auditAdapter, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(audit)
+	auditAdapter, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(audit)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestPostgresAuthorityGraphRefreshAdaptersPreserveRepositoryIdentity(t *test
 	if !refreshCancelAuditMatches(audit, auditAdapter) {
 		t.Fatal("refresh cancellation audit adapter did not retain exact Access audit identity")
 	}
-	if _, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(nil); err == nil {
+	if _, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(nil); err == nil {
 		t.Fatal("refresh cancellation audit adapter accepted a nil Access audit authority")
 	}
 	if refreshJobsMatches(jobspostgres.New(nil), refresh, jobsAdapter) {

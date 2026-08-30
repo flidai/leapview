@@ -1,4 +1,9 @@
-package module
+// Package refreshpostgres contains process-composition bridges that connect
+// the refresh module's narrow contracts to sibling PostgreSQL authorities.
+//
+// These adapters intentionally live outside refresh/module: refresh module
+// code must not import another capability's concrete persistence adapter.
+package refreshpostgres
 
 import (
 	"context"
@@ -9,9 +14,9 @@ import (
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 )
 
-// PostgresCancelAuditWriterAdapter appends the immutable access audit event
-// through the cancellation transaction. The access repository owns canonical
-// event identity, metadata validation and replay conflict handling.
+// PostgresCancelAuditWriterAdapter appends the immutable access audit event through
+// the cancellation transaction. The access repository owns canonical event
+// identity, metadata validation and replay conflict handling.
 type PostgresCancelAuditWriterAdapter struct {
 	Audit *accesspostgres.AuditRepository
 }
@@ -22,8 +27,6 @@ func NewPostgresCancelAuditWriterAdapter(audit *accesspostgres.AuditRepository) 
 	}
 	return &PostgresCancelAuditWriterAdapter{Audit: audit}, nil
 }
-
-var _ PostgresCancelAuditWriter = (*PostgresCancelAuditWriterAdapter)(nil)
 
 func (w *PostgresCancelAuditWriterAdapter) RecordRefreshCancelAuditTx(ctx context.Context, tx refreshpostgres.Tx, intent access.AuditIntent) error {
 	if w == nil || w.Audit == nil {

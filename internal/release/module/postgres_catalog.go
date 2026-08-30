@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
-	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -39,6 +39,8 @@ type postgresCatalogAuthority interface {
 	PostgreSQLAuthority()
 	Configured() bool
 }
+
+var postgresCatalogTargetPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_.:-]{0,159}$`)
 
 // PostgresCatalogConfig wires the canonical project identity and
 // target-scoped connection-binding authorities. TargetID is the process-bound
@@ -80,8 +82,8 @@ func NewPostgresCatalog(config PostgresCatalogConfig) (*PostgresCatalog, error) 
 	if config.LatestReleaseID == nil || config.ActiveDeploymentID == nil {
 		return nil, errors.New("PostgreSQL release catalog latest-release and active-deployment readers are required")
 	}
-	if _, err := connectionbinding.ParseTargetID(config.TargetID); err != nil {
-		return nil, fmt.Errorf("PostgreSQL release catalog target id: %w", err)
+	if !postgresCatalogTargetPattern.MatchString(config.TargetID) {
+		return nil, errors.New("PostgreSQL release catalog target id must be canonical")
 	}
 	return &PostgresCatalog{projects: config.Projects, bindings: config.Bindings, targetID: config.TargetID, latestReleaseID: config.LatestReleaseID, activeDeploymentID: config.ActiveDeploymentID}, nil
 }

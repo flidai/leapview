@@ -1,4 +1,4 @@
-package module
+package refreshpostgres
 
 import (
 	"context"
@@ -28,8 +28,6 @@ func NewPostgresCanonicalVerifierAdapter(deployment *deploymentpostgres.Reposito
 	}
 	return &PostgresCanonicalVerifierAdapter{Deployment: deployment, PhysicalPoolID: physicalPoolID, CatalogID: catalogID, CatalogDatabase: catalogDatabase, CatalogUUID: catalogUUID}, nil
 }
-
-var _ PostgresCanonicalVerifier = (*PostgresCanonicalVerifierAdapter)(nil)
 
 func (v *PostgresCanonicalVerifierAdapter) VerifyCanonicalRefreshTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult) (refreshpostgres.PublicationInput, error) {
 	if v == nil || v.Deployment == nil || tx == nil {

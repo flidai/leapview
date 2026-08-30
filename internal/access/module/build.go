@@ -13,7 +13,6 @@ import (
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -22,9 +21,8 @@ import (
 
 type Config struct {
 	// Persistence is the preferred capability-owned authority bundle.
-	Persistence        *Persistence
-	PostgresRepository *accesspostgres.Repository
-	Database           *sql.DB
+	Persistence *Persistence
+	Database    *sql.DB
 	// LegacySQLite is an explicit development/test opt-in for Database.
 	// Production composition must inject PostgreSQL Persistence instead.
 	LegacySQLite                 bool
@@ -34,8 +32,6 @@ type Config struct {
 	PublicURL                    string
 	InstanceID                   string
 	MCPIssuerURL                 string
-	OAuth                        *mcpoauth.Service
-	OAuthResource                mcpoauth.ResourceServer
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Presentation                 webpage.Presentation
@@ -53,21 +49,11 @@ func NewAuditStore(database *sql.DB) access.AuditStore {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && (config.Database != nil || config.PostgresRepository != nil) {
+	if config.Persistence != nil && config.Database != nil {
 		return nil, errors.New("access persistence is mutually exclusive with database inputs")
 	}
 	if config.Production && config.Database != nil {
 		return nil, errors.New("production access build rejects SQLite database injection; use PostgreSQL persistence")
-	}
-	if config.PostgresRepository != nil {
-		if config.Persistence != nil {
-			return nil, errors.New("PostgresRepository cannot be combined with Persistence")
-		}
-		persistence, err := NewPostgresPersistence(config.PostgresRepository, config.OAuth)
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
 	}
 	if config.Production && config.Persistence == nil {
 		return nil, errors.New("production access build requires injected PostgreSQL persistence")
@@ -102,9 +88,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if err := config.Persistence.Validate(); err != nil {
 		return nil, err
 	}
-	if config.OAuth == nil {
-		config.OAuth = config.Persistence.OAuth
-	}
+	oauth := config.Persistence.OAuth
 	repository := config.Persistence.Repository
 	var avatarService *avatar.Service
 	if config.AvatarBlobs != nil {
@@ -171,18 +155,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if auth == nil {
 		return module, nil
 	}
-	if config.OAuth != nil {
-		module.oauth = config.OAuth
-		module.oauthResource = config.OAuth
-	} else if config.OAuthResource != nil {
-		module.oauthResource = config.OAuthResource
+	if oauth != nil {
+		module.oauth = oauth
+		module.oauthResource = oauth
 	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else if config.PostgresRepository != nil {
-		module.oauth, err = mcpoauth.NewPostgres(config.PostgresRepository.DB(), repository, mcpoauth.Config{
-			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
-		})
-		module.oauthResource = module.oauth
 	} else if config.Database != nil {
 		module.oauth, err = mcpoauth.New(config.Database, repository, mcpoauth.Config{
 			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),

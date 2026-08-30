@@ -40,11 +40,10 @@ type AuthorizeProjectCapability func(context.Context, string, projectgraph.Resou
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
 	Database *sql.DB
-	// NativeRepository is the complete PostgreSQL authoring authority. It is
-	// mutually exclusive with Database and uses UUIDv7 identity generators.
-	// Keeping the concrete type here prevents production composition from
-	// accidentally supplying a legacy SQLite or in-memory repository.
-	NativeRepository           *authoringpostgres.Repository
+	// Persistence is the opaque native dashboard authority bundle. It is
+	// mutually exclusive with Database; the bundle owns the concrete authoring
+	// repository and uses UUIDv7 identity generators.
+	Persistence                *NativePersistence
 	AuditIntentRecorder        access.AuditIntentRecorder
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
@@ -54,14 +53,14 @@ type AuthoringConfig struct {
 // BuildAuthoring constructs the complete dashboard authoring application and
 // its adapters behind the dashboard module surface.
 func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
-	if config.Database != nil && config.NativeRepository != nil {
+	if config.Database != nil && config.Persistence != nil {
 		return nil, fmt.Errorf("dashboard authoring cannot combine native PostgreSQL and SQLite repositories")
 	}
-	if config.Database == nil && config.NativeRepository == nil {
+	if config.Database == nil && config.Persistence == nil {
 		return nil, fmt.Errorf("dashboard authoring database is required")
 	}
-	if config.NativeRepository != nil && !config.NativeRepository.IsNative() {
-		return nil, fmt.Errorf("dashboard authoring native repository is not configured")
+	if config.Persistence != nil && !config.Persistence.valid() {
+		return nil, fmt.Errorf("dashboard authoring native persistence is not configured")
 	}
 	if config.AuthorizeResource == nil || config.AuthorizeProjectCapability == nil {
 		return nil, fmt.Errorf("dashboard authoring resource and project capability authorizers are required")
@@ -71,11 +70,11 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	}
 	var repository authoring.Repository
 	ids := newAuthoringIDs(cryptorand.Reader)
-	if config.NativeRepository != nil {
+	if config.Persistence != nil {
 		if config.AuditIntentRecorder != nil {
 			return nil, fmt.Errorf("dashboard authoring native composition rejects SQLite audit recorder")
 		}
-		repository = config.NativeRepository
+		repository = config.Persistence.authoring
 		ids = authoringIDs{
 			dashboard: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
 			draft:     func() (authoring.DraftID, error) { return authoringpostgres.NewDraftID() },

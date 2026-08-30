@@ -11,6 +11,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
+	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
@@ -263,7 +264,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatalf("pipeline plan identity does not match delivery evidence: %#v", plan)
 	}
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	verifier, err := NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-concrete", catalogDB, catalogUUID)
+	verifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-concrete", catalogDB, catalogUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,7 +287,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if _, err := persistence.Runs.MarkRunPrepared(t.Context(), claimed); err != nil {
 		t.Fatal(err)
 	}
-	wrongCatalogVerifier, err := NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-wrong", catalogDB, catalogUUID)
+	wrongCatalogVerifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, poolID, "catalog-wrong", catalogDB, catalogUUID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -380,7 +381,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 
 func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
 	db := accessOnlyPostgresDB(t)
-	writer, err := NewPostgresCancelAuditWriterAdapter(accesspostgres.New())
+	writer, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(accesspostgres.New())
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -25,6 +25,11 @@ import (
 
 type CredentialMode string
 
+// QueryAuditStore is the analytics-module boundary for durable query audit
+// reads and writes. The alias keeps application composition on the module
+// surface while preserving the capability-owned contract.
+type QueryAuditStore = queryaudit.Store
+
 const (
 	CredentialModeNonSecret              CredentialMode = "non_secret"
 	CredentialModeDevelopmentEnvironment CredentialMode = "development_environment"

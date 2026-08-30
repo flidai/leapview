@@ -6,7 +6,6 @@ import (
 	"strings"
 	"testing"
 
-	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 )
@@ -54,19 +53,14 @@ func TestValidateDashboardAssemblyInputsRejectsPartialOrMixedNativeAuthorities(t
 			want: "persistence bundle",
 		},
 		{
-			name: "missing authoring repository",
-			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}},
-			want: "authoring repository",
-		},
-		{
 			name: "missing reconciler",
-			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardAuthoring: &dashboardauthoringpostgres.Repository{}},
+			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}},
 			want: "publication reconciler",
 		},
 		{
 			name: "forged bundle",
-			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardAuthoring: &dashboardauthoringpostgres.Repository{}, DashboardPublicationReconciler: nativeDashboardReconcilerStub{}},
-			want: "does not match persistence bundle",
+			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardPublicationReconciler: nativeDashboardReconcilerStub{}},
+			want: "authoring application",
 		},
 	}
 	for _, test := range tests {

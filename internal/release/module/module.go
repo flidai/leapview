@@ -59,7 +59,7 @@ type Config struct {
 	// Catalog is the project/connection read authority. Native production
 	// composition injects a PostgreSQL-marked catalog independently from the
 	// release mutation authority; legacy composition derives it from SQLite.
-	Catalog release.CatalogRepository
+	Catalog Catalog
 	// Database is retained only for explicitly selected legacy SQLite
 	// development/test composition.
 	Database     *sql.DB
@@ -80,6 +80,15 @@ type Config struct {
 	API                  APIConfig
 	Logger               *slog.Logger
 	ExtensionPreparation extension.Preparation
+}
+
+// Catalog is the release-module boundary for project and connection reads.
+// It repeats the narrow domain contract so module configuration does not
+// expose a repository-owned type from another package.
+type Catalog interface {
+	GetProject(context.Context, string) (release.ProjectRecord, error)
+	ListConnections(context.Context, string, string) ([]release.ConnectionRecord, error)
+	GetConnection(context.Context, string, string, string) (release.ConnectionRecord, error)
 }
 
 // NativePersistence is the capability-owned release authority consumed by the

@@ -179,10 +179,6 @@ type ConnectionAuthorizer func(context.Context, string, string, string, access.C
 type Config struct {
 	// Persistence is the preferred capability-owned authority bundle.
 	Persistence *Persistence
-	// PostgresRepository is the native PostgreSQL control authority used by
-	// production. It is intentionally concrete so a database/sql or arbitrary
-	// repository cannot be mislabeled as the production backend.
-	PostgresRepository *manageddatapostgres.Repository
 	// Database is retained only for the explicit legacy SQLite development
 	// adapter. Production always rejects it.
 	Database            *sql.DB
@@ -236,7 +232,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		if cfg.Database != nil || cfg.LegacySQLite {
 			return nil, errors.New("production managed-data module rejects SQLite database injection")
 		}
-		if cfg.Persistence == nil && cfg.PostgresRepository == nil {
+		if cfg.Persistence == nil {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
 	}
@@ -266,18 +262,8 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		})
 		return module, nil
 	}
-	if cfg.Persistence != nil && (cfg.Database != nil || cfg.PostgresRepository != nil) {
+	if cfg.Persistence != nil && cfg.Database != nil {
 		return nil, errors.New("managed-data persistence is mutually exclusive with database inputs")
-	}
-	if cfg.Database != nil && cfg.PostgresRepository != nil {
-		return nil, errors.New("managed-data persistence is mutually exclusive with database inputs")
-	}
-	if cfg.PostgresRepository != nil {
-		persistence, persistenceErr := NewPostgresPersistence(cfg.PostgresRepository)
-		if persistenceErr != nil {
-			return nil, persistenceErr
-		}
-		cfg.Persistence = &persistence
 	}
 	if cfg.Production {
 		if cfg.Database != nil || cfg.LegacySQLite {

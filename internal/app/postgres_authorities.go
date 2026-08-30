@@ -28,6 +28,7 @@ import (
 	manageddataaudit "github.com/flidai/leapview/internal/app/manageddataaudit"
 	manageddataworkflow "github.com/flidai/leapview/internal/app/manageddataworkflow"
 	"github.com/flidai/leapview/internal/app/productaudit"
+	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
 	"github.com/flidai/leapview/internal/app/releaseaudit"
 	"github.com/flidai/leapview/internal/app/releasecatalog"
 	"github.com/flidai/leapview/internal/app/releaseevents"
@@ -106,7 +107,7 @@ type PostgresAuthorityGraph struct {
 	// retain the exact Refresh, Jobs and Access audit repository identities so
 	// refresh transactions cannot silently split across sibling authorities.
 	RefreshJobs        *refreshmodule.PostgresJobsAdapter
-	RefreshCancelAudit *refreshmodule.PostgresCancelAuditWriterAdapter
+	RefreshCancelAudit *refreshcomposition.PostgresCancelAuditWriterAdapter
 
 	Release        *releasepostgres.Repository
 	ReleaseCatalog *releasemodule.PostgresCatalog
@@ -195,7 +196,7 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 	servingState := servingstatepostgres.New(runtime)
 	refresh := refreshpostgres.New(runtime)
 	refreshJobs := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
-	refreshCancelAudit, err := refreshmodule.NewPostgresCancelAuditWriterAdapter(audit)
+	refreshCancelAudit, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(audit)
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL refresh cancellation audit authority: %w", err)
 	}
@@ -518,7 +519,7 @@ func refreshJobsMatches(jobs *jobspostgres.Repository, refresh *refreshpostgres.
 	return jobs != nil && refresh != nil && adapter != nil && adapter.Jobs == jobs && adapter.Refresh == refresh
 }
 
-func refreshCancelAuditMatches(audit *accesspostgres.AuditRepository, adapter *refreshmodule.PostgresCancelAuditWriterAdapter) bool {
+func refreshCancelAuditMatches(audit *accesspostgres.AuditRepository, adapter *refreshcomposition.PostgresCancelAuditWriterAdapter) bool {
 	return audit != nil && adapter != nil && adapter.Audit == audit
 }
 
