@@ -11,6 +11,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
@@ -30,7 +31,9 @@ type projectFileReader interface {
 
 type osProjectReader struct{ document.OSFragmentReader }
 
-func (osProjectReader) ReadFile(path string) ([]byte, error) { return os.ReadFile(path) }
+func (osProjectReader) ReadFile(path string) ([]byte, error) {
+	return securefs.ReadCanonicalFile(path)
+}
 func (osProjectReader) ExpandIncludes(baseDir string, includes []string) ([]string, error) {
 	return expandIncludes(baseDir, includes)
 }
@@ -375,7 +378,7 @@ func expandIncludes(baseDir string, includes []string) ([]string, error) {
 			if _, duplicate := seen[canonical]; duplicate {
 				continue
 			}
-			info, err := os.Stat(match)
+			info, err := securefs.StatCanonicalFile(canonical)
 			if err != nil {
 				return nil, fmt.Errorf("include pattern %q match %q: %w", pattern, includeDisplayPath(baseDir, match), err)
 			}

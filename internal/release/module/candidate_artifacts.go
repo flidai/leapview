@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -72,7 +73,7 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil || request.Scope.Environment != string(service.environment) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
-	projectBytes, err := os.ReadFile(request.Source.ProjectArtifactPath)
+	projectBytes, err := securefs.ReadCanonicalRegularFile(request.Source.ProjectArtifactPath)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}
@@ -294,7 +295,7 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if request.Scope.Environment != string(service.environment) {
 		return release.CandidateArtifactSet{}, fmt.Errorf("%w: candidate environment does not match target", release.ErrCandidateArtifactInvalid)
 	}
-	projectBytes, err := os.ReadFile(request.Source.ProjectArtifactPath)
+	projectBytes, err := securefs.ReadCanonicalRegularFile(request.Source.ProjectArtifactPath)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}

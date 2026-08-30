@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"fmt"
 	"reflect"
 	"sort"
 
@@ -105,7 +106,7 @@ func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Proje
 	if err != nil {
 		return ProjectPlan{}, err
 	}
-	return planProjectAgainstArtifact(project, active), nil
+	return planProjectAgainstArtifact(project, active)
 }
 
 // PlanProjectFilesAgainstArtifact is the in-memory counterpart to
@@ -115,13 +116,17 @@ func PlanProjectFilesAgainstArtifact(files map[string][]byte, projectFile string
 	if err != nil {
 		return ProjectPlan{}, err
 	}
-	return planProjectAgainstArtifact(project, active), nil
+	return planProjectAgainstArtifact(project, active)
 }
 
-func planProjectAgainstArtifact(project Project, active projectartifact.Project) ProjectPlan {
+func planProjectAgainstArtifact(project Project, active projectartifact.Project) (ProjectPlan, error) {
 	plan := planForProject(project)
 	changes, dependencyChanges, summary := diffProjectGraphs(project.Graph, active.Graph())
-	for _, materialization := range diffCompiledMaterialization(project, active) {
+	materializationChanges, err := diffCompiledMaterialization(project, active)
+	if err != nil {
+		return ProjectPlan{}, err
+	}
+	for _, materialization := range materializationChanges {
 		merged := false
 		for i := range changes {
 			if changes[i].ID == materialization.ID && changes[i].Action == materialization.Action {
@@ -157,10 +162,10 @@ func planProjectAgainstArtifact(project Project, active projectartifact.Project)
 		summary.MaterializationImpact = summary.MaterializationImpact || change.MaterializationImpact
 	}
 	plan.Changes, plan.DependencyChanges, plan.Summary = changes, dependencyChanges, summary
-	return plan
+	return plan, nil
 }
 
-func diffCompiledMaterialization(project Project, active projectartifact.Project) []ProjectPlanChange {
+func diffCompiledMaterialization(project Project, active projectartifact.Project) ([]ProjectPlanChange, error) {
 	changes := make([]ProjectPlanChange, 0)
 	activeTables := active.ModelTables()
 	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
@@ -169,7 +174,11 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 			authoredTables[id] = table
 		}
 	}
-	seen := make(map[string]struct{}, len(activeTables)+len(authoredTables))
+	capacity, err := checkedCapacitySum(len(activeTables), len(authoredTables))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization table set: %w", err)
+	}
+	seen := make(map[string]struct{}, capacity)
 	for id := range authoredTables {
 		seen[id] = struct{}{}
 	}
@@ -202,7 +211,11 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 			authoredSources[id] = source
 		}
 	}
-	seen = make(map[string]struct{}, len(activeSources)+len(authoredSources))
+	capacity, err = checkedCapacitySum(len(activeSources), len(authoredSources))
+	if err != nil {
+		return nil, fmt.Errorf("compiled materialization source set: %w", err)
+	}
+	seen = make(map[string]struct{}, capacity)
 	for id := range authoredSources {
 		seen[id] = struct{}{}
 	}
@@ -225,7 +238,18 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		}
 		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindSource), Key: resource.Name, Reason: "compiled source definition changed", MaterializationImpact: true})
 	}
-	return changes
+	return changes, nil
+}
+
+func checkedCapacitySum(left, right int) (int, error) {
+	if left < 0 || right < 0 {
+		return 0, fmt.Errorf("capacity cannot be negative")
+	}
+	maximumInt := int(^uint(0) >> 1)
+	if left > maximumInt-right {
+		return 0, fmt.Errorf("capacity overflows platform int")
+	}
+	return left + right, nil
 }
 
 func planForProject(project Project) ProjectPlan {

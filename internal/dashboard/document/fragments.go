@@ -8,11 +8,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	configschema "github.com/flidai/leapview/internal/project/schema"
 	"gopkg.in/yaml.v3"
 )
@@ -63,32 +63,20 @@ type FragmentReader interface {
 // OSFragmentReader preserves the original filesystem/symlink boundary.
 type OSFragmentReader struct{}
 
-func (OSFragmentReader) ReadFile(path string) ([]byte, error) { return os.ReadFile(path) }
+func (OSFragmentReader) ReadFile(path string) ([]byte, error) {
+	return securefs.ReadCanonicalFile(path)
+}
 func (OSFragmentReader) ValidateDashboardPath(projectRoot, dashboardPath string) (string, string, error) {
-	root, err := filepath.Abs(projectRoot)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve project boundary: %w", err)
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", "", fmt.Errorf("resolve project boundary: %w", err)
-	}
-	dashboardPath, err = filepath.Abs(dashboardPath)
+	canonicalDashboard, relativeDashboard, err := securefs.CanonicalPathWithinRoot(projectRoot, dashboardPath)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve dashboard path: %w", err)
 	}
-	canonicalDashboard, err := filepath.EvalSymlinks(dashboardPath)
+	info, err := securefs.StatCanonicalFile(canonicalDashboard)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve dashboard path: %w", err)
 	}
-	if info, statErr := os.Stat(canonicalDashboard); statErr != nil {
-		return "", "", fmt.Errorf("resolve dashboard path: %w", statErr)
-	} else if info.IsDir() {
+	if info.IsDir() {
 		return "", "", fmt.Errorf("dashboard path %q is a directory", dashboardPath)
-	}
-	relativeDashboard, err := filepath.Rel(root, canonicalDashboard)
-	if err != nil || filepath.IsAbs(relativeDashboard) || relativeDashboard == ".." || strings.HasPrefix(relativeDashboard, ".."+string(filepath.Separator)) {
-		return "", "", fmt.Errorf("dashboard path %q resolves outside project boundary", dashboardPath)
 	}
 	return filepath.Dir(canonicalDashboard), filepath.ToSlash(relativeDashboard), nil
 }
@@ -103,25 +91,9 @@ func (OSFragmentReader) CanonicalPath(path string) (string, error) {
 	return filepath.EvalSymlinks(path)
 }
 func (OSFragmentReader) RelativePath(projectRoot, target string) (string, error) {
-	root, err := filepath.Abs(projectRoot)
+	_, relative, err := securefs.CanonicalPathWithinRoot(projectRoot, target)
 	if err != nil {
 		return "", err
-	}
-	root, err = filepath.EvalSymlinks(root)
-	if err != nil {
-		return "", err
-	}
-	canonical, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	canonical, err = filepath.EvalSymlinks(canonical)
-	if err != nil {
-		return "", err
-	}
-	relative, err := filepath.Rel(root, canonical)
-	if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("path resolves outside project boundary")
 	}
 	return filepath.ToSlash(relative), nil
 }
@@ -728,7 +700,7 @@ func resolveFragmentPaths(projectRoot, dashboardDir, pattern string) ([]string, 
 		if err != nil || filepath.IsAbs(relative) || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
 			return nil, fmt.Errorf("dashboard fragment include %q resolves outside the project boundary", pattern)
 		}
-		info, err := os.Stat(match)
+		info, err := securefs.StatCanonicalFile(canonical)
 		if err != nil {
 			return nil, fmt.Errorf("dashboard fragment include %q: %w", pattern, err)
 		}
