@@ -91,10 +91,21 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
-	plan, err := planCandidateProject(request.Source.ProjectPath, base)
+	return service.inspectCandidateProject(ctx, request, compiledProject, request.Source.ProjectPath, base)
+}
+
+// inspectCandidateProject contains the shared compiler/evidence logic used by
+// both the legacy filesystem-backed path and the native object-backed path.
+// Native callers use inspectCandidateProjectPlan with logical source bytes.
+func (service *candidateArtifactService) inspectCandidateProject(ctx context.Context, request release.CandidateArtifactRequest, compiledProject projectartifact.Project, projectPath string, base candidateGenerationBase) (release.CandidateArtifactSet, error) {
+	plan, err := planCandidateProject(projectPath, base)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	return service.inspectCandidateProjectPlan(ctx, request, compiledProject, plan, base)
+}
+
+func (service *candidateArtifactService) inspectCandidateProjectPlan(ctx context.Context, request release.CandidateArtifactRequest, compiledProject projectartifact.Project, plan projectcompiler.ProjectPlan, base candidateGenerationBase) (release.CandidateArtifactSet, error) {
 	activations, err := compiledProject.ConnectionActivations()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)

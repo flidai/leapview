@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	"github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -24,6 +25,7 @@ import (
 type Module struct {
 	service               *release.Service
 	candidateArtifacts    *candidateArtifactService
+	nativeCandidatePhases candidateArtifactPhases
 	catalog               release.CatalogRepository
 	searchCatalog         projectcatalogSearcher
 	deployments           release.DeploymentLinkage
@@ -84,6 +86,11 @@ type Config struct {
 	API                  APIConfig
 	Logger               *slog.Logger
 	ExtensionPreparation extension.Preparation
+	// CandidateSourceReader is the optional native object-backed source reader.
+	// Native candidate inspect is enabled only when this capability is present;
+	// materialization and rehydration remain unavailable until serving-object
+	// admission is wired by the deployment authority.
+	CandidateSourceReader project.CandidateSourceObjectReader
 }
 
 // Catalog is the release-module boundary for project and connection reads.
@@ -303,6 +310,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		environment:   string(environment), api: config.API, logger: logger,
 		finalizeExecution: finalizeExecution, auditIntentConfigured: auditIntentConfigured,
 	}
+	if native != nil && config.CandidateSourceReader != nil {
+		module.nativeCandidatePhases = &nativeCandidateArtifactPhases{
+			reader: config.CandidateSourceReader, environment: environment,
+			pins: config.ManagedDataPins, extensionPreparation: config.ExtensionPreparation,
+		}
+	}
 	if err := validateFinalizeJobHandlers(finalizeExecution, module.JobHandlers()); err != nil {
 		return nil, err
 	}
@@ -343,10 +356,16 @@ func (m *Module) InspectCandidateArtifacts(
 	ctx context.Context,
 	request release.CandidateArtifactRequest,
 ) (release.CandidateArtifactSet, error) {
-	if m == nil || m.candidateArtifacts == nil {
+	if m == nil {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
-	return m.candidateArtifacts.InspectCandidateArtifacts(ctx, request)
+	if m.candidateArtifacts != nil {
+		return m.candidateArtifacts.InspectCandidateArtifacts(ctx, request)
+	}
+	if m.nativeCandidatePhases == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.nativeCandidatePhases.InspectCandidateArtifacts(ctx, request)
 }
 
 // MaterializeCandidateArtifacts exposes the write phase after a durable plan
@@ -356,10 +375,16 @@ func (m *Module) MaterializeCandidateArtifacts(
 	request release.CandidateArtifactRequest,
 	inspected release.CandidateArtifactSet,
 ) (release.CandidateArtifactSet, error) {
-	if m == nil || m.candidateArtifacts == nil {
+	if m == nil {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
-	return m.candidateArtifacts.MaterializeCandidateArtifacts(ctx, request, inspected)
+	if m.candidateArtifacts != nil {
+		return m.candidateArtifacts.MaterializeCandidateArtifacts(ctx, request, inspected)
+	}
+	if m.nativeCandidatePhases == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.nativeCandidatePhases.MaterializeCandidateArtifacts(ctx, request, inspected)
 }
 
 // HydrateCandidateArtifacts reattaches a durable artifact for a retry without
@@ -370,10 +395,16 @@ func (m *Module) HydrateCandidateArtifacts(
 	inspected release.CandidateArtifactSet,
 	identity release.CandidateArtifactIdentity,
 ) (release.CandidateArtifactSet, error) {
-	if m == nil || m.candidateArtifacts == nil {
+	if m == nil {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
-	return m.candidateArtifacts.HydrateCandidateArtifacts(ctx, request, inspected, identity)
+	if m.candidateArtifacts != nil {
+		return m.candidateArtifacts.HydrateCandidateArtifacts(ctx, request, inspected, identity)
+	}
+	if m.nativeCandidatePhases == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.nativeCandidatePhases.HydrateCandidateArtifacts(ctx, request, inspected, identity)
 }
 
 func (m *Module) RetainCandidateProvenance(
