@@ -79,19 +79,21 @@ type PostgresAuthorityGraph struct {
 	Jobs                 *jobspostgres.Repository
 	Events               *eventspostgres.Repository
 
-	Project     *projectpostgres.Repository
-	Access      *accesspostgres.Repository
-	AccessAudit *accesspostgres.AuditRepository
-	Product     *adminproductpostgres.Repository
+	Project      *projectpostgres.Repository
+	Access       *accesspostgres.Repository
+	AccessAudit  *accesspostgres.AuditRepository
+	Product      *adminproductpostgres.Repository
+	ProductAudit *productaudit.Adapter
 
 	Idempotency              *idempotencypostgres.Store
 	CursorSigning            *cursorsigningpostgres.Repository
 	CursorSigningMaintenance *cursorsigningpostgres.Maintenance
 
-	ConnectionBinding *connectionbindingpostgres.Repository
-	QueryAudit        *queryauditpostgres.Repository
-	Cache             *cachepostgres.Repository
-	Lineage           *lineagepostgres.Repository
+	ConnectionBinding      *connectionbindingpostgres.Repository
+	ConnectionBindingAudit *connectionbindingaudit.Adapter
+	QueryAudit             *queryauditpostgres.Repository
+	Cache                  *cachepostgres.Repository
+	Lineage                *lineagepostgres.Repository
 
 	// PhysicalPool is the control-database identity/admission authority for a
 	// DuckLake physical namespace. DuckLake remains authoritative for table and
@@ -111,6 +113,8 @@ type PostgresAuthorityGraph struct {
 	RefreshCancelAudit *refreshcomposition.PostgresCancelAuditWriterAdapter
 
 	Release        *releasepostgres.Repository
+	ReleaseAudit   *releaseaudit.Adapter
+	ReleaseEvents  *releaseevents.Adapter
 	ReleaseCatalog *releasemodule.PostgresCatalog
 
 	DeploymentRepository   *deploymentpostgres.Repository
@@ -118,6 +122,7 @@ type PostgresAuthorityGraph struct {
 	AgentRepository        *agentpostgres.Repository
 	AgentPersistence       *agentmodule.Persistence
 	ManagedDataRepository  *manageddatapostgres.Repository
+	ManagedDataAudit       *manageddataaudit.Adapter
 	ManagedDataPersistence *manageddatamodule.Persistence
 
 	// Dashboard authorities are all backed by the retained runtime pool. The
@@ -176,11 +181,13 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL access authority: %w", err)
 	}
-	product, err := adminproductpostgres.NewWithOptions(runtime, adminproductpostgres.Options{Audit: productaudit.New()})
+	productAudit := productaudit.NewWithRepository(audit)
+	product, err := adminproductpostgres.NewWithOptions(runtime, adminproductpostgres.Options{Audit: productAudit})
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL product authority: %w", err)
 	}
-	binding, err := connectionbindingpostgres.NewProduction(runtime, connectionbindingaudit.New())
+	connectionBindingAudit := connectionbindingaudit.NewWithRepository(audit)
+	binding, err := connectionbindingpostgres.NewProduction(runtime, connectionBindingAudit)
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL connection-binding authority: %w", err)
 	}
@@ -271,16 +278,19 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	if !ok || agentRepository == nil {
 		return nil, errors.New("construct PostgreSQL agent persistence: native repository is unavailable")
 	}
+	managedDataAudit := manageddataaudit.NewWithRepository(audit)
 	managedDataRepository := manageddatapostgres.NewWithOptions(runtime, manageddatapostgres.Options{
-		Workflow: manageddataworkflow.New(jobs), Audit: manageddataaudit.New(),
+		Workflow: manageddataworkflow.New(jobs), Audit: managedDataAudit,
 	})
 	managedDataPersistence, err := manageddatamodule.NewPostgresPersistence(managedDataRepository)
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL managed-data persistence: %w", err)
 	}
 
+	releaseAudit := releaseaudit.NewWithRepository(audit)
+	releaseEvents := releaseevents.NewWithRepository(events)
 	releaseRepository := releasepostgres.NewWithOptions(runtime, releasepostgres.Options{
-		Audit: releaseaudit.New(), Events: releaseevents.New(), Workflow: releasejobs.New(jobs),
+		Audit: releaseAudit, Events: releaseEvents, Workflow: releasejobs.New(jobs),
 	})
 	projectCatalog, err := releasecatalog.NewProjectAuthority(project)
 	if err != nil {
@@ -306,16 +316,16 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	graph := &PostgresAuthorityGraph{
 		Bootstrap: bootstrap, Settings: bootstrap,
 		Operation: operations, OperationMaintenance: operationMaintenance, Jobs: jobs, Events: events,
-		Project: project, Access: accessRepository, AccessAudit: audit, Product: product,
+		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
 		Idempotency:   idempotencypostgres.NewStore(runtime),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorsigningpostgres.NewMaintenance(maintenance),
-		ConnectionBinding: binding, QueryAudit: queryauditpostgres.New(runtime), Cache: cachepostgres.New(runtime), Lineage: lineagepostgres.New(runtime),
+		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), Cache: cachepostgres.New(runtime), Lineage: lineagepostgres.New(runtime),
 		PhysicalPool: physicalPool, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
-		Release: releaseRepository, ReleaseCatalog: releaseCatalog,
+		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
 		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
 		AgentRepository: agentRepository, AgentPersistence: &agentPersistence,
-		ManagedDataRepository: managedDataRepository, ManagedDataPersistence: &managedDataPersistence,
+		ManagedDataRepository: managedDataRepository, ManagedDataAudit: managedDataAudit, ManagedDataPersistence: &managedDataPersistence,
 		DashboardSession: dashboardSession, DashboardUsage: dashboardUsage,
 		DashboardAppearance: dashboardAppearance, DashboardAppearanceAudit: dashboardAppearanceAudit, DashboardAppearanceEvents: dashboardAppearanceEvents,
 		DashboardAuthoring: dashboardAuthoring, DashboardAuthoringAudit: dashboardAuthoringAudit, DashboardAuthoringEvents: dashboardAuthoringEvents,
@@ -396,15 +406,15 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"platform bootstrap authority", g.Bootstrap}, {"platform settings authority", g.Settings},
 		{"operation authority", g.Operation}, {"operation maintenance authority", g.OperationMaintenance},
 		{"jobs authority", g.Jobs}, {"event authority", g.Events}, {"project authority", g.Project},
-		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product},
+		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
-		{"connection-binding authority", g.ConnectionBinding}, {"query-audit authority", g.QueryAudit}, {"cache authority", g.Cache}, {"lineage authority", g.Lineage},
+		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"cache authority", g.Cache}, {"lineage authority", g.Lineage},
 		{"physical-pool authority", g.PhysicalPool}, {"serving-state authority", g.ServingState},
 		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
-		{"release authority", g.Release}, {"release catalog authority", g.ReleaseCatalog},
+		{"release authority", g.Release}, {"release audit authority", g.ReleaseAudit}, {"release event authority", g.ReleaseEvents}, {"release catalog authority", g.ReleaseCatalog},
 		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
 		{"agent repository", g.AgentRepository}, {"agent persistence", g.AgentPersistence},
-		{"managed-data repository", g.ManagedDataRepository}, {"managed-data persistence", g.ManagedDataPersistence},
+		{"managed-data repository", g.ManagedDataRepository}, {"managed-data audit authority", g.ManagedDataAudit}, {"managed-data persistence", g.ManagedDataPersistence},
 		{"dashboard session authority", g.DashboardSession}, {"dashboard usage authority", g.DashboardUsage},
 		{"dashboard appearance authority", g.DashboardAppearance}, {"dashboard appearance audit authority", g.DashboardAppearanceAudit},
 		{"dashboard appearance event authority", g.DashboardAppearanceEvents},
@@ -428,11 +438,17 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	if g.Access.DB() == nil {
 		return errors.New("PostgreSQL authority graph access authority is not configured")
 	}
+	if !g.ProductAudit.Matches(g.AccessAudit) {
+		return errors.New("PostgreSQL authority graph product audit adapter does not preserve access audit identity")
+	}
 	if !g.Project.Configured() {
 		return errors.New("PostgreSQL authority graph project authority is not configured")
 	}
 	if !g.ConnectionBinding.Configured() || !g.ConnectionBinding.AuditCapable() {
 		return errors.New("PostgreSQL authority graph connection-binding authority is not audit-capable")
+	}
+	if !g.ConnectionBindingAudit.Matches(g.AccessAudit) {
+		return errors.New("PostgreSQL authority graph connection-binding audit adapter does not preserve access audit identity")
 	}
 	if !g.ServingState.Configured() {
 		return errors.New("PostgreSQL authority graph serving-state authority is not configured")
@@ -446,6 +462,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	if !g.Release.Configured() || !g.Release.AuditCapable() || !g.Release.EventCapable() || !g.Release.WorkflowCapable() {
 		return errors.New("PostgreSQL authority graph release authority is not fully configured")
 	}
+	if !g.ReleaseAudit.Matches(g.AccessAudit) || !g.ReleaseEvents.Matches(g.Events) {
+		return errors.New("PostgreSQL authority graph release adapters do not preserve sibling repository identity")
+	}
 	if !g.ReleaseCatalog.Configured() {
 		return errors.New("PostgreSQL authority graph release catalog is not configured")
 	}
@@ -457,6 +476,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if !g.ManagedDataRepository.TransitionCapabilitiesConfigured() {
 		return errors.New("PostgreSQL authority graph managed-data authority is not fully configured")
+	}
+	if !g.ManagedDataAudit.Matches(g.AccessAudit) {
+		return errors.New("PostgreSQL authority graph managed-data audit adapter does not preserve access audit identity")
 	}
 	if !deploymentPersistenceMatches(g.DeploymentRepository, g.DeploymentPersistence) || !agentPersistenceMatches(g.AgentRepository, g.AgentPersistence) {
 		return errors.New("PostgreSQL authority graph persistence identity mismatch")

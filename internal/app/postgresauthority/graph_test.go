@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
 	"github.com/flidai/leapview/internal/app/dashboardauthoringaudit"
@@ -14,7 +15,11 @@ import (
 	"github.com/flidai/leapview/internal/app/dashboardgenerationfence"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
 	"github.com/flidai/leapview/internal/app/dashboardpublicationevents"
+	manageddataaudit "github.com/flidai/leapview/internal/app/manageddataaudit"
+	"github.com/flidai/leapview/internal/app/productaudit"
 	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
+	"github.com/flidai/leapview/internal/app/releaseaudit"
+	"github.com/flidai/leapview/internal/app/releaseevents"
 	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -256,6 +261,13 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 	}) {
 		t.Fatal("constructed graph did not preserve dashboard target and persistence identities")
 	}
+	if !graph.ProductAudit.Matches(graph.AccessAudit) ||
+		!graph.ConnectionBindingAudit.Matches(graph.AccessAudit) ||
+		!graph.ManagedDataAudit.Matches(graph.AccessAudit) ||
+		!graph.ReleaseAudit.Matches(graph.AccessAudit) ||
+		!graph.ReleaseEvents.Matches(graph.Events) {
+		t.Fatal("constructed graph did not preserve product, connection-binding, managed-data, or release sibling identities")
+	}
 
 	originalEvents := graph.DashboardPublicationEvents
 	graph.DashboardPublicationEvents = dashboardpublicationevents.NewWithRepository(eventspostgres.New())
@@ -263,6 +275,35 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 		t.Fatalf("mismatched publication event authority error = %v", err)
 	}
 	graph.DashboardPublicationEvents = originalEvents
+	originalProductAudit := graph.ProductAudit
+	graph.ProductAudit = productaudit.NewWithRepository(accesspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "product audit adapter") {
+		t.Fatalf("mismatched product audit authority error = %v", err)
+	}
+	graph.ProductAudit = originalProductAudit
+	originalConnectionBindingAudit := graph.ConnectionBindingAudit
+	graph.ConnectionBindingAudit = connectionbindingaudit.NewWithRepository(accesspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "connection-binding audit adapter") {
+		t.Fatalf("mismatched connection-binding audit authority error = %v", err)
+	}
+	graph.ConnectionBindingAudit = originalConnectionBindingAudit
+	originalManagedDataAudit := graph.ManagedDataAudit
+	graph.ManagedDataAudit = manageddataaudit.NewWithRepository(accesspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "managed-data audit adapter") {
+		t.Fatalf("mismatched managed-data audit authority error = %v", err)
+	}
+	graph.ManagedDataAudit = originalManagedDataAudit
+	originalReleaseAudit, originalReleaseEvents := graph.ReleaseAudit, graph.ReleaseEvents
+	graph.ReleaseAudit = releaseaudit.NewWithRepository(accesspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "release adapters") {
+		t.Fatalf("mismatched release audit authority error = %v", err)
+	}
+	graph.ReleaseAudit, graph.ReleaseEvents = originalReleaseAudit, originalReleaseEvents
+	graph.ReleaseEvents = releaseevents.NewWithRepository(eventspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "release adapters") {
+		t.Fatalf("mismatched release event authority error = %v", err)
+	}
+	graph.ReleaseEvents = originalReleaseEvents
 	graph.DashboardTargetID = "target-other"
 	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "generation fence") {
 		t.Fatalf("mismatched dashboard target error = %v", err)

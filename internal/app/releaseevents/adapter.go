@@ -26,6 +26,18 @@ var _ releasepostgres.EventAppender = (*Adapter)(nil)
 // log.
 func New() *Adapter { return &Adapter{events: eventspostgres.New()} }
 
+// NewWithRepository binds the adapter to the exact platform event authority
+// allocated by application composition.
+func NewWithRepository(events *eventspostgres.Repository) *Adapter {
+	return &Adapter{events: events}
+}
+
+// Matches proves this adapter retains the exact platform event repository
+// supplied by application composition rather than a sibling allocation.
+func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
+	return a != nil && a.events != nil && a.events == events
+}
+
 // AppendEvent appends through the caller-owned release transaction and
 // validates the immutable event identity before returning. Transaction
 // ownership remains with Release.

@@ -20,6 +20,18 @@ var _ productpostgres.AuditPort = (*Adapter)(nil)
 
 func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
 
+// NewWithRepository binds the adapter to the exact Access audit authority
+// allocated by application composition.
+func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
+	return &Adapter{audit: audit}
+}
+
+// Matches proves this adapter retains the exact Access audit repository
+// supplied by application composition rather than a sibling allocation.
+func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
+	return a != nil && a.audit != nil && a.audit == audit
+}
+
 func (a *Adapter) RecordAuditEvent(ctx context.Context, tx pgx.Tx, input productpostgres.AuditInput) error {
 	if a == nil || a.audit == nil {
 		return productpostgres.ErrAuditUnavailable

@@ -5,8 +5,24 @@ import (
 	"errors"
 	"testing"
 
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/release/postgres"
 )
+
+func TestNewWithRepositoryPreservesEventRepositoryIdentity(t *testing.T) {
+	events := eventspostgres.New()
+	adapter := NewWithRepository(events)
+	if !adapter.Matches(events) {
+		t.Fatal("adapter did not retain the supplied platform event repository")
+	}
+	if adapter.Matches(eventspostgres.New()) {
+		t.Fatal("adapter accepted a distinct platform event repository")
+	}
+	var nilAdapter *Adapter
+	if nilAdapter.Matches(events) {
+		t.Fatal("nil adapter matched a platform event repository")
+	}
+}
 
 func TestAppendEventRejectsNonCanonicalExplicitEventID(t *testing.T) {
 	_, err := New().AppendEvent(context.Background(), nil, postgres.EventInput{

@@ -28,6 +28,18 @@ var _ releasepostgres.AuditAppender = (*Adapter)(nil)
 // New returns an adapter backed by Access's immutable PostgreSQL audit table.
 func New() *Adapter { return &Adapter{audit: accesspostgres.New()} }
 
+// NewWithRepository binds the adapter to the exact Access audit authority
+// allocated by application composition.
+func NewWithRepository(audit *accesspostgres.AuditRepository) *Adapter {
+	return &Adapter{audit: audit}
+}
+
+// Matches proves this adapter retains the exact Access audit repository
+// supplied by application composition rather than a sibling allocation.
+func (a *Adapter) Matches(audit *accesspostgres.AuditRepository) bool {
+	return a != nil && a.audit != nil && a.audit == audit
+}
+
 // RecordAuditEvent appends and reads back the canonical audit intent using the
 // exact transaction supplied by Release. It never begins, commits, or rolls
 // back the transaction itself.
