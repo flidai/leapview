@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -233,16 +234,56 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
+	validation, _, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
 	object.Body.Close()
 	if object.Info.ContentType != nativeServingArtifactContentType || object.Info.StorageSecurityDomain != "runtime" || object.Info.Digest != materialized.Generation.ArtifactDigest {
 		t.Fatalf("serving object info = %#v", object.Info)
+	}
+	if materialized.Generation.BundleManifestJSON == "" || materialized.Generation.BundleManifestJSON != validation.ManifestJSON {
+		t.Fatalf("materialized bundle manifest = %q, validated = %q", materialized.Generation.BundleManifestJSON, validation.ManifestJSON)
 	}
 	hydrated, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if hydrated.Generation.Identity != materialized.Generation.Identity || hydrated.Compiler.Artifact.Digest() != inspected.Compiler.Artifact.Digest() || hydrated.Artifact.ContentDigest != materialized.Artifact.ContentDigest {
+	if hydrated.Generation.Identity != materialized.Generation.Identity || hydrated.Compiler.Artifact.Digest() != inspected.Compiler.Artifact.Digest() || hydrated.Artifact.ContentDigest != materialized.Artifact.ContentDigest || hydrated.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON {
 		t.Fatalf("hydrated set drifted: %#v", hydrated.Generation)
+	}
+	replayed, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, materialized)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replayed.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON {
+		t.Fatalf("materialized replay changed bundle manifest: %q != %q", replayed.Generation.BundleManifestJSON, materialized.Generation.BundleManifestJSON)
+	}
+}
+
+func TestNativeCandidateMaterializeRejectsTamperedBundleManifestEvidence(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized.Generation.BundleManifestJSON = `{"tampered":true}`
+	if _, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, materialized); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("tampered materialize manifest error = %v", err)
+	}
+	identity := release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID}
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, materialized, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("tampered hydrate manifest error = %v", err)
 	}
 }
 

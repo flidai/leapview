@@ -54,8 +54,13 @@ type CandidateGenerationArtifact struct {
 	// intentionally distinct from Identity.GenerationID/ServingStateID.
 	ServingArtifactID string
 	ArtifactDigest    string
-	DataRevision      string
-	DataMode          GenerationDataMode
+	// BundleManifestJSON is the canonical project-bundle container manifest
+	// retained with the immutable serving artifact. It is populated by native
+	// materialization/hydration from the bundle itself so serving admission can
+	// persist the exact manifest without re-deriving it from compiler evidence.
+	BundleManifestJSON string
+	DataRevision       string
+	DataMode           GenerationDataMode
 	// Deterministic is an explicit compiler/runtime declaration. Zero means
 	// unknown and therefore fail-closed for physical reuse.
 	Deterministic       bool

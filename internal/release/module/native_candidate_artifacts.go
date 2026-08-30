@@ -129,7 +129,11 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	compiledProject := inspected.Compiler.Artifact
 	plan := inspected.Compiler.Plan
 	var content bytes.Buffer
-	_, digest, err := projectbundle.PackCompiledProject(compiledProject, plan, &content)
+	manifest, digest, err := projectbundle.PackCompiledProject(compiledProject, plan, &content)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	manifestJSON, err := nativeBundleManifestJSON(manifest)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -138,6 +142,14 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	}
 	if inspected.Artifact.ContentDigest != "" && inspected.Artifact.ContentDigest != digest || inspected.Generation.ArtifactDigest != "" && inspected.Generation.ArtifactDigest != digest || inspected.Generation.ServingArtifactID != "" && inspected.Generation.ServingArtifactID != nativeServingArtifactID(digest) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving artifact identity changed"))
+	}
+	if inspected.Generation.BundleManifestJSON != "" {
+		if err := validateNativeBundleManifestJSON(inspected.Generation.BundleManifestJSON); err != nil || inspected.Generation.BundleManifestJSON != manifestJSON {
+			if err == nil {
+				err = errors.New("inspected native serving artifact bundle manifest changed")
+			}
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+		}
 	}
 	expectedGenerationID := nativeCandidateGenerationID(request, digest).String()
 	existingIdentity := inspected.Generation.Identity
@@ -169,6 +181,7 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	}
 	result := inspected
 	result.Artifact.ContentDigest = digest
+	result.Generation.BundleManifestJSON = manifestJSON
 	result.Generation.Identity = identity
 	result.Generation.ServingArtifactID = nativeServingArtifactID(digest)
 	result.Generation.ArtifactDigest = digest
@@ -229,6 +242,12 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	if err := validateNativeBundleManifestJSON(validation.ManifestJSON); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if inspected.Generation.BundleManifestJSON != "" && inspected.Generation.BundleManifestJSON != validation.ManifestJSON {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("inspected native serving artifact bundle manifest changed"))
+	}
 	if validation.Digest != identity.ServingArtifactDigest || validation.ProjectID != request.Scope.ProjectID.String() || validation.ProjectDigest != request.Source.ProjectDigest || compiled.ProjectID != request.Scope.ProjectID || compiled.ProjectDigest != request.Source.ProjectDigest {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native serving artifact compiled identity mismatch"))
 	}
@@ -252,6 +271,7 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 	}
 	result := inspected
 	result.Artifact.ContentDigest = identity.ServingArtifactDigest
+	result.Generation.BundleManifestJSON = validation.ManifestJSON
 	result.Compiler.Graph = compiled.Graph
 	result.Compiler.Manifest = compiled.Manifest
 	result.Compiler.Plan = compiled.Plan
@@ -272,6 +292,75 @@ func sameNativeJSON(left, right any) bool {
 	leftBytes, leftErr := json.Marshal(left)
 	rightBytes, rightErr := json.Marshal(right)
 	return leftErr == nil && rightErr == nil && bytes.Equal(leftBytes, rightBytes)
+}
+
+// nativeBundleManifestJSON is the release-side representation of the
+// canonical container manifest emitted by projectbundle.PackCompiledProject
+// and returned by projectbundle.ValidateArtifactReader. Keep the bytes as a
+// JSON object string: downstream serving admission stores this exact value,
+// so it must never be reconstructed from the compiler's semantic manifest.
+func nativeBundleManifestJSON(manifest projectbundle.Manifest) (string, error) {
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		return "", fmt.Errorf("encode native serving artifact bundle manifest: %w", err)
+	}
+	value := string(data)
+	if err := validateNativeBundleManifestJSON(value); err != nil {
+		return "", err
+	}
+	return value, nil
+}
+
+func validateNativeBundleManifestJSON(value string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return errors.New("native serving artifact bundle manifest must be a canonical JSON object")
+	}
+	decoder := json.NewDecoder(strings.NewReader(value))
+	decoder.DisallowUnknownFields()
+	var manifest projectbundle.Manifest
+	if err := decoder.Decode(&manifest); err != nil {
+		return fmt.Errorf("native serving artifact bundle manifest: %w", err)
+	}
+	var extra any
+	if err := decoder.Decode(&extra); err == nil {
+		return errors.New("native serving artifact bundle manifest contains trailing JSON value")
+	} else if !errors.Is(err, io.EOF) {
+		return fmt.Errorf("native serving artifact bundle manifest trailing data: %w", err)
+	}
+	canonical, err := json.Marshal(manifest)
+	if err != nil {
+		return fmt.Errorf("canonicalize native serving artifact bundle manifest: %w", err)
+	}
+	if string(canonical) != value {
+		return errors.New("native serving artifact bundle manifest is not canonical JSON")
+	}
+	if manifest.Version != 1 || manifest.ProjectID == "" || manifest.ProjectDigest == "" || manifest.GraphDigest == "" || manifest.CatalogPath == "" || manifest.CompiledPath == "" || manifest.CompiledSHA256 == "" {
+		return errors.New("native serving artifact bundle manifest is incomplete")
+	}
+	if _, err := projectgraph.NewResourceID(manifest.ProjectID); err != nil {
+		return fmt.Errorf("native serving artifact bundle manifest project id: %w", err)
+	}
+	for field, value := range map[string]string{"project digest": manifest.ProjectDigest, "graph digest": manifest.GraphDigest} {
+		if err := platformdigest.ValidateSHA256Identity(value); err != nil {
+			return fmt.Errorf("native serving artifact bundle manifest %s: %w", field, err)
+		}
+	}
+	if len(manifest.CompiledSHA256) != sha256.Size*2 {
+		return errors.New("native serving artifact bundle manifest compiled digest is invalid")
+	}
+	if _, err := hex.DecodeString(manifest.CompiledSHA256); err != nil {
+		return fmt.Errorf("native serving artifact bundle manifest compiled digest: %w", err)
+	}
+	if manifest.CompiledSHA256 != strings.ToLower(manifest.CompiledSHA256) {
+		return errors.New("native serving artifact bundle manifest compiled digest must be lowercase")
+	}
+	if manifest.CatalogPath != projectbundle.ProjectFile && manifest.CatalogPath != projectbundle.CompiledProjectFile {
+		return errors.New("native serving artifact bundle manifest catalog path is invalid")
+	}
+	if manifest.CompiledPath != projectbundle.CompiledProjectFile {
+		return errors.New("native serving artifact bundle manifest compiled path is invalid")
+	}
+	return nil
 }
 
 func validateNativeInspectedEvidence(request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) error {
