@@ -51,13 +51,13 @@ type PostgresCancelAuditWriter interface {
 	RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error
 }
 
-// PostgresPersistenceConfig supplies the physical publication identity. The
-// refresh authority records this pair as provenance; it never accepts an
-// unqualified snapshot-only data version.
+// PostgresPersistenceConfig supplies the transaction-aware physical
+// publication identity resolver. The refresh authority records the resolved
+// pair as provenance; it never accepts an unqualified snapshot-only data
+// version.
 type PostgresPersistenceConfig struct {
-	PhysicalPoolID string
-	CatalogID      string
-	SchedulerOwner string
+	SchedulerOwner              string
+	PublicationIdentityResolver PostgresPublicationIdentityResolver
 	// Jobs is the complete canonical platform-jobs authority. Reads, enqueue,
 	// lifecycle, and recovery must all come from this one adapter.
 	Jobs              PostgresJobsAuthority
@@ -69,35 +69,35 @@ type PostgresPersistenceConfig struct {
 // module's domain contracts. It does not create a queue or a second workflow
 // authority; callers should provide job queue behavior separately when they
 // enable the dispatcher.
-func NewPostgresPersistence(repository *refreshpostgres.Repository, physical PostgresPersistenceConfig) (Persistence, error) {
+func NewPostgresPersistence(repository *refreshpostgres.Repository, config PostgresPersistenceConfig) (Persistence, error) {
 	if repository == nil {
 		return Persistence{}, errors.New("refresh PostgreSQL repository is required")
 	}
-	if strings.TrimSpace(physical.PhysicalPoolID) == "" || strings.TrimSpace(physical.CatalogID) == "" {
-		return Persistence{}, errors.New("PostgreSQL physical pool and catalog identities are required")
-	}
-	if strings.TrimSpace(physical.SchedulerOwner) == "" {
+	if strings.TrimSpace(config.SchedulerOwner) == "" {
 		return Persistence{}, errors.New("PostgreSQL scheduler owner is required")
 	}
-	if physical.Jobs == nil {
+	if config.PublicationIdentityResolver == nil {
+		return Persistence{}, ErrPublicationIdentityUnavailable
+	}
+	if config.Jobs == nil {
 		return Persistence{}, errors.New("PostgreSQL canonical jobs authority is required")
 	}
-	if physical.CanonicalVerifier == nil {
+	if config.CanonicalVerifier == nil {
 		return Persistence{}, errors.New("PostgreSQL canonical refresh verifier is required")
 	}
-	if physical.CancelAuditWriter == nil {
+	if config.CancelAuditWriter == nil {
 		return Persistence{}, errors.New("PostgreSQL cancellation audit writer is required")
 	}
-	lifecycle := physical.Jobs
-	recoveryQueue := physical.Jobs
+	lifecycle := config.Jobs
+	recoveryQueue := config.Jobs
 	terminalRecovery, err := NewPostgresTerminalRecovery(repository, recoveryQueue)
 	if err != nil {
 		return Persistence{}, err
 	}
 	return Persistence{
-		Runs:             &postgresRunPersistence{repository: repository, jobs: physical.Jobs, cancelAuditWriter: physical.CancelAuditWriter},
-		Schedules:        &postgresSchedulePersistence{repository: repository, physical: physical},
-		Publication:      &postgresPublicationPersistence{repository: repository, physical: physical, canonicalVerifier: physical.CanonicalVerifier, cancelAuditWriter: physical.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
+		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter},
+		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
+		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
 		TerminalRecovery: terminalRecovery,
 	}, nil
 }
@@ -108,8 +108,9 @@ var _ refreshrun.PublicationUnitOfWork = (*postgresPublicationPersistence)(nil)
 var _ refreshrun.CanonicalPublicationUnitOfWork = (*postgresPublicationPersistence)(nil)
 
 type postgresSchedulePersistence struct {
-	repository *refreshpostgres.Repository
-	physical   PostgresPersistenceConfig
+	repository       *refreshpostgres.Repository
+	schedulerOwner   string
+	identityResolver PostgresPublicationIdentityResolver
 }
 
 func (p *postgresSchedulePersistence) Reconcile(ctx context.Context, input refreshschedule.ReconcileInput) error {
@@ -167,7 +168,7 @@ func (p *postgresSchedulePersistence) ClaimDue(ctx context.Context, identity pro
 	if p == nil || p.repository == nil {
 		return nil, errors.New("refresh PostgreSQL schedule persistence is unavailable")
 	}
-	claimed, err := p.repository.ClaimDue(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID}, now, p.physical.SchedulerOwner, 5*time.Minute, refreshpostgres.MaxPageSize)
+	claimed, err := p.repository.ClaimDue(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID}, now, p.schedulerOwner, 5*time.Minute, refreshpostgres.MaxPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -233,13 +234,25 @@ func (p *postgresSchedulePersistence) SaveDataVersion(ctx context.Context, versi
 	if version.Source == refreshschedule.DataVersionSourcePublish && strings.TrimSpace(version.RunID) == "" {
 		return errors.New("PostgreSQL published data versions require deployment publication provenance")
 	}
-	return p.repository.SaveDataVersion(ctx, refreshpostgres.DataVersion{
+	request := PostgresPublicationIdentityRequest{
 		ProjectID: version.Identity.ProjectID.String(), Environment: version.Identity.Environment,
-		SemanticModelID: version.SemanticModelID.String(), GenerationID: version.Identity.GenerationID,
-		SnapshotID: version.SnapshotID, RefreshedAt: version.RefreshedAt.UTC(), Source: version.Source,
-		PipelineID: version.PipelineID.String(), RunID: version.RunID, PhysicalPoolID: p.physical.PhysicalPoolID,
-		CatalogID: p.physical.CatalogID, TargetRevision: version.TargetRevision, LeaseOwner: version.LeaseOwner,
-		LeaseRevision: version.LeaseRevision,
+		GenerationID: version.Identity.GenerationID, SemanticModelID: version.SemanticModelID.String(),
+		PipelineID: version.PipelineID.String(), RunID: version.RunID, SnapshotID: version.SnapshotID,
+		Source: version.Source, TargetRevision: version.TargetRevision,
+	}
+	return p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		identity, err := resolvePublicationIdentityTx(ctx, tx, p.identityResolver, request)
+		if err != nil {
+			return err
+		}
+		return p.repository.SaveDataVersionTx(ctx, tx, refreshpostgres.DataVersion{
+			ProjectID: version.Identity.ProjectID.String(), Environment: version.Identity.Environment,
+			SemanticModelID: version.SemanticModelID.String(), GenerationID: version.Identity.GenerationID,
+			SnapshotID: version.SnapshotID, RefreshedAt: version.RefreshedAt.UTC(), Source: version.Source,
+			PipelineID: version.PipelineID.String(), RunID: version.RunID, PhysicalPoolID: identity.PhysicalPoolID,
+			CatalogID: identity.CatalogID, TargetRevision: version.TargetRevision, LeaseOwner: version.LeaseOwner,
+			LeaseRevision: version.LeaseRevision,
+		})
 	})
 }
 
@@ -817,7 +830,7 @@ func (p *postgresRunPersistence) JobQueueStats(ctx context.Context, scope refres
 // paths exposed by the authority itself.
 type postgresPublicationPersistence struct {
 	repository        *refreshpostgres.Repository
-	physical          PostgresPersistenceConfig
+	identityResolver  PostgresPublicationIdentityResolver
 	canonicalVerifier PostgresCanonicalVerifier
 	cancelAuditWriter PostgresCancelAuditWriter
 	queueLifecycle    PostgresQueueLifecycle
@@ -850,7 +863,19 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		SnapshotID     int64  `json:"snapshot_id"`
 	}{result.PlanID, result.ServingStateID, result.SnapshotID})
 	return p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
-		replayed, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence)
+		// Replays deliberately resolve the current admitted identity before
+		// trusting persisted publication evidence. If admission is unavailable,
+		// fail closed instead of treating an old physical tuple as authority.
+		identity, identityErr := resolvePublicationIdentityTx(ctx, tx, p.identityResolver, PostgresPublicationIdentityRequest{
+			ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment,
+			GenerationID: result.ServingStateID, SemanticModelID: job.SemanticModelID.String(),
+			PipelineID: job.PipelineID.String(), RunID: job.RunID, SnapshotID: result.SnapshotID,
+			Source: string(refreshschedule.DataVersionSourceRefresh), TargetRevision: job.TargetRevision,
+		})
+		if identityErr != nil {
+			return identityErr
+		}
+		replayed, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence, identity)
 		if replayErr != nil {
 			return replayErr
 		}
@@ -864,8 +889,8 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		if pubInput.RunID != job.RunID || pubInput.BaseGenerationID != job.Identity.GenerationID || pubInput.ResultGenerationID != result.ServingStateID || pubInput.ExpectedTargetRevision != job.TargetRevision || pubInput.ResultTargetRevision <= pubInput.ExpectedTargetRevision || pubInput.SnapshotID != 0 {
 			return errors.New("canonical publication evidence identity differs")
 		}
-		if pubInput.PhysicalPoolID != p.physical.PhysicalPoolID || pubInput.CatalogID != p.physical.CatalogID {
-			return errors.New("canonical publication physical identity differs from configured runtime")
+		if pubInput.PhysicalPoolID != identity.PhysicalPoolID || pubInput.CatalogID != identity.CatalogID {
+			return publicationIdentityMismatchf("canonical publication physical identity differs from resolved runtime")
 		}
 		if pubInput.PublicationID == "" {
 			pubInput.PublicationID = "publication-canonical-" + job.RunID
@@ -885,7 +910,7 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		if err := p.repository.SaveDataVersionTx(ctx, tx, refreshpostgres.DataVersion{
 			ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment, SemanticModelID: job.SemanticModelID.String(), GenerationID: result.ServingStateID,
 			SnapshotID: result.SnapshotID, Source: refreshschedule.DataVersionSourceRefresh, PipelineID: job.PipelineID.String(), RunID: job.RunID,
-			PhysicalPoolID: pubInput.PhysicalPoolID, CatalogID: pubInput.CatalogID, TargetRevision: pubInput.ResultTargetRevision, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
+			PhysicalPoolID: identity.PhysicalPoolID, CatalogID: identity.CatalogID, TargetRevision: pubInput.ResultTargetRevision, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision,
 		}); err != nil {
 			return fmt.Errorf("save canonical data version: %w", err)
 		}
@@ -899,7 +924,7 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 	})
 }
 
-func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, evidence []byte) (bool, error) {
+func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, evidence []byte, identity PostgresPublicationIdentity) (bool, error) {
 	publicationID := "publication-canonical-" + job.RunID
 	publication, err := p.repository.PublicationTx(ctx, tx, publicationID)
 	if errors.Is(err, refreshpostgres.ErrNotFound) {
@@ -945,15 +970,15 @@ func (p *postgresPublicationPersistence) replayCanonicalCompletionTx(ctx context
 	if publication.State != "committed" {
 		return false, fmt.Errorf("%w: replay publication state=%s", refreshpostgres.ErrConflict, publication.State)
 	}
-	if publication.RunID != job.RunID || publication.BaseGenerationID != job.Identity.GenerationID || publication.ResultGenerationID != result.ServingStateID || publication.PlanDigest != job.PipelinePlan.Digest || publication.ArtifactDigest != job.PipelinePlan.ArtifactDigest || publication.ExpectedTargetRevision != job.TargetRevision || publication.SnapshotID != result.SnapshotID || publication.PhysicalPoolID != p.physical.PhysicalPoolID || publication.CatalogID != p.physical.CatalogID || publication.OwnerID != job.LeaseOwner || publication.FenceGeneration != job.LeaseRevision || !jsonEquivalent(publication.Evidence, evidence) {
-		return false, refreshpostgres.ErrConflict
+	if publication.RunID != job.RunID || publication.BaseGenerationID != job.Identity.GenerationID || publication.ResultGenerationID != result.ServingStateID || publication.PlanDigest != job.PipelinePlan.Digest || publication.ArtifactDigest != job.PipelinePlan.ArtifactDigest || publication.ExpectedTargetRevision != job.TargetRevision || publication.SnapshotID != result.SnapshotID || publication.PhysicalPoolID != identity.PhysicalPoolID || publication.CatalogID != identity.CatalogID || publication.OwnerID != job.LeaseOwner || publication.FenceGeneration != job.LeaseRevision || !jsonEquivalent(publication.Evidence, evidence) {
+		return false, publicationIdentityMismatchf("replay publication evidence differs from resolved identity")
 	}
 	version, found, err := p.repository.DataVersionTx(ctx, tx, job.Identity.ProjectID.String(), job.Identity.Environment, job.SemanticModelID.String(), result.ServingStateID)
 	if err != nil {
 		return false, err
 	}
-	if !found || version.ProjectID != job.Identity.ProjectID.String() || version.Environment != job.Identity.Environment || version.SemanticModelID != job.SemanticModelID.String() || version.GenerationID != result.ServingStateID || version.SnapshotID != result.SnapshotID || version.Source != refreshschedule.DataVersionSourceRefresh || version.PipelineID != job.PipelineID.String() || version.RunID != job.RunID || version.TargetRevision != publication.ResultTargetRevision || version.LeaseOwner != job.LeaseOwner || version.LeaseRevision != job.LeaseRevision || version.PhysicalPoolID != p.physical.PhysicalPoolID || version.CatalogID != p.physical.CatalogID {
-		return false, refreshpostgres.ErrConflict
+	if !found || version.ProjectID != job.Identity.ProjectID.String() || version.Environment != job.Identity.Environment || version.SemanticModelID != job.SemanticModelID.String() || version.GenerationID != result.ServingStateID || version.SnapshotID != result.SnapshotID || version.Source != refreshschedule.DataVersionSourceRefresh || version.PipelineID != job.PipelineID.String() || version.RunID != job.RunID || version.TargetRevision != publication.ResultTargetRevision || version.LeaseOwner != job.LeaseOwner || version.LeaseRevision != job.LeaseRevision || version.PhysicalPoolID != identity.PhysicalPoolID || version.CatalogID != identity.CatalogID {
+		return false, publicationIdentityMismatchf("replay data-version evidence differs from resolved identity")
 	}
 	treeSucceeded, err := p.repository.RunTreeSucceededTx(ctx, tx, job.RunID)
 	if err != nil {

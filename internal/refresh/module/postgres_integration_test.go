@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/analytics/ducklake"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	refreshcomposition "github.com/flidai/leapview/internal/app/refreshpostgres"
 	"github.com/flidai/leapview/internal/deployment"
@@ -39,6 +40,25 @@ func (w integrationAuditWriter) RecordRefreshCancelAuditTx(context.Context, refr
 type integrationCanonicalVerifier struct {
 	physicalPoolID string
 	catalogID      string
+}
+
+type integrationPublicationIdentityResolver struct {
+	physicalPoolID string
+	catalogID      string
+}
+
+func (r integrationPublicationIdentityResolver) ResolvePublicationIdentityTx(_ context.Context, _ refreshpostgres.Tx, _ PostgresPublicationIdentityRequest) (PostgresPublicationIdentity, error) {
+	return PostgresPublicationIdentity{PhysicalPoolID: r.physicalPoolID, CatalogID: r.catalogID}, nil
+}
+
+func staticPublicationIdentityResolver(physicalPoolID, catalogID string) PostgresPublicationIdentityResolver {
+	return integrationPublicationIdentityResolver{physicalPoolID: physicalPoolID, catalogID: catalogID}
+}
+
+func unavailablePublicationIdentityResolver() PostgresPublicationIdentityResolver {
+	return PostgresPublicationIdentityResolverFunc(func(context.Context, refreshpostgres.Tx, PostgresPublicationIdentityRequest) (PostgresPublicationIdentity, error) {
+		return PostgresPublicationIdentity{}, ErrPublicationIdentityUnavailable
+	})
 }
 
 type failingSupersedeQueue struct {
@@ -204,11 +224,19 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if _, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-concrete", PhysicalPoolID: poolID, FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/concrete", SessionIdentity: "session-concrete", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := json.RawMessage(`{"attempt_id":"` + attemptID + `","physical_pool_id":"` + poolID + `","request_digest":"` + digest('f') + `","plan_digest":"` + planDigest + `","fencing_epoch":1}`)
+	markerJSON, err := (ducklake.CommitMarker{
+		SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: targetID, GenerationID: generationID,
+		AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest,
+		Project: "project_concrete", Environment: "prod", PhysicalPoolID: poolID,
+	}).CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := json.RawMessage(markerJSON)
 	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-concrete", FencingEpoch: 1, SnapshotID: 777, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, digest('3')); err != nil {
@@ -268,7 +296,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: poolID, CatalogID: "catalog-concrete", SchedulerOwner: "scheduler-concrete", Jobs: queue, CanonicalVerifier: verifier, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver(poolID, "catalog-concrete"), SchedulerOwner: "scheduler-concrete", Jobs: queue, CanonicalVerifier: verifier, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,9 +330,9 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err := wrongTx.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	mismatchedPersistence := &postgresPublicationPersistence{repository: refreshRepo, physical: PostgresPersistenceConfig{PhysicalPoolID: poolID, CatalogID: "catalog-config-mismatch"}, canonicalVerifier: verifier, queueLifecycle: queue}
-	if err := mismatchedPersistence.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err == nil {
-		t.Fatal("canonical completion accepted verifier catalog identity different from persistence config")
+	mismatchedPersistence := &postgresPublicationPersistence{repository: refreshRepo, identityResolver: staticPublicationIdentityResolver(poolID, "catalog-config-mismatch"), canonicalVerifier: verifier, queueLifecycle: queue}
+	if err := mismatchedPersistence.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); !errors.Is(err, ErrPublicationIdentityMismatch) || !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("canonical completion identity mismatch = %v, want typed conflict", err)
 	}
 	publication, ok := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
 	if !ok {
@@ -406,12 +434,61 @@ func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
 	}
 }
 
+func TestPostgresPublicationIdentityUnavailableDoesNotWriteDataVersion(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobspostgres.New(db), refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PublicationIdentityResolver: unavailablePublicationIdentityResolver(), SchedulerOwner: "scheduler-identity-unavailable",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-unused", catalogID: "catalog-unused"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := projectgraph.ServingIdentity{ProjectID: "project_identity_unavailable", Environment: "prod", GenerationID: "generation_identity_unavailable"}
+	err = persistence.Schedules.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
+		Identity: identity, SemanticModelID: "semantic_identity_unavailable", SnapshotID: 41,
+		Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_identity_unavailable", RunID: "run_identity_unavailable",
+		TargetRevision: 1, LeaseOwner: "worker", LeaseRevision: 1,
+	})
+	if !errors.Is(err, ErrPublicationIdentityUnavailable) {
+		t.Fatalf("SaveDataVersion error=%v, want ErrPublicationIdentityUnavailable", err)
+	}
+	var count int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.data_version WHERE project_id=$1`, identity.ProjectID.String()).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("data-version rows=%d after unavailable identity, want 0", count)
+	}
+}
+
+func TestPostgresPublishedDataVersionWithoutRunIDFailsClosed(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobspostgres.New(db), refreshRepo)
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-publish-provenance", "catalog-publish-provenance"), SchedulerOwner: "scheduler-publish-provenance",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-publish-provenance", catalogID: "catalog-publish-provenance"}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = persistence.Schedules.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
+		Identity: projectgraph.ServingIdentity{ProjectID: "project_publish_provenance", Environment: "prod", GenerationID: "generation_publish_provenance"}, SemanticModelID: "semantic_publish_provenance", SnapshotID: 41,
+		Source: refreshschedule.DataVersionSourcePublish,
+	})
+	if err == nil || !strings.Contains(err.Error(), "deployment publication provenance") {
+		t.Fatalf("SaveDataVersion error=%v, want publication provenance failure", err)
+	}
+}
+
 func TestPostgresRefreshCandidatesPaginatePastOtherScopes(t *testing.T) {
 	db := modulePostgresTestDB(t)
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-scope", CatalogID: "catalog-scope", SchedulerOwner: "scheduler-scope", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-scope", catalogID: "catalog-scope"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-scope", "catalog-scope"), SchedulerOwner: "scheduler-scope", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-scope", catalogID: "catalog-scope"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -438,7 +515,7 @@ func TestPostgresRefreshCandidatesPreservePrincipalFIFOAcrossScopePages(t *testi
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-fifo", CatalogID: "catalog-fifo", SchedulerOwner: "scheduler-fifo", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-fifo", catalogID: "catalog-fifo"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-fifo", "catalog-fifo"), SchedulerOwner: "scheduler-fifo", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-fifo", catalogID: "catalog-fifo"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -582,7 +659,7 @@ func TestPostgresStartupRecoveryReconcilesPairsWithoutKillingLiveWork(t *testing
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery", CatalogID: "catalog-recovery", SchedulerOwner: "scheduler-recovery", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery", catalogID: "catalog-recovery"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery", "catalog-recovery"), SchedulerOwner: "scheduler-recovery", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery", catalogID: "catalog-recovery"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -694,7 +771,7 @@ func TestPostgresStartupRecoveryRejectsAmbiguousPairAndRollsBack(t *testing.T) {
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery-ambiguous", CatalogID: "catalog-recovery-ambiguous", SchedulerOwner: "scheduler-recovery-ambiguous", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-ambiguous", catalogID: "catalog-recovery-ambiguous"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery-ambiguous", "catalog-recovery-ambiguous"), SchedulerOwner: "scheduler-recovery-ambiguous", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-ambiguous", catalogID: "catalog-recovery-ambiguous"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -745,7 +822,7 @@ func TestPostgresStartupRecoveryPagesActiveRunsAndRollsBackLaterAmbiguity(t *tes
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-recovery-pages", CatalogID: "catalog-recovery-pages", SchedulerOwner: "scheduler-recovery-pages", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-pages", catalogID: "catalog-recovery-pages"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-recovery-pages", "catalog-recovery-pages"), SchedulerOwner: "scheduler-recovery-pages", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-recovery-pages", catalogID: "catalog-recovery-pages"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -798,7 +875,7 @@ func TestPostgresLinkedLeaseRenewalRollsBackOnStaleRefreshFence(t *testing.T) {
 	identity := projectgraph.ServingIdentity{ProjectID: "project_lease", Environment: "prod", GenerationID: "generation_lease"}
 	plan := integrationPlan(t, identity, "daily")
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-lease", CatalogID: "catalog-lease", SchedulerOwner: "scheduler-lease",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-lease", "catalog-lease"), SchedulerOwner: "scheduler-lease",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-lease", catalogID: "catalog-lease"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -877,7 +954,7 @@ func TestPostgresRunTreeAdmissionRollsBackEveryAuthorityOnChildConflict(t *testi
 	identity := projectgraph.ServingIdentity{ProjectID: "project_tree_atomic", Environment: "prod", GenerationID: "generation_tree_atomic"}
 	plan := integrationPlan(t, identity, "daily")
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-tree-atomic", CatalogID: "catalog-tree-atomic", SchedulerOwner: "scheduler-tree-atomic",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-tree-atomic", "catalog-tree-atomic"), SchedulerOwner: "scheduler-tree-atomic",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-tree-atomic", catalogID: "catalog-tree-atomic"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -960,7 +1037,7 @@ func TestPostgresRunTreeAdmissionRollsBackEveryAuthorityOnChildConflict(t *testi
 	}); err != nil {
 		t.Fatal(err)
 	}
-	scheduled, err := (&postgresSchedulePersistence{repository: refreshRepo, physical: PostgresPersistenceConfig{SchedulerOwner: "scheduler-tree-atomic"}}).ClaimDue(t.Context(), scheduledIdentity, now)
+	scheduled, err := (&postgresSchedulePersistence{repository: refreshRepo, schedulerOwner: "scheduler-tree-atomic", identityResolver: staticPublicationIdentityResolver("pool-tree-atomic", "catalog-tree-atomic")}).ClaimDue(t.Context(), scheduledIdentity, now)
 	if err != nil || len(scheduled) != 1 {
 		t.Fatalf("claim scheduled occurrence=%#v err=%v", scheduled, err)
 	}
@@ -980,7 +1057,7 @@ func TestPostgresRunTreeSuccessTerminalizesChildOccurrenceAndJob(t *testing.T) {
 	identity := projectgraph.ServingIdentity{ProjectID: "project_tree_success", Environment: "prod", GenerationID: "generation_tree_success"}
 	plan := integrationPlan(t, identity, "daily")
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-tree-success", CatalogID: "catalog-tree-success", SchedulerOwner: "scheduler-tree-success",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-tree-success", "catalog-tree-success"), SchedulerOwner: "scheduler-tree-success",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-tree-success", catalogID: "catalog-tree-success"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1057,7 +1134,7 @@ func TestPostgresRunPersistenceRejectsStandaloneAdmission(t *testing.T) {
 	identity := projectgraph.ServingIdentity{ProjectID: "project_standalone_rejected", Environment: "prod", GenerationID: "generation_standalone_rejected"}
 	plan := integrationPlan(t, identity, "daily")
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-standalone-rejected", CatalogID: "catalog-standalone-rejected", SchedulerOwner: "scheduler-standalone-rejected",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-standalone-rejected", "catalog-standalone-rejected"), SchedulerOwner: "scheduler-standalone-rejected",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-standalone-rejected", catalogID: "catalog-standalone-rejected"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1095,7 +1172,7 @@ func TestPostgresProducerFailureCancelsLinkedRootJob(t *testing.T) {
 		t.Fatal(err)
 	}
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-producer-failure", CatalogID: "catalog-producer-failure", SchedulerOwner: "scheduler-producer-failure",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-producer-failure", "catalog-producer-failure"), SchedulerOwner: "scheduler-producer-failure",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-producer-failure", catalogID: "catalog-producer-failure"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1162,7 +1239,7 @@ func TestPostgresScheduledClaimCreatesRunAndJobAtomically(t *testing.T) {
 	_ = schedule
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-primary", CatalogID: "catalog-primary", SchedulerOwner: "scheduler-module-1",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-primary", "catalog-primary"), SchedulerOwner: "scheduler-module-1",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-primary", catalogID: "catalog-primary"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1241,7 +1318,7 @@ func TestPostgresScheduledReplaceTerminalizesOldRefreshTreeAndJob(t *testing.T) 
 	jobsRepo := jobspostgres.New(db)
 	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-replace", CatalogID: "catalog-replace", SchedulerOwner: "scheduler-replace",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-replace", "catalog-replace"), SchedulerOwner: "scheduler-replace",
 		Jobs: baseQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-replace", catalogID: "catalog-replace"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1296,7 +1373,7 @@ func TestPostgresScheduledReplaceRollbackKeepsRefreshAndJobLive(t *testing.T) {
 	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	failingQueue := failingSupersedeQueue{PostgresJobsAdapter: baseQueue, err: errors.New("supersede queue unavailable")}
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-replace-rollback", CatalogID: "catalog-replace-rollback", SchedulerOwner: "scheduler-replace-rollback",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-replace-rollback", "catalog-replace-rollback"), SchedulerOwner: "scheduler-replace-rollback",
 		Jobs: failingQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-replace-rollback", catalogID: "catalog-replace-rollback"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1343,7 +1420,7 @@ func TestPostgresWorkerSupersedeTerminalizesRefreshTreeAndJobAtomically(t *testi
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-worker-supersede", CatalogID: "catalog-worker-supersede", SchedulerOwner: "scheduler-worker-supersede", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-supersede", catalogID: "catalog-worker-supersede"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-worker-supersede", "catalog-worker-supersede"), SchedulerOwner: "scheduler-worker-supersede", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-supersede", catalogID: "catalog-worker-supersede"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1393,7 +1470,7 @@ func TestPostgresWorkerSupersedeRollbackKeepsRefreshAndJobLive(t *testing.T) {
 	jobsRepo := jobspostgres.New(db)
 	baseQueue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	failingQueue := failingCancelClaimQueue{PostgresJobsAdapter: baseQueue, err: errors.New("supersede job cancellation unavailable")}
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-worker-rollback", CatalogID: "catalog-worker-rollback", SchedulerOwner: "scheduler-worker-rollback", Jobs: failingQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-rollback", catalogID: "catalog-worker-rollback"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-worker-rollback", "catalog-worker-rollback"), SchedulerOwner: "scheduler-worker-rollback", Jobs: failingQueue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-worker-rollback", catalogID: "catalog-worker-rollback"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1445,7 +1522,7 @@ func TestPostgresPrepareVerifiedPublicationDataVersionAndSuccess(t *testing.T) {
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	physicalPoolID, catalogID := "pool-publish", "catalog-publish"
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: physicalPoolID, CatalogID: catalogID, SchedulerOwner: "scheduler-publish",
+		PublicationIdentityResolver: staticPublicationIdentityResolver(physicalPoolID, catalogID), SchedulerOwner: "scheduler-publish",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: physicalPoolID, catalogID: catalogID}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1483,6 +1560,34 @@ func TestPostgresPrepareVerifiedPublicationDataVersionAndSuccess(t *testing.T) {
 	}
 	if prepared.Status != refreshrun.RunStatusPrepared {
 		t.Fatalf("prepared status=%q", prepared.Status)
+	}
+	unavailablePersistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PublicationIdentityResolver: unavailablePublicationIdentityResolver(), SchedulerOwner: "scheduler-publish-unavailable",
+		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: physicalPoolID, catalogID: catalogID}, CancelAuditWriter: integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	unavailablePublication := unavailablePersistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
+	if err := unavailablePublication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: identity.GenerationID, SnapshotID: 901}); !errors.Is(err, ErrPublicationIdentityUnavailable) {
+		t.Fatalf("canonical completion without admitted identity = %v, want unavailable", err)
+	}
+	unchanged, err := refreshRepo.LookupRun(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Status != refreshrun.RunStatusPrepared {
+		t.Fatalf("run status after unavailable identity=%q, want prepared", unchanged.Status)
+	}
+	if _, found, err := refreshRepo.DataVersion(t.Context(), identity.ProjectID.String(), identity.Environment, "semantic_publish", identity.GenerationID); err != nil || found {
+		t.Fatalf("data version after unavailable identity found=%v err=%v", found, err)
+	}
+	unchangedJob, err := jobsRepo.Get(t.Context(), unchanged.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchangedJob.Status != "running" {
+		t.Fatalf("job status after unavailable identity=%q, want running", unchangedJob.Status)
 	}
 	publication, ok := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
 	if !ok {
@@ -1540,7 +1645,7 @@ func TestPostgresCancellationAuditFailureRollsBackRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-cancel", CatalogID: "catalog-cancel", SchedulerOwner: "scheduler-cancel",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-cancel", "catalog-cancel"), SchedulerOwner: "scheduler-cancel",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-cancel", catalogID: "catalog-cancel"}, CancelAuditWriter: integrationAuditWriter{fail: true},
 	})
 	if err != nil {
@@ -1574,7 +1679,7 @@ func TestPostgresManualRunIdentityReplayAndDistinctCommands(t *testing.T) {
 	identity := projectgraph.ServingIdentity{ProjectID: "project_identity", Environment: "prod", GenerationID: "generation_identity"}
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
-		PhysicalPoolID: "pool-identity", CatalogID: "catalog-identity", SchedulerOwner: "scheduler-identity",
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-identity", "catalog-identity"), SchedulerOwner: "scheduler-identity",
 		Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-identity", catalogID: "catalog-identity"}, CancelAuditWriter: integrationAuditWriter{},
 	})
 	if err != nil {
@@ -1632,7 +1737,7 @@ func TestPostgresAdvancedQueueReplayPreservesFencedRunAndJob(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PhysicalPoolID: "pool-advanced-replay", CatalogID: "catalog-advanced-replay", SchedulerOwner: "scheduler-advanced-replay", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-advanced-replay", catalogID: "catalog-advanced-replay"}, CancelAuditWriter: integrationAuditWriter{}})
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{PublicationIdentityResolver: staticPublicationIdentityResolver("pool-advanced-replay", "catalog-advanced-replay"), SchedulerOwner: "scheduler-advanced-replay", Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-advanced-replay", catalogID: "catalog-advanced-replay"}, CancelAuditWriter: integrationAuditWriter{}})
 	if err != nil {
 		t.Fatal(err)
 	}

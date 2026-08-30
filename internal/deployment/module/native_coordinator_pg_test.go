@@ -11,6 +11,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
@@ -203,11 +204,16 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.BeginBuildAttempt(ctx, deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder", PhysicalPoolID: "pool", FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Namespace: "candidate/attempt", SessionIdentity: "session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := []byte(`{"attempt_id":"` + attemptID + `","physical_pool_id":"pool","request_digest":"` + digest('f') + `","plan_digest":"` + digest('a') + `","fencing_epoch":1}`)
+	commitMarker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-native", GenerationID: "generation-native", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Project: "project_sales", Environment: "prod", PhysicalPoolID: "pool"}
+	markerJSON, err := commitMarker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	marker := []byte(markerJSON)
 	if _, err := repo.CommitBuildAttempt(ctx, deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: digest('a'), CompatibilityDigest: digest('2'), ServingArtifactDigest: digest('e'), DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := repo.CreateSnapshotSeal(ctx, deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: uuid.New().String(), CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/42", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), RequestDigest: digest('f'), PlanDigest: digest('a'), CompatibilityDigest: digest('2'), ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.QualifyCandidate(ctx, candidateID, sealID, digest('3')); err != nil {

@@ -13,10 +13,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"strings"
 	"time"
 
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
@@ -150,10 +150,10 @@ type SnapshotSeal struct {
 	PhysicalPoolID, TenantDomain, Region, EncryptionDomain, ObjectNamespace, CatalogDatabase, CatalogID, CatalogUUID string
 	CatalogVersion, DuckLakeSnapshotID                                                                               int64
 	RelationNamespace, ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                                string
-	RelationManifestDigest                                                                                           string
+	RelationManifestDigest, ClosureDigest                                                                            string
 	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                                             string
-	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactDigest                                            string
-	DuckDBVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion                               string
+	RequestDigest, PlanDigest, CompatibilityDigest, ServingArtifactID, ServingArtifactDigest                         string
+	DuckDBVersion, RuntimeVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion               string
 	QualificationEvidence                                                                                            json.RawMessage
 	QualifiedAt                                                                                                      time.Time
 }
@@ -951,13 +951,35 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 	if at.OwnerID != owner || at.FencingEpoch != in.FencingEpoch {
 		return DeliveryBuildAttempt{}, ErrStaleFence
 	}
-	if at.State != AttemptRunning {
-		canonicalEvidence, evidenceErr := canonicalNonEmpty(in.CommitMarker, 32768)
-		if state == AttemptCommitted {
-			canonicalEvidence, evidenceErr = canonicalNonEmpty(in.CommitMarker, 4096)
+	// Commit markers are durable DuckLake identity evidence. Validate the
+	// complete marker schema even on idempotent retries; accepting a sparse or
+	// unknown-field marker here would make the retry path weaker than the
+	// initial commit path.
+	var inputMarker ducklake.CommitMarker
+	var inputMarkerCanonical []byte
+	if state == AttemptCommitted {
+		inputMarker, inputMarkerCanonical, err = decodeCommitMarker(in.CommitMarker, true)
+		if err != nil {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: invalid commit marker: %v", ErrInvalid, err)
 		}
-		if evidenceErr == nil && at.State == state && ((state == AttemptCommitted && at.SnapshotID == in.SnapshotID && sameCanonical(at.CommitMarker, canonicalEvidence)) || (state != AttemptCommitted && sameCanonical(at.TerminationEvidence, canonicalEvidence))) {
-			return at, nil
+		if !markerIdentityMatches(inputMarker, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, at.FencingEpoch) {
+			return DeliveryBuildAttempt{}, fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
+		}
+	}
+	if at.State != AttemptRunning {
+		if state == AttemptCommitted {
+			storedMarker, _, storedErr := decodeCommitMarker(at.CommitMarker, false)
+			if storedErr == nil && markerIdentityMatches(storedMarker, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, at.FencingEpoch) && at.State == state && at.SnapshotID == in.SnapshotID {
+				storedCanonical, canonicalErr := storedMarker.CanonicalJSON()
+				if canonicalErr == nil && bytes.Equal([]byte(storedCanonical), inputMarkerCanonical) {
+					return at, nil
+				}
+			}
+		} else {
+			canonicalEvidence, evidenceErr := canonicalNonEmpty(in.CommitMarker, 32768)
+			if evidenceErr == nil && at.State == state && sameCanonical(at.TerminationEvidence, canonicalEvidence) {
+				return at, nil
+			}
 		}
 		return DeliveryBuildAttempt{}, ErrConflict
 	}
@@ -972,14 +994,7 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 		if in.SnapshotID <= 0 {
 			return DeliveryBuildAttempt{}, ErrInvalid
 		}
-		marker, err := canonicalNonEmpty(in.CommitMarker, 4096)
-		if err != nil {
-			return DeliveryBuildAttempt{}, ErrInvalid
-		}
-		if !markerMatches(marker, id, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, at.FencingEpoch) {
-			return DeliveryBuildAttempt{}, fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
-		}
-		rows, err := depdb.New(db).CommitBuildAttempt(ctx, depdb.CommitBuildAttemptParams{AttemptID: dbUUID(id), SnapshotID: pgInt8(&in.SnapshotID), CommitMarker: marker, OwnerID: owner, FencingEpoch: in.FencingEpoch})
+		rows, err := depdb.New(db).CommitBuildAttempt(ctx, depdb.CommitBuildAttemptParams{AttemptID: dbUUID(id), SnapshotID: pgInt8(&in.SnapshotID), CommitMarker: inputMarkerCanonical, OwnerID: owner, FencingEpoch: in.FencingEpoch})
 		if err != nil {
 			return DeliveryBuildAttempt{}, err
 		}
@@ -1002,24 +1017,45 @@ func transitionAttemptTx(ctx context.Context, db DBTX, in CommitAttemptInput, st
 	return loadAttempt(ctx, db, id)
 }
 
-type commitMarkerIdentity struct {
-	AttemptID      string          `json:"attempt_id"`
-	PhysicalPoolID string          `json:"physical_pool_id"`
-	RequestDigest  string          `json:"request_digest"`
-	PlanDigest     string          `json:"plan_digest"`
-	FencingEpoch   json.RawMessage `json:"fencing_epoch"`
+func markerMatches(raw []byte, attempt, physicalPool, request, plan string, fence int64) bool {
+	m, _, err := decodeCommitMarker(raw, false)
+	return err == nil && markerIdentityMatches(m, attempt, physicalPool, request, plan, fence)
 }
 
-func markerMatches(raw []byte, attempt, physicalPool, request, plan string, fence int64) bool {
-	var m commitMarkerIdentity
-	if strictjson.DecodeWithOptions(raw, &m, strictjson.Options{AllowUnknownFields: true, MaxBytes: 4096}) != nil {
-		return false
+func markerIdentityMatches(m ducklake.CommitMarker, attempt, physicalPool, request, plan string, fence int64) bool {
+	return m.AttemptID == attempt && m.PhysicalPoolID == physicalPool && m.RequestDigest == request && m.PlanDigest == plan && m.LeaseEpoch == fence
+}
+
+// decodeCommitMarker performs the full DuckLake marker decode and Normalize
+// validation. PostgreSQL jsonb does not preserve input key order, so callers
+// validating a stored marker must set requireCanonical to false and compare
+// the normalized value semantically. The initial commit input is required to
+// use DuckLake's canonical byte ordering because that exact string is written
+// to commit_extra_info by the DuckLake writer.
+func decodeCommitMarker(raw []byte, requireCanonical bool) (ducklake.CommitMarker, []byte, error) {
+	if len(raw) == 0 {
+		return ducklake.CommitMarker{}, nil, errors.New("commit marker is empty")
 	}
-	if m.AttemptID != attempt || m.PhysicalPoolID != physicalPool || m.RequestDigest != request || m.PlanDigest != plan || len(m.FencingEpoch) == 0 {
-		return false
+	if len(raw) > ducklake.MaxCommitMarkerBytes {
+		return ducklake.CommitMarker{}, nil, fmt.Errorf("commit marker exceeds %d bytes", ducklake.MaxCommitMarkerBytes)
 	}
-	n, err := strconv.ParseInt(string(m.FencingEpoch), 10, 64)
-	return err == nil && n == fence
+	var marker ducklake.CommitMarker
+	if err := strictjson.DecodeWithOptions(raw, &marker, strictjson.Options{MaxBytes: ducklake.MaxCommitMarkerBytes}); err != nil {
+		return ducklake.CommitMarker{}, nil, err
+	}
+	normalized, err := marker.Normalize()
+	if err != nil {
+		return ducklake.CommitMarker{}, nil, err
+	}
+	canonical, err := normalized.CanonicalJSON()
+	if err != nil {
+		return ducklake.CommitMarker{}, nil, err
+	}
+	canonicalBytes := []byte(canonical)
+	if requireCanonical && !bytes.Equal(raw, canonicalBytes) {
+		return ducklake.CommitMarker{}, nil, errors.New("commit marker is not canonical JSON")
+	}
+	return normalized, canonicalBytes, nil
 }
 
 // CreateSnapshotSeal accepts only a committed attempt and exact marker
@@ -1071,12 +1107,15 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if in.CatalogVersion <= 0 || in.DuckLakeSnapshotID <= 0 {
 		return SnapshotSeal{}, ErrInvalid
 	}
-	for n, v := range map[string]string{"relation manifest digest": in.RelationManifestDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "request digest": in.RequestDigest, "plan digest": in.PlanDigest, "compatibility digest": in.CompatibilityDigest, "serving artifact digest": in.ServingArtifactDigest} {
+	for n, v := range map[string]string{"relation manifest digest": in.RelationManifestDigest, "closure digest": in.ClosureDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "request digest": in.RequestDigest, "plan digest": in.PlanDigest, "compatibility digest": in.CompatibilityDigest, "serving artifact digest": in.ServingArtifactDigest} {
 		if _, err := digest(v, n); err != nil {
 			return SnapshotSeal{}, err
 		}
 	}
-	for n, v := range map[string]string{"DuckDB version": in.DuckDBVersion, "DuckLake extension version": in.DuckLakeExtensionVersion, "DuckLake specification version": in.DuckLakeSpecVersion, "catalog schema version": in.CatalogSchemaVersion} {
+	if in.ServingArtifactID == "" || in.ServingArtifactID != strings.TrimSpace(in.ServingArtifactID) || len(in.ServingArtifactID) > 255 || strings.ContainsAny(in.ServingArtifactID, "\x00\r\n") {
+		return SnapshotSeal{}, fmt.Errorf("%w: serving artifact id", ErrInvalid)
+	}
+	for n, v := range map[string]string{"DuckDB version": in.DuckDBVersion, "runtime version": in.RuntimeVersion, "DuckLake extension version": in.DuckLakeExtensionVersion, "DuckLake specification version": in.DuckLakeSpecVersion, "catalog schema version": in.CatalogSchemaVersion} {
 		if v == "" || v != strings.TrimSpace(v) || len(v) > 128 {
 			return SnapshotSeal{}, fmt.Errorf("%w: %s", ErrInvalid, n)
 		}
@@ -1113,7 +1152,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if pi.PlanDigest != in.PlanDigest || pi.CompiledGraphDigest != in.CompiledGraphDigest || pi.CompiledConfigDigest != in.CompiledConfigDigest || pi.SecurityDomainFingerprint != in.SecurityDomainFingerprint || pi.ArtifactDigest != in.ServingArtifactDigest {
 		return SnapshotSeal{}, fmt.Errorf("%w: plan evidence differs", ErrNotQualified)
 	}
-	err = depdb.New(db).InsertSnapshotSeal(ctx, depdb.InsertSnapshotSealParams{SealID: dbUUID(id), AttemptID: dbUUID(attempt), CandidateID: dbUUID(candidate), PhysicalPoolID: in.PhysicalPoolID, TenantDomain: in.TenantDomain, Region: in.Region, EncryptionDomain: in.EncryptionDomain, ObjectNamespace: in.ObjectNamespace, CatalogDatabase: in.CatalogDatabase, CatalogID: in.CatalogID, CatalogUuid: in.CatalogUUID, CatalogVersion: in.CatalogVersion, DucklakeSnapshotID: in.DuckLakeSnapshotID, RelationNamespace: in.RelationNamespace, RelationManifestDigest: in.RelationManifestDigest, ObjectRoot: in.ObjectRoot, ObjectRootDigest: in.ObjectRootDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, CompatibilityDigest: in.CompatibilityDigest, ServingArtifactDigest: in.ServingArtifactDigest, DuckdbVersion: in.DuckDBVersion, DucklakeExtensionVersion: in.DuckLakeExtensionVersion, DucklakeSpecVersion: in.DuckLakeSpecVersion, CatalogSchemaVersion: in.CatalogSchemaVersion, QualificationEvidence: evidence})
+	err = depdb.New(db).InsertSnapshotSeal(ctx, depdb.InsertSnapshotSealParams{SealID: dbUUID(id), AttemptID: dbUUID(attempt), CandidateID: dbUUID(candidate), PhysicalPoolID: in.PhysicalPoolID, TenantDomain: in.TenantDomain, Region: in.Region, EncryptionDomain: in.EncryptionDomain, ObjectNamespace: in.ObjectNamespace, CatalogDatabase: in.CatalogDatabase, CatalogID: in.CatalogID, CatalogUuid: in.CatalogUUID, CatalogVersion: in.CatalogVersion, DucklakeSnapshotID: in.DuckLakeSnapshotID, RelationNamespace: in.RelationNamespace, RelationManifestDigest: in.RelationManifestDigest, ClosureDigest: in.ClosureDigest, ObjectRoot: in.ObjectRoot, ObjectRootDigest: in.ObjectRootDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, CompatibilityDigest: in.CompatibilityDigest, ServingArtifactID: in.ServingArtifactID, ServingArtifactDigest: in.ServingArtifactDigest, DuckdbVersion: in.DuckDBVersion, RuntimeVersion: in.RuntimeVersion, DucklakeExtensionVersion: in.DuckLakeExtensionVersion, DucklakeSpecVersion: in.DuckLakeSpecVersion, CatalogSchemaVersion: in.CatalogSchemaVersion, QualificationEvidence: evidence})
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
@@ -1127,7 +1166,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	return s, nil
 }
 func sameSealIdentity(a SnapshotSeal, b SnapshotSeal) bool {
-	return a.AttemptID == b.AttemptID && a.CandidateID == b.CandidateID && a.PhysicalPoolID == b.PhysicalPoolID && a.TenantDomain == b.TenantDomain && a.Region == b.Region && a.EncryptionDomain == b.EncryptionDomain && a.ObjectNamespace == b.ObjectNamespace && a.CatalogDatabase == b.CatalogDatabase && a.CatalogID == b.CatalogID && a.CatalogUUID == b.CatalogUUID && a.CatalogVersion == b.CatalogVersion && a.DuckLakeSnapshotID == b.DuckLakeSnapshotID && a.RelationNamespace == b.RelationNamespace && a.RelationManifestDigest == b.RelationManifestDigest && a.ObjectRoot == b.ObjectRoot && a.ObjectRootDigest == b.ObjectRootDigest && a.ArtifactRoot == b.ArtifactRoot && a.ArtifactRootDigest == b.ArtifactRootDigest && a.CompiledGraphDigest == b.CompiledGraphDigest && a.CompiledConfigDigest == b.CompiledConfigDigest && a.SecurityDomainFingerprint == b.SecurityDomainFingerprint && a.RequestDigest == b.RequestDigest && a.PlanDigest == b.PlanDigest && a.CompatibilityDigest == b.CompatibilityDigest && a.ServingArtifactDigest == b.ServingArtifactDigest && a.DuckDBVersion == b.DuckDBVersion && a.DuckLakeExtensionVersion == b.DuckLakeExtensionVersion && a.DuckLakeSpecVersion == b.DuckLakeSpecVersion && a.CatalogSchemaVersion == b.CatalogSchemaVersion && sameCanonical(a.QualificationEvidence, b.QualificationEvidence)
+	return a.AttemptID == b.AttemptID && a.CandidateID == b.CandidateID && a.PhysicalPoolID == b.PhysicalPoolID && a.TenantDomain == b.TenantDomain && a.Region == b.Region && a.EncryptionDomain == b.EncryptionDomain && a.ObjectNamespace == b.ObjectNamespace && a.CatalogDatabase == b.CatalogDatabase && a.CatalogID == b.CatalogID && a.CatalogUUID == b.CatalogUUID && a.CatalogVersion == b.CatalogVersion && a.DuckLakeSnapshotID == b.DuckLakeSnapshotID && a.RelationNamespace == b.RelationNamespace && a.RelationManifestDigest == b.RelationManifestDigest && a.ClosureDigest == b.ClosureDigest && a.ObjectRoot == b.ObjectRoot && a.ObjectRootDigest == b.ObjectRootDigest && a.ArtifactRoot == b.ArtifactRoot && a.ArtifactRootDigest == b.ArtifactRootDigest && a.CompiledGraphDigest == b.CompiledGraphDigest && a.CompiledConfigDigest == b.CompiledConfigDigest && a.SecurityDomainFingerprint == b.SecurityDomainFingerprint && a.RequestDigest == b.RequestDigest && a.PlanDigest == b.PlanDigest && a.CompatibilityDigest == b.CompatibilityDigest && a.ServingArtifactID == b.ServingArtifactID && a.ServingArtifactDigest == b.ServingArtifactDigest && a.DuckDBVersion == b.DuckDBVersion && a.RuntimeVersion == b.RuntimeVersion && a.DuckLakeExtensionVersion == b.DuckLakeExtensionVersion && a.DuckLakeSpecVersion == b.DuckLakeSpecVersion && a.CatalogSchemaVersion == b.CatalogSchemaVersion && sameCanonical(a.QualificationEvidence, b.QualificationEvidence)
 }
 
 func sameCanonical(a, b []byte) bool {
@@ -1144,7 +1183,7 @@ func loadSeal(ctx context.Context, db DBTX, id string) (SnapshotSeal, error) {
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	s.SealID, s.AttemptID, s.CandidateID, s.PhysicalPoolID, s.TenantDomain, s.Region, s.EncryptionDomain, s.ObjectNamespace, s.CatalogDatabase, s.CatalogID, s.CatalogUUID, s.CatalogVersion, s.DuckLakeSnapshotID, s.RelationNamespace, s.RelationManifestDigest, s.ObjectRoot, s.ObjectRootDigest, s.ArtifactRoot, s.ArtifactRootDigest, s.CompiledGraphDigest, s.CompiledConfigDigest, s.SecurityDomainFingerprint, s.RequestDigest, s.PlanDigest, s.CompatibilityDigest, s.ServingArtifactDigest, s.DuckDBVersion, s.DuckLakeExtensionVersion, s.DuckLakeSpecVersion, s.CatalogSchemaVersion, s.QualificationEvidence, s.QualifiedAt = row.SealID, row.AttemptID, row.CandidateID, row.PhysicalPoolID, row.TenantDomain, row.Region, row.EncryptionDomain, row.ObjectNamespace, row.CatalogDatabase, row.CatalogID, row.CatalogUuid, row.CatalogVersion, row.DucklakeSnapshotID, row.RelationNamespace, row.RelationManifestDigest, row.ObjectRoot, row.ObjectRootDigest, row.ArtifactRoot, row.ArtifactRootDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.RequestDigest, row.PlanDigest, row.CompatibilityDigest, row.ServingArtifactDigest, row.DuckdbVersion, row.DucklakeExtensionVersion, row.DucklakeSpecVersion, row.CatalogSchemaVersion, append([]byte(nil), row.QualificationEvidence...), dbTime(row.QualifiedAt)
+	s.SealID, s.AttemptID, s.CandidateID, s.PhysicalPoolID, s.TenantDomain, s.Region, s.EncryptionDomain, s.ObjectNamespace, s.CatalogDatabase, s.CatalogID, s.CatalogUUID, s.CatalogVersion, s.DuckLakeSnapshotID, s.RelationNamespace, s.RelationManifestDigest, s.ClosureDigest, s.ObjectRoot, s.ObjectRootDigest, s.ArtifactRoot, s.ArtifactRootDigest, s.CompiledGraphDigest, s.CompiledConfigDigest, s.SecurityDomainFingerprint, s.RequestDigest, s.PlanDigest, s.CompatibilityDigest, s.ServingArtifactID, s.ServingArtifactDigest, s.DuckDBVersion, s.RuntimeVersion, s.DuckLakeExtensionVersion, s.DuckLakeSpecVersion, s.CatalogSchemaVersion, s.QualificationEvidence, s.QualifiedAt = row.SealID, row.AttemptID, row.CandidateID, row.PhysicalPoolID, row.TenantDomain, row.Region, row.EncryptionDomain, row.ObjectNamespace, row.CatalogDatabase, row.CatalogID, row.CatalogUuid, row.CatalogVersion, row.DucklakeSnapshotID, row.RelationNamespace, row.RelationManifestDigest, row.ClosureDigest, row.ObjectRoot, row.ObjectRootDigest, row.ArtifactRoot, row.ArtifactRootDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.RequestDigest, row.PlanDigest, row.CompatibilityDigest, row.ServingArtifactID, row.ServingArtifactDigest, row.DuckdbVersion, row.RuntimeVersion, row.DucklakeExtensionVersion, row.DucklakeSpecVersion, row.CatalogSchemaVersion, append([]byte(nil), row.QualificationEvidence...), dbTime(row.QualifiedAt)
 	return s, nil
 }
 func (r *Repository) SnapshotSeal(ctx context.Context, id string) (SnapshotSeal, error) {

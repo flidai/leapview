@@ -13,12 +13,27 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func testDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+
+func testCommitMarker(attempt, pool, request, plan string) []byte {
+	marker := ducklake.CommitMarker{
+		SchemaVersion: ducklake.CommitMarkerSchemaVersion,
+		DeliveryID:    "delivery-test", GenerationID: "generation-test", AttemptID: attempt,
+		LeaseEpoch: 1, RequestDigest: request, PlanDigest: plan,
+		Project: "project-test", Environment: "prod", PhysicalPoolID: pool,
+	}
+	canonical, err := marker.CanonicalJSON()
+	if err != nil {
+		panic(err)
+	}
+	return []byte(canonical)
+}
 
 // testActivationAudit is an explicit injected adapter. Wrapping the app
 // composition implementation keeps these PostgreSQL tests focused on
@@ -150,11 +165,11 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := []byte(`{"attempt_id":"` + ids["attempt"] + `","physical_pool_id":"pool-sales","request_digest":"` + testDigest('f') + `","plan_digest":"` + testDigest('a') + `","fencing_epoch":1}`)
+	marker := testCommitMarker(ids["attempt"], "pool-sales", testDigest('f'), testDigest('a'))
 	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: ids["attempt"], OwnerID: "builder-a", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogID: "catalog-sales", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), CompatibilityDigest: testDigest('2'), ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
+	sealInput := SnapshotSealInput{SealID: ids["seal"], AttemptID: ids["attempt"], CandidateID: ids["candidate"], PhysicalPoolID: "pool-sales", TenantDomain: "tenant-sales", Region: "us-east", EncryptionDomain: "enc-sales", ObjectNamespace: "objects/sales", CatalogDatabase: "ducklake", CatalogID: "catalog-sales", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/attempt/fence", RelationManifestDigest: testDigest('1'), ClosureDigest: testDigest('8'), ObjectRoot: "objects/sales/42", ObjectRootDigest: testDigest('6'), ArtifactRoot: "artifacts/" + testDigest('e'), ArtifactRootDigest: testDigest('7'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), CompatibilityDigest: testDigest('2'), ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: []byte(`{"checks":["schema"]}`)}
 	if _, err := r.CreateSnapshotSeal(ctx, sealInput); err != nil {
 		t.Fatal(err)
 	}
@@ -462,7 +477,7 @@ func TestPostgresBuildAttemptCommitAbortRace(t *testing.T) {
 	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{AttemptID: attempt, PlanID: plan, CandidateID: candidate, OwnerID: "builder", PhysicalPoolID: "pool-race", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: testDigest('a'), Namespace: "candidate/race", SessionIdentity: "session-race", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	marker := json.RawMessage(`{"attempt_id":"` + attempt + `","physical_pool_id":"pool-race","request_digest":"` + testDigest('f') + `","plan_digest":"` + testDigest('a') + `","fencing_epoch":1}`)
+	marker := json.RawMessage(testCommitMarker(attempt, "pool-race", testDigest('f'), testDigest('a')))
 	results := make(chan error, 2)
 	go func() {
 		_, err := r.CommitBuildAttempt(t.Context(), CommitAttemptInput{AttemptID: attempt, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 7, CommitMarker: marker})
@@ -485,6 +500,47 @@ func TestPostgresBuildAttemptCommitAbortRace(t *testing.T) {
 	}
 	if successes != 1 || conflicts != 1 {
 		t.Fatalf("race outcomes successes=%d conflicts=%d", successes, conflicts)
+	}
+}
+
+func TestPostgresCommitBuildAttemptRejectsIncompleteDuckLakeMarker(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := t.Context()
+	const target = "target_marker_schema"
+	plan := "0198f2c0-7c7a-7f00-0000-000000000031"
+	attempt := "0198f2c0-7c7a-7f00-0000-000000000032"
+	request, planDigest := testDigest('f'), testDigest('a')
+	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: target, ProjectID: "project_marker", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e')}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attempt, PlanID: plan, OwnerID: "builder", PhysicalPoolID: "pool-marker", FencingEpoch: 1, RequestDigest: request, PlanDigest: planDigest, Namespace: "candidate/marker", SessionIdentity: "session-marker", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	valid := testCommitMarker(attempt, "pool-marker", request, planDigest)
+	cases := []struct {
+		name   string
+		marker []byte
+	}{
+		{name: "unknown field", marker: []byte(strings.TrimSuffix(string(valid), "}") + `,"unreviewed":"x"}`)},
+		{name: "missing required field", marker: []byte(strings.Replace(string(valid), `"delivery_id":"delivery-test",`, "", 1))},
+		{name: "wrong schema version", marker: []byte(strings.Replace(string(valid), `"schema_version":1`, `"schema_version":2`, 1))},
+		{name: "invalid normalized field", marker: []byte(strings.Replace(string(valid), `"environment":"prod"`, `"environment":" prod"`, 1))},
+		{name: "invalid digest", marker: []byte(strings.Replace(string(valid), `"plan_digest":"`+planDigest+`"`, `"plan_digest":"sha256:not-a-digest"`, 1))},
+		{name: "identity mismatch", marker: []byte(strings.Replace(string(valid), `"lease_epoch":1`, `"lease_epoch":2`, 1))},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: attempt, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: tc.marker}); err == nil {
+				t.Fatal("invalid commit marker was accepted")
+			}
+		})
+	}
+	if _, err := r.CommitBuildAttempt(ctx, CommitAttemptInput{AttemptID: attempt, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: valid}); err != nil {
+		t.Fatalf("valid full marker rejected after invalid attempts: %v", err)
 	}
 }
 
