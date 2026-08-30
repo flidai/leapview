@@ -91,6 +91,11 @@ type Input struct {
 	Bounds            Bounds
 	Sources           []SourceInput
 	Models            []ModelInput
+	// RelationNamespace binds model checks to an authority-derived DuckLake
+	// schema. Empty retains the historical model schema for callers which do
+	// not have a candidate namespace. Native qualification must provide the
+	// exact candidate namespace before evaluating checks.
+	RelationNamespace string
 	Query             Query
 	PreflightQueries  int
 	PreflightRows     int64
@@ -136,6 +141,9 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 	bounds := input.Bounds.normalized()
 	if strings.TrimSpace(input.CandidateID) == "" || strings.TrimSpace(input.SourceDigest) == "" || strings.TrimSpace(input.BindingGeneration) == "" || strings.TrimSpace(input.RuntimeVersion) == "" || strings.TrimSpace(input.DuckDBVersion) == "" || input.Query == nil {
 		return release.GateEvidence{}, fmt.Errorf("%w: candidate identity, source/runtime evidence, and query capability are required", ErrGateUnavailable)
+	}
+	if input.RelationNamespace != "" && !canonicalRelationNamespace(input.RelationNamespace) {
+		return release.GateEvidence{}, fmt.Errorf("%w: relation namespace is not canonical", ErrGateUnavailable)
 	}
 	if input.Now.IsZero() {
 		input.Now = time.Now().UTC()
@@ -237,7 +245,7 @@ func Evaluate(ctx context.Context, input Input) (release.GateEvidence, error) {
 			}
 		}
 		for _, check := range checks {
-			result, err := evaluateCheck(ctx, state, model.ID, model.Model, check, modelRefs)
+			result, err := evaluateCheck(ctx, state, model.ID, model.Model, check, modelRefs, input.RelationNamespace)
 			evidence.Checks = append(evidence.Checks, result)
 			if err != nil {
 				return finishFailure(evidence, state, err)
@@ -524,7 +532,7 @@ func evaluateFreshness(ctx context.Context, now time.Time, state *budget, source
 	}{Observed: observed.UTC(), AgeMillis: age.Milliseconds(), Revision: source.Revision}), nil
 }
 
-func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck, modelRefs map[string]semanticmodel.Table) (result release.GateCheckEvidence, retErr error) {
+func evaluateCheck(ctx context.Context, state *budget, modelID string, table semanticmodel.Table, check semanticmodel.ModelCheck, modelRefs map[string]semanticmodel.Table, relationNamespace string) (result release.GateCheckEvidence, retErr error) {
 	identity := checkIdentity(modelID, check)
 	result = release.GateCheckEvidence{Identity: identity, Kind: check.Type, ResourceID: modelID, Severity: severity(check.Severity)}
 	queriesBefore := state.Queries
@@ -534,7 +542,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 			result.Outcome = outcomeOf(retErr)
 		}
 	}()
-	relation := modelRelation(table)
+	relation := modelRelation(table, relationNamespace)
 	var rows semanticquery.Rows
 	var err error
 	switch check.Type {
@@ -578,7 +586,7 @@ func evaluateCheck(ctx context.Context, state *budget, modelID string, table sem
 		if !validField(toField) {
 			return result, gateError(identity, release.GateUnavailable, ErrGateUnavailable, nil)
 		}
-		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), modelRelation(target), quoteIdent(toField), quoteIdent(check.Field))
+		where := fmt.Sprintf("child.%s IS NOT NULL AND NOT EXISTS (SELECT 1 FROM %s AS parent WHERE parent.%s = child.%s)", quoteIdent(check.Field), modelRelation(target, relationNamespace), quoteIdent(toField), quoteIdent(check.Field))
 		rows, err = runQualified(ctx, state, relation+" AS child", "1", where, nil)
 	case "row_count":
 		limit := check.Maximum
@@ -839,11 +847,33 @@ func normalizeCompilerRelation(value string) (string, bool) {
 	return strings.Join(quoted, "."), true
 }
 func quoteIdent(value string) string { return `"` + strings.ReplaceAll(value, `"`, `""`) + `"` }
-func modelRelation(table semanticmodel.Table) string {
-	return modelRelationName(strings.TrimSpace(table.ModelName))
+func modelRelation(table semanticmodel.Table, relationNamespace string) string {
+	return modelRelationName(strings.TrimSpace(table.ModelName), relationNamespace)
 }
-func modelRelationName(id string) string {
-	return `"model".` + quoteIdent(id)
+func modelRelationName(id string, relationNamespace string) string {
+	namespace := strings.TrimSpace(relationNamespace)
+	if namespace == "" {
+		namespace = "model"
+	}
+	return quoteIdent(namespace) + "." + quoteIdent(id)
+}
+
+func canonicalRelationNamespace(value string) bool {
+	if value == "" || value != strings.TrimSpace(value) || value != strings.ToLower(value) || len(value) > 63 {
+		return false
+	}
+	for index, r := range value {
+		if index == 0 {
+			if !(r == '_' || r >= 'a' && r <= 'z') {
+				return false
+			}
+			continue
+		}
+		if !(r == '_' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
 }
 func splitReference(value string) (string, string, bool) {
 	parts := strings.Split(strings.TrimSpace(value), ".")
