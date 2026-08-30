@@ -396,4 +396,5 @@ var (
 	_ DashboardUsagePruner       = (*dashboardusagepostgres.Repository)(nil)
 	_ DashboardPublicationPruner = (*dashboardpublicationpostgres.Maintenance)(nil)
 	_ ManagedDataPruner          = (*manageddatapostgres.Repository)(nil)
+	_ EventTxRunner              = (*PgxEventTxRunner)(nil)
 )
