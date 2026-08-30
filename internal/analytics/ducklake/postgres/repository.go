@@ -351,6 +351,17 @@ func New(db DBTX) *Repository { return &Repository{db: db} }
 // than opening a second one.
 func (r *Repository) Configured() bool { return r != nil && r.db != nil }
 
+// BeginAttemptTx persists an exact running-attempt identity through a
+// caller-owned transaction. It never begins, commits, or rolls back tx; app
+// composition uses it to share one control-plane transaction with delivery
+// admission.
+func (r *Repository) BeginAttemptTx(ctx context.Context, tx Tx, in BeginAttemptInput) (AttemptEvidence, error) {
+	if r == nil || tx == nil {
+		return AttemptEvidence{}, ErrInvalid
+	}
+	return BeginAttempt(ctx, tx, in)
+}
+
 // CommitAttemptTx records the exact external DuckLake commit in a
 // caller-owned PostgreSQL transaction. It is the transaction-aware adapter
 // used by app composition when delivery, serving-state, and DuckLake control
