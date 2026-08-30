@@ -267,9 +267,11 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 	return &Scope{pool: p, key: key}, nil
 }
 
-// OpenSharedScope acquires one handle to a stable cache partition. It is kept
-// for compatibility with callers that explicitly share one partition scope;
-// generation runtimes should use OpenScope with distinct RuntimeID values.
+// OpenSharedScope acquires one handle to a stable cache scope. All live
+// handles with the same identity share entries and invalidation generation.
+// Closing the final handle leaves retained state dormant so a compatible
+// serving generation can reactivate it. Generation runtimes that overlap at
+// cutover use distinct RuntimeID values with the same PartitionID instead.
 func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 	if p == nil {
 		return nil, fmt.Errorf("result cache pool is required")
@@ -287,7 +289,7 @@ func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 		return nil, fmt.Errorf("result cache pool is closed")
 	}
 	if existing := p.scopes[key]; existing != nil && !existing.closed {
-		if !existing.shared {
+		if !existing.shared || existing.id != id {
 			return nil, fmt.Errorf("result cache scope already exists")
 		}
 		existing.references++
@@ -522,9 +524,20 @@ func (p *Pool) removeLocked(element *list.Element, constraint Constraint) {
 			delete(p.partitions, e.partition)
 		}
 	}
+	if state != nil {
+		p.removeEmptyDormantScopeLocked(state)
+	}
 	if constraint != "" {
 		p.evictions[constraint]++
 	}
+}
+
+func (p *Pool) removeEmptyDormantScopeLocked(state *scopeState) {
+	if state == nil || !state.shared || state.references != 0 || len(state.entries) != 0 {
+		return
+	}
+	state.closed = true
+	delete(p.scopes, state.id.RuntimeID)
 }
 
 func cloneMetadata(metadata Metadata) Metadata {
@@ -573,8 +586,8 @@ func (s *Scope) Clear() {
 	p := s.pool
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	state := p.scopes[s.key]
-	if state == nil || state.closed {
+	state := s.openStateLocked()
+	if state == nil {
 		return
 	}
 	partition := state.id.PartitionID
@@ -605,11 +618,18 @@ func (s *Scope) Close() error {
 	if state == nil || state.closed {
 		return nil
 	}
-	if state.shared && state.references > 1 {
-		state.references--
+	if state.shared {
+		if state.references > 0 {
+			state.references--
+		}
+		p.removeEmptyDormantScopeLocked(state)
 		return nil
 	}
-	if state.shared {
+	// The compatibility/default partition is generation-owned and is cleared
+	// on close. An explicit stable PartitionID survives this runtime so an
+	// overlapping or successor generation can reuse dependency-equivalent
+	// results without retaining generation-owned byte entries.
+	if state.id.PartitionID == state.id.RuntimeID {
 		partition := state.id.PartitionID
 		for element := p.lru.Back(); element != nil; {
 			previous := element.Prev()
