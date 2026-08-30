@@ -2,6 +2,7 @@ package architecture
 
 import (
 	"encoding/json"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -15,6 +16,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 )
 
 const modulePath = "github.com/flidai/leapview"
@@ -3921,6 +3923,43 @@ func taskfileTaskBlock(t *testing.T, taskfile, task string) string {
 
 func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 	root := repoRoot(t)
+	sqlcConfig, err := os.ReadFile(filepath.Join(root, "sqlc.yaml"))
+	if err != nil {
+		t.Fatalf("read sqlc.yaml: %v", err)
+	}
+	var config struct {
+		SQL []struct {
+			Engine string `yaml:"engine"`
+			Gen    struct {
+				Go struct {
+					Out        string `yaml:"out"`
+					SQLPackage string `yaml:"sql_package"`
+				} `yaml:"go"`
+			} `yaml:"gen"`
+		} `yaml:"sql"`
+	}
+	if err := yaml.Unmarshal(sqlcConfig, &config); err != nil {
+		t.Fatalf("decode sqlc.yaml: %v", err)
+	}
+	var postgresOutputs []string
+	for _, statement := range config.SQL {
+		if statement.Engine != "postgresql" {
+			continue
+		}
+		if statement.Gen.Go.SQLPackage != "pgx/v5" {
+			t.Errorf("PostgreSQL sqlc output %q must use pgx/v5, got %q", statement.Gen.Go.Out, statement.Gen.Go.SQLPackage)
+			continue
+		}
+		if statement.Gen.Go.Out == "" {
+			t.Error("PostgreSQL sqlc statement has no generated output directory")
+			continue
+		}
+		postgresOutputs = append(postgresOutputs, statement.Gen.Go.Out)
+	}
+	if len(postgresOutputs) == 0 {
+		t.Fatal("sqlc.yaml has no PostgreSQL generated output directories")
+	}
+
 	files := map[string][]string{
 		"Taskfile.yml": {
 			"db:generate:",
@@ -3974,6 +4013,17 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			if !strings.Contains(string(body), fragment) {
 				t.Errorf("%s missing sqlc generation contract fragment %q", name, fragment)
 			}
+		}
+	}
+	dockerfile, err := os.ReadFile(filepath.Join(root, "Dockerfile"))
+	if err != nil {
+		t.Fatalf("read Dockerfile: %v", err)
+	}
+	dockerfileText := string(dockerfile)
+	for _, output := range postgresOutputs {
+		copy := fmt.Sprintf("COPY --from=sourcegen /src/%s ./%s", output, output)
+		if !strings.Contains(dockerfileText, copy) {
+			t.Errorf("Dockerfile missing generated PostgreSQL sqlc output %s", output)
 		}
 	}
 }
