@@ -74,9 +74,11 @@ func NewCandidateSourceSynchronizer(root string) (project.CandidateSourceSynchro
 		now: time.Now, plans: make(map[candidateSourcePlanKey]candidateSourcePlan),
 	}
 	if err := os.MkdirAll(synchronizer.planDir, 0o700); err != nil {
+		_ = store.Close()
 		return nil, fmt.Errorf("%w: create source synchronization plan store: %v", project.ErrCandidateSourceUnavailable, err)
 	}
 	if err := synchronizer.loadPlans(); err != nil {
+		_ = store.Close()
 		return nil, fmt.Errorf("%w: load source synchronization plans: %v", project.ErrCandidateSourceUnavailable, err)
 	}
 	return synchronizer, nil

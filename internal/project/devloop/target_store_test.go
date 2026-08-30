@@ -185,6 +185,76 @@ func TestTargetStoreCannotCommitWithMissingBlobs(t *testing.T) {
 	}
 }
 
+func TestTargetStoreRejectsTraversalBeforeTouchingFilesystem(t *testing.T) {
+	store, err := NewTargetStore(t.TempDir())
+	require.NoError(t, err)
+	snapshot := testSnapshotWithArtifacts("traversal", []Artifact{
+		contentArtifact("leapview.yaml", []byte("project")),
+	})
+	request := planRequestForSnapshot(snapshot)
+	request.ProjectFile = "../outside.yaml"
+	if _, err := store.Missing(t.Context(), request); err == nil {
+		t.Fatal("target store accepted a parent-traversing project path")
+	}
+}
+
+func TestTargetStoreRejectsSymlinkedBlob(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewTargetStore(root)
+	require.NoError(t, err)
+	artifact := contentArtifact("leapview.yaml", []byte("project"))
+	outside := filepath.Join(t.TempDir(), "outside")
+	require.NoError(t, os.WriteFile(outside, artifact.Content, 0o600))
+	link := filepath.Join(store.blobs, digestHex(artifact.Digest))
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	request := planRequestForSnapshot(testSnapshotWithArtifacts("symlink", []Artifact{artifact}))
+	if _, err := store.Missing(t.Context(), request); err == nil {
+		t.Fatal("target store followed a blob symlink")
+	}
+}
+
+func TestTargetStoreRejectsSymlinkedRetainedSource(t *testing.T) {
+	snapshot, err := (FilesystemBuilder{ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")}).Build(t.Context())
+	require.NoError(t, err)
+	store, err := NewTargetStore(t.TempDir())
+	require.NoError(t, err)
+	for _, artifact := range snapshot.Artifacts {
+		require.NoError(t, store.Put(t.Context(), artifact.Digest, bytes.NewReader(artifact.Content)))
+	}
+	request := planRequestForSnapshot(snapshot)
+	stored, err := store.Commit(t.Context(), request)
+	require.NoError(t, err)
+	outside := filepath.Join(t.TempDir(), "outside.yaml")
+	require.NoError(t, os.WriteFile(outside, []byte("project"), 0o600))
+	require.NoError(t, os.Remove(stored.ProjectPath))
+	if err := os.Symlink(outside, stored.ProjectPath); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	if _, err := store.Commit(t.Context(), request); err == nil {
+		t.Fatal("target store followed a retained source symlink")
+	}
+}
+
+func TestTargetStoreRejectsSymlinkedSnapshotDirectory(t *testing.T) {
+	root := t.TempDir()
+	store, err := NewTargetStore(root)
+	require.NoError(t, err)
+	artifact := contentArtifact("leapview.yaml", []byte("project"))
+	snapshot := testSnapshotWithArtifacts("symlink-snapshot", []Artifact{artifact})
+	request := planRequestForSnapshot(snapshot)
+	outside := t.TempDir()
+	link := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
+	if err := os.Symlink(outside, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	require.NoError(t, store.Put(t.Context(), artifact.Digest, bytes.NewReader(artifact.Content)))
+	if _, err := store.Commit(t.Context(), request); err == nil {
+		t.Fatal("target store followed a retained snapshot symlink")
+	}
+}
+
 func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T) {
 	store, err := NewTargetStore(t.TempDir())
 	require.NoError(t, err)

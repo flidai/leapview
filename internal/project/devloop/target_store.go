@@ -3,6 +3,7 @@ package devloop
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -15,7 +16,6 @@ import (
 	"sync"
 
 	"github.com/flidai/leapview/internal/platform/digest"
-	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -33,7 +33,11 @@ type TargetStore struct {
 	root      string
 	blobs     string
 	snapshots string
-	commitMu  sync.Mutex
+	// rootFS is the canonical project-root containment boundary. All paths
+	// derived from synchronization manifests are opened relative to this
+	// descriptor, so traversal and symlink escapes cannot leave the store.
+	rootFS   *os.Root
+	commitMu sync.Mutex
 }
 
 type StoredSnapshot struct {
@@ -99,8 +103,8 @@ func (store *TargetStore) snapshot(ctx context.Context, projectID projectgraph.R
 	if err := digest.ValidateSHA256Identity(request.ArtifactDigest); err != nil {
 		return StoredSnapshot{}, err
 	}
-	directory := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
-	manifestBytes, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	directory := store.snapshotRelativePath(request.ArtifactDigest)
+	manifestBytes, err := store.readFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -119,7 +123,7 @@ func (store *TargetStore) snapshot(ctx context.Context, projectID projectgraph.R
 		if err := digest.ValidateSHA256Identity(attestationDigest); err != nil {
 			return StoredSnapshot{}, err
 		}
-		attestation, err := readSourceAttestation(directory, attestationDigest)
+		attestation, err := store.readSourceAttestation(directory, attestationDigest)
 		if err != nil {
 			return StoredSnapshot{}, err
 		}
@@ -153,19 +157,47 @@ func NewTargetStore(root string) (*TargetStore, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := os.MkdirAll(absolute, 0o700); err != nil {
+		return nil, err
+	}
+	if err := os.Chmod(absolute, 0o700); err != nil {
+		return nil, err
+	}
+	// Resolve the configured root once. The descriptor opened below remains
+	// anchored to this canonical directory even if its name is later moved.
+	absolute, err = filepath.EvalSymlinks(absolute)
+	if err != nil {
+		return nil, err
+	}
+	rootFS, err := os.OpenRoot(absolute)
+	if err != nil {
+		return nil, err
+	}
 	store := &TargetStore{
 		root: absolute, blobs: filepath.Join(absolute, "blobs"),
-		snapshots: filepath.Join(absolute, "snapshots"),
+		snapshots: filepath.Join(absolute, "snapshots"), rootFS: rootFS,
 	}
-	for _, directory := range []string{store.root, store.blobs, store.snapshots} {
-		if err := os.MkdirAll(directory, 0o700); err != nil {
+	for _, directory := range []string{"blobs", "snapshots"} {
+		if err := store.mkdirAll(directory); err != nil {
+			_ = rootFS.Close()
 			return nil, err
 		}
-		if err := os.Chmod(directory, 0o700); err != nil {
+		if err := store.rootFS.Chmod(directory, 0o700); err != nil {
+			_ = rootFS.Close()
 			return nil, err
 		}
 	}
 	return store, nil
+}
+
+// Close releases the descriptor that anchors all target-store operations.
+// Callers that construct short-lived stores should close them; the project
+// module retains its store for the application lifetime.
+func (store *TargetStore) Close() error {
+	if store == nil || store.rootFS == nil {
+		return nil
+	}
+	return store.rootFS.Close()
 }
 
 func (store *TargetStore) Missing(
@@ -186,7 +218,7 @@ func (store *TargetStore) Missing(
 			continue
 		}
 		seen[reference.Digest] = struct{}{}
-		if err := verifyBlob(store.blobPath(reference.Digest), reference.Digest, reference.SizeBytes); err != nil {
+		if err := store.verifyBlob(reference.Digest, reference.SizeBytes); err != nil {
 			if os.IsNotExist(err) {
 				missing = append(missing, reference.Digest)
 				continue
@@ -206,18 +238,17 @@ func (store *TargetStore) Put(ctx context.Context, identity string, source io.Re
 	if err := digest.ValidateSHA256Identity(identity); err != nil {
 		return fmt.Errorf("project source blob digest is invalid: %w", err)
 	}
-	target := store.blobPath(identity)
-	if err := verifyBlob(target, identity); err == nil {
+	target := store.blobRelativePath(identity)
+	if err := store.verifyBlob(identity); err == nil {
 		return nil
 	} else if !os.IsNotExist(err) {
 		return err
 	}
-	temporary, err := os.CreateTemp(store.blobs, ".upload-*")
+	temporary, temporaryRelative, err := store.createTemp("blobs", ".upload-")
 	if err != nil {
 		return err
 	}
-	temporaryPath := temporary.Name()
-	defer os.Remove(temporaryPath)
+	defer func() { _ = store.remove(temporaryRelative) }()
 	hash := sha256.New()
 	written, copyErr := io.Copy(io.MultiWriter(temporary, hash), io.LimitReader(
 		contextReader{ctx: ctx, source: source},
@@ -247,8 +278,8 @@ func (store *TargetStore) Put(ctx context.Context, identity string, source io.Re
 	if err := temporary.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(temporaryPath, target); err != nil {
-		if verifyErr := verifyBlob(target, identity); verifyErr == nil {
+	if err := store.link(temporaryRelative, target); err != nil {
+		if verifyErr := store.verifyBlob(identity); verifyErr == nil {
 			return nil
 		}
 		return err
@@ -270,8 +301,8 @@ func (store *TargetStore) Commit(
 	store.commitMu.Lock()
 	defer store.commitMu.Unlock()
 
-	destination := filepath.Join(store.snapshots, digestHex(request.ArtifactDigest))
-	if _, err := os.Stat(destination); err == nil {
+	destination := store.snapshotRelativePath(request.ArtifactDigest)
+	if _, err := store.stat(destination); err == nil {
 		stored, verifyErr := store.verifyStoredSnapshot(ctx, request, destination)
 		if verifyErr != nil {
 			return StoredSnapshot{}, verifyErr
@@ -279,7 +310,7 @@ func (store *TargetStore) Commit(
 		if _, err := store.appendSourceAttestation(destination, request); err != nil {
 			return StoredSnapshot{}, err
 		}
-		return storedSnapshot(request, destination, stored.ProjectDigest), nil
+		return store.storedSnapshot(request, destination, stored.ProjectDigest)
 	} else if !os.IsNotExist(err) {
 		return StoredSnapshot{}, err
 	}
@@ -290,25 +321,27 @@ func (store *TargetStore) Commit(
 	if len(missing) != 0 {
 		return StoredSnapshot{}, fmt.Errorf("project snapshot is missing %d source blobs", len(missing))
 	}
-	staging, err := os.MkdirTemp(store.snapshots, ".snapshot-*")
+	staging, err := store.createTempDirectory("snapshots", ".snapshot-")
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	defer os.RemoveAll(staging)
-	sourceRoot := filepath.Join(staging, "source")
-	if err := os.MkdirAll(sourceRoot, 0o700); err != nil {
+	stagingRelative := staging
+	defer func() { _ = store.removeAll(stagingRelative) }()
+	sourceRootRelative := filepath.Join(stagingRelative, "source")
+	if err := store.mkdirAll(sourceRootRelative); err != nil {
 		return StoredSnapshot{}, err
 	}
+	sourceFiles := make(map[string][]byte, len(request.Artifacts))
 	var total int64
 	for _, reference := range request.Artifacts {
 		if err := ctx.Err(); err != nil {
 			return StoredSnapshot{}, err
 		}
-		target := filepath.Join(sourceRoot, filepath.FromSlash(reference.Path))
-		if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		targetRelative := filepath.Join(sourceRootRelative, filepath.FromSlash(reference.Path))
+		if err := store.mkdirAll(filepath.Dir(targetRelative)); err != nil {
 			return StoredSnapshot{}, err
 		}
-		size, err := copyRetainedBlob(store.blobPath(reference.Digest), target, reference.Digest, reference.SizeBytes)
+		size, err := store.copyRetainedBlob(targetRelative, reference.Digest, reference.SizeBytes)
 		if err != nil {
 			return StoredSnapshot{}, err
 		}
@@ -316,9 +349,13 @@ func (store *TargetStore) Commit(
 		if total > maxTargetSnapshotBytes {
 			return StoredSnapshot{}, fmt.Errorf("project snapshot exceeds %d bytes", maxTargetSnapshotBytes)
 		}
+		content, err := store.readFile(targetRelative)
+		if err != nil {
+			return StoredSnapshot{}, err
+		}
+		sourceFiles[reference.Path] = content
 	}
-	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.Compile(projectPath)
+	compiled, err := projectcompiler.CompileProjectFiles(sourceFiles, request.ProjectFile)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -328,21 +365,18 @@ func (store *TargetStore) Commit(
 			compiled.ProjectID(), request.ProjectID,
 		)
 	}
-	if err := writeRetainedProjectArtifact(
-		filepath.Join(staging, targetProjectArtifact),
-		compiled.Canonical(),
-	); err != nil {
+	if err := store.writePrivateFile(filepath.Join(stagingRelative, targetProjectArtifact), compiled.Canonical()); err != nil {
 		return StoredSnapshot{}, err
 	}
 	manifest, err := json.Marshal(sourceManifest(request))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
-	if err := os.WriteFile(filepath.Join(staging, "manifest.json"), manifest, 0o600); err != nil {
+	if err := store.writePrivateFile(filepath.Join(stagingRelative, "manifest.json"), manifest); err != nil {
 		return StoredSnapshot{}, err
 	}
-	if err := os.Rename(staging, destination); err != nil {
-		if _, statErr := os.Stat(destination); statErr == nil {
+	if err := store.rename(stagingRelative, destination); err != nil {
+		if _, statErr := store.stat(destination); statErr == nil {
 			stored, verifyErr := store.verifyStoredSnapshot(ctx, request, destination)
 			if verifyErr != nil {
 				return StoredSnapshot{}, verifyErr
@@ -350,14 +384,14 @@ func (store *TargetStore) Commit(
 			if _, err := store.appendSourceAttestation(destination, request); err != nil {
 				return StoredSnapshot{}, err
 			}
-			return storedSnapshot(request, destination, stored.ProjectDigest), nil
+			return store.storedSnapshot(request, destination, stored.ProjectDigest)
 		}
 		return StoredSnapshot{}, err
 	}
 	if _, err := store.appendSourceAttestation(destination, request); err != nil {
 		return StoredSnapshot{}, err
 	}
-	return storedSnapshot(request, destination, compiled.Digest()), nil
+	return store.storedSnapshot(request, destination, compiled.Digest())
 }
 
 func (store *TargetStore) verifyStoredSnapshot(
@@ -365,7 +399,7 @@ func (store *TargetStore) verifyStoredSnapshot(
 	request SynchronizationPlanRequest,
 	directory string,
 ) (StoredSnapshot, error) {
-	manifestBytes, err := os.ReadFile(filepath.Join(directory, "manifest.json"))
+	manifestBytes, err := store.readFile(filepath.Join(directory, "manifest.json"))
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -383,33 +417,38 @@ func (store *TargetStore) verifyStoredSnapshot(
 		return StoredSnapshot{}, fmt.Errorf("retained project snapshot identity does not match request")
 	}
 	sourceRoot := filepath.Join(directory, "source")
+	sourceFiles := make(map[string][]byte, len(request.Artifacts))
 	for _, reference := range request.Artifacts {
 		if err := ctx.Err(); err != nil {
 			return StoredSnapshot{}, err
 		}
-		if err := verifyBlob(
+		if err := store.verifyBlobAt(
 			filepath.Join(sourceRoot, filepath.FromSlash(reference.Path)),
 			reference.Digest,
 			reference.SizeBytes,
 		); err != nil {
 			return StoredSnapshot{}, fmt.Errorf("verify stored project source %q: %w", reference.Path, err)
 		}
+		content, err := store.readFile(filepath.Join(sourceRoot, filepath.FromSlash(reference.Path)))
+		if err != nil {
+			return StoredSnapshot{}, err
+		}
+		sourceFiles[reference.Path] = content
 	}
-	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.Compile(projectPath)
+	compiled, err := projectcompiler.CompileProjectFiles(sourceFiles, request.ProjectFile)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
 	if compiled.ProjectID() != request.ProjectID {
 		return StoredSnapshot{}, fmt.Errorf("stored project identity changed")
 	}
-	retainedArtifact, err := os.ReadFile(filepath.Join(directory, targetProjectArtifact))
+	retainedArtifact, err := store.readFile(filepath.Join(directory, targetProjectArtifact))
 	if os.IsNotExist(err) {
-		if err := writeRetainedProjectArtifact(
-			filepath.Join(directory, targetProjectArtifact),
-			compiled.Canonical(),
-		); err != nil {
-			return StoredSnapshot{}, fmt.Errorf("repair retained project artifact: %w", err)
+		if err := store.writePrivateFile(filepath.Join(directory, targetProjectArtifact), compiled.Canonical()); err != nil {
+			existing, readErr := store.readFile(filepath.Join(directory, targetProjectArtifact))
+			if readErr != nil || !bytes.Equal(existing, compiled.Canonical()) {
+				return StoredSnapshot{}, fmt.Errorf("repair retained project artifact: %w", err)
+			}
 		}
 		retainedArtifact = compiled.Canonical()
 		err = nil
@@ -420,33 +459,12 @@ func (store *TargetStore) verifyStoredSnapshot(
 	if string(retainedArtifact) != string(compiled.Canonical()) {
 		return StoredSnapshot{}, fmt.Errorf("retained project artifact does not match synchronized sources")
 	}
-	return storedSnapshot(request, directory, compiled.Digest()), nil
+	return store.storedSnapshot(request, directory, compiled.Digest())
 }
 
-func resolveSourceAttestation(directory string, request SynchronizationPlanRequest, expected string) (string, error) {
-	content, err := json.Marshal(sourceAttestation{SourceDigest: request.ArtifactDigest, SourceRevision: cloneSourceRevision(request.SourceRevision)})
-	if err != nil {
-		return "", err
-	}
-	sum := sha256.Sum256(content)
-	actual := "sha256:" + hex.EncodeToString(sum[:])
-	if expected != "" && actual != expected {
-		return "", fmt.Errorf("source attestation digest mismatch")
-	}
-	path := filepath.Join(directory, "attestations", hex.EncodeToString(sum[:])+".json")
-	stored, err := os.ReadFile(path)
-	if err != nil {
-		return "", fmt.Errorf("read source attestation: %w", err)
-	}
-	if string(stored) != string(content) {
-		return "", fmt.Errorf("source attestation content mismatch")
-	}
-	return actual, nil
-}
-
-func readSourceAttestation(directory, expected string) (sourceAttestation, error) {
+func (store *TargetStore) readSourceAttestation(directory, expected string) (sourceAttestation, error) {
 	path := filepath.Join(directory, "attestations", digestHex(expected)+".json")
-	content, err := os.ReadFile(path)
+	content, err := store.readFile(path)
 	if err != nil {
 		return sourceAttestation{}, fmt.Errorf("read source attestation: %w", err)
 	}
@@ -471,10 +489,6 @@ func readSourceAttestation(directory, expected string) (sourceAttestation, error
 	return attestation, nil
 }
 
-func writeRetainedProjectArtifact(path string, content []byte) error {
-	return securefs.WritePrivateFileAtomic(path, content)
-}
-
 func (store *TargetStore) appendSourceAttestation(
 	directory string,
 	request SynchronizationPlanRequest,
@@ -488,13 +502,13 @@ func (store *TargetStore) appendSourceAttestation(
 		return "", err
 	}
 	directory = filepath.Join(directory, "attestations")
-	if err := os.MkdirAll(directory, 0o700); err != nil {
+	if err := store.mkdirAll(directory); err != nil {
 		return "", err
 	}
 	sum := sha256.Sum256(content)
 	attestationDigest := "sha256:" + hex.EncodeToString(sum[:])
 	path := filepath.Join(directory, hex.EncodeToString(sum[:])+".json")
-	if existing, err := os.ReadFile(path); err == nil {
+	if existing, err := store.readFile(path); err == nil {
 		if string(existing) != string(content) {
 			return "", fmt.Errorf("source attestation identity collision")
 		}
@@ -502,8 +516,8 @@ func (store *TargetStore) appendSourceAttestation(
 	} else if !os.IsNotExist(err) {
 		return "", err
 	}
-	if err := securefs.WritePrivateFileAtomic(path, content); err != nil {
-		if existing, readErr := os.ReadFile(path); readErr == nil && string(existing) == string(content) {
+	if err := store.writePrivateFile(path, content); err != nil {
+		if existing, readErr := store.readFile(path); readErr == nil && string(existing) == string(content) {
 			return attestationDigest, nil
 		}
 		return "", err
@@ -574,16 +588,300 @@ func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPl
 	return clonePlanRequest(request), nil
 }
 
-func (store *TargetStore) blobPath(identity string) string {
-	return filepath.Join(store.blobs, digestHex(identity))
+func (store *TargetStore) blobRelativePath(identity string) string {
+	return filepath.Join("blobs", digestHex(identity))
+}
+
+func (store *TargetStore) snapshotRelativePath(identity string) string {
+	return filepath.Join("snapshots", digestHex(identity))
 }
 
 func digestHex(identity string) string {
 	return strings.TrimPrefix(strings.TrimSpace(identity), "sha256:")
 }
 
-func verifyBlob(path, identity string, expectedSize ...int64) error {
-	source, err := os.Open(path)
+// cleanRelativePath is the one path boundary for all names supplied to the
+// descriptor-backed store. os.Root rejects escapes itself, while this check
+// keeps callers from accidentally passing absolute or parent-traversing names.
+func cleanRelativePath(value string) (string, error) {
+	if value == "" || filepath.IsAbs(value) || filepath.VolumeName(value) != "" || strings.ContainsRune(value, '\x00') {
+		return "", fmt.Errorf("target-store path must be relative")
+	}
+	clean := filepath.Clean(value)
+	if clean == "." || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("target-store path escapes project root")
+	}
+	return clean, nil
+}
+
+func (store *TargetStore) absolutePath(relative string) (string, error) {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return "", err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return "", err
+	}
+	return filepath.Join(store.root, clean), nil
+}
+
+// rejectSymlinkComponents validates the existing portion of a path before a
+// descriptor-relative operation. os.Root prevents escapes even if a path is
+// swapped concurrently; rejecting links here also prevents surprising
+// in-root redirection and makes retained snapshots structurally immutable.
+func (store *TargetStore) rejectSymlinkComponents(relative string) error {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return err
+	}
+	current := ""
+	components := strings.Split(filepath.ToSlash(clean), "/")
+	for index, component := range components {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		info, statErr := store.rootFS.Lstat(current)
+		if os.IsNotExist(statErr) {
+			return nil
+		}
+		if statErr != nil {
+			return statErr
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("target-store path %q contains a symlink", relative)
+		}
+		if index < len(components)-1 && !info.IsDir() {
+			return fmt.Errorf("target-store path %q has a non-directory parent", relative)
+		}
+	}
+	return nil
+}
+
+func (store *TargetStore) mkdirAll(relative string) error {
+	if relative == "." {
+		return nil
+	}
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return err
+	}
+	current := ""
+	for _, component := range strings.Split(filepath.ToSlash(clean), "/") {
+		if component == "" || component == "." {
+			continue
+		}
+		current = filepath.Join(current, component)
+		if err := store.rootFS.Mkdir(current, 0o700); err != nil && !os.IsExist(err) {
+			return err
+		}
+		info, err := store.rootFS.Lstat(current)
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+			return fmt.Errorf("target-store path %q is not a directory", current)
+		}
+	}
+	return nil
+}
+
+func (store *TargetStore) createTemp(directory, prefix string) (*os.File, string, error) {
+	cleanDirectory, err := cleanRelativePath(directory)
+	if err != nil {
+		return nil, "", err
+	}
+	if err := store.mkdirAll(cleanDirectory); err != nil {
+		return nil, "", err
+	}
+	for range 32 {
+		var suffix [16]byte
+		if _, err := cryptorand.Read(suffix[:]); err != nil {
+			return nil, "", err
+		}
+		relative := filepath.Join(cleanDirectory, prefix+hex.EncodeToString(suffix[:]))
+		file, err := store.openFile(relative, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err == nil {
+			return file, relative, nil
+		}
+		if !os.IsExist(err) {
+			return nil, "", err
+		}
+	}
+	return nil, "", fmt.Errorf("could not allocate target-store temporary file")
+}
+
+func (store *TargetStore) createTempDirectory(directory, prefix string) (string, error) {
+	cleanDirectory, err := cleanRelativePath(directory)
+	if err != nil {
+		return "", err
+	}
+	if err := store.mkdirAll(cleanDirectory); err != nil {
+		return "", err
+	}
+	for range 32 {
+		var suffix [16]byte
+		if _, err := cryptorand.Read(suffix[:]); err != nil {
+			return "", err
+		}
+		relative := filepath.Join(cleanDirectory, prefix+hex.EncodeToString(suffix[:]))
+		if err := store.rootFS.Mkdir(relative, 0o700); err == nil {
+			return relative, nil
+		} else if !os.IsExist(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("could not allocate target-store temporary directory")
+}
+
+func (store *TargetStore) stat(relative string) (os.FileInfo, error) {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return nil, err
+	}
+	return store.rootFS.Stat(clean)
+}
+
+func (store *TargetStore) readFile(relative string) ([]byte, error) {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return nil, err
+	}
+	return store.rootFS.ReadFile(clean)
+}
+
+func (store *TargetStore) open(relative string) (*os.File, error) {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return nil, err
+	}
+	return store.rootFS.Open(clean)
+}
+
+func (store *TargetStore) openFile(relative string, flag int, mode os.FileMode) (*os.File, error) {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return nil, err
+	}
+	if err := store.rejectSymlinkComponents(filepath.Dir(clean)); err != nil {
+		return nil, err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return nil, err
+	}
+	return store.rootFS.OpenFile(clean, flag, mode)
+}
+
+func (store *TargetStore) rename(oldRelative, newRelative string) error {
+	oldClean, err := cleanRelativePath(oldRelative)
+	if err != nil {
+		return err
+	}
+	newClean, err := cleanRelativePath(newRelative)
+	if err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(oldClean); err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(filepath.Dir(newClean)); err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(newClean); err != nil {
+		return err
+	}
+	return store.rootFS.Rename(oldClean, newClean)
+}
+
+func (store *TargetStore) link(oldRelative, newRelative string) error {
+	oldClean, err := cleanRelativePath(oldRelative)
+	if err != nil {
+		return err
+	}
+	newClean, err := cleanRelativePath(newRelative)
+	if err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(oldClean); err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(filepath.Dir(newClean)); err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(newClean); err != nil {
+		return err
+	}
+	return store.rootFS.Link(oldClean, newClean)
+}
+
+func (store *TargetStore) remove(relative string) error {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return err
+	}
+	return store.rootFS.Remove(clean)
+}
+
+func (store *TargetStore) removeAll(relative string) error {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return err
+	}
+	if err := store.rejectSymlinkComponents(clean); err != nil {
+		return err
+	}
+	return store.rootFS.RemoveAll(clean)
+}
+
+func (store *TargetStore) writePrivateFile(relative string, content []byte) error {
+	clean, err := cleanRelativePath(relative)
+	if err != nil {
+		return err
+	}
+	if err := store.mkdirAll(filepath.Dir(clean)); err != nil {
+		return err
+	}
+	file, temporary, err := store.createTemp(filepath.Dir(clean), "."+filepath.Base(clean)+".tmp-")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = store.remove(temporary) }()
+	if err := file.Chmod(0o600); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if _, err := file.Write(content); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Sync(); err != nil {
+		_ = file.Close()
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	return store.link(temporary, clean)
+}
+
+func (store *TargetStore) verifyBlob(identity string, expectedSize ...int64) error {
+	return store.verifyBlobAt(store.blobRelativePath(identity), identity, expectedSize...)
+}
+
+func (store *TargetStore) verifyBlobAt(relativePath, identity string, expectedSize ...int64) error {
+	source, err := store.open(relativePath)
 	if err != nil {
 		return err
 	}
@@ -608,16 +906,17 @@ func verifyBlob(path, identity string, expectedSize ...int64) error {
 	return nil
 }
 
-func copyRetainedBlob(sourcePath, targetPath, identity string, expectedSize ...int64) (int64, error) {
-	if err := verifyBlob(sourcePath, identity, expectedSize...); err != nil {
+func (store *TargetStore) copyRetainedBlob(targetPath, identity string, expectedSize ...int64) (int64, error) {
+	sourcePath := store.blobRelativePath(identity)
+	if err := store.verifyBlobAt(sourcePath, identity, expectedSize...); err != nil {
 		return 0, err
 	}
-	source, err := os.Open(sourcePath)
+	source, err := store.open(sourcePath)
 	if err != nil {
 		return 0, err
 	}
 	defer source.Close()
-	target, err := os.OpenFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	target, err := store.openFile(targetPath, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		return 0, err
 	}
@@ -633,18 +932,25 @@ func copyRetainedBlob(sourcePath, targetPath, identity string, expectedSize ...i
 	return size, closeErr
 }
 
-func storedSnapshot(
+func (store *TargetStore) storedSnapshot(
 	request SynchronizationPlanRequest,
 	directory, projectDigest string,
-) StoredSnapshot {
-	artifactPath := filepath.Join(directory, targetProjectArtifact)
+) (StoredSnapshot, error) {
+	projectPath, err := store.absolutePath(filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)))
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
+	artifactPath, err := store.absolutePath(filepath.Join(directory, targetProjectArtifact))
+	if err != nil {
+		return StoredSnapshot{}, err
+	}
 	return StoredSnapshot{
 		ProjectID: request.ProjectID, Digest: request.ArtifactDigest,
 		SourceAttestationDigest: sourceAttestationDigest(request),
-		ProjectPath:             filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)),
+		ProjectPath:             projectPath,
 		ProjectDigest:           projectDigest, ProjectArtifactPath: artifactPath,
 		SourceRevision: cloneSourceRevision(request.SourceRevision),
-	}
+	}, nil
 }
 
 func cloneSourceRevision(value *SourceRevision) *SourceRevision {
