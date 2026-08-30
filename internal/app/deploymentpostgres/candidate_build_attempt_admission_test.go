@@ -183,6 +183,43 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	}
 }
 
+func TestCandidateBuildAttemptAdmissionTxComposesAdjacentMutation(t *testing.T) {
+	p := candidateAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	ducklake := ducklakepostgres.New(p)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := candidateAdmissionFixtureInput(t)
+	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
+
+	tx, err := delivery.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := admission.AdmitCandidateBuildAttemptTx(t.Context(), tx, fixture.Input)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("admit candidate build attempt in caller transaction: %v", err)
+	}
+	if result.Attempt.AttemptID != fixture.Input.Attempt.AttemptID {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("admission result = %#v", result)
+	}
+	adjacent := deploymentnative.TargetInput{TargetID: "target-candidate-admission-adjacent", ProjectID: "project-candidate-admission", Environment: "staging"}
+	if _, err := delivery.CreateTargetTx(t.Context(), tx, adjacent); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("adjacent mutation after caller-owned admission: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit composed transaction: %v", err)
+	}
+	if _, err := delivery.Target(t.Context(), adjacent.TargetID); err != nil {
+		t.Fatalf("adjacent mutation was not committed with admission: %v", err)
+	}
+}
+
 func TestNormalizeCandidateBuildAttemptAdmissionRejectsExpiryDrift(t *testing.T) {
 	fixture := candidateAdmissionFixtureInput(t)
 	fixture.Input.Attempt.LeaseExpiresAt = fixture.Input.Lease.ExpiresAt.Add(time.Second)

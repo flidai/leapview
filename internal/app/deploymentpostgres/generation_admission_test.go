@@ -448,3 +448,41 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 		t.Fatalf("rollback retained DuckLake snapshot retention, err=%v", err)
 	}
 }
+
+func TestGenerationAdmissionTxComposesAdjacentMutation(t *testing.T) {
+	p := generationAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	serving := servingnative.New(p)
+	ducklake := ducklakepostgres.New(p)
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validGenerationAdmissionInput(t)
+	seedGenerationAdmission(t, delivery, ducklake, input)
+
+	tx, err := delivery.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := admission.CompleteBuildAndAdmitTx(t.Context(), tx, input)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("complete and admit in caller transaction: %v", err)
+	}
+	if result.Generation.GenerationID != input.Generation.GenerationID {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("admission result = %#v", result)
+	}
+	adjacent := deploymentnative.TargetInput{TargetID: "target-generation-admission-adjacent", ProjectID: "project_admission", Environment: "staging"}
+	if _, err := delivery.CreateTargetTx(t.Context(), tx, adjacent); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("adjacent mutation after caller-owned admission: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit composed transaction: %v", err)
+	}
+	if _, err := delivery.Target(t.Context(), adjacent.TargetID); err != nil {
+		t.Fatalf("adjacent mutation was not committed with admission: %v", err)
+	}
+}

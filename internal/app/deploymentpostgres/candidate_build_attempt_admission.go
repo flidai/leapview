@@ -46,11 +46,12 @@ type CandidateBuildAttemptAdmissionResult struct {
 }
 
 // CandidateBuildAttemptAdmission is the application-owned native capability
-// for admitting a candidate build attempt across delivery and DuckLake.
-// Implementations own the single PostgreSQL transaction and commit only after
-// every identity has been admitted.
+// for admitting a candidate build attempt across delivery and DuckLake. The
+// convenience method owns its transaction; the Tx method composes into one
+// supplied by the caller.
 type CandidateBuildAttemptAdmission interface {
 	AdmitCandidateBuildAttempt(context.Context, CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error)
+	AdmitCandidateBuildAttemptTx(context.Context, deploymentnative.Tx, CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error)
 }
 
 // CandidateBuildAttemptDuckLakeAuthority is the narrow transaction-aware
@@ -89,7 +90,7 @@ func deliveryConfigured(delivery *deploymentnative.Repository) bool {
 // AdmitCandidateBuildAttempt atomically admits the target lease, delivery
 // build attempt, immutable serving-artifact binding, and DuckLake attempt
 // ledger. The transaction returned by delivery.Begin is the only transaction
-// used; this method alone owns its commit and rollback.
+// used; this convenience method owns its commit and rollback.
 func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.Context, input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error) {
 	if a == nil || !deliveryConfigured(a.delivery) || a.ducklake == nil || !a.ducklake.Configured() {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission authorities are not configured", deploymentnative.ErrInvalid)
@@ -109,6 +110,32 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	result, err := a.AdmitCandidateBuildAttemptTx(ctx, tx, normalized)
+	if err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+// AdmitCandidateBuildAttemptTx admits the target lease, delivery build
+// attempt, immutable serving-artifact binding, and DuckLake attempt ledger
+// into the caller-owned transaction. It never commits or rolls back tx.
+func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context.Context, tx deploymentnative.Tx, input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error) {
+	if a == nil || !deliveryConfigured(a.delivery) || a.ducklake == nil || !a.ducklake.Configured() {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission authorities are not configured", deploymentnative.ErrInvalid)
+	}
+	if tx == nil {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	normalized, err := normalizeCandidateBuildAttemptAdmissionInput(input)
+	if err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, err
+	}
 	if _, ok := tx.(pgx.Tx); !ok {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
@@ -179,10 +206,6 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: DuckLake attempt identity drifted from admitted delivery attempt", deploymentnative.ErrConflict)
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return CandidateBuildAttemptAdmissionResult{}, err
-	}
-	committed = true
 	return CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: binding, DuckLakeAttempt: duckAttempt}, nil
 }
 

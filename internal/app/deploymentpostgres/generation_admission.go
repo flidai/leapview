@@ -28,11 +28,12 @@ import (
 )
 
 // GenerationAdmission is the application-composition capability for the
-// native build-completion hand-off. Implementations own one PostgreSQL
-// transaction and commit only after both delivery and serving-state evidence
-// have been admitted.
+// native build-completion hand-off. The convenience method owns one
+// PostgreSQL transaction; the Tx method composes into one supplied by the
+// caller.
 type GenerationAdmission interface {
 	CompleteBuildAndAdmit(context.Context, GenerationAdmissionInput) (GenerationAdmissionResult, error)
+	CompleteBuildAndAdmitTx(context.Context, deploymentnative.Tx, GenerationAdmissionInput) (GenerationAdmissionResult, error)
 }
 
 // GenerationAdmissionInput carries all immutable build, seal, generation,
@@ -164,9 +165,9 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
-// and admits the serving bundle in one caller-owned PostgreSQL transaction.
-// Every lower-level Tx method receives the exact same pgx transaction; this
-// method alone owns Begin, Commit and Rollback.
+// and admits the serving bundle in one PostgreSQL transaction. Every
+// lower-level Tx method receives the exact same pgx transaction; this
+// convenience method owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
 	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
@@ -186,6 +187,32 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	result, err := a.CompleteBuildAndAdmitTx(ctx, tx, normalized)
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+// CompleteBuildAndAdmitTx completes the build, allocates a generation
+// revision, and admits the serving bundle in the caller-owned transaction.
+// It never commits or rolls back tx.
+func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
+	}
+	if tx == nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	normalized, err := normalizeInput(input)
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 	if _, ok := tx.(pgx.Tx); !ok {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
@@ -264,10 +291,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	if err := verifyDuckLakeBinding(duckBinding, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return GenerationAdmissionResult{}, err
-	}
-	committed = true
 	return GenerationAdmissionResult{
 		AttemptID: completed.Attempt.AttemptID, SealID: completed.Seal.SealID, CandidateID: completed.Candidate.CandidateID,
 		Generation: fromNativeGeneration(generation), Bundle: fromNativeBundle(bundle),
