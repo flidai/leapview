@@ -8,6 +8,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -29,7 +30,7 @@ func TestProjectMaterializerForEnvironmentUsesExplicitEnvironmentAndModulePolicy
 
 	executor, err := module.ProjectMaterializerForEnvironment(targetEnvironment)
 	require.NoError(t, err)
-	materializer, ok := executor.(duckDBProjectMaterializer)
+	materializer, ok := executor.(*duckDBProjectMaterializer)
 	require.True(t, ok)
 	require.Same(t, targetEnvironment, materializer.environment)
 	require.Same(t, credentials, materializer.credentials)
@@ -60,7 +61,7 @@ func TestProjectMaterializerForEnvironmentFailsClosedForMissingEnvironmentOrConf
 
 func TestProjectMaterializerResolvesConnectionsAgainstActiveReleaseState(t *testing.T) {
 	module := &Module{activeRuntimeBindingEvidence: activeEvidenceSource{}}
-	materializer := duckDBProjectMaterializer{module: module}
+	materializer := &duckDBProjectMaterializer{module: module}
 
 	resolver := materializer.connectionResolver(analyticsmaterialization.Request{
 		ConnectionEvidenceServingStateID: "state_active",
@@ -91,7 +92,7 @@ func TestProjectMaterializerResolvesConnectionsAgainstCandidateRuntime(t *testin
 	token := module.candidateRuntimeBindings.register(key, candidate)
 	t.Cleanup(func() { module.candidateRuntimeBindings.remove(key, token) })
 
-	resolver := (duckDBProjectMaterializer{module: module}).connectionResolver(analyticsmaterialization.Request{
+	resolver := (&duckDBProjectMaterializer{module: module}).connectionResolver(analyticsmaterialization.Request{
 		CandidateID: "candidate_1",
 		Identity:    projectgraph.ServingIdentity{ProjectID: "sales"},
 		// Active evidence must not be consulted for candidate requests.
@@ -102,7 +103,7 @@ func TestProjectMaterializerResolvesConnectionsAgainstCandidateRuntime(t *testin
 
 func TestProjectMaterializerFailsClosedForMissingCandidateRuntime(t *testing.T) {
 	module := &Module{activeRuntimeBindingEvidence: activeEvidenceSource{}}
-	resolver := (duckDBProjectMaterializer{module: module}).connectionResolver(analyticsmaterialization.Request{
+	resolver := (&duckDBProjectMaterializer{module: module}).connectionResolver(analyticsmaterialization.Request{
 		CandidateID: "candidate_1",
 		Identity:    projectgraph.ServingIdentity{ProjectID: "sales"},
 		// A missing candidate binding must not fall back to this active state.
@@ -122,7 +123,7 @@ func TestProjectMaterializerRejectsNonCanonicalCandidateIdentity(t *testing.T) {
 		"project":   {CandidateID: "candidate_1", Identity: projectgraph.ServingIdentity{ProjectID: " sales"}},
 	} {
 		t.Run(name, func(t *testing.T) {
-			resolver := (duckDBProjectMaterializer{module: module}).connectionResolver(request)
+			resolver := (&duckDBProjectMaterializer{module: module}).connectionResolver(request)
 			require.NotNil(t, resolver)
 			_, err := resolver.Resolve(t.Context(), "warehouse", semanticmodel.Connection{Kind: "postgres"})
 			require.ErrorIs(t, err, connectionbinding.ErrProviderUnavailable)
@@ -131,8 +132,39 @@ func TestProjectMaterializerRejectsNonCanonicalCandidateIdentity(t *testing.T) {
 }
 
 func TestProjectMaterializerLeavesConnectionsUnboundWithoutIdentity(t *testing.T) {
-	materializer := duckDBProjectMaterializer{module: &Module{}}
+	materializer := &duckDBProjectMaterializer{module: &Module{}}
 	require.Nil(t, materializer.connectionResolver(analyticsmaterialization.Request{
 		Identity: projectgraph.ServingIdentity{},
 	}))
+}
+
+func TestProjectMaterializerObservationStateClearsAcrossRunsAndCopiesSchemas(t *testing.T) {
+	materializer := &duckDBProjectMaterializer{}
+	nullable := true
+	first := []analyticsmaterialize.SourceObservation{{ID: "orders", Schema: []semanticmodel.ColumnSchema{{Name: "id", PhysicalType: "BIGINT", Nullable: &nullable}}}}
+	run := materializer.beginMaterializationRun()
+	materializer.setMaterializationRun(run, first)
+	first[0].ID = "mutated"
+	first[0].Schema[0].Name = "mutated"
+	first[0].Schema[0].Nullable = nil
+	got, err := materializer.SourceObservations(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, "orders", got[0].ID)
+	require.Equal(t, "id", got[0].Schema[0].Name)
+	require.NotNil(t, got[0].Schema[0].Nullable)
+
+	// A failed subsequent run must not leave the previous run's evidence
+	// visible, and a later successful run replaces it completely.
+	run = materializer.beginMaterializationRun()
+	materializer.clearMaterializationRun(run)
+	got, err = materializer.SourceObservations(t.Context())
+	require.NoError(t, err)
+	require.Empty(t, got)
+	second := []analyticsmaterialize.SourceObservation{{ID: "customers"}}
+	run = materializer.beginMaterializationRun()
+	materializer.setMaterializationRun(run, second)
+	got, err = materializer.SourceObservations(t.Context())
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	require.Equal(t, "customers", got[0].ID)
 }

@@ -439,7 +439,7 @@ func (m *Module) ProjectMaterializer() analyticsmaterialization.Executor {
 	if m == nil || m.environment == nil {
 		return nil
 	}
-	return duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
+	return &duckDBProjectMaterializer{environment: m.environment, credentials: m.credentials, module: m}
 }
 
 // ProjectMaterializerForEnvironment builds the governed project materializer
@@ -457,7 +457,7 @@ func (m *Module) ProjectMaterializerForEnvironment(environment *analyticsducklak
 	if m.credentials == nil {
 		return nil, fmt.Errorf("analytical runtime credential resolver is unavailable")
 	}
-	return duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
+	return &duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
 }
 
 func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
@@ -495,7 +495,7 @@ func NewProjectMaterializerWithCredentials(
 	if credentials == nil {
 		credentials = analyticsduckdb.NonSecretCredentialResolver{}
 	}
-	return duckDBProjectMaterializer{environment: environment, credentials: credentials}
+	return &duckDBProjectMaterializer{environment: environment, credentials: credentials}
 }
 
 func (m *Module) QueryAuditReader() queryaudit.Reader {
