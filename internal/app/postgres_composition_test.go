@@ -2,11 +2,84 @@ package app
 
 import (
 	"context"
+	"errors"
+	"go/parser"
+	"go/token"
+	"os"
+	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/app/config"
+	projectsource "github.com/flidai/leapview/internal/app/projectsource"
+	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
+	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 )
+
+func TestComposeNativeProjectSourceUsesExactDomainAndProjectAuthority(t *testing.T) {
+	home := t.TempDir()
+	rootParent := filepath.Join(home, "objects")
+	if err := os.Mkdir(rootParent, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	repo := projectpostgres.New(nil)
+	begin := projectsource.BeginFunc(func(context.Context) (projectsource.Tx, error) {
+		return nil, errors.New("unused test transaction")
+	})
+	composed, err := composeNativeProjectSource(context.Background(), config.Config{HomeDir: home, ObjectStoreFilesystemRoot: filepath.Join(rootParent, "store")}, "instance-a", "prod", begin, repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if composed.CandidateSourceReader == nil {
+		t.Fatal("native candidate source reader is nil")
+	}
+	if composed.Sources != repo {
+		t.Fatalf("source authority identity changed: got %T, want exact repository", composed.Sources)
+	}
+	if _, ok := composed.Objects.(*platformobjectstore.FilesystemStore); !ok {
+		t.Fatalf("object store type = %T, want native filesystem store", composed.Objects)
+	}
+	if composed.StorageSecurityDomain == "" {
+		t.Fatal("storage security domain is empty")
+	}
+}
+
+func TestComposeNativeProjectSourceRejectsFreshMissingAuthoritiesWithoutStoreSideEffects(t *testing.T) {
+	home := t.TempDir()
+	root := filepath.Join(home, "objects")
+	repo := projectpostgres.New(nil)
+	_, err := composeNativeProjectSource(context.Background(), config.Config{HomeDir: home, ObjectStoreFilesystemRoot: root}, "instance-a", "prod", nil, repo)
+	if err == nil || !strings.Contains(err.Error(), "PostgreSQL begin") {
+		t.Fatalf("missing begin error = %v, want PostgreSQL authority validation", err)
+	}
+	if _, statErr := os.Stat(root); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("missing-authority composition touched object-store root: %v", statErr)
+	}
+}
+
+func TestPostgresBuildSourceCompositionHasNoSQLiteOrPathFallbackImports(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	file, err := parser.ParseFile(token.NewFileSet(), "postgres_build.go", contents, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, spec := range file.Imports {
+		path, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if path == "database/sql" || path == "github.com/flidai/leapview/internal/project/sqlite" {
+			t.Fatalf("postgres build imports forbidden SQLite fallback %q", path)
+		}
+	}
+	if strings.Contains(string(contents), "DBPath(") {
+		t.Fatal("postgres build contains a database-path fallback")
+	}
+}
 
 func TestBuildProductionFailsClosedBeforeLegacySQLiteComposition(t *testing.T) {
 	_, err := BuildProduction(context.Background(), config.Config{Production: true})

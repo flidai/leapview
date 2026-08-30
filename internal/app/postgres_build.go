@@ -23,7 +23,9 @@ import (
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
+	appobjectstore "github.com/flidai/leapview/internal/app/objectstore"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
+	projectsource "github.com/flidai/leapview/internal/app/projectsource"
 	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -36,6 +38,7 @@ import (
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
+	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -46,6 +49,52 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 )
+
+// nativeProjectSourceComposition keeps the native source reader's authority
+// set visible to composition tests. The synchronizer remains the sole
+// capability injected into release.
+type nativeProjectSourceComposition struct {
+	Objects               platformobjectstore.ImmutableStore
+	StorageSecurityDomain string
+	Sources               projectsource.NativeSourceRepository
+	CandidateSourceReader *projectsource.NativeCandidateSourceSynchronizer
+}
+
+// composeNativeProjectSource wires the process-bound immutable object store
+// to the PostgreSQL project authority. The caller owns transaction lifecycle
+// through begin; this helper never opens a second database or derives a
+// filesystem-backed project repository.
+func composeNativeProjectSource(
+	ctx context.Context,
+	cfg config.Config,
+	instanceID string,
+	environment string,
+	begin projectsource.BeginFunc,
+	sources projectsource.NativeSourceRepository,
+) (nativeProjectSourceComposition, error) {
+	if begin == nil || sources == nil {
+		return nativeProjectSourceComposition{}, errors.New("native project source composition requires PostgreSQL begin and project authorities")
+	}
+	objects, storageDomain, err := appobjectstore.New(ctx, cfg, instanceID, environment)
+	if err != nil {
+		return nativeProjectSourceComposition{}, fmt.Errorf("construct native project object store: %w", err)
+	}
+	compiler := projectsource.Compiler{}
+	reader, err := projectsource.NewNativeCandidateSourceSynchronizer(projectsource.NativeCandidateSourceConfig{
+		Begin:                 begin,
+		Sources:               sources,
+		Objects:               objects,
+		Compiler:              compiler,
+		StorageSecurityDomain: storageDomain,
+	})
+	if err != nil {
+		return nativeProjectSourceComposition{}, fmt.Errorf("construct native candidate source synchronizer: %w", err)
+	}
+	return nativeProjectSourceComposition{
+		Objects: objects, StorageSecurityDomain: storageDomain,
+		Sources: sources, CandidateSourceReader: reader,
+	}, nil
+}
 
 // buildPostgresProductionTarget assembles the native graph and HTTP surface
 // behind the production admission gate. The gate calls this only after
@@ -142,6 +191,12 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("build PostgreSQL authority graph: %w", err))
 	}
+	nativeProjectSource, err := composeNativeProjectSource(ctx, cfg, instanceID, string(environment), func(beginCtx context.Context) (projectsource.Tx, error) {
+		return bootstrap.RuntimePool().Begin(beginCtx)
+	}, graph.Project)
+	if err != nil {
+		return fail(fmt.Errorf("build native project source reader: %w", err))
+	}
 	readClaim := readClaimedProject(graph.DeploymentRepository, environment)
 	claimedProject, found, err := readClaim(ctx)
 	if err != nil {
@@ -232,7 +287,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: graph.Release, Catalog: graph.ReleaseCatalog, Production: true, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ManagedDataHook: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, ArtifactDirectory: cfg.ArtifactDir(), Environment: environment, API: releasemodule.APIConfig{Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs}})
+	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: graph.Release, Catalog: graph.ReleaseCatalog, Production: true, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ManagedDataHook: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, ArtifactDirectory: cfg.ArtifactDir(), Environment: environment, CandidateSourceReader: nativeProjectSource.CandidateSourceReader, API: releasemodule.APIConfig{Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs}})
 	if err != nil {
 		return fail(fmt.Errorf("build release module: %w", err))
 	}
