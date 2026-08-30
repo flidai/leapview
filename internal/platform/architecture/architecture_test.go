@@ -4062,10 +4062,17 @@ func TestArrowResponseContractDeclaresCursorTrailer(t *testing.T) {
 	contract := string(body)
 	for _, fragment := range []string{
 		`@extension("x-leapview-response-trailers", #["X-Next-Cursor"])`,
+		`@header contentType: "application/vnd.apache.arrow.stream";`,
+		`@header("X-Query-ID") queryId: string;`,
+		`@header("X-Serving-Snapshot") servingSnapshot: string;`,
+		`@header("X-LeapView-Arrow-Contract") arrowContract: "native-v1";`,
 		`@header("Trailer") trailers: "X-Next-Cursor";`,
+		`@header cacheControl: "no-store";`,
+		`model GatewayTimeout`,
+		`alias RowsetErrors = CommonErrors | GatewayTimeout;`,
 	} {
 		if !strings.Contains(contract, fragment) {
-			t.Errorf("Arrow response contract missing trailer declaration %q", fragment)
+			t.Errorf("Arrow response contract missing native-v1 declaration %q", fragment)
 		}
 	}
 	if strings.Contains(contract, `@header("X-Next-Cursor")`) {
@@ -4076,10 +4083,28 @@ func TestArrowResponseContractDeclaresCursorTrailer(t *testing.T) {
 	if got := strings.Count(string(operations), `@extension("x-leapview-response-trailers", #["X-Next-Cursor"])`); got != 3 {
 		t.Errorf("Arrow operation trailer declarations = %d, want 3", got)
 	}
+	if got := strings.Count(string(operations), `RowsetErrors;`); got != 3 {
+		t.Errorf("Arrow operation timeout error declarations = %d, want 3", got)
+	}
 	openAPI, err := os.ReadFile(filepath.Join(root, "docs", "api", "openapi.yaml"))
 	require.NoError(t, err)
 	if got := strings.Count(string(openAPI), "x-leapview-response-trailers:"); got != 3 {
 		t.Errorf("generated OpenAPI trailer declarations = %d, want 3", got)
+	}
+	for _, operationID := range []string{"queryDashboardVisualData", "previewSemanticDataset", "querySemanticModel"} {
+		section := string(openAPI)
+		start := strings.Index(section, "operationId: "+operationID)
+		if start < 0 {
+			t.Errorf("generated OpenAPI is missing operation %q", operationID)
+			continue
+		}
+		section = section[start:]
+		if end := strings.Index(section, "\n  /api/"); end >= 0 {
+			section = section[:end]
+		}
+		if !strings.Contains(section, "        '504':") {
+			t.Errorf("generated OpenAPI operation %q is missing the Arrow timeout response", operationID)
+		}
 	}
 }
 

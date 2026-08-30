@@ -1,0 +1,193 @@
+# Dashboard native Arrow response contract
+
+This document defines the `native-v1` correctness oracle for a future native
+Arrow response from dashboard table data queries. It does not activate that
+response, change the current dashboard endpoint, or authorize a production
+migration. FAI-543 and later experiments must satisfy this contract before
+their performance results can be considered.
+
+The existing unversioned dashboard Arrow response is a compatibility boundary:
+it projects every cell to UTF-8, represents a source null as an empty string,
+and returns its next cursor as an initial response header. A `native-v1`
+response instead preserves governed Arrow values and uses a completion trailer.
+Those behaviors are not wire-compatible. The current stream must not silently
+change; a native response requires explicit client opt-in and the response must
+identify `native-v1` in both its header and schema metadata.
+
+## Scope
+
+The first eligible implementation is an ordinary detail/table query. It must
+use the same authorization, governance, admission, audit, result-budget,
+sorting, and pagination inputs as the current direct dashboard query. Matrix,
+pivot, calculations, multi-block shaping, Datastar SSE, retained-result cache,
+and warm-cache delivery are outside this contract's first implementation.
+
+## Schema contract
+
+The IPC stream schema is the post-governance projected schema, not the source
+table schema. In particular:
+
+- Fields appear in governed projection order. Field names are the requested
+  aliases where aliases exist; physical source names must not replace aliases.
+- Arrow physical types are preserved. Boolean and signed/unsigned integer
+  widths, floating-point widths, dates, timestamps, UTF-8 strings, binary
+  values, decimals, and dictionary encodings must not be projected to strings.
+- The field's nullable declaration and each array's validity bitmap are
+  preserved. A null must remain null; it must not become zero, `false`, an
+  empty string, or an empty byte slice.
+- A decimal preserves its precision, scale, sign, and exact unscaled value.
+- A timestamp preserves its Arrow unit and timezone. A timestamp with timezone
+  `UTC` represents the same UTC instant; a timezone-neutral timestamp remains
+  timezone-neutral rather than acquiring a server-local zone.
+- Binary values preserve their exact bytes, including zero bytes and empty
+  non-null values.
+- A dictionary field preserves its index type, value type, ordering flag,
+  dictionary values, indices, and validity bitmap. Expanding a dictionary to
+  strings is a contract change.
+- Only response-safe governed metadata from the closed allowlists below is
+  emitted. It must not expose generated SQL, physical connection or source
+  identifiers, policy expressions, credentials, principals, or other internal
+  state.
+
+An empty result is a valid Arrow IPC stream containing the full governed schema
+and zero record batches. It is not a schema-less stream and it is not a JSON
+empty array.
+
+### Reserved LeapView metadata
+
+The `leapview.*` namespace is server-owned. Upstream/source metadata cannot set
+or override it. The allowlists are closed: unknown keys are rejected whether
+they use the `leapview.*` namespace, another namespace, or no namespace. Adding
+a response metadata key requires a contract revision and corresponding oracle
+coverage.
+
+| Location | Key | Authority and required value |
+| --- | --- | --- |
+| Schema | `leapview.arrow_contract` | `native-v1` |
+| Schema | `leapview.query_id` | Same value as `X-Query-ID` |
+| Schema | `leapview.serving_snapshot` | Same value as `X-Serving-Snapshot` |
+| Schema | `leapview.visualization_schema_version` | Server-controlled visualization schema version |
+| Schema | `leapview.visualization_spec_revision` | Server-controlled visualization specification revision |
+| Schema | `leapview.visualization_data_revision` | Server-controlled visualization data revision |
+| Field | `leapview.logical_type` | Public governed logical type, when available |
+| Field | `display.label` | Approved producer metadata for the governed display label |
+
+All schema keys and `leapview.logical_type` are authoritative server values;
+producer values cannot override them. `display.label` is the only producer
+metadata currently approved for forwarding. SQL, engine, connection, physical
+source, and other producer metadata are rejected. In particular, a cursor is
+never placed in schema metadata: it is disclosed only through the response
+trailer after successful completion.
+
+## Response protocol
+
+A successful native response is an Arrow IPC stream and has these required
+headers before the body is committed:
+
+| Header | Value |
+| --- | --- |
+| `Content-Type` | `application/vnd.apache.arrow.stream` |
+| `Cache-Control` | `no-store` |
+| `X-Query-ID` | Non-empty request/query correlation ID |
+| `X-Serving-Snapshot` | Non-empty serving snapshot bound to the query |
+| `X-LeapView-Arrow-Contract` | `native-v1` |
+| `Trailer` | Declares `X-Next-Cursor` |
+
+The server executes a `limit + 1` pagination probe under the same governed
+query. At most `limit` rows are written. If the probe row exists and the stream
+closes successfully, the server writes an opaque `X-Next-Cursor` trailer. The
+cursor identifies the next offset, is bound to the normalized query scope and
+serving snapshot, and expires according to the dashboard cursor policy. A
+client must not parse it. A cursor for a different query scope is invalid; a
+cursor for a different or unavailable serving snapshot is a conflict.
+
+The final page has no `X-Next-Cursor` trailer value. The trailer name is still
+declared so clients can consume both cases uniformly. Probe rows count toward
+physical execution and result budgets even though they are not emitted.
+
+## Error and commit boundary
+
+Before the Arrow response is committed, failures use the API's JSON problem
+shape with `Content-Type: application/problem+json` and no Arrow contract
+headers. Existing resource-concealment rules remain authoritative.
+
+| Failure | Required result before commit |
+| --- | --- |
+| Authentication failure | `401` problem response |
+| Authorization failure | `403`, or `404` where the route conceals inaccessible resources |
+| Malformed or wrong-scope cursor | `400` problem response |
+| Cursor serving-snapshot mismatch | `409` problem response |
+| Row or byte budget failure | `422` problem response |
+| Admission rejection or resource exhaustion | `503` problem response, including `Retry-After` where applicable |
+| Admission queue timeout or execution timeout | `504` problem response |
+| Internal failure | `500` problem response |
+
+Request cancellation stops query work and releases borrowed batches and other
+leases. If the connection remains writable and no bytes have been committed,
+the failure follows the normal problem mapping; a disconnected client may
+observe only connection termination.
+
+After the Arrow response is committed, the server cannot switch formats. A
+query, IPC, cancellation, or transport failure terminates the stream. There is
+no JSON suffix or fallback, no successful completion signal, and no
+`X-Next-Cursor` trailer value. Consumers must treat an unreadable or incomplete
+IPC stream as failed even if the HTTP status was already `200`.
+
+## Security and governance invariants
+
+The native transport changes representation only. Before any schema or batch
+is written, the request must pass the same boundaries as the current governed
+direct query:
+
+1. Resolve the authenticated principal and active serving snapshot.
+2. Authorize the dashboard/model dependencies and preserve any resource
+   concealment behavior.
+3. Apply row policies and column masks and compute the effective policy
+   fingerprint. The emitted schema is the masked projection; it cannot reveal
+   denied source columns or pre-mask physical types/metadata.
+4. Acquire workload admission using the same class, identity, operation, and
+   memory estimate as the control query.
+5. Apply row and byte budgets to the schema, emitted rows, and pagination
+   probe. A transport encoder cannot bypass budget accounting.
+6. Record the same audit actor, credential/effective subject, operation,
+   resource target, start, success, and failure outcomes as the control query.
+
+FAI-543's borrowed DuckDB batches may be observed only synchronously inside
+the sink callback. The sink must finish reading or encoding a batch before the
+callback returns, must not retain borrowed buffers, and must not populate or
+read the retained dashboard result cache.
+
+## Correctness qualification
+
+A candidate is rejected before performance comparison if it differs from the
+control in column order, aliases, physical types, values, null positions,
+metadata, sorting, offset/limit behavior, cursor behavior, cancellation,
+partial-write handling, authorization, row policies, masks, admission,
+budgets, or audit identity. The executable fixtures in
+`internal/dashboard/http/arrow_contract_test.go` lock the native value and wire
+semantics. Existing authorization, admission, budget, and audit tests lock the
+shared governed execution boundaries.
+
+Only after those gates pass may an experiment compare the candidate with the
+current `api_direct` dashboard path using the same query and physical query
+behavior. Warm-cache measurements are a guardrail, not a comparable lane.
+
+## Client compatibility and activation
+
+No first-party browser component currently decodes this API Arrow stream, but
+API and generated-client consumers may rely on the current string/null
+projection. Therefore:
+
+- native delivery requires an explicit, documented request opt-in or a new
+  versioned route; merely sending the Arrow media type is not sufficient to
+  silently reinterpret the existing stream;
+- the response must return `X-LeapView-Arrow-Contract: native-v1`, and clients
+  must reject unknown contract versions;
+- clients must support native Arrow types, validity bitmaps, dictionaries, and
+  HTTP trailers before opting in;
+- generated clients continue to prefer JSON unless native Arrow support is
+  explicitly selected.
+
+The precise opt-in mechanism is an implementation decision for the production
+migration issue. It must be added to TypeSpec/OpenAPI before activation. FAI-541
+locks response semantics; it does not add a production negotiation path.
