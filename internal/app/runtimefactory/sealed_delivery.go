@@ -290,6 +290,9 @@ func validatePostgresCandidateTuple(targetID string, plan deploymentpostgres.Del
 	if plan.PlanID == "" || plan.TargetID != targetID || plan.PlanDigest != seal.PlanDigest || plan.CompiledGraphDigest != seal.CompiledGraphDigest || plan.CompiledConfigDigest != seal.CompiledConfigDigest || plan.SecurityDomainFingerprint != seal.SecurityDomainFingerprint || plan.ArtifactDigest != seal.ServingArtifactDigest {
 		return fmt.Errorf("%w: plan, candidate, and seal are not one verified tuple", ErrSealedRootMismatch)
 	}
+	if err := platformdigest.ValidateSHA256Identity(plan.QualificationDigest); err != nil {
+		return fmt.Errorf("%w: plan qualification digest is invalid: %v", ErrSealedRootUnavailable, err)
+	}
 	if input.Artifact.Digest == "" || seal.ServingArtifactID == "" || seal.ServingArtifactID != input.Artifact.ID || candidate.ArtifactDigest != input.Artifact.Digest || seal.ServingArtifactDigest != input.Artifact.Digest {
 		return fmt.Errorf("%w: durable serving artifact digest differs from requested artifact", ErrSealedRootMismatch)
 	}

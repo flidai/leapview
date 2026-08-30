@@ -154,7 +154,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_sales_prod", ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: "target_sales_prod", PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: "target_sales_prod", PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		got, ge := r.Plan(ctx, ids["plan"])
 		t.Logf("plan got=%#v load=%v", got, ge)
 		t.Fatalf("plan: %v", err)
@@ -359,7 +359,7 @@ func TestPostgresDeliveryCallerOwnedMutationTransactions(t *testing.T) {
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: targetID, ProjectID: "project_tx", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: artifactDigest, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: ids["plan"], TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: artifactDigest, QualificationDigest: testDigest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: targetID, PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
@@ -502,6 +502,7 @@ func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
 		CompiledConfigDigest:      testDigest('c'),
 		SecurityDomainFingerprint: testDigest('d'),
 		ArtifactDigest:            testDigest('e'),
+		QualificationDigest:       testDigest('3'),
 		Evidence:                  []byte(`{"source":"retained"}`),
 	}
 	tx, err := r.Begin(ctx)
@@ -540,6 +541,19 @@ func TestPostgresCallerOwnedTargetAndPlanAdmission(t *testing.T) {
 		t.Fatalf("replayed target/plan drifted: %#v / %#v", replayedTarget, replayedPlan)
 	}
 	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	mismatchedPlan := plan
+	mismatchedPlan.QualificationDigest = testDigest('4')
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreatePlanTx(ctx, tx, mismatchedPlan); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("qualification digest replay mismatch = %v", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
 
@@ -582,6 +596,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 		CompiledConfigDigest:      testDigest('c'),
 		SecurityDomainFingerprint: testDigest('d'),
 		ArtifactDigest:            testDigest('e'),
+		QualificationDigest:       testDigest('3'),
 	}
 	if _, err := r.CreatePlan(ctx, plan); err != nil {
 		t.Fatal(err)
@@ -819,7 +834,7 @@ func TestPostgresBuildAttemptCommitAbortRace(t *testing.T) {
 	if _, err := r.CreateTarget(t.Context(), TargetInput{TargetID: target, ProjectID: "project_race", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(t.Context(), PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e')}); err != nil {
+	if _, err := r.CreatePlan(t.Context(), PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: testDigest('a'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(t.Context(), CandidateInput{CandidateID: candidate, TargetID: target, PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
@@ -865,7 +880,7 @@ func TestPostgresCommitBuildAttemptRejectsIncompleteDuckLakeMarker(t *testing.T)
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: target, ProjectID: "project_marker", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e')}); err != nil {
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: plan, TargetID: target, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: testDigest('e'), QualificationDigest: testDigest('3')}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attempt, PlanID: plan, OwnerID: "builder", PhysicalPoolID: "pool-marker", FencingEpoch: 1, RequestDigest: request, PlanDigest: planDigest, Namespace: "candidate/marker", SessionIdentity: "session-marker", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
@@ -943,7 +958,7 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 	if _, err := New(p).CreateTarget(ctx, TargetInput{TargetID: "guard_target_other", ProjectID: "project_guard_other", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest) VALUES($1::uuid,'guard_target',1,$2,$2,$2,$2,$2)`, plan, testDigest('a')); err != nil {
+	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest) VALUES($1::uuid,'guard_target',1,$2,$2,$2,$2,$2,$2)`, plan, testDigest('a')); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(p).CreateCandidate(ctx, CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000038", TargetID: "guard_target_other", PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('a')}); !errors.Is(err, ErrConflict) {

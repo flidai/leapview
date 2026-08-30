@@ -253,7 +253,7 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, du
 		t.Fatal(err)
 	}
 	if _, err := repo.Plan(ctx, input.Generation.PlanID); errors.Is(err, deploymentnative.ErrNotFound) {
-		if _, err := repo.CreatePlan(ctx, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, PlanDigest: input.Generation.PlanDigest, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest}); err != nil {
+		if _, err := repo.CreatePlan(ctx, deploymentnative.PlanInput{PlanID: input.Generation.PlanID, TargetID: input.Generation.TargetID, PlanRevision: 1, PlanDigest: input.Generation.PlanDigest, CompiledGraphDigest: input.Generation.CompiledGraphDigest, CompiledConfigDigest: input.Generation.CompiledConfigDigest, SecurityDomainFingerprint: input.Generation.SecurityDomainFingerprint, ArtifactDigest: input.Generation.ServingArtifactDigest, QualificationDigest: input.QualificationDigest}); err != nil {
 			t.Fatal(err)
 		}
 	} else if err != nil {

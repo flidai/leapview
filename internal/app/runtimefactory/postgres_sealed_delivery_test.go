@@ -100,7 +100,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	if _, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{
 		PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest,
 		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest,
-		SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest,
+		SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: runtimeFactoryDigest("qualification"),
 		Evidence: json.RawMessage(`{"source":"resolver-test"}`),
 	}); err != nil {
 		t.Fatal(err)
@@ -116,6 +116,12 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		Namespace: "relation_namespace", SessionIdentity: "resolver-session", LeaseExpiresAt: time.Now().UTC().Add(10 * time.Minute),
 	})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.BindBuildArtifact(t.Context(), deploymentpostgres.BuildArtifactBindingInput{
+		AttemptID: attemptID, ServingArtifactID: "artifact-preview", ServingArtifactDigest: artifactDigest,
+		ServingStateID: generationID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	markerJSON, err := (ducklake.CommitMarker{

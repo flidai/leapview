@@ -195,7 +195,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.CreateTarget(ctx, deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: digest('a'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: digest('a'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: digest('e')}); err != nil {

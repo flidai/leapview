@@ -238,6 +238,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 		pipePlan = pipelinePlans[0]
 	}
 	planDigest, artifactDigest := digest('a'), digest('e')
+	qualificationDigest := digest('3')
 	compiledGraphDigest, compiledConfigDigest, securityDigest := digest('b'), digest('c'), digest('d')
 	if pipePlan.Digest != "" {
 		planDigest, artifactDigest = pipePlan.Digest, pipePlan.ArtifactDigest
@@ -246,14 +247,18 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_concrete", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, Evidence: json.RawMessage(`{"source":"concrete"}`)})
+	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, Evidence: json.RawMessage(`{"source":"concrete"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.CreateCandidate(t.Context(), deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-concrete", PhysicalPoolID: poolID, FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/concrete", SessionIdentity: "session-concrete", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	attempt, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-concrete", PhysicalPoolID: poolID, FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/concrete", SessionIdentity: "session-concrete", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := delivery.BindBuildArtifact(t.Context(), deploymentpostgres.BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, ServingStateID: generationID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch}); err != nil {
 		t.Fatal(err)
 	}
 	markerJSON, err := (ducklake.CommitMarker{

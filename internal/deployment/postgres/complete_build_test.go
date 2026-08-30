@@ -45,7 +45,7 @@ func newCompleteBuildFixtureWithSuffixBindingAndLifetime(t *testing.T, r *Reposi
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: f.TargetID, ProjectID: "project_complete_build_" + suffix, Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: f.PlanID, TargetID: f.TargetID, PlanRevision: 1, PlanDigest: f.PlanDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: f.ArtifactDigest}); err != nil {
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: f.PlanID, TargetID: f.TargetID, PlanRevision: 1, PlanDigest: f.PlanDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: f.ArtifactDigest, QualificationDigest: testDigest('3')}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: f.CandidateID, TargetID: f.TargetID, PlanID: f.PlanID, CandidateRevision: 1, ArtifactDigest: f.ArtifactDigest}); err != nil {

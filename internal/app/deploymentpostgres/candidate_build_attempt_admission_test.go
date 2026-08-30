@@ -69,7 +69,7 @@ func candidateAdmissionFixtureInput() candidateAdmissionFixture {
 			CatalogID: "catalog-candidate-admission",
 		},
 		Target:    deploymentnative.TargetInput{TargetID: "target-candidate-admission", ProjectID: "project-candidate-admission", Environment: "prod"},
-		Plan:      deploymentnative.PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", TargetID: "target-candidate-admission", PlanRevision: 1, PlanDigest: digestPlan, CompiledGraphDigest: candidateAdmissionDigest('d'), CompiledConfigDigest: candidateAdmissionDigest('e'), SecurityDomainFingerprint: candidateAdmissionDigest('f'), ArtifactDigest: candidateAdmissionDigest('c')},
+		Plan:      deploymentnative.PlanInput{PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", TargetID: "target-candidate-admission", PlanRevision: 1, PlanDigest: digestPlan, CompiledGraphDigest: candidateAdmissionDigest('d'), CompiledConfigDigest: candidateAdmissionDigest('e'), SecurityDomainFingerprint: candidateAdmissionDigest('f'), ArtifactDigest: candidateAdmissionDigest('c'), QualificationDigest: candidateAdmissionDigest('1')},
 		Candidate: deploymentnative.CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000304", TargetID: "target-candidate-admission", PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", CandidateRevision: 1, ArtifactDigest: candidateAdmissionDigest('c')},
 		ExpiresAt: expires,
 	}

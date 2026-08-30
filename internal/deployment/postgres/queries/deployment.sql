@@ -61,12 +61,12 @@ COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WH
 t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id);
 
 -- name: InsertPlan :exec
-INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence)
-VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_required),sqlc.arg(evidence)::jsonb)
+INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,evidence)
+VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_digest),sqlc.arg(qualification_required),sqlc.arg(evidence)::jsonb)
 ON CONFLICT(plan_id) DO NOTHING;
 
 -- name: GetPlan :one
-SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_required,evidence,created_at
+SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,evidence,created_at
 FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: GetCandidatePlan :one
@@ -109,7 +109,7 @@ WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sql
 SELECT target_id,plan_id::text,status,artifact_digest FROM delivery.delivery_candidate WHERE candidate_id=sqlc.arg(candidate_id)::uuid;
 
 -- name: GetPlanDigests :one
-SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
+SELECT plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: InsertSnapshotSeal :exec
 INSERT INTO delivery.delivery_snapshot_seal(seal_id,attempt_id,candidate_id,physical_pool_id,tenant_domain,region,encryption_domain,object_namespace,catalog_database,catalog_id,catalog_uuid,catalog_version,ducklake_snapshot_id,relation_namespace,relation_manifest_digest,closure_digest,object_root,object_root_digest,artifact_root,artifact_root_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,request_digest,plan_digest,compatibility_digest,serving_artifact_id,serving_artifact_digest,duckdb_version,runtime_version,ducklake_extension_version,ducklake_spec_version,catalog_schema_version,qualification_evidence)

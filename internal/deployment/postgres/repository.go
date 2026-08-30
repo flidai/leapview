@@ -88,7 +88,7 @@ type DeliveryPlan struct {
 	PlanID, TargetID, PlanDigest                                         string
 	PlanRevision                                                         int64
 	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint string
-	ArtifactDigest                                                       string
+	ArtifactDigest, QualificationDigest                                  string
 	QualificationRequired                                                bool
 	Evidence                                                             json.RawMessage
 	CreatedAt                                                            time.Time
@@ -847,7 +847,7 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 	if in.PlanRevision <= 0 {
 		return DeliveryPlan{}, ErrInvalid
 	}
-	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest} {
+	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest, "qualification digest": in.QualificationDigest} {
 		if _, err := digest(value, label); err != nil {
 			return DeliveryPlan{}, err
 		}
@@ -856,7 +856,7 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 	if err != nil {
 		return DeliveryPlan{}, fmt.Errorf("%w: plan evidence", ErrInvalid)
 	}
-	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence})
+	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence})
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -875,7 +875,7 @@ func planAllocationInput(in PlanInput) (id, target string, evidence []byte, err 
 	if err != nil {
 		return "", "", nil, err
 	}
-	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest} {
+	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest, "qualification digest": in.QualificationDigest} {
 		if _, err := digest(value, label); err != nil {
 			return "", "", nil, err
 		}
@@ -890,7 +890,7 @@ func planAllocationInput(in PlanInput) (id, target string, evidence []byte, err 
 func planImmutableMatches(p DeliveryPlan, in PlanInput, target, id string, evidence []byte) bool {
 	return p.PlanID == id && p.TargetID == target && p.PlanDigest == in.PlanDigest &&
 		p.CompiledGraphDigest == in.CompiledGraphDigest && p.CompiledConfigDigest == in.CompiledConfigDigest &&
-		p.SecurityDomainFingerprint == in.SecurityDomainFingerprint && p.ArtifactDigest == in.ArtifactDigest &&
+		p.SecurityDomainFingerprint == in.SecurityDomainFingerprint && p.ArtifactDigest == in.ArtifactDigest && p.QualificationDigest == in.QualificationDigest &&
 		p.QualificationRequired == in.QualificationRequired && sameCanonical(p.Evidence, evidence)
 }
 
@@ -902,7 +902,7 @@ func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in P
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
 	if !planImmutableMatches(p, in, target, id, evidence) {
 		return DeliveryPlan{}, ErrConflict
 	}
@@ -933,7 +933,7 @@ func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPl
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence}); err != nil {
+	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence}); err != nil {
 		return DeliveryPlan{}, err
 	}
 	allocated := in
@@ -949,10 +949,10 @@ func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (Deli
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p.PlanID, p.TargetID, p.PlanRevision, p.PlanDigest, p.CompiledGraphDigest, p.CompiledConfigDigest, p.SecurityDomainFingerprint, p.ArtifactDigest, p.QualificationRequired, p.CreatedAt = row.PlanID, row.TargetID, row.PlanRevision, row.PlanDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.ArtifactDigest, row.QualificationRequired, dbTime(row.CreatedAt)
+	p.PlanID, p.TargetID, p.PlanRevision, p.PlanDigest, p.CompiledGraphDigest, p.CompiledConfigDigest, p.SecurityDomainFingerprint, p.ArtifactDigest, p.QualificationDigest, p.QualificationRequired, p.CreatedAt = row.PlanID, row.TargetID, row.PlanRevision, row.PlanDigest, row.CompiledGraphDigest, row.CompiledConfigDigest, row.SecurityDomainFingerprint, row.ArtifactDigest, row.QualificationDigest, row.QualificationRequired, dbTime(row.CreatedAt)
 	p.Evidence = append([]byte(nil), row.Evidence...)
 	expectedEvidence, _ := canonicalObject(expected.Evidence, 65536, true)
-	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) {
+	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationDigest != expected.QualificationDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) {
 		return DeliveryPlan{}, ErrConflict
 	}
 	return p, nil
@@ -973,7 +973,7 @@ func (r *Repository) Plan(ctx context.Context, id string) (DeliveryPlan, error) 
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
 	return p, nil
 }
 
@@ -995,7 +995,7 @@ func (r *Repository) PlanTx(ctx context.Context, tx Tx, id string) (DeliveryPlan
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
 	return p, nil
 }
 func (r *Repository) LoadPlan(ctx context.Context, id string) (DeliveryPlan, error) {

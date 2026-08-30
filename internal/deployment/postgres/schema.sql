@@ -63,6 +63,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_plan (
     compiled_config_digest text NOT NULL CHECK (compiled_config_digest ~ '^sha256:[0-9a-f]{64}$'),
     security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
+    qualification_digest text NOT NULL CHECK (qualification_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_required boolean NOT NULL DEFAULT false,
     evidence jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 65536),
