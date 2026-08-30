@@ -788,7 +788,7 @@ op listSemanticModelFields(@path("model") modelName: ResourceId, @query limit?: 
     cursor: #{ source: "/page/nextCursor" }
   },
 })
-op querySemanticModel(@path("model") modelName: ResourceId, @header accept?: string, @body body?: SemanticQueryRequest): RowsetResponse<SemanticQueryResponse> | CommonErrors;
+op querySemanticModel(@path("model") modelName: ResourceId, @header accept?: string, @body body?: SemanticQueryRequest): RowsetResponse<SemanticQueryResponse> | RowsetErrors;
 
 @tag("BI")
 @summary("Explain semantic model query")
@@ -836,7 +836,7 @@ op listSemanticFields(@path("model") modelName: ResourceId, @path dataset: strin
 @extension("x-leapview-object-scope", "semantic-model")
 @extension("x-leapview-response-trailers", #["X-Next-Cursor"])
 @apigen.cli(#{ command: #["semantic-models", "preview"], args: #[#{ source: "path", name: "model", displayName: "model-id" }, #{ source: "path", name: "dataset", displayName: "dataset" }], output: #{ mode: "raw" } })
-op previewSemanticDataset(@path("model") modelName: ResourceId, @path dataset: string, @header accept?: string, @body body?: SemanticPreviewRequest): RowsetResponse<SemanticQueryResponse> | CommonErrors;
+op previewSemanticDataset(@path("model") modelName: ResourceId, @path dataset: string, @header accept?: string, @body body?: SemanticPreviewRequest): RowsetResponse<SemanticQueryResponse> | RowsetErrors;
 
 @tag("BI")
 @summary("Explain semantic model dataset row preview")
@@ -878,7 +878,7 @@ op queryDashboardPage(@path dashboard: ResourceId, @path page: string, @body bod
   ] },
   output: #{ mode: "raw" },
 })
-op queryDashboardVisualData(@path dashboard: ResourceId, @path page: string, @path visual: string, @header accept?: string, @body body?: DashboardVisualQueryRequest): RowsetResponse<LeapViewVisualization.VisualizationEnvelope> | CommonErrors;
+op queryDashboardVisualData(@path dashboard: ResourceId, @path page: string, @path visual: string, @header accept?: string, @body body?: DashboardVisualQueryRequest): RowsetResponse<LeapViewVisualization.VisualizationEnvelope> | RowsetErrors;
 
 @tag("BI")
 @summary("List dashboard filter values")

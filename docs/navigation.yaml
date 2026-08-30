@@ -540,6 +540,11 @@ sections:
             type: explanation
             summary: Measure dashboard Arrow boundaries before approving a production migration.
             source: articles/architecture/arrow-optimization-evidence.md
+          - slug: architecture/dashboard-native-arrow-contract
+            title: Dashboard native Arrow response contract
+            type: explanation
+            summary: Define the native-v1 schema, protocol, governance, pagination, and compatibility oracle for future dashboard Arrow experiments.
+            source: articles/architecture/dashboard-native-arrow-contract.md
           - slug: architecture/journey-qualification
             title: Cross-role journey qualification
             type: reference

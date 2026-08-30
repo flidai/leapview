@@ -216,4 +216,9 @@ model ServiceUnavailable {
   ...ProblemResponse<503>;
 }
 
+model GatewayTimeout {
+  ...ProblemResponse<504>;
+}
+
 alias CommonErrors = BadRequest | Unauthorized | Forbidden | NotFound | Conflict | PreconditionFailed | ContentTooLarge | UnsupportedMediaType | UnprocessableContent | RateLimited | InternalServerError | BadGateway | ServiceUnavailable;
+alias RowsetErrors = CommonErrors | GatewayTimeout;

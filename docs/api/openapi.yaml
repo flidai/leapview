@@ -7548,6 +7548,24 @@ paths:
                 status: 1
                 title: example
                 type: example
+        '504':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
       tags:
         - BI
       requestBody:
@@ -58613,6 +58631,24 @@ paths:
                 status: 1
                 title: example
                 type: example
+        '504':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
       tags:
         - BI
       requestBody:
@@ -59538,6 +59574,24 @@ paths:
                 type: example
         '503':
           description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '504':
+          description: Server error
           content:
             application/problem+json:
               schema:
