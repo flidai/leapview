@@ -54,6 +54,8 @@ func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 	for _, required := range []string{
 		"REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime",
 		"REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime",
+		"ON audit.audit_retention_floor, audit.query_event_retention_floor",
+		"FROM leapview_control_runtime",
 		"GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_maintenance",
 		"GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_maintenance",
 	} {

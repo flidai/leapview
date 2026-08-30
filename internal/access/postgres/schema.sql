@@ -38,9 +38,152 @@ CREATE TABLE IF NOT EXISTS audit.audit_event (
     metadata jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(metadata)='object' AND octet_length(metadata::text)<=32768),
     occurred_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
-CREATE OR REPLACE FUNCTION audit.reject_audit_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'audit history is immutable'; END; $$;
+CREATE INDEX IF NOT EXISTS audit_event_retention_order_idx
+    ON audit.audit_event (occurred_at, audit_id);
+
+-- The floor is durable evidence of the policy boundary used by the last
+-- bounded retention batch.  It is a cursor, not an authorization shortcut:
+-- append-only producers continue to write audit_event directly.
+CREATE TABLE IF NOT EXISTS audit.audit_retention_floor (
+    retention_class text PRIMARY KEY CHECK (retention_class IN ('short', 'standard', 'security')),
+    floor_at timestamptz NOT NULL DEFAULT '1970-01-01 00:00:00+00'::timestamptz,
+    updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
+);
+INSERT INTO audit.audit_retention_floor (retention_class)
+VALUES ('short'), ('standard'), ('security')
+ON CONFLICT (retention_class) DO NOTHING;
+
+-- Audit history is immutable to runtime callers.  A deletion can only be
+-- reached through the bounded SECURITY DEFINER function below, which sets a
+-- transaction-local marker and is itself executable only by maintenance.
+CREATE OR REPLACE FUNCTION audit.reject_audit_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF TG_OP = 'INSERT' THEN
+        -- The database owns evidence time.  Even an owner or runtime caller
+        -- supplying an explicit age cannot make a fresh event look old.
+        NEW.occurred_at := statement_timestamp();
+        RETURN NEW;
+    END IF;
+    IF TG_OP = 'DELETE'
+       AND current_setting('audit.maintenance', true) = 'on'
+       AND session_user = 'leapview_control_maintenance' THEN
+        RETURN OLD;
+    END IF;
+    RAISE EXCEPTION 'audit history is immutable';
+END;
+$$;
 DROP TRIGGER IF EXISTS audit_event_immutable ON audit.audit_event;
-CREATE TRIGGER audit_event_immutable BEFORE UPDATE OR DELETE ON audit.audit_event FOR EACH ROW EXECUTE FUNCTION audit.reject_audit_mutation();
+CREATE TRIGGER audit_event_immutable BEFORE INSERT OR UPDATE OR DELETE ON audit.audit_event FOR EACH ROW EXECUTE FUNCTION audit.reject_audit_mutation();
+
+-- Retention is a maintenance capability, never a runtime table privilege.
+-- Every invocation is capped by the database clock and one bounded candidate
+-- batch.  Candidate rows are inspected and locked before eligibility is
+-- decided; malformed retention envelopes are retained for operator review
+-- rather than silently discarded.  Valid envelopes (short, standard, or
+-- security) follow the explicitly supplied policy cutoff.
+CREATE OR REPLACE FUNCTION audit.prune_audit_events(
+    p_retention_class text,
+    p_requested_cutoff timestamptz,
+    p_batch_limit integer
+)
+RETURNS TABLE (
+    retention_class text,
+    requested_cutoff timestamptz,
+    cutoff timestamptz,
+    requested_limit integer,
+    removed_count bigint,
+    retained_floor timestamptz
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, audit
+AS $$
+DECLARE
+    v_floor timestamptz;
+    v_target timestamptz;
+    v_remaining timestamptz;
+    v_removed bigint := 0;
+BEGIN
+    IF session_user <> 'leapview_control_maintenance' THEN
+        RAISE EXCEPTION 'audit retention requires the maintenance capability';
+    END IF;
+    IF p_retention_class IS NULL OR p_retention_class NOT IN ('short', 'standard', 'security') THEN
+        RAISE EXCEPTION 'audit retention class must be short, standard, or security';
+    END IF;
+    IF p_requested_cutoff IS NULL THEN
+        RAISE EXCEPTION 'audit retention cutoff is required';
+    END IF;
+    IF p_batch_limit IS NULL OR p_batch_limit < 1 OR p_batch_limit > 1000 THEN
+        RAISE EXCEPTION 'audit retention batch limit must be between 1 and 1000';
+    END IF;
+
+    SELECT f.floor_at INTO STRICT v_floor
+      FROM audit.audit_retention_floor f
+     WHERE f.retention_class = p_retention_class
+     FOR UPDATE;
+
+    retention_class := p_retention_class;
+    requested_cutoff := p_requested_cutoff;
+    requested_limit := p_batch_limit;
+    -- Never let an operator-provided future cutoff delete newly-written rows.
+    v_target := GREATEST(v_floor, LEAST(p_requested_cutoff, clock_timestamp()));
+
+    cutoff := v_target;
+
+    -- The CTE first locks and inspects the exact rows to be removed.  The
+    -- trigger marker is transaction-local and cannot be used by runtime SQL,
+    -- which has neither DELETE nor EXECUTE privilege.
+    PERFORM set_config('audit.maintenance', 'on', true);
+    WITH candidates AS (
+        SELECT e.audit_id, e.occurred_at, e.source, e.operation,
+               e.action, e.outcome, e.metadata
+         FROM audit.audit_event e
+         WHERE e.occurred_at < v_target
+           AND CASE
+                 WHEN e.metadata ? 'retention' THEN e.metadata->>'retention' = p_retention_class
+                 ELSE p_retention_class = 'standard'
+               END
+         ORDER BY e.occurred_at, e.audit_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT p_batch_limit
+    ), deleted AS (
+        DELETE FROM audit.audit_event e
+         USING candidates c
+         WHERE e.audit_id = c.audit_id
+         RETURNING e.audit_id
+    )
+    SELECT count(*) INTO v_removed FROM deleted;
+
+    -- Derive the floor from the rows still visible after the bounded delete.
+    -- This keeps a full backlog, or a row skipped by a concurrent lock, from
+    -- being represented as already retained past the actual evidence.
+    SELECT min(e.occurred_at) INTO v_remaining
+      FROM audit.audit_event e
+     WHERE e.occurred_at < v_target
+       AND CASE
+             WHEN e.metadata ? 'retention' THEN e.metadata->>'retention' = p_retention_class
+             ELSE p_retention_class = 'standard'
+           END;
+    IF v_remaining IS NULL THEN
+        v_remaining := v_target;
+    END IF;
+    IF v_remaining > v_floor THEN
+        UPDATE audit.audit_retention_floor
+           SET floor_at = v_remaining, updated_at = clock_timestamp()
+         WHERE audit_retention_floor.retention_class = p_retention_class;
+        v_floor := v_remaining;
+    END IF;
+    cutoff := v_target;
+    removed_count := v_removed;
+    retained_floor := v_floor;
+    RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
 
 CREATE TABLE access.principal (
     id uuid PRIMARY KEY,
@@ -596,6 +739,10 @@ BEGIN
     REVOKE ALL ON SCHEMA access FROM PUBLIC;
     REVOKE ALL ON ALL TABLES IN SCHEMA access FROM PUBLIC;
     REVOKE ALL ON ALL FUNCTIONS IN SCHEMA access FROM PUBLIC;
+    REVOKE ALL ON SCHEMA audit FROM PUBLIC;
+    REVOKE ALL ON TABLE audit.audit_event, audit.audit_retention_floor FROM PUBLIC;
+    REVOKE ALL ON FUNCTION audit.reject_audit_mutation() FROM PUBLIC;
+    REVOKE ALL ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM PUBLIC;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime';
@@ -603,12 +750,19 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON audit.audit_event TO leapview_control_runtime';
+        EXECUTE 'REVOKE DELETE ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_runtime';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) FROM leapview_control_runtime';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_maintenance') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION audit.prune_audit_events(text, timestamptz, integer) TO leapview_control_maintenance';
+        EXECUTE 'REVOKE ALL ON audit.audit_event, audit.audit_retention_floor FROM leapview_control_maintenance';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA access TO leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON ALL TABLES IN SCHEMA access TO leapview_control_readonly';
         EXECUTE 'REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential, access.oauth_client, access.oauth_session, access.oauth_client_assertion FROM leapview_control_readonly';
         EXECUTE 'GRANT USAGE ON SCHEMA audit TO leapview_control_readonly';
-        EXECUTE 'GRANT SELECT ON audit.audit_event TO leapview_control_readonly';
+        EXECUTE 'GRANT SELECT ON audit.audit_event, audit.audit_retention_floor TO leapview_control_readonly';
     END IF;
 END $$;

@@ -123,6 +123,9 @@ BEGIN
         GRANT SELECT, INSERT ON agent.messages, agent.events TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
         GRANT SELECT, INSERT ON ALL TABLES IN SCHEMA audit TO leapview_control_runtime;
+		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+			ON audit.audit_retention_floor, audit.query_event_retention_floor
+			FROM leapview_control_runtime;
         GRANT SELECT ON ALL TABLES IN SCHEMA lineage TO leapview_control_runtime;
         GRANT INSERT ON lineage.graphs, lineage.nodes, lineage.edges, lineage.bindings TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE ON lineage.revisions FROM leapview_control_runtime;

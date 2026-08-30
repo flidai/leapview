@@ -2,6 +2,16 @@
 -- validation, replay comparison, and transaction ownership remain in the Go
 -- audit adapters.
 
+-- name: PruneAuditEvents :one
+SELECT result.requested_cutoff::timestamptz AS requested_cutoff,
+       result.retention_class::text AS retention_class,
+       result.cutoff::timestamptz AS cutoff,
+       result.requested_limit::integer AS requested_limit,
+       result.removed_count::bigint AS removed_count,
+       result.retained_floor::timestamptz AS retained_floor
+FROM audit.prune_audit_events(sqlc.arg(retention_class), sqlc.arg(requested_cutoff), sqlc.arg(batch_limit))
+     AS result(retention_class, requested_cutoff, cutoff, requested_limit, removed_count, retained_floor);
+
 -- name: InsertAuditIntent :exec
 INSERT INTO audit.audit_event
     (audit_id, event_id, scope_id, actor_id, principal_id, source, operation, action,

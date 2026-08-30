@@ -63,6 +63,16 @@ func TestSQLCVetPreparesAgainstBaselinePostgreSQL18(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	var accessFloorInsert, queryFloorInsert bool
+	if err := pool.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_retention_floor', 'INSERT'),
+		       has_table_privilege('leapview_control_runtime', 'audit.query_event_retention_floor', 'INSERT')
+	`).Scan(&accessFloorInsert, &queryFloorInsert); err != nil {
+		t.Fatalf("inspect runtime retention-floor privileges: %v", err)
+	}
+	if accessFloorInsert || queryFloorInsert {
+		t.Fatalf("runtime can insert retention floors: access=%t query=%t", accessFloorInsert, queryFloorInsert)
+	}
 
 	root := repositoryRoot(t)
 	config := prepareSQLCConfig(t, root)
