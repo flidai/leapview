@@ -163,7 +163,15 @@ func stableDeliveryStartupDiagnostic(code deployment.DeliveryStartupDiagnosticCo
 		deployment.DeliveryStartupMixedServingPaths,
 		deployment.DeliveryStartupMissingTargetRevision,
 		deployment.DeliveryStartupMissingServingGeneration,
-		deployment.DeliveryStartupIndeterminatePublication:
+		deployment.DeliveryStartupIndeterminatePublication,
+		deployment.DeliveryStartupClaimTargetPartial,
+		deployment.DeliveryStartupTargetIdentityMismatch,
+		deployment.DeliveryStartupActivePointerMismatch,
+		deployment.DeliveryStartupMissingPublication,
+		deployment.DeliveryStartupMissingServingState,
+		deployment.DeliveryStartupServingEvidenceMismatch,
+		deployment.DeliveryStartupMissingSeal,
+		deployment.DeliveryStartupSealEvidenceMismatch:
 		return true
 	default:
 		return false

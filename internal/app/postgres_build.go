@@ -300,6 +300,17 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
+	deliveryStartup, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
+		TargetID:    instanceID,
+		Environment: environment,
+		ReadClaim:   readClaim,
+		Delivery:    graph.DeploymentRepository,
+		Serving:     graph.ServingState,
+		Physical:    graph.PhysicalPool,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build PostgreSQL delivery startup checker: %w", err))
+	}
 
 	// Native deployment has no legacy delivery reader/candidate builder yet;
 	// keep canonical refresh dispatch disabled while retaining durable refresh
@@ -312,7 +323,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		}
 		defer lease.Release()
 		return lease.Identity().GenerationID, nil
-	}, DuckLakeCatalogPath: "", DuckLakeDataPath: "", DefaultEnvironment: string(environment), Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: true, SealedServing: true}, httpAssemblyInputs{PublicURL: publicURL, RateLimits: apihttpmiddleware.ProductionRateLimitConfig(), SecurityHeaders: apihttpmiddleware.SecurityHeaders(true), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
+	}, DuckLakeCatalogPath: "", DuckLakeDataPath: "", DefaultEnvironment: string(environment), Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: true, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, RateLimits: apihttpmiddleware.ProductionRateLimitConfig(), SecurityHeaders: apihttpmiddleware.SecurityHeaders(true), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
 	if err != nil {
 		return fail(err)
 	}
