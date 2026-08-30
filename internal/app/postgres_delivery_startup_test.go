@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
@@ -161,11 +162,12 @@ func TestPostgresDeliveryStartupRejectsTargetAndPointerIdentityDrift(t *testing.
 
 func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 	pool, admission := startupPhysicalPool(t)
+	artifact := startupNativeArtifact()
 	baseAuthority := postgresDeliveryStartupAuthorityFake{
 		target:      appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
-		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 		publication: appdeploymentpostgres.StartupPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
-		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: artifact.ID, ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 	}
 	for _, test := range []struct {
 		name string
@@ -187,7 +189,7 @@ func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			authority := baseAuthority
-			serving := postgresDeliveryStartupServingFake{state: servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: "artifact-digest", DuckLakeSnapshotID: 42}, artifact: servingstate.Artifact{ID: "artifact-id", ServingStateID: startupGeneration, Digest: "artifact-digest", Path: "pool/object"}}
+			serving := postgresDeliveryStartupServingFake{state: servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: artifact.Digest, DuckLakeSnapshotID: 42}, artifact: artifact}
 			test.make(&authority, &serving)
 			check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 				TargetID: startupTarget, Environment: startupEnvironment,
@@ -204,15 +206,16 @@ func TestPostgresDeliveryStartupRejectsMissingActiveEvidence(t *testing.T) {
 
 func TestPostgresDeliveryStartupAcceptsExactActiveEvidenceAndChecksRevision(t *testing.T) {
 	pool, admission := startupPhysicalPool(t)
+	artifact := startupNativeArtifact()
 	authority := &postgresDeliveryStartupAuthorityFake{
 		target:      appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
-		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 		publication: appdeploymentpostgres.StartupPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
-		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact-id", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: artifact.ID, ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
 	}
 	serving := &postgresDeliveryStartupServingFake{
-		state:    servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: "artifact-digest", DuckLakeSnapshotID: 42},
-		artifact: servingstate.Artifact{ID: "artifact-id", ServingStateID: startupGeneration, Digest: "artifact-digest", Path: "pool/object"},
+		state:    servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: artifact.Digest, DuckLakeSnapshotID: 42},
+		artifact: artifact,
 	}
 	check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
 		TargetID: startupTarget, Environment: startupEnvironment,
@@ -241,6 +244,55 @@ func TestPostgresDeliveryStartupAcceptsExactActiveEvidenceAndChecksRevision(t *t
 		t.Fatal(err)
 	}
 	assertPostgresStartupDiagnostic(t, checkPhysicalFailure(context.Background()), deployment.DeliveryStartupMissingPoolAdmission)
+}
+
+func TestPostgresDeliveryStartupRejectsMalformedNativeArtifactEvidence(t *testing.T) {
+	pool, admission := startupPhysicalPool(t)
+	artifact := startupNativeArtifact()
+	authority := &postgresDeliveryStartupAuthorityFake{
+		target:      appdeploymentpostgres.StartupTarget{TargetID: startupTarget, ProjectID: startupProject, Environment: string(startupEnvironment), TargetRevision: 2, ActiveGenerationID: startupGeneration, ActivePublicationID: startupPublication},
+		generation:  appdeploymentpostgres.StartupGeneration{GenerationID: startupGeneration, TargetID: startupTarget, CandidateID: startupCandidate, PlanID: startupPlan, SnapshotSealID: startupSeal, PlanDigest: "plan-digest", ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+		publication: appdeploymentpostgres.StartupPublication{PublicationID: startupPublication, TargetID: startupTarget, GenerationID: startupGeneration, CandidateID: startupCandidate, SnapshotSealID: startupSeal, State: "committed", ExpectedTargetRevision: 1, ResultTargetRevision: 2},
+		seal:        appdeploymentpostgres.StartupSnapshotSeal{SealID: startupSeal, CandidateID: startupCandidate, PhysicalPoolID: string(pool.ID), CompatibilityDigest: admission.CompatibilityDigest, DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: artifact.ID, ServingArtifactDigest: artifact.Digest, CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "root", ArtifactRootDigest: "root-digest"},
+	}
+	serving := &postgresDeliveryStartupServingFake{
+		state:    servingstate.State{ID: startupGeneration, ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: artifact.Digest, DuckLakeSnapshotID: 42},
+		artifact: artifact,
+	}
+	check, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
+		TargetID: startupTarget, Environment: startupEnvironment,
+		ReadClaim: func(context.Context) (projectgraph.ResourceID, bool, error) { return startupProject, true, nil },
+		Delivery:  authority, Serving: serving, Physical: postgresDeliveryStartupPhysicalFake{contract: physicalpool.AdmissionContract{Pool: pool, Admission: admission}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name   string
+		mutate func(*servingstate.Artifact)
+	}{
+		{name: "missing locator", mutate: func(a *servingstate.Artifact) { a.Locator = "" }},
+		{name: "wrong locator", mutate: func(a *servingstate.Artifact) { a.Locator = "serving-artifacts/not-the-digest.tar.gz" }},
+		{name: "missing security domain", mutate: func(a *servingstate.Artifact) { a.StorageSecurityDomain = "" }},
+		{name: "malformed security domain", mutate: func(a *servingstate.Artifact) { a.StorageSecurityDomain = " runtime" }},
+		{name: "missing metadata digest", mutate: func(a *servingstate.Artifact) { a.MetadataDigest = "" }},
+		{name: "malformed metadata digest", mutate: func(a *servingstate.Artifact) { a.MetadataDigest = "not-a-digest" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			serving.artifact = startupNativeArtifact()
+			test.mutate(&serving.artifact)
+			assertPostgresStartupDiagnostic(t, check(context.Background()), deployment.DeliveryStartupServingEvidenceMismatch)
+		})
+	}
+}
+
+func startupNativeArtifact() servingstate.Artifact {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	return servingstate.Artifact{
+		ID: "artifact-" + strings.TrimPrefix(digest, "sha256:"), ServingStateID: startupGeneration, Digest: digest,
+		Format: servingstate.ArtifactBundleFormat, Locator: "serving-artifacts/" + strings.TrimPrefix(digest, "sha256:") + ".tar.gz",
+		StorageSecurityDomain: "runtime", ContentType: servingstate.ArtifactBundleContentType, MetadataDigest: "sha256:" + strings.Repeat("b", 64), SizeBytes: 1,
+	}
 }
 
 func startupPhysicalPool(t *testing.T) (physicalpool.PhysicalPool, physicalpool.PoolAdmission) {

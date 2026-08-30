@@ -2,9 +2,12 @@ package app
 
 import (
 	"context"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	physicalpool "github.com/flidai/leapview/internal/analytics/physicalpool"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
@@ -147,7 +150,7 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 			}
 			return fmt.Errorf("delivery startup serving artifact: %w", artifactErr)
 		}
-		if state.ID != stateID || state.ProjectID != claimedProject || state.Environment != config.Environment || state.Status != servingstate.StatusActive || state.Digest != generation.ServingArtifactDigest || artifact.ServingStateID != stateID || strings.TrimSpace(artifact.ID) == "" || artifact.Digest != generation.ServingArtifactDigest || strings.TrimSpace(artifact.Path) == "" {
+		if state.ID != stateID || state.ProjectID != claimedProject || state.Environment != config.Environment || state.Status != servingstate.StatusActive || state.Digest != generation.ServingArtifactDigest || artifact.ServingStateID != stateID || artifact.Digest != generation.ServingArtifactDigest || !postgresDeliveryStartupNativeArtifactComplete(artifact) {
 			return postgresDeliveryStartupDiagnostics(scope, deployment.DeliveryStartupServingEvidenceMismatch)
 		}
 
@@ -180,6 +183,45 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 		}
 		return nil
 	}, nil
+}
+
+// postgresDeliveryStartupNativeArtifactComplete validates the immutable
+// object-backed serving artifact persisted by the native PostgreSQL serving
+// state repository. Native admission intentionally leaves Path empty; the
+// digest-derived Locator and its storage metadata are the serving authority.
+func postgresDeliveryStartupNativeArtifactComplete(artifact servingstate.Artifact) bool {
+	if artifact.Path != "" || !postgresDeliveryStartupCanonicalDigest(artifact.Digest) {
+		return false
+	}
+	wantID := "artifact-" + strings.TrimPrefix(artifact.Digest, "sha256:")
+	if artifact.ID != wantID || artifact.ID != strings.TrimSpace(artifact.ID) {
+		return false
+	}
+	if artifact.Format != servingstate.ArtifactBundleFormat || artifact.SizeBytes < 1 || artifact.SizeBytes > servingstate.MaxArtifactBundleBytes {
+		return false
+	}
+	wantLocator := "serving-artifacts/" + strings.TrimPrefix(artifact.Digest, "sha256:") + ".tar.gz"
+	if artifact.Locator != wantLocator || artifact.Locator != strings.TrimSpace(artifact.Locator) {
+		return false
+	}
+	if artifact.StorageSecurityDomain == "" || !utf8.ValidString(artifact.StorageSecurityDomain) || artifact.StorageSecurityDomain != strings.TrimSpace(artifact.StorageSecurityDomain) || len(artifact.StorageSecurityDomain) > 512 || strings.IndexFunc(artifact.StorageSecurityDomain, unicode.IsControl) >= 0 {
+		return false
+	}
+	if artifact.ContentType != servingstate.ArtifactBundleContentType || !postgresDeliveryStartupCanonicalDigest(artifact.MetadataDigest) {
+		return false
+	}
+	return true
+}
+
+func postgresDeliveryStartupCanonicalDigest(value string) bool {
+	if len(value) != len("sha256:")+64 || !strings.HasPrefix(value, "sha256:") {
+		return false
+	}
+	hexPart := value[len("sha256:"):]
+	if _, err := hex.DecodeString(hexPart); err != nil {
+		return false
+	}
+	return strings.ToLower(hexPart) == hexPart
 }
 
 func postgresDeliveryStartupSealComplete(seal appdeploymentpostgres.StartupSnapshotSeal, generation appdeploymentpostgres.StartupGeneration, artifact servingstate.Artifact, state servingstate.State) bool {
