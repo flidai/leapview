@@ -48,7 +48,7 @@ Recovery alerts use current-state ledger projections. `leapview_recovery_qualifi
 
 Every alert links to [Operational troubleshooting](/docs/guides/operate/troubleshooting); recovery alerts link directly to the [recovery qualification response](/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire). Configure routing and receivers in the operator-owned Alertmanager deployment.
 
-### Dashboard refresh reliability SLI
+### Dashboard refresh reliability SLI and SLO
 
 The repository-owned recording rules at `deploy/observability/prometheus/leapview-recording-rules.yaml` derive dashboard refresh reliability only from `leapview_dashboard_refresh_duration_seconds_count`. A finished refresh is eligible unless its outcome is `canceled`. `complete` is good; `partial`, `error`, and the bounded fallback `other` are bad. Cancellations are excluded because refresh supersession and stream closure are expected lifecycle behavior rather than evidence of failed dashboard work.
 
@@ -62,7 +62,13 @@ Four companion recordings make the ratio's underlying traffic volume explicit. `
 
 Prometheus must retain at least 30 days of source samples for a complete rolling window. Until that history has accumulated after initial deployment or retention loss, the 30-day ratio and event volumes reflect only the available portion of the window. `increase` may return fractional estimates at range boundaries, so event volumes are operational context rather than accounting totals. Canceled-only traffic records zero eligible and bad events while still emitting no reliability ratio. Completely missing source metrics emit neither volume nor ratio; missing or idle traffic is never reported as perfect reliability. Sparse traffic can make the five-minute ratio volatile and the 30-day ratio statistically weak, so operators should inspect the eligible event recording before interpreting either series.
 
-This SLI measures only completed dashboard refresh work. It does not measure refreshes still in flight, HTTP or SSE transport continuity, authentication, static assets, direct API queries, or an end-to-end synthetic journey. It defines no SLO target, error budget, burn rate, or alert threshold.
+The repository-owned dashboard refresh reliability objective is 99% over a rolling 30-day window. The LeapView engineering/operations owner owns this initial target. It is a realistic baseline for detecting meaningful degradation while production behavior is still being established, without requiring an immature system to meet a stricter objective before sufficient operational history exists. Revisit the target after production reliability data establishes normal dashboard refresh behavior.
+
+`leapview:dashboard_refresh_reliability:objective_ratio_30d` records the `0.99` objective wherever the 30-day reliability ratio is evaluable. `leapview:dashboard_refresh_reliability:error_budget_consumption_30d` divides the observed bad-event fraction by the approved 1% bad-event allowance. A value below `1` is within budget, `1` is exhausted, and a value above `1` is overdrawn. `leapview:dashboard_refresh_reliability:error_budget_remaining_30d` records one minus consumption, so a negative value remains visible after exhaustion rather than being clamped. All three recordings retain only `job` and `instance`.
+
+The objective and budget recordings are absent when eligible traffic is zero or missing, including canceled-only traffic; absence must not be interpreted as compliance. Low traffic remains mathematically valid but statistically weak, so evaluate budget state together with `eligible_events_30d`. Prometheus cannot distinguish a complete 30-day history from a partial window after deployment or retention loss, and the budget recordings naturally reflect only the samples available. They inherit the SLI's `increase` estimation behavior and are not accounting totals.
+
+This SLO measures only completed dashboard refresh work. It does not measure refreshes still in flight, HTTP or SSE transport continuity, authentication, static assets, direct API queries, or an end-to-end synthetic journey. It defines no burn-rate alert, paging policy, or Alertmanager routing.
 
 ## Structured logs
 
