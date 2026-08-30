@@ -11,8 +11,11 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectdb "github.com/flidai/leapview/internal/project/postgres/internal/db"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -127,6 +130,22 @@ type SourceSnapshotEntry struct {
 	Digest                string
 	SizeBytes             int64
 	Ordinal               int
+}
+
+// SourceSnapshotObjectRef identifies one source file in a sealed snapshot
+// and its immutable object-store reference. Path is only the authored source
+// identity; callers must use ObjectKey for object-store access.
+type SourceSnapshotObjectRef struct {
+	SnapshotID            uuid.UUID
+	ProjectID             string
+	StorageSecurityDomain string
+	Path                  string
+	Digest                string
+	SizeBytes             int64
+	Ordinal               int
+	ObjectKey             string
+	ContentType           string
+	MetadataDigest        string
 }
 
 // CommitSnapshotInput is the complete immutable snapshot identity. Object
@@ -372,6 +391,35 @@ func (r *Repository) InsertSourceBlobTx(ctx context.Context, tx SourceTx, input 
 	return stored, nil
 }
 
+// SourceBlob loads one exact source object reference by project, storage
+// security domain, and canonical content digest.
+func (r *Repository) SourceBlob(ctx context.Context, projectID, storageSecurityDomain, blobDigest string) (SourceBlob, error) {
+	if r == nil || r.db == nil {
+		return SourceBlob{}, ErrSourceInvalid
+	}
+	projectID, storageSecurityDomain, err := normalizeSourceReadIdentity(projectID, storageSecurityDomain)
+	if err != nil {
+		return SourceBlob{}, err
+	}
+	if digest.ValidateSHA256Identity(blobDigest) != nil {
+		return SourceBlob{}, ErrSourceInvalid
+	}
+	row, err := projectdb.New(r.db).GetSourceBlob(contextOrBackground(ctx), projectdb.GetSourceBlobParams{
+		ProjectID: projectID, StorageSecurityDomain: storageSecurityDomain, Digest: blobDigest,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SourceBlob{}, ErrSourceNotFound
+	}
+	if err != nil {
+		return SourceBlob{}, err
+	}
+	stored := blobFromModel(row)
+	if stored.ProjectID != projectID || stored.StorageSecurityDomain != storageSecurityDomain || stored.Digest != blobDigest {
+		return SourceBlob{}, ErrSourceConflict
+	}
+	return stored, nil
+}
+
 func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input CommitSnapshotInput) (SourceSnapshot, error) {
 	n, entries, attestation, err := normalizeCommit(input)
 	if err != nil || tx == nil {
@@ -511,6 +559,49 @@ func (r *Repository) SnapshotEntries(ctx context.Context, snapshotID uuid.UUID) 
 	out := make([]SourceSnapshotEntry, len(rows))
 	for i, row := range rows {
 		out[i] = SourceSnapshotEntry{SnapshotID: uuidFromDB(row.SnapshotID), ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal)}
+	}
+	return out, nil
+}
+
+// SnapshotSourceObjectRefs returns all source object references for one sealed
+// snapshot in canonical ordinal order. The SQL leaf performs the complete
+// snapshot/entry/blob join, so this method never issues per-entry reads.
+func (r *Repository) SnapshotSourceObjectRefs(ctx context.Context, projectID, storageSecurityDomain, sourceDigest string) ([]SourceSnapshotObjectRef, error) {
+	if r == nil || r.db == nil {
+		return nil, ErrSourceInvalid
+	}
+	projectID, storageSecurityDomain, err := normalizeSourceReadIdentity(projectID, storageSecurityDomain)
+	if err != nil {
+		return nil, err
+	}
+	if digest.ValidateSHA256Identity(sourceDigest) != nil {
+		return nil, ErrSourceInvalid
+	}
+	rows, err := projectdb.New(r.db).ListSealedSourceSnapshotObjectRefs(contextOrBackground(ctx), projectdb.ListSealedSourceSnapshotObjectRefsParams{
+		ProjectID: projectID, StorageSecurityDomain: storageSecurityDomain, SourceDigest: sourceDigest,
+	})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) == 0 {
+		return nil, ErrSourceNotFound
+	}
+	out := make([]SourceSnapshotObjectRef, len(rows))
+	var snapshotID uuid.UUID
+	for i, row := range rows {
+		rowSnapshotID := uuidFromDB(row.SnapshotID)
+		if !row.SnapshotID.Valid || rowSnapshotID == uuid.Nil || row.ProjectID != projectID || row.StorageSecurityDomain != storageSecurityDomain || !canonicalSourcePath(row.Path) || digest.ValidateSHA256Identity(row.Digest) != nil || row.SizeBytes < 0 || row.SizeBytes > maxSourceBlobBytes || row.Ordinal != int32(i) || !validObjectKey(row.ObjectKey) || row.ContentType == "" || digest.ValidateSHA256Identity(row.MetadataDigest) != nil {
+			return nil, ErrSourceConflict
+		}
+		if i == 0 {
+			snapshotID = rowSnapshotID
+		} else if rowSnapshotID != snapshotID {
+			return nil, ErrSourceConflict
+		}
+		if row.Digest != row.BlobDigest || row.SizeBytes != row.BlobSizeBytes {
+			return nil, ErrSourceConflict
+		}
+		out[i] = SourceSnapshotObjectRef{SnapshotID: rowSnapshotID, ProjectID: row.ProjectID, StorageSecurityDomain: row.StorageSecurityDomain, Path: row.Path, Digest: row.Digest, SizeBytes: row.SizeBytes, Ordinal: int(row.Ordinal), ObjectKey: row.ObjectKey, ContentType: row.ContentType, MetadataDigest: row.MetadataDigest}
 	}
 	return out, nil
 }
@@ -757,6 +848,19 @@ func normalizeProjectDomain(projectID, domain string) (string, string, error) {
 	projectID = strings.TrimSpace(projectID)
 	domain = strings.TrimSpace(domain)
 	if projectID == "" || domain == "" || len(projectID) > 255 || len(domain) > 255 {
+		return "", "", ErrSourceInvalid
+	}
+	return projectID, domain, nil
+}
+
+func normalizeSourceReadIdentity(projectID, domain string) (string, string, error) {
+	if projectID == "" || strings.TrimSpace(projectID) != projectID || len(projectID) > maxProjectIDBytes {
+		return "", "", ErrSourceInvalid
+	}
+	if _, err := projectgraph.NewResourceID(projectID); err != nil {
+		return "", "", ErrSourceInvalid
+	}
+	if domain == "" || strings.TrimSpace(domain) != domain || len(domain) > 255 || !utf8.ValidString(domain) || strings.IndexFunc(domain, unicode.IsControl) >= 0 {
 		return "", "", ErrSourceInvalid
 	}
 	return projectID, domain, nil

@@ -81,6 +81,9 @@ func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
+	if _, err := r.SnapshotSourceObjectRefs(t.Context(), plan.ProjectID, plan.StorageSecurityDomain, source); !errors.Is(err, ErrSourceNotFound) {
+		t.Fatalf("building snapshot object refs err=%v, want ErrSourceNotFound", err)
+	}
 	attestationPayload := []byte(`{"sourceDigest":"` + source + `"}`)
 	attestationDigest := sha256Identity(attestationPayload)
 	commit := CommitSnapshotInput{PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: uuid.New(), ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain, SourceDigest: source, ProjectFile: plan.ProjectFile, ProjectDigest: sourceTestDigest("e"), ProjectArtifactObjectKey: "artifacts/project.json", ProjectArtifactDigest: sourceTestDigest("f"), ProjectArtifactSizeBytes: 10, ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("1"), ManifestObjectSizeBytes: 20, CompilerVersion: "compiler:v1", SchemaVersion: 1, Entries: []SourceSnapshotEntryInput{{Path: entries[0].Path, Digest: entries[0].Digest, SizeBytes: entries[0].SizeBytes}, {Path: entries[1].Path, Digest: entries[1].Digest, SizeBytes: entries[1].SizeBytes}}, Attestation: SourceAttestationInput{AttestationID: uuid.New(), SourceDigest: source, AttestationDigest: attestationDigest, Payload: attestationPayload}}
@@ -125,6 +128,39 @@ func TestSourcePlanBlobSnapshotLifecycle(t *testing.T) {
 	}
 	if _, err := r.SnapshotAttestation(t.Context(), snapshot.SnapshotID, attestationDigest); err != nil {
 		t.Fatal(err)
+	}
+	refs, err := r.SnapshotSourceObjectRefs(t.Context(), plan.ProjectID, plan.StorageSecurityDomain, source)
+	if err != nil {
+		t.Fatalf("snapshot object refs: %v", err)
+	}
+	if len(refs) != len(entries) {
+		t.Fatalf("snapshot object refs len=%d, want %d", len(refs), len(entries))
+	}
+	for i, ref := range refs {
+		entry := entries[i]
+		wantKey := "sources/" + strings.TrimPrefix(entry.Digest, "sha256:")
+		if ref.SnapshotID != snapshot.SnapshotID || ref.ProjectID != plan.ProjectID || ref.StorageSecurityDomain != plan.StorageSecurityDomain || ref.Path != entry.Path || ref.Digest != entry.Digest || ref.SizeBytes != entry.SizeBytes || ref.Ordinal != i || ref.ObjectKey != wantKey || ref.ContentType != "text/plain" || ref.MetadataDigest != sourceTestDigest("d") {
+			t.Fatalf("snapshot object ref[%d]=%#v", i, ref)
+		}
+		blob, blobErr := r.SourceBlob(t.Context(), plan.ProjectID, plan.StorageSecurityDomain, entry.Digest)
+		if blobErr != nil {
+			t.Fatalf("source blob[%d]: %v", i, blobErr)
+		}
+		if blob.Digest != ref.Digest || blob.SizeBytes != ref.SizeBytes || blob.ObjectKey != ref.ObjectKey || blob.ContentType != ref.ContentType || blob.MetadataDigest != ref.MetadataDigest {
+			t.Fatalf("source blob[%d]=%#v disagrees with ref=%#v", i, blob, ref)
+		}
+	}
+	if _, err := r.SnapshotSourceObjectRefs(t.Context(), plan.ProjectID, "other-domain", source); !errors.Is(err, ErrSourceNotFound) {
+		t.Fatalf("wrong source domain object refs err=%v, want ErrSourceNotFound", err)
+	}
+	if _, err := r.SnapshotSourceObjectRefs(t.Context(), plan.ProjectID, plan.StorageSecurityDomain, sourceTestDigest("9")); !errors.Is(err, ErrSourceNotFound) {
+		t.Fatalf("wrong source digest object refs err=%v, want ErrSourceNotFound", err)
+	}
+	if _, err := r.SourceBlob(t.Context(), plan.ProjectID, "other-domain", entries[0].Digest); !errors.Is(err, ErrSourceNotFound) {
+		t.Fatalf("wrong source domain blob err=%v, want ErrSourceNotFound", err)
+	}
+	if _, err := r.SourceBlob(t.Context(), plan.ProjectID, plan.StorageSecurityDomain, sourceTestDigest("9")); !errors.Is(err, ErrSourceNotFound) {
+		t.Fatalf("wrong source digest blob err=%v, want ErrSourceNotFound", err)
 	}
 	if _, err := db.Exec(t.Context(), `UPDATE project.source_blob SET object_key='mutated' WHERE project_id=$1`, plan.ProjectID); err == nil {
 		t.Fatal("source blob UPDATE bypassed immutable trigger")

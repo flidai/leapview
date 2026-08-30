@@ -137,6 +137,26 @@ FROM project.source_snapshot_entry
 WHERE snapshot_id = $1
 ORDER BY ordinal;
 
+-- name: ListSealedSourceSnapshotObjectRefs :many
+SELECT e.snapshot_id, e.project_id, e.storage_security_domain,
+       e.path, e.digest, e.size_bytes, e.ordinal,
+       b.digest AS blob_digest, b.size_bytes AS blob_size_bytes,
+       b.object_key, b.content_type, b.metadata_digest
+FROM project.source_snapshot s
+JOIN project.source_snapshot_entry e
+  ON e.snapshot_id = s.snapshot_id
+ AND e.project_id = s.project_id
+ AND e.storage_security_domain = s.storage_security_domain
+JOIN project.source_blob b
+  ON b.project_id = e.project_id
+ AND b.storage_security_domain = e.storage_security_domain
+ AND b.digest = e.digest
+WHERE s.project_id = $1
+  AND s.storage_security_domain = $2
+  AND s.source_digest = $3
+  AND s.state = 'sealed'
+ORDER BY e.ordinal;
+
 -- name: InsertSourceAttestation :exec
 INSERT INTO project.source_attestation
     (attestation_id, snapshot_id, source_digest, attestation_digest, payload,
