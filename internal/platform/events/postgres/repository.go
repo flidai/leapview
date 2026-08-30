@@ -32,9 +32,10 @@ type Tx interface {
 	QueryRow(context.Context, string, ...any) pgx.Row
 }
 
-// Repository is stateless.  It exists as a named capability so callers can
-// keep the event repository alongside other platform repositories.
-type Repository struct{}
+// Repository is operationally stateless. The non-zero marker gives each
+// allocated authority a distinct Go identity so composition can prove that
+// adapters retain the exact canonical authority instead of a sibling object.
+type Repository struct{ identity byte }
 
 //go:embed schema.sql
 var schemaSQL string

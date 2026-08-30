@@ -7,10 +7,26 @@ import (
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
+	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
+	"github.com/flidai/leapview/internal/app/dashboardauthoringaudit"
+	"github.com/flidai/leapview/internal/app/dashboardauthoringevents"
+	"github.com/flidai/leapview/internal/app/dashboardgenerationfence"
+	"github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
+	"github.com/flidai/leapview/internal/app/dashboardpublicationevents"
+	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
+	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
+	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
+	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -122,5 +138,121 @@ func TestPostgresAuthorityGraphRefreshAdaptersPreserveRepositoryIdentity(t *test
 	}
 	if refreshJobsMatches(jobs, refresh, nil) || refreshCancelAuditMatches(audit, nil) {
 		t.Fatal("nil refresh adapter was accepted")
+	}
+}
+
+func TestPostgresAuthorityGraphDashboardPersistencePreservesSiblingIdentity(t *testing.T) {
+	db := deploymentPostgresDBStub{}
+	audit := accesspostgres.New()
+	events := eventspostgres.New()
+
+	appearanceAudit := dashboardappearanceaudit.NewWithRepository(audit)
+	appearanceEvents := dashboardappearanceevents.NewWithRepository(events)
+	appearance, err := dashboardappearancepostgres.New(db, dashboardappearancepostgres.Options{Audit: appearanceAudit, Events: appearanceEvents})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deployment := deploymentpostgres.New(db)
+	fence, err := dashboardgenerationfence.New(deployment, "target-prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoringAudit := dashboardauthoringaudit.NewWithRepository(audit)
+	authoringEvents := dashboardauthoringevents.NewWithRepository(events)
+	authoring, err := dashboardauthoringpostgres.New(db, authoringAudit, authoringEvents, fence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	publicationAudit := dashboardpublicationaudit.NewWithRepository(audit)
+	publicationEvents := dashboardpublicationevents.NewWithRepository(events)
+	publication, err := dashboardpublicationpostgres.New(db, publicationAudit, publicationEvents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := dashboardsessionpostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := dashboardusagepostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	streams := dashboardpublicationpostgres.NewStreamRegistry(db)
+	broker := dashboardpublicationpostgres.NewBroker(nil)
+	options := dashboardmodule.NativePersistenceOptions{
+		Session: session, Usage: usage, Appearance: appearance, Authoring: authoring,
+		Publication: publication, Streams: streams, Broker: broker,
+	}
+	bundle, err := dashboardmodule.NewNativePersistence(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.Matches(options) {
+		t.Fatal("dashboard native persistence bundle rejected its exact authorities")
+	}
+	if !appearanceAudit.Matches(audit) || !appearanceEvents.Matches(events) ||
+		!authoringAudit.Matches(audit) || !authoringEvents.Matches(events) ||
+		!publicationAudit.Matches(audit) || !publicationEvents.Matches(events) ||
+		!fence.Matches(deployment, "target-prod") {
+		t.Fatal("dashboard adapters did not preserve exact sibling authority identities")
+	}
+	if appearanceAudit.Matches(accesspostgres.New()) || authoringEvents.Matches(eventspostgres.New()) {
+		t.Fatal("dashboard adapters accepted distinct stateless authority allocations")
+	}
+	if bundle.Matches(dashboardmodule.NativePersistenceOptions{
+		Session: session, Usage: usage, Appearance: appearance, Authoring: authoring,
+		Publication: publication, Streams: dashboardpublicationpostgres.NewStreamRegistry(db), Broker: broker,
+	}) {
+		t.Fatal("dashboard native persistence accepted a different stream authority")
+	}
+}
+
+func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "postgres_authority_graph")
+	config := platformpostgres.Config{
+		URL: database.AdminURL(), ExpectedMajor: platformpostgres.DefaultExpectedMajor,
+		RuntimeRole: "postgres", Intent: platformpostgres.IntentReadWrite,
+		MinConns: 0, MaxConns: 4,
+	}
+	runtime, err := platformpostgres.Open(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	config.MaxConns = 1
+	maintenance, err := platformpostgres.Open(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenance.Close)
+
+	graph, err := NewPostgresAuthorityGraph(
+		&postgresControlPlaneLifecycle{pools: &platformpostgres.ControlPlanePools{Runtime: runtime, Maintenance: maintenance}},
+		PostgresAuthorityGraphOptions{TargetID: "target-prod", FingerprintKey: []byte(strings.Repeat("k", 32))},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := graph.Validate(); err != nil {
+		t.Fatalf("validate constructed graph: %v", err)
+	}
+	if graph.DashboardTargetID != "target-prod" || !graph.DashboardPersistence.Matches(dashboardmodule.NativePersistenceOptions{
+		Session: graph.DashboardSession, Usage: graph.DashboardUsage, Appearance: graph.DashboardAppearance,
+		Authoring: graph.DashboardAuthoring, Publication: graph.DashboardPublication,
+		Streams: graph.DashboardStreams, Broker: graph.DashboardBroker,
+	}) {
+		t.Fatal("constructed graph did not preserve dashboard target and persistence identities")
+	}
+
+	originalEvents := graph.DashboardPublicationEvents
+	graph.DashboardPublicationEvents = dashboardpublicationevents.NewWithRepository(eventspostgres.New())
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "publication adapters") {
+		t.Fatalf("mismatched publication event authority error = %v", err)
+	}
+	graph.DashboardPublicationEvents = originalEvents
+	graph.DashboardTargetID = "target-other"
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "generation fence") {
+		t.Fatalf("mismatched dashboard target error = %v", err)
 	}
 }

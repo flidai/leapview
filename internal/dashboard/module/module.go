@@ -139,6 +139,26 @@ func (p *NativePersistence) valid() bool {
 	return p.session != nil && p.session.IsNative() && p.usage != nil && p.usage.IsNative() && p.appearance != nil && p.appearance.IsNative() && p.authoring != nil && p.authoring.IsNative() && p.publication != nil && p.publication.IsNative() && registryOK && brokerOK && nativeBroker != nil && nativeBroker.IsNative() && nativeBroker.Configured()
 }
 
+// Matches reports whether options contains the exact authorities owned by p.
+// The identity check lets application composition verify that a bundle was
+// built from the same stores it intends to install without exposing any of
+// the bundle's opaque fields.
+func (p *NativePersistence) Matches(options NativePersistenceOptions) bool {
+	if !p.valid() {
+		return false
+	}
+	nativeStreams, streamsOK := p.streams.(*publicationpostgres.StreamRegistry)
+	nativeBroker, brokerOK := p.broker.(*publicationpostgres.Broker)
+	return streamsOK && nativeStreams != nil && nativeBroker != nil && brokerOK &&
+		p.session == options.Session &&
+		p.usage == options.Usage &&
+		p.appearance == options.Appearance &&
+		p.authoring == options.Authoring &&
+		p.publication == options.Publication &&
+		nativeStreams == options.Streams &&
+		nativeBroker == options.Broker
+}
+
 // NewNativePersistence validates the complete dashboard persistence bundle.
 // Production composition should construct this only from native PostgreSQL
 // repositories; legacy SQLite and memory stores are intentionally rejected.

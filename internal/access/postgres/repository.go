@@ -55,8 +55,10 @@ type Repository struct {
 
 var _ access.Repository = (*Repository)(nil)
 
-// AuditRepository is the stateless transaction-bound audit appender.
-type AuditRepository struct{}
+// AuditRepository is the operationally stateless transaction-bound audit
+// appender. The non-zero marker gives each allocated authority a distinct Go
+// identity so composition can validate exact adapter wiring.
+type AuditRepository struct{ identity byte }
 
 // New returns the direct immutable audit appender. Source mutations must pass
 // their caller-owned pgx transaction to RecordAuditEvent.

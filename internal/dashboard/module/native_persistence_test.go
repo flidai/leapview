@@ -83,7 +83,7 @@ func (nativePublicationEventStub) AppendEvent(_ context.Context, _ dashboardpubl
 	return dashboardpublicationpostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, PublicationID: input.PublicationID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, ServingStateID: input.ServingStateID, Payload: input.Payload}, nil
 }
 
-func validNativePersistence(t *testing.T) *dashboardmodule.NativePersistence {
+func validNativePersistenceOptions(t *testing.T) dashboardmodule.NativePersistenceOptions {
 	t.Helper()
 	db := nativeDBStub{}
 	sessions, err := dashboardsessionpostgres.New(db)
@@ -106,14 +106,66 @@ func validNativePersistence(t *testing.T) *dashboardmodule.NativePersistence {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := dashboardmodule.NewNativePersistence(dashboardmodule.NativePersistenceOptions{
+	return dashboardmodule.NativePersistenceOptions{
 		Session: sessions, Usage: usage, Appearance: appearance, Authoring: authoring, Publication: pub,
 		Streams: dashboardpublicationpostgres.NewStreamRegistry(db), Broker: dashboardpublicationpostgres.NewBroker(nil),
-	})
+	}
+}
+
+func validNativePersistence(t *testing.T) *dashboardmodule.NativePersistence {
+	t.Helper()
+	bundle, err := dashboardmodule.NewNativePersistence(validNativePersistenceOptions(t))
 	if err != nil {
 		t.Fatal(err)
 	}
 	return bundle
+}
+
+func TestNativePersistenceMatchesExactAuthorities(t *testing.T) {
+	options := validNativePersistenceOptions(t)
+	bundle, err := dashboardmodule.NewNativePersistence(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bundle.Matches(options) {
+		t.Fatal("native persistence did not match the exact constructor authorities")
+	}
+
+	tests := []struct {
+		name   string
+		mutate func(*dashboardmodule.NativePersistenceOptions, dashboardmodule.NativePersistenceOptions)
+	}{
+		{name: "session", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Session = other.Session
+		}},
+		{name: "usage", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Usage = other.Usage
+		}},
+		{name: "appearance", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Appearance = other.Appearance
+		}},
+		{name: "authoring", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Authoring = other.Authoring
+		}},
+		{name: "publication", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Publication = other.Publication
+		}},
+		{name: "streams", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Streams = other.Streams
+		}},
+		{name: "broker", mutate: func(options *dashboardmodule.NativePersistenceOptions, other dashboardmodule.NativePersistenceOptions) {
+			options.Broker = other.Broker
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			mismatched := options
+			test.mutate(&mismatched, validNativePersistenceOptions(t))
+			if bundle.Matches(mismatched) {
+				t.Fatalf("native persistence matched a different %s authority", test.name)
+			}
+		})
+	}
 }
 
 func TestBuildRequiresExplicitNativeDashboardAuthorities(t *testing.T) {

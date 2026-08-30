@@ -18,6 +18,13 @@ import (
 	"github.com/flidai/leapview/internal/app/agentaudit"
 	"github.com/flidai/leapview/internal/app/agentevents"
 	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
+	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
+	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
+	"github.com/flidai/leapview/internal/app/dashboardauthoringaudit"
+	"github.com/flidai/leapview/internal/app/dashboardauthoringevents"
+	"github.com/flidai/leapview/internal/app/dashboardgenerationfence"
+	"github.com/flidai/leapview/internal/app/dashboardpublicationaudit"
+	"github.com/flidai/leapview/internal/app/dashboardpublicationevents"
 	manageddataaudit "github.com/flidai/leapview/internal/app/manageddataaudit"
 	manageddataworkflow "github.com/flidai/leapview/internal/app/manageddataworkflow"
 	"github.com/flidai/leapview/internal/app/productaudit"
@@ -25,6 +32,12 @@ import (
 	"github.com/flidai/leapview/internal/app/releasecatalog"
 	"github.com/flidai/leapview/internal/app/releaseevents"
 	"github.com/flidai/leapview/internal/app/releasejobs"
+	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
+	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
+	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
+	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	"github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
@@ -104,6 +117,27 @@ type PostgresAuthorityGraph struct {
 	AgentPersistence       *agentmodule.Persistence
 	ManagedDataRepository  *manageddatapostgres.Repository
 	ManagedDataPersistence *manageddatamodule.Persistence
+
+	// Dashboard authorities are all backed by the retained runtime pool. The
+	// audit and event adapters below deliberately retain the graph's canonical
+	// Access and platform-event repository identities, while authoring's fence
+	// retains the graph's deployment repository and process-bound target.
+	DashboardSession           *dashboardsessionpostgres.Store
+	DashboardUsage             *dashboardusagepostgres.Repository
+	DashboardAppearance        *dashboardappearancepostgres.Repository
+	DashboardAppearanceAudit   *dashboardappearanceaudit.Adapter
+	DashboardAppearanceEvents  *dashboardappearanceevents.Adapter
+	DashboardAuthoring         *dashboardauthoringpostgres.Repository
+	DashboardAuthoringAudit    *dashboardauthoringaudit.Adapter
+	DashboardAuthoringEvents   *dashboardauthoringevents.Adapter
+	DashboardGenerationFence   *dashboardgenerationfence.Fence
+	DashboardTargetID          string
+	DashboardPublication       *dashboardpublicationpostgres.Repository
+	DashboardPublicationAudit  *dashboardpublicationaudit.Adapter
+	DashboardPublicationEvents *dashboardpublicationevents.Adapter
+	DashboardStreams           *dashboardpublicationpostgres.StreamRegistry
+	DashboardBroker            *dashboardpublicationpostgres.Broker
+	DashboardPersistence       *dashboardmodule.NativePersistence
 }
 
 // PostgresAuthorityGraphOptions supplies values that are not persisted in the
@@ -176,6 +210,58 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 	// one pointer for the module bundle and release catalog avoids split
 	// identity even though both surfaces are otherwise capability-equivalent.
 	deploymentRepository := deploymentPersistence.Repository
+
+	dashboardSession, err := dashboardsessionpostgres.New(runtime)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard session authority: %w", err)
+	}
+	dashboardUsage, err := dashboardusagepostgres.New(runtime)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard usage authority: %w", err)
+	}
+	dashboardAppearanceAudit := dashboardappearanceaudit.NewWithRepository(audit)
+	dashboardAppearanceEvents := dashboardappearanceevents.NewWithRepository(events)
+	dashboardAppearance, err := dashboardappearancepostgres.New(runtime, dashboardappearancepostgres.Options{
+		Audit: dashboardAppearanceAudit, Events: dashboardAppearanceEvents,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard appearance authority: %w", err)
+	}
+	dashboardFence, err := dashboardgenerationfence.New(deploymentRepository, options.TargetID)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard generation fence: %w", err)
+	}
+	dashboardAuthoringAudit := dashboardauthoringaudit.NewWithRepository(audit)
+	dashboardAuthoringEvents := dashboardauthoringevents.NewWithRepository(events)
+	dashboardAuthoring, err := dashboardauthoringpostgres.New(
+		runtime,
+		dashboardAuthoringAudit,
+		dashboardAuthoringEvents,
+		dashboardFence,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard authoring authority: %w", err)
+	}
+	dashboardPublicationAudit := dashboardpublicationaudit.NewWithRepository(audit)
+	dashboardPublicationEvents := dashboardpublicationevents.NewWithRepository(events)
+	dashboardPublication, err := dashboardpublicationpostgres.New(
+		runtime,
+		dashboardPublicationAudit,
+		dashboardPublicationEvents,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard publication authority: %w", err)
+	}
+	dashboardStreams := dashboardpublicationpostgres.NewStreamRegistry(runtime)
+	dashboardBroker := dashboardpublicationpostgres.NewBroker(nil)
+	dashboardPersistence, err := dashboardmodule.NewNativePersistence(dashboardmodule.NativePersistenceOptions{
+		Session: dashboardSession, Usage: dashboardUsage, Appearance: dashboardAppearance,
+		Authoring: dashboardAuthoring, Publication: dashboardPublication,
+		Streams: dashboardStreams, Broker: dashboardBroker,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL dashboard persistence: %w", err)
+	}
 	agentRepository, err := agentpostgres.NewProduction(runtime, agentpostgres.Options{
 		Workflow: jobs, Jobs: jobs,
 		Audit: agentaudit.NewWithRepository(audit), Domain: agentevents.NewWithRepository(events),
@@ -232,6 +318,12 @@ func NewPostgresAuthorityGraph(lifecycle *postgresControlPlaneLifecycle, options
 		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
 		AgentRepository: agentRepository, AgentPersistence: &agentPersistence,
 		ManagedDataRepository: managedDataRepository, ManagedDataPersistence: &managedDataPersistence,
+		DashboardSession: dashboardSession, DashboardUsage: dashboardUsage,
+		DashboardAppearance: dashboardAppearance, DashboardAppearanceAudit: dashboardAppearanceAudit, DashboardAppearanceEvents: dashboardAppearanceEvents,
+		DashboardAuthoring: dashboardAuthoring, DashboardAuthoringAudit: dashboardAuthoringAudit, DashboardAuthoringEvents: dashboardAuthoringEvents,
+		DashboardGenerationFence: dashboardFence, DashboardTargetID: options.TargetID,
+		DashboardPublication: dashboardPublication, DashboardPublicationAudit: dashboardPublicationAudit, DashboardPublicationEvents: dashboardPublicationEvents,
+		DashboardStreams: dashboardStreams, DashboardBroker: dashboardBroker, DashboardPersistence: dashboardPersistence,
 	}
 	if err := graph.Validate(); err != nil {
 		return nil, err
@@ -315,11 +407,22 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
 		{"agent repository", g.AgentRepository}, {"agent persistence", g.AgentPersistence},
 		{"managed-data repository", g.ManagedDataRepository}, {"managed-data persistence", g.ManagedDataPersistence},
+		{"dashboard session authority", g.DashboardSession}, {"dashboard usage authority", g.DashboardUsage},
+		{"dashboard appearance authority", g.DashboardAppearance}, {"dashboard appearance audit authority", g.DashboardAppearanceAudit},
+		{"dashboard appearance event authority", g.DashboardAppearanceEvents},
+		{"dashboard authoring authority", g.DashboardAuthoring}, {"dashboard authoring audit authority", g.DashboardAuthoringAudit},
+		{"dashboard authoring event authority", g.DashboardAuthoringEvents}, {"dashboard generation fence", g.DashboardGenerationFence},
+		{"dashboard publication authority", g.DashboardPublication}, {"dashboard publication audit authority", g.DashboardPublicationAudit},
+		{"dashboard publication event authority", g.DashboardPublicationEvents}, {"dashboard streams authority", g.DashboardStreams},
+		{"dashboard broker authority", g.DashboardBroker}, {"dashboard persistence", g.DashboardPersistence},
 	}
 	for _, item := range required {
 		if isNilAuthority(item.value) {
 			return fmt.Errorf("PostgreSQL authority graph missing %s", item.name)
 		}
+	}
+	if strings.TrimSpace(g.DashboardTargetID) == "" || g.DashboardTargetID != strings.TrimSpace(g.DashboardTargetID) {
+		return errors.New("PostgreSQL authority graph dashboard target id is not configured")
 	}
 	if g.Bootstrap != g.Settings {
 		return errors.New("PostgreSQL authority graph platform bootstrap and settings authorities must share identity")
@@ -359,6 +462,46 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if !deploymentPersistenceMatches(g.DeploymentRepository, g.DeploymentPersistence) || !agentPersistenceMatches(g.AgentRepository, g.AgentPersistence) {
 		return errors.New("PostgreSQL authority graph persistence identity mismatch")
+	}
+	if !g.DashboardSession.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard session authority is not configured")
+	}
+	if !g.DashboardUsage.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard usage authority is not configured")
+	}
+	if !g.DashboardAppearance.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard appearance authority is not configured")
+	}
+	if !g.DashboardAuthoring.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard authoring authority is not configured")
+	}
+	if !g.DashboardPublication.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard publication authority is not configured")
+	}
+	if !g.DashboardStreams.IsNative() {
+		return errors.New("PostgreSQL authority graph dashboard streams authority is not configured")
+	}
+	if !g.DashboardBroker.IsNative() || !g.DashboardBroker.Configured() {
+		return errors.New("PostgreSQL authority graph dashboard broker authority is not configured")
+	}
+	if !g.DashboardAppearanceAudit.Matches(g.AccessAudit) || !g.DashboardAppearanceEvents.Matches(g.Events) {
+		return errors.New("PostgreSQL authority graph dashboard appearance adapters do not preserve sibling repository identity")
+	}
+	if !g.DashboardAuthoringAudit.Matches(g.AccessAudit) || !g.DashboardAuthoringEvents.Matches(g.Events) {
+		return errors.New("PostgreSQL authority graph dashboard authoring adapters do not preserve sibling repository identity")
+	}
+	if !g.DashboardGenerationFence.Matches(g.DeploymentRepository, g.DashboardTargetID) {
+		return errors.New("PostgreSQL authority graph dashboard generation fence does not preserve deployment identity")
+	}
+	if !g.DashboardPublicationAudit.Matches(g.AccessAudit) || !g.DashboardPublicationEvents.Matches(g.Events) {
+		return errors.New("PostgreSQL authority graph dashboard publication adapters do not preserve sibling repository identity")
+	}
+	if !g.DashboardPersistence.Matches(dashboardmodule.NativePersistenceOptions{
+		Session: g.DashboardSession, Usage: g.DashboardUsage, Appearance: g.DashboardAppearance,
+		Authoring: g.DashboardAuthoring, Publication: g.DashboardPublication,
+		Streams: g.DashboardStreams, Broker: g.DashboardBroker,
+	}) {
+		return errors.New("PostgreSQL authority graph dashboard persistence identity mismatch")
 	}
 	return nil
 }
