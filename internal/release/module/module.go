@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/extension"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
+	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -87,10 +88,15 @@ type Config struct {
 	Logger               *slog.Logger
 	ExtensionPreparation extension.Preparation
 	// CandidateSourceReader is the optional native object-backed source reader.
-	// Native candidate inspect is enabled only when this capability is present;
-	// materialization and rehydration remain unavailable until serving-object
-	// admission is wired by the deployment authority.
+	// Native candidate inspect is enabled only when this capability is present.
 	CandidateSourceReader project.CandidateSourceObjectReader
+	// CandidateArtifactStore is the neutral immutable object authority used by
+	// native candidate materialization and hydration. It is deliberately
+	// separate from release.ArtifactStore, which belongs to embedded mode.
+	CandidateArtifactStore platformobjectstore.ImmutableStore
+	// StorageSecurityDomain is the process-bound object namespace isolation
+	// identity. Native candidate artifacts reject objects from another domain.
+	StorageSecurityDomain string
 }
 
 // Catalog is the release-module boundary for project and connection reads.
@@ -199,6 +205,15 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 		if config.States == nil {
 			return nil, errors.New("production release module requires immutable serving-state reader")
+		}
+		hasSourceReader := config.CandidateSourceReader != nil
+		hasArtifactStore := config.CandidateArtifactStore != nil
+		hasStorageDomain := config.StorageSecurityDomain != ""
+		if !hasSourceReader || !hasArtifactStore || !hasStorageDomain {
+			return nil, errors.New("production release module requires candidate source reader, artifact store, and storage security domain together")
+		}
+		if !validNativeStorageDomain(config.StorageSecurityDomain) {
+			return nil, errors.New("production release module requires canonical candidate artifact storage security domain")
 		}
 	} else if native != nil {
 		return nil, errors.New("native PostgreSQL persistence requires production release mode")
@@ -313,6 +328,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if native != nil && config.CandidateSourceReader != nil {
 		module.nativeCandidatePhases = &nativeCandidateArtifactPhases{
 			reader: config.CandidateSourceReader, environment: environment,
+			artifacts: config.CandidateArtifactStore, storageDomain: config.StorageSecurityDomain,
 			pins: config.ManagedDataPins, extensionPreparation: config.ExtensionPreparation,
 		}
 	}

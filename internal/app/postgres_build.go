@@ -283,7 +283,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: graph.Release, Catalog: graph.ReleaseCatalog, Production: true, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ManagedDataHook: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, ArtifactDirectory: cfg.ArtifactDir(), Environment: environment, CandidateSourceReader: nativeProjectSource.CandidateSourceReader, API: releasemodule.APIConfig{Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs}})
+	release, err := releasemodule.Build(ctx, releasemodule.Config{Persistence: graph.Release, Catalog: graph.ReleaseCatalog, Production: true, States: graph.ServingState, ManagedDataPins: managedData.BindingValidation(), ManagedDataHook: managedData.BindingValidation(), ExtensionPreparation: extensionSupply, ArtifactDirectory: cfg.ArtifactDir(), Environment: environment, CandidateSourceReader: nativeProjectSource.CandidateSourceReader, CandidateArtifactStore: nativeProjectSource.Objects, StorageSecurityDomain: nativeProjectSource.StorageSecurityDomain, API: releasemodule.APIConfig{Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs}})
 	if err != nil {
 		return fail(fmt.Errorf("build release module: %w", err))
 	}

@@ -14,10 +14,12 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/extension"
+	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/google/uuid"
 )
 
 type nativeInspectReaderStub struct {
@@ -200,6 +202,153 @@ func TestNativeCandidateInspectDoesNotWriteServingOrObjectState(t *testing.T) {
 	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, release.CandidateArtifactSet{}, release.CandidateArtifactIdentity{}); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
 		t.Fatalf("rehydrate error = %v", err)
 	}
+}
+
+func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := uuid.Parse(materialized.Generation.Identity.GenerationID); err != nil {
+		t.Fatalf("generation id = %q is not UUID: %v", materialized.Generation.Identity.GenerationID, err)
+	}
+	if materialized.Generation.Identity.GenerationID == materialized.Generation.ServingArtifactID {
+		t.Fatal("serving state and artifact identities must remain distinct")
+	}
+	if materialized.Generation.ArtifactDigest == "" || materialized.Artifact.ContentDigest != materialized.Generation.ArtifactDigest {
+		t.Fatalf("materialized artifact identity = %#v / %#v", materialized.Artifact, materialized.Generation)
+	}
+	object, err := store.Open(t.Context(), nativeServingArtifactKey(materialized.Generation.ArtifactDigest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	object.Body.Close()
+	if object.Info.ContentType != nativeServingArtifactContentType || object.Info.StorageSecurityDomain != "runtime" || object.Info.Digest != materialized.Generation.ArtifactDigest {
+		t.Fatalf("serving object info = %#v", object.Info)
+	}
+	hydrated, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hydrated.Generation.Identity != materialized.Generation.Identity || hydrated.Compiler.Artifact.Digest() != inspected.Compiler.Artifact.Digest() || hydrated.Artifact.ContentDigest != materialized.Artifact.ContentDigest {
+		t.Fatalf("hydrated set drifted: %#v", hydrated.Generation)
+	}
+}
+
+func TestNativeCandidateMaterializeReplaysContentAddressedObjectAndLostAck(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SimulateLostCommitAcknowledgement()
+	first, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatalf("lost acknowledgement was not reconciled: %v", err)
+	}
+	second, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Generation.Identity != second.Generation.Identity || first.Generation.ServingArtifactID != second.Generation.ServingArtifactID || first.Generation.ArtifactDigest != second.Generation.ArtifactDigest {
+		t.Fatalf("content-addressed replay changed identity: %#v != %#v", first.Generation, second.Generation)
+	}
+	objects, _, err := store.List(t.Context(), strings.TrimSuffix(nativeServingArtifactPrefix, "/"), "", 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(objects) != 1 {
+		t.Fatalf("serving object count = %d, want one immutable object", len(objects))
+	}
+}
+
+func TestNativeCandidateHydrateRejectsForgedObjectMetadata(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	baseStore, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: baseStore, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity := release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID}
+	for name, mutate := range map[string]func(*platformobjectstore.ObjectInfo){
+		"domain":   func(info *platformobjectstore.ObjectInfo) { info.StorageSecurityDomain = "forged" },
+		"digest":   func(info *platformobjectstore.ObjectInfo) { info.Digest = testNativeDigest("forged") },
+		"size":     func(info *platformobjectstore.ObjectInfo) { info.SizeBytes++ },
+		"type":     func(info *platformobjectstore.ObjectInfo) { info.ContentType = "application/octet-stream" },
+		"metadata": func(info *platformobjectstore.ObjectInfo) { info.MetadataDigest = testNativeDigest("forged") },
+		"key":      func(info *platformobjectstore.ObjectInfo) { info.Key = "serving-artifacts/forged.tar.gz" },
+	} {
+		wrapped := &nativeForgedArtifactStore{ImmutableStore: baseStore, mutate: mutate}
+		service.artifacts = wrapped
+		if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+			t.Fatalf("forged %s metadata error = %v", name, err)
+		}
+	}
+	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: baseStore, body: []byte("corrupt bundle")}
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("corrupt serving object error = %v", err)
+	}
+	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: baseStore, openErr: errors.New("object store unavailable")}
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
+		t.Fatalf("unavailable serving object error = %v", err)
+	}
+	identity.ServingStateID = "not-a-uuid"
+	service.artifacts = baseStore
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("invalid serving state identity error = %v", err)
+	}
+	identity.ServingStateID = uuid.NewString()
+	if _, err := service.HydrateCandidateArtifacts(t.Context(), fixture.request, inspected, identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("foreign serving state identity error = %v", err)
+	}
+}
+
+type nativeForgedArtifactStore struct {
+	platformobjectstore.ImmutableStore
+	mutate  func(*platformobjectstore.ObjectInfo)
+	openErr error
+	body    []byte
+}
+
+func (s *nativeForgedArtifactStore) Open(ctx context.Context, key string) (platformobjectstore.Object, error) {
+	if s.openErr != nil {
+		return platformobjectstore.Object{}, s.openErr
+	}
+	object, err := s.ImmutableStore.Open(ctx, key)
+	if err == nil && s.mutate != nil {
+		s.mutate(&object.Info)
+	}
+	if err == nil && s.body != nil {
+		_ = object.Body.Close()
+		object.Body = io.NopCloser(bytes.NewReader(s.body))
+	}
+	return object, err
 }
 
 func TestReadNativeInspectBodyEnforcesEmptyObjectSize(t *testing.T) {

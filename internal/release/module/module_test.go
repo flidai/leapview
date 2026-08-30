@@ -3,12 +3,12 @@ package module
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/platform"
+	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
@@ -145,7 +145,8 @@ func TestBuildProductionRejectsUnconfiguredNativeAuthority(t *testing.T) {
 
 func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
-	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, States: nativeServingStateReaderStub{}, Environment: "dev"})
+	config := configuredNativeReleaseConfig(t, stub)
+	module, err := Build(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,23 +158,25 @@ func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
 	}
 }
 
-func TestBuildNativeLeavesLegacyArtifactLifecycleUnavailable(t *testing.T) {
+func TestBuildProductionRequiresNativeArtifactLifecycle(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
-	module, err := Build(t.Context(), Config{
+	if _, err := Build(t.Context(), Config{
 		Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true},
 		States: nativeServingStateReaderStub{}, Environment: "dev",
-	})
+	}); err == nil || !strings.Contains(err.Error(), "candidate source reader, artifact store, and storage security domain") {
+		t.Fatalf("missing native artifact lifecycle error = %v", err)
+	}
+	config := configuredNativeReleaseConfig(t, stub)
+	module, err := Build(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if module.candidateArtifacts != nil {
-		t.Fatal("native module exposed candidate artifact lifecycle")
+	if module.nativeCandidatePhases == nil {
+		t.Fatal("production native candidate artifact lifecycle is unavailable")
 	}
-	if _, err := module.PrepareCandidateArtifacts(t.Context(), release.CandidateArtifactRequest{}); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
-		t.Fatalf("native candidate preparation error = %v", err)
-	}
-	if _, err := module.service.UploadArtifact(t.Context(), "project", "release", "", nil); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
-		t.Fatalf("native artifact upload error = %v", err)
+	config.StorageSecurityDomain = " invalid "
+	if _, err := Build(t.Context(), config); err == nil || !strings.Contains(err.Error(), "canonical candidate artifact storage security domain") {
+		t.Fatalf("invalid native storage domain error = %v", err)
 	}
 }
 
@@ -195,12 +198,28 @@ func TestBuildProductionRejectsUnmarkedDeploymentAuthority(t *testing.T) {
 
 func TestBuildProductionAcceptsConfiguredDeploymentAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
-	module, err := Build(t.Context(), Config{Production: true, Persistence: stub, Catalog: nativeCatalogStub{configured: true}, Deployments: deploymentStub{configured: true}, States: nativeServingStateReaderStub{}, Environment: "dev"})
+	config := configuredNativeReleaseConfig(t, stub)
+	config.Deployments = deploymentStub{configured: true}
+	module, err := Build(t.Context(), config)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if module.DeploymentLinkage() == nil {
 		t.Fatal("configured deployment authority was not exposed")
+	}
+}
+
+func configuredNativeReleaseConfig(t *testing.T, persistence NativePersistence) Config {
+	t.Helper()
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "release-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return Config{
+		Production: true, Persistence: persistence, Catalog: nativeCatalogStub{configured: true},
+		States: nativeServingStateReaderStub{}, Environment: "dev",
+		CandidateSourceReader: &nativeInspectReaderStub{}, CandidateArtifactStore: store,
+		StorageSecurityDomain: "release-test",
 	}
 }
 
