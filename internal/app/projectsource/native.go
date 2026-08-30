@@ -2,7 +2,7 @@ package projectsource
 
 // This file contains the native implementation of the deployment-facing
 // CandidateSourceSynchronizer contract.  It deliberately does not depend on
-// a filesystem workspace: source bytes are staged from immutable object-store
+// a filesystem checkout: source bytes are staged from immutable object-store
 // references and the compiler receives an in-memory source set.
 
 import (

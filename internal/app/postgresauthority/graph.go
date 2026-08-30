@@ -155,8 +155,9 @@ type PostgresAuthorityGraph struct {
 	DashboardBroker             *dashboardpublicationpostgres.Broker
 	DashboardPersistence        *dashboardmodule.NativePersistence
 
-	AccessAuditMaintenance *accesspostgres.Maintenance
-	Retention              *postgresmaintenance.Coordinator
+	AccessAuditMaintenance     *accesspostgres.Maintenance
+	AccessAuthStateMaintenance *accesspostgres.Maintenance
+	Retention                  *postgresmaintenance.Coordinator
 }
 
 // PostgresAuthorityGraphOptions supplies values that are not persisted in the
@@ -313,12 +314,13 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	dashboardUsageMaintenance := dashboardusagepostgres.NewMaintenance(maintenance)
 	dashboardStreamsMaintenance := dashboardpublicationpostgres.NewMaintenance(maintenance)
 	accessAuditMaintenance := accesspostgres.NewMaintenance(maintenance)
+	accessAuthStateMaintenance := accesspostgres.NewMaintenance(maintenance)
 	retention, err := postgresmaintenance.New(postgresmaintenance.Options{
 		Operations: operationMaintenance, CursorSigning: cursorSigningMaintenance,
 		Jobs: jobsMaintenance, Events: events, EventTransactions: eventTransactions,
 		Cache: cacheMaintenance, DashboardSession: dashboardSessionMaintenance,
 		DashboardUsage: dashboardUsageMaintenance, DashboardStreams: dashboardStreamsMaintenance,
-		ManagedData: managedDataMaintenance, AccessAudit: accessAuditMaintenance,
+		ManagedData: managedDataMaintenance, AccessAudit: accessAuditMaintenance, AccessAuthState: accessAuthStateMaintenance,
 		QueryAudit: queryAuditMaintenance, AgentHistory: agentMaintenance,
 	})
 	if err != nil {
@@ -370,7 +372,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		DashboardGenerationFence: dashboardFence, DashboardTargetID: options.TargetID,
 		DashboardPublication: dashboardPublication, DashboardPublicationAudit: dashboardPublicationAudit, DashboardPublicationEvents: dashboardPublicationEvents,
 		DashboardStreams: dashboardStreams, DashboardStreamsMaintenance: dashboardStreamsMaintenance, DashboardBroker: dashboardBroker, DashboardPersistence: dashboardPersistence,
-		AccessAuditMaintenance: accessAuditMaintenance, Retention: retention,
+		AccessAuditMaintenance: accessAuditMaintenance, AccessAuthStateMaintenance: accessAuthStateMaintenance, Retention: retention,
 	}
 	if err := graph.Validate(); err != nil {
 		return nil, err
@@ -462,7 +464,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"dashboard publication authority", g.DashboardPublication}, {"dashboard publication audit authority", g.DashboardPublicationAudit},
 		{"dashboard publication event authority", g.DashboardPublicationEvents}, {"dashboard streams authority", g.DashboardStreams}, {"dashboard streams maintenance authority", g.DashboardStreamsMaintenance},
 		{"dashboard broker authority", g.DashboardBroker}, {"dashboard persistence", g.DashboardPersistence},
-		{"access-audit maintenance authority", g.AccessAuditMaintenance}, {"retention coordinator", g.Retention},
+		{"access-audit maintenance authority", g.AccessAuditMaintenance}, {"access-auth-state maintenance authority", g.AccessAuthStateMaintenance}, {"retention coordinator", g.Retention},
 	}
 	for _, item := range required {
 		if isNilAuthority(item.value) {
