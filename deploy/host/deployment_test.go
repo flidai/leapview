@@ -545,6 +545,9 @@ func writeFile(t *testing.T, path string, contents []byte, mode os.FileMode) {
 	if err := os.WriteFile(path, contents, mode); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Chmod(path, mode); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestBackupSchedulingSeparatesCreationFromMaintenance(t *testing.T) {
