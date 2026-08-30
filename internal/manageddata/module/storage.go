@@ -238,7 +238,10 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	}
 	var buildAuditIntent func(context.Context, manageddatahttp.CommandAuditInput) (*access.AuditIntent, error)
 	if !cfg.Disabled {
-		if cfg.AuditIntentRecorder == nil {
+		// Native PostgreSQL persistence carries its Access audit adapter on the
+		// repository's caller-owned transaction. The generic recorder is only
+		// the legacy SQLite composition port and must not gate native admission.
+		if (cfg.Persistence == nil || !cfg.Persistence.isPostgres()) && cfg.AuditIntentRecorder == nil {
 			return nil, errors.New("managed-data audit intent recorder is required")
 		}
 		buildAuditIntent, err = buildManagedDataAuditIntentBuilder()
