@@ -1,5 +1,34 @@
 -- Static PostgreSQL query leaves for deployment authority.
 
+-- name: EnsureTargetRevision :exec
+INSERT INTO delivery.delivery_target_revision(target_id)
+VALUES(sqlc.arg(target_id))
+ON CONFLICT(target_id) DO NOTHING;
+
+-- name: LockTargetRevision :one
+SELECT target_id,next_plan_revision,next_candidate_revision,next_generation_revision
+FROM delivery.delivery_target_revision
+WHERE target_id=sqlc.arg(target_id)
+FOR UPDATE;
+
+-- name: NextPlanRevision :one
+UPDATE delivery.delivery_target_revision
+SET next_plan_revision=next_plan_revision+1
+WHERE target_id=sqlc.arg(target_id)
+RETURNING (next_plan_revision-1)::bigint AS revision;
+
+-- name: NextCandidateRevision :one
+UPDATE delivery.delivery_target_revision
+SET next_candidate_revision=next_candidate_revision+1
+WHERE target_id=sqlc.arg(target_id)
+RETURNING (next_candidate_revision-1)::bigint AS revision;
+
+-- name: NextGenerationRevision :one
+UPDATE delivery.delivery_target_revision
+SET next_generation_revision=next_generation_revision+1
+WHERE target_id=sqlc.arg(target_id)
+RETURNING (next_generation_revision-1)::bigint AS revision;
+
 -- name: GetApproval :one
 SELECT approval_id::text AS approval_id,candidate_id::text AS candidate_id,COALESCE(principal_id::text,'')::text AS principal_id,decision,evidence,decided_at
 FROM delivery.delivery_approval WHERE approval_id=sqlc.arg(approval_id)::uuid;

@@ -693,6 +693,34 @@ func (r *Repository) CreatePlanTx(ctx context.Context, tx Tx, in PlanInput) (Del
 	return createPlan(contextOrBackground(ctx), tx, in)
 }
 
+// CreatePlanAllocatedTx atomically admits a plan using the next revision
+// owned by its target. The caller owns tx's commit/rollback. An existing plan
+// UUID is replayed before allocating a revision and must match all immutable
+// input fields exactly.
+func (r *Repository) CreatePlanAllocatedTx(ctx context.Context, tx Tx, in PlanInput) (DeliveryPlan, error) {
+	if tx == nil {
+		return DeliveryPlan{}, ErrInvalid
+	}
+	return createPlanAllocated(contextOrBackground(ctx), tx, in)
+}
+
+// CreatePlanAllocated owns a short transaction around CreatePlanAllocatedTx.
+func (r *Repository) CreatePlanAllocated(ctx context.Context, in PlanInput) (DeliveryPlan, error) {
+	tx, err := r.begin(contextOrBackground(ctx))
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	defer tx.Rollback(contextOrBackground(ctx))
+	out, err := r.CreatePlanAllocatedTx(ctx, tx, in)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryPlan{}, err
+	}
+	return out, nil
+}
+
 // CreateTargetAndPlanTx atomically creates (or exactly replays) a target and
 // its immutable plan through a caller-owned PostgreSQL transaction.  The
 // caller owns the final commit/rollback; on any error no mutation is
@@ -715,6 +743,29 @@ func (r *Repository) CreateTargetAndPlanTx(ctx context.Context, tx Tx, target Ta
 	}
 	return createdTarget, createdPlan, nil
 }
+
+// CreateTargetAndPlanAllocatedTx atomically admits a fresh target and its
+// first plan. The target row and target-owned plan revision are committed (or
+// rolled back) together by the caller.
+func (r *Repository) CreateTargetAndPlanAllocatedTx(ctx context.Context, tx Tx, target TargetInput, plan PlanInput) (DeliveryTarget, DeliveryPlan, error) {
+	if tx == nil {
+		return DeliveryTarget{}, DeliveryPlan{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	createdTarget, err := createTarget(ctx, tx, target)
+	if err != nil {
+		return DeliveryTarget{}, DeliveryPlan{}, err
+	}
+	if plan.TargetID != createdTarget.TargetID {
+		return DeliveryTarget{}, DeliveryPlan{}, fmt.Errorf("%w: plan target differs from target", ErrConflict)
+	}
+	createdPlan, err := createPlanAllocated(ctx, tx, plan)
+	if err != nil {
+		return DeliveryTarget{}, DeliveryPlan{}, err
+	}
+	return createdTarget, createdPlan, nil
+}
+
 func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
 	id, err := uuidID(in.PlanID, "plan id", true)
 	if err != nil {
@@ -741,6 +792,84 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 		return DeliveryPlan{}, err
 	}
 	return loadPlan(ctx, db, id, in)
+}
+
+func planAllocationInput(in PlanInput) (id, target string, evidence []byte, err error) {
+	if in.PlanRevision != 0 {
+		return "", "", nil, ErrInvalid
+	}
+	id, err = uuidID(in.PlanID, "plan id", true)
+	if err != nil {
+		return "", "", nil, err
+	}
+	target, err = textID(in.TargetID, "target id")
+	if err != nil {
+		return "", "", nil, err
+	}
+	for label, value := range map[string]string{"plan digest": in.PlanDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact digest": in.ArtifactDigest} {
+		if _, err := digest(value, label); err != nil {
+			return "", "", nil, err
+		}
+	}
+	evidence, err = canonicalObject(in.Evidence, 65536, true)
+	if err != nil {
+		return "", "", nil, fmt.Errorf("%w: plan evidence", ErrInvalid)
+	}
+	return id, target, evidence, nil
+}
+
+func planImmutableMatches(p DeliveryPlan, in PlanInput, target, id string, evidence []byte) bool {
+	return p.PlanID == id && p.TargetID == target && p.PlanDigest == in.PlanDigest &&
+		p.CompiledGraphDigest == in.CompiledGraphDigest && p.CompiledConfigDigest == in.CompiledConfigDigest &&
+		p.SecurityDomainFingerprint == in.SecurityDomainFingerprint && p.ArtifactDigest == in.ArtifactDigest &&
+		p.QualificationRequired == in.QualificationRequired && sameCanonical(p.Evidence, evidence)
+}
+
+func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in PlanInput, evidence []byte) (DeliveryPlan, error) {
+	row, err := depdb.New(db).GetPlan(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryPlan{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	p := DeliveryPlan{PlanID: row.PlanID, TargetID: row.TargetID, PlanRevision: row.PlanRevision, PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, ArtifactDigest: row.ArtifactDigest, QualificationRequired: row.QualificationRequired, CreatedAt: dbTime(row.CreatedAt), Evidence: append([]byte(nil), row.Evidence...)}
+	if !planImmutableMatches(p, in, target, id, evidence) {
+		return DeliveryPlan{}, ErrConflict
+	}
+	return p, nil
+}
+
+func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
+	id, target, evidence, err := planAllocationInput(in)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	q := depdb.New(db)
+	if err := q.EnsureTargetRevision(ctx, target); err != nil {
+		return DeliveryPlan{}, err
+	}
+	if _, err := q.LockTargetRevision(ctx, target); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeliveryPlan{}, ErrNotFound
+		}
+		return DeliveryPlan{}, err
+	}
+	if existing, lookupErr := loadPlanForAllocation(ctx, db, id, target, in, evidence); lookupErr == nil {
+		return existing, nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return DeliveryPlan{}, lookupErr
+	}
+	revision, err := q.NextPlanRevision(ctx, target)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationRequired: in.QualificationRequired, Evidence: evidence}); err != nil {
+		return DeliveryPlan{}, err
+	}
+	allocated := in
+	allocated.PlanID, allocated.TargetID, allocated.PlanRevision, allocated.Evidence = id, target, revision, evidence
+	return loadPlan(ctx, db, id, allocated)
 }
 func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (DeliveryPlan, error) {
 	var p DeliveryPlan
@@ -1374,6 +1503,33 @@ func (r *Repository) CreateCandidateTx(ctx context.Context, tx Tx, in CandidateI
 	return createCandidate(contextOrBackground(ctx), tx, in)
 }
 
+// CreateCandidateAllocatedTx admits a candidate with the next target-owned
+// revision through a caller-owned transaction. Existing UUIDs are replayed
+// before allocation and compare only immutable admission identity.
+func (r *Repository) CreateCandidateAllocatedTx(ctx context.Context, tx Tx, in CandidateInput) (DeliveryCandidate, error) {
+	if tx == nil {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	return createCandidateAllocated(contextOrBackground(ctx), tx, in)
+}
+
+// CreateCandidateAllocated owns a short transaction around the Tx API.
+func (r *Repository) CreateCandidateAllocated(ctx context.Context, in CandidateInput) (DeliveryCandidate, error) {
+	tx, err := r.begin(contextOrBackground(ctx))
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	defer tx.Rollback(contextOrBackground(ctx))
+	out, err := r.CreateCandidateAllocatedTx(ctx, tx, in)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryCandidate{}, err
+	}
+	return out, nil
+}
+
 // StartCandidateWithClaimTx composes the instance project claim and native
 // candidate admission in one caller-owned control-plane transaction. It is
 // the supported atomic seam for composition roots that need candidate start
@@ -1440,6 +1596,102 @@ func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryC
 		return DeliveryCandidate{}, err
 	}
 	return loadCandidate(ctx, db, id, in)
+}
+
+func candidateAllocationInput(in CandidateInput) (id, target, plan string, err error) {
+	if in.CandidateRevision != 0 {
+		return "", "", "", ErrInvalid
+	}
+	id, err = uuidID(in.CandidateID, "candidate id", true)
+	if err != nil {
+		return "", "", "", err
+	}
+	target, err = textID(in.TargetID, "target id")
+	if err != nil {
+		return "", "", "", err
+	}
+	plan, err = uuidID(in.PlanID, "plan id", false)
+	if err != nil {
+		return "", "", "", err
+	}
+	if _, err := digest(in.ArtifactDigest, "artifact digest"); err != nil {
+		return "", "", "", err
+	}
+	return id, target, plan, nil
+}
+
+func candidateImmutableMatches(c DeliveryCandidate, in CandidateInput, id, target, plan string) bool {
+	return c.CandidateID == id && c.TargetID == target && c.PlanID == plan && c.ArtifactDigest == in.ArtifactDigest
+}
+
+func loadCandidateForAllocation(ctx context.Context, db DBTX, id, target, plan string, in CandidateInput) (DeliveryCandidate, error) {
+	row, err := depdb.New(db).GetCandidate(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryCandidate{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	c := DeliveryCandidate{CandidateID: row.CandidateID, TargetID: row.TargetID, PlanID: row.PlanID, AttemptID: row.AttemptID, SnapshotSealID: row.SnapshotSealID, Status: row.Status, CandidateRevision: row.CandidateRevision, ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest, CreatedAt: dbTime(row.CreatedAt)}
+	if row.QualifiedAt.Valid {
+		c.QualifiedAt = row.QualifiedAt.Time.UTC()
+	}
+	if row.RetiredAt.Valid {
+		c.RetiredAt = row.RetiredAt.Time.UTC()
+	}
+	if !candidateImmutableMatches(c, in, id, target, plan) {
+		return DeliveryCandidate{}, ErrConflict
+	}
+	return c, nil
+}
+
+func createCandidateAllocated(ctx context.Context, db DBTX, in CandidateInput) (DeliveryCandidate, error) {
+	id, target, plan, err := candidateAllocationInput(in)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	q := depdb.New(db)
+	planTarget, err := q.GetPlanTarget(ctx, dbUUID(plan))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryCandidate{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if planTarget != target {
+		return DeliveryCandidate{}, fmt.Errorf("%w: candidate target differs from plan target", ErrConflict)
+	}
+	if err := q.EnsureTargetRevision(ctx, target); err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if _, err := q.LockTargetRevision(ctx, target); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeliveryCandidate{}, ErrNotFound
+		}
+		return DeliveryCandidate{}, err
+	}
+	if existing, lookupErr := loadCandidateForAllocation(ctx, db, id, target, plan, in); lookupErr == nil {
+		return existing, nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return DeliveryCandidate{}, lookupErr
+	}
+	status := in.Status
+	if status == "" {
+		status = "building"
+	}
+	if status != "building" || in.SnapshotSealID != "" || in.QualificationDigest != "" {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	revision, err := q.NextCandidateRevision(ctx, target)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if err := q.InsertCandidate(ctx, depdb.InsertCandidateParams{CandidateID: dbUUID(id), TargetID: target, PlanID: dbUUID(plan), SnapshotSealID: dbUUID(""), Status: status, CandidateRevision: revision, ArtifactDigest: in.ArtifactDigest, QualificationDigest: pgText(nil)}); err != nil {
+		return DeliveryCandidate{}, err
+	}
+	allocated := in
+	allocated.CandidateID, allocated.TargetID, allocated.PlanID, allocated.CandidateRevision, allocated.Status = id, target, plan, revision, status
+	return loadCandidate(ctx, db, id, allocated)
 }
 func loadCandidate(ctx context.Context, db DBTX, id string, expected CandidateInput) (DeliveryCandidate, error) {
 	var c DeliveryCandidate
@@ -1582,6 +1834,33 @@ func (r *Repository) CreateGenerationTx(ctx context.Context, tx Tx, in Generatio
 	return createGeneration(contextOrBackground(ctx), tx, in)
 }
 
+// CreateGenerationAllocatedTx admits a serving generation using the next
+// target-owned revision through a caller-owned transaction. Existing UUIDs
+// replay immutable evidence before candidate lifecycle checks or allocation.
+func (r *Repository) CreateGenerationAllocatedTx(ctx context.Context, tx Tx, in GenerationInput) (DeliveryGeneration, error) {
+	if tx == nil {
+		return DeliveryGeneration{}, ErrInvalid
+	}
+	return createGenerationAllocated(contextOrBackground(ctx), tx, in)
+}
+
+// CreateGenerationAllocated owns a short transaction around the Tx API.
+func (r *Repository) CreateGenerationAllocated(ctx context.Context, in GenerationInput) (DeliveryGeneration, error) {
+	tx, err := r.begin(contextOrBackground(ctx))
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	defer tx.Rollback(contextOrBackground(ctx))
+	out, err := r.CreateGenerationAllocatedTx(ctx, tx, in)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryGeneration{}, err
+	}
+	return out, nil
+}
+
 func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (DeliveryGeneration, error) {
 	id, err := uuidID(in.GenerationID, "generation id", true)
 	if err != nil {
@@ -1672,6 +1951,119 @@ func createGeneration(ctx context.Context, db DBTX, in GenerationInput) (Deliver
 		return DeliveryGeneration{}, err
 	}
 	return loadGeneration(ctx, db, id, expected)
+}
+
+func generationAllocationInput(in GenerationInput) (id, target, candidate, seal, plan string, err error) {
+	if in.GenerationRevision != 0 {
+		return "", "", "", "", "", ErrInvalid
+	}
+	id, err = uuidID(in.GenerationID, "generation id", true)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	target, err = textID(in.TargetID, "target id")
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	for n, v := range map[string]string{"plan digest": in.PlanDigest, "serving artifact digest": in.ServingArtifactDigest, "compiled graph digest": in.CompiledGraphDigest, "compiled config digest": in.CompiledConfigDigest, "security fingerprint": in.SecurityDomainFingerprint, "artifact root digest": in.ArtifactRootDigest} {
+		if _, err := digest(v, n); err != nil {
+			return "", "", "", "", "", err
+		}
+	}
+	if in.ArtifactRoot == "" {
+		return "", "", "", "", "", ErrInvalid
+	}
+	candidate, err = uuidID(in.CandidateID, "candidate id", false)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	seal, err = uuidID(in.SnapshotSealID, "seal id", false)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	plan, err = uuidID(in.PlanID, "plan id", false)
+	if err != nil {
+		return "", "", "", "", "", err
+	}
+	return id, target, candidate, seal, plan, nil
+}
+
+func generationImmutableMatches(g DeliveryGeneration, in GenerationInput, id, target, candidate, seal, plan string) bool {
+	return g.GenerationID == id && g.TargetID == target && g.CandidateID == candidate && g.SnapshotSealID == seal && g.PlanID == plan &&
+		g.PlanDigest == in.PlanDigest && g.ArtifactRoot == in.ArtifactRoot && g.ArtifactRootDigest == in.ArtifactRootDigest &&
+		g.ServingArtifactDigest == in.ServingArtifactDigest && g.CompiledGraphDigest == in.CompiledGraphDigest &&
+		g.CompiledConfigDigest == in.CompiledConfigDigest && g.SecurityDomainFingerprint == in.SecurityDomainFingerprint
+}
+
+func loadGenerationForAllocation(ctx context.Context, db DBTX, id, target, candidate, seal, plan string, in GenerationInput) (DeliveryGeneration, error) {
+	row, err := depdb.New(db).GetGeneration(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryGeneration{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	g := DeliveryGeneration{GenerationID: row.GenerationID, TargetID: row.TargetID, CandidateID: row.CandidateID, SnapshotSealID: row.SnapshotSealID, PlanID: row.PlanID, PlanDigest: row.PlanDigest, ArtifactRoot: row.ArtifactRoot, ArtifactRootDigest: row.ArtifactRootDigest, ServingArtifactDigest: row.ServingArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, GenerationRevision: row.GenerationRevision, CreatedAt: dbTime(row.CreatedAt)}
+	if !generationImmutableMatches(g, in, id, target, candidate, seal, plan) {
+		return DeliveryGeneration{}, ErrConflict
+	}
+	return g, nil
+}
+
+func createGenerationAllocated(ctx context.Context, db DBTX, in GenerationInput) (DeliveryGeneration, error) {
+	id, target, candidate, seal, plan, err := generationAllocationInput(in)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	q := depdb.New(db)
+	if err := q.EnsureTargetRevision(ctx, target); err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if _, err := q.LockTargetRevision(ctx, target); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return DeliveryGeneration{}, ErrNotFound
+		}
+		return DeliveryGeneration{}, err
+	}
+	if existing, lookupErr := loadGenerationForAllocation(ctx, db, id, target, candidate, seal, plan, in); lookupErr == nil {
+		return existing, nil
+	} else if !errors.Is(lookupErr, ErrNotFound) {
+		return DeliveryGeneration{}, lookupErr
+	}
+	cr, err := q.GetCandidateStatus(ctx, dbUUID(candidate))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryGeneration{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if cr.Status != "qualified" || cr.TargetID != target || cr.PlanID != plan || cr.SnapshotSealID != seal {
+		return DeliveryGeneration{}, ErrNotQualified
+	}
+	snapshotSeal, err := loadSeal(ctx, db, seal)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	pr, err := q.GetPlanDigests(ctx, dbUUID(plan))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryGeneration{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if snapshotSeal.ServingArtifactDigest != in.ServingArtifactDigest || snapshotSeal.ArtifactRoot != in.ArtifactRoot || snapshotSeal.ArtifactRootDigest != in.ArtifactRootDigest || snapshotSeal.CompiledGraphDigest != in.CompiledGraphDigest || snapshotSeal.CompiledConfigDigest != in.CompiledConfigDigest || snapshotSeal.SecurityDomainFingerprint != in.SecurityDomainFingerprint || snapshotSeal.PlanDigest != in.PlanDigest || pr.PlanDigest != in.PlanDigest || pr.CompiledGraphDigest != in.CompiledGraphDigest || pr.CompiledConfigDigest != in.CompiledConfigDigest || pr.SecurityDomainFingerprint != in.SecurityDomainFingerprint || pr.ArtifactDigest != in.ServingArtifactDigest {
+		return DeliveryGeneration{}, fmt.Errorf("%w: generation evidence differs from seal and plan", ErrConflict)
+	}
+	revision, err := q.NextGenerationRevision(ctx, target)
+	if err != nil {
+		return DeliveryGeneration{}, err
+	}
+	if err := q.InsertGeneration(ctx, depdb.InsertGenerationParams{GenerationID: dbUUID(id), TargetID: target, CandidateID: dbUUID(candidate), SnapshotSealID: dbUUID(seal), PlanID: dbUUID(plan), PlanDigest: in.PlanDigest, ArtifactRoot: in.ArtifactRoot, ArtifactRootDigest: in.ArtifactRootDigest, ServingArtifactDigest: in.ServingArtifactDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, GenerationRevision: revision}); err != nil {
+		return DeliveryGeneration{}, err
+	}
+	allocated := in
+	allocated.GenerationID, allocated.TargetID, allocated.CandidateID, allocated.SnapshotSealID, allocated.PlanID, allocated.GenerationRevision = id, target, candidate, seal, plan, revision
+	return loadGeneration(ctx, db, id, allocated)
 }
 func loadGeneration(ctx context.Context, db DBTX, id string, expected GenerationInput) (DeliveryGeneration, error) {
 	var g DeliveryGeneration

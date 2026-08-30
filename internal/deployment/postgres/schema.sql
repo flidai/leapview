@@ -27,6 +27,33 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_target_fence (
     next_fencing_epoch bigint NOT NULL DEFAULT 1 CHECK (next_fencing_epoch > 0)
 );
 
+-- Target-owned immutable revision allocators.  Each counter is advanced while
+-- the row is locked by the admitting transaction, so plan/candidate/generation
+-- revisions are serialized per target without MAX scans or advisory locks.
+-- The counters are deliberately independent: a failed admission rolls back
+-- only the caller transaction and therefore cannot consume a revision.
+CREATE TABLE IF NOT EXISTS delivery.delivery_target_revision (
+    target_id text PRIMARY KEY REFERENCES delivery.delivery_target(target_id),
+    next_plan_revision bigint NOT NULL DEFAULT 1 CHECK (next_plan_revision > 0),
+    next_candidate_revision bigint NOT NULL DEFAULT 1 CHECK (next_candidate_revision > 0),
+    next_generation_revision bigint NOT NULL DEFAULT 1 CHECK (next_generation_revision > 0)
+);
+
+CREATE OR REPLACE FUNCTION delivery.create_target_revision_row()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    INSERT INTO delivery.delivery_target_revision(target_id)
+    VALUES (NEW.target_id)
+    ON CONFLICT (target_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS delivery_target_revision_after_insert ON delivery.delivery_target;
+CREATE TRIGGER delivery_target_revision_after_insert
+AFTER INSERT ON delivery.delivery_target
+FOR EACH ROW EXECUTE FUNCTION delivery.create_target_revision_row();
+
 CREATE TABLE IF NOT EXISTS delivery.delivery_plan (
     plan_id uuid PRIMARY KEY,
     target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
@@ -181,6 +208,44 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_generation (
     FOREIGN KEY (snapshot_seal_id, candidate_id) REFERENCES delivery.delivery_snapshot_seal(seal_id, candidate_id)
 );
 
+-- Explicit-revision APIs remain supported.  Keep allocator counters ahead of
+-- any explicitly supplied revision so a later allocated admission cannot
+-- collide with legacy/caller-assigned rows.
+CREATE OR REPLACE FUNCTION delivery.advance_target_revision_counter()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_ARGV[0] = 'plan' THEN
+        UPDATE delivery.delivery_target_revision
+           SET next_plan_revision = GREATEST(next_plan_revision, NEW.plan_revision + 1)
+         WHERE target_id = NEW.target_id;
+    ELSIF TG_ARGV[0] = 'candidate' THEN
+        UPDATE delivery.delivery_target_revision
+           SET next_candidate_revision = GREATEST(next_candidate_revision, NEW.candidate_revision + 1)
+         WHERE target_id = NEW.target_id;
+    ELSIF TG_ARGV[0] = 'generation' THEN
+        UPDATE delivery.delivery_target_revision
+           SET next_generation_revision = GREATEST(next_generation_revision, NEW.generation_revision + 1)
+         WHERE target_id = NEW.target_id;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS delivery_plan_revision_counter ON delivery.delivery_plan;
+CREATE TRIGGER delivery_plan_revision_counter
+AFTER INSERT ON delivery.delivery_plan
+FOR EACH ROW EXECUTE FUNCTION delivery.advance_target_revision_counter('plan');
+
+DROP TRIGGER IF EXISTS delivery_candidate_revision_counter ON delivery.delivery_candidate;
+CREATE TRIGGER delivery_candidate_revision_counter
+AFTER INSERT ON delivery.delivery_candidate
+FOR EACH ROW EXECUTE FUNCTION delivery.advance_target_revision_counter('candidate');
+
+DROP TRIGGER IF EXISTS delivery_generation_revision_counter ON delivery.delivery_generation;
+CREATE TRIGGER delivery_generation_revision_counter
+AFTER INSERT ON delivery.delivery_generation
+FOR EACH ROW EXECUTE FUNCTION delivery.advance_target_revision_counter('generation');
+
 CREATE TABLE IF NOT EXISTS delivery.delivery_publication (
     publication_id uuid PRIMARY KEY,
     target_id text NOT NULL REFERENCES delivery.delivery_target(target_id),
@@ -290,6 +355,19 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id OR NEW.next_fencing_epoch < OLD.next_fencing_epoch THEN
         RAISE EXCEPTION 'delivery fencing counter is monotonic and owned by the authority';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_target_revision_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.target_id <> OLD.target_id
+       OR NEW.next_plan_revision < OLD.next_plan_revision
+       OR NEW.next_candidate_revision < OLD.next_candidate_revision
+       OR NEW.next_generation_revision < OLD.next_generation_revision THEN
+        RAISE EXCEPTION 'delivery target revision counters are monotonic and immutable';
     END IF;
     RETURN NEW;
 END;
@@ -487,6 +565,9 @@ CREATE TRIGGER delivery_target_identity_immutable BEFORE UPDATE OR DELETE ON del
 DROP TRIGGER IF EXISTS delivery_fence_counter_monotonic ON delivery.delivery_target_fence;
 CREATE TRIGGER delivery_fence_counter_monotonic BEFORE UPDATE OR DELETE ON delivery.delivery_target_fence
     FOR EACH ROW EXECUTE FUNCTION delivery.reject_fence_counter_mutation();
+DROP TRIGGER IF EXISTS delivery_target_revision_monotonic ON delivery.delivery_target_revision;
+CREATE TRIGGER delivery_target_revision_monotonic BEFORE UPDATE OR DELETE ON delivery.delivery_target_revision
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_target_revision_mutation();
 DROP TRIGGER IF EXISTS delivery_plan_history_immutable ON delivery.delivery_plan;
 CREATE TRIGGER delivery_plan_history_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_plan
     FOR EACH ROW EXECUTE FUNCTION delivery.reject_authority_history_mutation();
