@@ -7,6 +7,7 @@ import (
 	"time"
 
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/jackc/pgx/v5"
 )
@@ -22,9 +23,11 @@ type CandidateBuildArtifactInput struct {
 }
 
 // CandidateBuildAttemptAdmissionInput carries only value evidence for one
-// candidate build attempt. Lease and Attempt are the delivery inputs; CatalogID
-// is the sole DuckLake-specific value because all other DuckLake begin fields
-// are derived from the admitted delivery attempt and lease.
+// candidate build attempt. Lease and Attempt provide the caller's immutable
+// delivery inputs; the admission transaction assigns the fencing epoch, lease
+// expiry, and relation namespace from the admitted lease. CatalogID is the
+// sole DuckLake-specific value because all other DuckLake begin fields are
+// derived from the admitted delivery attempt and lease.
 type CandidateBuildAttemptAdmissionInput struct {
 	Lease     deploymentnative.LeaseInput
 	Attempt   deploymentnative.BuildAttemptInput
@@ -110,14 +113,27 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
 
-	lease, attempt, err := a.delivery.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx, normalized.Lease, normalized.Attempt)
+	lease, err := a.delivery.AcquireLeaseTx(ctx, tx, normalized.Lease)
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
 	}
-	if lease.LeaseID != normalized.Lease.LeaseID || lease.TargetID != normalized.Lease.TargetID || lease.OwnerID != normalized.Lease.OwnerID || lease.State != "active" || !lease.ExpiresAt.Equal(normalized.Lease.ExpiresAt) {
+	if lease.LeaseID != normalized.Lease.LeaseID || lease.TargetID != normalized.Lease.TargetID || lease.OwnerID != normalized.Lease.OwnerID || lease.FencingEpoch <= 0 || lease.State != "active" || !lease.ExpiresAt.Equal(normalized.Lease.ExpiresAt) {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery lease identity drifted", deploymentnative.ErrConflict)
 	}
-	if attempt.AttemptID != normalized.Attempt.AttemptID || attempt.PlanID != normalized.Attempt.PlanID || attempt.CandidateID != normalized.Attempt.CandidateID || attempt.OwnerID != normalized.Attempt.OwnerID || attempt.PhysicalPoolID != normalized.Attempt.PhysicalPoolID || attempt.FencingEpoch <= 0 || (normalized.Attempt.FencingEpoch > 0 && attempt.FencingEpoch != normalized.Attempt.FencingEpoch) || attempt.RequestDigest != normalized.Attempt.RequestDigest || attempt.PlanDigest != normalized.Attempt.PlanDigest || attempt.Namespace != normalized.Attempt.Namespace || attempt.SessionIdentity != normalized.Attempt.SessionIdentity || attempt.State != deploymentnative.AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+	attemptInput := normalized.Attempt
+	attemptInput.FencingEpoch = lease.FencingEpoch
+	attemptInput.LeaseExpiresAt = lease.ExpiresAt
+	attemptInput.Namespace, err = deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: attemptInput.CandidateID, AttemptID: attemptInput.AttemptID, FencingEpoch: attemptInput.FencingEpoch,
+	})
+	if err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: derive relation namespace: %v", deploymentnative.ErrInvalid, err)
+	}
+	attempt, err := a.delivery.BeginBuildAttemptTx(ctx, tx, attemptInput)
+	if err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, err
+	}
+	if attempt.AttemptID != attemptInput.AttemptID || attempt.PlanID != attemptInput.PlanID || attempt.CandidateID != attemptInput.CandidateID || attempt.OwnerID != attemptInput.OwnerID || attempt.PhysicalPoolID != attemptInput.PhysicalPoolID || attempt.FencingEpoch != attemptInput.FencingEpoch || attempt.RequestDigest != attemptInput.RequestDigest || attempt.PlanDigest != attemptInput.PlanDigest || attempt.Namespace != attemptInput.Namespace || attempt.SessionIdentity != attemptInput.SessionIdentity || attempt.State != deploymentnative.AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery build attempt identity drifted", deploymentnative.ErrConflict)
 	}
 
@@ -213,8 +229,10 @@ func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdm
 			return CandidateBuildAttemptAdmissionInput{}, err
 		}
 	}
+	if out.Attempt.Namespace != "" {
+		return CandidateBuildAttemptAdmissionInput{}, fmt.Errorf("%w: build attempt relation namespace is authority-derived and must be empty", deploymentnative.ErrInvalid)
+	}
 	for label, value := range map[string]string{
-		"namespace":        out.Attempt.Namespace,
 		"session identity": out.Attempt.SessionIdentity,
 	} {
 		if err := validateText(value, label, 512); err != nil {
@@ -242,8 +260,8 @@ func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdm
 	}
 	out.Lease.ExpiresAt = leaseExpiry
 	out.Attempt.LeaseExpiresAt = leaseExpiry
-	if out.Attempt.FencingEpoch < 0 {
-		return CandidateBuildAttemptAdmissionInput{}, fmt.Errorf("%w: build attempt fencing epoch is invalid", deploymentnative.ErrInvalid)
+	if out.Attempt.FencingEpoch != 0 {
+		return CandidateBuildAttemptAdmissionInput{}, fmt.Errorf("%w: build attempt fencing epoch is authority-derived and must be zero", deploymentnative.ErrInvalid)
 	}
 	return out, nil
 }

@@ -14,6 +14,7 @@ import (
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -61,6 +62,10 @@ func validNativePhysicalBuildInput(t *testing.T) NativePhysicalBuildInput {
 	planID := "0198f2c0-7c7a-7f00-8a11-000000000101"
 	candidateID := "0198f2c0-7c7a-7f00-8a11-000000000102"
 	requestDigest, planDigest := nativePhysicalDigest('f'), nativePhysicalDigest('a')
+	namespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
 	marker := catalogartifact.CommitMarker{
 		SchemaVersion: catalogartifact.CommitMarkerSchemaVersion, DeliveryID: "delivery-native",
 		GenerationID: "generation-native", AttemptID: attemptID, LeaseEpoch: 3,
@@ -71,7 +76,7 @@ func validNativePhysicalBuildInput(t *testing.T) NativePhysicalBuildInput {
 		Attempt: deploymentnative.DeliveryBuildAttempt{
 			AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-native", PhysicalPoolID: "pool-native",
 			FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: planDigest,
-			State: deploymentnative.AttemptRunning, LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
+			Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
 		},
 		Marker:    marker,
 		CatalogID: "catalog-native", ObjectRoot: "/tmp/native-objects",
@@ -171,6 +176,17 @@ func TestBuildNativePhysicalValidatesBeforeOpen(t *testing.T) {
 	}
 	if opens != 0 {
 		t.Fatalf("factory opened %d times after invalid input", opens)
+	}
+}
+
+func TestBuildNativePhysicalRejectsRelationNamespaceDrift(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	in.Attempt.Namespace = "_not-the-canonical-namespace"
+	if _, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		t.Fatal("factory opened despite relation namespace drift")
+		return nil, nil
+	})); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("namespace drift error = %v, want conflict", err)
 	}
 }
 

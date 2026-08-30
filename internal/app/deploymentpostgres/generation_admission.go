@@ -16,6 +16,7 @@ import (
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -487,6 +488,15 @@ func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, e
 	}
 	if ctx.Commit.OwnerID != ctx.Fence.OwnerID || ctx.Commit.FencingEpoch != ctx.Fence.FencingEpoch {
 		return GenerationAdmissionInput{}, conflict("commit and lease fences differ")
+	}
+	expectedNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: ctx.Seal.CandidateID, AttemptID: ctx.Commit.AttemptID, FencingEpoch: ctx.Commit.FencingEpoch,
+	})
+	if err != nil {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: derive relation namespace: %v", deploymentnative.ErrInvalid, err)
+	}
+	if ctx.Seal.RelationNamespace != expectedNamespace {
+		return GenerationAdmissionInput{}, conflict("snapshot seal relation namespace differs from canonical candidate attempt identity")
 	}
 	if ctx.Commit.SnapshotID != ctx.Seal.DuckLakeSnapshotID {
 		return GenerationAdmissionInput{}, conflict("commit snapshot and seal snapshot differ")

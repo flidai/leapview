@@ -53,15 +53,17 @@ type candidateAdmissionFixture struct {
 func candidateAdmissionFixtureInput() candidateAdmissionFixture {
 	digestPlan := candidateAdmissionDigest('a')
 	expires := time.Now().UTC().Add(time.Hour)
+	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000303"
+	const candidateID = "0198f2c0-7c7a-7f00-8a11-000000000304"
 	return candidateAdmissionFixture{
 		Input: CandidateBuildAttemptAdmissionInput{
 			Lease: deploymentnative.LeaseInput{
 				LeaseID: "0198f2c0-7c7a-7f00-8a11-000000000301", TargetID: "target-candidate-admission", OwnerID: "builder-candidate-admission", ExpiresAt: expires,
 			},
 			Attempt: deploymentnative.BuildAttemptInput{
-				AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000303", PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000304",
+				AttemptID: attemptID, PlanID: "0198f2c0-7c7a-7f00-8a11-000000000302", CandidateID: candidateID,
 				OwnerID: "builder-candidate-admission", PhysicalPoolID: "pool-candidate-admission", RequestDigest: candidateAdmissionDigest('b'), PlanDigest: digestPlan,
-				Namespace: "candidate/admission", SessionIdentity: "duckdb-session-candidate-admission", LeaseExpiresAt: expires,
+				SessionIdentity: "duckdb-session-candidate-admission", LeaseExpiresAt: expires,
 			},
 			Artifact:  CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + strings.TrimPrefix(candidateAdmissionDigest('c'), "sha256:"), ServingArtifactDigest: candidateAdmissionDigest('c'), ServingStateID: "candidate-serving-state"},
 			CatalogID: "catalog-candidate-admission",
@@ -144,7 +146,6 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	rollback.Input.Attempt.PlanID = "0198f2c0-7c7a-7f00-8a11-000000000312"
 	rollback.Input.Attempt.CandidateID = "0198f2c0-7c7a-7f00-8a11-000000000314"
 	rollback.Input.Lease.TargetID = "target-candidate-admission-rollback"
-	rollback.Input.Attempt.Namespace = "candidate/admission-rollback"
 	rollback.Input.Attempt.SessionIdentity = "duckdb-session-candidate-admission-rollback"
 	rollback.Input.Attempt.PhysicalPoolID = "pool-candidate-admission-rollback"
 	rollback.Input.CatalogID = "catalog-candidate-admission-rollback"
@@ -192,6 +193,22 @@ func TestNormalizeCandidateBuildAttemptAdmissionRequiresCandidateID(t *testing.T
 	fixture.Input.Attempt.CandidateID = ""
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 		t.Fatalf("missing candidate id error = %v, want delivery invalid", err)
+	}
+}
+
+func TestNormalizeCandidateBuildAttemptAdmissionRejectsRelationNamespaceDrift(t *testing.T) {
+	fixture := candidateAdmissionFixtureInput()
+	fixture.Input.Attempt.Namespace = "_not-the-canonical-namespace"
+	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
+		t.Fatalf("caller-authored namespace error = %v, want delivery invalid", err)
+	}
+}
+
+func TestNormalizeCandidateBuildAttemptAdmissionRejectsCallerFencingEpoch(t *testing.T) {
+	fixture := candidateAdmissionFixtureInput()
+	fixture.Input.Attempt.FencingEpoch = 1
+	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
+		t.Fatalf("caller-authored fencing epoch error = %v, want delivery invalid", err)
 	}
 }
 

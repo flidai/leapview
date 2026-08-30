@@ -10,6 +10,7 @@ import (
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
@@ -35,6 +36,10 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	if err != nil {
 		t.Fatal(err)
 	}
+	relationNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
 	marker := catalogartifact.CommitMarker{SchemaVersion: catalogartifact.CommitMarkerSchemaVersion, DeliveryID: "delivery-admission", GenerationID: genID, AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: admissionDigest('f'), PlanDigest: planDigest, Project: "project_admission", Environment: "prod", PhysicalPoolID: pool}
 	markerJSON, err := marker.CanonicalJSON()
 	if err != nil {
@@ -43,7 +48,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	manifest := `{"version":1}`
 	return GenerationAdmissionInput{
 		Commit:              CommitEvidence{DeliveryID: "delivery-admission", AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
-		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: "candidate/admission", RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
+		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
 		QualificationDigest: admissionDigest('3'),
 		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: "target-admission", OwnerID: "builder-admission", FencingEpoch: 1},
 		Generation:          GenerationEvidence{GenerationID: genID, TargetID: "target-admission", CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
@@ -82,6 +87,7 @@ func TestNormalizeGenerationAdmissionRejectsCrossFieldMismatches(t *testing.T) {
 		}},
 		{name: "locator", mutate: func(in *GenerationAdmissionInput) { in.Bundle.ArtifactLocator = "objects/not-the-digest.tar.gz" }},
 		{name: "artifact digest", mutate: func(in *GenerationAdmissionInput) { in.Bundle.Artifact.Digest = admissionDigest('4') }},
+		{name: "relation namespace", mutate: func(in *GenerationAdmissionInput) { in.Seal.RelationNamespace = "_not_the_canonical_namespace" }},
 		{name: "filesystem path", mutate: func(in *GenerationAdmissionInput) { in.Bundle.Artifact.Path = "/tmp/artifact" }},
 	}
 	for _, test := range tests {

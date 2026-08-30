@@ -21,6 +21,7 @@ import (
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -327,6 +328,15 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 	if attempt.State != deploymentnative.AttemptRunning {
 		return fmt.Errorf("%w: build attempt must be running before physical materialization", deploymentnative.ErrConflict)
 	}
+	expectedNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: attempt.CandidateID, AttemptID: attempt.AttemptID, FencingEpoch: attempt.FencingEpoch,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: derive relation namespace: %v", deploymentnative.ErrInvalid, err)
+	}
+	if attempt.Namespace != expectedNamespace {
+		return fmt.Errorf("%w: build attempt relation namespace differs from canonical identity", deploymentnative.ErrConflict)
+	}
 	if attempt.LeaseExpiresAt.IsZero() || !attempt.LeaseExpiresAt.After(time.Now().UTC()) {
 		return fmt.Errorf("%w: build attempt lease is expired", deploymentnative.ErrConflict)
 	}
@@ -339,6 +349,15 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 }
 
 func verifyNativePhysicalEvidence(seal ducklake.PostgresSnapshotSealEvidence, closure ducklake.NativeSnapshotClosureEvidence, input NativePhysicalBuildInput, canonicalMarker []byte, canonicalRoot string, snapshotID int64) error {
+	expectedNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
+		CandidateID: input.Attempt.CandidateID, AttemptID: input.Attempt.AttemptID, FencingEpoch: input.Attempt.FencingEpoch,
+	})
+	if err != nil {
+		return fmt.Errorf("%w: derive relation namespace: %v", deploymentnative.ErrInvalid, err)
+	}
+	if input.Attempt.Namespace != expectedNamespace {
+		return fmt.Errorf("%w: build attempt relation namespace differs from canonical identity", deploymentnative.ErrConflict)
+	}
 	if seal.SnapshotID != snapshotID {
 		return fmt.Errorf("%w: snapshot seal evidence snapshot %d differs from materialized snapshot %d", deploymentnative.ErrConflict, seal.SnapshotID, snapshotID)
 	}
