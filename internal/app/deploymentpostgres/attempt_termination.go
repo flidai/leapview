@@ -36,11 +36,14 @@ type AttemptTerminationResult struct {
 }
 
 // AttemptTermination is the application-owned native termination capability.
-// Each operation owns one delivery transaction and passes that same native
-// pgx transaction to the application-owned DuckLake ledger.
+// The convenience methods own one delivery transaction; the Tx methods
+// compose into a caller-owned transaction and pass that same native pgx
+// transaction to the application-owned DuckLake ledger.
 type AttemptTermination interface {
 	AbortAttempt(context.Context, AttemptTerminationInput) (AttemptTerminationResult, error)
 	MarkAttemptIndeterminate(context.Context, AttemptTerminationInput) (AttemptTerminationResult, error)
+	AbortAttemptTx(context.Context, deploymentnative.Tx, AttemptTerminationInput) (AttemptTerminationResult, error)
+	MarkAttemptIndeterminateTx(context.Context, deploymentnative.Tx, AttemptTerminationInput) (AttemptTerminationResult, error)
 }
 
 type AttemptTerminationDuckLakeAuthority interface {
@@ -78,6 +81,18 @@ func (a *attemptTerminator) MarkAttemptIndeterminate(ctx context.Context, input 
 	return a.terminateAttempt(ctx, input, attemptTerminationIndeterminate)
 }
 
+// AbortAttemptTx transitions both control ledgers to aborted in the
+// caller-owned transaction. It never begins, commits, or rolls back tx.
+func (a *attemptTerminator) AbortAttemptTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput) (AttemptTerminationResult, error) {
+	return a.terminateAttemptTx(ctx, tx, input, attemptTerminationAborted)
+}
+
+// MarkAttemptIndeterminateTx transitions both control ledgers to indeterminate
+// in the caller-owned transaction. It never begins, commits, or rolls back tx.
+func (a *attemptTerminator) MarkAttemptIndeterminateTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput) (AttemptTerminationResult, error) {
+	return a.terminateAttemptTx(ctx, tx, input, attemptTerminationIndeterminate)
+}
+
 type attemptTerminationOutcome string
 
 const (
@@ -86,18 +101,14 @@ const (
 )
 
 // terminateAttempt transitions the delivery and DuckLake ledgers in one
-// caller-owned control transaction. The external leapview_ducklake catalog is
-// never opened or mutated by this operation.
+// control transaction owned by the convenience wrapper. The external
+// leapview_ducklake catalog is never opened or mutated by this operation.
 func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptTerminationInput, outcome attemptTerminationOutcome) (AttemptTerminationResult, error) {
 	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
-	normalized, canonical, err := normalizeAttemptTerminationInput(input)
-	if err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	state, err := terminationStates(outcome)
+	normalized, _, err := normalizeAttemptTerminationInput(input)
 	if err != nil {
 		return AttemptTerminationResult{}, err
 	}
@@ -112,6 +123,36 @@ func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptT
 			_ = tx.Rollback(ctx)
 		}
 	}()
+	result, err := a.terminateAttemptTx(ctx, tx, normalized, outcome)
+	if err != nil {
+		return AttemptTerminationResult{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return AttemptTerminationResult{}, err
+	}
+	committed = true
+	return result, nil
+}
+
+// terminateAttemptTx applies the delivery and DuckLake transitions to tx.
+// It performs all input and native-transaction validation but never invokes
+// a transaction lifecycle method, leaving commit or rollback to the caller.
+func (a *attemptTerminator) terminateAttemptTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput, outcome attemptTerminationOutcome) (AttemptTerminationResult, error) {
+	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
+		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination authorities are not configured", deploymentnative.ErrInvalid)
+	}
+	if tx == nil {
+		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	ctx = contextOrBackground(ctx)
+	normalized, canonical, err := normalizeAttemptTerminationInput(input)
+	if err != nil {
+		return AttemptTerminationResult{}, err
+	}
+	state, err := terminationStates(outcome)
+	if err != nil {
+		return AttemptTerminationResult{}, err
+	}
 	if _, ok := tx.(pgx.Tx); !ok {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
@@ -147,10 +188,6 @@ func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptT
 		return AttemptTerminationResult{}, err
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	committed = true
 	return AttemptTerminationResult{DeliveryAttempt: deliveryAttempt, DuckLakeAttempt: duckAttempt}, nil
 }
 

@@ -200,6 +200,86 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 	}
 }
 
+func TestAttemptTerminationTxComposesAndCallerControlsRollback(t *testing.T) {
+	p := candidateAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	ducklake := ducklakepostgres.New(p)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	if err != nil {
+		t.Fatal(err)
+	}
+	termination, err := NewAttemptTermination(delivery, ducklake)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	aborted := uniqueTerminationFixture(t, 6)
+	seedCandidateAdmissionFixture(t, delivery, ducklake, aborted)
+	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), aborted.Input); err != nil {
+		t.Fatal(err)
+	}
+	abortInput := AttemptTerminationInput{AttemptID: aborted.Input.Attempt.AttemptID, OwnerID: aborted.Input.Attempt.OwnerID, FencingEpoch: 1, Evidence: []byte(`{"reason":"caller-owned"}`)}
+	tx, err := delivery.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := termination.AbortAttemptTx(t.Context(), tx, abortInput)
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("abort attempt in caller transaction: %v", err)
+	}
+	if result.DeliveryAttempt.State != deploymentnative.AttemptAborted || result.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("abort result = %#v", result)
+	}
+	adjacent := deploymentnative.TargetInput{TargetID: "target-attempt-termination-adjacent", ProjectID: aborted.Target.ProjectID, Environment: "staging"}
+	if _, err := delivery.CreateTargetTx(t.Context(), tx, adjacent); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("adjacent mutation after caller-owned abort: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit composed abort transaction: %v", err)
+	}
+	if _, err := delivery.Target(t.Context(), adjacent.TargetID); err != nil {
+		t.Fatalf("adjacent mutation was not committed with abort: %v", err)
+	}
+	if got, err := delivery.BuildAttempt(t.Context(), abortInput.AttemptID); err != nil || got.State != deploymentnative.AttemptAborted {
+		t.Fatalf("aborted delivery attempt = %#v, %v", got, err)
+	}
+
+	indeterminate := uniqueTerminationFixture(t, 7)
+	seedCandidateAdmissionFixture(t, delivery, ducklake, indeterminate)
+	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), indeterminate.Input); err != nil {
+		t.Fatal(err)
+	}
+	indeterminateInput := AttemptTerminationInput{AttemptID: indeterminate.Input.Attempt.AttemptID, OwnerID: indeterminate.Input.Attempt.OwnerID, FencingEpoch: 1, Evidence: []byte(`{"reason":"caller-rollback"}`)}
+	tx, err = delivery.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := termination.MarkAttemptIndeterminateTx(t.Context(), tx, indeterminateInput); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("mark indeterminate in caller transaction: %v", err)
+	}
+	rolledBackAdjacent := deploymentnative.TargetInput{TargetID: "target-attempt-termination-rollback-adjacent", ProjectID: indeterminate.Target.ProjectID, Environment: "staging"}
+	if _, err := delivery.CreateTargetTx(t.Context(), tx, rolledBackAdjacent); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("adjacent mutation before caller rollback: %v", err)
+	}
+	if err := tx.Rollback(t.Context()); err != nil {
+		t.Fatalf("caller rollback: %v", err)
+	}
+	if _, err := delivery.Target(t.Context(), rolledBackAdjacent.TargetID); !errors.Is(err, deploymentnative.ErrNotFound) {
+		t.Fatalf("caller rollback retained adjacent target, err=%v", err)
+	}
+	if got, err := delivery.BuildAttempt(t.Context(), indeterminateInput.AttemptID); err != nil || got.State != deploymentnative.AttemptRunning {
+		t.Fatalf("rolled-back delivery attempt = %#v, %v", got, err)
+	}
+	if got, err := ducklake.LoadAttempt(t.Context(), indeterminateInput.AttemptID); err != nil || got.State != ducklakepostgres.AttemptRunning {
+		t.Fatalf("rolled-back DuckLake attempt = %#v, %v", got, err)
+	}
+}
+
 func TestNormalizeAttemptTerminationInputCanonicalBounds(t *testing.T) {
 	base := AttemptTerminationInput{AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000403", OwnerID: "builder", FencingEpoch: 1, Evidence: []byte(`{"b":1,"a":2}`)}
 	got, canonical, err := normalizeAttemptTerminationInput(base)
