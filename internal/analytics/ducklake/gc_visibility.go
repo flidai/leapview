@@ -10,8 +10,8 @@ import (
 // BaseTable identifies one visible, non-temporary DuckLake base table. It is
 // intentionally value-only so callers cannot obtain a mutable SQL handle.
 type BaseTable struct {
-	Schema string
-	Table  string
+	Schema string `json:"schema"`
+	Table  string `json:"table"`
 }
 
 // VisibleBaseTables enumerates every current user table through DuckDB's
