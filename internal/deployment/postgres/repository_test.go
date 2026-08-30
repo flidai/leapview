@@ -960,7 +960,8 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 	if _, err := New(p).CreateTarget(ctx, TargetInput{TargetID: "guard_target_other", ProjectID: "project_guard_other", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest) VALUES($1::uuid,'guard_target',1,$2,$2,$2,$2,$2,$2)`, plan, testDigest('a')); err != nil {
+	richPlan, planDocument := richPlanDocumentFixture(t, plan, "guard_target", "project_guard")
+	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,plan_document) VALUES($1::uuid,'guard_target',1,$2,$3,$4,$5,$6,$7,$8::jsonb)`, plan, richPlan.Digest, testDigest('b'), richPlan.Execution.ConfigDigest, richPlan.Governance.AuthorizationDigest, richPlan.SourceDigest, richPlan.Governance.QualificationDigest, planDocument); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(p).CreateCandidate(ctx, CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000038", TargetID: "guard_target_other", PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('a')}); !errors.Is(err, ErrConflict) {

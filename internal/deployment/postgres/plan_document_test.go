@@ -18,15 +18,15 @@ func richPlanDocumentFixture(t *testing.T, id, target, project string) (deployme
 	created := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	plan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
 		ID: id, TargetID: target, ProjectID: graph.ResourceID(project), Environment: "prod",
-		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('a'), BaseTargetRevision: 0,
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('e'), BaseTargetRevision: 0,
 		Execution: deployment.DeliveryExecutionInputs{
-			SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'),
+			SourceArtifactDigest: d('e'), CompilerDigest: d('b'), ExecutableDigest: d('c'),
 			DependencyDigest: d('d'), ConfigDigest: d('c'), BindingDigest: d('f'),
 			RuntimeDigest: d('0'), CapabilityDigest: d('1'),
 		},
 		Provenance: deployment.DeliveryProvenance{Builder: "test"},
 		Governance: deployment.DeliveryGovernance{
-			PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('3'),
+			PolicyDigest: d('2'), AuthorizationDigest: d('d'), QualificationDigest: d('3'),
 			ExpiresAt: created.Add(time.Hour), RequiresApproval: true,
 		},
 		Evidence: deployment.DeliveryPlanEvidence{
