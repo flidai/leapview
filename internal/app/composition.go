@@ -1866,6 +1866,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			DeploymentConfig:         deploymentConfig,
 		},
 		runtimeAssemblyInputs{
+			Production:           production,
 			RuntimeHost:          runtimeHostModule,
 			DeliveryTargetReader: sealedDelivery,
 			ProjectID:            projectID, ProjectIDResolver: projectIDResolver, ServingSnapshotResolver: servingSnapshotResolver,

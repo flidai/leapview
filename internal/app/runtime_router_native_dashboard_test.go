@@ -6,8 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
+	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 )
 
 type nativeDashboardReconcilerStub struct{}
@@ -28,6 +31,58 @@ func TestValidateDashboardAssemblyInputsPreservesLegacyOnlyWhenNativeIsAbsent(t 
 	native := dataAssemblyInputs{DashboardPublicationReconciler: nativeDashboardReconcilerStub{}}
 	if !dashboardNativeInputsPresent(native) {
 		t.Fatal("native publication reconciler did not select native dashboard admission")
+	}
+}
+
+func TestNativePersistenceInputsPresenceIncludesOpaqueCapabilityBundles(t *testing.T) {
+	if nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{}) {
+		t.Fatal("empty assembly was classified as native persistence")
+	}
+	if !nativePersistenceInputsPresent(dataAssemblyInputs{RefreshPersistence: &refreshmodule.Persistence{}}, capabilityAssemblyInputs{}) {
+		t.Fatal("refresh persistence did not select native persistence admission")
+	}
+	if !nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{AgentPersistence: &agentmodule.Persistence{}}) {
+		t.Fatal("agent persistence did not select native persistence admission")
+	}
+	if nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{JobModule: &jobsmodule.Module{}}) {
+		t.Fatal("opaque jobs module was incorrectly assumed to be native persistence")
+	}
+}
+
+func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
+	production := runtimeAssemblyInputs{Production: true}
+	if err := validateProductionRuntimeInputs(dataAssemblyInputs{}, capabilityAssemblyInputs{}, production); err == nil || !strings.Contains(err.Error(), "native dashboard") {
+		t.Fatalf("missing dashboard admission error = %v", err)
+	}
+	data := dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, RequireExplicitAPIProtocol: true}
+	if err := validateProductionRuntimeInputs(data, capabilityAssemblyInputs{}, production); err == nil || !strings.Contains(err.Error(), "jobs module") {
+		t.Fatalf("missing jobs admission error = %v", err)
+	}
+	jobs := &jobsmodule.Module{}
+	capabilities := capabilityAssemblyInputs{JobModule: jobs}
+	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "agent persistence") {
+		t.Fatalf("missing agent persistence error = %v", err)
+	}
+	capabilities.AgentPersistence = &agentmodule.Persistence{}
+	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "refresh persistence") {
+		t.Fatalf("missing refresh persistence error = %v", err)
+	}
+	data.RefreshPersistence = &refreshmodule.Persistence{}
+	if err := validateProductionRuntimeInputs(data, capabilities, production); err != nil {
+		t.Fatalf("complete native production authorities rejected: %v", err)
+	}
+}
+
+func TestNativeRuntimeInputsRejectMixedSQLiteAuthorities(t *testing.T) {
+	capabilities := capabilityAssemblyInputs{AgentPersistence: &agentmodule.Persistence{}}
+	for _, data := range []dataAssemblyInputs{
+		{Database: &sql.DB{}},
+		{AdminDatabase: &sql.DB{}},
+		{AuditRuntime: &auditRuntime{}},
+	} {
+		if err := validateProductionRuntimeInputs(data, capabilities, runtimeAssemblyInputs{}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
+			t.Fatalf("mixed native/SQLite inputs error = %v", err)
+		}
 	}
 }
 

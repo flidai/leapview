@@ -24,7 +24,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		ctx = context.Background()
 	}
 	service, err := projectRefreshService(persistence, workflow, func() *dashboardmodule.Module { return routes.dashboardModule })
-	if err != nil && database != nil {
+	if err != nil && (database != nil || persistence.requireNativePersistence) {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
 	if workflow.refreshMaterializer != nil {
@@ -73,8 +73,8 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
 		recoveryLifecycle = refreshmodule.NewRecoveryLifecycle(database, *recoveryLifecycle)
 	}
-	var refreshPersistence *refreshmodule.Persistence
-	if database != nil {
+	refreshPersistence := persistence.refreshPersistence
+	if refreshPersistence == nil && database != nil {
 		built, buildErr := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
 			Database: database, Workflow: platform.jobModule,
 			Audit: persistence.auditRecorder,
@@ -83,6 +83,9 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			return fmt.Errorf("configure refresh persistence: %w", buildErr)
 		}
 		refreshPersistence = &built
+	}
+	if refreshPersistence == nil && persistence.requireNativePersistence {
+		return fmt.Errorf("configure refresh persistence: native composition requires an injected persistence bundle")
 	}
 	config := refreshmodule.Config{
 		Persistence: refreshPersistence, Service: service,

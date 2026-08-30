@@ -243,6 +243,7 @@ type assemblyConfig struct {
 	Database                *sql.DB
 	PlatformHealth          platformHealth
 	AgentSettings           agentmodule.Settings
+	AgentPersistence        *agentmodule.Persistence
 	AdminDatabase           *sql.DB
 	ServingStateRepo        servingStateRepository
 	StorageRetention        *servingstatemodule.Retention
@@ -294,6 +295,7 @@ type assemblyConfig struct {
 	ProductStatus           adminmodule.ProductStatus
 	ProjectCatalog          *projectcatalog.Service
 	ProjectGraph            projecthttp.GraphReader
+	RefreshPersistence      *refreshmodule.Persistence
 }
 
 // appTestHarness is the test-only composition adapter used by app-package tests.
@@ -408,11 +410,12 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		dataAssemblyInputs{
 			Database: options.Database, PlatformHealth: options.PlatformHealth,
 			AdminDatabase: options.AdminDatabase, ServingStateRepo: options.ServingStateRepo,
-			StorageRetention: options.StorageRetention,
-			AccessRepo:       options.AccessRepo,
+			StorageRetention:   options.StorageRetention,
+			AccessRepo:         options.AccessRepo,
+			RefreshPersistence: options.RefreshPersistence,
 		},
 		capabilityAssemblyInputs{
-			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule,
+			ReleaseModule: options.ReleaseModule, JobModule: options.JobModule, AgentPersistence: options.AgentPersistence,
 			AccessModule: options.AccessModule, Agent: options.Agent,
 			ManagedDataModule: options.ManagedDataModule, AnalyticsModule: options.AnalyticsModule, Authoring: options.Authoring,
 			DashboardAssets: options.DashboardAssets, Product: options.Product, ProductStatus: options.ProductStatus,
