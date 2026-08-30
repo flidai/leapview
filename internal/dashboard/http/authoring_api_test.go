@@ -238,6 +238,20 @@ func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 	}
 }
 
+func TestAuthoringAPIRejectsNonUUIDv7IdempotencyKey(t *testing.T) {
+	app := &fakeHeadlessAuthoring{}
+	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
+	req.Header.Set("Idempotency-Key", "legacy-idempotency-key")
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(app).ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want %d (%s)", rec.Code, http.StatusBadRequest, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "IDEMPOTENCY_KEY_REQUIRED") {
+		t.Fatalf("body = %s, want canonical UUIDv7 idempotency problem", rec.Body.String())
+	}
+}
+
 func TestAuthoringGeneratedCommandContractRejectsZeroAndMultiplePayloads(t *testing.T) {
 	base := `"kind":"metadata","dashboardId":"dash","draftId":"draft","expectedRevision":{"revisionId":"rev","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`
 	var zero dashboardgen.GenSchemaDashboardAuthoringCommandRequest
@@ -478,7 +492,7 @@ func TestAuthoringAPIDraftUsesAuthenticatedActor(t *testing.T) {
 func TestAuthoringAPIMapsValidation(t *testing.T) {
 	app := &fakeHeadlessAuthoring{executeErr: errors.New("invalid dashboard authoring contract")}
 	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
-	req.Header.Set("Idempotency-Key", "cmd-1")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000101")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	// The fake error is intentionally not wrapped in ErrInvalidAuthoring; it
@@ -491,7 +505,7 @@ func TestAuthoringAPIMapsValidation(t *testing.T) {
 func TestAuthoringAPIMutationDoesNotSpoofToolCallProvenance(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
 	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
-	req.Header.Set("Idempotency-Key", "idem-1")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000102")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -508,7 +522,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		ID: "created-dashboard", Draft: &authoring.Draft{ID: "created-draft"},
 	}}}
 	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales","origin":"file"}`))
-	req.Header.Set("Idempotency-Key", "idem-audit")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000103")
 	req.Header.Set("X-Correlation-ID", "corr-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -530,7 +544,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "dash-command"}}}
 	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"publish","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
-	req.Header.Set("Idempotency-Key", "cmd-audit")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000104")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -551,7 +565,7 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 func TestAuthoringAPIForkBindsInstanceSourceToRouteProject(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
 	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"instance","dashboardId":"dash"}}`))
-	req.Header.Set("Idempotency-Key", "fork-cross-workspace")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000105")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -567,7 +581,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 		ID: "forked-dashboard", Draft: &authoring.Draft{ID: "forked-draft"},
 	}}}
 	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"},"origin":"file"}`))
-	req.Header.Set("Idempotency-Key", "fork-audit")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000106")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
@@ -646,13 +660,13 @@ func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
 	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"organization"}}`))
-	req.Header.Set("Idempotency-Key", "cmd-1")
+	req.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000107")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d (%s)", rec.Code, http.StatusOK, rec.Body.String())
 	}
-	if app.command.ID != "cmd-1" || app.command.Provenance.ActorID != "principal_1" {
+	if app.command.ID != "018f4f2e-0000-7000-8000-000000000107" || app.command.Provenance.ActorID != "principal_1" {
 		t.Fatalf("command identity = %#v, want authenticated id/actor", app.command)
 	}
 }

@@ -20888,8 +20888,9 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
           example: example
       responses:
         '200':
@@ -23355,8 +23356,9 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
           example: example
       responses:
         '201':
@@ -23745,8 +23747,9 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
           example: example
       responses:
         '201':
@@ -33890,6 +33893,7 @@ paths:
                     name: example
                     projectId: example
                     publicUrl: example
+                    revision: 1
                     rotatedAt: "2026-01-02T15:04:05Z"
                     status: active
                     suspendedAt: "2026-01-02T15:04:05Z"
@@ -34174,6 +34178,7 @@ paths:
                 name: example
                 projectId: example
                 publicUrl: example
+                revision: 1
                 rotatedAt: "2026-01-02T15:04:05Z"
                 status: active
                 suspendedAt: "2026-01-02T15:04:05Z"
@@ -34441,8 +34446,15 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
           example: example
       responses:
         '200':
@@ -34466,6 +34478,7 @@ paths:
                 name: example
                 projectId: example
                 publicUrl: example
+                revision: 1
                 rotatedAt: "2026-01-02T15:04:05Z"
                 status: active
                 suspendedAt: "2026-01-02T15:04:05Z"
@@ -34727,7 +34740,8 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_publication.resumed
-        authz_mode: authenticated
+        authz_mode: privilege
+        concurrency: if-match
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -34745,6 +34759,10 @@ paths:
             kind: not_found
             public_detail: Dashboard publication not found.
             status_code: !!float 404
+          - code: PUBLICATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: Dashboard publication changed before this command was applied.
+            status_code: !!float 412
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -34752,6 +34770,11 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.resume
+        privilege: RESOURCE_PUBLISH
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_PUBLISH
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/dashboard-publications/{publication}/rotate:
     post:
       operationId: rotateDashboardPublication
@@ -34777,8 +34800,15 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
           example: example
       responses:
         '200':
@@ -34802,6 +34832,7 @@ paths:
                 name: example
                 projectId: example
                 publicUrl: example
+                revision: 1
                 rotatedAt: "2026-01-02T15:04:05Z"
                 status: active
                 suspendedAt: "2026-01-02T15:04:05Z"
@@ -35062,8 +35093,9 @@ paths:
               ref: DashboardPublicationCommandAuditPayload
             schema_version: !!float 1
           required: true
-          success_action: dashboard_publication.public_id_rotated
-        authz_mode: authenticated
+          success_action: dashboard_publication.rotated
+        authz_mode: privilege
+        concurrency: if-match
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -35081,6 +35113,10 @@ paths:
             kind: not_found
             public_detail: Dashboard publication not found.
             status_code: !!float 404
+          - code: PUBLICATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: Dashboard publication changed before this command was applied.
+            status_code: !!float 412
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -35088,6 +35124,11 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.rotate
+        privilege: RESOURCE_PUBLISH
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_PUBLISH
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/dashboard-publications/{publication}/suspend:
     post:
       operationId: suspendDashboardPublication
@@ -35113,8 +35154,15 @@ paths:
           required: true
           schema:
             type: string
-            minLength: 1
-            maxLength: 200
+            minLength: 36
+            maxLength: 36
+            pattern: ^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
           example: example
       responses:
         '200':
@@ -35138,6 +35186,7 @@ paths:
                 name: example
                 projectId: example
                 publicUrl: example
+                revision: 1
                 rotatedAt: "2026-01-02T15:04:05Z"
                 status: active
                 suspendedAt: "2026-01-02T15:04:05Z"
@@ -35399,7 +35448,8 @@ paths:
             schema_version: !!float 1
           required: true
           success_action: dashboard_publication.suspended
-        authz_mode: authenticated
+        authz_mode: privilege
+        concurrency: if-match
         failures:
           - code: AUDIT_UNAVAILABLE
             kind: audit_unavailable
@@ -35417,6 +35467,10 @@ paths:
             kind: not_found
             public_detail: Dashboard publication not found.
             status_code: !!float 404
+          - code: PUBLICATION_PRECONDITION_FAILED
+            kind: precondition
+            public_detail: Dashboard publication changed before this command was applied.
+            status_code: !!float 412
         idempotency: required
         owner: LeapViewAPI.Dashboard
         target:
@@ -35424,6 +35478,11 @@ paths:
           type: project
         ui:
           action_id: dashboard.publication.suspend
+        privilege: RESOURCE_PUBLISH
+      x-authz:
+        mode: privilege
+        privilege: RESOURCE_PUBLISH
+      x-leapview-object-scope: project
   /api/v1/projects/{project}/data-policies:
     get:
       operationId: listDataPolicies
@@ -72245,6 +72304,7 @@ components:
               name: example
               projectId: example
               publicUrl: example
+              revision: 1
               rotatedAt: "2026-01-02T15:04:05Z"
               status: active
               suspendedAt: "2026-01-02T15:04:05Z"
@@ -72266,6 +72326,7 @@ components:
             name: example
             projectId: example
             publicUrl: example
+            revision: 1
             rotatedAt: "2026-01-02T15:04:05Z"
             status: active
             suspendedAt: "2026-01-02T15:04:05Z"
@@ -72286,6 +72347,7 @@ components:
         - iframeSnippet
         - createdAt
         - updatedAt
+        - revision
       properties:
         name:
           type: string
@@ -72336,6 +72398,10 @@ components:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
+        revision:
+          type: integer
+          format: int64
+          example: 1
         configuredAt:
           type: string
           format: date-time
@@ -72370,6 +72436,7 @@ components:
         name: example
         projectId: example
         publicUrl: example
+        revision: 1
         rotatedAt: "2026-01-02T15:04:05Z"
         status: active
         suspendedAt: "2026-01-02T15:04:05Z"

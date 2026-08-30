@@ -4,16 +4,24 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	uisignals "github.com/flidai/leapview/internal/admin/ui/signals"
+	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	"github.com/flidai/leapview/internal/platform"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
+	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
+	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	"github.com/go-chi/chi/v5"
 )
 
 func TestBuildConstructsOwnedHTTPHandler(t *testing.T) {
@@ -59,13 +67,79 @@ func TestAdminPublicationMutationPassesUIInvocationIdentity(t *testing.T) {
 	}
 	r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", nil)
 	r.Header.Set("X-Request-ID", "ui-request-1")
+	r.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000011")
+	r.Header.Set("If-Match", `"1"`)
 	r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
-	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{ProjectID: "sales", Publication: "executive", Action: "suspend"})
+	err := m.mutatePublication(r, uisignals.AdminPublicationCommand{ProjectID: "sales", Publication: "executive", Action: "suspend", ExpectedRevision: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "ui-request-1" {
+	if service.invocation.Surface != string(apigencommand.SurfaceUI) || service.invocation.RequestID != "ui-request-1" || service.invocation.IdempotencyKey != "018f4f2e-0000-7000-8000-000000000011" || service.invocation.ExpectedRevision != 1 {
 		t.Fatalf("invocation = %#v", service.invocation)
+	}
+}
+
+func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "admin-publication-replay.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
+		Store: apiidempotencysqlite.NewStore(store.SQLDB()),
+		CursorSigning: cursorsigning.InitializerFunc(func(ctx context.Context) error {
+			return cursorsigningsqlite.Configure(ctx, store.SQLDB())
+		}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowed := true
+	service := &adminPublicationInvocationService{}
+	m := &Module{
+		publications: service, publicationCommands: map[string]uicommand.Binding{"suspend": dashboardgen.GenUIActionSuspendDashboardPublication()},
+		currentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-ui"}, true },
+		currentEffectiveCapabilities: func(context.Context, string) ([]access.Capability, error) {
+			if allowed {
+				return []access.Capability{access.CapabilityResourcePublish}, nil
+			}
+			return nil, nil
+		},
+	}
+	m.handler.PublicationMutation = m.mutatePublication
+	router := chi.NewRouter()
+	m.MountAuthenticated(router, RouteGuard{
+		Authenticate:              func(next http.Handler) http.Handler { return next },
+		RequirePlatformAdmin:      func(next http.Handler) http.Handler { return next },
+		BrowserMutationMiddleware: protocol.BrowserMutationMiddleware,
+	})
+	body := `{"adminPublicationCommand":{"projectId":"sales","publication":"executive","action":"suspend","expectedRevision":1}}`
+	request := func(requestID string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/admin/publications/command", strings.NewReader(body))
+		r.Header.Set("Content-Type", "application/json")
+		r.Header.Set("X-Request-ID", requestID)
+		r.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000921")
+		r.Header.Set("If-Match", `"1"`)
+		r.Header.Set(uicommand.HeaderOperationID, dashboardgen.GenUIActionSuspendDashboardPublication().OperationID())
+		recorder := httptest.NewRecorder()
+		router.ServeHTTP(recorder, r)
+		return recorder
+	}
+	first := request("018f4f2e-0000-7000-8000-000000000920")
+	if first.Code != http.StatusOK {
+		t.Fatalf("first publication command = %d body=%s", first.Code, first.Body.String())
+	}
+	replay := request("018f4f2e-0000-7000-8000-000000000922")
+	if replay.Code != http.StatusOK || replay.Header().Get("Idempotency-Replayed") != "true" || replay.Body.String() != first.Body.String() {
+		t.Fatalf("publication replay = %d headers=%#v body=%s", replay.Code, replay.Header(), replay.Body.String())
+	}
+	if service.mutations != 1 {
+		t.Fatalf("publication mutation calls = %d, want 1", service.mutations)
+	}
+	allowed = false
+	denied := request("018f4f2e-0000-7000-8000-000000000923")
+	if denied.Code != http.StatusForbidden || service.mutations != 1 {
+		t.Fatalf("revoked publication replay = %d calls=%d body=%s", denied.Code, service.mutations, denied.Body.String())
 	}
 }
 
@@ -112,6 +186,7 @@ func TestCapabilityAllowedPreservesTokenDynamicAndDenyAll(t *testing.T) {
 
 type adminPublicationInvocationService struct {
 	invocation publication.CommandInvocation
+	mutations  int
 }
 
 func (*adminPublicationInvocationService) PublicationsConfigured() bool { return true }
@@ -129,5 +204,6 @@ func (*adminPublicationInvocationService) MutatePublication(context.Context, str
 }
 func (s *adminPublicationInvocationService) MutatePublicationWithInvocation(_ context.Context, _ string, _ string, _ string, _ publication.Action, invocation publication.CommandInvocation) (publication.Publication, error) {
 	s.invocation = invocation
-	return publication.Publication{}, nil
+	s.mutations++
+	return publication.Publication{Revision: 2}, nil
 }

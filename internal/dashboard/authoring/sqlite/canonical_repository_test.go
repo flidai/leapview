@@ -170,7 +170,7 @@ func TestCanonicalSQLiteRepositoryRevalidationFailureRetainsPublishedEvidence(t 
 		t.Fatal(err)
 	}
 	failure := authoring.RevalidationFailure{Identity: identity, DependencyIDs: []graph.ResourceID{"model:sales"}, Code: "INVALID_DEPENDENCY", Message: "model changed", FailedAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)}
-	if err := repository.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "attempt_00000000000000000000000000000001", Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: compiled.Token(), DependencyIDs: failure.DependencyIDs, Failure: failure}); err != nil {
+	if err := repository.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "018f4f2e-0000-7000-8000-000000000013", Generation: generation, Dashboard: lifecycle, AuthoredRevision: revision, PriorCompilation: compiled.Token(), DependencyIDs: failure.DependencyIDs, Failure: failure}); err != nil {
 		t.Fatal(err)
 	}
 	got, err := repository.Get(ctx, "project:sales", "dashboard:revalidate")

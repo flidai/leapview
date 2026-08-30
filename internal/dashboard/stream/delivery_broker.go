@@ -48,6 +48,17 @@ func NewDeliveryBroker() *DeliveryBroker {
 }
 
 func (b *DeliveryBroker) Subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
+	return b.subscribe(streamID)
+}
+
+// SubscribeForPublication scopes a stream key by publication identity. Native
+// delivery is node-local; this composite key prevents equal stream IDs from
+// different publications sharing subscribers.
+func (b *DeliveryBroker) SubscribeForPublication(publicationID, streamID string) (<-chan pagestream.SignalPatch, func()) {
+	return b.Subscribe(publicationID + "\x00" + streamID)
+}
+
+func (b *DeliveryBroker) subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
 	subscription := &deliverySubscription{
 		out:  make(chan pagestream.SignalPatch, 1),
 		wake: make(chan struct{}, 1),
@@ -60,7 +71,6 @@ func (b *DeliveryBroker) Subscribe(streamID string) (<-chan pagestream.SignalPat
 	}
 	b.clients[streamID][subscription] = struct{}{}
 	b.mu.Unlock()
-
 	go subscription.forward()
 	return subscription.out, func() {
 		subscription.once.Do(func() {
@@ -89,6 +99,13 @@ func (b *DeliveryBroker) PublishEnvelope(streamID string, envelope Envelope) {
 	for _, subscription := range subscriptions {
 		subscription.enqueue(envelope)
 	}
+}
+
+// PublishEnvelopeForPublication publishes to a publication-scoped stream on
+// this process only. Cross-node routing is an affinity/deployment concern, not
+// a PostgreSQL signal relay.
+func (b *DeliveryBroker) PublishEnvelopeForPublication(publicationID, streamID string, envelope Envelope) {
+	b.PublishEnvelope(publicationID+"\x00"+streamID, envelope)
 }
 
 func (s *deliverySubscription) enqueue(envelope Envelope) {

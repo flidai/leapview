@@ -223,7 +223,8 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	request := func() *httptest.ResponseRecorder {
 		recorder := httptest.NewRecorder()
 		r := httptest.NewRequest(http.MethodPost, path, nil)
-		r.Header.Set("Idempotency-Key", "suspend-website-1")
+		r.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000021")
+		r.Header.Set("If-Match", `"1"`)
 		r.Header.Set("Authorization", "Bearer local-secret")
 		server.Routes().ServeHTTP(recorder, r)
 		return recorder

@@ -37,30 +37,36 @@ WHERE publication_id = sqlc.arg(publication_id);
 
 -- name: SuspendDashboardPublication :execresult
 UPDATE dashboard_publications
-SET suspended_at = COALESCE(suspended_at, CURRENT_TIMESTAMP),
+SET revision = revision + 1,
+    suspended_at = COALESCE(suspended_at, CURRENT_TIMESTAMP),
     suspended_by = sqlc.arg(actor_id),
     updated_at = CURRENT_TIMESTAMP
 WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
-  AND configured = 1;
+  AND configured = 1
+  AND revision = sqlc.arg(expected_revision);
 
 -- name: ResumeDashboardPublication :execresult
 UPDATE dashboard_publications
-SET suspended_at = NULL,
+SET revision = revision + 1,
+    suspended_at = NULL,
     suspended_by = '',
     updated_at = CURRENT_TIMESTAMP
 WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
-  AND configured = 1;
+  AND configured = 1
+  AND revision = sqlc.arg(expected_revision);
 
 -- name: RotateDashboardPublication :execresult
 UPDATE dashboard_publications
-SET public_id = sqlc.arg(public_id),
+SET revision = revision + 1,
+    public_id = sqlc.arg(public_id),
     rotated_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
 WHERE project_id = sqlc.arg(project_id)
   AND name = sqlc.arg(name)
-  AND configured = 1;
+  AND configured = 1
+  AND revision = sqlc.arg(expected_revision);
 
 -- name: GetDashboardPublicationConfiguredState :one
 SELECT configured
@@ -84,13 +90,16 @@ VALUES
   (sqlc.arg(publication_id), sqlc.arg(event_type), sqlc.arg(actor_id), NULLIF(sqlc.arg(serving_state_id), ''));
 
 -- name: ListProjectDashboardPublicationStates :many
-SELECT id, name, configured, configuration_digest
+SELECT id, name, configured, configuration_digest,
+       COALESCE(active_serving_state_id, '') AS active_serving_state_id,
+       revision
 FROM dashboard_publications
 WHERE project_id = sqlc.arg(project_id);
 
 -- name: DisableDashboardPublication :exec
 UPDATE dashboard_publications
-SET configured = 0,
+SET revision = revision + 1,
+    configured = 0,
     active_serving_state_id = NULL,
     disabled_at = CURRENT_TIMESTAMP,
     updated_at = CURRENT_TIMESTAMP
@@ -98,7 +107,8 @@ WHERE id = sqlc.arg(id);
 
 -- name: UpdateDashboardPublicationConfiguration :exec
 UPDATE dashboard_publications
-SET dashboard = sqlc.arg(dashboard),
+SET revision = revision + 1,
+    dashboard = sqlc.arg(dashboard),
     default_page = sqlc.arg(default_page),
     configuration_digest = sqlc.arg(configuration_digest),
     allowed_origins_json = sqlc.arg(allowed_origins_json),

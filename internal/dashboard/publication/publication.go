@@ -30,15 +30,18 @@ type Publication struct {
 	ConfigurationDigest string
 	AllowedOrigins      []string
 	DependencyAssetIDs  []string
-	Configured          bool
-	ServingStateID      string
-	SuspendedAt         string
-	SuspendedBy         string
-	ConfiguredAt        string
-	DisabledAt          string
-	RotatedAt           string
-	CreatedAt           string
-	UpdatedAt           string
+	// Revision is the optimistic-concurrency version of the mutable
+	// publication projection. It advances on every state/configuration change.
+	Revision       int64
+	Configured     bool
+	ServingStateID string
+	SuspendedAt    string
+	SuspendedBy    string
+	ConfiguredAt   string
+	DisabledAt     string
+	RotatedAt      string
+	CreatedAt      string
+	UpdatedAt      string
 }
 
 // Definition is the immutable, compiled authorization boundary for one

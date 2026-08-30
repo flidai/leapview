@@ -14,6 +14,10 @@ type CommandInvocation struct {
 	IdempotencyKey string
 	RequestID      string
 	CorrelationID  string
+	// ExpectedRevision is the caller-observed publication revision used for
+	// optimistic concurrency. Command producers must supply it explicitly;
+	// the service must never perform a hidden read to infer a token.
+	ExpectedRevision int64
 }
 
 // WithAuditIntent carries the source-built audit intent into the publication

@@ -70,8 +70,8 @@ func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *tes
 	}))
 	request := func() *httptest.ResponseRecorder {
 		r := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(`{"pipelineCommand":{"action":"run","pipelineId":"pipeline:sales"}}`))
-		r.Header.Set("X-Request-ID", "browser-command-1")
-		r.Header.Set("Idempotency-Key", "ui:browser-command-1")
+		r.Header.Set("X-Request-ID", "018f4f2e-0000-7000-8000-000000000801")
+		r.Header.Set("Idempotency-Key", "018f4f2e-0000-7000-8000-000000000802")
 		recorder := httptest.NewRecorder()
 		handler.ServeHTTP(recorder, r)
 		return recorder
@@ -104,8 +104,8 @@ func TestBrowserMutationMiddlewareRequiresMatchingGeneratedIdentity(t *testing.T
 	called := false
 	handler := protocol.BrowserMutationMiddleware(func(*http.Request) bool { return true }, http.HandlerFunc(func(http.ResponseWriter, *http.Request) { called = true }))
 	request := httptest.NewRequest(http.MethodPost, "/pipelines/command", strings.NewReader(`{}`))
-	request.Header.Set("X-Request-ID", "request-1")
-	request.Header.Set("Idempotency-Key", "request-1")
+	request.Header.Set("X-Request-ID", "018f4f2e-0000-7000-8000-000000000811")
+	request.Header.Set("Idempotency-Key", "018f4f2e-0000-4000-8000-000000000812")
 	recorder := httptest.NewRecorder()
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusBadRequest || called {

@@ -3,10 +3,8 @@ package sqlite
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 type Repository struct {
@@ -46,6 +45,7 @@ func mapPublication(row publicationdb.DashboardPublication) (publication.Publica
 		ID: row.ID, ProjectID: projectID, Name: row.Name,
 		PublicID: row.PublicID, Dashboard: row.Dashboard, DefaultPage: row.DefaultPage,
 		ConfigurationDigest: row.ConfigurationDigest, Configured: row.Configured == 1,
+		Revision:       row.Revision,
 		ServingStateID: row.ActiveServingStateID.String, SuspendedAt: row.SuspendedAt.String,
 		SuspendedBy: row.SuspendedBy, ConfiguredAt: row.ConfiguredAt.String,
 		DisabledAt: row.DisabledAt.String, RotatedAt: row.RotatedAt.String,
@@ -125,30 +125,39 @@ func mapPublications(rows []publicationdb.DashboardPublication, err error) ([]pu
 	return out, nil
 }
 
-func (r *Repository) Suspend(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
+func (r *Repository) Suspend(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string, expectedRevision int64) (publication.Publication, error) {
+	if expectedRevision <= 0 {
+		return publication.Publication{}, publication.ErrConflict
+	}
 	return r.mutate(ctx, projectID, name, actorID, "suspended", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.SuspendDashboardPublication(ctx, publicationdb.SuspendDashboardPublicationParams{
-			ActorID: strings.TrimSpace(actorID), ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
+			ActorID: strings.TrimSpace(actorID), ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
 		})
 	})
 }
 
-func (r *Repository) Resume(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
+func (r *Repository) Resume(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string, expectedRevision int64) (publication.Publication, error) {
+	if expectedRevision <= 0 {
+		return publication.Publication{}, publication.ErrConflict
+	}
 	return r.mutate(ctx, projectID, name, actorID, "resumed", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.ResumeDashboardPublication(ctx, publicationdb.ResumeDashboardPublicationParams{
-			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
+			ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
 		})
 	})
 }
 
-func (r *Repository) Rotate(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string) (publication.Publication, error) {
+func (r *Repository) Rotate(ctx context.Context, projectID projectgraph.ResourceID, name, actorID string, expectedRevision int64) (publication.Publication, error) {
+	if expectedRevision <= 0 {
+		return publication.Publication{}, publication.ErrConflict
+	}
 	publicID, err := newPublicID()
 	if err != nil {
 		return publication.Publication{}, err
 	}
 	return r.mutate(ctx, projectID, name, actorID, "rotated", func(q *publicationdb.Queries) (sql.Result, error) {
 		return q.RotateDashboardPublication(ctx, publicationdb.RotateDashboardPublicationParams{
-			PublicID: publicID, ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name),
+			PublicID: publicID, ProjectID: strings.TrimSpace(projectID.String()), Name: strings.TrimSpace(name), ExpectedRevision: expectedRevision,
 		})
 	})
 }
@@ -229,7 +238,7 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx *sql.Tx, publicat
 	return r.audit.RecordAuditIntent(ctx, tx, intent)
 }
 
-func ReconcileTx(
+func (r *Repository) ReconcileTx(
 	ctx context.Context,
 	tx transaction.Transaction,
 	input publication.ReconcileInput,
@@ -251,13 +260,14 @@ func ReconcileTx(
 		return err
 	}
 	type existingRow struct {
-		id, name, digest string
-		configured       bool
+		id, name, digest, servingStateID string
+		configured                       bool
 	}
 	existing := make(map[string]existingRow, len(rows))
 	for _, row := range rows {
 		existing[row.Name] = existingRow{
-			id: row.ID, name: row.Name, digest: row.ConfigurationDigest, configured: row.Configured == 1,
+			id: row.ID, name: row.Name, digest: row.ConfigurationDigest,
+			servingStateID: row.ActiveServingStateID, configured: row.Configured == 1,
 		}
 	}
 
@@ -297,6 +307,11 @@ func ReconcileTx(
 				eventType = "configured"
 			} else if current.digest != compiled.ConfigurationDigest {
 				eventType = "configuration_changed"
+			} else if current.servingStateID != input.ServingStateID {
+				eventType = "serving_state_changed"
+			}
+			if eventType == "" {
+				continue
 			}
 			if err := q.UpdateDashboardPublicationConfiguration(ctx, publicationdb.UpdateDashboardPublicationConfigurationParams{
 				Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage,
@@ -307,10 +322,8 @@ func ReconcileTx(
 			}); err != nil {
 				return err
 			}
-			if eventType != "" {
-				if err := insertEvent(ctx, q, current.id, eventType, input.ActorID, input.ServingStateID); err != nil {
-					return err
-				}
+			if err := insertEvent(ctx, q, current.id, eventType, input.ActorID, input.ServingStateID); err != nil {
+				return err
 			}
 			continue
 		}
@@ -318,7 +331,11 @@ func ReconcileTx(
 		if err != nil {
 			return err
 		}
-		id := operationalID(input.ProjectID, name)
+		idValue, err := uuid.NewV7()
+		if err != nil {
+			return err
+		}
+		id := idValue.String()
 		if err := q.CreateDashboardPublication(ctx, publicationdb.CreateDashboardPublicationParams{
 			ID: id, ProjectID: input.ProjectID.String(), Name: name, PublicID: publicID,
 			Dashboard: compiled.Dashboard, DefaultPage: compiled.DefaultPage,
@@ -348,9 +365,4 @@ func newPublicID() (string, error) {
 		return "", err
 	}
 	return base64.RawURLEncoding.EncodeToString(raw), nil
-}
-
-func operationalID(projectID projectgraph.ResourceID, name string) string {
-	sum := sha256.Sum256([]byte(projectID.String() + "\x00" + name))
-	return "pub_" + hex.EncodeToString(sum[:16])
 }

@@ -18,6 +18,7 @@ import (
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
+	"github.com/google/uuid"
 )
 
 type Config struct {
@@ -127,13 +128,18 @@ func (p *Protocol) BrowserMutationMiddleware(replayAuthorize func(*http.Request)
 		}
 		requestID := strings.TrimSpace(r.Header.Get("X-Request-ID"))
 		key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
-		if requestID == "" || key == "" || key != "ui:"+requestID {
-			apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "Idempotency-Key must equal ui:<X-Request-ID>", nil)
+		if !canonicalUUIDv7(requestID) || !canonicalUUIDv7(key) {
+			apitransport.WriteProblem(w, r, http.StatusBadRequest, "IDEMPOTENCY_KEY_REQUIRED", "X-Request-ID and Idempotency-Key must be canonical UUIDv7 values", nil)
 			return
 		}
 		PrepareRequest(w, r)
 		p.serveIdempotent(w, r, next, replayAuthorize)
 	})
+}
+
+func canonicalUUIDv7(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id.Version() == 7 && id.String() == value
 }
 
 func (p *Protocol) Authenticate(w http.ResponseWriter, r *http.Request) bool {

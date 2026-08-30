@@ -15,6 +15,8 @@ import (
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
+	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
@@ -50,6 +52,8 @@ var plan = platformmigrations.Plan{
 		{Name: "dashboard.session", SQL: dashboardsessionpostgres.SchemaSQL()},
 		{Name: "dashboard.usage", SQL: dashboardusagepostgres.SchemaSQL()},
 		{Name: "dashboard.appearance", SQL: dashboardappearancepostgres.SchemaSQL()},
+		{Name: "dashboard.authoring", SQL: dashboardauthoringpostgres.SchemaSQL()},
+		{Name: "dashboard.publication", SQL: dashboardpublicationpostgres.SchemaSQL()},
 		{Name: "connection_binding", SQL: connectionbindingpostgres.SchemaSQL()},
 		{Name: "event", SQL: eventspostgres.SchemaSQL()},
 		{Name: "managed_data", SQL: manageddatapostgres.SchemaSQL()},
@@ -93,6 +97,8 @@ BEGIN
 		GRANT SELECT, INSERT ON platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_runtime;
 		GRANT SELECT, UPDATE ON admin.product_identity TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_runtime;
+		GRANT SELECT, INSERT ON dashboard.authoring_revisions, dashboard.authoring_compiled_revisions, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts TO leapview_control_runtime;
+		GRANT SELECT, INSERT ON dashboard.publication_events TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON release.release_record, release.release_connection
             FROM leapview_control_runtime;
@@ -137,6 +143,7 @@ BEGIN
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
 		GRANT USAGE ON SCHEMA dashboard, event, jobs, physical_pool TO leapview_control_maintenance;
 		GRANT SELECT, DELETE ON dashboard.view_session, dashboard.view_day TO leapview_control_maintenance;
+		GRANT SELECT, DELETE ON dashboard.publication_streams TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) TO leapview_control_maintenance;
         GRANT SELECT ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims TO leapview_control_maintenance;
@@ -149,6 +156,7 @@ BEGIN
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_readonly;
 		GRANT SELECT ON admin.product_identity TO leapview_control_readonly;
 		GRANT SELECT ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_readonly;
+		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA release TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_readonly;
@@ -167,6 +175,7 @@ BEGIN
 		GRANT SELECT ON platform.setting, platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_backup;
 		GRANT SELECT ON admin.product_identity TO leapview_control_backup;
 		GRANT SELECT ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_backup;
+		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA project, access, delivery, event, audit, release, ducklake, jobs, lineage, cache, physical_pool TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_backup;

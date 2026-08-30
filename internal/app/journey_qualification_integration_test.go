@@ -20,6 +20,7 @@ import (
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/google/uuid"
 )
 
 // TestJourneyQualificationAssembledRouter protects the highest-risk browser
@@ -135,8 +136,8 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 	viewerConnection.Header.Set("Authorization", "Bearer "+viewerToken)
 	viewerConnection.Header.Set("Content-Type", "application/json")
 	viewerConnection.Header.Set(uicommand.HeaderOperationID, "createTargetConnectionBinding")
-	viewerConnection.Header.Set("X-Request-ID", "journey-connection-viewer")
-	viewerConnection.Header.Set("Idempotency-Key", "ui:journey-connection-viewer")
+	viewerConnection.Header.Set("X-Request-ID", mustJourneyUUIDv7(t))
+	viewerConnection.Header.Set("Idempotency-Key", mustJourneyUUIDv7(t))
 	viewerConnectionRec := httptest.NewRecorder()
 	handler.ServeHTTP(viewerConnectionRec, viewerConnection)
 	if viewerConnectionRec.Code != http.StatusOK || !strings.Contains(viewerConnectionRec.Body.String(), "forbidden") {
@@ -146,8 +147,8 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 	operatorConnection.Header.Set("Authorization", "Bearer "+operatorToken)
 	operatorConnection.Header.Set("Content-Type", "application/json")
 	operatorConnection.Header.Set(uicommand.HeaderOperationID, "createTargetConnectionBinding")
-	operatorConnection.Header.Set("X-Request-ID", "journey-connection-operator")
-	operatorConnection.Header.Set("Idempotency-Key", "ui:journey-connection-operator")
+	operatorConnection.Header.Set("X-Request-ID", mustJourneyUUIDv7(t))
+	operatorConnection.Header.Set("Idempotency-Key", mustJourneyUUIDv7(t))
 	operatorConnectionRec := httptest.NewRecorder()
 	handler.ServeHTTP(operatorConnectionRec, operatorConnection)
 	if operatorConnectionRec.Code != http.StatusOK || !strings.Contains(operatorConnectionRec.Body.String(), "connectionAdmin") {
@@ -183,8 +184,8 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 	operatorPipeline.Header.Set("Authorization", "Bearer "+operatorToken)
 	operatorPipeline.Header.Set("Content-Type", "application/json")
 	operatorPipeline.Header.Set(uicommand.HeaderOperationID, "createRefreshRun")
-	operatorPipeline.Header.Set("X-Request-ID", "journey-pipeline-operator")
-	operatorPipeline.Header.Set("Idempotency-Key", "ui:journey-pipeline-operator")
+	operatorPipeline.Header.Set("X-Request-ID", mustJourneyUUIDv7(t))
+	operatorPipeline.Header.Set("Idempotency-Key", mustJourneyUUIDv7(t))
 	operatorPipelineRec := httptest.NewRecorder()
 	handler.ServeHTTP(operatorPipelineRec, operatorPipeline)
 	if operatorPipelineRec.Code != http.StatusOK || !strings.Contains(operatorPipelineRec.Body.String(), "accepted") || !strings.Contains(operatorPipelineRec.Body.String(), "Reload the page") || pipelineCalls != 1 {
@@ -197,6 +198,15 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 	if pipelineReplayRec.Code != http.StatusOK || pipelineReplayRec.Header().Get("Idempotency-Replayed") != "true" || pipelineCalls != 1 {
 		t.Fatalf("pipeline replay = %d replay=%q calls=%d body=%s", pipelineReplayRec.Code, pipelineReplayRec.Header().Get("Idempotency-Replayed"), pipelineCalls, pipelineReplayRec.Body.String())
 	}
+}
+
+func mustJourneyUUIDv7(t *testing.T) string {
+	t.Helper()
+	value, err := uuid.NewV7()
+	if err != nil {
+		t.Fatalf("generate browser mutation identity: %v", err)
+	}
+	return value.String()
 }
 
 // journeyDefinitionReader supplies only typed, credential-free definition

@@ -20,6 +20,18 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+type mutableAPIGenLease struct {
+	identity projectgraph.ServingIdentity
+	current  func() accesssnapshot.AuthorizationSnapshot
+}
+
+func (l mutableAPIGenLease) Runtime() projectruntime.Runtime        { return nil }
+func (l mutableAPIGenLease) Identity() projectgraph.ServingIdentity { return l.identity }
+func (l mutableAPIGenLease) Release()                               {}
+func (l mutableAPIGenLease) AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot {
+	return l.current()
+}
+
 type apigenRuntimeFake struct {
 	project projectgraph.ResourceID
 	lease   runtimehost.Lease
@@ -530,6 +542,66 @@ func TestAPIGenReplayReevaluatesCurrentPolicyAndRejectsMethodOrPathMismatch(t *t
 	request.URL.Path = contract.Path
 	if authorizer.AuthorizeReplay(request) {
 		t.Fatal("replay ignored current authentication policy")
+	}
+}
+
+func TestAPIGenPublicationReplayRechecksRevokedResourcePublishGrant(t *testing.T) {
+	identity, err := projectgraph.NewServingIdentity("project_demo", "prod", "generation_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
+		{ID: "dashboard_website", Kind: projectgraph.KindDashboard, Name: "website"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, "principal_alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	allowedSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, []accesssnapshot.RoleBinding{{
+		ID: "binding_deployer", Subject: subject, Role: access.ProjectRoleDeployer,
+		Capabilities: access.ProjectRoleCapabilities(access.ProjectRoleDeployer),
+	}}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revokedSnapshot, err := accesssnapshot.NewAuthorizationSnapshotWithRoleBindings(identity, graph, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := allowedSnapshot
+	module := browserGuardModule(browserGuardRepository{}, Principal{ID: subject.ID}, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		return current.EffectiveCapabilities([]access.SubjectRef{subject})
+	})
+	lease := mutableAPIGenLease{identity: identity, current: func() accesssnapshot.AuthorizationSnapshot { return current }}
+	authorizer, err := module.APIGenAuthorizer(apigenRuntimeFake{project: identity.ProjectID, lease: lease}, map[string]APIGenOperationContract{
+		"suspendDashboardPublication": {
+			OperationID: "suspendDashboardPublication", Method: http.MethodPost,
+			Path: "/api/v1/projects/{project}/dashboard-publications/{publication}/suspend", Protected: true, AuthzMode: "privilege",
+			Command:    &APIGenCommandContract{AuthzMode: "privilege", Privilege: "RESOURCE_PUBLISH", Target: &APIGenCommandTarget{Parameter: "project", Type: "project"}},
+			Extensions: map[string]any{apiGenObjectScopeExtension: "project"},
+		},
+	}, APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/dashboard-publications/website/suspend", map[string]string{"project": "project_demo", "publication": "website"})
+	handler, ok := authorizer.Protect("suspendDashboardPublication", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }))
+	if !ok || handler == nil {
+		t.Fatal("publication operation was not protected")
+	}
+	first := httptest.NewRecorder()
+	handler.ServeHTTP(first, request)
+	if first.Code != http.StatusNoContent {
+		t.Fatalf("initial publication mutation authorization = %d, want %d", first.Code, http.StatusNoContent)
+	}
+	current = revokedSnapshot
+	if authorizer.AuthorizeReplay(request) {
+		t.Fatal("publication replay bypassed revoked RESOURCE_PUBLISH grant")
 	}
 }
 

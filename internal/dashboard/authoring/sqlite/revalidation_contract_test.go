@@ -87,7 +87,7 @@ func TestCanonicalSQLiteRevalidationCASPreservesEvidenceAndClearsFailures(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	commit := canonicalRevalidationCommit(t, fixture, "attempt_00000000000000000000000000000001", fixture.lifecycle, fixture.prior, compiled)
+	commit := canonicalRevalidationCommit(t, fixture, "018f4f2e-0000-7000-8000-000000000001", fixture.lifecycle, fixture.prior, compiled)
 	if err := fixture.repository.CommitRevalidation(ctx, commit); err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +103,7 @@ func TestCanonicalSQLiteRevalidationCASPreservesEvidenceAndClearsFailures(t *tes
 		t.Fatal(err)
 	}
 	failure := authoring.RevalidationFailure{Identity: fixture.generation.Identity, DependencyIDs: fixture.deps, Code: "INVALID_DEPENDENCY", Message: "model changed", FailedAt: time.Date(2026, 8, 18, 13, 0, 0, 0, time.UTC)}
-	if err := fixture.repository.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "attempt_00000000000000000000000000000002", Generation: fixture.generation, Dashboard: current, AuthoredRevision: fixture.revision, PriorCompilation: compiled.Token(), DependencyIDs: fixture.deps, Failure: failure}); err != nil {
+	if err := fixture.repository.RecordRevalidationFailure(ctx, authoring.RevalidationFailureInput{AttemptID: "018f4f2e-0000-7000-8000-000000000002", Generation: fixture.generation, Dashboard: current, AuthoredRevision: fixture.revision, PriorCompilation: compiled.Token(), DependencyIDs: fixture.deps, Failure: failure}); err != nil {
 		t.Fatal(err)
 	}
 	failed, err := fixture.repository.Get(ctx, "project:sales", "dashboard:revalidate")
@@ -118,7 +118,7 @@ func TestCanonicalSQLiteRevalidationCASPreservesEvidenceAndClearsFailures(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := fixture.repository.CommitRevalidation(ctx, canonicalRevalidationCommit(t, fixture, "attempt_00000000000000000000000000000003", current, compiled, retryCompiled)); err != nil {
+	if err := fixture.repository.CommitRevalidation(ctx, canonicalRevalidationCommit(t, fixture, "018f4f2e-0000-7000-8000-000000000003", current, compiled, retryCompiled)); err != nil {
 		t.Fatal(err)
 	}
 	cleared, err := fixture.repository.Get(ctx, "project:sales", "dashboard:revalidate")
@@ -135,8 +135,8 @@ func TestCanonicalSQLiteRevalidationConcurrentCASAdvancesOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	commits := []authoring.RevalidationCommit{
-		canonicalRevalidationCommit(t, fixture, "attempt_00000000000000000000000000000004", fixture.lifecycle, fixture.prior, compiled),
-		canonicalRevalidationCommit(t, fixture, "attempt_00000000000000000000000000000005", fixture.lifecycle, fixture.prior, compiled),
+		canonicalRevalidationCommit(t, fixture, "018f4f2e-0000-7000-8000-000000000004", fixture.lifecycle, fixture.prior, compiled),
+		canonicalRevalidationCommit(t, fixture, "018f4f2e-0000-7000-8000-000000000005", fixture.lifecycle, fixture.prior, compiled),
 	}
 	results := make(chan error, len(commits))
 	var group sync.WaitGroup

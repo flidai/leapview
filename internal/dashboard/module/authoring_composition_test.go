@@ -7,12 +7,88 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/access"
+	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	runtimehost "github.com/flidai/leapview/internal/runtimehost"
+	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// nativeCompositionDB is intentionally only a composition probe: BuildAuthoring
+// must preserve the supplied PostgreSQL repository without opening a transaction.
+// The embedded transaction interface keeps the fake small while ensuring the
+// native constructor still sees a transaction-capable DB handle.
+type nativeCompositionDB struct{}
+
+func (nativeCompositionDB) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+func (nativeCompositionDB) Query(context.Context, string, ...any) (pgx.Rows, error) {
+	return nil, nil
+}
+func (nativeCompositionDB) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
+func (nativeCompositionDB) Begin(context.Context) (pgx.Tx, error) {
+	return nil, nil
+}
+
+type nativeCompositionAudit struct{}
+
+func (nativeCompositionAudit) RecordAuditIntent(context.Context, authoringpostgres.Tx, access.AuditIntent) error {
+	return nil
+}
+
+type nativeCompositionEvents struct{}
+
+func (nativeCompositionEvents) AppendEvent(_ context.Context, _ authoringpostgres.Tx, input authoringpostgres.EventInput) (authoringpostgres.Event, error) {
+	return authoringpostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, Payload: input.Payload}, nil
+}
+
+type nativeCompositionFence struct{}
+
+func (nativeCompositionFence) ValidateActiveGeneration(context.Context, authoringpostgres.Tx, projectgraph.ServingIdentity) error {
+	return nil
+}
+
+func TestBuildAuthoringNativeUsesSuppliedRepositoryWithoutSQLiteAuditRecorder(t *testing.T) {
+	repository, err := authoringpostgres.New(nativeCompositionDB{}, nativeCompositionAudit{}, nativeCompositionEvents{}, nativeCompositionFence{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	application, err := BuildAuthoring(AuthoringConfig{
+		NativeRepository: repository,
+		AuthorizeResource: func(context.Context, string, projectgraph.ResourceID, access.ResourceRef, access.Capability) (bool, error) {
+			return true, nil
+		},
+		AuthorizeProjectCapability: func(context.Context, string, projectgraph.ResourceID, access.Capability) (bool, error) {
+			return true, nil
+		},
+		AcquireRuntime: func(context.Context) (runtimehost.Lease, error) { return nil, errors.New("runtime unavailable") },
+	})
+	if err != nil {
+		t.Fatalf("native composition rejected repository-owned audit wiring: %v", err)
+	}
+	if application == nil || application.PublishedCompilationReader() != repository {
+		t.Fatalf("native composition did not preserve supplied repository: application=%#v", application)
+	}
+	for name, generate := range map[string]func() (string, error){
+		"dashboard": func() (string, error) { id, err := authoringpostgres.NewDashboardID(); return string(id), err },
+		"draft":     func() (string, error) { id, err := authoringpostgres.NewDraftID(); return string(id), err },
+		"revision":  func() (string, error) { id, err := authoringpostgres.NewRevisionID(); return string(id), err },
+	} {
+		value, err := generate()
+		if err != nil {
+			t.Fatalf("generate %s id: %v", name, err)
+		}
+		parsed, err := uuid.Parse(value)
+		if err != nil || parsed.Version() != 7 {
+			t.Fatalf("%s id=%q, want UUIDv7: parse=%v version=%v", name, value, err, parsed.Version())
+		}
+	}
+}
 
 func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *testing.T) {
 	store, err := platform.Open(context.Background(), filepath.Join(t.TempDir(), "leapview.db"))

@@ -35,7 +35,7 @@ func ReconcilePublications(
 		}
 		publications[name] = definition
 	}
-	return publicationsqlite.ReconcileTx(ctx, tx, publication.ReconcileInput{
+	return new(publicationsqlite.Repository).ReconcileTx(ctx, tx, publication.ReconcileInput{
 		ProjectID:      projectID,
 		ServingStateID: input.ServingStateID, ActorID: input.ActorID,
 		Publications: publications,

@@ -3,15 +3,26 @@ package module_test
 import (
 	"context"
 	"database/sql"
+	"errors"
+	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	dashboardappearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
+	dashboardauthoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
+	"github.com/flidai/leapview/internal/dashboard/publication"
+	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
 	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/platform/transaction"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 type nativeDBStub struct{}
@@ -35,6 +46,43 @@ func (nativeEventStub) AppendEvent(_ context.Context, _ dashboardappearancepostg
 	return dashboardappearancepostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, Revision: input.Revision, Patch: input.Patch, AggregateVersion: input.Revision}, nil
 }
 
+type nativeAuthoringAuditStub struct{}
+
+func (nativeAuthoringAuditStub) RecordAuditIntent(context.Context, dashboardauthoringpostgres.Tx, access.AuditIntent) error {
+	return nil
+}
+
+type nativeAuthoringEventStub struct{}
+
+func (nativeAuthoringEventStub) AppendEvent(_ context.Context, _ dashboardauthoringpostgres.Tx, input dashboardauthoringpostgres.EventInput) (dashboardauthoringpostgres.Event, error) {
+	return dashboardauthoringpostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, DashboardID: input.DashboardID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, Payload: input.Payload}, nil
+}
+
+type nativeFenceStub struct{}
+
+func (nativeFenceStub) ValidateActiveGeneration(context.Context, dashboardauthoringpostgres.Tx, projectgraph.ServingIdentity) error {
+	return nil
+}
+
+type nativePublicationAuditStub struct{}
+
+func (nativePublicationAuditStub) RecordAuditIntent(context.Context, dashboardpublicationpostgres.Tx, access.AuditIntent) error {
+	return nil
+}
+
+type capturingNativePublicationAudit struct{ count int }
+
+func (a *capturingNativePublicationAudit) RecordAuditIntent(context.Context, dashboardpublicationpostgres.Tx, access.AuditIntent) error {
+	a.count++
+	return nil
+}
+
+type nativePublicationEventStub struct{}
+
+func (nativePublicationEventStub) AppendEvent(_ context.Context, _ dashboardpublicationpostgres.Tx, input dashboardpublicationpostgres.EventInput) (dashboardpublicationpostgres.Event, error) {
+	return dashboardpublicationpostgres.Event{EventID: input.EventID, ProjectID: input.ProjectID, PublicationID: input.PublicationID, ActorID: input.ActorID, CorrelationID: input.CorrelationID, Revision: input.Revision, AggregateVersion: input.Revision, Type: input.Type, ServingStateID: input.ServingStateID, Payload: input.Payload}, nil
+}
+
 func validNativePersistence(t *testing.T) *dashboardmodule.NativePersistence {
 	t.Helper()
 	db := nativeDBStub{}
@@ -50,7 +98,18 @@ func validNativePersistence(t *testing.T) *dashboardmodule.NativePersistence {
 	if err != nil {
 		t.Fatal(err)
 	}
-	bundle, err := dashboardmodule.NewNativePersistence(sessions, usage, appearance)
+	authoring, err := dashboardauthoringpostgres.New(db, nativeAuthoringAuditStub{}, nativeAuthoringEventStub{}, nativeFenceStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pub, err := dashboardpublicationpostgres.New(db, nativePublicationAuditStub{}, nativePublicationEventStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := dashboardmodule.NewNativePersistence(dashboardmodule.NativePersistenceOptions{
+		Session: sessions, Usage: usage, Appearance: appearance, Authoring: authoring, Publication: pub,
+		Streams: dashboardpublicationpostgres.NewStreamRegistry(db), Broker: dashboardpublicationpostgres.NewBroker(nil),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,6 +131,125 @@ func TestBuildNativeDashboardUsesValidatedBundleWithoutSQLite(t *testing.T) {
 	if module.AppearanceStore() == nil {
 		t.Fatal("native dashboard build did not expose appearance authority")
 	}
+	if !module.PublicationsConfigured() {
+		t.Fatal("native dashboard build did not mark publication audit/mutation authority ready")
+	}
+}
+
+// TestBuildNativeDashboardMutationUsesNativeAudit exercises the composed
+// module through its transport-neutral mutation adapter. A real PostgreSQL
+// authority is required here because a native repository must execute its
+// source transaction and invoke the transaction-scoped audit port; SQLite or
+// nil database stand-ins would only prove the readiness flag.
+func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "dashboard_native_module")
+	db, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(db.Close)
+	tx, err := db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := dashboardappearancepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := dashboardauthoringpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := dashboardpublicationpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := dashboardsessionpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := dashboardusagepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, err := dashboardsessionpostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	usage, err := dashboardusagepostgres.New(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	appearance, err := dashboardappearancepostgres.New(db, dashboardappearancepostgres.Options{Audit: nativeAuditStub{}, Events: nativeEventStub{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoring, err := dashboardauthoringpostgres.New(db, nativeAuthoringAuditStub{}, nativeAuthoringEventStub{}, nativeFenceStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := &capturingNativePublicationAudit{}
+	publications, err := dashboardpublicationpostgres.New(db, audit, nativePublicationEventStub{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := dashboardmodule.NewNativePersistence(dashboardmodule.NativePersistenceOptions{
+		Session: sessions, Usage: usage, Appearance: appearance, Authoring: authoring, Publication: publications,
+		Streams: dashboardpublicationpostgres.NewStreamRegistry(db), Broker: dashboardpublicationpostgres.NewBroker(nil),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	projectID := projectgraph.ResourceID("project_native")
+	tx, err = db.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := publications.ReconcileTx(t.Context(), tx, publication.ReconcileInput{
+		ProjectID: projectID, ServingStateID: "generation_native", ActorID: "principal:owner",
+		Publications: map[string]publication.Definition{
+			"website": {Name: "website", Dashboard: "dashboard:website", DefaultPage: "overview", ConfigurationDigest: "sha256:" + "a" + strings.Repeat("0", 63)},
+		},
+	}, func(context.Context, dashboardpublicationpostgres.Tx, projectgraph.ResourceID, string) error {
+		return nil
+	}); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	row, err := publications.Get(t.Context(), projectID, "website")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if audit.count == 0 {
+		t.Fatal("native publication reconciliation did not record an audit intent")
+	}
+	module, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{RequireNativePersistence: true, NativePersistence: bundle})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestID := uuid.MustParse("018f4f2e-0000-7000-0000-000000000731").String()
+	_, err = module.MutatePublicationWithInvocation(t.Context(), projectID.String(), "website", "principal:owner", publication.ActionSuspend, publication.CommandInvocation{
+		Surface: "api", OperationID: "suspendDashboardPublication", RequestID: requestID, CorrelationID: requestID,
+		IdempotencyKey: uuid.MustParse("018f4f2e-0000-7000-0000-000000000732").String(), ExpectedRevision: row.Revision,
+	})
+	if err != nil {
+		if errors.Is(err, publication.ErrNotFound) {
+			t.Fatalf("native mutation incorrectly returned ErrNotFound: %v", err)
+		}
+		t.Fatalf("native publication mutation failed (audit unavailable would indicate bad composition): %v", err)
+	}
+	if audit.count < 2 {
+		t.Fatalf("native publication mutation recorded %d audit intents, want reconciliation plus mutation", audit.count)
+	}
 }
 
 func TestBuildNativeDashboardRejectsLegacyOrForgedPersistence(t *testing.T) {
@@ -81,6 +259,7 @@ func TestBuildNativeDashboardRejectsLegacyOrForgedPersistence(t *testing.T) {
 		{RequireNativePersistence: true, NativePersistence: bundle, LegacySQLite: true},
 		{RequireNativePersistence: true, NativePersistence: &dashboardmodule.NativePersistence{}},
 		{RequireNativePersistence: true, NativePersistence: bundle, SessionStore: dashboardsession.NewMemoryStore()},
+		{RequireNativePersistence: true, NativePersistence: bundle, AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return nil })},
 	}
 	for index, config := range cases {
 		if _, err := dashboardmodule.Build(t.Context(), config); err == nil {

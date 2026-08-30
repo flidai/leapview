@@ -2,7 +2,6 @@ package http
 
 import (
 	"crypto/rand"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,6 +23,7 @@ import (
 	webtransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/pagestream"
+	"github.com/google/uuid"
 )
 
 var readStreamInstanceRandom = rand.Read
@@ -250,12 +250,19 @@ func streamActivePage(pages []dashboard.Page, pageID string) (dashboard.Page, bo
 }
 
 func fallbackStreamInstanceID() (string, error) {
-	var value [16]byte
-	if _, err := readStreamInstanceRandom(value[:]); err != nil {
+	reader := randomFuncReader(readStreamInstanceRandom)
+	id, err := uuid.NewV7FromReader(reader)
+	if err != nil {
 		return "", fmt.Errorf("generate dashboard stream identity: %w", err)
 	}
-	return hex.EncodeToString(value[:]), nil
+	return id.String(), nil
 }
+
+// randomFuncReader preserves the test seam for the secure UUIDv7 entropy
+// source while adapting the historical function-shaped reader to io.Reader.
+type randomFuncReader func([]byte) (int, error)
+
+func (r randomFuncReader) Read(p []byte) (int, error) { return r(p) }
 
 func (h Handler) refreshObserver(dashboardID, pageID string) dashboardstream.SummaryObserver {
 	logger := h.Logger

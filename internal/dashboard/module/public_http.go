@@ -19,9 +19,11 @@ import (
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
+	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	reportui "github.com/flidai/leapview/internal/dashboard/ui"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -218,7 +220,7 @@ func (m *Module) PublicDashboardCommand(commandName string) http.HandlerFunc {
 func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboardhttp.Handler {
 	handler := m.HTTP()
 	handler.Metrics = resolved.Metrics
-	handler.Broker = m.publicBroker
+	handler.Broker = scopedPublicationBroker(m.publicBroker, resolved.Publication.ID)
 	handler.CSRFToken = nil
 	handler.Layout = nil
 	handler.SessionKey = func(_ *http.Request, definition dashboarddefinition.Definition, clientID, streamInstanceID string) (dashboardsession.Key, error) {
@@ -258,6 +260,31 @@ func (m *Module) PublicDashboardHTTP(resolved ResolvedPublicDashboard) dashboard
 		return m.streams.PrepareCommand(r.Context(), resolved.Publication.ID, streamID, version, prepare)
 	}
 	return handler
+}
+
+type publicationScopedBroker interface {
+	SubscribeForPublication(string, string) (<-chan pagestream.SignalPatch, func())
+	PublishEnvelopeForPublication(string, string, dashboardstream.Envelope)
+}
+
+type scopedBroker struct {
+	broker        publicationScopedBroker
+	publicationID string
+}
+
+func (b scopedBroker) Subscribe(streamID string) (<-chan pagestream.SignalPatch, func()) {
+	return b.broker.SubscribeForPublication(b.publicationID, streamID)
+}
+
+func (b scopedBroker) PublishEnvelope(streamID string, envelope dashboardstream.Envelope) {
+	b.broker.PublishEnvelopeForPublication(b.publicationID, streamID, envelope)
+}
+
+func scopedPublicationBroker(b dashboardhttp.SignalBroker, publicationID string) dashboardhttp.SignalBroker {
+	if scoped, ok := b.(publicationScopedBroker); ok {
+		return scopedBroker{broker: scoped, publicationID: publicationID}
+	}
+	return b
 }
 
 func PublicationExecutionContext(ctx context.Context, row publication.Publication, modelID string) context.Context {

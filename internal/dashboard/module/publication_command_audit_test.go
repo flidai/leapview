@@ -17,7 +17,7 @@ func TestPublicationAuditIntentIsStableAndSecretSafe(t *testing.T) {
 	input := publicationCommandAuditInput{
 		operationID: dashboardgen.GenOperationSuspendDashboardPublication, projectID: projectgraph.ResourceID("project_1"),
 		principalID: "principal-a", targetID: "executive", requestID: "request-a", correlationID: "correlation-a",
-		surface: "cli", idempotencyKey: "retry-key", aggregateKey: "dashboard_publication:project_1:executive",
+		surface: "cli", idempotencyKey: "018f4f2e-0000-7000-8000-000000000001", aggregateKey: "dashboard_publication:project_1:executive",
 	}
 	first, err := buildPublicationAuditIntent(input)
 	if err != nil {
@@ -30,7 +30,7 @@ func TestPublicationAuditIntentIsStableAndSecretSafe(t *testing.T) {
 	if first.EventID == "" || first.EventID != second.EventID || first.AggregateKey != second.AggregateKey {
 		t.Fatalf("intent identity is not stable: first=%#v second=%#v", first, second)
 	}
-	if strings.Contains(first.MetadataJSON, "retry-key") || strings.Contains(first.MetadataJSON, "principal-a") {
+	if strings.Contains(first.MetadataJSON, "018f4f2e-0000-7000-8000-000000000001") || strings.Contains(first.MetadataJSON, "principal-a") {
 		t.Fatalf("audit metadata leaked request identity: %s", first.MetadataJSON)
 	}
 	if first.MetadataJSON == "" || first.MetadataJSON == "{}" {
@@ -83,7 +83,7 @@ func TestPublicationAuditIntentFieldsUseAccessContract(t *testing.T) {
 	intent, err := buildPublicationAuditIntent(publicationCommandAuditInput{
 		operationID: dashboardgen.GenOperationRotateDashboardPublication, projectID: projectgraph.ResourceID("project_1"),
 		principalID: "principal-a", targetID: "executive", requestID: "request-a", correlationID: "request-a",
-		surface: "api", idempotencyKey: "rotate-1",
+		surface: "api", idempotencyKey: "018f4f2e-0000-7000-8000-000000000002",
 	})
 	if err != nil {
 		t.Fatal(err)

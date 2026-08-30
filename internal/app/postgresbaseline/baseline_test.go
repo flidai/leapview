@@ -6,7 +6,7 @@ import (
 )
 
 func TestProductBaselineComponentOrder(t *testing.T) {
-	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "lineage", "cache", "queryaudit"}
+	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "dashboard.authoring", "dashboard.publication", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "lineage", "cache", "queryaudit"}
 	components := Components()
 	if len(components) != len(want) {
 		t.Fatalf("component count = %d, want %d", len(components), len(want))
@@ -74,6 +74,20 @@ func TestProductRolePolicyNamesDashboardTablesExplicitly(t *testing.T) {
 	} {
 		if !strings.Contains(rolePolicySQL, required) {
 			t.Fatalf("dashboard role policy is missing explicit grant %q", required)
+		}
+	}
+}
+
+func TestProductRolePolicyDoesNotBroadenDashboardProjectionMutation(t *testing.T) {
+	for _, forbidden := range []string{
+		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_dashboards",
+		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_drafts",
+		"GRANT SELECT, INSERT, UPDATE ON dashboard.authoring_published",
+		"GRANT SELECT, INSERT, UPDATE ON dashboard.publications",
+		"GRANT SELECT, INSERT, UPDATE ON dashboard.publication_streams",
+	} {
+		if strings.Contains(rolePolicySQL, forbidden) {
+			t.Fatalf("dashboard role policy broadens component column grants through %q", forbidden)
 		}
 	}
 }

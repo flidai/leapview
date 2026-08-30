@@ -157,7 +157,7 @@ func TestRevalidationAttemptIDCanonicalValidation(t *testing.T) {
 	if err := ValidateRevalidationAttemptID(id); err != nil {
 		t.Fatalf("generated ID %q rejected: %v", id, err)
 	}
-	for _, invalid := range []string{"", "attempt-short", "attempt_0000000000000000000000000000000G", "attempt_00000000000000000000000000000001 "} {
+	for _, invalid := range []string{"", "attempt-short", "018f4f2e-0000-6000-8000-000000000000", "018f4f2e-0000-7000-8000-000000000001 "} {
 		if err := ValidateRevalidationAttemptID(invalid); err == nil {
 			t.Fatalf("invalid ID %q accepted", invalid)
 		}

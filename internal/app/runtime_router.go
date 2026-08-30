@@ -77,20 +77,21 @@ type capabilityRoutes struct {
 }
 
 type runtimeServices struct {
-	analyticsModule       *analyticsmodule.Module
-	metrics               QueryMetrics
-	workloads             workloadControl
-	broker                *pagestream.Broker
-	dashboardBroker       *dashboardmodule.DeliveryBroker
-	pageStreams           *uitransport.PageStream
-	persistenceConfigured bool
-	platformHealth        platformHealth
-	storageRetention      *servingstatemodule.Retention
-	queryAuditProvider    adminmodule.QueryAuditReaderProvider
-	candidateMetrics      func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
-	runtimeHostModule     *runtimehostmodule.Module
-	projectID             projectgraph.ResourceID
-	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+	analyticsModule                *analyticsmodule.Module
+	metrics                        QueryMetrics
+	workloads                      workloadControl
+	broker                         *pagestream.Broker
+	dashboardBroker                *dashboardmodule.DeliveryBroker
+	pageStreams                    *uitransport.PageStream
+	persistenceConfigured          bool
+	platformHealth                 platformHealth
+	storageRetention               *servingstatemodule.Retention
+	queryAuditProvider             adminmodule.QueryAuditReaderProvider
+	dashboardPublicationReconciler dashboardPublicationActivationReconciler
+	candidateMetrics               func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
+	runtimeHostModule              *runtimehostmodule.Module
+	projectID                      projectgraph.ResourceID
+	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
 }
 
 // resolveProjectID returns the exact project bound to the active serving
@@ -225,6 +226,10 @@ type dataAssemblyInputs struct {
 	AccessRepo       access.Repository
 	APIIdempotency   idempotency.Store
 	CursorSigning    cursorsigning.Initializer
+	// DashboardPublicationReconciler is the explicit native PostgreSQL
+	// activation path. When configured it takes precedence over Database;
+	// callers must not provide a SQLite handle as a production fallback.
+	DashboardPublicationReconciler dashboardPublicationActivationReconciler
 	// RequireExplicitAPIProtocol prevents a production assembly from silently
 	// selecting the process-local or SQLite protocol implementations.
 	RequireExplicitAPIProtocol bool
@@ -572,6 +577,7 @@ func buildApplicationSurfaces(
 		return fail(errors.New("durable audit runtime facets are unavailable"))
 	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
+	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	moduleWorkflow := workflowInputs{}
@@ -1084,7 +1090,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if priorAfterActivated != nil {
 				priorAfterActivated(ctx, activated)
 			}
-			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
+			var reconcileErr error
+			if runtime.dashboardPublicationReconciler != nil {
+				reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
+			} else {
+				reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
+			}
+			if err := reconcileErr; err != nil {
 				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
 			}
 		}
@@ -1237,9 +1249,15 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return fmt.Errorf("build dashboard module: %w", err)
 		}
 	}
-	if database != nil && routes.dashboardModule != nil {
+	if routes.dashboardModule != nil && (database != nil || runtime.dashboardPublicationReconciler != nil) {
 		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
-			if err := reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated); err != nil {
+			var reconcileErr error
+			if runtime.dashboardPublicationReconciler != nil {
+				reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
+			} else {
+				reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
+			}
+			if err := reconcileErr; err != nil {
 				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
 			}
 		} else if !errors.Is(err, servingstate.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
