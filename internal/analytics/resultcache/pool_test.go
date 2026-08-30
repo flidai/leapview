@@ -292,11 +292,12 @@ func waitForArrowFlightWaiters(t *testing.T, scope *ExecutionScope, key string, 
 	}
 }
 
-func TestSharedScopeKeepsEntriesUntilLastHandleCloses(t *testing.T) {
+func TestSharedScopeRetainsEntriesAcrossZeroReferenceTransition(t *testing.T) {
 	pool, err := New(testLimits())
 	if err != nil {
 		t.Fatal(err)
 	}
+	defer pool.Close()
 	first, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
 	if err != nil {
 		t.Fatal(err)
@@ -324,7 +325,41 @@ func TestSharedScopeKeepsEntriesUntilLastHandleCloses(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	assertMiss(t, reopened, "query")
+	entry, _, ok, err = reopened.LookupArrow("query")
+	if err != nil || !ok {
+		t.Fatalf("reopened dormant scope lookup ok=%v err=%v", ok, err)
+	}
+	entry.Release()
+}
+
+func TestDormantSharedScopePreservesInvalidationToken(t *testing.T) {
+	pool, err := New(testLimits())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	scope, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope.Invalidate()
+	token := scope.Generation()
+	put(t, scope, "query", "after-invalidation")
+	if err := scope.Close(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := pool.OpenSharedScope(ScopeID{RuntimeID: "partition-production"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := reopened.Generation(); got != token {
+		t.Fatalf("reopened generation = %d, want %d", got, token)
+	}
+	entry, _, ok, err := reopened.LookupArrow("query")
+	if err != nil || !ok {
+		t.Fatalf("reopened lookup ok=%v err=%v", ok, err)
+	}
+	entry.Release()
 }
 
 func TestGenerationScopeCloseDoesNotAffectSharedResultScope(t *testing.T) {
@@ -359,6 +394,114 @@ func TestGenerationScopeCloseDoesNotAffectSharedResultScope(t *testing.T) {
 	if _, _, ok, err := reopenedBytes.LookupBytes("tile"); err != nil || ok {
 		t.Fatalf("generation-two byte lookup ok=%v err=%v", ok, err)
 	}
+}
+
+func TestDormantSharedScopeIsRemovedAfterFinalEntryEviction(t *testing.T) {
+	pool, err := New(Limits{RuntimeEntries: 1, RuntimeBytes: 1 << 20, NodeEntries: 1, NodeBytes: 1 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	stableID := ScopeID{RuntimeID: "partition-production"}
+	stable, err := pool.OpenSharedScope(stableID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put(t, stable, "query", "stable")
+	if err := stable.Close(); err != nil {
+		t.Fatal(err)
+	}
+	active := mustScope(t, pool, ScopeID{RuntimeID: "generation-bytes"})
+	if outcome := active.StoreBytes("newer", active.Generation(), []byte("active")); outcome != StoreStored {
+		t.Fatalf("store newer entry = %q", outcome)
+	}
+	pool.mu.Lock()
+	_, retained := pool.scopes[stableID.RuntimeID]
+	pool.mu.Unlock()
+	if retained {
+		t.Fatal("empty dormant shared scope remained after final entry eviction")
+	}
+}
+
+func TestEmptyDormantSharedScopeIsRemovedAfterDeleteOrInvalidation(t *testing.T) {
+	for _, test := range []struct {
+		name  string
+		clear func(*Scope)
+	}{
+		{name: "delete", clear: func(scope *Scope) { scope.Delete("query") }},
+		{name: "invalidate", clear: func(scope *Scope) { scope.Invalidate() }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			pool, err := New(testLimits())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer pool.Close()
+			id := ScopeID{RuntimeID: "partition-production"}
+			scope, err := pool.OpenSharedScope(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			put(t, scope, "query", "stable")
+			if err := scope.Close(); err != nil {
+				t.Fatal(err)
+			}
+			clearer, err := pool.OpenSharedScope(id)
+			if err != nil {
+				t.Fatal(err)
+			}
+			test.clear(clearer)
+			if err := clearer.Close(); err != nil {
+				t.Fatal(err)
+			}
+			pool.mu.Lock()
+			_, retained := pool.scopes[id.RuntimeID]
+			pool.mu.Unlock()
+			if retained {
+				t.Fatal("empty dormant shared scope remained after final entry removal")
+			}
+		})
+	}
+}
+
+func TestSharedScopeConcurrentCloseReopenInvalidateLookupAndStore(t *testing.T) {
+	pool, err := New(Limits{RuntimeEntries: 32, RuntimeBytes: 4 << 20, NodeEntries: 64, NodeBytes: 8 << 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pool.Close()
+	id := ScopeID{RuntimeID: "partition-production"}
+	value := testArrowResult(t, memory.DefaultAllocator, "value")
+	defer value.Release()
+	var wait sync.WaitGroup
+	for worker := range 16 {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			for iteration := range 100 {
+				scope, openErr := pool.OpenSharedScope(id)
+				if openErr != nil {
+					t.Errorf("worker %d open: %v", worker, openErr)
+					return
+				}
+				token := scope.Generation()
+				if iteration%5 == 0 {
+					scope.Invalidate()
+				}
+				_ = scope.StoreArrow("query", token, value, Metadata{})
+				if entry, _, ok, lookupErr := scope.LookupArrow("query"); lookupErr != nil {
+					t.Errorf("worker %d lookup: %v", worker, lookupErr)
+				} else if ok {
+					entry.Release()
+				}
+				if closeErr := scope.Close(); closeErr != nil {
+					t.Errorf("worker %d close: %v", worker, closeErr)
+					return
+				}
+			}
+		}()
+	}
+	wait.Wait()
 }
 
 func TestPoolConcurrentStatsInvalidateAndClose(t *testing.T) {

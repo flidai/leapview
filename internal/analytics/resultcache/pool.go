@@ -236,8 +236,8 @@ func (p *Pool) OpenScope(id ScopeID) (*Scope, error) {
 
 // OpenSharedScope acquires one handle to a stable cache scope. All live
 // handles with the same identity share entries and invalidation generation.
-// Closing one handle leaves the scope available to the others; the final
-// close releases the retained entries.
+// Closing the final handle leaves retained state dormant so a compatible
+// serving generation can reactivate it. Empty dormant scopes are discarded.
 func (p *Pool) OpenSharedScope(id ScopeID) (*Scope, error) {
 	if p == nil {
 		return nil, fmt.Errorf("result cache pool is required")
@@ -471,10 +471,19 @@ func (p *Pool) removeLocked(element *list.Element, constraint Constraint) {
 		delete(state.entries, e.composite)
 		state.usage.entries--
 		state.usage.bytes -= e.bytes
+		p.removeEmptyDormantScopeLocked(state)
 	}
 	if constraint != "" {
 		p.evictions[constraint]++
 	}
+}
+
+func (p *Pool) removeEmptyDormantScopeLocked(state *scopeState) {
+	if state == nil || !state.shared || state.references != 0 || len(state.entries) != 0 {
+		return
+	}
+	state.closed = true
+	delete(p.scopes, scopeKey(state.id))
 }
 
 func cloneMetadata(metadata Metadata) Metadata {
@@ -522,8 +531,11 @@ func (s *Scope) Close() error {
 	if state == nil || state.closed {
 		return nil
 	}
-	if state.shared && state.references > 1 {
-		state.references--
+	if state.shared {
+		if state.references > 0 {
+			state.references--
+		}
+		p.removeEmptyDormantScopeLocked(state)
 		return nil
 	}
 	for composite := range state.entries {
