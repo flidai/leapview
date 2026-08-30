@@ -328,6 +328,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if native != nil && config.CandidateSourceReader != nil {
 		module.nativeCandidatePhases = &nativeCandidateArtifactPhases{
 			reader: config.CandidateSourceReader, environment: environment,
+			states: config.States, provenance: servingProvenance,
 			artifacts: config.CandidateArtifactStore, storageDomain: config.StorageSecurityDomain,
 			pins: config.ManagedDataPins, extensionPreparation: config.ExtensionPreparation,
 		}

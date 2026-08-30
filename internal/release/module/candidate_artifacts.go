@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -157,7 +156,7 @@ func (service *candidateArtifactService) inspectCandidateProjectPlan(ctx context
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	dataMode := release.GenerationDataRefreshSources
-	dataRevision, err := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
+	dataRevision, err := release.CandidateSourcesDataRevision(request.ArtifactDigest, candidateManagedDataPins(managedPins))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -371,17 +370,33 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 		}
 	}
 	dataMode := release.GenerationDataRefreshSources
-	dataRevision, err := candidateSourcesDataRevision(request.ArtifactDigest, managedPins)
+	dataRevision, err := release.CandidateSourcesDataRevision(request.ArtifactDigest, candidateManagedDataPins(managedPins))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if base.active && base.dataRevision != "" && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil {
+	if base.active && base.dataRevision != "" && !plan.Summary.MaterializationImpact && base.graph.Validate() == nil && (expected == nil || expected.Generation.DataMode == release.GenerationDataReuseBase) {
 		dataMode = release.GenerationDataReuseBase
 		dataRevision = base.dataRevision
 		if dataRevision == "" && base.snapshotID > 0 {
 			dataRevision = fmt.Sprintf("snapshot:%d", base.snapshotID)
 		}
 		authored = nil
+	}
+	// Canonical delivery derives the effective mode from the durable reuse
+	// decision before materialization. Preserve that decision here rather than
+	// recomputing reuse from compiler impact, which would otherwise allow a
+	// context mismatch to physically refresh while retaining reuse provenance.
+	if expected != nil {
+		dataMode = expected.Generation.DataMode
+		dataRevision = expected.Generation.DataRevision
+		if dataMode == release.GenerationDataRefreshSources {
+			// Authored connections are required for a source refresh even when the
+			// inspected artifact was initially classified as reuse_base.
+			_, _, authored, err = candidateConnectionRequirements(activations)
+			if err != nil {
+				return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+			}
+		}
 	}
 	if dataMode == release.GenerationDataRefreshSources && len(requirements) == 0 && len(managedPins) == 0 && len(authored) == 0 {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("project requires data preparation but has no refresh-capable connections"))
@@ -464,11 +479,15 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if expected != nil && (!reflect.DeepEqual(expected.Compiler.RelationExecution, relationExecution) || !reflect.DeepEqual(expected.Compiler.BaseRelationExecution, baseRelationExecution)) {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("materialized relation execution evidence differs from inspected plan evidence"))
 	}
+	baseGateEvidence := base.gateEvidence
+	if dataMode != release.GenerationDataReuseBase {
+		baseGateEvidence = nil
+	}
 	return release.CandidateArtifactSet{
 		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: request.ArtifactDigest, ProjectDigest: compiledProject.Digest(), ContentDigest: validated.Digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: compiledProject.Version()},
 		Extensions:               extensions,
 		AuthorizationFingerprint: authorizationFingerprint,
-		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions, BaseGateEvidence: base.gateEvidence},
+		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions, BaseGateEvidence: baseGateEvidence},
 		Compiler:                 release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
 	}, nil
 }
@@ -700,20 +719,11 @@ func candidateManagedDataPinMap(managed []string, base map[string]string) map[st
 	return pins
 }
 
-// candidateSourcesDataRevision is release provenance for a source-refresh
-// candidate. It includes the source artifact and the complete, sorted set of
-// managed-data pins so the same candidate cannot silently race a pin change.
+// candidateSourcesDataRevision is retained as a compatibility shim for
+// package-local callers. The canonical hashing implementation lives in the
+// release domain so deployment and both artifact paths share one identity.
 func candidateSourcesDataRevision(artifactDigest string, pins map[string]string) (string, error) {
-	payload := struct {
-		ArtifactDigest  string                   `json:"artifactDigest"`
-		ManagedDataPins []release.ManagedDataPin `json:"managedDataPins"`
-	}{ArtifactDigest: artifactDigest, ManagedDataPins: candidateManagedDataPins(pins)}
-	encoded, err := json.Marshal(payload)
-	if err != nil {
-		return "", fmt.Errorf("encode candidate source data revision: %w", err)
-	}
-	digest := sha256.Sum256(encoded)
-	return "sources:sha256:" + fmt.Sprintf("%x", digest[:]), nil
+	return release.CandidateSourcesDataRevision(artifactDigest, candidateManagedDataPins(pins))
 }
 
 func missingCandidateManagedConnections(connections []string, pins map[string]string) []string {

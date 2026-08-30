@@ -35,6 +35,8 @@ import (
 // one exact object read.
 type nativeCandidateArtifactPhases struct {
 	reader               project.CandidateSourceObjectReader
+	states               ServingStateReader
+	provenance           release.ServingStateProvenanceRepository
 	artifacts            platformobjectstore.ImmutableStore
 	storageDomain        string
 	environment          servingstate.Environment
@@ -97,18 +99,23 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("retained source files do not match project artifact"))
 	}
 
-	// Native serving state does not yet expose a durable object locator for the
-	// active compiler artifact. Keep planning available for a target with no
-	// base generation, and fail closed for requests that would need one.
+	// Resolve the exact active compiler artifact through the serving-state,
+	// provenance, and immutable-object authorities. A target with no active
+	// generation plans against an empty graph.
 	baseIdentity, err := request.Scope.BaseIdentity()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	if baseIdentity != nil {
-		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("native candidate base artifact is unavailable"))
+	base, err := service.nativeGenerationBase(ctx, baseIdentity)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
 	}
-	base := candidateGenerationBase{pins: map[string]string{}}
-	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, request.Source.ProjectFile, projectgraph.ProjectGraph{})
+	var plan projectcompiler.ProjectPlan
+	if base.active {
+		plan, err = projectcompiler.PlanProjectFilesAgainstArtifact(files, request.Source.ProjectFile, base.artifact)
+	} else {
+		plan, err = projectcompiler.PlanProjectFilesAgainstGraph(files, request.Source.ProjectFile, projectgraph.ProjectGraph{})
+	}
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -121,6 +128,155 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	return result, nil
+}
+
+// nativeGenerationBase loads one exact serving generation from the immutable
+// native authorities.  Unlike the legacy filesystem path, every byte and
+// identity is checked against the serving-state row, its provenance, and the
+// object-store metadata before the compiled project can affect planning.
+func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.Context, identity *projectgraph.ServingIdentity) (candidateGenerationBase, error) {
+	if identity == nil {
+		return candidateGenerationBase{pins: map[string]string{}}, nil
+	}
+	if service == nil || service.states == nil || service.provenance == nil || service.artifacts == nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(errors.New("native serving-state base authority is unavailable"))
+	}
+	if err := identity.Validate(); err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	parsedGenerationID, err := validateNativeGenerationID(identity.GenerationID, true)
+	if err != nil || parsedGenerationID.String() != identity.GenerationID {
+		if err == nil {
+			err = errors.New("native base generation identity must be a canonical UUIDv7")
+		}
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+
+	state, err := service.states.ByID(ctx, servingstate.ID(identity.GenerationID))
+	if errors.Is(err, servingstate.ErrNotFound) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation not found"))
+	}
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
+	}
+	if state.ID != servingstate.ID(identity.GenerationID) || state.ProjectID != identity.ProjectID || state.Environment != servingstate.Environment(identity.Environment) || state.Status != servingstate.StatusActive || state.DuckLakeSnapshotID <= 0 || state.ProjectID.Validate() != nil || servingstate.ValidateEnvironment(state.Environment) != nil || platformdigest.ValidateSHA256Identity(state.ProjectDigest) != nil || platformdigest.ValidateSHA256Identity(state.Digest) != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base generation identity mismatch"))
+	}
+
+	baseProvenance, err := service.provenance.ProvenanceForServingState(ctx, *identity)
+	if errors.Is(err, release.ErrNotFound) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance not found"))
+	}
+	if errors.Is(err, release.ErrConflict) || errors.Is(err, release.ErrInvalid) || errors.Is(err, release.ErrProvenanceInvalid) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
+	}
+	if err := baseProvenance.Validate(); err != nil || baseProvenance.Plan.Identity != *identity {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance identity mismatch"))
+	}
+
+	artifact, err := service.states.ArtifactByServingState(ctx, state.ID)
+	if errors.Is(err, servingstate.ErrNotFound) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact not found"))
+	}
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactUnavailable(err)
+	}
+	if artifact.ServingStateID != state.ID || artifact.ID != nativeServingArtifactID(artifact.Digest) || artifact.Path != "" || artifact.Format != servingstate.ArtifactBundleFormat || platformdigest.ValidateSHA256Identity(artifact.Digest) != nil || artifact.Digest != state.Digest || artifact.ManifestJSON == "" || artifact.ManifestJSON != state.ManifestJSON || artifact.SizeBytes < 1 || artifact.SizeBytes > projectbundle.MaxBundleBytes || artifact.ContentType != nativeServingArtifactContentType || !validNativeStorageDomain(artifact.StorageSecurityDomain) || artifact.StorageSecurityDomain != service.storageDomain || platformdigest.ValidateSHA256Identity(artifact.MetadataDigest) != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact identity or evidence mismatch"))
+	}
+	locator := nativeServingArtifactKey(artifact.Digest)
+	if locator == "" || artifact.Locator != locator || artifact.Locator != strings.TrimSpace(artifact.Locator) {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact locator is not canonical"))
+	}
+	if err := validateNativeBundleManifestJSON(artifact.ManifestJSON); err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if baseProvenance.Artifact.ContentDigest != artifact.Digest || baseProvenance.Artifact.ProjectDigest != state.ProjectDigest {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance content identity mismatch"))
+	}
+
+	object, err := service.artifacts.Open(ctx, artifact.Locator)
+	if err != nil {
+		return candidateGenerationBase{}, nativeCandidateObjectError(err)
+	}
+	if object.Body == nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact object body is nil"))
+	}
+	defer object.Body.Close()
+	expectedMetadata := platformobjectstore.ObjectMetadata{StorageSecurityDomain: artifact.StorageSecurityDomain, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes, ContentType: artifact.ContentType, MetadataDigest: artifact.MetadataDigest}
+	if err := validateNativeServingArtifactInfo(object.Info, artifact.Locator, expectedMetadata); err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if validation.Digest != artifact.Digest || validation.ProjectID != identity.ProjectID.String() || validation.ProjectDigest != state.ProjectDigest || validation.ManifestJSON != artifact.ManifestJSON || compiled.ProjectID != identity.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact content identity mismatch"))
+	}
+	baseArtifact, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if baseArtifact.ProjectID() != identity.ProjectID || baseArtifact.Digest() != state.ProjectDigest {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base project identity mismatch"))
+	}
+	if baseProvenance.Artifact.CompilerVersion != projectartifact.CompilerVersion || baseProvenance.Artifact.SchemaVersion != baseArtifact.Version() {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base provenance compiler identity mismatch"))
+	}
+	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(baseArtifact)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if state.AccessPolicyJSON != accessPolicyJSON || state.DashboardPublicationsJSON != publicationsJSON || state.DashboardAppearancesJSON != appearancesJSON {
+		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving policy identity mismatch"))
+	}
+
+	pins := make(map[string]string, len(baseProvenance.Plan.ManagedDataPins))
+	for _, pin := range baseProvenance.Plan.ManagedDataPins {
+		connection, revision := pin.ConnectionID, pin.RevisionID
+		if connection != strings.TrimSpace(connection) || revision != strings.TrimSpace(revision) || connection == "" || revision == "" {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical managed-data pins"))
+		}
+		if _, exists := pins[connection]; exists {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains duplicate managed-data pins"))
+		}
+		pins[connection] = revision
+	}
+	dataRevision := strings.TrimSpace(baseProvenance.Plan.DataRevision)
+	if dataRevision == "" && state.DuckLakeSnapshotID > 0 {
+		dataRevision = fmt.Sprintf("snapshot:%d", state.DuckLakeSnapshotID)
+	}
+	baseBindings := make(map[string]string, len(baseProvenance.Plan.Bindings))
+	for _, binding := range baseProvenance.Plan.Bindings {
+		connectionID := strings.TrimSpace(binding.ConnectionID)
+		kind := strings.TrimSpace(binding.ConnectorKind)
+		if connectionID == "" || kind == "" || connectionID != binding.ConnectionID || kind != binding.ConnectorKind {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains noncanonical binding evidence"))
+		}
+		if existing, ok := baseBindings[connectionID]; ok && existing != kind {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains conflicting binding evidence"))
+		}
+		if _, exists := baseBindings[connectionID]; exists {
+			return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("active generation contains duplicate binding evidence"))
+		}
+		baseBindings[connectionID] = kind
+	}
+	if len(baseBindings) == 0 {
+		activations, activationErr := baseArtifact.ConnectionActivations()
+		if activationErr != nil {
+			return candidateGenerationBase{}, candidateArtifactInvalid(activationErr)
+		}
+		baseBindings = candidateActivationBindings(activations)
+	}
+	relationContext, err := candidateRelationContexts(pins, baseArtifact, baseBindings)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	return candidateGenerationBase{graph: validation.Graph, artifact: baseArtifact, pins: pins, bindings: baseBindings, snapshotID: state.DuckLakeSnapshotID, dataRevision: dataRevision, relationContext: relationContext, gateEvidence: baseProvenance.Plan.GateEvidence, active: true}, nil
 }
 
 func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
@@ -187,7 +343,7 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 		ContentType:           nativeServingArtifactContentType,
 		MetadataDigest:        nativeServingArtifactMetadataDigest(),
 	}
-	info, err := service.putServingArtifact(ctx, key, bytes.NewReader(content.Bytes()), metadata)
+	info, err := service.putServingArtifact(ctx, key, bytes.NewReader(content.Bytes()), metadata, request.Scope.ProjectID.String())
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
@@ -561,7 +717,7 @@ func validateNativeArtifactIdentity(identity release.CandidateArtifactIdentity) 
 	return nil
 }
 
-func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Context, key string, body io.Reader, metadata platformobjectstore.ObjectMetadata) (platformobjectstore.ObjectInfo, error) {
+func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Context, key string, body io.Reader, metadata platformobjectstore.ObjectMetadata, expectedProjectID string) (platformobjectstore.ObjectInfo, error) {
 	info, err := service.artifacts.PutImmutable(ctx, key, body, metadata)
 	if err == nil {
 		if validateErr := validateNativeServingArtifactInfo(info, key, metadata); validateErr != nil {
@@ -586,8 +742,12 @@ func (service *nativeCandidateArtifactPhases) putServingArtifact(ctx context.Con
 	if validateErr := validateNativeServingArtifactInfo(object.Info, key, metadata); validateErr != nil {
 		return platformobjectstore.ObjectInfo{}, candidateArtifactInvalid(validateErr)
 	}
-	if _, _, validateErr := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes); validateErr != nil {
+	validation, _, validateErr := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
+	if validateErr != nil {
 		return platformobjectstore.ObjectInfo{}, candidateArtifactInvalid(validateErr)
+	}
+	if validation.Digest != metadata.Digest || validation.ProjectID != expectedProjectID {
+		return platformobjectstore.ObjectInfo{}, candidateArtifactInvalid(errors.New("native serving artifact replay content identity mismatch"))
 	}
 	return object.Info, nil
 }

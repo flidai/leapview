@@ -61,6 +61,36 @@ func planDigest(value string) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
+func candidateDataConfigDigest(targetID, environment string, mode release.GenerationDataMode, revision string) string {
+	return planDigest(strings.Join([]string{targetID, environment, string(mode), revision}, "\x00"))
+}
+
+// finalizeCandidatePlanExecution reconciles the hypothetical reuse contract
+// used to evaluate exact physical identity with the execution the persisted
+// plan will actually perform. A rejected reuse decision is a source refresh,
+// so its config digest and operator-facing evidence must not continue to claim
+// the retained snapshot even though that was the inspected starting point.
+func finalizeCandidatePlanExecution(request deployment.DeliveryPlanRequest, candidateID string, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlanRequest, error) {
+	if artifacts.Generation.DataMode != release.GenerationDataReuseBase {
+		return request, nil
+	}
+	decision, found := deployment.ResolveDeliveryReuseDecision(&deployment.DeliveryPlan{Evidence: request.Evidence}, candidateID)
+	if found && decision.Reusable {
+		return request, nil
+	}
+	revision, err := release.CandidateSourcesDataRevision(artifacts.Artifact.SourceDigest, artifacts.Generation.ManagedDataPins)
+	if err != nil {
+		return deployment.DeliveryPlanRequest{}, fmt.Errorf("derive effective source-refresh revision: %w", err)
+	}
+	request.Execution.ConfigDigest = candidateDataConfigDigest(request.TargetID, request.Environment, release.GenerationDataRefreshSources, revision)
+	request.Evidence.Compatibility.SemanticChanges = append(request.Evidence.Compatibility.SemanticChanges, "effective data mode=refresh_sources")
+	if !found || !decision.RetainBase {
+		request.Evidence.PhysicalWorkStatement = "refreshes compiled project relations in a private DuckLake catalog"
+		request.Evidence.ReuseStatement = "does not reuse the retained base because exact execution or physical identities changed"
+	}
+	return request, nil
+}
+
 func finalizeReuseEvidence(evidence *deployment.DeliveryPlanEvidence, decisions []deployment.DeliveryReuseDecision) {
 	if evidence == nil || len(decisions) == 0 {
 		return
@@ -288,7 +318,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	// ConfigDigest remains a complete plan identity (including data mode and
 	// revision). ContextDigest below deliberately excludes it when deciding
 	// per-relation retention so one table refresh does not invalidate siblings.
-	configDigest := planDigest(strings.Join([]string{input.Candidate.TargetID, input.Candidate.Scope.Environment, string(artifacts.Generation.DataMode), artifacts.Generation.DataRevision}, "\x00"))
+	configDigest := candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, artifacts.Generation.DataMode, artifacts.Generation.DataRevision)
 	// Planning is read-only and therefore has no serving-state/artifact row
 	// yet. Bind qualification to retained compiler/contract evidence only;
 	// materialized serving identities are checked and sealed during Build.
@@ -414,7 +444,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			}
 			request.Evidence.Reuse = decisions
 			finalizeReuseEvidence(&request.Evidence, decisions)
-			return request, nil
+			return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 		} else if operation != deployment.DeliveryOperationCodeChange {
 			decision.Reason = "operation requires explicit full materialization"
 		} else if reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
@@ -462,7 +492,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				}
 				request.Evidence.Reuse = decisions
 				finalizeReuseEvidence(&request.Evidence, decisions)
-				return request, nil
+				return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 			}
 		}
 		if operation != deployment.DeliveryOperationCodeChange {
@@ -500,7 +530,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		request.Evidence.Reuse = []deployment.DeliveryReuseDecision{decision}
 		finalizeReuseEvidence(&request.Evidence, request.Evidence.Reuse)
 	}
-	return request, nil
+	return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
 }
 
 // QualificationRequestForCandidate declares only checks with independent

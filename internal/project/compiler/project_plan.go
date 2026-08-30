@@ -5,7 +5,6 @@ import (
 	"reflect"
 	"sort"
 
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -168,12 +167,16 @@ func planProjectAgainstArtifact(project Project, active projectartifact.Project)
 func diffCompiledMaterialization(project Project, active projectartifact.Project) ([]ProjectPlanChange, error) {
 	changes := make([]ProjectPlanChange, 0)
 	activeTables := active.ModelTables()
-	authoredTables := make(map[string]semanticmodel.Table, len(project.Models))
-	for name, table := range project.Models {
-		if id := project.ModelIDs[name]; id != "" {
-			authoredTables[id] = table
-		}
+	// Compare the canonical manifest projection rather than compiler.Project's
+	// authored-name runtime maps. The latter intentionally use symbolic source
+	// and model names, while the artifact manifest uses stable resource IDs and
+	// canonical references; comparing them directly reports every unchanged
+	// model as a materialization change after artifact serialization.
+	authoredArtifact, err := projectartifact.NewProject(project.Graph, project.Manifest)
+	if err != nil {
+		return nil, fmt.Errorf("canonicalize authored project materialization: %w", err)
 	}
+	authoredTables := authoredArtifact.ModelTables()
 	capacity, err := checkedCapacitySum(len(activeTables), len(authoredTables))
 	if err != nil {
 		return nil, fmt.Errorf("compiled materialization table set: %w", err)
@@ -205,12 +208,7 @@ func diffCompiledMaterialization(project Project, active projectartifact.Project
 		changes = append(changes, ProjectPlanChange{Action: action, ID: id, Type: string(projectgraph.KindModel), Key: resource.Name, Reason: reason, Breaking: breaking, MaterializationImpact: true})
 	}
 	activeSources := active.Manifest().Sources
-	authoredSources := make(map[string]semanticmodel.Source, len(project.Sources))
-	for name, source := range project.Sources {
-		if id := project.SourceIDs[name]; id != "" {
-			authoredSources[id] = source
-		}
-	}
+	authoredSources := authoredArtifact.Manifest().Sources
 	capacity, err = checkedCapacitySum(len(activeSources), len(authoredSources))
 	if err != nil {
 		return nil, fmt.Errorf("compiled materialization source set: %w", err)

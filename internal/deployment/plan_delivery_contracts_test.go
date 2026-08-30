@@ -15,6 +15,18 @@ func deliveryTestDigest(char byte) string {
 	return "sha256:" + strings.Repeat(string(char), 64)
 }
 
+func TestResolveDeliveryReuseDecisionRequiresExactCandidateOrAggregatesRelations(t *testing.T) {
+	plan := &DeliveryPlan{Evidence: DeliveryPlanEvidence{Reuse: []DeliveryReuseDecision{{ResourceID: "model:orders", Reusable: true}}}}
+	if _, ok := ResolveDeliveryReuseDecision(plan, "candidate-1"); ok {
+		t.Fatal("single relation decision was accepted as candidate evidence")
+	}
+	plan.Evidence.Reuse = append(plan.Evidence.Reuse, DeliveryReuseDecision{ResourceID: "model:customers", Reusable: false, RetainBase: true})
+	decision, ok := ResolveDeliveryReuseDecision(plan, "candidate-1")
+	if !ok || decision.Reusable || !decision.RetainBase {
+		t.Fatalf("partial relation decisions = %#v, found=%v", decision, ok)
+	}
+}
+
 func deliveryTestPlan(t *testing.T) DeliveryPlan {
 	t.Helper()
 	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)

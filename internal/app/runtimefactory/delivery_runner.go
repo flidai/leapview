@@ -346,38 +346,7 @@ func candidateAuthoredConnections(values []release.CandidateAuthoredConnection) 
 }
 
 func deliveryReuseDecision(plan *deployment.DeliveryPlan, resourceID string) (deployment.DeliveryReuseDecision, bool) {
-	if plan == nil {
-		return deployment.DeliveryReuseDecision{}, false
-	}
-	for _, decision := range plan.Evidence.Reuse {
-		if decision.ResourceID == resourceID {
-			return decision, true
-		}
-	}
-	if len(plan.Evidence.Reuse) == 1 {
-		if plan.Evidence.Reuse[0].ResourceID != resourceID {
-			return deployment.DeliveryReuseDecision{}, false
-		}
-		return plan.Evidence.Reuse[0], true
-	}
-	if len(plan.Evidence.Reuse) > 1 {
-		aggregate := deployment.DeliveryReuseDecision{ResourceID: resourceID, Reusable: true, Reason: "all unchanged relation identities are reusable"}
-		for _, decision := range plan.Evidence.Reuse {
-			if !decision.Reusable {
-				aggregate.Reusable = false
-			}
-			if decision.Reusable || decision.RetainBase {
-				aggregate.RetainBase = true
-			}
-		}
-		if aggregate.RetainBase {
-			if !aggregate.Reusable {
-				aggregate.Reason = "retain exact base for unchanged relations and rebuild impacted relations"
-			}
-			return aggregate, true
-		}
-	}
-	return deployment.DeliveryReuseDecision{}, false
+	return deployment.ResolveDeliveryReuseDecision(plan, resourceID)
 }
 
 // validateReuseEvidenceCoverage prevents a partial or misidentified reuse
@@ -445,6 +414,9 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 		return nil, err
 	}
 	reuseDecision, hasReuseDecision := deliveryReuseDecision(&buildInput.Plan, r.input.Candidate.ID)
+	if r.artifacts.Generation.DataMode == release.GenerationDataReuseBase && (!hasReuseDecision || !reuseDecision.Reusable) {
+		return nil, fmt.Errorf("candidate artifact set remains reuse_base without an exact reusable delivery decision")
+	}
 	useRetainedBase := hasReuseDecision && (reuseDecision.Reusable || reuseDecision.RetainBase)
 	if buildInput.Plan.BaseGenerationID != "" && useRetainedBase && r.config.Base == nil {
 		return nil, fmt.Errorf("exact sealed base resolver is required for non-empty active base")
@@ -457,12 +429,6 @@ func (r *candidateCatalogRunner) Construct(ctx context.Context, buildInput deplo
 		if base == nil || (buildInput.Attempt.BaseCatalogDigest != "" && base.Digest != buildInput.Attempt.BaseCatalogDigest) || (buildInput.Attempt.BasePhysicalPoolID != "" && base.PhysicalPoolID != buildInput.Attempt.BasePhysicalPoolID) {
 			return nil, fmt.Errorf("sealed base does not match exact build attempt identity")
 		}
-	}
-	if (!hasReuseDecision || !reuseDecision.Reusable) && r.artifacts.Generation.DataMode == release.GenerationDataReuseBase {
-		// A reuse-key mismatch is an explicit rebuild decision. Keep the
-		// candidate private, but make the materializer refresh source data
-		// instead of merely checking inherited relations.
-		r.artifacts.Generation.DataMode = release.GenerationDataRefreshSources
 	}
 	if r.config.Materialize == nil {
 		return nil, fmt.Errorf("candidate materialization adapter is required")

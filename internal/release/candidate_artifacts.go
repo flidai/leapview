@@ -2,6 +2,8 @@ package release
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -10,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/extension"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
@@ -131,6 +134,41 @@ type CandidateArtifactSet struct {
 	// artifact prevents production delivery from reloading or recompiling a
 	// moving worktree while constructing a private candidate catalog.
 	Compiler CandidateCompilerEvidence
+}
+
+// CandidateSourcesDataRevision returns the canonical provenance identity for
+// a candidate that refreshes source data. The source artifact digest and the
+// complete managed-data pin set are the only inputs; pins are sorted before
+// hashing so map/loader order can never change the resulting identity.
+func CandidateSourcesDataRevision(artifactDigest string, pins []ManagedDataPin) (string, error) {
+	if artifactDigest != strings.TrimSpace(artifactDigest) || platformdigest.ValidateSHA256Identity(artifactDigest) != nil {
+		return "", fmt.Errorf("candidate source artifact digest is not a canonical SHA-256 identity")
+	}
+	canonicalPins := append([]ManagedDataPin(nil), pins...)
+	sort.Slice(canonicalPins, func(i, j int) bool {
+		if canonicalPins[i].ConnectionID != canonicalPins[j].ConnectionID {
+			return canonicalPins[i].ConnectionID < canonicalPins[j].ConnectionID
+		}
+		return canonicalPins[i].RevisionID < canonicalPins[j].RevisionID
+	})
+	for i, pin := range canonicalPins {
+		if pin.ConnectionID == "" || pin.ConnectionID != strings.TrimSpace(pin.ConnectionID) || pin.RevisionID == "" || pin.RevisionID != strings.TrimSpace(pin.RevisionID) {
+			return "", fmt.Errorf("candidate managed-data pin is incomplete")
+		}
+		if i > 0 && canonicalPins[i-1].ConnectionID == pin.ConnectionID {
+			return "", fmt.Errorf("candidate managed-data pins contain duplicate connection %q", pin.ConnectionID)
+		}
+	}
+	payload := struct {
+		ArtifactDigest  string           `json:"artifactDigest"`
+		ManagedDataPins []ManagedDataPin `json:"managedDataPins"`
+	}{ArtifactDigest: artifactDigest, ManagedDataPins: canonicalPins}
+	encoded, err := json.Marshal(payload)
+	if err != nil {
+		return "", fmt.Errorf("encode candidate source data revision: %w", err)
+	}
+	digest := sha256.Sum256(encoded)
+	return "sources:sha256:" + fmt.Sprintf("%x", digest[:]), nil
 }
 
 type CandidateCompilerEvidence struct {

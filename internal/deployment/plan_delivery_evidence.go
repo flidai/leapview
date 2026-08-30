@@ -74,6 +74,46 @@ type DeliveryReuseDecision struct {
 	ReuseKeyDigest string `json:"reuseKeyDigest,omitempty"`
 }
 
+// ResolveDeliveryReuseDecision returns the exact candidate-level disposition
+// represented by persisted reuse evidence. A single relation decision is not
+// treated as candidate evidence when its resource ID differs; multiple
+// relation decisions are aggregated so partial reuse retains the base while
+// still reporting a non-reusable candidate execution.
+func ResolveDeliveryReuseDecision(plan *DeliveryPlan, resourceID string) (DeliveryReuseDecision, bool) {
+	if plan == nil {
+		return DeliveryReuseDecision{}, false
+	}
+	for _, decision := range plan.Evidence.Reuse {
+		if decision.ResourceID == resourceID {
+			return decision, true
+		}
+	}
+	if len(plan.Evidence.Reuse) == 1 {
+		if plan.Evidence.Reuse[0].ResourceID != resourceID {
+			return DeliveryReuseDecision{}, false
+		}
+		return plan.Evidence.Reuse[0], true
+	}
+	if len(plan.Evidence.Reuse) > 1 {
+		aggregate := DeliveryReuseDecision{ResourceID: resourceID, Reusable: true, Reason: "all unchanged relation identities are reusable"}
+		for _, decision := range plan.Evidence.Reuse {
+			if !decision.Reusable {
+				aggregate.Reusable = false
+			}
+			if decision.Reusable || decision.RetainBase {
+				aggregate.RetainBase = true
+			}
+		}
+		if aggregate.RetainBase {
+			if !aggregate.Reusable {
+				aggregate.Reason = "retain exact base for unchanged relations and rebuild impacted relations"
+			}
+			return aggregate, true
+		}
+	}
+	return DeliveryReuseDecision{}, false
+}
+
 // DeliveryReuseInput is the target-owned physical identity used to decide
 // whether one resource may retain its exact sealed base references. A reuse
 // decision is stricter than an execution-digest comparison: catalog, pool,

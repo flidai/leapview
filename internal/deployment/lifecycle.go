@@ -7,15 +7,18 @@ package deployment
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/google/uuid"
 )
 
 // DeliveryCandidateBuildInput is the transport-neutral hand-off used by the
@@ -159,6 +162,12 @@ type DeliveryBuildInput struct {
 	Plan    DeliveryPlan
 	Attempt DeliveryBuildAttempt
 	Lease   DeliveryWriterLease
+	// ServingStateID is the canonical serving-generation identity reserved for
+	// this build attempt before artifact materialization. A retry reuses the
+	// durable attempt binding; an unbound attempt derives the same UUIDv7 from
+	// its durable attempt identity, so a process restart cannot silently choose
+	// a different native serving generation.
+	ServingStateID string
 }
 
 // DeliveryBuildOutput is the only physical result accepted by Build. The
@@ -269,6 +278,41 @@ func (l *DeliveryLifecycle) now() time.Time {
 		return l.Now().UTC()
 	}
 	return time.Now().UTC()
+}
+
+// servingStateIDForAttempt derives one canonical UUIDv7 from the durable
+// attempt identity. Native artifact materialization requires a UUIDv7 before
+// it writes the immutable object, while the legacy delivery repository binds
+// the complete artifact identity only after materialization. Deriving the
+// generation from the attempt lets both paths share that ordering without a
+// second pre-attempt persistence operation; retries of an unbound attempt
+// still receive the same identity.
+func servingStateIDForAttempt(attempt DeliveryBuildAttempt) (string, error) {
+	if attempt.ID == "" {
+		return "", fmt.Errorf("%w: build attempt identity is required", ErrDeliveryInvalid)
+	}
+	if attempt.CreatedAt.IsZero() {
+		return "", fmt.Errorf("%w: build attempt creation time is required", ErrDeliveryInvalid)
+	}
+	sum := sha256.Sum256([]byte("leapview-delivery-serving-state\x00" + attempt.ID))
+	id := uuid.Nil
+	// Preserve the durable attempt timestamp in the UUIDv7 timestamp field;
+	// the remaining bits are deterministic entropy bound to the attempt ID.
+	millis := uint64(attempt.CreatedAt.UTC().UnixMilli())
+	id[0] = byte(millis >> 40)
+	id[1] = byte(millis >> 32)
+	id[2] = byte(millis >> 24)
+	id[3] = byte(millis >> 16)
+	id[4] = byte(millis >> 8)
+	id[5] = byte(millis)
+	copy(id[6:], sum[:10])
+	id[6] = id[6]&0x0f | 0x70
+	id[8] = id[8]&0x3f | 0x80
+	value := id.String()
+	if parsed, err := uuid.Parse(value); err != nil || parsed.String() != value || parsed.Version() != 7 || parsed.Variant() != uuid.RFC4122 {
+		return "", fmt.Errorf("%w: derived serving state identity is not UUIDv7", ErrDeliveryInvalid)
+	}
+	return value, nil
 }
 
 func closeBuildPhase(value any) error {
@@ -531,14 +575,41 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 	if attempt.Status != DeliveryBuildBuilding && attempt.Status != DeliveryBuildNormalizing && attempt.Status != DeliveryBuildValidating && attempt.Status != DeliveryBuildSealing {
 		return DeliveryBuildResult{}, fmt.Errorf("%w: build attempt is %s", ErrDeliveryTransition, attempt.Status)
 	}
+	// Reserve the serving-generation identity from the durable attempt before
+	// invoking artifact preparation. Native materialization requires this UUIDv7
+	// as an input, while retries with an existing binding must use that exact
+	// persisted value instead of allocating a new one.
+	boundIdentity := DeliveryArtifactIdentity{ServingArtifactID: attempt.ServingArtifactID, ServingArtifactDigest: attempt.ServingArtifactDigest, ServingStateID: attempt.ServingStateID}
+	requestedIdentity := DeliveryArtifactIdentity{ServingArtifactID: request.ServingArtifactID, ServingArtifactDigest: request.ServingArtifactDigest, ServingStateID: request.ServingStateID}
+	if boundIdentity.ServingArtifactID != "" {
+		if (requestedIdentity.ServingArtifactID != "" && requestedIdentity.ServingArtifactID != boundIdentity.ServingArtifactID) ||
+			(requestedIdentity.ServingArtifactDigest != "" && requestedIdentity.ServingArtifactDigest != boundIdentity.ServingArtifactDigest) ||
+			(requestedIdentity.ServingStateID != "" && requestedIdentity.ServingStateID != boundIdentity.ServingStateID) {
+			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, fmt.Errorf("%w: requested serving identity differs from durable attempt binding", ErrDeliveryConflict))
+		}
+	}
+	servingStateID := strings.TrimSpace(boundIdentity.ServingStateID)
+	if servingStateID == "" {
+		servingStateID = strings.TrimSpace(requestedIdentity.ServingStateID)
+	}
+	if servingStateID == "" {
+		servingStateID, err = servingStateIDForAttempt(attempt)
+		if err != nil {
+			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, err)
+		}
+	}
+	request.ServingStateID = servingStateID
+	input := DeliveryBuildInput{Plan: plan, Attempt: attempt, Lease: lease, ServingStateID: servingStateID}
 	// Serving artifacts are prepared only after the attempt/lease transaction
 	// has committed. A crash before this point leaves a durable building
 	// attempt that can be reconciled without any pre-attempt catalog rows.
 	if request.PrepareArtifacts != nil {
-		boundIdentity := DeliveryArtifactIdentity{ServingArtifactID: attempt.ServingArtifactID, ServingArtifactDigest: attempt.ServingArtifactDigest, ServingStateID: attempt.ServingStateID}
-		identity, prepareErr := request.PrepareArtifacts(ctx, DeliveryBuildInput{Plan: plan, Attempt: attempt, Lease: lease})
+		identity, prepareErr := request.PrepareArtifacts(ctx, input)
 		if prepareErr != nil {
 			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, prepareErr)
+		}
+		if identity.ServingStateID != servingStateID {
+			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, fmt.Errorf("%w: prepared serving state differs from reserved attempt identity", ErrDeliveryConflict))
 		}
 		if boundIdentity.ServingArtifactID != "" && identity != boundIdentity {
 			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, fmt.Errorf("%w: prepared serving identity changed on retry", ErrDeliveryConflict))
@@ -553,15 +624,18 @@ func (l *DeliveryLifecycle) Build(ctx context.Context, request DeliveryBuildRequ
 				return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, prepareErr)
 			}
 		}
+		if attempt.ServingStateID != servingStateID {
+			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, fmt.Errorf("%w: durable serving state differs from reserved attempt identity", ErrDeliveryConflict))
+		}
 		request.ServingArtifactID = identity.ServingArtifactID
 		request.ServingArtifactDigest = identity.ServingArtifactDigest
-		request.ServingStateID = identity.ServingStateID
+		request.ServingStateID = servingStateID
 		request.PrepareArtifacts = nil
 		if err := validateBuildRequestIdentities(request); err != nil {
 			return DeliveryBuildResult{}, failBuildPreparation(l, ctx, attempt, lease, err)
 		}
 	}
-	input := DeliveryBuildInput{Plan: plan, Attempt: attempt, Lease: lease}
+	input = DeliveryBuildInput{Plan: plan, Attempt: attempt, Lease: lease, ServingStateID: servingStateID}
 	var normalizing DeliveryBuildAttempt
 	var validating DeliveryBuildAttempt
 	var output DeliveryBuildOutput

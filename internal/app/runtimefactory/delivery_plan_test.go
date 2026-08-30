@@ -265,7 +265,19 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseExecution, err := baseRequest.Execution.ExecutionDigest()
+	refreshRevision, err := release.CandidateSourcesDataRevision(artifacts.Artifact.SourceDigest, artifacts.Generation.ManagedDataPins)
+	if err != nil {
+		t.Fatal(err)
+	}
+	refreshConfig := candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, release.GenerationDataRefreshSources, refreshRevision)
+	if baseRequest.Execution.ConfigDigest != refreshConfig || !strings.Contains(baseRequest.Evidence.PhysicalWorkStatement, "refreshes compiled project relations") || !strings.Contains(baseRequest.Evidence.ReuseStatement, "does not reuse") {
+		t.Fatalf("unavailable reuse identity left stale plan execution/evidence: config=%q physical=%q reuse=%q", baseRequest.Execution.ConfigDigest, baseRequest.Evidence.PhysicalWorkStatement, baseRequest.Evidence.ReuseStatement)
+	}
+	// Reuse is evaluated against the hypothetical retained-snapshot execution;
+	// a rejected decision is reconciled to refresh_sources before persistence.
+	baseExecutionInputs := baseRequest.Execution
+	baseExecutionInputs.ConfigDigest = candidateDataConfigDigest(input.Candidate.TargetID, input.Candidate.Scope.Environment, release.GenerationDataReuseBase, artifacts.Generation.DataRevision)
+	baseExecution, err := baseExecutionInputs.ExecutionDigest()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -280,6 +292,9 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	if len(exact.Evidence.Reuse) != 1 || !exact.Evidence.Reuse[0].Reusable || exact.Evidence.Reuse[0].ReuseKeyDigest == "" {
 		t.Fatalf("exact active identity reuse = %#v", exact.Evidence.Reuse)
 	}
+	if exact.Execution.ConfigDigest != baseExecutionInputs.ConfigDigest || !strings.Contains(exact.Evidence.ReuseStatement, "reuses") {
+		t.Fatalf("exact reuse execution/evidence = config:%q reuse:%q", exact.Execution.ConfigDigest, exact.Evidence.ReuseStatement)
+	}
 	changed := *reuse
 	changed.BaseCatalogDigest = deliveryPlanDigest('f')
 	mismatch, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{}, baseRequest.CreatedAt, &changed)
@@ -288,6 +303,9 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	}
 	if len(mismatch.Evidence.Reuse) != 1 || mismatch.Evidence.Reuse[0].Reusable {
 		t.Fatalf("mismatching active identity unexpectedly reused: %#v", mismatch.Evidence.Reuse)
+	}
+	if mismatch.Execution.ConfigDigest != refreshConfig || !strings.Contains(mismatch.Evidence.PhysicalWorkStatement, "refreshes compiled project relations") || !strings.Contains(mismatch.Evidence.ReuseStatement, "does not reuse") {
+		t.Fatalf("mismatching identity left stale execution/evidence: config=%q physical=%q reuse=%q", mismatch.Execution.ConfigDigest, mismatch.Evidence.PhysicalWorkStatement, mismatch.Evidence.ReuseStatement)
 	}
 	undeclared := artifacts
 	undeclared.Generation.Deterministic = false
@@ -401,11 +419,11 @@ func TestCandidateRunnerForcesRestatementRefreshFromReuseBase(t *testing.T) {
 	}
 	plan := deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, BaseGenerationID: "generation-1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate-restatement", Reason: "operation requires explicit full materialization"}}}}
 	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
-	if err == nil || baseCalled {
-		t.Fatalf("restatement reused base: err=%v baseCalled=%v", err, baseCalled)
+	if err == nil || !strings.Contains(err.Error(), "remains reuse_base") || baseCalled {
+		t.Fatalf("restatement artifact mismatch: err=%v baseCalled=%v", err, baseCalled)
 	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("restatement data mode = %q, want %q", runner.artifacts.Generation.DataMode, release.GenerationDataRefreshSources)
+	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
+		t.Fatalf("restatement data mode mutated to %q", runner.artifacts.Generation.DataMode)
 	}
 }
 
@@ -637,8 +655,8 @@ func TestCandidateRunnerRebuildsWhenReuseDecisionMismatches(t *testing.T) {
 	if err == nil || baseCalled {
 		t.Fatalf("mismatching reuse decision err=%v baseCalled=%v", err, baseCalled)
 	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("mismatching reuse decision left data mode %q", runner.artifacts.Generation.DataMode)
+	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
+		t.Fatalf("mismatching reuse decision mutated data mode to %q", runner.artifacts.Generation.DataMode)
 	}
 }
 
@@ -677,8 +695,8 @@ func TestCandidateRunnerMissingReuseDecisionRebuilds(t *testing.T) {
 	if err == nil || baseCalled {
 		t.Fatalf("missing reuse decision err=%v baseCalled=%v", err, baseCalled)
 	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataRefreshSources {
-		t.Fatalf("missing reuse decision left data mode %q", runner.artifacts.Generation.DataMode)
+	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
+		t.Fatalf("missing reuse decision mutated data mode to %q", runner.artifacts.Generation.DataMode)
 	}
 }
 

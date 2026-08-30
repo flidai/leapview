@@ -58,6 +58,13 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseline, err := PlanProjectAgainstArtifact(projectPath, active)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if baseline.Summary.MaterializationImpact {
+		t.Fatalf("identical authored project reported materialization impact: %#v", baseline)
+	}
 	modelPath := filepath.Join(filepath.Dir(projectPath), "models", "orders.yaml")
 	modelBytes, err := os.ReadFile(modelPath)
 	if err != nil {

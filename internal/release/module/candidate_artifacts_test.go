@@ -56,12 +56,13 @@ func TestCandidateManagedDataPinMapDoesNotRetainSwitchedManagedConnection(t *tes
 }
 
 func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
-	first, err := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+	artifactDigest := "sha256:" + strings.Repeat("a", 64)
+	first, err := candidateSourcesDataRevision(artifactDigest, map[string]string{
 		"z_connection": "revision_z",
 		"a_connection": "revision_a",
 	})
 	require.NoError(t, err)
-	second, err := candidateSourcesDataRevision("sha256:artifact", map[string]string{
+	second, err := candidateSourcesDataRevision(artifactDigest, map[string]string{
 		"a_connection": "revision_a",
 		"z_connection": "revision_z",
 	})
@@ -75,11 +76,12 @@ func TestCandidateSourcesDataRevisionIsPinOrderIndependent(t *testing.T) {
 }
 
 func TestCandidateSourcesDataRevisionChangesWhenManagedDataPinChanges(t *testing.T) {
+	artifactDigest := "sha256:" + strings.Repeat("a", 64)
 	base := map[string]string{"orders": "revision_a"}
 	changed := map[string]string{"orders": "revision_b"}
-	baseRevision, err := candidateSourcesDataRevision("sha256:artifact", base)
+	baseRevision, err := candidateSourcesDataRevision(artifactDigest, base)
 	require.NoError(t, err)
-	changedRevision, err := candidateSourcesDataRevision("sha256:artifact", changed)
+	changedRevision, err := candidateSourcesDataRevision(artifactDigest, changed)
 	require.NoError(t, err)
 	if baseRevision == changedRevision {
 		t.Fatal("source data revision did not change when managed-data pin changed")

@@ -12,16 +12,19 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	dashboardpublication "github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/extension"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	"github.com/flidai/leapview/internal/project"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/google/uuid"
 )
 
@@ -32,6 +35,39 @@ type nativeInspectReaderStub struct {
 	errRefs  error
 	errOpen  error
 	opens    int
+}
+
+type nativeBaseStateStub struct {
+	state       servingstate.State
+	artifact    servingstate.Artifact
+	stateErr    error
+	artifactErr error
+}
+
+func (r nativeBaseStateStub) ByID(context.Context, servingstate.ID) (servingstate.State, error) {
+	if r.stateErr != nil {
+		return servingstate.State{}, r.stateErr
+	}
+	return r.state, nil
+}
+
+func (r nativeBaseStateStub) ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error) {
+	if r.artifactErr != nil {
+		return servingstate.Artifact{}, r.artifactErr
+	}
+	return r.artifact, nil
+}
+
+type nativeBaseProvenanceStub struct {
+	provenance release.Provenance
+	err        error
+}
+
+func (r nativeBaseProvenanceStub) ProvenanceForServingState(context.Context, projectgraph.ServingIdentity) (release.Provenance, error) {
+	if r.err != nil {
+		return release.Provenance{}, r.err
+	}
+	return r.provenance, nil
 }
 
 func (r *nativeInspectReaderStub) OpenProjectArtifact(context.Context, project.CandidateSourceScope, string) (io.ReadCloser, error) {
@@ -439,6 +475,50 @@ func TestNativeCandidateMaterializeReplaysContentAddressedObjectAndLostAck(t *te
 	}
 }
 
+func TestNativeCandidateMaterializeRejectsAmbiguousReplayContentIdentityMismatch(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	baseStore, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: baseStore, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	object, err := baseStore.Open(t.Context(), nativeServingArtifactKey(materialized.Generation.ArtifactDigest))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(object.Body)
+	_ = object.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := platformobjectstore.ObjectMetadata{StorageSecurityDomain: "runtime", SizeBytes: int64(len(body)), ContentType: nativeServingArtifactContentType, MetadataDigest: materialized.Generation.NativeArtifact.MetadataDigest}
+	cases := []struct {
+		name, digest, projectID string
+	}{
+		{name: "digest", digest: testNativeDigest("different-bundle"), projectID: materialized.Compiler.Artifact.ProjectID().String()},
+		{name: "project", digest: materialized.Generation.ArtifactDigest, projectID: "project:other"},
+	}
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			metadata.Digest = testCase.digest
+			store := &nativeAmbiguousReplayStore{ImmutableStore: baseStore, body: body}
+			service.artifacts = store
+			if _, err := service.putServingArtifact(t.Context(), nativeServingArtifactKey(testCase.digest), bytes.NewReader(body), metadata, testCase.projectID); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+				t.Fatalf("ambiguous replay %s mismatch error = %v", testCase.name, err)
+			}
+		})
+	}
+}
+
 func TestNativeCandidateHydrateRejectsForgedObjectMetadata(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	baseStore, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
@@ -508,6 +588,21 @@ type nativeForgedArtifactStore struct {
 	mutate  func(*platformobjectstore.ObjectInfo)
 	openErr error
 	body    []byte
+}
+
+type nativeAmbiguousReplayStore struct {
+	platformobjectstore.ImmutableStore
+	body []byte
+	info platformobjectstore.ObjectInfo
+}
+
+func (s *nativeAmbiguousReplayStore) PutImmutable(_ context.Context, key string, _ io.Reader, metadata platformobjectstore.ObjectMetadata) (platformobjectstore.ObjectInfo, error) {
+	s.info = platformobjectstore.ObjectInfo{Key: key, StorageSecurityDomain: metadata.StorageSecurityDomain, Digest: metadata.Digest, SizeBytes: metadata.SizeBytes, ContentType: metadata.ContentType, MetadataDigest: metadata.MetadataDigest}
+	return platformobjectstore.ObjectInfo{}, platformobjectstore.ErrAmbiguous
+}
+
+func (s *nativeAmbiguousReplayStore) Open(_ context.Context, _ string) (platformobjectstore.Object, error) {
+	return platformobjectstore.Object{Body: io.NopCloser(bytes.NewReader(s.body)), Info: s.info}, nil
 }
 
 func (s *nativeForgedArtifactStore) Open(ctx context.Context, key string) (platformobjectstore.Object, error) {
@@ -591,6 +686,182 @@ spec:
 	sourceDigest := testNativeDigest("source-snapshot")
 	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", GenerationID: "018f0e4e-6f2a-7abc-8def-0123456789ab", Scope: projectgraph.CandidateScope{ProjectID: "project:test", Environment: "dev"}, OwnerID: "owner-1", ArtifactDigest: sourceDigest, Source: project.CandidateSourceSnapshot{ProjectID: "project:test", ArtifactDigest: sourceDigest, ProjectFile: "leapview.yaml", ProjectDigest: projectDigest}}
 	return nativeInspectFixtureValue{request: request, artifact: compiled.Canonical(), refs: refs, objects: objects}
+}
+
+type nativeBaseFixtureValue struct {
+	identity   projectgraph.ServingIdentity
+	state      servingstate.State
+	artifact   servingstate.Artifact
+	provenance release.Provenance
+	store      *platformobjectstore.MemoryStore
+}
+
+func nativeBaseFixture(t *testing.T, fixture nativeInspectFixtureValue) nativeBaseFixtureValue {
+	t.Helper()
+	compiled, err := projectartifact.Decode(fixture.artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string][]byte, len(fixture.refs))
+	for _, ref := range fixture.refs {
+		files[ref.Path] = fixture.objects[ref.ObjectKey]
+	}
+	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, fixture.request.Source.ProjectFile, compiled.Graph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	bundleManifest, digest, err := projectbundle.PackCompiledProject(compiled, plan, &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestJSON, err := nativeBundleManifestJSON(bundleManifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(fixture.request.Scope.ProjectID, fixture.request.Scope.Environment, fixture.request.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadataDigest := testNativeDigest("base-object-metadata")
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.PutImmutable(t.Context(), nativeServingArtifactKey(digest), bytes.NewReader(body.Bytes()), platformobjectstore.ObjectMetadata{StorageSecurityDomain: "runtime", Digest: digest, SizeBytes: int64(body.Len()), ContentType: nativeServingArtifactContentType, MetadataDigest: metadataDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	accessJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(compiled)
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := servingstate.State{ID: servingstate.ID(identity.GenerationID), ProjectID: identity.ProjectID, ProjectDigest: compiled.Digest(), AccessPolicyJSON: accessJSON, DashboardPublicationsJSON: publicationsJSON, DashboardAppearancesJSON: appearancesJSON, Environment: servingstate.Environment(identity.Environment), Status: servingstate.StatusActive, Digest: digest, ManifestJSON: manifestJSON, DuckLakeSnapshotID: 17}
+	artifact := servingstate.Artifact{ID: nativeServingArtifactID(digest), ServingStateID: state.ID, Digest: digest, Format: servingstate.ArtifactBundleFormat, Locator: nativeServingArtifactKey(digest), StorageSecurityDomain: "runtime", ContentType: nativeServingArtifactContentType, MetadataDigest: metadataDigest, ManifestJSON: manifestJSON, SizeBytes: int64(body.Len())}
+	artifactProvenance := release.ProjectArtifactProvenance{SourceDigest: fixture.request.ArtifactDigest, ProjectDigest: compiled.Digest(), ContentDigest: digest, CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: projectartifact.Version}
+	planProvenance := release.GenerationPlanProvenance{Identity: identity, TargetID: "target-dev", RuntimeVersion: "runtime:test", PolicyDigest: testNativeDigest("base-policy"), DataRevision: "snapshot:17", DataMode: release.GenerationDataReuseBase, ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "connection:warehouse", RevisionID: "revision:base"}}}
+	gate, err := (release.GateEvidence{Version: 1, CandidateID: "base-candidate", SourceDigest: artifactProvenance.SourceDigest, BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: planProvenance.RuntimeVersion, DuckDBVersion: "duckdb:test", Outcome: release.GateSuccess, EvaluatedAt: time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 1, MaxMillis: 100}}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	planProvenance.GateEvidence = &gate
+	provenance, err := release.NewProvenance(release.ProvenanceInput{Artifact: artifactProvenance, Candidate: release.CandidateProvenance{ID: "base-candidate", Revision: 1, OwnerID: "base-owner"}, Plan: planProvenance})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nativeBaseFixtureValue{identity: identity, state: state, artifact: artifact, provenance: provenance, store: store}
+}
+
+func TestNativeGenerationBaseLoadsExactObjectAndPlansAgainstArtifact(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{provenance: base.provenance}, artifacts: base.store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	loaded, err := service.nativeGenerationBase(t.Context(), &base.identity)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !loaded.active || loaded.artifact.Digest() != base.state.ProjectDigest || loaded.dataRevision != "snapshot:17" || loaded.snapshotID != 17 {
+		t.Fatalf("loaded native base = %#v", loaded)
+	}
+	request := fixture.request
+	request.Scope.BaseGenerationID = base.identity.GenerationID
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inspected.Generation.DataMode != release.GenerationDataReuseBase || inspected.Generation.DataRevision != "snapshot:17" {
+		t.Fatalf("inspect data evidence = %q/%q", inspected.Generation.DataMode, inspected.Generation.DataRevision)
+	}
+	if inspected.Compiler.Plan.Summary.Added != 0 || inspected.Compiler.Plan.Summary.Removed != 0 {
+		t.Fatalf("plan was not compared to exact base artifact: %#v", inspected.Compiler.Plan.Summary)
+	}
+}
+
+func TestNativeGenerationBaseRejectsInactiveOrIncompleteState(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	service := &nativeCandidateArtifactPhases{states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{provenance: base.provenance}, artifacts: base.store, storageDomain: "runtime", environment: "dev"}
+	for name, mutate := range map[string]func(*servingstate.State){
+		"inactive": func(state *servingstate.State) { state.Status = servingstate.StatusValidated },
+		"snapshot": func(state *servingstate.State) { state.DuckLakeSnapshotID = 0 },
+	} {
+		state := base.state
+		mutate(&state)
+		service.states = nativeBaseStateStub{state: state, artifact: base.artifact}
+		if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+			t.Fatalf("%s state error = %v", name, err)
+		}
+	}
+}
+
+func TestNativeGenerationBaseClassifiesPermanentProvenanceFailuresAsInvalid(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	for _, provenanceErr := range []error{release.ErrConflict, release.ErrInvalid, release.ErrProvenanceInvalid} {
+		service := &nativeCandidateArtifactPhases{states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{err: provenanceErr}, artifacts: base.store, storageDomain: "runtime", environment: "dev"}
+		if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+			t.Fatalf("provenance error %v classified as %v, want candidate artifact invalid", provenanceErr, err)
+		}
+	}
+}
+
+func TestNativeGenerationBaseRejectsObjectAndManifestEvidence(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	service := &nativeCandidateArtifactPhases{states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{provenance: base.provenance}, artifacts: base.store, storageDomain: "runtime", environment: "dev"}
+	for name, mutate := range map[string]func(*servingstate.Artifact){
+		"locator":  func(artifact *servingstate.Artifact) { artifact.Locator = "serving-artifacts/forged.tar.gz" },
+		"metadata": func(artifact *servingstate.Artifact) { artifact.MetadataDigest = testNativeDigest("forged") },
+		"manifest": func(artifact *servingstate.Artifact) { artifact.ManifestJSON = `{}` },
+	} {
+		artifact := base.artifact
+		mutate(&artifact)
+		service.states = nativeBaseStateStub{state: base.state, artifact: artifact}
+		if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+			t.Fatalf("%s artifact error = %v", name, err)
+		}
+	}
+	service.states = nativeBaseStateStub{state: base.state, artifact: base.artifact}
+	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: base.store, body: []byte("corrupt bundle")}
+	if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("corrupt object error = %v", err)
+	}
+}
+
+func TestNativeGenerationBaseRejectsDuplicateBindingEvidence(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	duplicate := base.provenance
+	duplicate.Plan.Bindings = []release.BindingEvidence{{BindingID: "binding-a", ConnectionID: "connection:warehouse", ConnectorKind: "managed", Revision: 1, ValidatedVersion: "v1", EndpointConfigHash: testNativeDigest("a")}, {BindingID: "binding-b", ConnectionID: "connection:warehouse", ConnectorKind: "managed", Revision: 2, ValidatedVersion: "v2", EndpointConfigHash: testNativeDigest("b")}}
+	gate := *duplicate.Plan.GateEvidence
+	gate.BindingGeneration = release.BindingFingerprint(duplicate.Plan.Bindings)
+	canonicalGate, err := gate.Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
+	duplicate.Plan.GateEvidence = &canonicalGate
+	// Recompute the immutable provenance envelope so this reaches the loader's
+	// uniqueness check rather than being rejected as a stale content digest.
+	duplicate, err = release.NewProvenance(release.ProvenanceInput{Artifact: duplicate.Artifact, Candidate: duplicate.Candidate, SourceRevision: duplicate.SourceRevision, Plan: duplicate.Plan})
+	if err != nil {
+		t.Fatal(err)
+	}
+	service := &nativeCandidateArtifactPhases{states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{provenance: duplicate}, artifacts: base.store, storageDomain: "runtime", environment: "dev"}
+	if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("duplicate binding error = %v", err)
+	}
+}
+
+func TestNativeGenerationBaseRejectsDuplicateManagedDataPins(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	duplicate := base.provenance
+	duplicate.Plan.ManagedDataPins = append(duplicate.Plan.ManagedDataPins, duplicate.Plan.ManagedDataPins[0])
+	service := &nativeCandidateArtifactPhases{states: nativeBaseStateStub{state: base.state, artifact: base.artifact}, provenance: nativeBaseProvenanceStub{provenance: duplicate}, artifacts: base.store, storageDomain: "runtime", environment: "dev"}
+	if _, err := service.nativeGenerationBase(t.Context(), &base.identity); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("duplicate managed-data pin error = %v", err)
+	}
 }
 
 func testNativeDigest(value string) string {

@@ -198,13 +198,17 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	if err := m.verifyPlanEvidence(ctx, plan, planningInput, inspected); err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
+	effectiveArtifacts, err := effectiveCandidateArtifacts(plan, candidate.ID, inspected)
+	if err != nil {
+		return deployment.DeliveryBuildAttempt{}, err
+	}
 	preparationLease, err := m.Admission.AcquireCandidatePreparation(ctx)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, candidatePreparationError(err)
 	}
 	defer preparationLease.Release()
 	ctx = preparationLease.Context()
-	buildRequest, err := m.BuildRequest(ctx, buildInput, inspected)
+	buildRequest, err := m.BuildRequest(ctx, buildInput, effectiveArtifacts)
 	if err != nil {
 		return deployment.DeliveryBuildAttempt{}, err
 	}
@@ -214,15 +218,25 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	buildRequest.IdempotencyKey = idempotencyKey
 	var preparedArtifacts release.CandidateArtifactSet
 	buildRequest.PrepareArtifacts = func(prepareCtx context.Context, buildInput deployment.DeliveryBuildInput) (deployment.DeliveryArtifactIdentity, error) {
+		// Lifecycle reserves this identity from the durable attempt before this
+		// callback runs. Keep the request scoped to that value so native
+		// materialization never sees an empty generation ID, and retries replay
+		// the exact bound identity.
+		materializeRequest := request
+		materializeRequest.GenerationID = buildInput.ServingStateID
 		if buildInput.Attempt.ServingArtifactID != "" {
 			identity := deployment.DeliveryArtifactIdentity{ServingArtifactID: buildInput.Attempt.ServingArtifactID, ServingArtifactDigest: buildInput.Attempt.ServingArtifactDigest, ServingStateID: buildInput.Attempt.ServingStateID}
 			rehydrator, ok := m.Artifacts.(candidateArtifactRehydrator)
 			if !ok {
 				return deployment.DeliveryArtifactIdentity{}, fmt.Errorf("durable candidate artifact rehydration is unavailable")
 			}
-			artifacts, hydrateErr := rehydrator.HydrateCandidateArtifacts(prepareCtx, request, inspected, identity)
+			materializeRequest.GenerationID = identity.ServingStateID
+			artifacts, hydrateErr := rehydrator.HydrateCandidateArtifacts(prepareCtx, materializeRequest, effectiveArtifacts, identity)
 			if hydrateErr != nil {
 				return deployment.DeliveryArtifactIdentity{}, hydrateErr
+			}
+			if err := verifyEffectiveCandidateArtifacts(effectiveArtifacts, artifacts); err != nil {
+				return deployment.DeliveryArtifactIdentity{}, err
 			}
 			preparedArtifacts = artifacts
 			if setter, ok := buildRequest.PhasedRunner.(interface{ SetCandidateArtifacts(any) error }); ok {
@@ -235,11 +249,14 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 		materializer, materializeOK := m.Artifacts.(candidateArtifactMaterializer)
 		var artifacts release.CandidateArtifactSet
 		if materializeOK {
-			artifacts, err = materializer.MaterializeCandidateArtifacts(prepareCtx, request, inspected)
+			artifacts, err = materializer.MaterializeCandidateArtifacts(prepareCtx, materializeRequest, effectiveArtifacts)
 		} else {
-			artifacts, err = m.Artifacts.PrepareCandidateArtifacts(prepareCtx, request)
+			artifacts, err = m.Artifacts.PrepareCandidateArtifacts(prepareCtx, materializeRequest)
 		}
 		if err != nil {
+			return deployment.DeliveryArtifactIdentity{}, err
+		}
+		if err := verifyEffectiveCandidateArtifacts(effectiveArtifacts, artifacts); err != nil {
 			return deployment.DeliveryArtifactIdentity{}, err
 		}
 		preparedArtifacts = artifacts
@@ -269,8 +286,13 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 			ServingArtifactDigest: result.Attempt.ServingArtifactDigest,
 			ServingStateID:        result.Attempt.ServingStateID,
 		}
-		preparedArtifacts, err = rehydrator.HydrateCandidateArtifacts(ctx, request, inspected, identity)
+		rehydrateRequest := request
+		rehydrateRequest.GenerationID = identity.ServingStateID
+		preparedArtifacts, err = rehydrator.HydrateCandidateArtifacts(ctx, rehydrateRequest, effectiveArtifacts, identity)
 		if err != nil {
+			return deployment.DeliveryBuildAttempt{}, err
+		}
+		if err := verifyEffectiveCandidateArtifacts(effectiveArtifacts, preparedArtifacts); err != nil {
 			return deployment.DeliveryBuildAttempt{}, err
 		}
 	}
@@ -311,6 +333,46 @@ func (m *CanonicalDeliveryMutations) RollbackGeneration(ctx context.Context, pro
 func digestID(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+// effectiveCandidateArtifacts applies the durable plan's reuse disposition to
+// the inspected artifact set before any physical materialization begins. An
+// inspected reuse_base set is only safe when the exact candidate-level
+// decision is reusable; relation-scoped partial reuse deliberately refreshes
+// source data while retaining the sealed base for unchanged relations.
+func effectiveCandidateArtifacts(plan deployment.DeliveryPlan, candidateID string, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
+	effective := inspected
+	if effective.Generation.DataMode != release.GenerationDataReuseBase {
+		// Base gate evidence is meaningful only to a reuse-base execution. Never
+		// carry it into a source refresh, including ordinary inspected refreshes.
+		effective.Generation.BaseGateEvidence = nil
+		return effective, nil
+	}
+	decision, hasDecision := deployment.ResolveDeliveryReuseDecision(&plan, candidateID)
+	if hasDecision && decision.Reusable {
+		return effective, nil
+	}
+	effective.Generation.DataMode = release.GenerationDataRefreshSources
+	revision, err := release.CandidateSourcesDataRevision(effective.Artifact.SourceDigest, effective.Generation.ManagedDataPins)
+	if err != nil {
+		return release.CandidateArtifactSet{}, err
+	}
+	effective.Generation.DataRevision = revision
+	effective.Generation.BaseGateEvidence = nil
+	return effective, nil
+}
+
+func verifyEffectiveCandidateArtifacts(effective, actual release.CandidateArtifactSet) error {
+	if actual.Generation.DataMode != effective.Generation.DataMode || actual.Generation.DataRevision != effective.Generation.DataRevision {
+		return fmt.Errorf("materialized candidate data mode or revision differs from effective plan")
+	}
+	if (actual.Generation.BaseGateEvidence == nil) != (effective.Generation.BaseGateEvidence == nil) {
+		return fmt.Errorf("materialized candidate base gate evidence differs from effective plan")
+	}
+	if actual.Generation.BaseGateEvidence != nil && actual.Generation.BaseGateEvidence.Digest != effective.Generation.BaseGateEvidence.Digest {
+		return fmt.Errorf("materialized candidate base gate evidence differs from effective plan")
+	}
+	return nil
 }
 
 func (m *CanonicalDeliveryMutations) verifyPlanEvidence(ctx context.Context, plan deployment.DeliveryPlan, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) error {
@@ -385,6 +447,12 @@ func (a *CanonicalDeliveryAdapter) BuildCandidate(ctx context.Context, input dep
 			return deployment.Candidate{}, planErr
 		}
 		input.Plan = &plan
+	}
+	if input.Plan != nil {
+		artifacts, err = effectiveCandidateArtifacts(*input.Plan, input.Candidate.ID, artifacts)
+		if err != nil {
+			return deployment.Candidate{}, err
+		}
 	}
 	request, err := a.BuildRequest(ctx, input, artifacts)
 	if err != nil {

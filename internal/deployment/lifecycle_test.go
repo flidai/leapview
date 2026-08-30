@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/google/uuid"
 )
 
 type lifecycleTarget struct{ state DeliveryTarget }
@@ -216,6 +217,169 @@ func (s *lifecycleBuildStore) BindDeliveryBuildSnapshot(_ context.Context, id st
 		s.attempt.UpdatedAt = now
 	}
 	return s.attempt, nil
+}
+
+// lifecycleArtifactBindingStore models the native repository's durable
+// serving-artifact binding. The callback must receive the identity before any
+// physical runner work, and the binding is fenced by the attempt revision.
+type lifecycleArtifactBindingStore struct{ *lifecycleBuildStore }
+
+func (s *lifecycleArtifactBindingStore) BindDeliveryBuildArtifacts(_ context.Context, id string, expected int64, identity DeliveryArtifactIdentity, now time.Time) (DeliveryBuildAttempt, error) {
+	if id != s.attempt.ID || expected != s.attempt.Revision {
+		return DeliveryBuildAttempt{}, ErrDeliveryConflict
+	}
+	if identity.ServingArtifactID == "" || identity.ServingArtifactDigest == "" || identity.ServingStateID == "" {
+		return DeliveryBuildAttempt{}, ErrDeliveryInvalid
+	}
+	if s.attempt.ServingArtifactID != "" {
+		bound := DeliveryArtifactIdentity{ServingArtifactID: s.attempt.ServingArtifactID, ServingArtifactDigest: s.attempt.ServingArtifactDigest, ServingStateID: s.attempt.ServingStateID}
+		if bound != identity {
+			return DeliveryBuildAttempt{}, ErrDeliveryConflict
+		}
+		return s.attempt, nil
+	}
+	s.attempt.ServingArtifactID = identity.ServingArtifactID
+	s.attempt.ServingArtifactDigest = identity.ServingArtifactDigest
+	s.attempt.ServingStateID = identity.ServingStateID
+	s.attempt.Revision++
+	s.attempt.UpdatedAt = now.UTC()
+	return s.attempt, nil
+}
+
+func TestDeliveryLifecycleReservesUUIDv7BeforeFirstArtifactMaterialization(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	store := &lifecycleArtifactBindingStore{lifecycleBuildStore: &lifecycleBuildStore{plan: plan}}
+	var prepared DeliveryBuildInput
+	artifactDigest := lifecycleDigest('e')
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
+	_, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: "attempt-first-artifact", WriterLeaseID: "writer-first-artifact", CandidateID: "candidate-first-artifact", SealID: "seal-first-artifact",
+		PhysicalPoolID: "pool-first-artifact", OwnerID: "owner-first-artifact", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		PrepareArtifacts: func(_ context.Context, input DeliveryBuildInput) (DeliveryArtifactIdentity, error) {
+			prepared = input
+			parsed, parseErr := uuid.Parse(input.ServingStateID)
+			if parseErr != nil || parsed.Version() != 7 || parsed.Variant() != uuid.RFC4122 {
+				return DeliveryArtifactIdentity{}, fmt.Errorf("serving state is not UUIDv7: %q", input.ServingStateID)
+			}
+			return DeliveryArtifactIdentity{ServingArtifactID: "artifact-first-artifact", ServingArtifactDigest: artifactDigest, ServingStateID: input.ServingStateID}, nil
+		},
+		Runner: func(_ context.Context, input DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			if input.ServingStateID != prepared.ServingStateID || input.Attempt.ServingStateID != prepared.ServingStateID {
+				return DeliveryBuildOutput{}, fmt.Errorf("runner received a different serving state")
+			}
+			return DeliveryBuildOutput{}, errors.New("stop after identity reservation")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stop after identity reservation") {
+		t.Fatalf("first build error = %v", err)
+	}
+	if prepared.ServingStateID == "" || store.attempt.ServingStateID != prepared.ServingStateID {
+		t.Fatalf("durable serving identity = %q, prepared = %q", store.attempt.ServingStateID, prepared.ServingStateID)
+	}
+}
+
+func TestDeliveryLifecycleRetryReusesBoundServingIdentityAndRejectsDrift(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	boundState := "018f0e4e-6f2a-7abc-8def-0123456789ab"
+	boundDigest := lifecycleDigest('e')
+	baseAttempt := DeliveryBuildAttempt{ID: "attempt-reuse-artifact", PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: "pool-reuse-artifact", WriterLeaseID: "writer-reuse-artifact", ServingArtifactID: "artifact-reuse-artifact", ServingArtifactDigest: boundDigest, ServingStateID: boundState, Status: DeliveryBuildBuilding, CreatedAt: now, UpdatedAt: now, Revision: 1}
+	if err := baseAttempt.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	store := &lifecycleBuildStore{plan: plan, preexisting: baseAttempt}
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
+	var seen DeliveryBuildInput
+	_, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: baseAttempt.ID, WriterLeaseID: baseAttempt.WriterLeaseID, CandidateID: "candidate-reuse-artifact", SealID: "seal-reuse-artifact",
+		PhysicalPoolID: baseAttempt.PhysicalPoolID, OwnerID: "owner-reuse-artifact", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now, ServingStateID: boundState,
+		PrepareArtifacts: func(_ context.Context, input DeliveryBuildInput) (DeliveryArtifactIdentity, error) {
+			seen = input
+			return DeliveryArtifactIdentity{ServingArtifactID: baseAttempt.ServingArtifactID, ServingArtifactDigest: baseAttempt.ServingArtifactDigest, ServingStateID: baseAttempt.ServingStateID}, nil
+		},
+		Runner: func(_ context.Context, input DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			if input.ServingStateID != boundState || input.Attempt.ServingStateID != boundState {
+				return DeliveryBuildOutput{}, fmt.Errorf("retry did not reuse bound serving state")
+			}
+			return DeliveryBuildOutput{}, errors.New("stop after retry identity")
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "stop after retry identity") {
+		t.Fatalf("retry error = %v", err)
+	}
+	if seen.ServingStateID != boundState {
+		t.Fatalf("retry preparation serving state = %q, want %q", seen.ServingStateID, boundState)
+	}
+
+	store = &lifecycleBuildStore{plan: plan, preexisting: baseAttempt}
+	lifecycle.Store = store
+	_, err = lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: baseAttempt.ID, WriterLeaseID: baseAttempt.WriterLeaseID, CandidateID: "candidate-reuse-drift", SealID: "seal-reuse-drift",
+		PhysicalPoolID: baseAttempt.PhysicalPoolID, OwnerID: "owner-reuse-artifact", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		PrepareArtifacts: func(_ context.Context, _ DeliveryBuildInput) (DeliveryArtifactIdentity, error) {
+			return DeliveryArtifactIdentity{ServingArtifactID: baseAttempt.ServingArtifactID, ServingArtifactDigest: baseAttempt.ServingArtifactDigest, ServingStateID: "018f0e4e-6f2a-7abd-8def-0123456789ab"}, nil
+		},
+		Runner: func(context.Context, DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			return DeliveryBuildOutput{}, errors.New("runner must not run after identity drift")
+		},
+	})
+	if !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("retry identity drift error = %v, want ErrDeliveryConflict", err)
+	}
+}
+
+func TestDeliveryLifecycleRejectsPreparedServingStateDifferentFromFirstBuildReservation(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	store := &lifecycleArtifactBindingStore{lifecycleBuildStore: &lifecycleBuildStore{plan: plan}}
+	runnerCalled := false
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
+	_, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: "attempt-first-artifact-drift", WriterLeaseID: "writer-first-artifact-drift", CandidateID: "candidate-first-artifact-drift", SealID: "seal-first-artifact-drift",
+		PhysicalPoolID: "pool-first-artifact-drift", OwnerID: "owner-first-artifact-drift", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		PrepareArtifacts: func(_ context.Context, _ DeliveryBuildInput) (DeliveryArtifactIdentity, error) {
+			return DeliveryArtifactIdentity{ServingArtifactID: "artifact-first-artifact-drift", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: "018f0e4e-6f2a-7abd-8def-0123456789ab"}, nil
+		},
+		Runner: func(context.Context, DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			runnerCalled = true
+			return DeliveryBuildOutput{}, nil
+		},
+	})
+	if !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("first-build serving state drift error = %v, want ErrDeliveryConflict", err)
+	}
+	if runnerCalled {
+		t.Fatal("runner executed after first-build serving state drift")
+	}
+}
+
+func TestDeliveryLifecycleRejectsRequestDriftFromBoundServingStateWithoutPreparer(t *testing.T) {
+	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	plan := testLifecycleBuildPlan(t, now)
+	boundState := "018f0e4e-6f2a-7abc-8def-0123456789ab"
+	baseAttempt := DeliveryBuildAttempt{ID: "attempt-bound-state-drift", PlanID: plan.ID, PlanDigest: plan.Digest, SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest, PhysicalPoolID: "pool-bound-state-drift", WriterLeaseID: "writer-bound-state-drift", ServingArtifactID: "artifact-bound-state-drift", ServingArtifactDigest: lifecycleDigest('e'), ServingStateID: boundState, Status: DeliveryBuildBuilding, CreatedAt: now, UpdatedAt: now, Revision: 1}
+	if err := baseAttempt.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	store := &lifecycleBuildStore{plan: plan, preexisting: baseAttempt}
+	runnerCalled := false
+	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod"}}, Store: store, Now: func() time.Time { return now }}
+	_, err := lifecycle.Build(t.Context(), DeliveryBuildRequest{
+		PlanID: plan.ID, AttemptID: baseAttempt.ID, WriterLeaseID: baseAttempt.WriterLeaseID, CandidateID: "candidate-bound-state-drift", SealID: "seal-bound-state-drift",
+		ServingArtifactID: baseAttempt.ServingArtifactID, ServingArtifactDigest: baseAttempt.ServingArtifactDigest, ServingStateID: "018f0e4e-6f2a-7abd-8def-0123456789ab",
+		PhysicalPoolID: baseAttempt.PhysicalPoolID, OwnerID: "owner-bound-state-drift", Epoch: 1, LeaseLifetime: time.Hour, CreatedAt: now,
+		Runner: func(context.Context, DeliveryBuildInput) (DeliveryBuildOutput, error) {
+			runnerCalled = true
+			return DeliveryBuildOutput{}, nil
+		},
+	})
+	if !errors.Is(err, ErrDeliveryConflict) {
+		t.Fatalf("bound serving state drift error = %v, want ErrDeliveryConflict", err)
+	}
+	if runnerCalled {
+		t.Fatal("runner executed after bound serving state drift")
+	}
 }
 
 func TestDeliveryLifecycleRunnerBindsSnapshotAfterValidatingTransition(t *testing.T) {
