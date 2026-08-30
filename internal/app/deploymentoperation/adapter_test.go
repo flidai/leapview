@@ -267,3 +267,28 @@ func TestOperationAdapterIndeterminateProjectionAndEvidence(t *testing.T) {
 	}
 	_ = validationTx.Rollback(t.Context())
 }
+
+func TestValidateAcquireResultRejectsOperationLeaseAttemptDrift(t *testing.T) {
+	now := time.Now().UTC()
+	input := deploymentmodule.NativeOperationAcquireInput{
+		Scope: "target", OperationType: "delivery.plan.build", IdempotencyKey: "attempt-drift",
+		RequestDigest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", OwnerID: "builder",
+	}
+	result := operationpostgres.AcquireResult{
+		Status: operationpostgres.StatusAcquired,
+		Operation: operationpostgres.Operation{
+			Scope: input.Scope, OperationType: input.OperationType, IdempotencyKey: input.IdempotencyKey,
+			RequestDigest: input.RequestDigest, OperationID: "0198f2c0-7c7a-7f00-8a11-000000000510",
+			State: operationpostgres.StatePending, OwnerID: input.OwnerID, FencingGeneration: 1,
+			LeaseExpiresAt: now.Add(time.Minute), AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000511", AttemptIdentity: "attempt-one",
+		},
+		Lease: operationpostgres.Lease{
+			Scope: input.Scope, IdempotencyKey: input.IdempotencyKey, OperationID: "0198f2c0-7c7a-7f00-8a11-000000000510",
+			OwnerID: input.OwnerID, FencingGeneration: 1, LeaseExpiresAt: now.Add(time.Minute),
+			AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000512", AttemptIdentity: "attempt-two",
+		},
+	}
+	if err := validateAcquireResult(result, deploymentmodule.NativeOperationAcquired, input); !errors.Is(err, deploymentmodule.ErrNativeOperationConflict) {
+		t.Fatalf("attempt drift error = %v, want native operation conflict", err)
+	}
+}

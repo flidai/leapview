@@ -12,6 +12,7 @@ import (
 
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
@@ -100,7 +101,7 @@ func projectOperationRecord(stored operationpostgres.Operation) (deploymentmodul
 	if err := validateUUIDv7(stored.OperationID, "operation id"); err != nil {
 		return deploymentmodule.NativeOperationRecord{}, err
 	}
-	if stored.Scope == "" || stored.Scope != strings.TrimSpace(stored.Scope) || stored.OperationType == "" || stored.OperationType != strings.TrimSpace(stored.OperationType) || stored.IdempotencyKey == "" || stored.IdempotencyKey != strings.TrimSpace(stored.IdempotencyKey) || stored.RequestDigest == "" || stored.RequestDigest != strings.TrimSpace(stored.RequestDigest) || stored.OwnerID == "" || stored.OwnerID != strings.TrimSpace(stored.OwnerID) || stored.FencingGeneration <= 0 || stored.LeaseExpiresAt.IsZero() {
+	if stored.Scope == "" || stored.Scope != strings.TrimSpace(stored.Scope) || len(stored.Scope) > 255 || stored.OperationType == "" || stored.OperationType != strings.TrimSpace(stored.OperationType) || len(stored.OperationType) > 255 || stored.IdempotencyKey == "" || stored.IdempotencyKey != strings.TrimSpace(stored.IdempotencyKey) || len(stored.IdempotencyKey) > 512 || stored.RequestDigest == "" || stored.RequestDigest != strings.TrimSpace(stored.RequestDigest) || platformdigest.ValidateSHA256Identity(stored.RequestDigest) != nil || stored.OwnerID == "" || stored.OwnerID != strings.TrimSpace(stored.OwnerID) || len(stored.OwnerID) > 255 || stored.FencingGeneration <= 0 || stored.LeaseExpiresAt.IsZero() {
 		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned incomplete operation identity", deploymentmodule.ErrNativeOperationInvalid)
 	}
 	if (stored.AttemptID == "") != (stored.AttemptIdentity == "") {
@@ -264,6 +265,9 @@ func validateAcquireResult(result operationpostgres.AcquireResult, status deploy
 	if status == deploymentmodule.NativeOperationAcquired {
 		if result.Lease.Scope != input.Scope || result.Lease.IdempotencyKey != input.IdempotencyKey || result.Lease.OperationID != result.Operation.OperationID || result.Lease.OwnerID != input.OwnerID || result.Lease.FencingGeneration <= 0 || result.Lease.LeaseExpiresAt.IsZero() {
 			return fmt.Errorf("%w: operation authority returned an invalid lease identity", deploymentmodule.ErrNativeOperationInvalid)
+		}
+		if result.Operation.AttemptID != result.Lease.AttemptID || result.Operation.AttemptIdentity != result.Lease.AttemptIdentity {
+			return fmt.Errorf("%w: operation authority returned mismatched operation and lease attempts", deploymentmodule.ErrNativeOperationConflict)
 		}
 		leaseID, leaseErr := uuid.Parse(result.Lease.OperationID)
 		if leaseErr != nil || leaseID.String() != result.Lease.OperationID || leaseID.Version() != 7 {
