@@ -104,7 +104,13 @@ func nativePhysicalEnvironment(t *testing.T, in NativePhysicalBuildInput) *nativ
 	}
 	root := "/tmp/native-objects"
 	snapshot := int64(42)
-	relationJSON := []byte(`{"relations":[]}`)
+	relationJSON, err := json.Marshal(struct {
+		RelationNamespace string               `json:"relation_namespace"`
+		Relations         []ducklake.BaseTable `json:"relations"`
+	}{in.Attempt.Namespace, []ducklake.BaseTable{}})
+	if err != nil {
+		t.Fatal(err)
+	}
 	closureJSON := []byte(`{"objects":[]}`)
 	relationDigest := nativePhysicalValueDigest(relationJSON)
 	closureDigest := nativePhysicalValueDigest(closureJSON)
@@ -114,18 +120,19 @@ func nativePhysicalEnvironment(t *testing.T, in NativePhysicalBuildInput) *nativ
 		CatalogID              string                          `json:"catalog_id"`
 		SnapshotID             int64                           `json:"snapshot_id"`
 		ObjectRoot             string                          `json:"object_root"`
+		RelationNamespace      string                          `json:"relation_namespace"`
 		Relations              []ducklake.BaseTable            `json:"relations"`
 		Objects                []ducklake.NativeSnapshotObject `json:"objects"`
 		RelationManifestDigest string                          `json:"relation_manifest_digest"`
 		ClosureDigest          string                          `json:"closure_digest"`
 		ObjectRootDigest       string                          `json:"object_root_digest"`
-	}{1, in.CatalogID, snapshot, root, []ducklake.BaseTable{}, []ducklake.NativeSnapshotObject{}, relationDigest, closureDigest, rootDigest})
+	}{2, in.CatalogID, snapshot, root, in.Attempt.Namespace, []ducklake.BaseTable{}, []ducklake.NativeSnapshotObject{}, relationDigest, closureDigest, rootDigest})
 	if err != nil {
 		t.Fatal(err)
 	}
 	f := &nativePhysicalEnvironmentFake{
 		seal:    ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(in.Attempt.PhysicalPoolID), DataPath: root, ExtensionVersion: "1", CatalogVersion: "1", SnapshotID: snapshot, CommitMarker: canonical},
-		closure: ducklake.NativeSnapshotClosureEvidence{CatalogID: in.CatalogID, SnapshotID: snapshot, ObjectRoot: root, Relations: []ducklake.BaseTable{}, Objects: []ducklake.NativeSnapshotObject{}, RelationManifestJSON: relationJSON, ClosureJSON: closureJSON, CanonicalJSON: canonicalClosure, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest, ObjectRootDigest: rootDigest},
+		closure: ducklake.NativeSnapshotClosureEvidence{CatalogID: in.CatalogID, SnapshotID: snapshot, ObjectRoot: root, RelationNamespace: in.Attempt.Namespace, Relations: []ducklake.BaseTable{}, Objects: []ducklake.NativeSnapshotObject{}, RelationManifestJSON: relationJSON, ClosureJSON: closureJSON, CanonicalJSON: canonicalClosure, RelationManifestDigest: relationDigest, ClosureDigest: closureDigest, ObjectRootDigest: rootDigest},
 	}
 	return f
 }
@@ -159,7 +166,7 @@ func TestBuildNativePhysicalSuccess(t *testing.T) {
 	if got.Closure.Relations == nil || got.Closure.Objects == nil {
 		t.Fatal("successful evidence collapsed canonical empty arrays to nil")
 	}
-	if env.closureReq.CatalogID != in.CatalogID || env.closureReq.SnapshotID != 42 || env.closureReq.ObjectRoot != "/tmp/native-objects" {
+	if env.closureReq.CatalogID != in.CatalogID || env.closureReq.SnapshotID != 42 || env.closureReq.ObjectRoot != "/tmp/native-objects" || env.closureReq.RelationNamespace != in.Attempt.Namespace {
 		t.Fatalf("closure request = %#v", env.closureReq)
 	}
 	if env.request.RelationNamespace != in.Attempt.Namespace {
@@ -228,6 +235,21 @@ func TestBuildNativePhysicalRejectsForgedClosureDigest(t *testing.T) {
 	}))
 	if err == nil || !errors.Is(err, deploymentnative.ErrConflict) {
 		t.Fatalf("forged closure digest error = %v", err)
+	}
+	if env.closes != 1 {
+		t.Fatalf("close count = %d, want 1", env.closes)
+	}
+}
+
+func TestBuildNativePhysicalRejectsCrossNamespaceClosureEvidence(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	env := nativePhysicalEnvironment(t, in)
+	env.closure.Relations = []ducklake.BaseTable{{Schema: "model", Table: "orders"}}
+	_, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	}))
+	if err == nil || !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("cross-namespace closure error = %v, want conflict", err)
 	}
 	if env.closes != 1 {
 		t.Fatalf("close count = %d, want 1", env.closes)

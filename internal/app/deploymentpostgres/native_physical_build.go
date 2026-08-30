@@ -211,7 +211,10 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 	if sealErr != nil {
 		return NativePhysicalBuildEvidence{}, sealErr
 	}
-	closure, closureErr := environment.NativeSnapshotClosureEvidence(ctx, ducklake.NativeSnapshotClosureRequest{CatalogID: normalized.CatalogID, SnapshotID: snapshotID, ObjectRoot: canonicalRoot})
+	closure, closureErr := environment.NativeSnapshotClosureEvidence(ctx, ducklake.NativeSnapshotClosureRequest{
+		CatalogID: normalized.CatalogID, SnapshotID: snapshotID, ObjectRoot: canonicalRoot,
+		RelationNamespace: normalized.Attempt.Namespace,
+	})
 	if closureErr != nil {
 		return NativePhysicalBuildEvidence{}, closureErr
 	}
@@ -380,8 +383,13 @@ func verifyNativePhysicalEvidence(seal ducklake.PostgresSnapshotSealEvidence, cl
 			return err
 		}
 	}
-	if closure.CatalogID != input.CatalogID || closure.SnapshotID != snapshotID || closure.ObjectRoot != canonicalRoot {
+	if closure.CatalogID != input.CatalogID || closure.SnapshotID != snapshotID || closure.ObjectRoot != canonicalRoot || closure.RelationNamespace != input.Attempt.Namespace {
 		return fmt.Errorf("%w: native snapshot closure catalog/object/snapshot evidence differs", deploymentnative.ErrConflict)
+	}
+	for _, relation := range closure.Relations {
+		if relation.Schema != input.Attempt.Namespace {
+			return fmt.Errorf("%w: native snapshot closure relation %s.%s is outside candidate relation namespace %q", deploymentnative.ErrConflict, relation.Schema, relation.Table, input.Attempt.Namespace)
+		}
 	}
 	if len(closure.CanonicalJSON) == 0 || len(closure.CanonicalJSON) > ducklake.NativeSnapshotClosureMaxBytes {
 		return fmt.Errorf("%w: native snapshot closure canonical evidence is missing or oversized", deploymentnative.ErrInvalid)
@@ -407,7 +415,8 @@ func nativeEvidenceDigest(value []byte) string {
 
 func verifyCanonicalClosureJSON(closure ducklake.NativeSnapshotClosureEvidence, canonicalRoot string) error {
 	type relationManifest struct {
-		Relations []ducklake.BaseTable `json:"relations"`
+		RelationNamespace string               `json:"relation_namespace"`
+		Relations         []ducklake.BaseTable `json:"relations"`
 	}
 	type closureManifest struct {
 		Objects []ducklake.NativeSnapshotObject `json:"objects"`
@@ -417,13 +426,14 @@ func verifyCanonicalClosureJSON(closure ducklake.NativeSnapshotClosureEvidence, 
 		CatalogID              string                          `json:"catalog_id"`
 		SnapshotID             int64                           `json:"snapshot_id"`
 		ObjectRoot             string                          `json:"object_root"`
+		RelationNamespace      string                          `json:"relation_namespace"`
 		Relations              []ducklake.BaseTable            `json:"relations"`
 		Objects                []ducklake.NativeSnapshotObject `json:"objects"`
 		RelationManifestDigest string                          `json:"relation_manifest_digest"`
 		ClosureDigest          string                          `json:"closure_digest"`
 		ObjectRootDigest       string                          `json:"object_root_digest"`
 	}
-	relationJSON, err := json.Marshal(relationManifest{Relations: closure.Relations})
+	relationJSON, err := json.Marshal(relationManifest{RelationNamespace: closure.RelationNamespace, Relations: closure.Relations})
 	if err != nil {
 		return fmt.Errorf("%w: marshal closure relation manifest: %v", deploymentnative.ErrInvalid, err)
 	}
@@ -434,7 +444,7 @@ func verifyCanonicalClosureJSON(closure ducklake.NativeSnapshotClosureEvidence, 
 	if len(closure.RelationManifestJSON) == 0 || !bytes.Equal(closure.RelationManifestJSON, relationJSON) || len(closure.ClosureJSON) == 0 || !bytes.Equal(closure.ClosureJSON, closureJSON) {
 		return fmt.Errorf("%w: native snapshot closure manifests are not canonical", deploymentnative.ErrConflict)
 	}
-	expected, err := json.Marshal(envelope{SchemaVersion: ducklake.NativeSnapshotClosureSchemaVersion, CatalogID: closure.CatalogID, SnapshotID: closure.SnapshotID, ObjectRoot: canonicalRoot, Relations: closure.Relations, Objects: closure.Objects, RelationManifestDigest: closure.RelationManifestDigest, ClosureDigest: closure.ClosureDigest, ObjectRootDigest: closure.ObjectRootDigest})
+	expected, err := json.Marshal(envelope{SchemaVersion: ducklake.NativeSnapshotClosureSchemaVersion, CatalogID: closure.CatalogID, SnapshotID: closure.SnapshotID, ObjectRoot: canonicalRoot, RelationNamespace: closure.RelationNamespace, Relations: closure.Relations, Objects: closure.Objects, RelationManifestDigest: closure.RelationManifestDigest, ClosureDigest: closure.ClosureDigest, ObjectRootDigest: closure.ObjectRootDigest})
 	if err != nil {
 		return fmt.Errorf("%w: marshal closure evidence: %v", deploymentnative.ErrInvalid, err)
 	}

@@ -26,7 +26,7 @@ const (
 	// NativeSnapshotClosureSchemaVersion identifies the canonical document
 	// shape.  It is deliberately independent from the DuckLake extension
 	// version: changing either shape or extension is a qualification change.
-	NativeSnapshotClosureSchemaVersion = 1
+	NativeSnapshotClosureSchemaVersion = 2
 
 	// NativeSnapshotClosureMaxBytes bounds each returned canonical document.
 	// Closure evidence is an identity record, not an unbounded metadata channel.
@@ -51,6 +51,11 @@ type NativeSnapshotClosureRequest struct {
 	CatalogID  string
 	SnapshotID int64
 	ObjectRoot string
+	// RelationNamespace is the authority-derived candidate schema whose
+	// relations and file closure are eligible for native delivery evidence.
+	// Native callers must provide it; an omitted namespace must never fall back
+	// to the shared model schema.
+	RelationNamespace string
 }
 
 // NativeSnapshotObject is one canonical data or delete object reference.
@@ -66,9 +71,10 @@ type NativeSnapshotObject struct {
 // the corresponding digests; CanonicalJSON is a bounded envelope suitable for
 // persistence as qualification evidence.
 type NativeSnapshotClosureEvidence struct {
-	CatalogID  string `json:"catalog_id"`
-	SnapshotID int64  `json:"snapshot_id"`
-	ObjectRoot string `json:"object_root"`
+	CatalogID         string `json:"catalog_id"`
+	SnapshotID        int64  `json:"snapshot_id"`
+	ObjectRoot        string `json:"object_root"`
+	RelationNamespace string `json:"relation_namespace"`
 
 	Relations []BaseTable            `json:"relations"`
 	Objects   []NativeSnapshotObject `json:"objects"`
@@ -90,6 +96,7 @@ type nativeSnapshotClosureJSON struct {
 	CatalogID              string                 `json:"catalog_id"`
 	SnapshotID             int64                  `json:"snapshot_id"`
 	ObjectRoot             string                 `json:"object_root"`
+	RelationNamespace      string                 `json:"relation_namespace"`
 	Relations              []BaseTable            `json:"relations"`
 	Objects                []NativeSnapshotObject `json:"objects"`
 	RelationManifestDigest string                 `json:"relation_manifest_digest"`
@@ -98,7 +105,8 @@ type nativeSnapshotClosureJSON struct {
 }
 
 type nativeRelationManifestJSON struct {
-	Relations []BaseTable `json:"relations"`
+	RelationNamespace string      `json:"relation_namespace"`
+	Relations         []BaseTable `json:"relations"`
 }
 
 type nativeClosureManifestJSON struct {
@@ -122,6 +130,9 @@ func (e *Environment) NativeSnapshotClosureEvidence(ctx context.Context, request
 	if err := validateNativeIdentityField("catalog id", request.CatalogID); err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
+	if err := validateNativeRelationNamespace(request.RelationNamespace); err != nil {
+		return NativeSnapshotClosureEvidence{}, err
+	}
 	expectedRoot, err := CanonicalDataPath(request.ObjectRoot)
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, fmt.Errorf("canonicalize expected DuckLake DATA_PATH: %w", err)
@@ -137,7 +148,7 @@ func (e *Environment) NativeSnapshotClosureEvidence(ctx context.Context, request
 	// through one DuckDB connection. Re-check the current marker and settings
 	// after it returns so a concurrent writer cannot make the result appear to
 	// describe a different current state.
-	snapshot, tables, files, err := e.CurrentFileClosure(ctx, request.CatalogID)
+	snapshot, tables, files, err := e.CurrentFileClosure(ctx, request.CatalogID, request.RelationNamespace)
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
@@ -175,7 +186,7 @@ func (e *Environment) NativeSnapshotClosureEvidence(ctx context.Context, request
 		return NativeSnapshotClosureEvidence{}, fmt.Errorf("DuckLake current snapshot changed to %d, want %d", current, request.SnapshotID)
 	}
 
-	relations, err := canonicalNativeRelations(tables)
+	relations, err := canonicalNativeRelations(tables, request.RelationNamespace)
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
@@ -183,10 +194,10 @@ func (e *Environment) NativeSnapshotClosureEvidence(ctx context.Context, request
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
-	return newNativeSnapshotClosureEvidence(request.CatalogID, request.SnapshotID, expectedRoot, relations, objects)
+	return newNativeSnapshotClosureEvidence(request.CatalogID, request.SnapshotID, expectedRoot, request.RelationNamespace, relations, objects)
 }
 
-func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, objectRoot string, relations []BaseTable, objects []NativeSnapshotObject) (NativeSnapshotClosureEvidence, error) {
+func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, objectRoot, relationNamespace string, relations []BaseTable, objects []NativeSnapshotObject) (NativeSnapshotClosureEvidence, error) {
 	if err := validateNativeIdentityField("catalog id", catalogID); err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
@@ -203,7 +214,10 @@ func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, object
 	if err := validateNativeIdentityField("object root", objectRoot); err != nil {
 		return NativeSnapshotClosureEvidence{}, err
 	}
-	relationJSON, err := json.Marshal(nativeRelationManifestJSON{Relations: relations})
+	if err := validateNativeRelationNamespace(relationNamespace); err != nil {
+		return NativeSnapshotClosureEvidence{}, err
+	}
+	relationJSON, err := json.Marshal(nativeRelationManifestJSON{RelationNamespace: relationNamespace, Relations: relations})
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, fmt.Errorf("marshal relation manifest: %w", err)
 	}
@@ -226,13 +240,13 @@ func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, object
 		}
 	}
 	evidence := NativeSnapshotClosureEvidence{
-		CatalogID: catalogID, SnapshotID: snapshotID, ObjectRoot: objectRoot,
+		CatalogID: catalogID, SnapshotID: snapshotID, ObjectRoot: objectRoot, RelationNamespace: relationNamespace,
 		Relations: cloneBaseTables(relations), Objects: cloneNativeObjects(objects),
 		RelationManifestJSON:   append(json.RawMessage(nil), relationJSON...),
 		ClosureJSON:            append(json.RawMessage(nil), closureJSON...),
 		RelationManifestDigest: relationDigest, ClosureDigest: closureDigest, ObjectRootDigest: rootDigest,
 	}
-	envelope, err := json.Marshal(nativeSnapshotClosureJSON{SchemaVersion: NativeSnapshotClosureSchemaVersion, CatalogID: evidence.CatalogID, SnapshotID: evidence.SnapshotID, ObjectRoot: evidence.ObjectRoot, Relations: evidence.Relations, Objects: evidence.Objects, RelationManifestDigest: evidence.RelationManifestDigest, ClosureDigest: evidence.ClosureDigest, ObjectRootDigest: evidence.ObjectRootDigest})
+	envelope, err := json.Marshal(nativeSnapshotClosureJSON{SchemaVersion: NativeSnapshotClosureSchemaVersion, CatalogID: evidence.CatalogID, SnapshotID: evidence.SnapshotID, ObjectRoot: evidence.ObjectRoot, RelationNamespace: evidence.RelationNamespace, Relations: evidence.Relations, Objects: evidence.Objects, RelationManifestDigest: evidence.RelationManifestDigest, ClosureDigest: evidence.ClosureDigest, ObjectRootDigest: evidence.ObjectRootDigest})
 	if err != nil {
 		return NativeSnapshotClosureEvidence{}, fmt.Errorf("marshal snapshot closure evidence: %w", err)
 	}
@@ -248,15 +262,28 @@ func nativeSnapshotDigest(value []byte) string {
 	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
-func canonicalNativeRelations(input []BaseTable) ([]BaseTable, error) {
+func canonicalNativeRelations(input []BaseTable, relationNamespaces ...string) ([]BaseTable, error) {
 	if len(input) > NativeSnapshotClosureMaxEntries {
 		return nil, fmt.Errorf("DuckLake relation manifest has %d entries, maximum is %d", len(input), NativeSnapshotClosureMaxEntries)
+	}
+	var relationNamespace string
+	if len(relationNamespaces) > 1 {
+		return nil, fmt.Errorf("DuckLake relation manifest received more than one relation namespace")
+	}
+	if len(relationNamespaces) == 1 {
+		relationNamespace = relationNamespaces[0]
+		if err := validateNativeRelationNamespace(relationNamespace); err != nil {
+			return nil, err
+		}
 	}
 	seen := make(map[string]struct{}, len(input))
 	result := make([]BaseTable, 0, len(input))
 	for _, table := range input {
 		if err := validateNativeIdentityField("schema", table.Schema); err != nil {
 			return nil, err
+		}
+		if relationNamespace != "" && table.Schema != relationNamespace {
+			return nil, fmt.Errorf("DuckLake relation %s.%s is outside expected relation namespace %q", table.Schema, table.Table, relationNamespace)
 		}
 		if err := validateNativeIdentityField("table", table.Table); err != nil {
 			return nil, err
@@ -275,6 +302,28 @@ func canonicalNativeRelations(input []BaseTable) ([]BaseTable, error) {
 		return result[i].Schema < result[j].Schema
 	})
 	return result, nil
+}
+
+// validateNativeRelationNamespace enforces the canonical SQL identifier
+// shape used by authority-derived candidate schemas. The derivation itself is
+// owned by the deployment authority; this boundary only accepts a normalized,
+// bounded value and never interpolates an unchecked namespace into SQL.
+func validateNativeRelationNamespace(value string) error {
+	if value == "" || value != strings.TrimSpace(value) {
+		return fmt.Errorf("DuckLake relation namespace is empty or not normalized")
+	}
+	if len(value) > 63 {
+		return fmt.Errorf("DuckLake relation namespace exceeds 63 bytes")
+	}
+	if value != strings.ToLower(value) {
+		return fmt.Errorf("DuckLake relation namespace %q must be lowercase canonical", value)
+	}
+	for i, r := range value {
+		if (r < 'a' || r > 'z') && r != '_' && (i == 0 || r < '0' || r > '9') {
+			return fmt.Errorf("DuckLake relation namespace %q is not a canonical SQL identifier", value)
+		}
+	}
+	return nil
 }
 
 func canonicalNativeObjects(root string, files CatalogFileSet) ([]NativeSnapshotObject, error) {

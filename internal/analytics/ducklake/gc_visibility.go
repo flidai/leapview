@@ -55,11 +55,27 @@ func (e *Environment) VisibleBaseTables(ctx context.Context) ([]BaseTable, error
 }
 
 // CurrentFileClosure reads the current snapshot and every visible table's
-// data/delete closure on one pinned DuckDB connection.  A GC mark must never
+// data/delete closure on one pinned DuckDB connection. A GC mark must never
 // combine file references from snapshots that changed between tables.
-func (e *Environment) CurrentFileClosure(ctx context.Context, catalogID string) (int64, []BaseTable, CatalogFileSet, error) {
+//
+// Legacy callers may omit relationNamespace and receive the complete catalog
+// closure. Native PostgreSQL callers must pass exactly one authority-derived
+// relation namespace; the table enumeration is then filtered to that schema
+// and every returned row is checked against it before any file references are
+// listed.
+func (e *Environment) CurrentFileClosure(ctx context.Context, catalogID string, relationNamespaces ...string) (int64, []BaseTable, CatalogFileSet, error) {
 	if e == nil || e.db == nil {
 		return 0, nil, CatalogFileSet{}, fmt.Errorf("ducklake environment is not initialized")
+	}
+	if len(relationNamespaces) > 1 {
+		return 0, nil, CatalogFileSet{}, fmt.Errorf("relation namespace may be supplied at most once")
+	}
+	relationNamespace := ""
+	if len(relationNamespaces) == 1 {
+		relationNamespace = relationNamespaces[0]
+		if err := validateNativeRelationNamespace(relationNamespace); err != nil {
+			return 0, nil, CatalogFileSet{}, err
+		}
 	}
 	conn, release, err := e.queryConnection(ctx)
 	if err != nil {
@@ -70,7 +86,14 @@ func (e *Environment) CurrentFileClosure(ctx context.Context, catalogID string) 
 	if err := conn.QueryRowContext(ctx, "SELECT id FROM ducklake_current_snapshot(?)", catalogAlias).Scan(&snapshot); err != nil {
 		return 0, nil, CatalogFileSet{}, err
 	}
-	rows, err := conn.QueryContext(ctx, "SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'lake' AND NOT internal AND NOT temporary ORDER BY schema_name, table_name")
+	tableQuery := "SELECT schema_name, table_name FROM duckdb_tables() WHERE database_name = 'lake' AND NOT internal AND NOT temporary"
+	var tableArgs []any
+	if relationNamespace != "" {
+		tableQuery += " AND schema_name = ?"
+		tableArgs = append(tableArgs, relationNamespace)
+	}
+	tableQuery += " ORDER BY schema_name, table_name"
+	rows, err := conn.QueryContext(ctx, tableQuery, tableArgs...)
 	if err != nil {
 		return 0, nil, CatalogFileSet{}, err
 	}
@@ -80,6 +103,10 @@ func (e *Environment) CurrentFileClosure(ctx context.Context, catalogID string) 
 		if err := rows.Scan(&table.Schema, &table.Table); err != nil {
 			rows.Close()
 			return 0, nil, CatalogFileSet{}, err
+		}
+		if relationNamespace != "" && table.Schema != relationNamespace {
+			rows.Close()
+			return 0, nil, CatalogFileSet{}, fmt.Errorf("DuckLake table %s.%s is outside expected relation namespace %q", table.Schema, table.Table, relationNamespace)
 		}
 		tables = append(tables, table)
 	}

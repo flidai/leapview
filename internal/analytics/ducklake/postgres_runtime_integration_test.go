@@ -141,7 +141,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	if _, err := writerRestart.SnapshotSealEvidence(ctx, snapshot); err != nil {
 		t.Fatalf("snapshot seal evidence: %v", err)
 	}
-	closureEvidence, err := writerRestart.NativeSnapshotClosureEvidence(ctx, NativeSnapshotClosureRequest{CatalogID: "catalog-runtime", SnapshotID: snapshot, ObjectRoot: dataPath})
+	closureEvidence, err := writerRestart.NativeSnapshotClosureEvidence(ctx, NativeSnapshotClosureRequest{CatalogID: "catalog-runtime", SnapshotID: snapshot, ObjectRoot: dataPath, RelationNamespace: "model"})
 	if err != nil {
 		t.Fatalf("native snapshot closure evidence: %v", err)
 	}

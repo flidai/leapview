@@ -28,6 +28,26 @@ func TestCanonicalNativeRelationsSortAndDeduplicate(t *testing.T) {
 	}
 }
 
+func TestCanonicalNativeRelationsRejectsCrossNamespaceLeakage(t *testing.T) {
+	if _, err := canonicalNativeRelations([]BaseTable{
+		{Schema: "_candidate", Table: "orders"},
+		{Schema: "model", Table: "orders"},
+	}, "_candidate"); err == nil {
+		t.Fatal("relation manifest accepted a table from another schema")
+	}
+}
+
+func TestValidateNativeRelationNamespaceFailsClosed(t *testing.T) {
+	for _, namespace := range []string{"", "candidate schema", "Candidate", "candidate;drop", strings.Repeat("a", 64)} {
+		if err := validateNativeRelationNamespace(namespace); err == nil {
+			t.Fatalf("relation namespace %q unexpectedly accepted", namespace)
+		}
+	}
+	if err := validateNativeRelationNamespace("_candidate_01"); err != nil {
+		t.Fatalf("canonical relation namespace rejected: %v", err)
+	}
+}
+
 func TestCanonicalNativeObjectsCanonicalizesRootsAndRejectsConflicts(t *testing.T) {
 	root := "/var/lib/leapview/data"
 	got, err := canonicalNativeObjects(root, CatalogFileSet{
@@ -83,11 +103,11 @@ func TestCanonicalNativeObjectsSupportsObjectStoreRoots(t *testing.T) {
 func TestNativeSnapshotClosureEvidenceCanonicalDigestsAreStable(t *testing.T) {
 	relations := []BaseTable{{Schema: "model", Table: "events"}}
 	objects := []NativeSnapshotObject{{Kind: DataFile, Path: "/var/lib/leapview/data/events.parquet"}}
-	one, err := newNativeSnapshotClosureEvidence("catalog", 42, "/var/lib/leapview/data", relations, objects)
+	one, err := newNativeSnapshotClosureEvidence("catalog", 42, "/var/lib/leapview/data", "model", relations, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
-	two, err := newNativeSnapshotClosureEvidence("catalog", 42, "/var/lib/leapview/data", relations, objects)
+	two, err := newNativeSnapshotClosureEvidence("catalog", 42, "/var/lib/leapview/data", "model", relations, objects)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,17 +122,17 @@ func TestNativeSnapshotClosureEvidenceCanonicalDigestsAreStable(t *testing.T) {
 			t.Fatalf("%s digest %q: %v", name, value, err)
 		}
 	}
-	if !strings.Contains(string(one.CanonicalJSON), `"schema_version":1`) {
+	if !strings.Contains(string(one.CanonicalJSON), `"schema_version":2`) || !strings.Contains(string(one.CanonicalJSON), `"relation_namespace":"model"`) {
 		t.Fatalf("canonical envelope omitted schema version: %s", one.CanonicalJSON)
 	}
 }
 
 func TestNativeSnapshotClosureEvidencePreservesEmptyArrayCanonicalDocuments(t *testing.T) {
-	evidence, err := newNativeSnapshotClosureEvidence("catalog-empty", 42, "/var/lib/leapview/data", []BaseTable{}, []NativeSnapshotObject{})
+	evidence, err := newNativeSnapshotClosureEvidence("catalog-empty", 42, "/var/lib/leapview/data", "_empty_candidate", []BaseTable{}, []NativeSnapshotObject{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(evidence.RelationManifestJSON) != `{"relations":[]}` {
+	if string(evidence.RelationManifestJSON) != `{"relation_namespace":"_empty_candidate","relations":[]}` {
 		t.Fatalf("relation manifest = %s, want empty array", evidence.RelationManifestJSON)
 	}
 	if string(evidence.ClosureJSON) != `{"objects":[]}` {
