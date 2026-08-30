@@ -107,6 +107,13 @@ func (f fakeAccessAudit) Prune(_ context.Context, class accesspostgres.Retention
 	return accesspostgres.AuditRetentionResult{RetentionClass: class, RequestedCutoff: before, Cutoff: before, RequestedLimit: limit, RemovedCount: 10, RetainedFloor: before}, nil
 }
 
+type fakeAccessAuthState struct{ calls *[]string }
+
+func (f fakeAccessAuthState) PruneAuthState(_ context.Context, before time.Time, limit int) (accesspostgres.AuthRetentionResult, error) {
+	*f.calls = append(*f.calls, "access auth state")
+	return accesspostgres.AuthRetentionResult{RequestedCutoff: before, Cutoff: before, RequestedLimit: limit, SessionsDeleted: 2, AuthStateFloor: before}, nil
+}
+
 type fakeQueryAudit struct{ calls *[]string }
 
 func (f fakeQueryAudit) Prune(_ context.Context, before time.Time, _ int) (queryauditpostgres.PruneResult, error) {
@@ -134,6 +141,7 @@ func testOptions(calls *[]string, events *fakeEvents) Options {
 		DashboardStreams:  fakeDashboardStreams{calls},
 		ManagedData:       fakeManagedData{calls},
 		AccessAudit:       fakeAccessAudit{calls},
+		AccessAuthState:   fakeAccessAuthState{calls},
 		QueryAudit:        fakeQueryAudit{calls},
 		AgentHistory:      fakeAgentHistory{calls},
 	}
@@ -156,8 +164,9 @@ func testPolicy() Policy {
 			Standard: RetentionWindow{Before: cutoff, Limit: 10},
 			Security: RetentionWindow{Before: cutoff, Limit: 10},
 		},
-		QueryAudit:   RetentionWindow{Before: cutoff, Limit: 10},
-		AgentHistory: RetentionWindow{Before: cutoff, Limit: 10},
+		AccessAuthState: RetentionWindow{Before: cutoff, Limit: 10},
+		QueryAudit:      RetentionWindow{Before: cutoff, Limit: 10},
+		AgentHistory:    RetentionWindow{Before: cutoff, Limit: 10},
 	}
 }
 
@@ -182,7 +191,7 @@ func TestRunInvokesEveryBoundedAuthorityAndPreservesEventTransaction(t *testing.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "cache", "dashboard session", "dashboard usage", "dashboard streams", "managed data", "access audit short", "access audit standard", "access audit security", "query audit", "agent history"}
+	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "cache", "dashboard session", "dashboard usage", "dashboard streams", "managed data", "access audit short", "access audit standard", "access audit security", "access auth state", "query audit", "agent history"}
 	if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
 	}
@@ -197,6 +206,7 @@ func TestRunInvokesEveryBoundedAuthorityAndPreservesEventTransaction(t *testing.
 		AccessAuditShort:    accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionShort, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
 		AccessAuditStandard: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionStandard, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
 		AccessAuditSecurity: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionSecurity, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
+		AccessAuthState:     accesspostgres.AuthRetentionResult{RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, SessionsDeleted: 2, AuthStateFloor: cutoff},
 		QueryAudit:          queryauditpostgres.PruneResult{Before: cutoff, Cutoff: cutoff, FloorAt: cutoff, Removed: 3},
 		AgentHistory:        agentpostgres.RetentionResult{Before: cutoff, Cutoff: cutoff, RequestedLimit: 10, RunEventsDeleted: 4, ConversationsFloorAt: cutoff, RunEventsFloorAt: cutoff},
 	}
@@ -226,6 +236,7 @@ func TestPolicyRequiresIndependentEvidenceWindows(t *testing.T) {
 		func(p *Policy) { p.AccessAudit.Short.Before = time.Time{} },
 		func(p *Policy) { p.AccessAudit.Standard.Limit = 1001 },
 		func(p *Policy) { p.AccessAudit.Security.Before = time.Time{} },
+		func(p *Policy) { p.AccessAuthState.Limit = 0 },
 		func(p *Policy) { p.QueryAudit.Limit = 0 },
 		func(p *Policy) { p.AgentHistory.Before = time.Time{} },
 	} {
@@ -233,6 +244,28 @@ func TestPolicyRequiresIndependentEvidenceWindows(t *testing.T) {
 		mutate(&policy)
 		if err := policy.Validate(); err == nil {
 			t.Fatalf("Validate() accepted invalid evidence policy %#v", policy)
+		}
+	}
+}
+
+func TestRunSkipsExplicitlyDisabledEvidenceWindows(t *testing.T) {
+	calls := []string{}
+	coordinator, err := New(testOptions(&calls, &fakeEvents{calls: &calls}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	policy := testPolicy()
+	policy.AccessAudit.Short = RetentionWindow{Disabled: true}
+	policy.AccessAuthState = RetentionWindow{Disabled: true}
+	policy.QueryAudit = RetentionWindow{Disabled: true}
+	policy.AgentHistory = RetentionWindow{Disabled: true}
+	if _, err := coordinator.Run(t.Context(), policy); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, ",")
+	for _, skipped := range []string{"access audit short", "access auth state", "query audit", "agent history"} {
+		if strings.Contains(joined, skipped) {
+			t.Fatalf("disabled authority %q was called: %v", skipped, calls)
 		}
 	}
 }

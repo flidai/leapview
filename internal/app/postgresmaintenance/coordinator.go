@@ -91,6 +91,13 @@ type AccessAuditPruner interface {
 	Prune(context.Context, accesspostgres.RetentionClass, time.Time, int) (accesspostgres.AuditRetentionResult, error)
 }
 
+// AccessAuthStatePruner owns bounded cleanup of expired or revoked
+// authentication state. It is independent from immutable audit evidence and
+// therefore receives its own policy cutoff and result.
+type AccessAuthStatePruner interface {
+	PruneAuthState(context.Context, time.Time, int) (accesspostgres.AuthRetentionResult, error)
+}
+
 // QueryAuditPruner is the bounded query-evidence retention surface.
 type QueryAuditPruner interface {
 	Prune(context.Context, time.Time, int) (queryauditpostgres.PruneResult, error)
@@ -119,6 +126,7 @@ type Options struct {
 	DashboardStreams  DashboardPublicationPruner
 	ManagedData       ManagedDataPruner
 	AccessAudit       AccessAuditPruner
+	AccessAuthState   AccessAuthStatePruner
 	QueryAudit        QueryAuditPruner
 	AgentHistory      AgentHistoryPruner
 }
@@ -150,6 +158,7 @@ func New(options Options) (*Coordinator, error) {
 		{"dashboard publication streams", options.DashboardStreams},
 		{"managed data", options.ManagedData},
 		{"access audit", options.AccessAudit},
+		{"access auth state", options.AccessAuthState},
 		{"query audit", options.QueryAudit},
 		{"agent history", options.AgentHistory},
 	}
@@ -223,8 +232,9 @@ type ManagedDataPolicy struct {
 
 // RetentionWindow controls one bounded time-based evidence batch.
 type RetentionWindow struct {
-	Before time.Time
-	Limit  int
+	Before   time.Time
+	Limit    int
+	Disabled bool
 }
 
 // AccessAuditPolicy keeps every known audit class explicit. Security evidence
@@ -248,6 +258,7 @@ type Policy struct {
 	DashboardStreams DashboardPublicationPolicy
 	ManagedData      ManagedDataPolicy
 	AccessAudit      AccessAuditPolicy
+	AccessAuthState  RetentionWindow
 	QueryAudit       RetentionWindow
 	AgentHistory     RetentionWindow
 }
@@ -305,9 +316,13 @@ func (p Policy) Validate() error {
 		{"access audit short", p.AccessAudit.Short},
 		{"access audit standard", p.AccessAudit.Standard},
 		{"access audit security", p.AccessAudit.Security},
+		{"access auth state", p.AccessAuthState},
 		{"query audit", p.QueryAudit},
 		{"agent history", p.AgentHistory},
 	} {
+		if window.policy.Disabled {
+			continue
+		}
 		if window.policy.Before.IsZero() {
 			return fmt.Errorf("%s retention cutoff is required", window.name)
 		}
@@ -340,6 +355,7 @@ type Result struct {
 	AccessAuditShort                 accesspostgres.AuditRetentionResult
 	AccessAuditStandard              accesspostgres.AuditRetentionResult
 	AccessAuditSecurity              accesspostgres.AuditRetentionResult
+	AccessAuthState                  accesspostgres.AuthRetentionResult
 	QueryAudit                       queryauditpostgres.PruneResult
 	AgentHistory                     agentpostgres.RetentionResult
 }
@@ -387,20 +403,35 @@ func (c *Coordinator) Run(ctx context.Context, policy Policy) (Result, error) {
 	if result.ManagedDataUploadSessionsRemoved, err = c.options.ManagedData.PruneUploadSessions(ctx, policy.ManagedData.Before, policy.ManagedData.Limit); err != nil {
 		return result, fmt.Errorf("prune managed-data upload sessions: %w", err)
 	}
-	if result.AccessAuditShort, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionShort, policy.AccessAudit.Short.Before, policy.AccessAudit.Short.Limit); err != nil {
-		return result, fmt.Errorf("prune short access audit: %w", err)
+	if !policy.AccessAudit.Short.Disabled {
+		if result.AccessAuditShort, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionShort, policy.AccessAudit.Short.Before, policy.AccessAudit.Short.Limit); err != nil {
+			return result, fmt.Errorf("prune short access audit: %w", err)
+		}
 	}
-	if result.AccessAuditStandard, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionStandard, policy.AccessAudit.Standard.Before, policy.AccessAudit.Standard.Limit); err != nil {
-		return result, fmt.Errorf("prune standard access audit: %w", err)
+	if !policy.AccessAudit.Standard.Disabled {
+		if result.AccessAuditStandard, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionStandard, policy.AccessAudit.Standard.Before, policy.AccessAudit.Standard.Limit); err != nil {
+			return result, fmt.Errorf("prune standard access audit: %w", err)
+		}
 	}
-	if result.AccessAuditSecurity, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionSecurity, policy.AccessAudit.Security.Before, policy.AccessAudit.Security.Limit); err != nil {
-		return result, fmt.Errorf("prune security access audit: %w", err)
+	if !policy.AccessAudit.Security.Disabled {
+		if result.AccessAuditSecurity, err = c.options.AccessAudit.Prune(ctx, accesspostgres.RetentionSecurity, policy.AccessAudit.Security.Before, policy.AccessAudit.Security.Limit); err != nil {
+			return result, fmt.Errorf("prune security access audit: %w", err)
+		}
 	}
-	if result.QueryAudit, err = c.options.QueryAudit.Prune(ctx, policy.QueryAudit.Before, policy.QueryAudit.Limit); err != nil {
-		return result, fmt.Errorf("prune query audit: %w", err)
+	if !policy.AccessAuthState.Disabled {
+		if result.AccessAuthState, err = c.options.AccessAuthState.PruneAuthState(ctx, policy.AccessAuthState.Before, policy.AccessAuthState.Limit); err != nil {
+			return result, fmt.Errorf("prune access auth state: %w", err)
+		}
 	}
-	if result.AgentHistory, err = c.options.AgentHistory.Prune(ctx, policy.AgentHistory.Before, policy.AgentHistory.Limit); err != nil {
-		return result, fmt.Errorf("prune agent history: %w", err)
+	if !policy.QueryAudit.Disabled {
+		if result.QueryAudit, err = c.options.QueryAudit.Prune(ctx, policy.QueryAudit.Before, policy.QueryAudit.Limit); err != nil {
+			return result, fmt.Errorf("prune query audit: %w", err)
+		}
+	}
+	if !policy.AgentHistory.Disabled {
+		if result.AgentHistory, err = c.options.AgentHistory.Prune(ctx, policy.AgentHistory.Before, policy.AgentHistory.Limit); err != nil {
+			return result, fmt.Errorf("prune agent history: %w", err)
+		}
 	}
 	return result, nil
 }
@@ -478,6 +509,7 @@ var (
 	_ DashboardPublicationPruner = (*dashboardpublicationpostgres.Maintenance)(nil)
 	_ ManagedDataPruner          = (*manageddatapostgres.Maintenance)(nil)
 	_ AccessAuditPruner          = (*accesspostgres.Maintenance)(nil)
+	_ AccessAuthStatePruner      = (*accesspostgres.Maintenance)(nil)
 	_ QueryAuditPruner           = (*queryauditpostgres.Maintenance)(nil)
 	_ AgentHistoryPruner         = (*agentpostgres.Maintenance)(nil)
 	_ EventTxRunner              = (*PgxEventTxRunner)(nil)

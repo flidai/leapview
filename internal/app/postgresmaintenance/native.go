@@ -58,6 +58,7 @@ func NewNative(db NativeDB) (*Native, error) {
 		DashboardStreams:  dashboardpublicationpostgres.NewMaintenance(db),
 		ManagedData:       manageddatapostgres.NewMaintenance(db),
 		AccessAudit:       accesspostgres.NewMaintenance(db),
+		AccessAuthState:   accesspostgres.NewMaintenance(db),
 		QueryAudit:        queryauditpostgres.NewMaintenance(db),
 		AgentHistory:      agentpostgres.NewMaintenance(db),
 	})
