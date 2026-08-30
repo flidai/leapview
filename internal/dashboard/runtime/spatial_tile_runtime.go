@@ -180,7 +180,7 @@ func (s *SnapshotService) querySpatialTile(ctx context.Context, dashboardID, pag
 type immutableByteCache interface {
 	LookupImmutableBytes(string) ([]byte, bool, error)
 	StoreImmutableBytes(string, []byte) bool
-	CoalesceImmutableBytes(context.Context, string, func() error) (bool, error)
+	CoalesceImmutableBytes(context.Context, string, func(context.Context) error) (bool, error)
 }
 
 func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *modelRuntime, report *dashboarddefinition.Definition, filters dashboard.Filters, visualID, revision string, rawMinimumZoom, zoom, x, y int) (SpatialTileResult, error) {
@@ -207,7 +207,7 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		}
 	}
 	buffer := int(spatial.Tiles.CellRadius) * 16
-	execute := func(precision dataquery.SpatialTilePrecision) (dataquery.Result, error) {
+	execute := func(executionCtx context.Context, precision dataquery.SpatialTilePrecision) (dataquery.Result, error) {
 		targetZoom := spatialAggregateTargetZoom(zoom, rawMinimumZoom, int(spatial.Tiles.MaximumZoom))
 		query := dataquery.Query{
 			Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardSpatialTile,
@@ -222,11 +222,14 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		if spatial.Time != nil {
 			query.Time = dataquery.Time{Field: spatial.Time.FieldID, Alias: spatial.Time.Alias, Grain: spatial.Time.Grain}
 		}
-		return runtime.data.ExecuteDataQuery(ctx, query)
+		return runtime.data.ExecuteDataQuery(executionCtx, query)
 	}
 	precision := spatialTilePrecision(zoom, rawMinimumZoom)
-	generate := func() (SpatialTileResult, error) {
-		result, executeErr := execute(precision)
+	generate := func(executionCtx context.Context) (SpatialTileResult, error) {
+		if err := executionCtx.Err(); err != nil {
+			return SpatialTileResult{}, err
+		}
+		result, executeErr := execute(executionCtx, precision)
 		if executeErr != nil {
 			return SpatialTileResult{}, executeErr
 		}
@@ -236,6 +239,9 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		requested := SpatialTileResult{Precision: string(precision), CacheOutcome: result.CacheOutcome, QueryMS: result.DurationMS}
 		for childX := metatileX; childX < metatileX+metatileSize; childX++ {
 			for childY := metatileY; childY < metatileY+metatileSize; childY++ {
+				if err := executionCtx.Err(); err != nil {
+					return SpatialTileResult{}, err
+				}
 				tile, features, found, tileErr := spatialTileFromRows(result.Rows, childX, childY)
 				if tileErr != nil {
 					return SpatialTileResult{}, tileErr
@@ -258,15 +264,18 @@ func (s *VisualizationDataService) spatialTile(ctx context.Context, runtime *mod
 		return requested, nil
 	}
 	if !cacheEnabled {
-		return generate()
+		return generate(ctx)
 	}
 	var generated SpatialTileResult
-	shared, err := cache.CoalesceImmutableBytes(ctx, spatialTileMetatileCacheKey(revision, zoom, metatileX, metatileY), func() error {
+	shared, err := cache.CoalesceImmutableBytes(ctx, spatialTileMetatileCacheKey(revision, zoom, metatileX, metatileY), func(executionCtx context.Context) error {
+		if err := executionCtx.Err(); err != nil {
+			return err
+		}
 		if _, ok, lookupErr := lookupSpatialTileBytes(cache, childKey); lookupErr != nil || ok {
 			return lookupErr
 		}
 		var generateErr error
-		generated, generateErr = generate()
+		generated, generateErr = generate(executionCtx)
 		return generateErr
 	})
 	if err != nil {
