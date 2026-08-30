@@ -13,7 +13,6 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -46,8 +45,15 @@ func (r *Repository) RecordAuditEvent(ctx context.Context, input access.AuditEve
 	if err != nil {
 		return err
 	}
-	auditID := uuid.New()
-	return accessdb.New(db).InsertAccessAuditEvent(ctx, accessdb.InsertAccessAuditEventParams{AuditID: pgtype.UUID{Bytes: auditID, Valid: true}, PrincipalID: input.PrincipalID,
+	auditIDString, err := newUUID()
+	if err != nil {
+		return err
+	}
+	auditID, err := pgUUID(auditIDString)
+	if err != nil {
+		return err
+	}
+	return accessdb.New(db).InsertAccessAuditEvent(ctx, accessdb.InsertAccessAuditEventParams{AuditID: auditID, PrincipalID: input.PrincipalID,
 		Action: input.Action, ResourceKind: auditText(input.ResourceKind), ResourceID: auditText(input.ResourceID), Capability: input.Capability.String(), Status: input.Status,
 		RequestID: input.RequestID, CorrelationID: input.CorrelationID, AggregateKey: aggregateKey, IntentDigest: intentDigest, Metadata: []byte(metadata)})
 }

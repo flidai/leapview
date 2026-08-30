@@ -114,12 +114,12 @@ func requireDB(r *Repository) (DBTX, error) {
 	return r.db, nil
 }
 
-func uuidID(prefix string) string {
+func uuidID(prefix string) (string, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
-		id = uuid.New()
+		return "", fmt.Errorf("generate UUIDv7 %s identity: %w", prefix, err)
 	}
-	return prefix + "_" + strings.ReplaceAll(id.String(), "-", "")
+	return prefix + "_" + strings.ReplaceAll(id.String(), "-", ""), nil
 }
 func canonicalText(v string, max int) error {
 	if v != strings.TrimSpace(v) || v == "" || len(v) > max {
@@ -210,7 +210,10 @@ func (r *Repository) CreateCollection(ctx context.Context, in manageddata.Create
 	suppliedID := in.ID != ""
 	id := in.ID.String()
 	if id == "" {
-		id = uuidID("collection")
+		id, err = uuidID("collection")
+		if err != nil {
+			return manageddata.Collection{}, err
+		}
 	}
 	d := digestFor(in.ProjectID.String(), in.ConnectionID.String(), in.Name, in.Description, strings.TrimSpace(in.CreatedBy))
 	err = manageddb.New(db).InsertCollection(contextOrBackground(ctx), manageddb.InsertCollectionParams{CollectionID: id, ProjectID: in.ProjectID.String(), ConnectionID: in.ConnectionID.String(), Name: in.Name, Description: in.Description, CreatedBy: strings.TrimSpace(in.CreatedBy), RequestDigest: d})
@@ -734,7 +737,10 @@ func completeUploadTx(ctx context.Context, db DBTX, in manageddata.CompleteUploa
 	digest := m.RevisionID()
 	revisionID := in.RevisionID.String()
 	if revisionID == "" {
-		revisionID = uuidID("revision")
+		revisionID, err = uuidID("revision")
+		if err != nil {
+			return manageddata.Revision{}, err
+		}
 	}
 	if err := validID(revisionID, "revision id"); err != nil {
 		return manageddata.Revision{}, err

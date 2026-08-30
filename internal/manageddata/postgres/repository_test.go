@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -14,9 +15,30 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	jobspkg "github.com/flidai/leapview/pkg/jobs"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestGeneratedOpaqueIDUsesUUIDv7(t *testing.T) {
+	id, err := uuidID("collection")
+	if err != nil {
+		t.Fatal(err)
+	}
+	const prefix = "collection_"
+	if !strings.HasPrefix(id, prefix) {
+		t.Fatalf("generated id %q does not use %q prefix", id, prefix)
+	}
+	raw := strings.TrimPrefix(id, prefix)
+	if len(raw) != 32 {
+		t.Fatalf("generated UUID suffix length = %d, want 32", len(raw))
+	}
+	canonical := raw[:8] + "-" + raw[8:12] + "-" + raw[12:16] + "-" + raw[16:20] + "-" + raw[20:]
+	parsed, err := uuid.Parse(canonical)
+	if err != nil || parsed.Version() != 7 {
+		t.Fatalf("generated UUID suffix = %q (%v), want version 7", canonical, err)
+	}
+}
 
 func openManagedDataTestPool(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *postgrestest.Database, *postgrestest.Harness) {
 	t.Helper()

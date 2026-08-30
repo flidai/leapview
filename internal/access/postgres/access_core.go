@@ -57,7 +57,13 @@ func (r *Repository) txOrBegin(ctx context.Context) (pgx.Tx, bool, error) {
 	return tx, true, err
 }
 
-func newUUID() (string, error) { id, err := uuid.NewV7(); return id.String(), err }
+func newUUID() (string, error) {
+	id, err := uuid.NewV7()
+	if err != nil {
+		return "", fmt.Errorf("generate UUIDv7 identity: %w", err)
+	}
+	return id.String(), nil
+}
 
 func uuidID(label, value string) (string, error) {
 	v := strings.TrimSpace(value)

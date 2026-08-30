@@ -10,9 +10,24 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestNewUUIDGeneratesCanonicalUUIDv7(t *testing.T) {
+	id, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	parsed, err := uuid.Parse(id)
+	if err != nil || parsed.String() != id {
+		t.Fatalf("generated identity is not canonical UUID: %q (%v)", id, err)
+	}
+	if parsed.Version() != 7 {
+		t.Fatalf("generated UUID version = %d, want 7", parsed.Version())
+	}
+}
 
 func newStandaloneAccessDatabase(t *testing.T) auditDatabase {
 	t.Helper()

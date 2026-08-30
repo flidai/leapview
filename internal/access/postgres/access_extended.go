@@ -19,7 +19,6 @@ import (
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -497,7 +496,10 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 		return fmt.Errorf("audit outcome %q is invalid", outcome)
 	}
 	intentDigest := canonicalAuditDigest(event, metadata)
-	id := uuid.New()
+	idString, err := newUUID()
+	if err != nil {
+		return err
+	}
 	db, err := r.requireDB()
 	if err != nil {
 		return err
@@ -514,12 +516,16 @@ func (r *Repository) RecordCanonicalAuditEvent(ctx context.Context, event access
 	if err != nil {
 		return err
 	}
+	id, err := pgUUID(idString)
+	if err != nil {
+		return err
+	}
 	resourceKind := string(event.Resource.Kind())
 	resourceID := event.Resource.ID().String()
 	projectID := event.Identity.ProjectID.String()
 	environment := event.Identity.Environment
 	generationID := event.Identity.GenerationID
-	err = accessdb.New(db).RecordCanonicalAudit(ctx, accessdb.RecordCanonicalAuditParams{AuditID: pgtype.UUID{Bytes: id, Valid: true}, PrincipalID: parsedPrincipalID,
+	err = accessdb.New(db).RecordCanonicalAudit(ctx, accessdb.RecordCanonicalAuditParams{AuditID: id, PrincipalID: parsedPrincipalID,
 		Action: event.Action, ResourceKind: &resourceKind, ResourceID: &resourceID, ProjectID: &projectID, Environment: &environment,
 		GenerationID: &generationID, Capability: event.Capability.String(), Outcome: outcome, RequestID: parsedRequestID,
 		CorrelationID: parsedCorrelationID, AggregateKey: resourceID, IntentDigest: intentDigest, Metadata: []byte(metadata)})

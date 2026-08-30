@@ -20,7 +20,10 @@ func (r *Repository) CreateS3MultipartUpload(ctx context.Context, in manageddata
 	}
 	id := in.ID.String()
 	if id == "" {
-		id = uuidID("multipart")
+		id, err = uuidID("multipart")
+		if err != nil {
+			return manageddata.S3MultipartUpload{}, err
+		}
 	}
 	if err := validID(id, "multipart id"); err != nil || in.UploadSessionID == "" || in.LogicalPath == "" || in.SHA256 == "" || len(in.SHA256) != 64 || in.SizeBytes < 0 || in.IdempotencyIdentity == "" {
 		return manageddata.S3MultipartUpload{}, ErrInvalid
