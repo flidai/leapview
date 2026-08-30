@@ -66,7 +66,7 @@ func (service *candidateArtifactService) InspectCandidateArtifacts(ctx context.C
 	if service == nil || service.states == nil {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
-	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
+	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
 	if request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil || request.Scope.Environment != string(service.environment) {
@@ -285,7 +285,7 @@ func (service *candidateArtifactService) Prepare(ctx context.Context, request re
 }
 
 func (service *candidateArtifactService) prepare(ctx context.Context, request release.CandidateArtifactRequest, expected *release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
-	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
+	if request.CandidateID != strings.TrimSpace(request.CandidateID) || request.GenerationID != strings.TrimSpace(request.GenerationID) || request.OwnerID != strings.TrimSpace(request.OwnerID) || request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) || request.Source.ArtifactDigest != strings.TrimSpace(request.Source.ArtifactDigest) || request.Source.ProjectPath != strings.TrimSpace(request.Source.ProjectPath) || request.Source.ProjectDigest != strings.TrimSpace(request.Source.ProjectDigest) || request.Source.ProjectArtifactPath != strings.TrimSpace(request.Source.ProjectArtifactPath) {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactInvalid
 	}
 	if service == nil || service.states == nil || service.artifacts == nil || request.CandidateID == "" || request.Scope.Validate() != nil || request.OwnerID == "" || request.Source.ProjectArtifactPath == "" || request.Source.ProjectID.Validate() != nil || request.Source.ProjectID != request.Scope.ProjectID || request.Source.ArtifactDigest != request.ArtifactDigest || platformdigest.ValidateSHA256Identity(request.ArtifactDigest) != nil || platformdigest.ValidateSHA256Identity(request.Source.ProjectDigest) != nil {
@@ -420,7 +420,9 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 	if deterministic, ok := service.states.(interface {
 		CreateWithID(context.Context, servingstate.ID, servingstate.CreateInput) (servingstate.State, error)
 	}); ok {
-		state, err = deterministic.CreateWithID(ctx, servingstate.ID("state-"+shortCandidateDigest(request.CandidateID)), stateInput)
+		state, err = deterministic.CreateWithID(ctx, candidateServingStateID(request), stateInput)
+	} else if request.GenerationID != "" {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(errors.New("caller-owned serving state reservation is unavailable"))
 	} else {
 		state, err = service.states.Create(ctx, stateInput)
 	}
@@ -490,6 +492,13 @@ func (service *candidateArtifactService) prepare(ctx context.Context, request re
 		Generation:               release.CandidateGenerationArtifact{Identity: identity, ServingArtifactID: artifact.ID, ArtifactDigest: validated.Digest, DataRevision: dataRevision, DataMode: dataMode, Deterministic: plan.Deterministic, ManagedDataPins: candidateManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored, Restrictions: restrictions, BaseGateEvidence: baseGateEvidence},
 		Compiler:                 release.CandidateCompilerEvidence{Graph: compiledProject.Graph(), Manifest: compiledProject.Manifest(), Plan: plan, Artifact: compiledProject, RelationExecution: relationExecution, BaseRelationExecution: baseRelationExecution},
 	}, nil
+}
+
+func candidateServingStateID(request release.CandidateArtifactRequest) servingstate.ID {
+	if request.GenerationID != "" {
+		return servingstate.ID(request.GenerationID)
+	}
+	return servingstate.ID("state-" + shortCandidateDigest(request.CandidateID))
 }
 
 func candidateRestrictions(snapshot accesssnapshot.AuthorizationSnapshot) []release.CandidateRestriction {
