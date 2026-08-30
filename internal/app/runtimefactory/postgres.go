@@ -43,41 +43,31 @@ type DuckLakeRuntimeAttachChecker interface {
 // durable delivery state; it is not allowed to infer identity from process
 // configuration.
 type PostgresSealedFactoryConfig struct {
-	Base                      FactoryConfig
-	Resolve                   SealedRootResolver
-	BuildRuntime              SealedDashboardRuntimeBuilder
-	PoolContract              *ducklake.PoolContract
-	SnapshotLeases            runtimehost.SnapshotLeaseRepository
-	Authorize                 func(context.Context, PostgresServingAuthorizationInput) error
-	RuntimeAttachChecker      DuckLakeRuntimeAttachChecker
-	CatalogDatabase           string
-	CatalogID                 string
-	LeaseHolder               string
-	RuntimeVersion            string
-	SecurityDomainFingerprint string
-	CredentialBootstrap       ducklake.CredentialBootstrap
-	ExtensionAdmission        extension.Admission
-	DuckLakeSecret            string
-	PostgresSecret            string
+	Base                       FactoryConfig
+	Resolve                    SealedRootResolver
+	BuildRuntime               SealedDashboardRuntimeBuilder
+	SnapshotLeases             runtimehost.SnapshotLeaseRepository
+	Authorize                  func(context.Context, PostgresServingAuthorizationInput) error
+	RuntimeAttachChecker       DuckLakeRuntimeAttachChecker
+	LeaseHolder                string
+	CredentialBootstrapFactory func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error)
+	ExtensionAdmission         extension.Admission
+	DuckLakeSecret             string
+	PostgresSecret             string
 }
 
 type postgresSealedFactory struct {
-	base                 servingStateRuntimeFactory
-	resolve              SealedRootResolver
-	buildRuntime         SealedDashboardRuntimeBuilder
-	poolContract         *ducklake.PoolContract
-	snapshotLeases       runtimehost.SnapshotLeaseRepository
-	authorize            func(context.Context, PostgresServingAuthorizationInput) error
-	runtimeAttachChecker DuckLakeRuntimeAttachChecker
-	catalogDatabase      string
-	catalogID            string
-	leaseHolder          string
-	runtimeVersion       string
-	securityFingerprint  string
-	credentialBootstrap  ducklake.CredentialBootstrap
-	extensionAdmission   extension.Admission
-	duckLakeSecret       string
-	postgresSecret       string
+	base                       servingStateRuntimeFactory
+	resolve                    SealedRootResolver
+	buildRuntime               SealedDashboardRuntimeBuilder
+	snapshotLeases             runtimehost.SnapshotLeaseRepository
+	authorize                  func(context.Context, PostgresServingAuthorizationInput) error
+	runtimeAttachChecker       DuckLakeRuntimeAttachChecker
+	leaseHolder                string
+	credentialBootstrapFactory func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error)
+	extensionAdmission         extension.Admission
+	duckLakeSecret             string
+	postgresSecret             string
 }
 
 // PostgresServingAuthorizationInput carries the exact immutable root and
@@ -96,13 +86,12 @@ type PostgresServingAuthorizationInput struct {
 func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
 	return postgresSealedFactory{
 		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence},
-		resolve: config.Resolve, buildRuntime: config.BuildRuntime, poolContract: config.PoolContract,
-		credentialBootstrap: config.CredentialBootstrap, extensionAdmission: config.ExtensionAdmission,
+		resolve: config.Resolve, buildRuntime: config.BuildRuntime,
+		credentialBootstrapFactory: config.CredentialBootstrapFactory, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
 		snapshotLeases: config.SnapshotLeases, authorize: config.Authorize,
 		runtimeAttachChecker: config.RuntimeAttachChecker,
-		catalogDatabase:      config.CatalogDatabase, catalogID: config.CatalogID, leaseHolder: config.LeaseHolder,
-		runtimeVersion: config.RuntimeVersion, securityFingerprint: config.SecurityDomainFingerprint,
+		leaseHolder:          config.LeaseHolder,
 	}
 }
 
@@ -183,17 +172,11 @@ func (f postgresSealedFactory) Prepare(context.Context, runtimehost.RuntimeInput
 func (f postgresSealedFactory) PinnedSnapshotSealed() {}
 
 func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
-	if f.resolve == nil || f.buildRuntime == nil || f.poolContract == nil || f.snapshotLeases == nil || f.authorize == nil || f.credentialBootstrap == nil || f.extensionAdmission == nil {
+	if f.resolve == nil || f.buildRuntime == nil || f.snapshotLeases == nil || f.authorize == nil || f.credentialBootstrapFactory == nil || f.extensionAdmission == nil {
 		return nil, fmt.Errorf("PostgreSQL sealed serving resolver, pool admission, snapshot leases, authorization, credentials, extension admission, and dashboard builder are required")
 	}
 	if f.runtimeAttachChecker == nil {
 		return nil, ErrPostgresRuntimeAttachProbeUnavailable
-	}
-	if strings.TrimSpace(f.catalogDatabase) == "" || strings.TrimSpace(f.catalogID) == "" || strings.TrimSpace(f.runtimeVersion) == "" || strings.TrimSpace(f.securityFingerprint) == "" {
-		return nil, fmt.Errorf("PostgreSQL sealed serving catalog database, catalog ID, runtime version, and security fingerprint are required")
-	}
-	if err := f.poolContract.Validate(); err != nil {
-		return nil, fmt.Errorf("physical-pool admission: %w", err)
 	}
 	root, err := f.resolve(ctx, input)
 	if err != nil {
@@ -202,13 +185,20 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	if root.ServingStateID != string(input.State.ID) || root.ServingArtifactID != input.Artifact.ID || root.ServingArtifactDigest != input.Artifact.Digest {
 		return nil, fmt.Errorf("%w: persisted root is not bound to requested serving artifact", ErrSealedRootMismatch)
 	}
-	if root.PhysicalPoolID == "" || root.PhysicalPoolID != f.poolContract.Pool.ID.String() {
+	poolContract := root.PoolContract
+	if poolContract == nil {
+		return nil, fmt.Errorf("%w: PostgreSQL root physical-pool admission is unavailable", ErrSealedRootUnavailable)
+	}
+	if err := poolContract.Validate(); err != nil {
+		return nil, fmt.Errorf("physical-pool admission: %w", err)
+	}
+	if root.PhysicalPoolID == "" || root.PhysicalPoolID != poolContract.Pool.ID.String() {
 		return nil, fmt.Errorf("%w: PostgreSQL root physical-pool identity is incomplete", ErrSealedRootUnavailable)
 	}
-	if root.PoolContract == nil || root.PoolContract.Pool.ID.String() != root.PhysicalPoolID || root.Compatibility != f.poolContract.Tuple {
+	if root.Compatibility != poolContract.Tuple {
 		return nil, fmt.Errorf("%w: PostgreSQL root compatibility admission is not canonical", ErrSealedRootMismatch)
 	}
-	if root.CatalogDatabase == "" || root.CatalogDatabase != f.catalogDatabase || root.CatalogID == "" || root.CatalogID != f.catalogID || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
+	if root.CatalogDatabase == "" || root.CatalogID == "" || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
 		return nil, fmt.Errorf("%w: PostgreSQL catalog and generation identity is incomplete", ErrSealedRootUnavailable)
 	}
 	if _, err := uuid.Parse(root.CatalogUUID); err != nil {
@@ -218,7 +208,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	if err != nil || catalogVersion != root.CatalogVersionNumber {
 		return nil, fmt.Errorf("%w: PostgreSQL catalog version evidence is inconsistent", ErrSealedRootMismatch)
 	}
-	if err := f.poolContract.ValidateDataPathBinding(root.DataPath); err != nil {
+	if err := poolContract.ValidateDataPathBinding(root.DataPath); err != nil {
 		return nil, fmt.Errorf("%w: PostgreSQL DATA_PATH evidence differs: %v", ErrSealedRootMismatch, err)
 	}
 	if root.SealID == "" || root.QualificationDigest == "" || root.ClosureDigest == "" || root.CompatibilityDigest == "" || root.RuntimeVersion == "" || root.SecurityDomainFingerprint == "" || root.CatalogVersion == "" || root.CatalogVersionNumber <= 0 || root.DuckDBVersion == "" || root.DuckLakeExtensionVersion == "" || root.DuckLakeSpecVersion == "" || root.CatalogSchemaVersion == "" || root.RelationNamespace == "" || root.RelationManifestDigest == "" || root.ObjectRoot == "" || root.ObjectRootDigest == "" || root.ArtifactRoot == "" || root.ArtifactRootDigest == "" || root.CompiledGraphDigest == "" || root.CompiledConfigDigest == "" || root.RequestDigest == "" || root.PlanDigest == "" || root.TenantDomain == "" || root.Region == "" || root.EncryptionDomain == "" || root.ObjectNamespace == "" {
@@ -234,11 +224,11 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 			return nil, fmt.Errorf("%w: PostgreSQL %s identity is not normalized", ErrSealedRootMismatch, name)
 		}
 	}
-	compatibilityDigest, err := f.poolContract.Tuple.Digest()
+	compatibilityDigest, err := poolContract.Tuple.Digest()
 	if err != nil {
 		return nil, err
 	}
-	if root.CompatibilityDigest != compatibilityDigest || root.RuntimeVersion != f.runtimeVersion || root.SecurityDomainFingerprint != f.securityFingerprint {
+	if root.CompatibilityDigest != compatibilityDigest {
 		return nil, fmt.Errorf("%w: PostgreSQL runtime compatibility evidence differs", ErrSealedRootMismatch)
 	}
 	metadataSchema := strings.TrimSpace(root.CatalogMetadataSchema)
@@ -282,14 +272,23 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		_ = leaseHandle.Close()
 		return nil, fmt.Errorf("verify PostgreSQL DuckLake runtime attach eligibility: %w", err)
 	}
+	credentialBootstrap, err := f.credentialBootstrapFactory(ctx, poolContract)
+	if err != nil {
+		_ = leaseHandle.Close()
+		return nil, fmt.Errorf("build PostgreSQL DuckLake credential bootstrap: %w", err)
+	}
+	if strings.EqualFold(strings.TrimSpace(poolContract.Tuple.StorageImplementation), "s3") && credentialBootstrap == nil {
+		_ = leaseHandle.Close()
+		return nil, fmt.Errorf("%w: PostgreSQL S3 physical-pool credentials are unavailable", ErrSealedRootUnavailable)
+	}
 	catalog := ducklake.PostgresCatalogConfig{
 		PhysicalPoolID: root.PhysicalPoolID, DuckLakeSecret: duckLakeSecret, PostgresSecret: postgresSecret,
 		MetadataSchema: metadataSchema, Mode: ducklake.PostgresCatalogServing, SnapshotVersion: snapshotID,
 	}
 	env, err := ducklake.Open(ctx, ducklake.Config{
-		RootDir: input.RuntimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: f.poolContract,
-		Compatibility: f.poolContract.Tuple, PostgresCatalog: &catalog,
-		CredentialBootstrap: f.credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
+		RootDir: input.RuntimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: poolContract,
+		Compatibility: root.Compatibility, PostgresCatalog: &catalog,
+		CredentialBootstrap: credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
 	})
 	if err != nil {
 		_ = leaseHandle.Close()

@@ -40,7 +40,6 @@ func TestPostgresSealedFactoryRequiresTargetCapabilities(t *testing.T) {
 }
 
 func TestPostgresSealedFactoryRejectsMissingRuntimeAttachCheckerBeforeResolveOrLease(t *testing.T) {
-	contract := deliveryCredentialTestContract(t)
 	leases := &leaseProbe{}
 	resolved := false
 	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
@@ -51,14 +50,15 @@ func TestPostgresSealedFactoryRejectsMissingRuntimeAttachCheckerBeforeResolveOrL
 		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
 			return nil, errors.New("unexpected dashboard access")
 		},
-		PoolContract: contract, SnapshotLeases: leases,
+		SnapshotLeases: leases,
 		Authorize: func(context.Context, PostgresServingAuthorizationInput) error {
 			return nil
 		},
-		CatalogDatabase: "ducklake", CatalogID: "catalog", RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
-		CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
-		ExtensionAdmission:  extensionfixture.New(t, "ducklake").Admission,
-		DuckLakeSecret:      "lake_secret", PostgresSecret: "pg_secret",
+		CredentialBootstrapFactory: func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+			return func(context.Context, driver.ExecerContext) error { return nil }, nil
+		},
+		ExtensionAdmission: extensionfixture.New(t, "ducklake").Admission,
+		DuckLakeSecret:     "lake_secret", PostgresSecret: "pg_secret",
 	})
 	sealed := factory.(interface {
 		PrepareSealed(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error)
@@ -279,7 +279,7 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 			buildCalled = true
 			return nil, errors.New("unexpected dashboard access")
 		},
-		PoolContract: contract, SnapshotLeases: leases,
+		SnapshotLeases: leases,
 		Authorize: func(_ context.Context, in PostgresServingAuthorizationInput) error {
 			authorized = true
 			authorization = in
@@ -288,11 +288,10 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 		RuntimeAttachChecker: duckLakeRuntimeAttachCheckerFunc(func(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
 			return ducklakepostgres.RuntimeAttachEligibility{}, errors.New("runtime attach probe unavailable")
 		}),
-		CatalogDatabase: "ducklake", CatalogID: "catalog", LeaseHolder: "runtime",
-		RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: root.SecurityDomainFingerprint,
-		CredentialBootstrap: func(context.Context, driver.ExecerContext) error {
+		LeaseHolder: "runtime",
+		CredentialBootstrapFactory: func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
 			bootstrapCalled = true
-			return nil
+			return func(context.Context, driver.ExecerContext) error { return nil }, nil
 		},
 		ExtensionAdmission: extensionfixture.New(t, "ducklake").Admission,
 		DuckLakeSecret:     "lake_secret", PostgresSecret: "pg_secret",
@@ -388,18 +387,19 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 				BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
 					return nil, errors.New("unexpected dashboard access")
 				},
-				PoolContract: contract, SnapshotLeases: leases,
-				Authorize: func(context.Context, PostgresServingAuthorizationInput) error { return nil },
+				SnapshotLeases: leases,
+				Authorize:      func(context.Context, PostgresServingAuthorizationInput) error { return nil },
 				RuntimeAttachChecker: duckLakeRuntimeAttachCheckerFunc(func(_ context.Context, got ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
 					return ducklakepostgres.RuntimeAttachEligibility{Eligible: true, Current: ducklakepostgres.CatalogRuntimeCompatibility{
 						PhysicalPoolID: got.PhysicalPoolID, CatalogID: got.CatalogID, RuntimeCompatibility: got.Compatibility,
 						CurrentMigrationID: "0198f2c0-7c7a-7f00-8a11-000000000009",
 					}}, nil
 				}),
-				CatalogDatabase: "ducklake", CatalogID: "catalog", RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: baseRoot.SecurityDomainFingerprint,
-				CredentialBootstrap: func(context.Context, driver.ExecerContext) error { return nil },
-				ExtensionAdmission:  extensionfixture.New(t, "ducklake").Admission,
-				DuckLakeSecret:      "lake_secret", PostgresSecret: "pg_secret",
+				CredentialBootstrapFactory: func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
+					return func(context.Context, driver.ExecerContext) error { return nil }, nil
+				},
+				ExtensionAdmission: extensionfixture.New(t, "ducklake").Admission,
+				DuckLakeSecret:     "lake_secret", PostgresSecret: "pg_secret",
 			})
 			sealed := factory.(interface {
 				PrepareSealed(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error)
