@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -400,6 +401,33 @@ func NewWithOptions(db DBTX, options Options) *Repository {
 // NewWithActivationAudit is a concise constructor for composition packages.
 func NewWithActivationAudit(db DBTX, audit ActivationAuditPort) *Repository {
 	return &Repository{db: db, audit: audit}
+}
+
+// PostgreSQLAuthority marks this repository as the clean-slate delivery
+// authority.  The marker is intentionally implemented only by this concrete
+// repository; module composition uses it together with Configured and
+// AuditCapable to reject a database/sql or SQLite implementation.
+func (*Repository) PostgreSQLAuthority() {}
+
+// Configured reports whether the repository has a native database handle.
+// Schema readiness remains the migration/lifecycle owner's responsibility.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
+// TransactionCapable reports whether the native handle can begin the
+// caller-owned control-plane transactions required by activation, leasing,
+// and atomic candidate admission.
+func (r *Repository) TransactionCapable() bool {
+	if r == nil || r.db == nil {
+		return false
+	}
+	_, ok := r.db.(beginner)
+	return ok
+}
+
+// AuditCapable reports whether activation can append its audit evidence in
+// the same caller-owned PostgreSQL transaction.
+func (r *Repository) AuditCapable() bool {
+	return r != nil && r.audit != nil
 }
 
 func dbUUID(value string) pgtype.UUID {
@@ -1137,6 +1165,36 @@ func (r *Repository) CreateCandidate(ctx context.Context, in CandidateInput) (De
 	}
 	return createCandidate(contextOrBackground(ctx), db, in)
 }
+
+// CreateCandidateTx persists a candidate through a caller-owned control-plane
+// transaction. It deliberately never commits or rolls back tx, allowing
+// candidate admission to share the project-claim/audit/workflow boundary when
+// the composition root has all authorities on the same PostgreSQL database.
+func (r *Repository) CreateCandidateTx(ctx context.Context, tx Tx, in CandidateInput) (DeliveryCandidate, error) {
+	if tx == nil {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	return createCandidate(contextOrBackground(ctx), tx, in)
+}
+
+// StartCandidateWithClaimTx composes the instance project claim and native
+// candidate admission in one caller-owned control-plane transaction. It is
+// the supported atomic seam for composition roots that need candidate start
+// and claim/audit evidence to commit together.
+func (r *Repository) StartCandidateWithClaimTx(ctx context.Context, tx Tx, claim deployment.ProjectClaimInput, in CandidateInput) (deployment.ProjectClaim, DeliveryCandidate, error) {
+	if tx == nil {
+		return deployment.ProjectClaim{}, DeliveryCandidate{}, ErrInvalid
+	}
+	projectClaim, err := r.ClaimProjectTx(ctx, tx, claim)
+	if err != nil {
+		return deployment.ProjectClaim{}, DeliveryCandidate{}, err
+	}
+	candidate, err := r.CreateCandidateTx(ctx, tx, in)
+	if err != nil {
+		return deployment.ProjectClaim{}, DeliveryCandidate{}, err
+	}
+	return projectClaim, candidate, nil
+}
 func createCandidate(ctx context.Context, db DBTX, in CandidateInput) (DeliveryCandidate, error) {
 	id, err := uuidID(in.CandidateID, "candidate id", true)
 	if err != nil {
@@ -1262,6 +1320,50 @@ func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, 
 		return DeliveryCandidate{}, err
 	}
 	return loadCandidate(contextOrBackground(ctx), db, candidateID, CandidateInput{})
+}
+
+// QualifyCandidateTx is the transaction-aware qualification form. The
+// caller owns the complete commit/rollback boundary.
+func (r *Repository) QualifyCandidateTx(ctx context.Context, tx Tx, candidateID, sealID, qualificationDigest string) (DeliveryCandidate, error) {
+	if tx == nil {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	candidateID, err := uuidID(candidateID, "candidate id", false)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	sealID, err = uuidID(sealID, "seal id", false)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if _, err := digest(qualificationDigest, "qualification digest"); err != nil {
+		return DeliveryCandidate{}, err
+	}
+	c, err := loadCandidate(ctx, tx, candidateID, CandidateInput{})
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	s, err := loadSeal(ctx, tx, sealID)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	if s.CandidateID != "" && s.CandidateID != candidateID {
+		return DeliveryCandidate{}, ErrConflict
+	}
+	if c.AttemptID != "" && c.AttemptID != s.AttemptID {
+		return DeliveryCandidate{}, ErrConflict
+	}
+	if c.Status != "building" && c.Status != "ready" {
+		if c.Status == "qualified" && c.SnapshotSealID == sealID && c.QualificationDigest == qualificationDigest {
+			return c, nil
+		}
+		return DeliveryCandidate{}, ErrConflict
+	}
+	if err = depdb.New(tx).QualifyCandidate(ctx, depdb.QualifyCandidateParams{CandidateID: dbUUID(candidateID), SnapshotSealID: dbUUID(sealID), QualificationDigest: pgText(&qualificationDigest)}); err != nil {
+		return DeliveryCandidate{}, err
+	}
+	return loadCandidate(ctx, tx, candidateID, CandidateInput{})
 }
 
 // CreateGeneration binds the immutable seal and all compiler identities.

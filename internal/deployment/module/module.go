@@ -54,6 +54,7 @@ type Module struct {
 	requireSealedCoordinator  bool
 	deliveryReader            deployment.DeliveryReader
 	deliveryMutations         DeliveryMutationPort
+	persistence               *Persistence
 }
 
 type Principal struct {
@@ -169,7 +170,16 @@ type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, 
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
 type Config struct {
-	Database *sql.DB
+	// Persistence is the native clean-slate PostgreSQL delivery authority.
+	// It must be constructed with NewPostgresPersistence; the module never
+	// infers a native repository from a generic deployment interface.
+	Persistence *Persistence
+	Database    *sql.DB
+	// LegacySQLite is retained as documentation and an explicit composition
+	// signal for development/tests. Existing non-production callers that pass
+	// Database directly remain supported for compatibility.
+	LegacySQLite bool
+	Production   bool
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
 	// It is required whenever deployment SQLite persistence is configured.
 	AuditIntentRecorder       access.AuditIntentRecorder
@@ -243,6 +253,23 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if config.Persistence != nil && config.Database != nil {
+		return nil, errors.New("deployment persistence is mutually exclusive with database inputs")
+	}
+	if config.Production {
+		if config.Database != nil || config.LegacySQLite {
+			return nil, errors.New("production deployment module rejects SQLite database")
+		}
+		if config.Persistence == nil {
+			return nil, errors.New("production deployment module requires native PostgreSQL persistence")
+		}
+		if err := config.Persistence.validate(); err != nil {
+			return nil, fmt.Errorf("production deployment persistence validation: %w", err)
+		}
+	}
+	if config.Persistence != nil && !config.Production {
+		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
+	}
 	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
 		config.DeliveryCandidateBuilder = config.CanonicalDeliveryAdapter.CandidateDeliveryBuilder()
 	}
@@ -269,7 +296,13 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
-	if config.Database != nil {
+	if config.Persistence != nil {
+		// The clean-slate repository is exposed through Module.NativePersistence
+		// below. Its value types are intentionally not coerced into the legacy
+		// deployment coordinator; HTTP calls receive a typed, fail-closed
+		// unsupported-capability error instead of falling back to SQLite.
+		coordinator = unsupportedCoordinator{}
+	} else if config.Database != nil {
 		if config.AuditIntentRecorder == nil {
 			return nil, errors.New("deployment audit intent recorder is required")
 		}
@@ -411,6 +444,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
 		deliveryMutations: config.DeliveryMutations,
+		persistence:       config.Persistence,
 	}
 	if m.bootstrapPolicies == nil {
 		m.bootstrapPolicies = durableBootstrapPolicies
@@ -428,6 +462,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 }
 
 func (m *Module) HTTP() *deploymenthttp.Handler { return m.handler }
+
+// NativePersistence exposes the validated clean-slate authority bundle to
+// native delivery composition. It returns nil for the explicit legacy SQLite
+// module path.
+func (m *Module) NativePersistence() *Persistence {
+	if m == nil {
+		return nil
+	}
+	return m.persistence
+}
 
 // SealedApprovalVerifier returns the module's durable approval check for the
 // sealed publication boundary. Composition installs it on the coordinator

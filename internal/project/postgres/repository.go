@@ -106,6 +106,14 @@ func New(db DBTX) *Repository { return &Repository{db: db} }
 // NewRepository is an expressive compatibility constructor.
 func NewRepository(db DBTX) *Repository { return New(db) }
 
+// PostgreSQLAuthority marks this repository as the native project identity
+// authority. The release catalog adapter uses the marker to ensure a
+// database/sql or SQLite project store cannot be selected in production.
+func (*Repository) PostgreSQLAuthority() {}
+
+// Configured reports whether the repository has a native database handle.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 // WithTx returns a repository using tx as its database surface. The caller
 // retains ownership of commit and rollback.
 func (r *Repository) WithTx(tx Tx) *Repository { return New(tx) }

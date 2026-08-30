@@ -137,6 +137,9 @@ func (r *Repository) WithTx(tx Tx) *Repository {
 // accident in production.
 func (*Repository) PostgreSQLAuthority() {}
 
+// Configured reports whether the repository has a native database handle.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 func contextOrBackground(ctx context.Context) context.Context {
 	if ctx == nil {
 		return context.Background()
