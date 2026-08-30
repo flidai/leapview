@@ -208,6 +208,9 @@ func TestOperationAdapterBuildAttemptLifecycle(t *testing.T) {
 	if _, err := adapter.RenewLeaseTx(t.Context(), validationTx, bound.Lease, 0); !errors.Is(err, deploymentmodule.ErrNativeOperationInvalid) {
 		t.Fatalf("zero renewal duration error = %v, want native operation invalid", err)
 	}
+	if _, err := adapter.RenewLeaseTx(t.Context(), validationTx, bound.Lease, 25*time.Hour); !errors.Is(err, deploymentmodule.ErrNativeOperationInvalid) {
+		t.Fatalf("oversized renewal duration error = %v, want native operation invalid", err)
+	}
 	if _, err := adapter.BeginAttemptTx(t.Context(), validationTx, deploymentmodule.NativeOperationBeginAttemptInput{Lease: bound.Lease, AttemptID: "0198f2c0-7c7a-8f00-8a11-000000000501", AttemptIdentity: "bad"}); !errors.Is(err, deploymentmodule.ErrNativeOperationInvalid) {
 		t.Fatalf("non-v7 attempt error = %v, want native operation invalid", err)
 	}
