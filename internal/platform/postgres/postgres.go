@@ -83,26 +83,29 @@ type RuntimeConfig struct {
 	DuckLake Config
 }
 
-// ControlPlaneConfig describes the three independent control-plane roles.
+// ControlPlaneConfig describes the independently authenticated control-plane roles.
 // The migrator pool is used only during startup schema application, the
-// runtime pool serves normal read/write requests, and the optional readonly
-// pool is reserved for bounded reporting/backup reads.  Every role receives
-// its own URL and credentials; this type never derives one credential from
-// another or falls back to a shared superuser connection.
+// runtime pool serves normal read/write requests, maintenance is a required
+// one-connection read/write pool for bounded maintenance operations, and the
+// optional readonly pool is reserved for bounded reporting/backup reads.
+// Every role receives its own URL and credentials; this type never derives
+// one credential from another or falls back to a shared superuser connection.
 type ControlPlaneConfig struct {
-	Migrator Config
-	Runtime  Config
-	Readonly *Config
+	Migrator    Config
+	Runtime     Config
+	Maintenance Config
+	Readonly    *Config
 }
 
 // ControlPlanePools owns independently budgeted control-plane pools.  The
 // migrator is retained so callers can run a startup migration transaction and
-// then close it before serving traffic; Runtime and Readonly remain available
-// for their respective authorities.
+// then close it before serving traffic; Runtime, Maintenance and Readonly
+// remain available for their respective authorities.
 type ControlPlanePools struct {
-	Migrator *Pool
-	Runtime  *Pool
-	Readonly *Pool
+	Migrator    *Pool
+	Runtime     *Pool
+	Maintenance *Pool
+	Readonly    *Pool
 }
 
 // Close closes every configured pool.  It is safe to call on a nil value and
@@ -115,6 +118,9 @@ func (p *ControlPlanePools) Close() {
 	if p.Readonly != nil {
 		p.Readonly.Close()
 	}
+	if p.Maintenance != nil {
+		p.Maintenance.Close()
+	}
 	if p.Runtime != nil {
 		p.Runtime.Close()
 	}
@@ -123,12 +129,28 @@ func (p *ControlPlanePools) Close() {
 	}
 }
 
-// OpenControlPlane opens the required migrator and runtime pools and, when
-// supplied, an explicit readonly pool.  Opening is fail-closed: a failed
-// later pool closes every pool already opened and returns the original
-// contextual error.  Migration execution remains the caller's responsibility
-// so the pool package cannot accidentally hide a transaction boundary.
+// OpenControlPlane opens the required migrator, runtime, and maintenance
+// pools and, when supplied, an explicit readonly pool. Opening is fail-closed:
+// a failed later pool closes every pool already opened and returns the
+// original contextual error. Migration execution remains the caller's
+// responsibility so the pool package cannot accidentally hide a transaction
+// boundary.
 func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlanePools, error) {
+	if strings.TrimSpace(cfg.Maintenance.URL) == "" {
+		return nil, errors.New("PostgreSQL control maintenance URL is required")
+	}
+	if cfg.Maintenance.Intent != "" && cfg.Maintenance.Intent != IntentReadWrite {
+		return nil, errors.New("PostgreSQL control maintenance pool must be read-write")
+	}
+	if cfg.Maintenance.MinConns == 0 {
+		cfg.Maintenance.MinConns = 1
+	}
+	if cfg.Maintenance.MaxConns == 0 {
+		cfg.Maintenance.MaxConns = 1
+	}
+	if cfg.Maintenance.MinConns != 1 || cfg.Maintenance.MaxConns != 1 {
+		return nil, errors.New("PostgreSQL control maintenance pool must use exactly one connection")
+	}
 	migrator, err := Open(ctx, cfg.Migrator)
 	if err != nil {
 		return nil, fmt.Errorf("open PostgreSQL control migrator pool: %w", err)
@@ -138,16 +160,23 @@ func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlan
 		migrator.Close()
 		return nil, fmt.Errorf("open PostgreSQL control runtime pool: %w", err)
 	}
+	maintenance, err := Open(ctx, cfg.Maintenance)
+	if err != nil {
+		runtime.Close()
+		migrator.Close()
+		return nil, fmt.Errorf("open PostgreSQL control maintenance pool: %w", err)
+	}
 	var readonly *Pool
 	if cfg.Readonly != nil {
 		readonly, err = Open(ctx, *cfg.Readonly)
 		if err != nil {
+			maintenance.Close()
 			runtime.Close()
 			migrator.Close()
 			return nil, fmt.Errorf("open PostgreSQL control readonly pool: %w", err)
 		}
 	}
-	return &ControlPlanePools{Migrator: migrator, Runtime: runtime, Readonly: readonly}, nil
+	return &ControlPlanePools{Migrator: migrator, Runtime: runtime, Maintenance: maintenance, Readonly: readonly}, nil
 }
 
 // Pool is a bounded pgxpool with an acquisition deadline. The embedded pool

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -98,6 +99,40 @@ func TestConfigValidateRequiresURLAndRole(t *testing.T) {
 		if err := cfg.Validate(); err == nil {
 			t.Fatalf("Config.Validate(%#v) unexpectedly succeeded", cfg)
 		}
+	}
+}
+
+func TestOpenControlPlaneRequiresMaintenanceBeforeOpeningPools(t *testing.T) {
+	_, err := OpenControlPlane(context.Background(), ControlPlaneConfig{})
+	if err == nil || !strings.Contains(err.Error(), "maintenance URL is required") {
+		t.Fatalf("missing maintenance pool error = %v", err)
+	}
+}
+
+func TestOpenControlPlaneRequiresReadWriteSingleConnectionMaintenance(t *testing.T) {
+	tests := []struct {
+		name string
+		cfg  Config
+		want string
+	}{
+		{
+			name: "read-only intent",
+			cfg:  Config{URL: "postgres://maintenance@localhost/control", Intent: IntentReadOnly},
+			want: "must be read-write",
+		},
+		{
+			name: "multiple connections",
+			cfg:  Config{URL: "postgres://maintenance@localhost/control", MinConns: 1, MaxConns: 2},
+			want: "exactly one connection",
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, err := OpenControlPlane(context.Background(), ControlPlaneConfig{Maintenance: test.cfg})
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("maintenance policy error = %v, want %q", err, test.want)
+			}
+		})
 	}
 }
 

@@ -68,12 +68,14 @@ func TestPostgresControlPlaneConfigUsesIndependentLeastPrivilegeRoles(t *testing
 	cfg := Config{
 		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=verify-full",
 		PostgresControlMigratorURL:           "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:        "postgres://maintenance:secret@db/control?sslmode=verify-full",
 		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=verify-full",
 		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full",
 		PostgresControlReadonlyURL:           "postgres://readonly:secret@db/control?sslmode=verify-full",
 		PostgresControlRuntimeRole:           "runtime_role",
 		PostgresControlMigratorRole:          "migrator_role",
 		PostgresControlReadonlyRole:          "readonly_role",
+		PostgresControlMaintenanceRole:       "maintenance_role",
 		PostgresExpectedMajor:                18,
 		PostgresRequireTLS:                   true,
 		PostgresControlPoolMinConns:          2,
@@ -83,6 +85,10 @@ func TestPostgresControlPlaneConfigUsesIndependentLeastPrivilegeRoles(t *testing
 	require.Equal(t, "migrator_role", got.Migrator.RuntimeRole)
 	require.Equal(t, platformpostgres.IntentReadWrite, got.Migrator.Intent)
 	require.Equal(t, "runtime_role", got.Runtime.RuntimeRole)
+	require.Equal(t, "maintenance_role", got.Maintenance.RuntimeRole)
+	require.Equal(t, platformpostgres.IntentReadWrite, got.Maintenance.Intent)
+	require.EqualValues(t, 1, got.Maintenance.MinConns)
+	require.EqualValues(t, 1, got.Maintenance.MaxConns)
 	require.Equal(t, platformpostgres.IntentReadWrite, got.Runtime.Intent)
 	if got.Readonly == nil {
 		t.Fatal("readonly pool was omitted despite explicit URL")
@@ -96,9 +102,10 @@ func TestPostgresControlPlaneConfigUsesIndependentLeastPrivilegeRoles(t *testing
 
 func TestPostgresControlPlaneConfigAppliesReviewedRoleDefaults(t *testing.T) {
 	cfg := Config{
-		PostgresControlURL:         "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL: "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresRequireTLS:         true,
+		PostgresControlURL:            "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL:    "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresControlMaintenanceURL: "postgres://maintenance:secret@db/control?sslmode=require",
+		PostgresRequireTLS:            true,
 	}
 	got := cfg.PostgresControlPlaneConfig()
 	require.Equal(t, "leapview_control_migrator", got.Migrator.RuntimeRole)
@@ -112,17 +119,28 @@ func TestValidatePostgresProductionFailsClosedWithoutSeparateMigrator(t *testing
 	}
 }
 
+func TestValidatePostgresProductionFailsClosedWithoutMaintenance(t *testing.T) {
+	cfg := Config{Production: true, PostgresRequireTLS: true,
+		PostgresControlURL:         "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL: "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresDuckLakeURL:        "postgres://ducklake:secret@db/ducklake?sslmode=require"}
+	if err := cfg.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL") {
+		t.Fatalf("missing maintenance URL error = %v", err)
+	}
+}
+
 func TestValidatePostgresProductionRejectsPlaintextAndReadOnlyRuntime(t *testing.T) {
 	base := Config{
-		Production:                  true,
-		PostgresControlURL:          "postgres://runtime:secret@db/control?sslmode=disable",
-		PostgresControlMigratorURL:  "postgres://migrator:secret@db/control?sslmode=disable",
-		PostgresDuckLakeURL:         "postgres://ducklake:secret@db/ducklake?sslmode=disable",
-		PostgresControlRuntimeRole:  "runtime_role",
-		PostgresControlMigratorRole: "migrator_role",
-		PostgresDuckLakeRuntimeRole: "ducklake_role",
-		PostgresControlIntent:       "read-write",
-		PostgresDuckLakeIntent:      "read-write",
+		Production:                    true,
+		PostgresControlURL:            "postgres://runtime:secret@db/control?sslmode=disable",
+		PostgresControlMigratorURL:    "postgres://migrator:secret@db/control?sslmode=disable",
+		PostgresControlMaintenanceURL: "postgres://maintenance:secret@db/control?sslmode=disable",
+		PostgresDuckLakeURL:           "postgres://ducklake:secret@db/ducklake?sslmode=disable",
+		PostgresControlRuntimeRole:    "runtime_role",
+		PostgresControlMigratorRole:   "migrator_role",
+		PostgresDuckLakeRuntimeRole:   "ducklake_role",
+		PostgresControlIntent:         "read-write",
+		PostgresDuckLakeIntent:        "read-write",
 	}
 	if err := base.ValidatePostgresProduction(); err == nil {
 		t.Fatal("production PostgreSQL validation accepted plaintext URLs")
@@ -140,9 +158,10 @@ func TestValidatePostgresProductionRejectsPlaintextAndReadOnlyRuntime(t *testing
 func TestValidatePostgresProductionRequiresTwoDatabasesAndDistinctRoles(t *testing.T) {
 	base := Config{
 		Production: true, PostgresRequireTLS: true,
-		PostgresControlURL:         "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL: "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlRuntimeRole: "runtime_role", PostgresControlMigratorRole: "migrator_role",
+		PostgresControlURL:            "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL:    "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresControlMaintenanceURL: "postgres://maintenance:secret@db/control?sslmode=require",
+		PostgresControlRuntimeRole:    "runtime_role", PostgresControlMigratorRole: "migrator_role",
 	}
 	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_POSTGRES_DUCKLAKE_URL") {
 		t.Fatalf("missing DuckLake database error = %v", err)
@@ -156,6 +175,33 @@ func TestValidatePostgresProductionRequiresTwoDatabasesAndDistinctRoles(t *testi
 	base.PostgresControlMigratorRole = "runtime_role"
 	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "migrator and runtime roles must be distinct") {
 		t.Fatalf("shared control role error = %v", err)
+	}
+}
+
+func TestValidatePostgresProductionRequiresDistinctMaintenanceCredentials(t *testing.T) {
+	base := Config{
+		Production:                     true,
+		PostgresRequireTLS:             true,
+		PostgresControlURL:             "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL:     "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@db/control?sslmode=require",
+		PostgresDuckLakeURL:            "postgres://ducklake:secret@db/ducklake?sslmode=require",
+		PostgresControlRuntimeRole:     "runtime_role",
+		PostgresControlMigratorRole:    "migrator_role",
+		PostgresControlMaintenanceRole: "maintenance_role",
+		PostgresDuckLakeRuntimeRole:    "ducklake_role",
+	}
+	if err := base.ValidatePostgresProduction(); err != nil {
+		t.Fatalf("valid maintenance credentials rejected: %v", err)
+	}
+	base.PostgresControlMaintenanceRole = base.PostgresControlRuntimeRole
+	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "maintenance role") {
+		t.Fatalf("maintenance/runtime role reuse accepted: %v", err)
+	}
+	base.PostgresControlMaintenanceRole = "maintenance_role"
+	base.PostgresControlMaintenanceURL = base.PostgresControlURL
+	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "maintenance URL") {
+		t.Fatalf("maintenance/runtime URL reuse accepted: %v", err)
 	}
 }
 

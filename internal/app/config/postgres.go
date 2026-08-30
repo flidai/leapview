@@ -45,8 +45,10 @@ func (c Config) PostgresRuntimeConfig() platformpostgres.RuntimeConfig {
 }
 
 // PostgresControlPlaneConfig maps the explicit control-plane role settings to
-// the capability-neutral pool policy.  The readonly pool is omitted when its
-// URL is empty; it is never synthesized from the runtime credentials.
+// the capability-neutral pool policy. Maintenance is always represented as a
+// required one-connection read/write pool; production validation rejects an
+// empty URL rather than synthesizing credentials from another role. The
+// readonly pool is omitted when its URL is empty.
 func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig {
 	migratorRole := strings.TrimSpace(c.PostgresControlMigratorRole)
 	if migratorRole == "" {
@@ -87,6 +89,7 @@ func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig
 			LockTimeout:            c.PostgresControlLockTimeout,
 			IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
 		},
+		Maintenance: c.PostgresControlMaintenanceConfig(),
 	}
 	if strings.TrimSpace(c.PostgresControlReadonlyURL) != "" {
 		readonly := platformpostgres.Config{
@@ -160,10 +163,11 @@ func (c Config) PostgresDuckLakeUpgradeConfig() (platformpostgres.Config, platfo
 	return coordinator, catalog
 }
 
-// PostgresControlMaintenanceConfig describes the separately authenticated
-// bounded maintenance pool. It is intentionally not part of the serving
-// runtime pool set; callers open it only around an explicit maintenance
-// operation and close it immediately afterwards.
+// PostgresControlMaintenanceConfig describes the separately authenticated,
+// one-connection read/write maintenance pool. It is intentionally kept out of
+// the ordinary runtime policy; composition retains this bounded pool so
+// explicit maintenance operations can be wired without borrowing runtime
+// credentials.
 func (c Config) PostgresControlMaintenanceConfig() platformpostgres.Config {
 	role := strings.TrimSpace(c.PostgresControlMaintenanceRole)
 	if role == "" {
@@ -223,6 +227,9 @@ func (c Config) ValidatePostgresProduction() error {
 	if strings.TrimSpace(c.PostgresDuckLakeURL) == "" {
 		return errors.New("production serve requires LEAPVIEW_POSTGRES_DUCKLAKE_URL")
 	}
+	if strings.TrimSpace(c.PostgresControlMaintenanceURL) == "" {
+		return errors.New("production serve requires LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL")
+	}
 	if !c.PostgresRequireTLS {
 		return errors.New("production serve requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
@@ -240,10 +247,10 @@ func (c Config) ValidatePostgresProduction() error {
 	if strings.TrimSpace(control.Migrator.URL) == strings.TrimSpace(control.Runtime.URL) {
 		return errors.New("production control migrator and runtime URLs must use distinct credentials")
 	}
-	if ducklake.RuntimeRole == control.Runtime.RuntimeRole || ducklake.RuntimeRole == control.Migrator.RuntimeRole {
+	if ducklake.RuntimeRole == control.Runtime.RuntimeRole || ducklake.RuntimeRole == control.Migrator.RuntimeRole || ducklake.RuntimeRole == control.Maintenance.RuntimeRole {
 		return errors.New("production DuckLake and control PostgreSQL roles must be distinct")
 	}
-	if strings.TrimSpace(ducklake.URL) == strings.TrimSpace(control.Runtime.URL) || strings.TrimSpace(ducklake.URL) == strings.TrimSpace(control.Migrator.URL) {
+	if strings.TrimSpace(ducklake.URL) == strings.TrimSpace(control.Runtime.URL) || strings.TrimSpace(ducklake.URL) == strings.TrimSpace(control.Migrator.URL) || strings.TrimSpace(ducklake.URL) == strings.TrimSpace(control.Maintenance.URL) {
 		return errors.New("production DuckLake and control PostgreSQL URLs must use distinct database credentials")
 	}
 	if err := control.Migrator.Validate(); err != nil {
@@ -252,11 +259,20 @@ func (c Config) ValidatePostgresProduction() error {
 	if err := control.Runtime.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
 	}
+	if control.Maintenance.RuntimeRole == control.Runtime.RuntimeRole || control.Maintenance.RuntimeRole == control.Migrator.RuntimeRole {
+		return errors.New("production control maintenance role must be distinct from runtime and migrator roles")
+	}
+	if strings.TrimSpace(control.Maintenance.URL) == strings.TrimSpace(control.Runtime.URL) || strings.TrimSpace(control.Maintenance.URL) == strings.TrimSpace(control.Migrator.URL) {
+		return errors.New("production control maintenance URL must use distinct credentials")
+	}
+	if err := control.Maintenance.Validate(); err != nil {
+		return fmt.Errorf("invalid PostgreSQL control maintenance configuration: %w", err)
+	}
 	if control.Readonly != nil {
-		if control.Readonly.RuntimeRole == control.Runtime.RuntimeRole || control.Readonly.RuntimeRole == control.Migrator.RuntimeRole || control.Readonly.RuntimeRole == ducklake.RuntimeRole {
-			return errors.New("production control readonly role must be distinct from runtime, migrator, and DuckLake roles")
+		if control.Readonly.RuntimeRole == control.Runtime.RuntimeRole || control.Readonly.RuntimeRole == control.Migrator.RuntimeRole || control.Readonly.RuntimeRole == control.Maintenance.RuntimeRole || control.Readonly.RuntimeRole == ducklake.RuntimeRole {
+			return errors.New("production control readonly role must be distinct from runtime, migrator, maintenance, and DuckLake roles")
 		}
-		if strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(control.Runtime.URL) || strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(control.Migrator.URL) || strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(ducklake.URL) {
+		if strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(control.Runtime.URL) || strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(control.Migrator.URL) || strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(control.Maintenance.URL) || strings.TrimSpace(control.Readonly.URL) == strings.TrimSpace(ducklake.URL) {
 			return errors.New("production control readonly URL must use distinct credentials")
 		}
 		if err := control.Readonly.Validate(); err != nil {

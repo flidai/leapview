@@ -17,11 +17,12 @@ import (
 // SQLite authority after PostgreSQL bootstrap has been requested.
 var errPostgresProductionCompositionIncomplete = errors.New("production PostgreSQL control-plane adapters are not yet wired; refusing SQLite runtime")
 
-// postgresControlPlaneLifecycle owns the runtime and optional readonly pools
-// after the one-shot migrator pool has applied the baseline.  The migrator is
-// closed immediately after commit and is therefore never available to request
-// handlers.  Start re-pings the serving pools so readiness is tied to the
-// exact connections retained by the process rather than to migration success.
+// postgresControlPlaneLifecycle owns the runtime, required maintenance, and
+// optional readonly pools after the one-shot migrator pool has applied the
+// baseline. The migrator is closed immediately after commit and is therefore
+// never available to request handlers. Start re-pings the serving pools so
+// readiness is tied to the exact connections retained by the process rather
+// than to migration success.
 type postgresControlPlaneLifecycle struct {
 	pools    *platformpostgres.ControlPlanePools
 	ducklake *platformpostgres.Pool
@@ -37,7 +38,7 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 	if err != nil {
 		return nil, err
 	}
-	if pools == nil || pools.Migrator == nil || pools.Runtime == nil {
+	if pools == nil || pools.Migrator == nil || pools.Runtime == nil || pools.Maintenance == nil {
 		if pools != nil {
 			pools.Close()
 		}
@@ -56,6 +57,15 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 	if migratorDatabase != runtimeDatabase {
 		pools.Close()
 		return nil, fmt.Errorf("PostgreSQL control migrator database %q differs from runtime database %q", migratorDatabase, runtimeDatabase)
+	}
+	maintenanceDatabase, err := postgresDatabaseName(ctx, pools.Maintenance)
+	if err != nil {
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL control maintenance database: %w", err)
+	}
+	if maintenanceDatabase != runtimeDatabase {
+		pools.Close()
+		return nil, fmt.Errorf("PostgreSQL control maintenance database %q differs from runtime database %q", maintenanceDatabase, runtimeDatabase)
 	}
 	if err := applyPostgresControlPlaneMigrations(ctx, pools.Migrator); err != nil {
 		pools.Close()
@@ -127,11 +137,14 @@ func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platform
 // than once; each call rechecks the live database because a successful
 // startup ping is not a perpetual readiness guarantee.
 func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
-	if l == nil || l.pools == nil || l.pools.Runtime == nil || l.ducklake == nil {
+	if l == nil || l.pools == nil || l.pools.Runtime == nil || l.pools.Maintenance == nil || l.ducklake == nil {
 		return errors.New("PostgreSQL control-plane lifecycle is not initialized")
 	}
 	if err := l.pools.Runtime.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL control runtime pool: %w", err)
+	}
+	if err := l.pools.Maintenance.Ping(ctx); err != nil {
+		return fmt.Errorf("ping PostgreSQL control maintenance pool: %w", err)
 	}
 	revision, err := l.pools.Runtime.SchemaRevision(ctx, postgresbaseline.BaselineRevision)
 	if err != nil {
@@ -149,6 +162,16 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 		return fmt.Errorf("ping PostgreSQL DuckLake runtime pool: %w", err)
 	}
 	return nil
+}
+
+// MaintenancePool exposes the retained, independently authenticated
+// one-connection maintenance pool for future native maintenance wiring. The
+// lifecycle retains ownership and closes it from Stop.
+func (l *postgresControlPlaneLifecycle) MaintenancePool() *platformpostgres.Pool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	return l.pools.Maintenance
 }
 
 // Stop closes all serving pools and is idempotent.  It deliberately accepts a
