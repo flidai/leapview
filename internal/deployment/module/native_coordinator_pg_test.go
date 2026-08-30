@@ -204,12 +204,15 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if _, err := repo.BeginBuildAttempt(ctx, deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder", PhysicalPoolID: "pool", FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Namespace: "candidate/attempt", SessionIdentity: "session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	commitMarker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-native", GenerationID: "generation-native", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Project: "project_sales", Environment: "prod", PhysicalPoolID: "pool"}
+	commitMarker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-native", GenerationID: generationID, AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: digest('f'), PlanDigest: digest('a'), Project: "project_sales", Environment: "prod", PhysicalPoolID: "pool"}
 	markerJSON, err := commitMarker.CanonicalJSON()
 	if err != nil {
 		t.Fatal(err)
 	}
 	marker := []byte(markerJSON)
+	if _, err := repo.BindBuildArtifact(ctx, deploymentpostgres.BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-native", ServingArtifactDigest: digest('e'), ServingStateID: generationID, OwnerID: "builder", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := repo.CommitBuildAttempt(ctx, deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder", FencingEpoch: 1, SnapshotID: 42, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}

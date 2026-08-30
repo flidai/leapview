@@ -15,6 +15,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/google/uuid"
 )
 
 // deliveryEventReader is intentionally narrower than deployment.DeliveryReader:
@@ -199,12 +200,26 @@ func (m *Module) deliveryMutationReady(w http.ResponseWriter, r *http.Request) b
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return false
 	}
-	if m == nil || m.deliveryMutations == nil {
-		m.writeDeliveryReadError(w, r, errors.New("canonical delivery coordinator is unavailable"))
+	if m == nil || (m.deliveryMutations == nil && m.nativeDeliveryMutations == nil) {
+		m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
 		return false
 	}
 	if m.handlerEnvironment() == "" {
 		m.writeDeliveryReadError(w, r, errors.New("instance environment is required"))
+		return false
+	}
+	return true
+}
+
+// deliveryPublicationMutationReady is narrower than deliveryMutationReady:
+// native plan/build handlers use the clean-slate port, while publication and
+// rollback remain owned by the existing publication coordinator.
+func (m *Module) deliveryPublicationMutationReady(w http.ResponseWriter, r *http.Request) bool {
+	if !m.deliveryMutationReady(w, r) {
+		return false
+	}
+	if m.deliveryMutations == nil {
+		m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
 		return false
 	}
 	return true
@@ -248,6 +263,37 @@ func (m *Module) CreateDeliveryPlan(w http.ResponseWriter, r *http.Request, proj
 		m.writeDeliveryMutationError(w, r, err)
 		return
 	}
+	if m.nativeDeliveryMutations != nil {
+		operation := intent.Operation
+		if operation == "" {
+			operation = deployment.DeliveryOperationCodeChange
+		}
+		nativeRequest := NativeDeliveryPlanRequest{
+			ProjectID: intent.ProjectID, TargetID: intent.TargetID, Environment: intent.Environment,
+			PrincipalID: intent.PrincipalID, Operation: string(operation), SourceDigest: intent.SourceDigest,
+			SourceAttestationDigest: intent.SourceAttestationDigest, IdempotencyKey: idempotencyKey,
+		}
+		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		created, err := m.nativeDeliveryMutations.CreatePlan(r.Context(), nativeRequest)
+		if err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := created.validate(nativeRequest, m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := completeNativePlanCommand(r.Context(), m.nativeDeliveryMutations, created); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/projects/%s/delivery/plans/%s", project, created.ID.String()))
+		apitransport.WriteJSON(w, http.StatusCreated, nativePlanPreviewResponse(created))
+		return
+	}
 	created, err := m.deliveryMutations.CreatePlan(r.Context(), intent, idempotencyKey)
 	if err != nil {
 		m.writeDeliveryMutationError(w, r, err)
@@ -272,6 +318,40 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 		return
 	}
 	principal, _ := m.principal(r)
+	if m.nativeDeliveryMutations != nil {
+		parsedPlanID, parseErr := uuid.Parse(planID)
+		if parseErr != nil || parsedPlanID == uuid.Nil || parsedPlanID.String() != planID {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: plan identity must be a canonical UUID", deployment.ErrDeliveryInvalid))
+			return
+		}
+		projectID, projectErr := projectgraph.NewResourceID(project)
+		if projectErr != nil {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: project", deployment.ErrDeliveryInvalid))
+			return
+		}
+		nativeRequest := NativeDeliveryBuildRequest{ProjectID: projectID, PlanID: parsedPlanID, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
+		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		built, err := m.nativeDeliveryMutations.BuildPlan(r.Context(), nativeRequest)
+		if err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := built.validate(nativeRequest); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := completeNativeBuildCommand(r.Context(), m.nativeDeliveryMutations, built); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		response := nativeBuildStatusResponse(built)
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/projects/%s/delivery/builds/%s", project, built.ID.String()))
+		apitransport.WriteJSON(w, http.StatusOK, response)
+		return
+	}
 	attempt, err := m.deliveryMutations.BuildPlan(r.Context(), project, planID, principal.ID, idempotencyKey)
 	if err != nil {
 		m.writeDeliveryMutationError(w, r, err)
@@ -298,7 +378,7 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 }
 
 func (m *Module) PublishDeliveryCandidate(w http.ResponseWriter, r *http.Request, project, candidateID, idempotencyKey string) {
-	if !m.deliveryMutationReady(w, r) {
+	if !m.deliveryPublicationMutationReady(w, r) {
 		return
 	}
 	principal, _ := m.principal(r)
@@ -563,7 +643,7 @@ func (m *Module) RevokeDeliveryPublicationApproval(w http.ResponseWriter, r *htt
 }
 
 func (m *Module) RollbackDeliveryGeneration(w http.ResponseWriter, r *http.Request, project, generationID, idempotencyKey string) {
-	if !m.deliveryMutationReady(w, r) {
+	if !m.deliveryPublicationMutationReady(w, r) {
 		return
 	}
 	principal, _ := m.principal(r)

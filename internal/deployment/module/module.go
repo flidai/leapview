@@ -54,6 +54,7 @@ type Module struct {
 	requireSealedCoordinator  bool
 	deliveryReader            deployment.DeliveryReader
 	deliveryMutations         DeliveryMutationPort
+	nativeDeliveryMutations   NativeDeliveryMutationPort
 	persistence               *Persistence
 }
 
@@ -246,6 +247,11 @@ type Config struct {
 	// use cases. It is deliberately a narrow callback port so HTTP/CLI cannot
 	// bypass target admission, sealing, or the authoritative CAS fence.
 	DeliveryMutations DeliveryMutationPort
+	// NativeDeliveryMutations is the clean-slate PostgreSQL plan/build port.
+	// Native production composition must inject this port; it is deliberately
+	// separate from DeliveryMutations so the HTTP plan/build handlers cannot
+	// fall back to the legacy DeliveryLifecycle or text-ID contracts.
+	NativeDeliveryMutations NativeDeliveryMutationPort
 	// DeliveryReader is the durable, read-only plan/build/seal/operator port.
 	// When Database is configured, Build installs the SQLite repository by
 	// default; tests and alternate control stores may provide an implementation.
@@ -472,8 +478,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
 		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
-		deliveryMutations: config.DeliveryMutations,
-		persistence:       config.Persistence,
+		deliveryMutations: config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations,
+		persistence: config.Persistence,
 	}
 	if m.bootstrapPolicies == nil {
 		m.bootstrapPolicies = durableBootstrapPolicies
