@@ -124,8 +124,15 @@ func Analyze(ctx context.Context, sqlText string) (Analysis, error) {
 		if len(column.Names) == 0 || len(column.Names) > 3 {
 			return Analysis{}, fmt.Errorf("column reference must contain one to three identifiers")
 		}
-		for _, name := range column.Names {
-			if !validIdentifier(name) {
+		for index, name := range column.Names {
+			valid := validIdentifier(name)
+			// In a governed three-part reference the middle identifier is a
+			// relation name, whose authored contract permits dot and hyphen when
+			// quoted. Keep namespace and column identifiers strictly bounded.
+			if len(column.Names) == 3 && index == 1 {
+				valid = validRelationName(name)
+			}
+			if !valid {
 				return Analysis{}, fmt.Errorf("column reference identifier %q is invalid", name)
 			}
 		}
@@ -243,7 +250,11 @@ func modelColumnEdits(sqlText, relationNamespace string, expected []duckdbsql.Co
 		if !onlyDotBetween(sqlText, modelToken.end, tableToken.start) || !onlyDotBetween(sqlText, tableToken.end, columnToken.start) {
 			continue
 		}
-		if !validIdentifier(tableToken.value) || !validIdentifier(columnToken.value) {
+		// Model relation names intentionally permit dot and hyphen when quoted;
+		// Analyze applies this same relation-name contract before producing the
+		// expected column evidence. Column names remain plain governed
+		// identifiers, matching Analyze's validation above.
+		if !validRelationName(tableToken.value) || !validIdentifier(columnToken.value) {
 			continue
 		}
 		key := modelColumnKey(tableToken.value, columnToken.value)

@@ -150,6 +150,22 @@ func TestRewriteModelsRewritesQuotedThreePartModelColumns(t *testing.T) {
 	}
 }
 
+func TestRewriteModelsRewritesQuotedRelationNameWithPunctuation(t *testing.T) {
+	sqlText := `SELECT model."olist.order-items".id FROM model."olist.order-items"`
+	analysis, err := Analyze(context.Background(), sqlText)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := RewriteModels(sqlText, analysis, "_candidate_namespace")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `SELECT _candidate_namespace."olist.order-items".id FROM _candidate_namespace."olist.order-items"`
+	if got != want {
+		t.Fatalf("RewriteModels() = %q, want %q", got, want)
+	}
+}
+
 func TestRewriteModelsRejectsOverlappingParserSpans(t *testing.T) {
 	sqlText := `SELECT model.orders.id FROM model.orders`
 	analysis, err := Analyze(context.Background(), sqlText)
