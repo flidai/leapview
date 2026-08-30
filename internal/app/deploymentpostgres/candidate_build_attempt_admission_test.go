@@ -132,6 +132,11 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	if replayed.Lease != first.Lease || !reflect.DeepEqual(replayed.Attempt, first.Attempt) || replayed.Artifact != first.Artifact || !reflect.DeepEqual(replayed.DuckLakeAttempt, first.DuckLakeAttempt) {
 		t.Fatalf("exact replay drifted: first=%#v replay=%#v", first, replayed)
 	}
+	drift := fixture.Input
+	drift.Artifact.ServingArtifactDigest = candidateAdmissionDigest('4')
+	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), drift); !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("artifact replay drift error = %v, want delivery conflict", err)
+	}
 
 	rollback := candidateAdmissionFixtureInput()
 	rollback.Input.Lease.LeaseID = "0198f2c0-7c7a-7f00-8a11-000000000311"
@@ -187,5 +192,24 @@ func TestNormalizeCandidateBuildAttemptAdmissionRequiresCandidateID(t *testing.T
 	fixture.Input.Attempt.CandidateID = ""
 	if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
 		t.Fatalf("missing candidate id error = %v, want delivery invalid", err)
+	}
+}
+
+func TestNormalizeCandidateBuildAttemptAdmissionRejectsOversizedArtifactAndCatalogIDs(t *testing.T) {
+	for name, mutate := range map[string]func(*CandidateBuildAttemptAdmissionInput){
+		"artifact id": func(in *CandidateBuildAttemptAdmissionInput) {
+			in.Artifact.ServingArtifactID = strings.Repeat("a", 256)
+		},
+		"catalog id": func(in *CandidateBuildAttemptAdmissionInput) {
+			in.CatalogID = strings.Repeat("c", 256)
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			fixture := candidateAdmissionFixtureInput()
+			mutate(&fixture.Input)
+			if _, err := normalizeCandidateBuildAttemptAdmissionInput(fixture.Input); !errors.Is(err, deploymentnative.ErrInvalid) {
+				t.Fatalf("oversized %s error = %v, want delivery invalid", name, err)
+			}
+		})
 	}
 }

@@ -114,8 +114,11 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
 	}
-	if lease.State != "active" || attempt.State != deploymentnative.AttemptRunning {
-		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery lease and build attempt must be running", deploymentnative.ErrConflict)
+	if lease.LeaseID != normalized.Lease.LeaseID || lease.TargetID != normalized.Lease.TargetID || lease.OwnerID != normalized.Lease.OwnerID || lease.State != "active" || !lease.ExpiresAt.Equal(normalized.Lease.ExpiresAt) {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery lease identity drifted", deploymentnative.ErrConflict)
+	}
+	if attempt.AttemptID != normalized.Attempt.AttemptID || attempt.PlanID != normalized.Attempt.PlanID || attempt.CandidateID != normalized.Attempt.CandidateID || attempt.OwnerID != normalized.Attempt.OwnerID || attempt.PhysicalPoolID != normalized.Attempt.PhysicalPoolID || attempt.FencingEpoch <= 0 || (normalized.Attempt.FencingEpoch > 0 && attempt.FencingEpoch != normalized.Attempt.FencingEpoch) || attempt.RequestDigest != normalized.Attempt.RequestDigest || attempt.PlanDigest != normalized.Attempt.PlanDigest || attempt.Namespace != normalized.Attempt.Namespace || attempt.SessionIdentity != normalized.Attempt.SessionIdentity || attempt.State != deploymentnative.AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery build attempt identity drifted", deploymentnative.ErrConflict)
 	}
 
 	binding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
@@ -128,6 +131,9 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 	})
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
+	}
+	if binding.AttemptID != attempt.AttemptID || binding.ServingArtifactID != normalized.Artifact.ServingArtifactID || binding.ServingArtifactDigest != normalized.Artifact.ServingArtifactDigest || binding.ServingStateID != normalized.Artifact.ServingStateID {
+		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted serving artifact identity drifted", deploymentnative.ErrConflict)
 	}
 
 	duckAttempt, err := a.ducklake.BeginAttemptTx(ctx, tx, ducklakepostgres.BeginAttemptInput{
@@ -199,11 +205,17 @@ func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdm
 		"lease owner id":      out.Lease.OwnerID,
 		"attempt owner id":    out.Attempt.OwnerID,
 		"physical pool id":    out.Attempt.PhysicalPoolID,
-		"namespace":           out.Attempt.Namespace,
-		"session identity":    out.Attempt.SessionIdentity,
 		"serving artifact id": out.Artifact.ServingArtifactID,
 		"serving state id":    out.Artifact.ServingStateID,
 		"catalog id":          out.CatalogID,
+	} {
+		if err := validateText(value, label, 255); err != nil {
+			return CandidateBuildAttemptAdmissionInput{}, err
+		}
+	}
+	for label, value := range map[string]string{
+		"namespace":        out.Attempt.Namespace,
+		"session identity": out.Attempt.SessionIdentity,
 	} {
 		if err := validateText(value, label, 512); err != nil {
 			return CandidateBuildAttemptAdmissionInput{}, err
