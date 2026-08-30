@@ -132,7 +132,6 @@ RETURNS TABLE(cutoff timestamptz, floor_at timestamptz, removed bigint)
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = pg_catalog, audit
-SET audit.capability = 'maintenance'
 AS $$
 BEGIN
     IF p_before IS NULL THEN
@@ -141,6 +140,11 @@ BEGIN
     IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
         RAISE EXCEPTION 'query event prune limit must be between 1 and 1000';
     END IF;
+	-- Set the append-only exception inside the SECURITY DEFINER body. A
+	-- function-level custom GUC requires schema-applier privileges on
+	-- PostgreSQL 18 and prevents the clean baseline from being installed by
+	-- the bounded migrator role.
+	PERFORM set_config('audit.capability', 'maintenance', true);
     -- Never let a caller-supplied future cutoff remove events that have not
     -- reached their retention boundary yet. Returning this effective cutoff
     -- gives the retention job durable evidence of the time range applied.
