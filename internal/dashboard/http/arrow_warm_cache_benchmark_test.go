@@ -240,27 +240,31 @@ func TestDashboardWarmNativeReferencePreservesPhysicalFidelity(t *testing.T) {
 		t.Fatalf("native/decoded rows = %d/%d, want 50", got, want)
 	}
 	for column, field := range nativeReader.Schema().Fields() {
-		nullRow := (13 - column%13) % 13
-		if !nativeRecord.Column(column).IsNull(nullRow) {
-			t.Fatalf("native field %d row %d is non-null, want deterministic null", column, nullRow)
-		}
-		if got := decoded[nullRow][field.Name]; got != nil {
-			t.Fatalf("decoded field %d row %d null = %#v", column, nullRow, got)
-		}
 		currentColumn := currentRecord.Column(column).(*array.String)
-		if currentColumn.IsNull(nullRow) || currentColumn.Value(nullRow) != "" {
-			t.Fatalf("current field %d row %d null projection = null:%v value:%q, want non-null empty string", column, nullRow, currentColumn.IsNull(nullRow), currentColumn.Value(nullRow))
-		}
+		for row := 0; row < int(nativeRecord.NumRows()); row++ {
+			wantNull := (row+column)%13 == 0
+			if got := nativeRecord.Column(column).IsNull(row); got != wantNull {
+				t.Fatalf("native field %d row %d null = %v, want %v", column, row, got, wantNull)
+			}
+			if wantNull {
+				if got := decoded[row][field.Name]; got != nil {
+					t.Fatalf("decoded field %d row %d null = %#v", column, row, got)
+				}
+				if currentColumn.IsNull(row) || currentColumn.Value(row) != "" {
+					t.Fatalf("current field %d row %d null projection = null:%v value:%q, want non-null empty string", column, row, currentColumn.IsNull(row), currentColumn.Value(row))
+				}
+				continue
+			}
 
-		valueRow := nullRow + 1
-		want := dashboardWarmExpectedDecodedValue(valueRow, column)
-		if nativeRecord.Column(column).IsNull(valueRow) {
-			t.Fatalf("native field %d row %d is null, want value %#v", column, valueRow, want)
+			want := dashboardWarmExpectedDecodedValue(row, column)
+			assertDashboardWarmValue(t, fmt.Sprintf("native IPC field %d row %d", column, row), dashboardWarmNativeIPCValue(t, nativeRecord.Column(column), row), want)
+			assertDashboardWarmValue(t, fmt.Sprintf("decoded field %d row %d", column, row), decoded[row][field.Name], want)
+			if got, wantString := currentColumn.Value(row), dashboardWarmCurrentProjection(want); currentColumn.IsNull(row) || got != wantString {
+				t.Fatalf("current field %d row %d projection = null:%v value:%q, want %q", column, row, currentColumn.IsNull(row), got, wantString)
+			}
 		}
-		assertDashboardWarmValue(t, fmt.Sprintf("native IPC field %d row %d", column, valueRow), dashboardWarmNativeIPCValue(t, nativeRecord.Column(column), valueRow), want)
-		assertDashboardWarmValue(t, fmt.Sprintf("decoded field %d row %d", column, valueRow), decoded[valueRow][field.Name], want)
-		if got, wantString := currentColumn.Value(valueRow), dashboardWarmCurrentProjection(want); currentColumn.IsNull(valueRow) || got != wantString {
-			t.Fatalf("current field %d row %d projection = null:%v value:%q, want %q", column, valueRow, currentColumn.IsNull(valueRow), got, wantString)
+		if dictionary, ok := nativeRecord.Column(column).(*array.Dictionary); ok {
+			assertDashboardWarmDictionary(t, dictionary, column, int(nativeRecord.NumRows()))
 		}
 	}
 	if nativeRecord.Column(3).IsNull(1) || nativeRecord.Column(3).(*array.String).Value(1) != "" {
@@ -268,6 +272,30 @@ func TestDashboardWarmNativeReferencePreservesPhysicalFidelity(t *testing.T) {
 	}
 	if current := currentRecord.Column(3).(*array.String); current.IsNull(1) || current.Value(1) != "" {
 		t.Fatal("current UTF-8 empty string projection changed")
+	}
+}
+
+func assertDashboardWarmDictionary(tb testing.TB, values *array.Dictionary, column, rows int) {
+	tb.Helper()
+	dictionary, ok := values.Dictionary().(*array.String)
+	if !ok {
+		tb.Fatalf("dictionary field %d values = %T, want utf8", column, values.Dictionary())
+	}
+	wantIndex := 0
+	for row := 0; row < rows; row++ {
+		if (row+column)%13 == 0 {
+			continue
+		}
+		if got := values.GetValueIndex(row); got != wantIndex {
+			tb.Fatalf("dictionary field %d row %d index = %d, want %d", column, row, got, wantIndex)
+		}
+		if got, want := dictionary.Value(wantIndex), "category-"+strconv.Itoa(row%97); got != want {
+			tb.Fatalf("dictionary field %d value %d = %q, want %q", column, wantIndex, got, want)
+		}
+		wantIndex++
+	}
+	if got := dictionary.Len(); got != wantIndex {
+		tb.Fatalf("dictionary field %d values = %d, want %d", column, got, wantIndex)
 	}
 }
 
