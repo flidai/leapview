@@ -155,3 +155,23 @@ func TestNonProductionServiceConstructorRemainsAvailable(t *testing.T) {
 		t.Fatalf("maintenance output = %q", out.String())
 	}
 }
+
+func TestEvaluationModeRetainsIsolatedOfflineAuthority(t *testing.T) {
+	t.Setenv("LEAPVIEW_HOME", t.TempDir())
+	t.Setenv("LEAPVIEW_PRODUCTION", "1")
+	t.Setenv("LEAPVIEW_EVALUATION_MODE", "true")
+	t.Setenv("LEAPVIEW_ENVIRONMENT", "evaluation")
+	t.Setenv("LEAPVIEW_LOCAL_AUTH", "true")
+	t.Setenv("LEAPVIEW_PUBLIC_URL", "http://localhost:8080")
+	t.Setenv("LEAPVIEW_COOKIE_SECURE", "false")
+	t.Setenv("LEAPVIEW_TRUST_PROXY_HEADERS", "false")
+	t.Setenv("LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH", "")
+
+	service, err := newService()
+	if err != nil {
+		t.Fatalf("newService evaluation mode: %v", err)
+	}
+	if service == nil {
+		t.Fatal("newService returned nil evaluation service")
+	}
+}

@@ -35,15 +35,17 @@ type Operations struct{}
 var ErrProductionUnavailable = errors.New("legacy offline admin operations are unavailable in production")
 
 // loadNonProductionConfig is the single admission gate for this composition
-// layer. Keep the production check immediately after environment decoding so
-// callers cannot accidentally construct an extension loader, SQLite store, or
+// layer. Evaluation is the one explicit exception: it deliberately enables
+// production runtime checks while retaining an isolated, loopback-only local
+// authority. Keep the gate immediately after environment decoding so ordinary
+// production callers cannot construct an extension loader, SQLite store, or
 // filesystem-backed adapter before being rejected.
 func loadNonProductionConfig() (config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
 		return config.Config{}, err
 	}
-	if cfg.Production {
+	if cfg.Production && !cfg.EvaluationMode {
 		return config.Config{}, ErrProductionUnavailable
 	}
 	return cfg, nil
