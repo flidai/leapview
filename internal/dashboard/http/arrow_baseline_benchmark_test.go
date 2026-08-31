@@ -752,6 +752,9 @@ func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanti
 		d.physical = dashboardBaselinePhysicalSnapshot{types: types, nulls: totalNulls}
 		d.mu.Unlock()
 	}
+	if err := arrowquery.ConsumeSchemaBudget(ctx, schema); err != nil {
+		return err
+	}
 	if err := sink.WriteSchema(schema); err != nil {
 		return err
 	}
@@ -935,10 +938,16 @@ func dashboardBaselineModel() *semanticmodel.Model {
 		}},
 		Datasets:   map[string]semanticmodel.SemanticDatasetSpec{dashboardBaselineDatasetID: {Model: dashboardBaselineDatasetID}},
 		Dimensions: semanticDimensions,
-		Metrics: map[string]semanticmodel.Metric{"value_metric": {
-			Name: "value_metric", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
-			Input: &semanticmodel.MetricInput{Field: "orders.field_06"}, Empty: "zero",
-		}},
+		Metrics: map[string]semanticmodel.Metric{
+			"value_metric": {
+				Name: "value_metric", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
+				Input: &semanticmodel.MetricInput{Field: "orders.field_06"}, Empty: "zero",
+			},
+			"value_metric_b": {
+				Name: "value_metric_b", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
+				Input: &semanticmodel.MetricInput{Field: "orders.field_15"}, Empty: "zero",
+			},
+		},
 	}
 	dashboardWarmCacheExtendModel(model)
 	return model
@@ -990,6 +999,11 @@ func dashboardBaselineDefinition(model *semanticmodel.Model) (*dashboardruntime.
 		}
 		visualizations[shape.id] = definition
 	}
+	mixed, err := dashboardDirectArrowMixedDetailDefinition()
+	if err != nil {
+		return nil, err
+	}
+	visualizations["detail_mixed"] = mixed
 	matrix, err := dashboardBaselineAggregateDefinition("matrix", false)
 	if err != nil {
 		return nil, err
@@ -1008,7 +1022,7 @@ func dashboardBaselineDefinition(model *semanticmodel.Model) (*dashboardruntime.
 		visualizations[id] = definition
 	}
 	pageVisuals := make([]dashboard.PageVisual, 0, len(visualizations))
-	for _, id := range []string{"detail_narrow", "detail_wide", "matrix", "pivot", "warm_kpi", "warm_wide_chart", "warm_bundle_chart_0", "warm_bundle_chart_1", "warm_bundle_chart_2", "warm_bundle_chart_3"} {
+	for _, id := range []string{"detail_narrow", "detail_wide", "detail_mixed", "matrix", "pivot", "warm_kpi", "warm_wide_chart", "warm_bundle_chart_0", "warm_bundle_chart_1", "warm_bundle_chart_2", "warm_bundle_chart_3"} {
 		pageVisuals = append(pageVisuals, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id})
 	}
 	compiled, err := dashboarddefinition.New(dashboardBaselineDashboardID, "FAI-540 Dashboard Baseline", "", dashboardBaselineModelID.String(), []dashboard.Page{{ID: dashboardBaselinePageID, Title: "Overview", Visuals: pageVisuals}}, visualizations)

@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
+	"math/big"
 	stdhttp "net/http"
 	"net/http/httptest"
 	"slices"
@@ -25,6 +27,7 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/arrowresult"
 )
@@ -42,9 +45,11 @@ type dashboardDirectArrowPrototypeConfig struct {
 	dataRevision  string
 	logicalTypes  map[string]string
 	labels        map[string]string
+	projection    []string
 	limit         int
 	offset        int
 	allocator     memory.Allocator
+	resultLimits  dataquery.ResultLimits
 }
 
 // dashboardDirectArrowPrototypeSink is deliberately test-only. It encodes
@@ -54,8 +59,10 @@ type dashboardDirectArrowPrototypeSink struct {
 	w       stdhttp.ResponseWriter
 	config  dashboardDirectArrowPrototypeConfig
 	schema  *arrow.Schema
+	order   []int
 	writer  *ipc.Writer
 	output  *dashboardDirectArrowPrototypeOutput
+	budget  *dataquery.ResultBudget
 	written int64
 	seen    int64
 }
@@ -86,13 +93,38 @@ func (s *dashboardDirectArrowPrototypeSink) WriteSchema(schema *arrow.Schema) er
 		return errors.New("direct Arrow prototype schema was already written")
 	}
 
-	fields := schema.Fields()
-	for index := range fields {
+	sourceFields := schema.Fields()
+	projection := append([]string(nil), s.config.projection...)
+	if len(projection) == 0 {
+		projection = make([]string, len(sourceFields))
+		for index, field := range sourceFields {
+			projection[index] = field.Name
+		}
+	}
+	if len(projection) != len(sourceFields) {
+		return fmt.Errorf("direct Arrow prototype projection has %d fields, schema has %d", len(projection), len(sourceFields))
+	}
+	sourceByAlias := make(map[string]int, len(sourceFields))
+	for index, field := range sourceFields {
+		if _, exists := sourceByAlias[field.Name]; exists {
+			return fmt.Errorf("direct Arrow prototype schema repeats alias %q", field.Name)
+		}
+		sourceByAlias[field.Name] = index
+	}
+	fields := make([]arrow.Field, len(projection))
+	order := make([]int, len(projection))
+	for index, alias := range projection {
+		sourceIndex, exists := sourceByAlias[alias]
+		if !exists {
+			return fmt.Errorf("direct Arrow prototype projection alias %q is absent from governed schema", alias)
+		}
+		fields[index] = sourceFields[sourceIndex]
+		order[index] = sourceIndex
 		authoritative := map[string]string{}
-		if logicalType := s.config.logicalTypes[fields[index].Name]; logicalType != "" {
+		if logicalType := s.config.logicalTypes[alias]; logicalType != "" {
 			authoritative["leapview.logical_type"] = logicalType
 		}
-		if label := s.config.labels[fields[index].Name]; label != "" {
+		if label := s.config.labels[alias]; label != "" {
 			authoritative["display.label"] = label
 		}
 		fields[index].Metadata = publicDashboardNativeArrowMetadata(
@@ -109,9 +141,22 @@ func (s *dashboardDirectArrowPrototypeSink) WriteSchema(schema *arrow.Schema) er
 		"leapview.visualization_spec_revision":  s.config.specRevision,
 		"leapview.visualization_data_revision":  s.config.dataRevision,
 	})
-	// NewSchema copies the field slice and metadata values. No borrowed schema
+	// NewSchema copies the ordered field slice and metadata values. No borrowed schema
 	// pointer survives this callback; Arrow data types are immutable descriptors.
-	s.schema = arrow.NewSchema(fields, &metadata)
+	emittedSchema := arrow.NewSchema(fields, &metadata)
+	if s.budget != nil {
+		// The physical producer already charged the borrowed schema. Charge only
+		// response metadata added by the native-v1 boundary so the final emitted
+		// schema, rather than merely the upstream schema, is covered.
+		delta := arrowresult.SchemaBytes(emittedSchema) - arrowresult.SchemaBytes(schema)
+		if delta > 0 {
+			if err := s.budget.ConsumeSize(0, delta); err != nil {
+				return err
+			}
+		}
+	}
+	s.schema = emittedSchema
+	s.order = order
 	return nil
 }
 
@@ -137,7 +182,13 @@ func (s *dashboardDirectArrowPrototypeSink) WriteRecord(record arrow.RecordBatch
 	// values until Close. DuckDB buffers cannot be retained, so establish owned
 	// dictionary values before handing the batch to the writer. Dictionary
 	// indices remain borrowed and are consumed synchronously like other columns.
-	columns := append([]arrow.Array(nil), record.Columns()...)
+	if len(s.order) != len(record.Columns()) {
+		return fmt.Errorf("direct Arrow prototype record has %d columns, want %d", len(record.Columns()), len(s.order))
+	}
+	columns := make([]arrow.Array, len(s.order))
+	for outputIndex, sourceIndex := range s.order {
+		columns[outputIndex] = record.Column(sourceIndex)
+	}
 	ownedDictionaries := make([]arrow.Array, 0)
 	for index, column := range columns {
 		dictionary, ok := column.(*array.Dictionary)
@@ -252,7 +303,13 @@ func executeDashboardDirectArrowPrototype(
 	if config.limit <= 0 {
 		return dataquery.Result{}, errors.New("direct Arrow prototype limit must be positive")
 	}
-	sink := &dashboardDirectArrowPrototypeSink{w: w, config: config}
+	limits := config.resultLimits
+	if limits.MaxRows <= 0 || limits.MaxBytes <= 0 {
+		limits = dataquery.ResultLimits{MaxRows: 10_000, MaxBytes: 32 << 20}
+	}
+	ctx = dataquery.WithResultBudget(ctx, limits)
+	budget, _ := dataquery.ResultBudgetFromContext(ctx)
+	sink := &dashboardDirectArrowPrototypeSink{w: w, config: config, budget: budget}
 	result, err := executor.ExecuteDataQueryArrow(ctx, request, sink)
 	if err != nil {
 		// A committed stream stays incomplete. The experiment never switches to
@@ -301,9 +358,11 @@ func dashboardDirectArrowPrototypeQuery(
 
 	fields := make([]dataquery.Field, 0, len(visual.Query.Detail.Fields))
 	metrics := make([]dataquery.Field, 0, len(visual.Query.Detail.Fields))
+	projection := make([]string, 0, len(visual.Query.Detail.Fields))
 	aliases := make(map[string]struct{}, len(visual.Query.Detail.Fields))
 	for _, binding := range visual.Query.Detail.Fields {
 		field := dataquery.Field{Field: binding.FieldID, Alias: binding.Alias}
+		projection = append(projection, binding.Alias)
 		aliases[binding.Alias] = struct{}{}
 		if _, err := model.ResolveDimension(binding.FieldID); err == nil {
 			fields = append(fields, field)
@@ -353,8 +412,8 @@ func dashboardDirectArrowPrototypeQuery(
 	}
 	request := dataquery.Query{
 		ProjectID: dashboardBaselineProjectID,
-		Surface:   dataquery.SurfaceDashboard,
-		Operation: dataquery.OperationDashboardRows,
+		Surface:   dataquery.SurfaceAPI,
+		Operation: dataquery.OperationAPIQuery,
 		ModelID:   visual.Query.ModelID,
 		Kind:      dataquery.KindSemanticRows,
 		Target:    visual.Query.Detail.TableID,
@@ -376,13 +435,57 @@ func dashboardDirectArrowPrototypeQuery(
 		dataRevision:  "1",
 		logicalTypes:  logicalTypes,
 		labels:        labels,
+		projection:    projection,
 		limit:         limit,
 		offset:        offset,
+		resultLimits:  dataquery.ResultLimits{MaxRows: 10_000, MaxBytes: 32 << 20},
 	}
 	return request, config, nil
 }
 
-func (f *dashboardBaselineFixture) serveDirectArrowPrototype(tb testing.TB, visual string, offset, limit int) ([]byte, dashboardBaselineObservation, dataquery.Result) {
+func dashboardDirectArrowMixedDetailDefinition() (definition.Definition, error) {
+	fields := []visualizationir.VisualizationField{
+		{ID: "field_00", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeInteger, Nullable: true, Label: "Dimension A"},
+		{ID: "field_06", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: true, Label: "Metric A"},
+		{ID: "field_01", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeFloat, Nullable: true, Label: "Dimension B"},
+		{ID: "field_15", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: true, Label: "Metric B"},
+	}
+	columns := make([]visualizationir.TableVisualizationColumn, len(fields))
+	for index, field := range fields {
+		columns[index] = visualizationir.TableVisualizationColumn{
+			Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field.ID},
+			Label: field.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{},
+		}
+	}
+	base := dashboardBaselineSpecBase("detail_mixed", fields)
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "table", Columns: columns,
+		Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 28, ShowHeader: true},
+	}}
+	return definition.New("detail_mixed", spec, definition.QueryBinding{
+		Kind: definition.QueryDetail, ResultShape: definition.ResultDetailWindow,
+		ModelID: dashboardBaselineModelID.String(), DatasetID: "primary",
+		Detail: &definition.DetailQueryBinding{
+			TableID: dashboardBaselineDatasetID,
+			Fields: []definition.FieldBinding{
+				{FieldID: "orders.field_00", Alias: "field_00"},
+				{FieldID: "value_metric", Alias: "field_06"},
+				{FieldID: "orders.field_01", Alias: "field_01"},
+				{FieldID: "value_metric_b", Alias: "field_15"},
+			},
+			Limit: 1_000,
+		},
+	})
+}
+
+type dashboardDirectArrowPrototypePrepared struct {
+	visual     string
+	definition definition.Definition
+	request    dataquery.Query
+	config     dashboardDirectArrowPrototypeConfig
+}
+
+func (f *dashboardBaselineFixture) prepareDirectArrowPrototype(tb testing.TB, visual string, offset, limit int) dashboardDirectArrowPrototypePrepared {
 	tb.Helper()
 	resolved, err := f.service.Resolver().Resolve(projectgraph.ResourceID(dashboardBaselineDashboardID))
 	if err != nil {
@@ -396,16 +499,123 @@ func (f *dashboardBaselineFixture) serveDirectArrowPrototype(tb testing.TB, visu
 	if err != nil {
 		tb.Fatal(err)
 	}
-	observation := dashboardBaselineObservation{}
-	ctx := dashboardBaselineObservationContext(context.Background(), &observation)
+	return dashboardDirectArrowPrototypePrepared{visual: visual, definition: visualDefinition, request: request, config: config}
+}
+
+func (f *dashboardBaselineFixture) directArrowPrototypeContext(prepared dashboardDirectArrowPrototypePrepared, observation *dashboardBaselineObservation) context.Context {
+	ctx := dashboardBaselineObservationContext(context.Background(), observation)
 	ctx = dataquery.WithGovernor(ctx, f.governor)
-	ctx = dataquery.WithMetadata(ctx, dataquery.Metadata{
+	return dataquery.WithMetadata(ctx, dataquery.Metadata{
 		ProjectID: dashboardBaselineProjectID,
 		Surface:   dataquery.SurfaceAPI, Operation: dataquery.OperationAPIQuery,
-		RequestID: config.queryID, ObjectType: "dashboard_visual", ObjectID: dashboardBaselineDashboardID + ":" + visual,
+		RequestID: prepared.config.queryID, ObjectType: "dashboard_visual", ObjectID: dashboardBaselineDashboardID + ":" + prepared.visual,
 	})
+}
+
+func (f *dashboardBaselineFixture) servePreparedDirectArrowCurrent(tb testing.TB, prepared dashboardDirectArrowPrototypePrepared) ([]byte, dashboardBaselineObservation, dataquery.Result) {
+	tb.Helper()
+	observation := dashboardBaselineObservation{}
+	ctx := f.directArrowPrototypeContext(prepared, &observation)
+	result, err := f.core.ExecuteDataQuery(ctx, prepared.request)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	records := make([]map[string]any, len(result.Rows))
+	for index := range result.Rows {
+		records[index] = make(map[string]any, len(result.Rows[index]))
+		for key, value := range result.Rows[index] {
+			records[index][key] = dashboardDirectArrowCurrentDatumValue(value)
+		}
+	}
+	frame, err := visualizationruntime.FrameFromRecords(prepared.definition, records)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	dataRevision, err := strconv.ParseInt(prepared.config.dataRevision, 10, 64)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	envelope, err := visualizationruntime.EnvelopeFromFrame(prepared.definition, frame, nil, dataRevision, 0)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	base, err := visualizationir.SpecificationBase(prepared.definition.Spec)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	inline, ok := envelope.DataState.Value.(*visualizationir.InlineVisualizationDataState)
+	if !ok {
+		tb.Fatalf("direct Arrow current control data state = %T, want inline", envelope.DataState.Value)
+	}
+	var schema visualizationir.VisualizationDatasetSchema
+	for _, candidate := range base.Datasets {
+		if candidate.ID == prepared.definition.Query.DatasetID {
+			schema = candidate
+			break
+		}
+	}
+	var normalizedRows [][]any
+	for _, dataset := range inline.Datasets {
+		if dataset.ID == prepared.definition.Query.DatasetID {
+			normalizedRows = dataset.Rows
+			break
+		}
+	}
+	window := visualizationir.WindowedVisualizationDataState{
+		VisualizationDataStateBase: visualizationir.VisualizationDataStateBase{
+			Kind: "windowed", SpecRevision: prepared.definition.SpecRevision, DataRevision: dataRevision,
+		},
+		Kind: "windowed", Schema: schema, AvailableRows: int64(len(normalizedRows)), RowCap: int64(prepared.config.limit), ChunkSize: int64(prepared.config.limit),
+		Blocks: map[string]visualizationir.VisualizationWindowBlock{"a": {ID: "a", Start: int64(prepared.config.offset), Rows: normalizedRows}},
+	}
+	envelope.DataState = visualizationir.VisualizationDataState{Value: &window}
+	rowset, err := dashboardVisualizationRowset(envelope, "a", prepared.config.offset, prepared.config.limit, prepared.config.cursorScope, prepared.config.snapshot)
+	if err != nil {
+		tb.Fatal(err)
+	}
 	recorder := httptest.NewRecorder()
-	result, err := executeDashboardDirectArrowPrototype(ctx, recorder, f.core, request, config)
+	httpRequest := httptest.NewRequest(stdhttp.MethodPost, "/fai-543/current", nil)
+	httpRequest.Header.Set("Accept", dashboardArrowMediaType)
+	httpRequest.Header.Set("X-Request-ID", prepared.config.queryID)
+	writeDashboardTableRowset(recorder, httpRequest, rowset, envelope)
+	if recorder.Code != stdhttp.StatusOK {
+		tb.Fatalf("direct Arrow current control status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	observation.nextCursor = recorder.Header().Get("X-Next-Cursor")
+	return recorder.Body.Bytes(), observation, result
+}
+
+func dashboardDirectArrowCurrentDatumValue(value any) any {
+	switch typed := value.(type) {
+	case []byte:
+		return string(typed)
+	case time.Time:
+		return typed.Format("2006-01-02")
+	case float32:
+		return math.Round(float64(typed)*100) / 100
+	case float64:
+		return math.Round(typed*100) / 100
+	case *big.Int:
+		if typed != nil && typed.BitLen() <= 53 {
+			return float64(typed.Int64())
+		}
+		return typed
+	case big.Int:
+		if typed.BitLen() <= 53 {
+			return float64(typed.Int64())
+		}
+		return typed
+	default:
+		return typed
+	}
+}
+
+func (f *dashboardBaselineFixture) servePreparedDirectArrowPrototype(tb testing.TB, prepared dashboardDirectArrowPrototypePrepared) ([]byte, dashboardBaselineObservation, dataquery.Result) {
+	tb.Helper()
+	observation := dashboardBaselineObservation{}
+	ctx := f.directArrowPrototypeContext(prepared, &observation)
+	recorder := httptest.NewRecorder()
+	result, err := executeDashboardDirectArrowPrototype(ctx, recorder, f.core, prepared.request, prepared.config)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -419,6 +629,11 @@ func (f *dashboardBaselineFixture) serveDirectArrowPrototype(tb testing.TB, visu
 	return body, observation, result
 }
 
+func (f *dashboardBaselineFixture) serveDirectArrowPrototype(tb testing.TB, visual string, offset, limit int) ([]byte, dashboardBaselineObservation, dataquery.Result) {
+	tb.Helper()
+	return f.servePreparedDirectArrowPrototype(tb, f.prepareDirectArrowPrototype(tb, visual, offset, limit))
+}
+
 func BenchmarkDashboardDirectArrowPrototype(b *testing.B) {
 	for _, workload := range []dashboardBaselineWorkload{
 		{name: "detail_narrow", visual: "detail_narrow", columns: dashboardBaselineNarrowFields},
@@ -430,9 +645,11 @@ func BenchmarkDashboardDirectArrowPrototype(b *testing.B) {
 			b.Run(workload.name+"/rows_"+strconv.Itoa(rows), func(b *testing.B) {
 				for _, lane := range []string{"current_api_direct", "candidate_governed_native"} {
 					b.Run(lane, func(b *testing.B) {
-						// Use a short final page so both lanes execute exactly one
-						// physical query. Pagination is qualified separately below.
+						// Resolve and validate the visualization request once outside
+						// the timer. Both lanes start at the same governed data-query
+						// boundary and differ only after execution begins.
 						fixture := newDashboardBaselineFixture(b, rows)
+						prepared := fixture.prepareDirectArrowPrototype(b, workload.visual, 0, rows)
 						arrowBefore := arrowresult.Stats()
 						var totalBytes, physicalQueries, cacheOutcomes int64
 						durations := make([]time.Duration, b.N)
@@ -443,9 +660,9 @@ func BenchmarkDashboardDirectArrowPrototype(b *testing.B) {
 							var body []byte
 							var observation dashboardBaselineObservation
 							if lane == "current_api_direct" {
-								body, observation = fixture.serve(b, workload.visual, rows+1, "arrow")
+								body, observation, _ = fixture.servePreparedDirectArrowCurrent(b, prepared)
 							} else {
-								body, observation, _ = fixture.serveDirectArrowPrototype(b, workload.visual, 0, rows)
+								body, observation, _ = fixture.servePreparedDirectArrowPrototype(b, prepared)
 							}
 							dashboardBaselineBodySink = body
 							totalBytes += int64(len(body))
@@ -531,6 +748,71 @@ func TestDashboardDirectArrowPrototypeMatchesCurrentDirectValues(t *testing.T) {
 			}
 			assertDashboardDirectArrowEquivalent(t, current, candidate, rows, workload.columns)
 		})
+	}
+}
+
+func TestDashboardDirectArrowPrototypeSharedControlMatchesAPIDirect(t *testing.T) {
+	const rows = 50
+	fixture := newDashboardBaselineFixture(t, rows)
+	apiPayload, apiObservation := fixture.serve(t, "detail_wide", rows+1, "arrow")
+	prepared := fixture.prepareDirectArrowPrototype(t, "detail_wide", 0, rows)
+	prepared.config.queryID = "fai-540-baseline"
+	sharedPayload, sharedObservation, _ := fixture.servePreparedDirectArrowCurrent(t, prepared)
+	if apiObservation.physicalQueries != 1 || sharedObservation.physicalQueries != 1 {
+		t.Fatalf("api/shared control physical queries = %d/%d", apiObservation.physicalQueries, sharedObservation.physicalQueries)
+	}
+	if len(apiObservation.outcomes) != 0 || len(sharedObservation.outcomes) != 0 {
+		t.Fatalf("api/shared control touched retained cache: api=%v shared=%v", apiObservation.outcomes, sharedObservation.outcomes)
+	}
+	if !bytes.Equal(apiPayload, sharedPayload) {
+		t.Fatal("shared benchmark control does not match current api_direct Arrow response")
+	}
+}
+
+func TestDashboardDirectArrowPrototypePreservesMixedVisualizationOrder(t *testing.T) {
+	const rows = 50
+	fixture := newDashboardBaselineFixture(t, rows)
+	fixture.database.evidenceMetadata = true
+	var plans []semanticquery.Plan
+	fixture.database.observePlan = func(plan semanticquery.Plan) { plans = append(plans, plan) }
+	current, currentObservation := fixture.serve(t, "detail_mixed", rows+1, "arrow")
+	prepared := fixture.prepareDirectArrowPrototype(t, "detail_mixed", 0, rows)
+	wantAliases := []string{"field_00", "field_06", "field_01", "field_15"}
+	if !slices.Equal(prepared.config.projection, wantAliases) {
+		t.Fatalf("prototype projection = %#v, want %#v", prepared.config.projection, wantAliases)
+	}
+	candidate, candidateObservation, _ := fixture.servePreparedDirectArrowPrototype(t, prepared)
+	if currentObservation.physicalQueries != 1 || candidateObservation.physicalQueries != 1 {
+		t.Fatalf("mixed physical queries current/candidate = %d/%d", currentObservation.physicalQueries, candidateObservation.physicalQueries)
+	}
+	if len(plans) != 2 || plans[0].SQL != plans[1].SQL || !slices.Equal(plans[0].Columns, plans[1].Columns) {
+		t.Fatalf("mixed physical plans differ: %#v", plans)
+	}
+	// The planner groups dimensions before metrics. The response must restore
+	// the immutable visualization projection without copying Arrow values.
+	if slices.Equal(plans[1].Columns, wantAliases) {
+		t.Fatalf("mixed fixture did not exercise physical/output reordering: plan=%#v", plans[1].Columns)
+	}
+	assertDashboardDirectArrowEquivalentProjection(t, current, candidate, rows, wantAliases, []int{0, 2, 1, 3})
+	reader, err := ipc.NewReader(bytes.NewReader(candidate))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Release()
+	wantMetadata := map[string][2]string{
+		"field_00": {"integer", "Dimension A"},
+		"field_06": {"decimal", "Metric A"},
+		"field_01": {"float", "Dimension B"},
+		"field_15": {"decimal", "Metric B"},
+	}
+	for _, field := range reader.Schema().Fields() {
+		want := wantMetadata[field.Name]
+		if logical, _ := field.Metadata.GetValue("leapview.logical_type"); logical != want[0] {
+			t.Fatalf("mixed field %q logical type = %q, want %q", field.Name, logical, want[0])
+		}
+		if label, _ := field.Metadata.GetValue("display.label"); label != want[1] {
+			t.Fatalf("mixed field %q label = %q, want %q", field.Name, label, want[1])
+		}
 	}
 }
 
@@ -622,6 +904,31 @@ func TestDashboardDirectArrowPrototypeEmptyResultPreservesSchema(t *testing.T) {
 	assertDashboardNativeArrowSchema(t, reader.Schema())
 	if reader.Next() || reader.Err() != nil {
 		t.Fatalf("empty prototype emitted a record: next/error = false/%v", reader.Err())
+	}
+}
+
+func TestDashboardDirectArrowPrototypeChargesEmittedSchemaMetadataBeforeCommit(t *testing.T) {
+	rawSchema := arrow.NewSchema([]arrow.Field{{Name: "value", Type: arrow.PrimitiveTypes.Int64, Nullable: true}}, nil)
+	config := dashboardDirectArrowPrototypeConfig{
+		queryID: dashboardNativeArrowQueryID, snapshot: dashboardNativeArrowSnapshot,
+		cursorScope: "scope-a", schemaVersion: dashboardNativeArrowSchemaVersion,
+		specRevision: dashboardNativeArrowSpecRevision, dataRevision: dashboardNativeArrowDataRevision,
+		logicalTypes: map[string]string{"value": "integer"}, projection: []string{"value"}, limit: 1,
+	}
+	emittedSchema := dashboardNativeArrowContractSchema(rawSchema, config.logicalTypes, config.queryID, config.snapshot)
+	rawBytes, emittedBytes := arrowresult.SchemaBytes(rawSchema), arrowresult.SchemaBytes(emittedSchema)
+	if emittedBytes <= rawBytes {
+		t.Fatalf("emitted schema bytes = %d, want more than upstream %d", emittedBytes, rawBytes)
+	}
+	ctx := dataquery.WithResultBudget(context.Background(), dataquery.ResultLimits{MaxRows: 1, MaxBytes: emittedBytes - 1})
+	recorder := httptest.NewRecorder()
+	_, err := executeDashboardDirectArrowPrototype(ctx, recorder, dashboardDirectArrowFixtureExecutor{schema: rawSchema}, dataquery.Query{}, config)
+	var limit *dataquery.ResultLimitError
+	if !errors.As(err, &limit) || limit.Reason != dataquery.ResultBytes || limit.Observed != emittedBytes {
+		t.Fatalf("emitted schema budget error = %v, want observed bytes %d", err, emittedBytes)
+	}
+	if recorder.Body.Len() != 0 || recorder.Header().Get("X-LeapView-Arrow-Contract") != "" || recorder.Header().Get("X-Next-Cursor") != "" {
+		t.Fatalf("metadata budget failure committed Arrow response body=%d headers=%v", recorder.Body.Len(), recorder.Header())
 	}
 }
 
@@ -815,8 +1122,8 @@ func TestDashboardDirectArrowPrototypeEligibilityIsNarrow(t *testing.T) {
 	if request.Offset != 7 || request.Limit != 51 || len(request.Filters) != 1 || request.Filters[0].Field != filters[0].Field {
 		t.Fatalf("prototype pagination/filter request = %#v", request)
 	}
-	if request.Surface != dataquery.SurfaceDashboard || request.Operation != dataquery.OperationDashboardRows {
-		t.Fatalf("prototype admission metadata = %q/%q, want dashboard/dashboard_rows", request.Surface, request.Operation)
+	if request.Surface != dataquery.SurfaceAPI || request.Operation != dataquery.OperationAPIQuery {
+		t.Fatalf("prototype admission metadata = %q/%q, want api/api_query", request.Surface, request.Operation)
 	}
 	if len(request.Sort) != 1 || request.Sort[0] != (dataquery.Sort{Field: "field_00", Direction: "desc"}) {
 		t.Fatalf("prototype stable sort = %#v", request.Sort)
@@ -868,6 +1175,9 @@ func (e dashboardDirectArrowFixtureExecutor) ExecuteDataQueryArrow(ctx context.C
 	if e.schema == nil {
 		return dataquery.Result{}, errors.New("fixture schema is required")
 	}
+	if err := arrowquery.ConsumeSchemaBudget(ctx, e.schema); err != nil {
+		return dataquery.Result{}, err
+	}
 	if err := sink.WriteSchema(e.schema); err != nil {
 		return dataquery.Result{}, err
 	}
@@ -885,6 +1195,21 @@ func (e dashboardDirectArrowFixtureExecutor) ExecuteDataQueryArrow(ctx context.C
 
 func assertDashboardDirectArrowEquivalent(t testing.TB, currentPayload, candidatePayload []byte, rows, columns int) {
 	t.Helper()
+	aliases := make([]string, columns)
+	sourceOrder := make([]int, columns)
+	for column := 0; column < columns; column++ {
+		aliases[column] = fmt.Sprintf("field_%02d", column)
+		sourceOrder[column] = column
+	}
+	assertDashboardDirectArrowEquivalentProjection(t, currentPayload, candidatePayload, rows, aliases, sourceOrder)
+}
+
+func assertDashboardDirectArrowEquivalentProjection(t testing.TB, currentPayload, candidatePayload []byte, rows int, aliases []string, sourceOrder []int) {
+	t.Helper()
+	if len(aliases) != len(sourceOrder) {
+		t.Fatalf("equivalence aliases/source order = %d/%d", len(aliases), len(sourceOrder))
+	}
+	columns := len(aliases)
 	currentReader, err := ipc.NewReader(bytes.NewReader(currentPayload))
 	if err != nil {
 		t.Fatalf("open current Arrow response: %v", err)
@@ -904,13 +1229,13 @@ func assertDashboardDirectArrowEquivalent(t testing.TB, currentPayload, candidat
 	for column := 0; column < columns; column++ {
 		currentField := currentReader.Schema().Field(column)
 		candidateField := candidateReader.Schema().Field(column)
-		if currentField.Name != candidateField.Name || candidateField.Name != fmt.Sprintf("field_%02d", column) {
-			t.Fatalf("field %d aliases current/candidate = %q/%q", column, currentField.Name, candidateField.Name)
+		if currentField.Name != candidateField.Name || candidateField.Name != aliases[column] {
+			t.Fatalf("field %d aliases current/candidate = %q/%q, want %q", column, currentField.Name, candidateField.Name, aliases[column])
 		}
 		if currentField.Type.ID() != arrow.STRING {
 			t.Fatalf("current field %d type = %s, want legacy string", column, currentField.Type)
 		}
-		if candidateField.Type.ID() != dashboardBaselineArrowField(candidateField.Name, column, false).Type.ID() {
+		if candidateField.Type.ID() != dashboardBaselineArrowField(candidateField.Name, sourceOrder[column], false).Type.ID() {
 			t.Fatalf("candidate field %d type = %s", column, candidateField.Type)
 		}
 		if err := validateDashboardNativeArrowMetadata(candidateField.Metadata, dashboardNativeArrowFieldMetadataAllowlist); err != nil {
@@ -928,7 +1253,7 @@ func assertDashboardDirectArrowEquivalent(t testing.TB, currentPayload, candidat
 		legacy := currentRecord.Column(column).(*array.String)
 		for row := 0; row < rows; row++ {
 			native := candidateRecord.Column(column)
-			wantNull := (row+column)%13 == 0
+			wantNull := (row+sourceOrder[column])%13 == 0
 			if native.IsNull(row) != wantNull {
 				t.Fatalf("candidate field %d row %d null = %v, want %v", column, row, native.IsNull(row), wantNull)
 			}
