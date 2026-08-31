@@ -793,6 +793,7 @@ func TestPostgreSQL18CommittedClaimSurvivesConnectionLossAndIsLeaseReclaimed(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	claimantPID := claimantConn.Conn().PgConn().PID()
 	claimTx, err := claimantConn.Begin(ctx)
 	if err != nil {
 		claimantConn.Release()
@@ -824,6 +825,14 @@ func TestPostgreSQL18CommittedClaimSurvivesConnectionLossAndIsLeaseReclaimed(t *
 		t.Fatal(err)
 	}
 	closeCancel()
+	var claimantBackendAlive bool
+	if err := db.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM pg_catalog.pg_stat_activity WHERE pid = $1)`, claimantPID).Scan(&claimantBackendAlive); err != nil {
+		t.Fatal(err)
+	}
+	if claimantBackendAlive {
+		t.Fatalf("claimant backend %d remains active after connection loss", claimantPID)
+	}
 
 	var status string
 	var claimedBy string
