@@ -480,7 +480,14 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 	if err != nil {
 		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual interaction: %w", err)
 	}
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}, Interaction: interaction}, nil
+	var datasetID *string
+	if records, ok := authored.Query.Value.(*dashboarddocument.RecordsDashboardQuery); ok {
+		resolved := strings.TrimSpace(records.Dataset)
+		if resolved != "" && resolved != "pending_dataset" {
+			datasetID = &resolved
+		}
+	}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, DatasetID: datasetID, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}, Interaction: interaction}, nil
 }
 
 // projectCanonicalInteraction exposes only the small, closed subset needed by
@@ -886,6 +893,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 				fieldID = dimension.Name
 			}
 			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", uisignals.DashboardBuilderFieldRoleSignalDimension, dimension.Type, dimension.Description); ok {
+				projected.DatasetID = uisignals.Pointer(tableID)
 				fields = append(fields, projected)
 			}
 		}
@@ -895,8 +903,9 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 				if strings.TrimSpace(dimension.Field) != "" {
 					fieldID = dimension.Field
 				}
-				if !containsField(fields, fieldID) {
+				if !containsFieldRole(fields, fieldID, uisignals.DashboardBuilderFieldRoleSignalDetail) {
 					if projected, ok := fieldSignal(fieldID, display(dimension.Label, id), "dimension", uisignals.DashboardBuilderFieldRoleSignalDetail, dimension.Type, dimension.Description); ok {
+						projected.DatasetID = uisignals.Pointer(tableID)
 						fields = append(fields, projected)
 					}
 				}
@@ -908,6 +917,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 			}
 			fieldID := id
 			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", uisignals.DashboardBuilderFieldRoleSignalMetric, "number", metric.Description); ok {
+				projected.DatasetID = uisignals.Pointer(tableID)
 				fields = append(fields, projected)
 			}
 		}
@@ -955,10 +965,15 @@ func safeDataType(value string) string {
 	return value
 }
 
-func containsField(fields []uisignals.DashboardBuilderFieldSignal, id string) bool {
+func containsFieldRole(fields []uisignals.DashboardBuilderFieldSignal, id string, role uisignals.DashboardBuilderFieldRoleSignal) bool {
 	for _, field := range fields {
-		if field.ID == id {
-			return true
+		if field.ID != id {
+			continue
+		}
+		for _, candidate := range field.Roles {
+			if candidate == role {
+				return true
+			}
 		}
 	}
 	return false

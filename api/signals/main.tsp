@@ -120,6 +120,8 @@ model DashboardBuilderDatasetSignal {
 
 model DashboardBuilderFieldSignal {
   `id`: string;
+  /** Dataset that owns this projected field in the semantic catalog. */
+  `datasetId`?: string;
   `label`: string;
   `kind`: "dimension" | "metric";
   `roles`: DashboardBuilderFieldRoleSignal[];
@@ -208,6 +210,8 @@ model DashboardBuilderVisualSignal {
   `title`: string;
   `titleVisible`: boolean;
   `type`: LeapViewDashboard.DashboardVisualType;
+  /** Bound records dataset for table/map visuals once a first column resolves it. */
+  `datasetId`?: string;
   `legendVisible`: boolean;
   `axisVisible`: boolean;
   `dataLabelsVisible`: boolean;

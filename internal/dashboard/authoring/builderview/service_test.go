@@ -165,6 +165,7 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	var fieldID string
 	var physicalField bool
 	var semanticRoles, physicalRoles []uisignals.DashboardBuilderFieldRoleSignal
+	var semanticDataset, physicalDataset string
 	for _, dataset := range semantic.Datasets {
 		if dataset.ID != "orders" {
 			continue
@@ -173,10 +174,16 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 			if field.ID == "status" && field.Kind == "dimension" {
 				fieldID = field.ID
 				semanticRoles = field.Roles
+				if field.DatasetID != nil {
+					semanticDataset = *field.DatasetID
+				}
 			}
 			if field.ID == "orders.status" && field.Kind == "dimension" {
 				physicalField = true
 				physicalRoles = field.Roles
+				if field.DatasetID != nil {
+					physicalDataset = *field.DatasetID
+				}
 			}
 		}
 	}
@@ -191,6 +198,9 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	}
 	if !reflect.DeepEqual(physicalRoles, []uisignals.DashboardBuilderFieldRoleSignal{uisignals.DashboardBuilderFieldRoleSignalDetail}) {
 		t.Fatalf("physical dimension roles = %#v", physicalRoles)
+	}
+	if semanticDataset != "orders" || physicalDataset != "orders" {
+		t.Fatalf("projected field datasets = %q / %q", semanticDataset, physicalDataset)
 	}
 
 	// Start with an aggregate visual that has no dimensions, then feed the
@@ -226,6 +236,26 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	updated, ok := next.Document.Spec.Visuals["orders"].Query.Value.(*document.AggregateDashboardQuery)
 	if !ok || len(updated.Dimensions) != 1 || updated.Dimensions[0].String == nil || *updated.Dimensions[0].String != "status" {
 		t.Fatalf("assigned aggregate dimensions = %#v", updated)
+	}
+}
+
+func TestProjectCanonicalVisualExposesBoundRecordsDataset(t *testing.T) {
+	field := "order_id"
+	base := &document.DashboardPageComponentBase{ID: "orders-component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 4}}
+	component := &document.VisualDashboardPageComponent{Visual: "orders"}
+	authored := document.DashboardVisual{
+		Type: document.DashboardVisualTypeTable,
+		Query: document.DashboardQuery{Value: &document.RecordsDashboardQuery{
+			Type: "records", Dataset: "orders", Fields: []document.DashboardRecordFieldSelection{{String: &field}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.TableDashboardPresentation{Type: "table", ShowHeader: true, RowHeight: 32}},
+	}
+	projected, err := projectCanonicalVisual(base, component, authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.DatasetID == nil || *projected.DatasetID != "orders" {
+		t.Fatalf("projected dataset = %#v", projected.DatasetID)
 	}
 }
 

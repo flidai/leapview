@@ -145,8 +145,35 @@ func (a *Application) validateAssignedField(ctx context.Context, project project
 	if _, ok := revision.Document.Spec.Visuals[componentVisual]; !ok {
 		return fmt.Errorf("%w: visual definition %q", authoring.ErrNotFound, componentVisual)
 	}
-	field.ResolvedTable, err = a.validateFieldAgainstRuntime(ctx, project, revision, *field)
+	// Records queries store detail selections as unqualified root fields (the
+	// dataset is authored once on the query). Validation resolves dimensions
+	// against the active model, where physical fields are qualified by table.
+	// Qualify only the detached validation copy so remove/move commands retain
+	// the exact unqualified field ID required by the reducer.
+	validationField := *field
+	validationField.FieldID = recordDetailFieldIDForValidation(revision.Document, componentVisual, validationField.FieldID, validationField.Role)
+	field.ResolvedTable, err = a.validateFieldAgainstRuntime(ctx, project, revision, validationField)
 	return err
+}
+
+func recordDetailFieldIDForValidation(doc document.DashboardDocument, visualID, fieldID string, role authoring.FieldRole) string {
+	fieldID = strings.TrimSpace(fieldID)
+	if role != authoring.FieldRoleDetail || fieldID == "" || strings.Contains(fieldID, ".") {
+		return fieldID
+	}
+	visual, ok := doc.Spec.Visuals[visualID]
+	if !ok {
+		return fieldID
+	}
+	records, ok := visual.Query.Value.(*document.RecordsDashboardQuery)
+	if !ok {
+		return fieldID
+	}
+	dataset := strings.TrimSpace(records.Dataset)
+	if dataset == "" || dataset == "pending_dataset" {
+		return fieldID
+	}
+	return dataset + "." + fieldID
 }
 
 func (a *Application) validateIntentRevision(ctx context.Context, project projectgraph.ResourceID, command authoring.Command, lifecycle authoring.DashboardLifecycle) (authoring.Revision, error) {

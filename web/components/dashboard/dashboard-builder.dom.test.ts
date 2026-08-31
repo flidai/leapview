@@ -1103,6 +1103,71 @@ test('dashboard builder blocks record-only and full-role field assignments befor
   }
 })
 
+test('dashboard builder keeps table columns within the bound records dataset', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builder: {
+          semanticModel: {
+            id: 'commerce', title: 'Sales', datasets: [
+              { id: 'sales_orders', title: 'Sales orders', fields: [
+                { id: 'revenue', datasetId: 'sales_orders', label: 'Revenue', kind: 'metric', roles: ['metric'], dataType: 'number' },
+                { id: 'sales_orders.revenue', datasetId: 'sales_orders', label: 'Revenue', kind: 'dimension', roles: ['detail'], dataType: 'number' },
+                { id: 'sales_orders.customer_id', datasetId: 'sales_orders', label: 'Customer ID', kind: 'dimension', roles: ['detail'], dataType: 'string' },
+              ] },
+              { id: 'sales_customers', title: 'Sales customers', fields: [
+                { id: 'sales_customers.customer_id', datasetId: 'sales_customers', label: 'Customer ID', kind: 'dimension', roles: ['detail'], dataType: 'string' },
+              ] },
+            ],
+          },
+          pages: element.builder.pages.map((pageSignal: any) => pageSignal.id !== 'overview' ? pageSignal : {
+            ...pageSignal,
+            visuals: [{
+              ...pageSignal.visuals[0], type: 'table', datasetId: 'sales_orders',
+              slots: [{ id: 'field-0', label: 'Revenue', kind: 'detail', fieldId: 'revenue', required: false }],
+            }],
+          }),
+          selectedPageId: 'overview', selectedVisualId: 'sales-chart',
+        },
+      })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const rows = Array.from(root.querySelectorAll<HTMLElement>('.data-pane .field'))
+      const row = (label: string, context: string, group?: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label && (candidate.querySelector('.field-context')?.textContent ?? '').trim().startsWith(context) && (!group || candidate.closest('.field-section')?.getAttribute('data-field-group') === group))!
+      const metricRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Measure.'))!
+      const physicalRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Dimension.') && (candidate.querySelector('.field-context')?.textContent ?? '').trim().startsWith('Sales orders'))!
+      const ordersCustomer = row('Customer ID', 'Sales orders', 'dimension')
+      const customersCustomer = row('Customer ID', 'Sales customers')
+      const commands: unknown[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      customersCustomer.click()
+      ordersCustomer.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return {
+        commands,
+        metricRevenue: { tag: metricRevenue.tagName, used: metricRevenue.getAttribute('data-used') },
+        physicalRevenue: { tag: physicalRevenue.tagName, used: physicalRevenue.getAttribute('data-used') },
+        ordersCustomer: { tag: ordersCustomer.tagName, role: ordersCustomer.getAttribute('role') },
+        customersCustomer: { tag: customersCustomer.tagName, role: customersCustomer.getAttribute('role'), aria: customersCustomer.getAttribute('aria-label') },
+      }
+    })
+    expect(state.metricRevenue).toEqual({ tag: 'DIV', used: null })
+    expect(state.physicalRevenue).toEqual({ tag: 'BUTTON', used: 'true' })
+    expect(state.ordersCustomer).toEqual({ tag: 'BUTTON', role: null })
+    expect(state.customersCustomer.tag).toBe('DIV')
+    expect(state.customersCustomer.role).toBe('note')
+    expect(state.customersCustomer.aria).toContain('Not compatible with the selected table visual')
+    expect(state.commands).toHaveLength(1)
+    expect(state.commands[0]).toMatchObject({ action: 'assign_field', pageId: 'overview', visualId: 'sales-chart', fieldId: 'sales_orders.customer_id', role: 'detail' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder creates smart governed visuals from fields on an empty canvas', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
