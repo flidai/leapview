@@ -328,6 +328,14 @@ tasks:
       - bun test scripts/qa_ui_framework_config.test.ts
       - bun scripts/qa_ui_framework.ts
 
+  qa:ui-framework:visual:update:
+    desc: Review and refresh the UI framework visual-regression baselines
+    deps:
+      - node:deps
+    cmds:
+      - bun test scripts/qa_ui_framework_config.test.ts
+      - LEAPVIEW_UI_QA_SCOPE=visual LEAPVIEW_UPDATE_VISUAL_BASELINES=1 bun scripts/qa_ui_framework.ts
+
   qa:movielens-performance:
     desc: Run the local/nightly dashboard performance runner with the MovieLens scenario (not part of CI)
     deps:
