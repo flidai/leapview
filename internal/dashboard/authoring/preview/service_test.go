@@ -130,7 +130,7 @@ func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testi
 	invalidDoc.Spec.Visuals["orders"] = value
 	invalidDoc.Spec.Pages[0].Components = []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{
 		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "orders_card", Type: "visual", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 6, RowSpan: 4}},
-		Type: "visual", Visual: "orders",
+		Type:                       "visual", Visual: "orders",
 	}}}
 	invalidRevision, err := authoring.NewRevision("revision-invalid", "sales", 2, time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC), invalidDoc, f.revision.Provenance)
 	if err != nil {
@@ -157,6 +157,17 @@ func TestPreviewSemanticMismatchAndStrictErrorReleaseWithoutPersistence(t *testi
 	}
 	if f.runtime.queryCalls != 0 || f.provider.lease.releases != 2 {
 		t.Fatalf("compile-only path queried visual or leaked lease: query=%d release=%d", f.runtime.queryCalls, f.provider.lease.releases)
+	}
+	f.request.BestEffortVisuals = true
+	bestEffort, err := f.service.Preview(t.Context(), f.request)
+	if err != nil {
+		t.Fatalf("builder preview did not isolate invalid visual: %v", err)
+	}
+	if bestEffort.VisualErrors["orders"] == "" || len(bestEffort.Definition.Visualizations) != 0 {
+		t.Fatalf("builder preview = visuals %#v errors %#v", bestEffort.Definition.Visualizations, bestEffort.VisualErrors)
+	}
+	if f.runtime.queryCalls != 1 || f.provider.lease.releases != 3 {
+		t.Fatalf("best-effort preview calls query=%d release=%d", f.runtime.queryCalls, f.provider.lease.releases)
 	}
 }
 

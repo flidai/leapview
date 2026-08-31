@@ -104,6 +104,10 @@ type PreviewRequest struct {
 	ExpectedRevision authoring.RevisionToken
 	PageID           string
 	Filters          dashboard.Filters
+	// BestEffortVisuals is reserved for the interactive builder. It isolates
+	// visual lowering failures while keeping strict structural, semantic,
+	// filter, and layout validation. Headless preview and publish remain strict.
+	BestEffortVisuals bool
 }
 
 // CompileRequest identifies one exact draft revision without selecting or
@@ -135,6 +139,7 @@ type Preview struct {
 	Definition       dashboarddefinition.Definition `json:"definition"`
 	PagePatch        dashboard.Patch                `json:"pagePatch"`
 	SemanticEvidence SemanticServingStateEvidence   `json:"semanticEvidence"`
+	VisualErrors     map[string]string              `json:"visualErrors,omitempty"`
 }
 
 // Compilation is the exact-revision, compile-only draft result. It carries
@@ -144,6 +149,7 @@ type Compilation struct {
 	Revision         authoring.RevisionToken        `json:"revision"`
 	Definition       dashboarddefinition.Definition `json:"definition"`
 	SemanticEvidence SemanticServingStateEvidence   `json:"semanticEvidence"`
+	VisualErrors     map[string]string              `json:"visualErrors,omitempty"`
 }
 
 type preparedCompilation struct {
@@ -156,7 +162,7 @@ type preparedCompilation struct {
 // through a single active runtime lease. It neither lowers unrelated visual
 // queries nor executes a dashboard page query.
 func (s *Service) Compile(ctx context.Context, request CompileRequest) (Compilation, error) {
-	prepared, err := s.prepareCompilation(ctx, request, true)
+	prepared, err := s.prepareCompilation(ctx, request, true, false)
 	if err != nil {
 		return Compilation{}, err
 	}
@@ -177,7 +183,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 		ProjectID: request.ProjectID, ActorID: request.ActorID,
 		DashboardID: request.DashboardID, DraftID: request.DraftID,
 		ExpectedRevision: request.ExpectedRevision,
-	}, false)
+	}, false, request.BestEffortVisuals)
 	if err != nil {
 		return Preview{}, err
 	}
@@ -185,7 +191,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	patch, err := prepared.runtime.QueryDashboardPageForDefinition(ctx, prepared.Definition, pageID, request.Filters)
 	result := Preview{
 		Revision: prepared.Revision, Definition: prepared.Definition,
-		PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence,
+		PagePatch: patch, SemanticEvidence: prepared.SemanticEvidence, VisualErrors: prepared.VisualErrors,
 	}
 	if err != nil {
 		return result, fmt.Errorf("query dashboard draft page: %w", err)
@@ -193,7 +199,7 @@ func (s *Service) Preview(ctx context.Context, request PreviewRequest) (Preview,
 	return result, nil
 }
 
-func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest, filterContractOnly bool) (preparedCompilation, error) {
+func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest, filterContractOnly, bestEffortVisuals bool) (preparedCompilation, error) {
 	if s == nil || s.repository == nil || s.authorizer == nil || s.provider == nil {
 		return preparedCompilation{}, fmt.Errorf("dashboard preview service is not configured")
 	}
@@ -316,8 +322,14 @@ func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest
 	}
 
 	var compiled compiler.DocumentResult
+	visualErrors := map[string]string{}
 	if filterContractOnly {
 		compiled, err = compiler.CompileDocumentFilterContract(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
+	} else if bestEffortVisuals {
+		var builderPreview compiler.BuilderPreviewResult
+		builderPreview, err = compiler.CompileDocumentBuilderPreview(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
+		compiled = builderPreview.DocumentResult
+		visualErrors = builderPreview.VisualErrors
 	} else {
 		compiled, err = compiler.CompileDocument(revision.Document, map[string]*semanticmodel.Model{lifecycle.SemanticModel.String(): model})
 	}
@@ -342,7 +354,7 @@ func (s *Service) prepareCompilation(ctx context.Context, request CompileRequest
 	}
 	releaseOnError = false
 	return preparedCompilation{
-		Compilation: Compilation{Revision: revision.Token(), Definition: compiled.Definition, SemanticEvidence: evidence},
+		Compilation: Compilation{Revision: revision.Token(), Definition: compiled.Definition, SemanticEvidence: evidence, VisualErrors: visualErrors},
 		runtime:     queryRuntime, release: lease.Release,
 	}, nil
 }

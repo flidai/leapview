@@ -175,6 +175,9 @@ model DashboardBuilderVisualTypeSignal {
 
 model DashboardBuilderVisualRoleLimitSignal {
   `role`: DashboardBuilderFieldRoleSignal;
+  /** Required fields for a renderable target; zero means optional. */
+  `minimum`: int32;
+  /** Accepted fields before overflow; zero means unbounded. */
   `maximum`: int32;
 }
 
@@ -211,6 +214,8 @@ model DashboardBuilderVisualSignal {
   `formatOptions`: DashboardBuilderFormatOptionSignal[];
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
+  /** Strict draft-compile failure attributed to this visual definition. */
+  `previewError`?: string;
   `filters`: string[];
   /**
    * Bounded authored interaction metadata for the builder inspector. The

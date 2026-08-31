@@ -650,7 +650,7 @@ func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
 		}
 		limits := make([]uisignals.DashboardBuilderVisualRoleLimitSignal, 0, len(authoring.CanonicalVisualRoleLimits(entry.Type)))
 		for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
-			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Maximum: limit.Maximum})
+			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Minimum: limit.Minimum, Maximum: limit.Maximum})
 		}
 		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles, RoleLimits: limits})
 	}
@@ -733,6 +733,10 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 		for index, field := range value.Rows {
 			id, label := canonicalDimension(field)
 			slots = append(slots, slot(fmt.Sprintf("row-%d", index), label, "dimension", id, true))
+		}
+		for index, field := range value.Columns {
+			id, label := canonicalDimension(field)
+			slots = append(slots, slot(fmt.Sprintf("column-%d", index), label, "dimension", id, true))
 		}
 		for index, field := range value.Metrics {
 			id, label := canonicalMetric(field)

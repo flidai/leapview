@@ -1,6 +1,7 @@
 package authoring
 
 import (
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -9,6 +10,133 @@ import (
 
 	"github.com/flidai/leapview/internal/dashboard/document"
 )
+
+func TestCanonicalVisualTypeSwitchMatrixPreservesQueryAndIsReversible(t *testing.T) {
+	for _, source := range CanonicalVisualCatalog() {
+		for _, target := range CanonicalVisualCatalog() {
+			t.Run(string(source.Type)+"_to_"+string(target.Type), func(t *testing.T) {
+				_, revision := canonicalReducerFixture(t)
+				visual := defaultCanonicalVisual(string(source.Type), "Base")
+				revision.Document.Spec.Visuals["base"] = visual
+				originalQuery, err := json.Marshal(visual.Query)
+				if err != nil {
+					t.Fatal(err)
+				}
+
+				if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: target.Type}); err != nil {
+					t.Fatal(err)
+				}
+				switched := revision.Document.Spec.Visuals["base"]
+				if switched.Type != target.Type {
+					t.Fatalf("switched type = %q, want %q", switched.Type, target.Type)
+				}
+				gotQuery, err := json.Marshal(switched.Query)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if string(gotQuery) != string(originalQuery) {
+					t.Fatalf("switch changed query\n got: %s\nwant: %s", gotQuery, originalQuery)
+				}
+
+				if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: source.Type}); err != nil {
+					t.Fatal(err)
+				}
+				restored := revision.Document.Spec.Visuals["base"]
+				restoredQuery, err := json.Marshal(restored.Query)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if restored.Type != source.Type || string(restoredQuery) != string(originalQuery) {
+					t.Fatalf("switch back did not restore %q query: type=%q query=%s", source.Type, restored.Type, restoredQuery)
+				}
+			})
+		}
+	}
+}
+
+func TestCanonicalVisualTypeSwitchConfiguresScatterFromRetainedBindings(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	category, revenue, orders := "category", "revenue", "order_count"
+	visual := revision.Document.Spec.Visuals["base"]
+	visual.Query.Value = &document.AggregateDashboardQuery{
+		DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate",
+		Dimensions: []document.DashboardDimensionSelection{{String: &category}},
+		Metrics:    []document.DashboardMetricSelection{{String: &revenue}, {String: &orders}},
+	}
+	revision.Document.Spec.Visuals["base"] = visual
+	if err := setCanonicalVisualType(&revision.Document, SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeScatter}); err != nil {
+		t.Fatal(err)
+	}
+	scatter := revision.Document.Spec.Visuals["base"]
+	presentation, ok := scatter.Presentation.Value.(*document.PointDashboardPresentation)
+	if !ok || len(presentation.Identity) != 1 || presentation.Identity[0] != category || presentation.X != revenue || presentation.Y != orders {
+		t.Fatalf("scatter presentation = %#v", scatter.Presentation)
+	}
+	query := scatter.Query.Value.(*document.AggregateDashboardQuery)
+	if len(query.Dimensions) != 1 || len(query.Metrics) != 2 {
+		t.Fatalf("scatter query lost retained bindings: %#v", query)
+	}
+}
+
+func TestCanonicalVisualTypeSwitchPersistsIncompatibleDraftAndSwitchesBack(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	apply := func(id string, payload authoringPayload) error {
+		command := Command{ID: CommandID(id), DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID, ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance()}
+		var err error
+		lifecycle, current, err = ApplyEdit(lifecycle, current, canonicalReducerCommandWithPayload(command, payload), RevisionID(id+"-revision"), current.Number+1, time.Date(2026, 8, 18, 16, int(current.Number), 0, 0, time.UTC))
+		return err
+	}
+	if err := apply("add-category", &AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "category", Role: FieldRoleDimension}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply("add-revenue", &AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: "revenue", Role: FieldRoleMetric}); err != nil {
+		t.Fatal(err)
+	}
+	if err := apply("try-map", &SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeMap}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := current.Document.Spec.Visuals["base"].Query.Value.(*document.AggregateDashboardQuery); !ok {
+		t.Fatalf("map switch replaced source query: %#v", current.Document.Spec.Visuals["base"].Query)
+	}
+	if err := apply("return-bar", &SetVisualTypePayload{PageID: "overview", VisualID: "base-component", Type: document.DashboardVisualTypeBar}); err != nil {
+		t.Fatal(err)
+	}
+	restored := current.Document.Spec.Visuals["base"]
+	query, ok := restored.Query.Value.(*document.AggregateDashboardQuery)
+	if !ok || restored.Type != document.DashboardVisualTypeBar || len(query.Dimensions) != 1 || len(query.Metrics) != 1 {
+		t.Fatalf("restored visual = %#v", restored)
+	}
+}
+
+func TestCanonicalPivotAssignmentBuildsRowsAndColumns(t *testing.T) {
+	_, revision := canonicalReducerFixture(t)
+	revision.Document.Spec.Visuals["base"] = defaultCanonicalVisual(string(document.DashboardVisualTypePivot), "Pivot")
+	assign := func(field string, role FieldRole) {
+		t.Helper()
+		if err := assignCanonicalField(&revision.Document, AssignFieldPayload{PageID: "overview", VisualID: "base-component", FieldID: field, Role: role}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	assign("category", FieldRoleDimension)
+	assign("purchase_month", FieldRoleDimension)
+	assign("revenue", FieldRoleMetric)
+
+	query := revision.Document.Spec.Visuals["base"].Query.Value.(*document.PivotDashboardQuery)
+	if len(query.Rows) != 1 || len(query.Columns) != 1 || len(query.Metrics) != 1 {
+		t.Fatalf("pivot fields = rows:%#v columns:%#v metrics:%#v", query.Rows, query.Columns, query.Metrics)
+	}
+	row, _ := canonicalDimensionSelection(query.Rows[0])
+	column, _ := canonicalDimensionSelection(query.Columns[0])
+	if row != "category" || column != "purchase_month" {
+		t.Fatalf("pivot axes = %q / %q", row, column)
+	}
+	visual := revision.Document.Spec.Visuals["base"]
+	removed, err := removeFieldFromQuery(&visual.Query, FieldRoleDimension, "purchase_month")
+	revision.Document.Spec.Visuals["base"] = visual
+	if err != nil || !removed || len(query.Columns) != 0 {
+		t.Fatalf("remove pivot column: removed=%v err=%v columns=%#v", removed, err, query.Columns)
+	}
+}
 
 func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t *testing.T) {
 	lifecycle, current := canonicalReducerFixture(t)
@@ -25,7 +153,7 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeHistogram: {"histogram", "cartesian"},
 		document.DashboardVisualTypeBoxplot:   {"distribution", "cartesian"},
 		document.DashboardVisualTypeTable:     {"records", "table"},
-		document.DashboardVisualTypeMatrix:    {"pivot", "table"},
+		document.DashboardVisualTypeMatrix:    {"aggregate", "table"},
 		document.DashboardVisualTypePivot:     {"pivot", "table"},
 		document.DashboardVisualTypePie:       {"aggregate", "proportional"},
 		document.DashboardVisualTypeDonut:     {"aggregate", "proportional"},
@@ -39,6 +167,7 @@ func TestCanonicalAddVisualSupportsEveryVisualTypeWithNonOverlappingPlacement(t 
 		document.DashboardVisualTypeRadar:     {"aggregate", "polar"},
 		document.DashboardVisualTypeMap:       {"records", "geographic"},
 		document.DashboardVisualTypeKpi:       {"aggregate", "kpi"},
+		document.DashboardVisualTypeScatter:   {"aggregate", "point"},
 	}
 	for _, typ := range types {
 		if _, ok := expected[typ]; !ok {
