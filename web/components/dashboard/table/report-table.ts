@@ -1736,10 +1736,12 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleJumpBlock(start: number): void {
-    if (this.jumpTimer && this.pendingJumpStart === start) return
     this.pendingJumpStart = start
     this.requestUpdate()
-    this.clearJumpTimer()
+    // Keep one bounded trailing request alive while fast scrolling updates the
+    // destination. Restarting the timer for every crossed chunk can postpone
+    // loading indefinitely until scrolling stops.
+    if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
       this.emitBlock('all', this.pendingJumpStart, this.table.sort, this.table.resetVersion)
