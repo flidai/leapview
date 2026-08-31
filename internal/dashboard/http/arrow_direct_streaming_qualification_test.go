@@ -818,6 +818,7 @@ func TestDashboardDirectArrowQualificationSlowAndDisconnectedClientsReleaseConne
 		}
 		beforeRSS := dashboardDirectArrowQualificationRSS()
 		time.Sleep(100 * time.Millisecond)
+		blockedRSS := dashboardDirectArrowQualificationRSS()
 		blocked := fixture.database.stats()
 		if blocked.active != 1 || fixture.handlers.Load() != 1 {
 			response.Body.Close()
@@ -835,7 +836,7 @@ func TestDashboardDirectArrowQualificationSlowAndDisconnectedClientsReleaseConne
 		if len(after.leaseDurations) != 1 || after.leaseDurations[0] < 100*time.Millisecond {
 			t.Fatalf("delayed reader connection hold = %v", after.leaseDurations)
 		}
-		t.Logf("delayed reader RSS before/blocked=%d/%d connection_hold=%s", beforeRSS, dashboardDirectArrowQualificationRSS(), after.leaseDurations[0])
+		t.Logf("delayed reader RSS before/blocked=%d/%d delta=%d connection_hold=%s", beforeRSS, blockedRSS, blockedRSS-beforeRSS, after.leaseDurations[0])
 	})
 
 	t.Run("disconnect cancels and releases", func(t *testing.T) {
@@ -948,6 +949,9 @@ func BenchmarkDashboardDirectArrowQualification(b *testing.B) {
 					if stats.queries != int64(b.N) || fixture.physical.Load() != int64(b.N) || fixture.cacheOutcome.Load() != 0 || stats.active != 0 {
 						b.Fatalf("%s invalid query/cache/lifecycle stats: database=%d physical=%d cache=%d active=%d", lane, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active)
 					}
+					if fixture.governor.calls.Load() != int64(b.N) || len(fixture.admitter.snapshot()) != b.N {
+						b.Fatalf("%s governance/admission calls = %d/%d, want %d", lane, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), b.N)
+					}
 					if ownershipAfter := arrowresult.Stats(); ownershipAfter != ownershipBefore {
 						b.Fatalf("%s changed retained Arrow ownership: before=%#v after=%#v", lane, ownershipBefore, ownershipAfter)
 					}
@@ -1022,6 +1026,9 @@ func BenchmarkDashboardDirectArrowQualificationConcurrency(b *testing.B) {
 					stats := fixture.database.stats()
 					if stats.queries != requests || fixture.physical.Load() != requests || fixture.cacheOutcome.Load() != 0 || stats.active != 0 {
 						b.Fatalf("%s concurrent query/cache/lifecycle stats = database %d physical %d cache %d active %d, want %d requests", lane, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active, requests)
+					}
+					if fixture.governor.calls.Load() != requests || int64(len(fixture.admitter.snapshot())) != requests {
+						b.Fatalf("%s concurrent governance/admission calls = %d/%d, want %d", lane, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), requests)
 					}
 					sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 					elapsed := b.Elapsed()
