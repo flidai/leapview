@@ -313,6 +313,23 @@ tasks:
     cmds:
       - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  test:arrow:direct-streaming-qualification:
+    desc: Run the isolated FAI-544 real-DuckDB and HTTP qualification contracts
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^TestDashboardDirectArrowQualification' -count=1
+
+  bench:arrow:direct-streaming-qualification:quick:
+    desc: Run a bounded local sample of the FAI-544 qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=100ms -count=1 -cpu=1
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=100ms -count=1 -cpu=1
+
+  bench:arrow:direct-streaming-qualification:
+    desc: Run comparison-grade FAI-544 real-DuckDB and HTTP qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+
   bench:cache:cutover:quick:
     desc: Smoke-test cache cutover latency and retention benchmarks
     cmds:
@@ -337,6 +354,14 @@ tasks:
     cmds:
       - bun test scripts/qa_ui_framework_config.test.ts
       - bun scripts/qa_ui_framework.ts
+
+  qa:ui-framework:visual:update:
+    desc: Review and refresh the UI framework visual-regression baselines
+    deps:
+      - node:deps
+    cmds:
+      - bun test scripts/qa_ui_framework_config.test.ts
+      - LEAPVIEW_UI_QA_SCOPE=visual LEAPVIEW_UPDATE_VISUAL_BASELINES=1 bun scripts/qa_ui_framework.ts
 
   qa:movielens-performance:
     desc: Run the local/nightly dashboard performance runner with the MovieLens scenario (not part of CI)

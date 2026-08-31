@@ -164,6 +164,9 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const markColor = fill ?? (intent === undefined
       ? context.colors.data[seriesIndex % context.colors.data.length] ?? context.colors.accent
       : seriesColor(value.field, intent, context))
+    const translatedLabel = normalizedField
+      ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
+      : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
       yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
@@ -175,10 +178,9 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
         borderColor: stroke,
         borderWidth: stroke ? 2 : undefined,
       },
+      barMinHeight: horizontal && translatedLabel.label.show !== false && translatedLabel.label.position === 'insideRight' ? 44 : undefined,
       step: spec.presentation.step ? 'middle' : false,
-      ...(normalizedField
-        ? percentLabel(envelope, spec, context, normalized?.columnIndices.get(value.field))
-        : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)),
+      ...translatedLabel,
     }
   })
   return {

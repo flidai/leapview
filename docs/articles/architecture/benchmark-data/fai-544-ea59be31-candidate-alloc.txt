@@ -1,0 +1,40 @@
+FAI-544 candidate allocation profile summary; wide 32-column x 999-row real-DuckDB HTTP workload; 3s; GOMAXPROCS=1; commit ea59be318617d4e4a07b6421d671355ae8628b46.
+
+File: fai-544-http.test
+Build ID: dde68ad087fd17de9db213be9407cb73f7571f48
+Type: alloc_space
+Time: 2026-08-31 07:58:39 UTC
+Showing nodes accounting for 1225.17MB, 92.92% of 1318.50MB total
+Dropped 308 nodes (cum <= 6.59MB)
+Showing top 30 nodes out of 65
+      flat  flat%   sum%        cum   cum%
+ 1081.32MB 82.01% 82.01%  1081.32MB 82.01%  io.ReadAll
+   27.03MB  2.05% 84.06%    27.03MB  2.05%  github.com/flidai/leapview/internal/analytics/query/planir.NodeMeta.validate
+   21.59MB  1.64% 85.70%    21.59MB  1.64%  github.com/google/flatbuffers/go.(*Builder).growByteBuffer (inline)
+   18.09MB  1.37% 87.07%    18.59MB  1.41%  github.com/flidai/leapview/internal/analytics/query.(*Planner).semanticView
+   14.02MB  1.06% 88.13%    18.52MB  1.40%  github.com/flidai/leapview/internal/analytics/query/planir.validateNode
+   11.53MB  0.87% 89.01%    11.53MB  0.87%  github.com/apache/arrow-go/v18/arrow.(*Schema).Fields (inline)
+   10.02MB  0.76% 89.77%    10.02MB  0.76%  github.com/apache/arrow-go/v18/arrow.NewSchemaWithEndian
+    8.51MB  0.65% 90.42%     9.51MB  0.72%  github.com/flidai/leapview/internal/dashboard/http.dashboardDirectArrowExperimentQuery
+    7.52MB  0.57% 90.99%     7.52MB  0.57%  github.com/apache/arrow-go/v18/arrow.StructOf
+       5MB  0.38% 91.36%    15.01MB  1.14%  github.com/flidai/leapview/internal/analytics/query/planir.(*duckRenderer).renderSortLimit
+    4.51MB  0.34% 91.71%     7.01MB  0.53%  github.com/flidai/leapview/internal/analytics/query.(*Planner).buildFlatPlanIRWithFilters.func1
+       4MB   0.3% 92.01%    36.54MB  2.77%  github.com/flidai/leapview/internal/analytics/query.(*Planner).buildFlatPlanIRWithFilters
+    3.50MB  0.27% 92.28%    20.09MB  1.52%  github.com/apache/arrow-go/v18/arrow/ipc.fieldToFB (inline)
+    3.01MB  0.23% 92.50%    16.54MB  1.25%  github.com/flidai/leapview/internal/dashboard/semanticapi.(*directArrowExperimentSink).WriteSchema
+    1.50MB  0.11% 92.62%     8.01MB  0.61%  github.com/apache/arrow-go/v18/arrow/cdata.(*cimporter).doImportChildren
+    1.50MB  0.11% 92.73%    13.03MB  0.99%  github.com/duckdb/duckdb-go/v2.recordReaderFromRows
+       1MB 0.076% 92.81%     9.01MB  0.68%  github.com/apache/arrow-go/v18/arrow/cdata.(*cimporter).doImport
+    0.50MB 0.038% 92.85%    99.73MB  7.56%  github.com/flidai/leapview/internal/dashboard/http.(*dashboardDirectArrowQualificationDatabase).QueryArrow.func1
+    0.50MB 0.038% 92.88%    38.62MB  2.93%  github.com/flidai/leapview/internal/dashboard/semanticapi.(*directArrowExperimentSink).WriteRecord
+    0.50MB 0.038% 92.92%    98.18MB  7.45%  github.com/flidai/leapview/internal/analytics/query.(*Planner).PlanRows
+         0     0% 92.92%    99.73MB  7.56%  database/sql.(*Conn).Raw
+         0     0% 92.92%    10.02MB  0.76%  github.com/apache/arrow-go/v18/arrow.NewSchema (inline)
+         0     0% 92.92%     9.01MB  0.68%  github.com/apache/arrow-go/v18/arrow/cdata.(*cimporter).doImportArr
+         0     0% 92.92%    11.03MB  0.84%  github.com/apache/arrow-go/v18/arrow/cdata.ImportCArrowSchema
+         0     0% 92.92%    16.02MB  1.21%  github.com/apache/arrow-go/v18/arrow/cdata.ImportCRecordBatchWithSchema
+         0     0% 92.92%     9.01MB  0.68%  github.com/apache/arrow-go/v18/arrow/cdata.importCArrayAsType (inline)
+         0     0% 92.92%    38.12MB  2.89%  github.com/apache/arrow-go/v18/arrow/ipc.(*Writer).Write
+         0     0% 92.92%    23.60MB  1.79%  github.com/apache/arrow-go/v18/arrow/ipc.(*Writer).start
+         0     0% 92.92%    16.59MB  1.26%  github.com/apache/arrow-go/v18/arrow/ipc.(*fieldVisitor).result
+         0     0% 92.92%    13.52MB  1.03%  github.com/apache/arrow-go/v18/arrow/ipc.(*recordEncoder).Encode

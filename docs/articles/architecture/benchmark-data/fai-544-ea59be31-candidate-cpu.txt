@@ -1,0 +1,41 @@
+FAI-544 candidate CPU profile summary; wide 32-column x 999-row real-DuckDB HTTP workload; 3s; GOMAXPROCS=1; commit ea59be318617d4e4a07b6421d671355ae8628b46.
+
+File: fai-544-http.test
+Build ID: dde68ad087fd17de9db213be9407cb73f7571f48
+Type: cpu
+Time: 2026-08-31 07:58:35 UTC
+Duration: 4.17s, Total samples = 4.72s (113.30%)
+Showing nodes accounting for 4.21s, 89.19% of 4.72s total
+Dropped 202 nodes (cum <= 0.02s)
+Showing top 30 nodes out of 182
+      flat  flat%   sum%        cum   cum%
+     2.11s 44.70% 44.70%      2.14s 45.34%  runtime.cgocall
+     0.42s  8.90% 53.60%      0.42s  8.90%  [fai-544-http.test]
+     0.37s  7.84% 61.44%      0.37s  7.84%  internal/runtime/syscall.Syscall6
+     0.25s  5.30% 66.74%      0.47s  9.96%  runtime.scanobject
+     0.23s  4.87% 71.61%      0.23s  4.87%  [libc.so.6]
+     0.18s  3.81% 75.42%      0.18s  3.81%  runtime.findObject
+     0.14s  2.97% 78.39%      0.14s  2.97%  runtime.memmove
+     0.06s  1.27% 79.66%      0.06s  1.27%  runtime.typePointers.next
+     0.05s  1.06% 80.72%      0.07s  1.48%  runtime.scanblock
+     0.04s  0.85% 81.57%      0.06s  1.27%  regexp.(*Regexp).doOnePass
+     0.04s  0.85% 82.42%      0.04s  0.85%  runtime.memclrNoHeapPointers
+     0.03s  0.64% 83.05%      0.04s  0.85%  runtime.(*mcentral).cacheSpan
+     0.03s  0.64% 83.69%      0.04s  0.85%  runtime.exitsyscall
+     0.03s  0.64% 84.32%      0.03s  0.64%  runtime.mapaccess2_faststr
+     0.02s  0.42% 84.75%      0.03s  0.64%  runtime.(*spanSet).push
+     0.02s  0.42% 85.17%      0.18s  3.81%  runtime.gcDrainN
+     0.02s  0.42% 85.59%      0.37s  7.84%  runtime.growslice
+     0.02s  0.42% 86.02%      0.42s  8.90%  runtime.mallocgc
+     0.02s  0.42% 86.44%      0.04s  0.85%  runtime.mallocgcSmallScanHeader
+     0.02s  0.42% 86.86%      0.09s  1.91%  runtime.mallocgcSmallScanNoHeader
+     0.02s  0.42% 87.29%      0.04s  0.85%  runtime.wbBufFlush1
+     0.01s  0.21% 87.50%      0.03s  0.64%  github.com/apache/arrow-go/v18/arrow/cdata.(*cimporter).importFixedSizePrimitive
+     0.01s  0.21% 87.71%      0.46s  9.75%  github.com/apache/arrow-go/v18/arrow/ipc.(*Writer).Write
+     0.01s  0.21% 87.92%      0.37s  7.84%  github.com/apache/arrow-go/v18/arrow/ipc.(*streamWriter).Write
+     0.01s  0.21% 88.14%      0.12s  2.54%  github.com/flidai/leapview/internal/analytics/query/planir.(*duckRenderer).renderSortLimit
+     0.01s  0.21% 88.35%      0.36s  7.63%  github.com/flidai/leapview/internal/dashboard/semanticapi.(*directArrowExperimentWriter).Write
+     0.01s  0.21% 88.56%      0.10s  2.12%  net/http.(*body).readLocked
+     0.01s  0.21% 88.77%      0.11s  2.33%  net/http.(*cancelTimerBody).Read
+     0.01s  0.21% 88.98%      0.09s  1.91%  net/http.(*persistConn).Read
+     0.01s  0.21% 89.19%      0.40s  8.47%  runtime.gcDrain
