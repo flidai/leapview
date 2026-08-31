@@ -21,6 +21,7 @@ import (
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
+	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -221,6 +222,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
+	bounds := normalizeNativeBuildBounds(config.Bounds)
 	session := config.SessionIdentity
 	if session == "" {
 		session = nativeBuildDefaultSessionPrefix
@@ -232,11 +234,24 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
-		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: config.Bounds,
+		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: bounds,
 		leaseDuration: leaseDuration, clock: clock, events: config.Events, eventReader: eventReader, audit: config.Audit,
 		auditReader: auditReader, workflow: config.Workflow,
 		operationLookup: config.Operations.(nativeOperationLookup),
 	}, nil
+}
+
+func normalizeNativeBuildBounds(bounds gates.Bounds) gates.Bounds {
+	if bounds.MaxRows <= 0 {
+		bounds.MaxRows = 10000
+	}
+	if bounds.MaxQueries <= 0 {
+		bounds.MaxQueries = 128
+	}
+	if bounds.MaxMillis <= 0 {
+		bounds.MaxMillis = 5000
+	}
+	return bounds
 }
 
 // CreatePlan is intentionally unavailable on the build-only coordinator. The
@@ -479,7 +494,8 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 		return deploymentmodule.NativeDeliveryBuild{}, settle(err, NativePhysicalFailureDeterministic, NativePhysicalBuildPhaseValidation, nil)
 	}
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: nativeMaterializationRequest(effective, normalized, generationID, candidateID, attemptAdmission.Attempt.Namespace, plan.DeliveryPlan)}
-	physical, err := buildNativePhysicalWithCandidateBindings(buildCtx, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
+	physical, err := buildNativePhysicalWithCandidateBindings(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if err != nil {
 		classification, phase := NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseMaterialize
 		if failure, ok := NativePhysicalBuildFailureOf(err); ok {

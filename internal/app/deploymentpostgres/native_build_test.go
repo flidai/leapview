@@ -9,6 +9,7 @@ import (
 	"time"
 
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	"github.com/flidai/leapview/internal/analytics/gates"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -26,6 +27,17 @@ func TestNewNativeBuildCoordinatorFailsClosedWithoutRepository(t *testing.T) {
 	// coupling this test to an implementation error value.
 	if err.Error() != "native build requires a configured transaction-capable PostgreSQL repository" {
 		t.Fatalf("unexpected constructor error: %v", err)
+	}
+}
+
+func TestNormalizeNativeBuildBoundsUsesReviewedDefaults(t *testing.T) {
+	got := normalizeNativeBuildBounds(gates.Bounds{})
+	if got != (gates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000}) {
+		t.Fatalf("native build bounds = %+v", got)
+	}
+	explicit := gates.Bounds{MaxRows: 7, MaxQueries: 3, MaxMillis: 11}
+	if got := normalizeNativeBuildBounds(explicit); got != explicit {
+		t.Fatalf("explicit native build bounds = %+v, want %+v", got, explicit)
 	}
 }
 

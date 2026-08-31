@@ -63,24 +63,12 @@ var (
 	_ NativeBuildContractRuntimeAuthority      = (*ducklakepostgres.Repository)(nil)
 )
 
-// NativeBuildContractDomains are target-owned values which are not represented
-// exactly by physicalpool.PoolIdentity. TenantDomain is checked against the
-// identity's optional Tenant field. EncryptionDomain must be configured here;
-// EncryptionKeyRef is an opaque key handle, not a security-domain identity,
-// and therefore is never silently reused. ObjectNamespace is derived exactly
-// from the required StorageNamespace.
-type NativeBuildContractDomains struct {
-	TenantDomain     string
-	EncryptionDomain string
-}
-
 // NativeBuildContractAuthorityConfig supplies the three narrow PostgreSQL
-// readers and explicit target domains.
+// readers.
 type NativeBuildContractAuthorityConfig struct {
 	PhysicalPool NativeBuildContractPhysicalPoolAuthority
 	Catalog      NativeBuildContractCatalogAuthority
 	Runtime      NativeBuildContractRuntimeAuthority
-	Domains      NativeBuildContractDomains
 }
 
 // NativeBuildContractAuthority is read-only and stateless. It never caches a
@@ -89,19 +77,15 @@ type NativeBuildContractAuthority struct {
 	physicalPool NativeBuildContractPhysicalPoolAuthority
 	catalog      NativeBuildContractCatalogAuthority
 	runtime      NativeBuildContractRuntimeAuthority
-	domains      NativeBuildContractDomains
 }
 
-// NewNativeBuildContractAuthority validates dependency presence and explicit
-// domains without performing I/O.
+// NewNativeBuildContractAuthority validates dependency presence without
+// performing I/O.
 func NewNativeBuildContractAuthority(config NativeBuildContractAuthorityConfig) (*NativeBuildContractAuthority, error) {
 	if config.PhysicalPool == nil || config.Catalog == nil || config.Runtime == nil {
 		return nil, fmt.Errorf("%w: native build contract authorities are required", deploymentnative.ErrInvalid)
 	}
-	if err := validateNativeBuildContractDomains(config.Domains); err != nil {
-		return nil, err
-	}
-	return &NativeBuildContractAuthority{physicalPool: config.PhysicalPool, catalog: config.Catalog, runtime: config.Runtime, domains: config.Domains}, nil
+	return &NativeBuildContractAuthority{physicalPool: config.PhysicalPool, catalog: config.Catalog, runtime: config.Runtime}, nil
 }
 
 // NativeBuildContractRequest names one exact immutable compatibility record.
@@ -179,9 +163,6 @@ func (a *NativeBuildContractAuthority) Resolve(ctx context.Context, request Nati
 		return NativeBuildContract{}, err
 	}
 
-	if err := validateNativeBuildContractDomainsForPool(a.domains, admission.Pool); err != nil {
-		return NativeBuildContract{}, err
-	}
 	contract := &ducklake.PoolContract{
 		Pool: admission.Pool, Tuple: admission.Admission.Compatibility,
 		Admission: admission.Admission, Evidence: admission.Evidence,
@@ -193,7 +174,7 @@ func (a *NativeBuildContractAuthority) Resolve(ctx context.Context, request Nati
 		PhysicalPoolID: request.PhysicalPoolID, CompatibilityDigest: request.CompatibilityDigest,
 		PoolContract: contract, Catalog: catalog, CatalogRuntime: runtime,
 		Compatibility: runtime.RuntimeCompatibility,
-		TenantDomain:  a.domains.TenantDomain, EncryptionDomain: a.domains.EncryptionDomain,
+		TenantDomain:  admission.Pool.Identity.Tenant, EncryptionDomain: admission.Pool.Identity.EncryptionDomain,
 		ObjectNamespace: admission.Pool.Identity.StorageNamespace,
 	}, nil
 }
@@ -226,6 +207,9 @@ func validateNativeBuildContractAdmission(admission physicalpool.AdmissionContra
 	}
 	if err := admission.Pool.Validate(); err != nil {
 		return fmt.Errorf("%w: admitted physical-pool identity: %v", deploymentnative.ErrInvalid, err)
+	}
+	if err := validateNativeBuildContractPoolIdentity(admission.Pool); err != nil {
+		return err
 	}
 	if err := admission.Admission.Validate(); err != nil {
 		return fmt.Errorf("%w: physical-pool admission: %v", deploymentnative.ErrInvalid, err)
@@ -352,23 +336,13 @@ func validateNativeBuildContractEligibility(eligibility ducklakepostgres.Runtime
 	return nil
 }
 
-func validateNativeBuildContractDomains(domains NativeBuildContractDomains) error {
-	if err := validateNativeBuildContractText(domains.TenantDomain, "tenant domain", nativeBuildContractMaxText); err != nil {
-		return err
-	}
-	if err := validateNativeBuildContractText(domains.EncryptionDomain, "encryption domain", nativeBuildContractMaxText); err != nil {
-		return err
-	}
-	return nil
-}
-
-func validateNativeBuildContractDomainsForPool(domains NativeBuildContractDomains, pool physicalpool.PhysicalPool) error {
+func validateNativeBuildContractPoolIdentity(pool physicalpool.PhysicalPool) error {
 	identity := pool.Identity
 	if err := validateNativeBuildContractText(identity.Tenant, "physical-pool tenant", nativeBuildContractMaxText); err != nil {
 		return err
 	}
-	if identity.Tenant != domains.TenantDomain {
-		return fmt.Errorf("%w: configured tenant domain differs from physical-pool tenant", deploymentnative.ErrConflict)
+	if err := validateNativeBuildContractText(identity.EncryptionDomain, "physical-pool encryption domain", nativeBuildContractMaxText); err != nil {
+		return err
 	}
 	if err := validateNativeBuildContractText(identity.Region, "physical-pool region", nativeBuildContractMaxText); err != nil {
 		return err

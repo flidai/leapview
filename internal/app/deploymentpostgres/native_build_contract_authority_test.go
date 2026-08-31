@@ -77,7 +77,6 @@ func TestNativeBuildContractAuthorityResolvesExactContract(t *testing.T) {
 	runtime := &nativeContractRuntimeFake{compat: fixture.runtime}
 	authority, err := NewNativeBuildContractAuthority(NativeBuildContractAuthorityConfig{
 		PhysicalPool: physical, Catalog: catalog, Runtime: runtime,
-		Domains: NativeBuildContractDomains{TenantDomain: "tenant-domain", EncryptionDomain: "encryption-domain"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -95,7 +94,7 @@ func TestNativeBuildContractAuthorityResolvesExactContract(t *testing.T) {
 	if result.Catalog != fixture.catalog || result.CatalogRuntime != fixture.runtime || result.Compatibility != fixture.runtime.RuntimeCompatibility {
 		t.Fatalf("result authority evidence differs: %#v", result)
 	}
-	if result.PhysicalPoolID != fixture.pool.ID.String() || result.CompatibilityDigest != fixture.digest || result.TenantDomain != "tenant-domain" || result.EncryptionDomain != "encryption-domain" || result.ObjectNamespace != fixture.pool.Identity.StorageNamespace {
+	if result.PhysicalPoolID != fixture.pool.ID.String() || result.CompatibilityDigest != fixture.digest || result.TenantDomain != fixture.pool.Identity.Tenant || result.EncryptionDomain != fixture.pool.Identity.EncryptionDomain || result.ObjectNamespace != fixture.pool.Identity.StorageNamespace {
 		t.Fatalf("result identity = %#v", result)
 	}
 	if physical.calls != 1 || physical.poolID != fixture.pool.ID || physical.digest != fixture.digest || catalog.calls != 1 || catalog.poolID != fixture.pool.ID.String() || runtime.calls != 1 || runtime.poolID != fixture.pool.ID.String() || runtime.eligibilityCalls != 1 {
@@ -291,39 +290,14 @@ func TestNativeBuildContractAuthorityRequiresExactAttachEligibility(t *testing.T
 	})
 }
 
-func TestNativeBuildContractAuthorityRequiresConfiguredDomains(t *testing.T) {
-	fixture := newNativeBuildContractFixture(t)
-	base := NativeBuildContractAuthorityConfig{PhysicalPool: &nativeContractPhysicalFake{contract: fixture.admission}, Catalog: &nativeContractCatalogFake{identity: fixture.catalog}, Runtime: &nativeContractRuntimeFake{compat: fixture.runtime}}
-	for name, mutate := range map[string]func(*NativeBuildContractAuthorityConfig){
-		"missing tenant":     func(c *NativeBuildContractAuthorityConfig) { c.Domains.EncryptionDomain = "enc" },
-		"missing encryption": func(c *NativeBuildContractAuthorityConfig) { c.Domains.TenantDomain = "tenant-domain" },
-		"noncanonical tenant": func(c *NativeBuildContractAuthorityConfig) {
-			c.Domains = NativeBuildContractDomains{TenantDomain: " tenant-domain", EncryptionDomain: "enc"}
-		},
-	} {
-		t.Run(name, func(t *testing.T) {
-			config := base
-			mutate(&config)
-			if _, err := NewNativeBuildContractAuthority(config); !errors.Is(err, deploymentnative.ErrInvalid) {
-				t.Fatalf("error = %v, want deployment ErrInvalid", err)
-			}
-		})
-	}
-	config := base
-	config.Domains = NativeBuildContractDomains{TenantDomain: "other-tenant", EncryptionDomain: "enc"}
-	config.Runtime = base.Runtime
-	authority, err := NewNativeBuildContractAuthority(config)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := authority.Resolve(t.Context(), NativeBuildContractRequest{PhysicalPoolID: fixture.pool.ID.String(), CompatibilityDigest: fixture.digest}); !errors.Is(err, deploymentnative.ErrConflict) {
-		t.Fatalf("tenant drift error = %v, want deployment ErrConflict", err)
-	}
-}
-
 func TestNativeBuildContractAuthorityRejectsIncompletePoolDomainsBeforeBuild(t *testing.T) {
 	for name, mutate := range map[string]func(*physicalpool.PoolIdentity){
-		"missing tenant":       func(identity *physicalpool.PoolIdentity) { identity.Tenant = "" },
+		"missing tenant":      func(identity *physicalpool.PoolIdentity) { identity.Tenant = "" },
+		"noncanonical tenant": func(identity *physicalpool.PoolIdentity) { identity.Tenant = " tenant-domain" },
+		"missing encryption":  func(identity *physicalpool.PoolIdentity) { identity.EncryptionDomain = "" },
+		"noncanonical encryption": func(identity *physicalpool.PoolIdentity) {
+			identity.EncryptionDomain = " encryption-domain"
+		},
 		"missing region":       func(identity *physicalpool.PoolIdentity) { identity.Region = "" },
 		"noncanonical prefix":  func(identity *physicalpool.PoolIdentity) { identity.StorageNamespace = "objects/" },
 		"traversing namespace": func(identity *physicalpool.PoolIdentity) { identity.StorageNamespace = "../objects" },
@@ -332,7 +306,11 @@ func TestNativeBuildContractAuthorityRejectsIncompletePoolDomainsBeforeBuild(t *
 			fixture := newNativeBuildContractFixture(t)
 			identity := fixture.pool.Identity
 			mutate(&identity)
-			rebindNativeBuildContractPool(t, &fixture, identity)
+			if _, err := physicalpool.NewPhysicalPool(identity); err != nil {
+				fixture.admission.Pool.Identity = identity
+			} else {
+				rebindNativeBuildContractPool(t, &fixture, identity)
+			}
 			physical := &nativeContractPhysicalFake{contract: fixture.admission}
 			catalog := &nativeContractCatalogFake{identity: fixture.catalog}
 			runtime := &nativeContractRuntimeFake{compat: fixture.runtime}
@@ -413,7 +391,7 @@ func mustNativeBuildContractAuthority(t *testing.T, physical NativeBuildContract
 
 func mustNativeBuildContractAuthorityWithReaders(t *testing.T, physical NativeBuildContractPhysicalPoolAuthority, catalog NativeBuildContractCatalogAuthority, runtime NativeBuildContractRuntimeAuthority, fixture nativeBuildContractFixture) *NativeBuildContractAuthority {
 	t.Helper()
-	authority, err := NewNativeBuildContractAuthority(NativeBuildContractAuthorityConfig{PhysicalPool: physical, Catalog: catalog, Runtime: runtime, Domains: NativeBuildContractDomains{TenantDomain: "tenant-domain", EncryptionDomain: "encryption-domain"}})
+	authority, err := NewNativeBuildContractAuthority(NativeBuildContractAuthorityConfig{PhysicalPool: physical, Catalog: catalog, Runtime: runtime})
 	if err != nil {
 		t.Fatal(err)
 	}
