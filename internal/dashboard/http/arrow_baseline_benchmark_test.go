@@ -463,6 +463,7 @@ func (f *dashboardBaselineFixture) serve(tb testing.TB, visual string, rows int,
 	route.URLParams.Add("page", dashboardBaselinePageID)
 	route.URLParams.Add("visual", visual)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
+	ctx = dataquery.WithGovernor(ctx, f.governor)
 	observation := dashboardBaselineObservation{}
 	ctx = dataquery.WithCacheOutcomeObserver(ctx, func(outcome string) { observation.outcomes = append(observation.outcomes, outcome) })
 	ctx = dataquery.WithPhysicalQueryObserver(ctx, func(value dataquery.PhysicalQueryObservation) {
@@ -552,9 +553,13 @@ type dashboardBaselineObservation struct {
 
 type dashboardBaselineGovernor struct {
 	policyFingerprint string
+	calls             *atomic.Int64
 }
 
 func (g dashboardBaselineGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	if g.calls != nil {
+		g.calls.Add(1)
+	}
 	request.EffectivePolicyFingerprint = g.policyFingerprint
 	return request, nil, nil
 }
@@ -654,6 +659,7 @@ type dashboardBaselinePhysicalSnapshot struct {
 type dashboardBaselineDatabase struct {
 	rows             int
 	evidenceMetadata bool
+	observePlan      func(semanticquery.Plan)
 	queries          atomic.Int64
 	mu               sync.Mutex
 	physical         dashboardBaselinePhysicalSnapshot
@@ -661,6 +667,9 @@ type dashboardBaselineDatabase struct {
 
 func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {
 	d.queries.Add(1)
+	if d.observePlan != nil {
+		d.observePlan(plan)
+	}
 	countOnly := strings.Contains(strings.ToUpper(plan.SQL), "COUNT(")
 	rowCount := d.rows
 	if countOnly {
