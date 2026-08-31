@@ -75,6 +75,14 @@ Inspect the bounded dashboard refresh outcome metric and application logs to det
 
 Mitigate the underlying refresh failure through the normal deployment, data, or runtime recovery path. Do not change the 99% objective, reclassify outcomes, or exclude eligible traffic merely to silence the alert. Confirm recovery when the five-minute burn rate falls below `14.4` and the alert resolves on the next rule evaluation. Continue to inspect the rolling 30-day error-budget recordings because alert recovery does not restore budget already consumed.
 
+## Dashboard refresh slow-burn alert fires
+
+Confirm that `leapview:dashboard_refresh_reliability:burn_rate_30m` and `leapview:dashboard_refresh_reliability:burn_rate_6h` are both at least `6` for the affected `job` and `instance`, and that `leapview:dashboard_refresh_reliability:eligible_events_6h` is at least `60`. The warning alert has no additional hold duration: its 30-minute and 6-hour agreement is the persistence check. Missing, canceled-only, or lower-volume traffic cannot fire it.
+
+Inspect the bounded refresh outcome metric and application logs for sustained `partial`, `error`, or `other` outcomes. Correlate the degradation with deployments, serving-state changes, managed-data revisions, DuckDB health, executor saturation, queue depth, and dependency errors. If the critical fast-burn alert is also active, follow the fast-burn response first; Alertmanager warning inhibition remains operator-owned. Keep command, outcome, request, trace, principal, project, and resource dimensions in restricted diagnostic evidence rather than alert identity.
+
+Mitigate the underlying refresh failure through the normal deployment, data, or runtime recovery path. Do not change the 99% objective, reclassify outcomes, or exclude eligible traffic merely to silence the warning. Confirm recovery when the 30-minute burn rate falls below `6` and the alert resolves after the next rule evaluation. Continue to inspect the rolling 30-day error-budget recordings because recovery stops new excessive consumption but does not restore budget already spent.
+
 ## Recovery qualification freshness alerts fire
 
 Inspect the bounded ledger projection with the service stopped or from the same controlled maintenance environment used for other offline Admin commands:
