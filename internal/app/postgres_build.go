@@ -13,10 +13,15 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	"github.com/flidai/leapview/internal/analytics/catalogartifact"
+	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/gates"
+	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
@@ -360,10 +365,187 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		return fail(fmt.Errorf("build PostgreSQL delivery startup checker: %w", err))
 	}
 
-	// Native deployment has no legacy delivery reader/candidate builder yet;
-	// keep canonical refresh dispatch disabled while retaining durable refresh
-	// persistence. The HTTP module remains fully native and fail-closed.
-	deploymentConfig := deploymentmodule.Config{Persistence: graph.DeploymentPersistence, Production: true, Protected: true}
+	// Candidate planning inspects durable, non-secret binding evidence. Physical
+	// build opens validated credential leases only around materialization and
+	// releases them before qualification or generation admission.
+	candidateBindings, err := analytics.NewRuntimeBindingLeaser(analyticsmodule.RuntimeBindingLeaserConfig{
+		Authorize: func(ctx context.Context, principalID string, binding analyticsmodule.ConnectionTargetBinding) error {
+			resource, err := access.NewResourceRef(binding.ConnectionID, projectgraph.KindConnection)
+			if err != nil {
+				return err
+			}
+			allowed, err := authorizeProjectResources(ctx, accessBundle.Module, runtimeHost, principalID, binding.Scope.ProjectID, []access.ResourceRef{resource}, access.CapabilityResourceUse)
+			if err != nil {
+				return err
+			}
+			if !allowed {
+				return analyticsmodule.ErrConnectionBindingUnauthorized
+			}
+			return nil
+		},
+		Now: time.Now,
+		Audit: connectionRotationAuditRecorder{
+			record: accessAuditRecorder(accessBundle.Module),
+		},
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build native candidate binding authority: %w", err))
+	}
+	candidateConnections := candidateConnectionLeaser{leaser: candidateBindings, module: analytics}
+
+	physicalPoolID := strings.TrimSpace(cfg.DeliveryPhysicalPoolID)
+	compatibilityDigest := strings.TrimSpace(cfg.DeliveryPhysicalPoolCompatibilityDigest)
+	contractAuthority, err := appdeploymentpostgres.NewNativeBuildContractAuthority(appdeploymentpostgres.NativeBuildContractAuthorityConfig{
+		PhysicalPool: graph.PhysicalPool,
+		Catalog:      graph.DuckLakeControlLedger,
+		Runtime:      graph.DuckLakeControlLedger,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build native delivery contract authority: %w", err))
+	}
+	resolveDuckLakeConfig := func(resolveCtx context.Context) (ducklake.Config, string, error) {
+		contract, err := contractAuthority.Resolve(resolveCtx, appdeploymentpostgres.NativeBuildContractRequest{
+			PhysicalPoolID: physicalPoolID, CompatibilityDigest: compatibilityDigest,
+		})
+		if err != nil {
+			return ducklake.Config{}, "", err
+		}
+		credentialBootstrap, err := newPostgresDuckLakeCredentialBootstrap(cfg, contract.PoolContract, extensionSupply)
+		if err != nil {
+			return ducklake.Config{}, "", err
+		}
+		return ducklake.Config{
+			RootDir:             cfg.RuntimeDir(),
+			PhysicalPoolID:      contract.PhysicalPoolID,
+			SharedPool:          true,
+			Compatibility:       contract.PoolContract.Tuple,
+			PoolContract:        contract.PoolContract,
+			CredentialBootstrap: credentialBootstrap,
+			ExtensionAdmission:  extensionSupply,
+			MaxConnections:      cfg.WorkloadConfig().MaxRunning,
+			MemoryMaxBytes:      cfg.DuckDBNodeMemoryMaxBytes,
+			TempMaxBytes:        cfg.DuckDBNodeTempMaxBytes,
+			MaxThreads:          cfg.DuckDBNodeMaxThreads,
+			TempDir:             cfg.DuckDBTempDirPath(),
+			PostgresCatalog: &ducklake.PostgresCatalogConfig{
+				PhysicalPoolID: contract.PhysicalPoolID,
+				DuckLakeSecret: postgresDuckLakeSecret,
+				PostgresSecret: postgresConnectionSecret,
+				MetadataSchema: ducklake.MetadataSchemaForPool(contract.PhysicalPoolID),
+				Mode:           ducklake.PostgresCatalogWriter,
+			},
+		}, contract.Catalog.CatalogID, nil
+	}
+	buildOperations, ok := graph.DeploymentPersistence.Operations.(deploymentmodule.NativeBuildOperationAuthority)
+	if !ok {
+		return fail(errors.New("native delivery build operation authority is unavailable"))
+	}
+	attemptAdmission, err := appdeploymentpostgres.NewCandidateBuildAttemptAdmission(graph.DeploymentRepository, graph.DuckLakeControlLedger)
+	if err != nil {
+		return fail(err)
+	}
+	attemptTermination, err := appdeploymentpostgres.NewAttemptTermination(graph.DeploymentRepository, graph.DuckLakeControlLedger)
+	if err != nil {
+		return fail(err)
+	}
+	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger)
+	if err != nil {
+		return fail(err)
+	}
+	heartbeat, err := appdeploymentpostgres.NewNativeBuildHeartbeat(graph.DeploymentRepository, graph.DuckLakeControlLedger, buildOperations)
+	if err != nil {
+		return fail(err)
+	}
+	identity := buildinfo.Current()
+	runtimeVersion := identity.Version + ":" + identity.Revision
+	planCoordinator, err := appdeploymentpostgres.NewNativeCreatePlanCoordinator(appdeploymentpostgres.NativeCreatePlanConfig{
+		Repository:      graph.DeploymentRepository,
+		Sources:         nativeProjectSource.CandidateSourceReader,
+		Artifacts:       release,
+		BindingEvidence: candidateConnections,
+		RuntimeVersion:  runtimeVersion,
+		PolicyResolver: func(operation deployment.DeliveryOperationKind) (appruntimefactory.CandidateDeliveryPolicy, error) {
+			return appruntimefactory.CandidateDeliveryPolicy{
+				RequiresApproval: requiresDeliveryApproval(true, cfg.EvaluationMode, operation),
+				RollbackClass:    deployment.DeliveryServingSafe,
+				RetentionWindow:  cfg.DeliveryRollbackRetention().String(),
+			}, nil
+		},
+		Events:     graph.DeploymentPersistence.Events,
+		Audit:      graph.DeploymentPersistence.Audit,
+		Workflow:   graph.DeploymentPersistence.Workflow,
+		Operations: graph.DeploymentPersistence.Operations,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build native delivery plan coordinator: %w", err))
+	}
+	physicalFactory := appdeploymentpostgres.NativePhysicalBuildEnvironmentFactoryFunc(func(openCtx context.Context, marker catalogartifact.CommitMarker) (appdeploymentpostgres.NativePhysicalBuildEnvironment, error) {
+		duckLakeConfig, catalogID, err := resolveDuckLakeConfig(openCtx)
+		if err != nil {
+			return nil, err
+		}
+		return appdeploymentpostgres.DuckLakePhysicalBuildEnvironmentFactory{
+			Config: duckLakeConfig, CatalogID: catalogID,
+			MaterializerFactory: func(environment *ducklake.Environment) (analyticsmaterialization.Executor, error) {
+				return analytics.ProjectMaterializerForEnvironment(environment)
+			},
+		}.Open(openCtx, marker)
+	})
+	qualificationFactory := appdeploymentpostgres.NativeQualificationEnvironmentFactoryFunc(func(openCtx context.Context, request appdeploymentpostgres.NativeQualificationOpenRequest) (appdeploymentpostgres.NativeQualificationEnvironment, error) {
+		duckLakeConfig, catalogID, err := resolveDuckLakeConfig(openCtx)
+		if err != nil {
+			return nil, err
+		}
+		return appdeploymentpostgres.DuckLakeNativeQualificationEnvironmentFactory{
+			Config: duckLakeConfig, CatalogID: catalogID, CompatibilityAuthority: graph.DuckLakeControlLedger,
+		}.Open(openCtx, request)
+	})
+	markerFactory := appdeploymentpostgres.NativePhysicalMarkerResolverFactoryFunc(func(openCtx context.Context) (appdeploymentpostgres.NativePhysicalMarkerResolver, error) {
+		duckLakeConfig, _, err := resolveDuckLakeConfig(openCtx)
+		if err != nil {
+			return nil, err
+		}
+		return appdeploymentpostgres.DuckLakePhysicalMarkerResolverFactory{Config: duckLakeConfig}.OpenReadOnly(openCtx)
+	})
+	buildCoordinator, err := appdeploymentpostgres.NewNativeBuildCoordinator(appdeploymentpostgres.NativeBuildConfig{
+		Repository:            graph.DeploymentRepository,
+		Sources:               nativeProjectSource.CandidateSourceReader,
+		Artifacts:             release,
+		ArtifactRecovery:      release,
+		BindingEvidence:       candidateConnections,
+		Connections:           candidateConnections,
+		ContractAuthority:     contractAuthority,
+		PhysicalPoolID:        physicalPoolID,
+		CompatibilityDigest:   compatibilityDigest,
+		Operations:            buildOperations,
+		Heartbeat:             heartbeat,
+		AttemptAdmission:      attemptAdmission,
+		AttemptTermination:    attemptTermination,
+		GenerationAdmission:   generationAdmission,
+		PhysicalFactory:       physicalFactory,
+		ObservationWriter:     graph.DuckLakeControlLedger,
+		MarkerResolverFactory: markerFactory,
+		ObservationReader:     graph.DuckLakeControlLedger,
+		SnapshotFactory:       appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
+		QualificationFactory:  qualificationFactory,
+		RuntimeVersion:        runtimeVersion,
+		Bounds:                gates.Bounds{MaxRows: 10000, MaxQueries: 128, MaxMillis: 5000},
+		Events:                graph.DeploymentPersistence.Events,
+		Audit:                 graph.DeploymentPersistence.Audit,
+		Workflow:              graph.DeploymentPersistence.Workflow,
+	})
+	if err != nil {
+		return fail(fmt.Errorf("build native delivery build coordinator: %w", err))
+	}
+	nativeDelivery, err := appdeploymentpostgres.NewNativeDeliveryCoordinator(planCoordinator, buildCoordinator)
+	if err != nil {
+		return fail(fmt.Errorf("build native delivery coordinator: %w", err))
+	}
+
+	// The PostgreSQL module receives only the clean-slate native mutation port.
+	// Legacy delivery projection and candidate-builder paths remain absent.
+	// Refresh dispatch stays disabled until publication/activation is composed.
+	deploymentConfig := deploymentmodule.Config{Persistence: graph.DeploymentPersistence, Production: true, Protected: true, NativeDeliveryMutations: nativeDelivery}
 	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: false, RefreshSourceDigest: nil, CanonicalRefreshExecutor: nil}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {
