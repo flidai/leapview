@@ -955,6 +955,11 @@ tasks:
     cmds:
       - go list ./... | grep -v '/internal/app$' | xargs go test -p 2
 
+  test:cache:qualification:
+    desc: Race-qualify stable cache cutover, generation execution, and bounded cache observers
+    cmds:
+      - go test -race -tags=duckdb_arrow -p 1 ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -count=1
+
   test:go:app:0:
     cmds:
       - |
