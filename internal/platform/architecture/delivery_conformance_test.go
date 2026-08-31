@@ -97,10 +97,9 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 }
 
 // TestLEA414ProductionUsesSealedCanonicalPath keeps the cutover boundary
-// explicit. Legacy runtime factories and candidate preparation remain useful
-// fixtures for migration tests, but production composition must always select
-// the sealed delivery factory and source-only legacy synchronization cannot
-// create a physical candidate around that boundary.
+// explicit. Production composition must select the target-owned sealed
+// delivery factory (SQLite or native PostgreSQL), and source-only
+// synchronization cannot create a physical candidate around that boundary.
 func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 	root := repoRoot(t)
 	compositionBytes, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
@@ -121,32 +120,15 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Error("production composition does not require canonical delivery")
 	}
 
-	// No non-test production source may construct the snapshot-pinned factory.
-	// The legacy constructor is retained only for focused migration fixtures.
-	legacyFactoryCalls := []string{}
-	for _, relative := range []string{"internal", "cmd"} {
-		base := filepath.Join(root, relative)
-		if walkErr := filepath.Walk(base, func(path string, info os.FileInfo, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if info == nil || info.IsDir() || !strings.HasSuffix(path, ".go") || strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			body, readErr := os.ReadFile(path)
-			if readErr != nil {
-				return readErr
-			}
-			if strings.Contains(string(body), "runtimefactory.NewFactory(") {
-				legacyFactoryCalls = append(legacyFactoryCalls, path)
-			}
-			return nil
-		}); walkErr != nil {
-			t.Fatal(walkErr)
-		}
+	postgresBuildBytes, err := os.ReadFile(filepath.Join(root, "internal/app/postgres_build.go"))
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(legacyFactoryCalls) != 0 {
-		t.Fatalf("snapshot-pinned runtime factory is reachable from production: %v", legacyFactoryCalls)
+	postgresBuild := string(postgresBuildBytes)
+	for _, required := range []string{"NewPostgresSealedFactory", "RequireSealedCatalog: true", "ResolveSealedActiveState"} {
+		if !strings.Contains(postgresBuild, required) {
+			t.Errorf("native PostgreSQL composition missing sealed target contract %q", required)
+		}
 	}
 
 	syncBytes, err := os.ReadFile(filepath.Join(root, "internal/deployment/module/candidate_sync.go"))

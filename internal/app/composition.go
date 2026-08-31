@@ -1087,10 +1087,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		workloadmodule.ControlRequest("candidate.prepare"),
 	)
 	canonicalDeliveryRequired := true
-	// Sealed production serving uses delivery-owned catalog lease/GC state;
-	// the legacy serving-state snapshot retention worker must not inspect or
-	// delete the mutable process catalog on that path.
-	var retention *servingstatemodule.Retention
 	// Production serving resolves only the durable delivery pointer and exact
 	// sealed catalog object. The legacy process-wide catalog remains available
 	// to evaluation/tests, but is not opened in production.
@@ -1142,22 +1138,12 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 	}
 	runtimeHostModule, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{
-		States:             servingStateRepo,
-		ProjectID:          projectID,
-		Environment:        environment,
-		ReadClaimedProject: readClaim,
-		ManagedData:        managedDataResolver,
-		Authorization:      authorizationInstaller,
-		OnDrained: func(_ servingstatemodule.ID, _ int64) {
-			if retention == nil {
-				return
-			}
-			go func() {
-				if err := retention.Run(context.Background(), false); err != nil {
-					slog.Default().Warn("storage retention cleanup failed after runtime drain", "error", err)
-				}
-			}()
-		},
+		States:                   servingStateRepo,
+		ProjectID:                projectID,
+		Environment:              environment,
+		ReadClaimedProject:       readClaim,
+		ManagedData:              managedDataResolver,
+		Authorization:            authorizationInstaller,
 		Factory:                  servingFactory,
 		RequireSealedCatalog:     true,
 		ResolveSealedActiveState: sealedActiveState,
@@ -1837,7 +1823,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	routes, runtime, platformServices, policy, err := buildApplicationSurfaces(ctx, runtimeMetrics,
 		dataAssemblyInputs{
 			Database: store.SQLDB(), AuditRuntime: auditRuntime, PlatformHealth: store, AdminDatabase: store.SQLDB(),
-			ServingStateRepo: servingStateRepo, RefreshServingStateMutations: servingStateRepo, StorageRetention: retention,
+			ServingStateRepo: servingStateRepo, RefreshServingStateMutations: servingStateRepo,
 			AccessRepo: accessRepo,
 		},
 		capabilityAssemblyInputs{
