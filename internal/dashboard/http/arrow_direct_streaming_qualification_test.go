@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net"
 	stdhttp "net/http"
 	"net/http/httptest"
@@ -39,10 +40,13 @@ import (
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	"github.com/flidai/leapview/internal/dashboard"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	semanticapi "github.com/flidai/leapview/internal/dashboard/semanticapi"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
+	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/pkg/arrowresult"
@@ -52,6 +56,7 @@ import (
 const (
 	dashboardDirectArrowQualificationScope       = "fai-544-real-duckdb"
 	dashboardDirectArrowQualificationLargeVisual = "qualification_wide"
+	dashboardDirectArrowQualificationMixedVisual = "qualification_mixed"
 	dashboardDirectArrowQualificationMaxRows     = 50_000
 )
 
@@ -348,21 +353,140 @@ type dashboardDirectArrowQualificationFixture struct {
 	handler  Handler
 	governor dashboardBaselineGovernor
 	admitter *dashboardDirectArrowCapturingAdmitter
+	audit    *dashboardDirectArrowQualificationAuditRecorder
+	limits   dataquery.ResultLimits
 	server   *httptest.Server
 	client   *stdhttp.Client
 
 	physical     atomic.Int64
 	cacheOutcome atomic.Int64
 	handlers     atomic.Int64
+	queryMu      sync.Mutex
+	queries      []dataquery.Query
 	errorMu      sync.Mutex
 	lastError    error
-	largeVisual  visualizationdefinition.Definition
+}
+
+type dashboardDirectArrowQualificationAuditEvent struct {
+	projectID   projectgraph.ResourceID
+	surface     string
+	operation   string
+	principalID string
+	objectType  string
+	objectID    string
+	status      string
+}
+
+type dashboardDirectArrowQualificationAuditRecorder struct {
+	mu     sync.Mutex
+	events []dashboardDirectArrowQualificationAuditEvent
+}
+
+func (r *dashboardDirectArrowQualificationAuditRecorder) RecordDataQuery(_ context.Context, query dataquery.Query, result dataquery.Result) error {
+	r.mu.Lock()
+	r.events = append(r.events, dashboardDirectArrowQualificationAuditEvent{
+		projectID: query.ProjectID, surface: query.Surface, operation: query.Operation,
+		principalID: query.PrincipalID, objectType: query.ObjectType, objectID: query.ObjectID,
+		status: result.Status,
+	})
+	r.mu.Unlock()
+	return nil
+}
+
+func (r *dashboardDirectArrowQualificationAuditRecorder) reset() {
+	r.mu.Lock()
+	r.events = nil
+	r.mu.Unlock()
+}
+
+func (r *dashboardDirectArrowQualificationAuditRecorder) snapshot() []dashboardDirectArrowQualificationAuditEvent {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]dashboardDirectArrowQualificationAuditEvent(nil), r.events...)
+}
+
+type dashboardDirectArrowQualificationAuditedExecutor struct {
+	core *materializeruntime.Runtime
+}
+
+func (e dashboardDirectArrowQualificationAuditedExecutor) ExecuteDataQueryArrow(
+	ctx context.Context,
+	query dataquery.Query,
+	sink arrowquery.Sink,
+) (dataquery.Result, error) {
+	return dataquery.ExecuteAudited(ctx, query, func(ctx context.Context, governed dataquery.Query) (dataquery.Result, error) {
+		return e.core.ExecuteDataQueryArrow(ctx, governed, sink)
+	})
+}
+
+func dashboardDirectArrowQualificationMixedDefinition() (visualizationdefinition.Definition, error) {
+	fields := []visualizationir.VisualizationField{
+		{ID: "dimension_country", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeInteger, Nullable: false, Label: "Country"},
+		{ID: "metric_revenue", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: true, Label: "Revenue"},
+		{ID: "dimension_category", Role: visualizationir.VisualizationFieldRoleDimension, DataType: visualizationir.VisualizationDataTypeFloat, Nullable: false, Label: "Category"},
+		{ID: "metric_orders", Role: visualizationir.VisualizationFieldRoleMetric, DataType: visualizationir.VisualizationDataTypeDecimal, Nullable: false, Label: "Orders"},
+	}
+	columns := make([]visualizationir.TableVisualizationColumn, len(fields))
+	for index, field := range fields {
+		columns[index] = visualizationir.TableVisualizationColumn{
+			Field: visualizationir.VisualizationFieldRef{Dataset: "primary", Field: field.ID},
+			Label: field.Label, Formatting: []visualizationir.TableVisualizationFormattingRule{},
+		}
+	}
+	base := dashboardBaselineSpecBase(dashboardDirectArrowQualificationMixedVisual, fields)
+	spec := visualizationir.VisualizationSpec{Value: &visualizationir.TableVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "table", Columns: columns,
+		Presentation: visualizationir.GridVisualizationPresentation{RowHeight: 28, ShowHeader: true},
+	}}
+	return visualizationdefinition.New(dashboardDirectArrowQualificationMixedVisual, spec, visualizationdefinition.QueryBinding{
+		Kind: visualizationdefinition.QueryDetail, ResultShape: visualizationdefinition.ResultDetailWindow,
+		ModelID: dashboardBaselineModelID.String(), DatasetID: "primary",
+		Detail: &visualizationdefinition.DetailQueryBinding{
+			TableID: dashboardBaselineDatasetID,
+			Fields: []visualizationdefinition.FieldBinding{
+				{FieldID: "orders.field_00", Alias: "dimension_country"},
+				{FieldID: "value_metric", Alias: "metric_revenue"},
+				{FieldID: "orders.field_01", Alias: "dimension_category"},
+				{FieldID: "value_metric_b", Alias: "metric_orders"},
+			},
+			Limit: 1_000,
+		},
+	})
+}
+
+func dashboardDirectArrowQualificationDefinition(
+	definition *dashboardruntime.ProjectDefinition,
+	visuals ...visualizationdefinition.Definition,
+) (*dashboardruntime.ProjectDefinition, error) {
+	dashboards := definition.Dashboards()
+	report := dashboards[projectgraph.ResourceID(dashboardBaselineDashboardID)]
+	for _, visual := range visuals {
+		report.Visualizations[visual.ID] = visual
+		report.Pages[0].Visuals = append(report.Pages[0].Visuals, dashboard.PageVisual{ID: visual.ID, Kind: "visual", Visual: visual.ID})
+	}
+	dashboards[projectgraph.ResourceID(dashboardBaselineDashboardID)] = report
+	return dashboardruntime.NewProjectDefinition(
+		definition.ProjectID(), definition.Title(), definition.Description(), definition.Models(), dashboards,
+	)
 }
 
 func newDashboardDirectArrowQualificationFixture(tb testing.TB, rows, maxConnections, socketWriteBuffer int) *dashboardDirectArrowQualificationFixture {
 	tb.Helper()
 	model := dashboardBaselineModel()
 	definition, err := dashboardBaselineDefinition(model)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	large, err := dashboardBaselineDetailDefinition(dashboardDirectArrowQualificationLargeVisual, dashboardBaselineWideFields)
+	if err != nil {
+		tb.Fatal(err)
+	}
+	large.Query.Detail.Limit = dashboardDirectArrowQualificationMaxRows
+	mixed, err := dashboardDirectArrowQualificationMixedDefinition()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	definition, err = dashboardDirectArrowQualificationDefinition(definition, large, mixed)
 	if err != nil {
 		tb.Fatal(err)
 	}
@@ -393,21 +517,20 @@ func newDashboardDirectArrowQualificationFixture(tb testing.TB, rows, maxConnect
 		_ = database.Close()
 		tb.Fatal(err)
 	}
-	large, err := dashboardBaselineDetailDefinition(dashboardDirectArrowQualificationLargeVisual, dashboardBaselineWideFields)
-	if err != nil {
-		_ = service.Close()
-		_ = database.Close()
-		tb.Fatal(err)
-	}
-	large.Query.Detail.Limit = dashboardDirectArrowQualificationMaxRows
 	fixture := &dashboardDirectArrowQualificationFixture{
 		service: service, core: factory.core, database: database, model: model,
 		handler:  Handler{Metrics: service, ProjectID: dashboardBaselineProjectID},
 		governor: dashboardBaselineGovernor{policyFingerprint: dashboardBaselineDigest("fai-544-policy"), calls: &atomic.Int64{}},
-		admitter: &dashboardDirectArrowCapturingAdmitter{}, largeVisual: large,
+		admitter: &dashboardDirectArrowCapturingAdmitter{}, audit: &dashboardDirectArrowQualificationAuditRecorder{}, limits: factory.resultLimits,
+	}
+	fixture.governor.observe = func(_ context.Context, query dataquery.Query) {
+		fixture.queryMu.Lock()
+		fixture.queries = append(fixture.queries, query)
+		fixture.queryMu.Unlock()
 	}
 	router := chi.NewRouter()
 	router.Post("/api/dashboards/{dashboard}/pages/{page}/visuals/{visual}/data", fixture.handleControl)
+	router.Get("/qualification/compare/{lane}/{visual}", fixture.handleComparison)
 	router.Get("/qualification/native/{visual}", fixture.handleCandidate)
 	server := httptest.NewUnstartedServer(router)
 	server.Config.ErrorLog = log.New(io.Discard, "", 0)
@@ -437,66 +560,199 @@ func newDashboardDirectArrowQualificationFixture(tb testing.TB, rows, maxConnect
 func (f *dashboardDirectArrowQualificationFixture) qualificationContext(ctx context.Context) context.Context {
 	ctx = dataquery.WithGovernor(ctx, f.governor)
 	ctx = workload.WithAdmitter(ctx, f.admitter)
+	ctx = dataquery.WithAuditRecorder(ctx, f.audit)
 	ctx = dataquery.WithCacheOutcomeObserver(ctx, func(string) { f.cacheOutcome.Add(1) })
 	return dataquery.WithPhysicalQueryObserver(ctx, func(observation dataquery.PhysicalQueryObservation) {
 		f.physical.Add(int64(observation.Count))
 	})
 }
 
+func (f *dashboardDirectArrowQualificationFixture) qualificationRequestContext(ctx context.Context, visualID string) context.Context {
+	ctx = f.qualificationContext(ctx)
+	metadata := dataquery.MetadataFromContext(ctx)
+	metadata.ProjectID = dashboardBaselineProjectID
+	metadata.Surface = dataquery.SurfaceAPI
+	metadata.Operation = dataquery.OperationDashboardRows
+	metadata.PrincipalID = "fai-544-principal"
+	metadata.RequestID = "fai-544-qualification"
+	metadata.ObjectType = "dashboard_visual"
+	metadata.ObjectID = dashboardBaselineDashboardID + ":" + visualID
+	ctx = dataquery.WithMetadata(ctx, metadata)
+	return dataquery.WithIndependentResultBudget(ctx, f.limits)
+}
+
+type dashboardDirectArrowQualificationSetup struct {
+	visual visualizationdefinition.Definition
+	query  dataquery.Query
+	config semanticapi.DirectArrowExperimentConfig
+	offset int
+	limit  int
+}
+
 func (f *dashboardDirectArrowQualificationFixture) handleControl(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	f.handler.QueryDashboardVisualData(w, r.WithContext(f.qualificationContext(r.Context())))
+	ctx := f.qualificationRequestContext(r.Context(), chi.URLParam(r, "visual"))
+	f.handler.QueryDashboardVisualData(w, r.WithContext(ctx))
+}
+
+func (f *dashboardDirectArrowQualificationFixture) handleComparison(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	f.handleQualificationLane(chi.URLParam(r, "lane"), w, r)
 }
 
 func (f *dashboardDirectArrowQualificationFixture) handleCandidate(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	f.handleQualificationLane("candidate", w, r)
+}
+
+func (f *dashboardDirectArrowQualificationFixture) handleQualificationLane(lane string, w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	f.handlers.Add(1)
 	defer f.handlers.Add(-1)
+	setup, err := f.prepareQualificationRequest(r)
+	if err != nil {
+		stdhttp.Error(w, err.Error(), stdhttp.StatusBadRequest)
+		return
+	}
+	ctx := f.qualificationRequestContext(r.Context(), setup.visual.ID)
+
+	switch lane {
+	case "control":
+		err = f.writeQualificationControl(ctx, w, r, setup)
+	case "candidate":
+		executor := dashboardDirectArrowQualificationAuditedExecutor{core: f.core}
+		_, err = semanticapi.ExecuteDirectArrowExperiment(ctx, w, executor, setup.query, setup.config)
+	default:
+		err = fmt.Errorf("unknown qualification lane %q", lane)
+	}
+	f.errorMu.Lock()
+	f.lastError = err
+	f.errorMu.Unlock()
+}
+
+func (f *dashboardDirectArrowQualificationFixture) prepareQualificationRequest(r *stdhttp.Request) (dashboardDirectArrowQualificationSetup, error) {
 	limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
 	if err != nil || limit <= 0 {
-		stdhttp.Error(w, "invalid qualification limit", stdhttp.StatusBadRequest)
-		return
+		return dashboardDirectArrowQualificationSetup{}, errors.New("invalid qualification limit")
 	}
 	offset := 0
 	if token := r.URL.Query().Get("page_token"); token != "" {
 		offset, err = semanticapi.DecodeDirectArrowExperimentCursor(token, dashboardDirectArrowQualificationScope, dashboardBaselineSnapshot)
 		if err != nil {
-			stdhttp.Error(w, "invalid qualification cursor", stdhttp.StatusBadRequest)
-			return
+			return dashboardDirectArrowQualificationSetup{}, errors.New("invalid qualification cursor")
 		}
 	}
 	visualID := chi.URLParam(r, "visual")
-	visual := f.largeVisual
-	if visualID != dashboardDirectArrowQualificationLargeVisual {
-		resolved, resolveErr := f.service.Resolver().Resolve(projectgraph.ResourceID(dashboardBaselineDashboardID))
-		if resolveErr != nil {
-			stdhttp.Error(w, resolveErr.Error(), stdhttp.StatusInternalServerError)
-			return
-		}
-		var ok bool
-		visual, ok = resolved.Visualization(visualID)
-		if !ok {
-			stdhttp.Error(w, "qualification visual not found", stdhttp.StatusNotFound)
-			return
-		}
-	}
-	request, config, err := dashboardDirectArrowExperimentQuery(visual, f.model, nil, offset, limit, "a")
+	resolved, err := f.service.Resolver().Resolve(projectgraph.ResourceID(dashboardBaselineDashboardID))
 	if err != nil {
-		stdhttp.Error(w, err.Error(), stdhttp.StatusBadRequest)
-		return
+		return dashboardDirectArrowQualificationSetup{}, err
+	}
+	visual, ok := resolved.Visualization(visualID)
+	if !ok {
+		return dashboardDirectArrowQualificationSetup{}, errors.New("qualification visual not found")
+	}
+	filters := []dataquery.Filter(nil)
+	if value := r.URL.Query().Get("field_00_min"); value != "" {
+		minimum, parseErr := strconv.ParseInt(value, 10, 64)
+		if parseErr != nil {
+			return dashboardDirectArrowQualificationSetup{}, errors.New("invalid qualification filter")
+		}
+		filters = []dataquery.Filter{{
+			Field: "orders.field_00", Operator: "greater_than_or_equal", Values: []any{minimum},
+		}}
+	}
+	request, config, err := dashboardDirectArrowExperimentQuery(visual, f.model, filters, offset, limit, "a")
+	if err != nil {
+		return dashboardDirectArrowQualificationSetup{}, err
 	}
 	config.QueryID = "fai-544-direct-arrow"
 	config.CursorScope = dashboardDirectArrowQualificationScope
-	ctx := f.qualificationContext(r.Context())
-	metadata := dataquery.MetadataFromContext(ctx)
-	metadata.ProjectID = dashboardBaselineProjectID
-	metadata.Surface = dataquery.SurfaceAPI
-	metadata.RequestID = "fai-544-qualification"
-	metadata.ObjectType = "dashboard_visual"
-	metadata.ObjectID = dashboardBaselineDashboardID + ":" + visualID
-	ctx = dataquery.WithMetadata(ctx, metadata)
-	_, err = semanticapi.ExecuteDirectArrowExperiment(ctx, w, f.core, request, config)
-	f.errorMu.Lock()
-	f.lastError = err
-	f.errorMu.Unlock()
+	return dashboardDirectArrowQualificationSetup{visual: visual, query: request, config: config, offset: offset, limit: limit}, nil
+}
+
+func (f *dashboardDirectArrowQualificationFixture) writeQualificationControl(
+	ctx context.Context,
+	w stdhttp.ResponseWriter,
+	r *stdhttp.Request,
+	setup dashboardDirectArrowQualificationSetup,
+) error {
+	result, err := dataquery.ExecuteAudited(ctx, setup.query, f.core.ExecuteDataQuery)
+	if err != nil {
+		return err
+	}
+	rows := result.Rows
+	hasMore := len(rows) > setup.limit
+	if hasMore {
+		rows = rows[:setup.limit]
+	}
+	// The production dashboard runtime first detaches dataquery rows from the
+	// materialization result and then normalizes them into table-owned maps.
+	// Keep both current ownership boundaries in this post-query control adapter.
+	detached := make([]map[string]any, len(rows))
+	for rowIndex, row := range rows {
+		detached[rowIndex] = make(map[string]any, len(row))
+		for key, value := range row {
+			detached[rowIndex][key] = value
+		}
+	}
+	normalized := make([]map[string]any, len(detached))
+	for rowIndex, row := range detached {
+		normalized[rowIndex] = make(map[string]any, len(setup.config.Projection))
+		for _, alias := range setup.config.Projection {
+			normalized[rowIndex][alias] = dashboardDirectArrowQualificationNormalizeDBValue(row[alias])
+		}
+	}
+	columns := make([]dashboard.TableColumn, len(setup.config.Projection))
+	for index, alias := range setup.config.Projection {
+		columns[index] = dashboard.TableColumn{Key: alias, Label: setup.config.Labels[alias]}
+	}
+	sortState := dashboard.TableSort{}
+	if len(setup.query.Sort) > 0 {
+		sortState = dashboard.TableSort{Key: setup.query.Sort[0].Field, Direction: setup.query.Sort[0].Direction}
+	}
+	availableRows := setup.offset + len(normalized)
+	cardinality := dashboard.ExactCardinality(availableRows)
+	if hasMore || setup.offset > 0 {
+		availableRows += 1
+		cardinality = dashboard.LowerBoundCardinality(availableRows)
+	}
+	base, err := visualizationir.SpecificationBase(setup.visual.Spec)
+	if err != nil {
+		return err
+	}
+	style := dashboard.TableStyle{}.WithDefaults()
+	table := dashboard.Table{
+		Version: 2, Kind: "data_table", Title: base.Title, Style: style,
+		Selection: []dashboard.InteractionSelectionEntry{}, Columns: columns,
+		Cardinality: cardinality, AvailableRows: availableRows, IsCapped: hasMore,
+		RowCap: int(base.DataBudget.MaxRows), ChunkSize: dashboard.TableChunkSize, RowHeight: style.RowHeight(),
+		Sort: sortState, Blocks: map[string]dashboard.TableBlock{
+			"a": {Start: setup.offset, Sort: sortState, Rows: normalized},
+		},
+	}
+	envelope, err := visualizationruntime.WindowEnvelopeFromDefinition(setup.visual, table, 1, 0)
+	if err != nil {
+		return err
+	}
+	rowset, err := dashboardVisualizationRowset(envelope, "a", setup.offset, setup.limit, setup.config.CursorScope, setup.config.Snapshot)
+	if err != nil {
+		return err
+	}
+	writeDashboardTableRowset(w, r, rowset, envelope)
+	return nil
+}
+
+func dashboardDirectArrowQualificationNormalizeDBValue(value any) any {
+	switch typed := value.(type) {
+	case nil:
+		return nil
+	case []byte:
+		return string(typed)
+	case time.Time:
+		return typed.Format("2006-01-02")
+	case float32:
+		return math.Round(float64(typed)*100) / 100
+	case float64:
+		return math.Round(typed*100) / 100
+	default:
+		return typed
+	}
 }
 
 func (f *dashboardDirectArrowQualificationFixture) resetStats() {
@@ -509,6 +765,10 @@ func (f *dashboardDirectArrowQualificationFixture) resetStats() {
 	f.admitter.mu.Lock()
 	f.admitter.requests = nil
 	f.admitter.mu.Unlock()
+	f.audit.reset()
+	f.queryMu.Lock()
+	f.queries = nil
+	f.queryMu.Unlock()
 	f.errorMu.Lock()
 	f.lastError = nil
 	f.errorMu.Unlock()
@@ -518,6 +778,12 @@ func (f *dashboardDirectArrowQualificationFixture) candidateError() error {
 	f.errorMu.Lock()
 	defer f.errorMu.Unlock()
 	return f.lastError
+}
+
+func (f *dashboardDirectArrowQualificationFixture) governedQueries() []dataquery.Query {
+	f.queryMu.Lock()
+	defer f.queryMu.Unlock()
+	return append([]dataquery.Query(nil), f.queries...)
 }
 
 type dashboardDirectArrowQualificationResponse struct {
@@ -559,6 +825,24 @@ func (f *dashboardDirectArrowQualificationFixture) requestCandidate(ctx context.
 	return f.do(request)
 }
 
+func (f *dashboardDirectArrowQualificationFixture) requestComparison(ctx context.Context, lane, visual string, limit int, pageToken string) (dashboardDirectArrowQualificationResponse, error) {
+	query := url.Values{
+		"limit":        []string{strconv.Itoa(limit)},
+		"field_00_min": []string{"0"},
+	}
+	if pageToken != "" {
+		query.Set("page_token", pageToken)
+	}
+	request, err := stdhttp.NewRequestWithContext(ctx, stdhttp.MethodGet, f.server.URL+"/qualification/compare/"+lane+"/"+visual+"?"+query.Encode(), nil)
+	if err != nil {
+		return dashboardDirectArrowQualificationResponse{}, err
+	}
+	request.Header.Set("Accept", dashboardArrowMediaType)
+	request.Header.Set("X-Serving-Snapshot", dashboardBaselineSnapshot)
+	request.Header.Set("X-Request-ID", "fai-544-comparison")
+	return f.do(request)
+}
+
 func (f *dashboardDirectArrowQualificationFixture) do(request *stdhttp.Request) (dashboardDirectArrowQualificationResponse, error) {
 	started := time.Now()
 	response, err := f.client.Do(request)
@@ -597,36 +881,63 @@ func TestDashboardDirectArrowQualificationRealDuckDBHTTPParity(t *testing.T) {
 	}{
 		{name: "narrow", visual: "detail_narrow", columns: dashboardBaselineNarrowFields},
 		{name: "wide", visual: "detail_wide", columns: dashboardBaselineWideFields},
+		{name: "mixed", visual: dashboardDirectArrowQualificationMixedVisual, columns: 4},
 	} {
 		t.Run(workload.name, func(t *testing.T) {
 			const rows = 999
 			fixture := newDashboardDirectArrowQualificationFixture(t, rows, 2, 64<<10)
 			fixture.resetStats()
 			ownershipBefore := arrowresult.Stats()
-			control, err := fixture.requestControl(t.Context(), workload.visual, rows+1, "")
+			productionControl, err := fixture.requestControl(t.Context(), workload.visual, rows+1, "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			candidate, err := fixture.requestCandidate(t.Context(), workload.visual, rows, "")
+			control, err := fixture.requestComparison(t.Context(), "control", workload.visual, rows, "")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if control.status != stdhttp.StatusOK || candidate.status != stdhttp.StatusOK {
-				t.Fatalf("control/candidate status = %d/%d", control.status, candidate.status)
+			candidate, err := fixture.requestComparison(t.Context(), "candidate", workload.visual, rows, "")
+			if err != nil {
+				t.Fatal(err)
 			}
+			if productionControl.status != stdhttp.StatusOK || control.status != stdhttp.StatusOK || candidate.status != stdhttp.StatusOK {
+				t.Fatalf("production/shared/candidate status = %d/%d/%d", productionControl.status, control.status, candidate.status)
+			}
+			assertDashboardDirectArrowQualificationLegacyEquivalent(t, productionControl.body, control.body, workload.columns)
 			assertDashboardDirectArrowQualificationEquivalent(t, control.body, candidate.body, workload.columns)
+			if workload.visual == dashboardDirectArrowQualificationMixedVisual {
+				assertDashboardDirectArrowQualificationMixed(t, candidate.body, rows)
+			}
 			if control.header.Get("X-Next-Cursor") != "" || candidate.trailer.Get("X-Next-Cursor") != "" {
 				t.Fatalf("short result cursors control/candidate = %q/%q", control.header.Get("X-Next-Cursor"), candidate.trailer.Get("X-Next-Cursor"))
 			}
 			stats := fixture.database.stats()
-			if stats.queries != 2 || fixture.physical.Load() != 2 || fixture.cacheOutcome.Load() != 0 {
+			if stats.queries != 3 || fixture.physical.Load() != 3 || fixture.cacheOutcome.Load() != 0 {
 				t.Fatalf("control/candidate physical/cache observations = database %d physical %d cache %d", stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load())
 			}
-			if fixture.governor.calls.Load() != 2 || len(fixture.admitter.snapshot()) != 2 {
+			if fixture.governor.calls.Load() != 3 || len(fixture.admitter.snapshot()) != 3 {
 				t.Fatalf("control/candidate governance/admission calls = %d/%d", fixture.governor.calls.Load(), len(fixture.admitter.snapshot()))
 			}
-			if stats.active != 0 || len(stats.leaseDurations) != 2 || len(stats.queryDurations) != 2 {
+			queries := fixture.governedQueries()
+			if len(queries) != 3 || !reflect.DeepEqual(queries[1], queries[2]) {
+				t.Fatalf("shared control/candidate governed queries differ: %#v / %#v", queries, queries)
+			}
+			if len(queries[1].Filters) != 1 || queries[1].Filters[0].Operator != "greater_than_or_equal" {
+				t.Fatalf("shared normalized filter = %#v", queries[1].Filters)
+			}
+			admissions := fixture.admitter.snapshot()
+			if !reflect.DeepEqual(admissions[1], admissions[2]) {
+				t.Fatalf("shared control/candidate admission requests differ: %#v / %#v", admissions[1], admissions[2])
+			}
+			audits := fixture.audit.snapshot()
+			if len(audits) != 3 || !reflect.DeepEqual(audits[1], audits[2]) || audits[1].status != dataquery.StatusSuccess {
+				t.Fatalf("shared control/candidate audit events differ: %#v", audits)
+			}
+			if stats.active != 0 || len(stats.leaseDurations) != 3 || len(stats.queryDurations) != 3 {
 				t.Fatalf("connection lifecycle after parity request = %#v", stats)
+			}
+			if !reflect.DeepEqual(stats.physicalSchemas[1], stats.physicalSchemas[2]) {
+				t.Fatalf("shared control/candidate physical schemas differ: %#v / %#v", stats.physicalSchemas[1], stats.physicalSchemas[2])
 			}
 			if ownershipAfter := arrowresult.Stats(); ownershipAfter != ownershipBefore {
 				t.Fatalf("direct HTTP comparison changed retained Arrow ownership: before=%#v after=%#v", ownershipBefore, ownershipAfter)
@@ -913,10 +1224,17 @@ func BenchmarkDashboardDirectArrowQualification(b *testing.B) {
 	}{
 		{name: "real_narrow_rows_999", visual: "detail_narrow", columns: dashboardBaselineNarrowFields},
 		{name: "real_wide_rows_999", visual: "detail_wide", columns: dashboardBaselineWideFields},
+		{name: "real_mixed_rows_999", visual: dashboardDirectArrowQualificationMixedVisual, columns: 4},
 	} {
 		b.Run(workload.name, func(b *testing.B) {
-			for _, lane := range []string{"control_api_direct_http", "candidate_native_v1_http"} {
-				b.Run(lane, func(b *testing.B) {
+			for _, lane := range []struct {
+				name string
+				id   string
+			}{
+				{name: "control_api_direct_post_query_http", id: "control"},
+				{name: "candidate_native_v1_post_query_http", id: "candidate"},
+			} {
+				b.Run(lane.name, func(b *testing.B) {
 					fixture := newDashboardDirectArrowQualificationFixture(b, 999, 2, 64<<10)
 					fixture.resetStats()
 					ownershipBefore := arrowresult.Stats()
@@ -928,15 +1246,9 @@ func BenchmarkDashboardDirectArrowQualification(b *testing.B) {
 					b.ReportAllocs()
 					b.ResetTimer()
 					for range b.N {
-						var response dashboardDirectArrowQualificationResponse
-						var err error
-						if lane == "control_api_direct_http" {
-							response, err = fixture.requestControl(context.Background(), workload.visual, 1_000, "")
-						} else {
-							response, err = fixture.requestCandidate(context.Background(), workload.visual, 999, "")
-						}
+						response, err := fixture.requestComparison(context.Background(), lane.id, workload.visual, 999, "")
 						if err != nil || response.status != stdhttp.StatusOK {
-							b.Fatalf("%s response status/error = %d/%v", lane, response.status, err)
+							b.Fatalf("%s response status/error = %d/%v", lane.name, response.status, err)
 						}
 						durations = append(durations, response.duration)
 						totalBytes += int64(len(response.body))
@@ -947,13 +1259,16 @@ func BenchmarkDashboardDirectArrowQualification(b *testing.B) {
 					runtime.ReadMemStats(&memoryAfter)
 					stats := fixture.database.stats()
 					if stats.queries != int64(b.N) || fixture.physical.Load() != int64(b.N) || fixture.cacheOutcome.Load() != 0 || stats.active != 0 {
-						b.Fatalf("%s invalid query/cache/lifecycle stats: database=%d physical=%d cache=%d active=%d", lane, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active)
+						b.Fatalf("%s invalid query/cache/lifecycle stats: database=%d physical=%d cache=%d active=%d", lane.name, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active)
 					}
 					if fixture.governor.calls.Load() != int64(b.N) || len(fixture.admitter.snapshot()) != b.N {
-						b.Fatalf("%s governance/admission calls = %d/%d, want %d", lane, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), b.N)
+						b.Fatalf("%s governance/admission calls = %d/%d, want %d", lane.name, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), b.N)
+					}
+					if len(fixture.audit.snapshot()) != b.N {
+						b.Fatalf("%s audit calls = %d, want %d", lane.name, len(fixture.audit.snapshot()), b.N)
 					}
 					if ownershipAfter := arrowresult.Stats(); ownershipAfter != ownershipBefore {
-						b.Fatalf("%s changed retained Arrow ownership: before=%#v after=%#v", lane, ownershipBefore, ownershipAfter)
+						b.Fatalf("%s changed retained Arrow ownership: before=%#v after=%#v", lane.name, ownershipBefore, ownershipAfter)
 					}
 					sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 					operations := float64(b.N)
@@ -978,8 +1293,14 @@ func BenchmarkDashboardDirectArrowQualification(b *testing.B) {
 func BenchmarkDashboardDirectArrowQualificationConcurrency(b *testing.B) {
 	for _, users := range []int{1, 4, 8} {
 		b.Run("real_wide_rows_999/users_"+strconv.Itoa(users), func(b *testing.B) {
-			for _, lane := range []string{"control_api_direct_http", "candidate_native_v1_http"} {
-				b.Run(lane, func(b *testing.B) {
+			for _, lane := range []struct {
+				name string
+				id   string
+			}{
+				{name: "control_api_direct_post_query_http", id: "control"},
+				{name: "candidate_native_v1_post_query_http", id: "candidate"},
+			} {
+				b.Run(lane.name, func(b *testing.B) {
 					fixture := newDashboardDirectArrowQualificationFixture(b, 999, users, 64<<10)
 					fixture.resetStats()
 					durations := make([]time.Duration, 0, b.N*users)
@@ -995,13 +1316,7 @@ func BenchmarkDashboardDirectArrowQualificationConcurrency(b *testing.B) {
 						for range users {
 							go func() {
 								<-start
-								var response dashboardDirectArrowQualificationResponse
-								var err error
-								if lane == "control_api_direct_http" {
-									response, err = fixture.requestControl(context.Background(), "detail_wide", 1_000, "")
-								} else {
-									response, err = fixture.requestCandidate(context.Background(), "detail_wide", 999, "")
-								}
+								response, err := fixture.requestComparison(context.Background(), lane.id, "detail_wide", 999, "")
 								if err == nil {
 									response.duration = time.Since(batchStarted)
 								}
@@ -1015,7 +1330,7 @@ func BenchmarkDashboardDirectArrowQualificationConcurrency(b *testing.B) {
 						for range users {
 							response := <-results
 							if err := <-errorsOut; err != nil || response.status != stdhttp.StatusOK {
-								b.Fatalf("%s concurrent response status/error = %d/%v", lane, response.status, err)
+								b.Fatalf("%s concurrent response status/error = %d/%v", lane.name, response.status, err)
 							}
 							durations = append(durations, response.duration)
 							totalBytes += int64(len(response.body))
@@ -1025,10 +1340,13 @@ func BenchmarkDashboardDirectArrowQualificationConcurrency(b *testing.B) {
 					requests := int64(b.N * users)
 					stats := fixture.database.stats()
 					if stats.queries != requests || fixture.physical.Load() != requests || fixture.cacheOutcome.Load() != 0 || stats.active != 0 {
-						b.Fatalf("%s concurrent query/cache/lifecycle stats = database %d physical %d cache %d active %d, want %d requests", lane, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active, requests)
+						b.Fatalf("%s concurrent query/cache/lifecycle stats = database %d physical %d cache %d active %d, want %d requests", lane.name, stats.queries, fixture.physical.Load(), fixture.cacheOutcome.Load(), stats.active, requests)
 					}
 					if fixture.governor.calls.Load() != requests || int64(len(fixture.admitter.snapshot())) != requests {
-						b.Fatalf("%s concurrent governance/admission calls = %d/%d, want %d", lane, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), requests)
+						b.Fatalf("%s concurrent governance/admission calls = %d/%d, want %d", lane.name, fixture.governor.calls.Load(), len(fixture.admitter.snapshot()), requests)
+					}
+					if int64(len(fixture.audit.snapshot())) != requests {
+						b.Fatalf("%s concurrent audit calls = %d, want %d", lane.name, len(fixture.audit.snapshot()), requests)
 					}
 					sort.Slice(durations, func(i, j int) bool { return durations[i] < durations[j] })
 					elapsed := b.Elapsed()
@@ -1134,6 +1452,145 @@ func assertDashboardDirectArrowQualificationValues(t testing.TB, record arrow.Re
 		if !values.IsNull(position) || values.IsNull(position-1) || values.IsNull(position+1) {
 			t.Fatalf("qualification column %d null position around row %d = %v/%v/%v", column, position, values.IsNull(position-1), values.IsNull(position), values.IsNull(position+1))
 		}
+	}
+}
+
+func assertDashboardDirectArrowQualificationLegacyEquivalent(t testing.TB, productionPayload, sharedPayload []byte, columns int) {
+	t.Helper()
+	productionReader, err := ipc.NewReader(bytes.NewReader(productionPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer productionReader.Release()
+	sharedReader, err := ipc.NewReader(bytes.NewReader(sharedPayload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer sharedReader.Release()
+	if productionReader.Schema().NumFields() != columns || sharedReader.Schema().NumFields() != columns {
+		t.Fatalf("production/shared legacy fields = %d/%d, want %d", productionReader.Schema().NumFields(), sharedReader.Schema().NumFields(), columns)
+	}
+	for index := 0; index < columns; index++ {
+		productionField := productionReader.Schema().Field(index)
+		sharedField := sharedReader.Schema().Field(index)
+		if productionField.Name != sharedField.Name || productionField.Type.ID() != arrow.STRING || sharedField.Type.ID() != arrow.STRING {
+			t.Fatalf("production/shared legacy field %d = %#v/%#v", index, productionField, sharedField)
+		}
+	}
+	decode := func(reader *ipc.Reader) [][]string {
+		values := make([][]string, columns)
+		for reader.Next() {
+			record := reader.Record()
+			for column := 0; column < columns; column++ {
+				array := record.Column(column).(*array.String)
+				for row := 0; row < int(record.NumRows()); row++ {
+					values[column] = append(values[column], array.Value(row))
+				}
+			}
+		}
+		if reader.Err() != nil {
+			t.Fatal(reader.Err())
+		}
+		return values
+	}
+	productionValues := decode(productionReader)
+	sharedValues := decode(sharedReader)
+	if !reflect.DeepEqual(productionValues, sharedValues) {
+		t.Fatal("shared post-query control does not match the current api_direct Arrow transformation")
+	}
+}
+
+func assertDashboardDirectArrowQualificationMixed(t testing.TB, payload []byte, rows int) {
+	t.Helper()
+	reader, err := ipc.NewReader(bytes.NewReader(payload))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reader.Release()
+	wantNames := []string{"dimension_country", "metric_revenue", "dimension_category", "metric_orders"}
+	wantTypes := []arrow.Type{arrow.INT64, arrow.DECIMAL128, arrow.FLOAT64, arrow.DECIMAL128}
+	if reader.Schema().NumFields() != len(wantNames) {
+		t.Fatalf("mixed native-v1 fields = %d, want %d", reader.Schema().NumFields(), len(wantNames))
+	}
+	if err := validateDashboardNativeArrowMetadata(reader.Schema().Metadata(), dashboardNativeArrowSchemaMetadataAllowlist); err != nil {
+		t.Fatal(err)
+	}
+	wantSchemaMetadata := map[string]string{
+		"leapview.arrow_contract":               dashboardNativeArrowContract,
+		"leapview.query_id":                     "fai-544-direct-arrow",
+		"leapview.serving_snapshot":             dashboardBaselineSnapshot,
+		"leapview.visualization_schema_version": dashboardNativeArrowSchemaVersion,
+		"leapview.visualization_data_revision":  "1",
+	}
+	for key, want := range wantSchemaMetadata {
+		if got, ok := reader.Schema().Metadata().GetValue(key); !ok || got != want {
+			t.Fatalf("mixed native-v1 schema metadata %q = (%q, %v), want %q", key, got, ok, want)
+		}
+	}
+	if revision, ok := reader.Schema().Metadata().GetValue("leapview.visualization_spec_revision"); !ok || revision == "" {
+		t.Fatal("mixed native-v1 schema omitted the visualization spec revision")
+	}
+	wantLogicalTypes := []string{"integer", "decimal", "float", "decimal"}
+	wantLabels := []string{"Country", "Revenue", "Category", "Orders"}
+	for index, name := range wantNames {
+		field := reader.Schema().Field(index)
+		if field.Name != name || field.Type.ID() != wantTypes[index] {
+			t.Fatalf("mixed native-v1 field %d = %s %s, want %s %s", index, field.Name, field.Type, name, wantTypes[index])
+		}
+		if err := validateDashboardNativeArrowMetadata(field.Metadata, dashboardNativeArrowFieldMetadataAllowlist); err != nil {
+			t.Fatalf("mixed native-v1 field %q metadata: %v", name, err)
+		}
+		if logicalType, ok := field.Metadata.GetValue("leapview.logical_type"); !ok || logicalType != wantLogicalTypes[index] {
+			t.Fatalf("mixed native-v1 field %q logical type = (%q, %v), want %q", name, logicalType, ok, wantLogicalTypes[index])
+		}
+		if label, ok := field.Metadata.GetValue("display.label"); !ok || label != wantLabels[index] {
+			t.Fatalf("mixed native-v1 field %q label = (%q, %v), want %q", name, label, ok, wantLabels[index])
+		}
+		if field.Metadata.Len() != 2 {
+			t.Fatalf("mixed native-v1 field %q metadata count = %d, want 2", name, field.Metadata.Len())
+		}
+	}
+	for _, index := range []int{1, 3} {
+		decimalType, ok := reader.Schema().Field(index).Type.(*arrow.Decimal128Type)
+		if !ok || decimalType.Precision != 38 || decimalType.Scale != 3 {
+			t.Fatalf("mixed decimal field %d = %v", index, reader.Schema().Field(index).Type)
+		}
+	}
+	seen := 0
+	for reader.Next() {
+		record := reader.Record()
+		countries := record.Column(0).(*array.Int64)
+		revenue := record.Column(1).(*array.Decimal128)
+		categories := record.Column(2).(*array.Float64)
+		orders := record.Column(3).(*array.Decimal128)
+		for row := 0; row < int(record.NumRows()); row++ {
+			sourceRow := int64(rows - 1 - seen)
+			if countries.IsNull(row) || countries.Value(row) != sourceRow*37+1 {
+				t.Fatalf("mixed country row %d value/null = %d/%v", seen, countries.Value(row), countries.IsNull(row))
+			}
+			wantRevenueNull := (sourceRow+6)%13 == 0
+			if revenue.IsNull(row) != wantRevenueNull {
+				t.Fatalf("mixed revenue row %d null = %v, want %v", seen, revenue.IsNull(row), wantRevenueNull)
+			}
+			if !wantRevenueNull {
+				want := strconv.FormatInt(sourceRow*37+7, 10) + ".000"
+				if got := revenue.Value(row).ToString(3); got != want {
+					t.Fatalf("mixed revenue row %d = %s, want %s", seen, got, want)
+				}
+			}
+			wantCategory := float64(sourceRow*37+2)/7.0 + 0.125
+			if categories.IsNull(row) || categories.Value(row) != wantCategory {
+				t.Fatalf("mixed category row %d value/null = %v/%v", seen, categories.Value(row), categories.IsNull(row))
+			}
+			wantOrders := strconv.FormatInt(sourceRow*37+16, 10) + ".000"
+			if orders.IsNull(row) || orders.Value(row).ToString(3) != wantOrders {
+				t.Fatalf("mixed orders row %d value/null = %s/%v, want %s/false", seen, orders.Value(row).ToString(3), orders.IsNull(row), wantOrders)
+			}
+			seen++
+		}
+	}
+	if reader.Err() != nil || seen != rows {
+		t.Fatalf("mixed native-v1 rows/error = %d/%v, want %d", seen, reader.Err(), rows)
 	}
 }
 
