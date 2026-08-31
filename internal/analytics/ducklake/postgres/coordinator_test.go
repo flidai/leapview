@@ -195,6 +195,105 @@ func TestCanonicalDataPathMatchesDuckLakeNormalization(t *testing.T) {
 	}
 }
 
+func TestProvisionCatalogMaintenancePrivilegesConformance(t *testing.T) {
+	h := postgrestest.Start(t)
+	catalogRole := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_maintenance_owner", Password: "catalog-secret", Login: true})
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_maintenance_runtime", Password: "runtime-secret", Login: true})
+	maintenanceRole := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_maintenance", Password: "maintenance-secret", Login: true})
+	catalogDB := h.NewDatabase(t, "ducklake_maintenance_privilege_test")
+	controlDB := h.NewDatabase(t, "ducklake_maintenance_control_test")
+	catalogAdmin, err := pgxpool.New(t.Context(), catalogDB.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(catalogAdmin.Close)
+	if _, err := catalogAdmin.Exec(t.Context(), `REVOKE ALL ON DATABASE ducklake_maintenance_privilege_test FROM PUBLIC`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogAdmin.Exec(t.Context(), `GRANT CONNECT, CREATE ON DATABASE ducklake_maintenance_privilege_test TO ducklake_maintenance_owner`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogAdmin.Exec(t.Context(), `GRANT CONNECT ON DATABASE ducklake_maintenance_privilege_test TO ducklake_maintenance_runtime, ducklake_maintenance`); err != nil {
+		t.Fatal(err)
+	}
+	controlAdmin, err := pgxpool.New(t.Context(), controlDB.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controlAdmin.Close)
+	if _, err := controlAdmin.Exec(t.Context(), `REVOKE ALL ON DATABASE ducklake_maintenance_control_test FROM PUBLIC`); err != nil {
+		t.Fatal(err)
+	}
+	catalogOwnerDB, err := pgxpool.New(t.Context(), catalogDB.URL(catalogRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(catalogOwnerDB.Close)
+	maintenanceDB, err := pgxpool.New(t.Context(), catalogDB.URL(maintenanceRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(maintenanceDB.Close)
+	runtimeDB, err := pgxpool.New(t.Context(), catalogDB.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	metadataSchema := ducklake.MetadataSchemaForPool("maintenance-conformance")
+	if err := EnsureCatalogMetadataSchema(t.Context(), catalogOwnerDB, metadataSchema); err != nil {
+		t.Fatal(err)
+	}
+	if err := ProvisionCatalogMaintenancePrivileges(t.Context(), catalogOwnerDB, metadataSchema, maintenanceRole.Name); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogOwnerDB.Exec(t.Context(), `CREATE TABLE "`+metadataSchema+`".probe (id integer)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogOwnerDB.Exec(t.Context(), `CREATE SEQUENCE "`+metadataSchema+`".probe_seq`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `INSERT INTO "`+metadataSchema+`".probe VALUES (nextval('"`+metadataSchema+`".probe_seq'))`); err != nil {
+		t.Fatalf("maintenance metadata DML rejected: %v", err)
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `UPDATE "`+metadataSchema+`".probe SET id = id + 1`); err != nil {
+		t.Fatalf("maintenance metadata UPDATE rejected: %v", err)
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `DELETE FROM "`+metadataSchema+`".probe`); err != nil {
+		t.Fatalf("maintenance metadata DELETE rejected: %v", err)
+	}
+	for name, statement := range map[string]string{
+		"create table": `CREATE TABLE "` + metadataSchema + `".forbidden (id integer)`,
+		"alter table":  `ALTER TABLE "` + metadataSchema + `".probe ADD COLUMN forbidden integer`,
+		"drop table":   `DROP TABLE "` + metadataSchema + `".probe`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := maintenanceDB.Exec(t.Context(), statement); err == nil {
+				t.Fatalf("maintenance role unexpectedly executed %s", name)
+			}
+		})
+	}
+	if _, err := catalogAdmin.Exec(t.Context(), `CREATE SCHEMA other_schema`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := catalogAdmin.Exec(t.Context(), `CREATE TABLE other_schema.secret (value text)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenanceDB.Exec(t.Context(), `SELECT * FROM other_schema.secret`); err == nil {
+		t.Fatal("maintenance role unexpectedly accessed another schema")
+	}
+	if err := runtimeDB.Ping(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	controlMaintenanceDB, err := pgxpool.New(t.Context(), controlDB.URL(maintenanceRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := controlMaintenanceDB.Ping(t.Context()); err == nil {
+		t.Fatal("maintenance role unexpectedly connected to control database")
+	}
+	controlMaintenanceDB.Close()
+}
+
 func TestValidateDatabaseIdentityRejectsSwappedCredentials(t *testing.T) {
 	identity := DatabaseIdentity{Database: DefaultControlDatabase, User: DefaultControlUpgradeCoordinatorRole, SessionUser: DefaultControlUpgradeCoordinatorRole}
 	if err := ValidateDatabaseIdentity(identity, DefaultControlDatabase, DefaultControlUpgradeCoordinatorRole); err != nil {

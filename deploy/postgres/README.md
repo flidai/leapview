@@ -9,10 +9,10 @@ service.
 The loopback-only service uses the pinned PostgreSQL 18 image and initializes
 two databases in one local server:
 
-| Database | Owner | Runtime role | Migration role |
+| Database | Owner | Runtime role | Privileged operation / maintenance role |
 | --- | --- | --- | --- |
 | `leapview_control` | `leapview_control_owner` | `leapview_control_runtime` (plus `leapview_control_readonly`) | `leapview_control_migrator` (control migrations) and `leapview_control_upgrade_coordinator` (guarded DuckLake authority) |
-| `leapview_ducklake` | `leapview_ducklake_owner` | `leapview_ducklake_runtime` | `leapview_ducklake_migrator` |
+| `leapview_ducklake` | `leapview_ducklake_owner` | `leapview_ducklake_runtime` | `leapview_ducklake_migrator` and `leapview_ducklake_maintenance` |
 
 Owner roles cannot log in. Runtime roles can connect only to their own
 database, and the catalog migration role receives owner membership only in
@@ -34,6 +34,10 @@ separate `leapview_ducklake_migrator` credential.
 That migrator alone has narrowly scoped `CREATE` on the DuckLake database so
 an explicit bootstrap can precreate the hash-qualified per-pool metadata
 schema; the runtime role has no database or schema `CREATE` capability.
+The separately authenticated `leapview_ducklake_maintenance` login has only
+metadata DML/sequence privileges needed by bounded snapshot expiry and file
+cleanup calls. It has no database/schema `CREATE` privilege and is never a
+member of `leapview_ducklake_owner` or reused by runtime/migration paths.
 The initialization script revokes default `PUBLIC` database/schema access.
 Capability baseline migrations own control-plane schemas and their table
 grants; provisioning creates only the exact DuckLake catalog schema contract

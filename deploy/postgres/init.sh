@@ -11,6 +11,7 @@ control_migrator_password="${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapvi
 control_upgrade_coordinator_password="${LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD:-leapview-local-control-upgrade-coordinator}"
 control_maintenance_password="${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:-leapview-local-control-maintenance}"
 ducklake_migrator_password="${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}"
+ducklake_maintenance_password="${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:-leapview-local-ducklake-maintenance}"
 
 psql_admin=(psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_STOP=1)
 
@@ -25,7 +26,8 @@ psql_admin=(psql --username "${POSTGRES_USER}" --dbname postgres --set ON_ERROR_
   --set=control_migrator_password="${control_migrator_password}" \
   --set=control_upgrade_coordinator_password="${control_upgrade_coordinator_password}" \
   --set=control_maintenance_password="${control_maintenance_password}" \
-  --set=ducklake_migrator_password="${ducklake_migrator_password}" <<'SQL'
+  --set=ducklake_migrator_password="${ducklake_migrator_password}" \
+  --set=ducklake_maintenance_password="${ducklake_maintenance_password}" <<'SQL'
 DO $roles$
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
@@ -58,6 +60,9 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_ducklake_migrator') THEN
         CREATE ROLE leapview_ducklake_migrator LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
     END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_ducklake_maintenance') THEN
+        CREATE ROLE leapview_ducklake_maintenance LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+    END IF;
 END
 $roles$;
 
@@ -68,6 +73,7 @@ ALTER ROLE leapview_control_migrator PASSWORD :'control_migrator_password';
 ALTER ROLE leapview_control_upgrade_coordinator PASSWORD :'control_upgrade_coordinator_password';
 ALTER ROLE leapview_control_maintenance PASSWORD :'control_maintenance_password';
 ALTER ROLE leapview_ducklake_migrator PASSWORD :'ducklake_migrator_password';
+ALTER ROLE leapview_ducklake_maintenance PASSWORD :'ducklake_maintenance_password';
 
 GRANT leapview_control_owner TO leapview_control_migrator;
 GRANT leapview_ducklake_owner TO leapview_ducklake_migrator;
@@ -113,23 +119,25 @@ GRANT CONNECT ON DATABASE leapview_control TO
     leapview_control_maintenance,
     leapview_control_readonly,
     leapview_control_backup;
-REVOKE CONNECT ON DATABASE leapview_control FROM leapview_ducklake_runtime, leapview_ducklake_migrator;
+REVOKE CONNECT ON DATABASE leapview_control FROM leapview_ducklake_runtime, leapview_ducklake_migrator, leapview_ducklake_maintenance;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 SQL
 
 psql_db leapview_ducklake <<'SQL'
 REVOKE ALL ON DATABASE leapview_ducklake FROM PUBLIC;
-GRANT CONNECT ON DATABASE leapview_ducklake TO leapview_ducklake_runtime, leapview_ducklake_migrator;
+GRANT CONNECT ON DATABASE leapview_ducklake TO leapview_ducklake_runtime, leapview_ducklake_migrator, leapview_ducklake_maintenance;
 -- The dedicated catalog migrator may precreate one exact per-pool metadata
 -- schema during an explicit bootstrap. Runtime has no database CREATE.
 GRANT CREATE ON DATABASE leapview_ducklake TO leapview_ducklake_migrator;
 REVOKE CREATE ON DATABASE leapview_ducklake FROM leapview_ducklake_runtime;
+REVOKE CREATE ON DATABASE leapview_ducklake FROM leapview_ducklake_maintenance;
 REVOKE CONNECT ON DATABASE leapview_ducklake FROM leapview_control_runtime, leapview_control_migrator, leapview_control_upgrade_coordinator, leapview_control_maintenance, leapview_control_readonly, leapview_control_backup;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 CREATE SCHEMA IF NOT EXISTS ducklake AUTHORIZATION leapview_ducklake_owner;
 REVOKE ALL ON SCHEMA ducklake FROM PUBLIC;
 GRANT USAGE ON SCHEMA ducklake TO leapview_ducklake_runtime;
 GRANT USAGE, CREATE ON SCHEMA ducklake TO leapview_ducklake_migrator;
+GRANT USAGE ON SCHEMA ducklake TO leapview_ducklake_maintenance;
 -- Runtime may perform the catalog's ordinary metadata DML but cannot create,
 -- alter, or drop objects.  Catalog schema changes require the owner-capable
 -- migrator credential and are never automatic for runtime attachments.
@@ -139,4 +147,14 @@ ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
     GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO leapview_ducklake_runtime;
 ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
     GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO leapview_ducklake_runtime;
+-- Maintenance has DML needed by DuckLake expiry/cleanup calls, but no schema
+-- CREATE/ALTER/DROP or owner-role membership. Dynamic pool schemas receive the
+-- same narrow grant from catalog bootstrap after migration.
+GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA ducklake TO leapview_ducklake_maintenance;
+GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA ducklake TO leapview_ducklake_maintenance;
+ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
+    GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO leapview_ducklake_maintenance;
+ALTER DEFAULT PRIVILEGES FOR ROLE leapview_ducklake_owner IN SCHEMA ducklake
+    GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO leapview_ducklake_maintenance;
+REVOKE CREATE ON SCHEMA ducklake FROM leapview_ducklake_maintenance;
 SQL

@@ -21,11 +21,12 @@ import (
 )
 
 const (
-	DefaultControlUpgradeCoordinatorRole = "leapview_control_upgrade_coordinator"
-	DefaultControlMigratorRole           = "leapview_control_migrator"
-	DefaultControlDatabase               = "leapview_control"
-	DefaultDuckLakeCatalogMigratorRole   = "leapview_ducklake_migrator"
-	DefaultDuckLakeDatabase              = "leapview_ducklake"
+	DefaultControlUpgradeCoordinatorRole  = "leapview_control_upgrade_coordinator"
+	DefaultControlMigratorRole            = "leapview_control_migrator"
+	DefaultControlDatabase                = "leapview_control"
+	DefaultDuckLakeCatalogMigratorRole    = "leapview_ducklake_migrator"
+	DefaultDuckLakeCatalogMaintenanceRole = "leapview_ducklake_maintenance"
+	DefaultDuckLakeDatabase               = "leapview_ducklake"
 )
 
 var (
@@ -456,6 +457,34 @@ func ProvisionCatalogRuntimePrivileges(ctx context.Context, db DBTX, metadataSch
 		// sqlc-exception:schema-ddl -- validated dynamic privilege identifiers.
 		if _, err := db.Exec(ctx, statement); err != nil {
 			return fmt.Errorf("provision DuckLake runtime schema privileges: %w", err)
+		}
+	}
+	return nil
+}
+
+// ProvisionCatalogMaintenancePrivileges grants the dedicated catalog
+// maintenance role the metadata DML and sequence privileges required by
+// DuckLake expiry/cleanup calls. It deliberately grants no CREATE privilege,
+// owner membership, or control-database capability. The schema identifier and
+// role are validated before being interpolated because PostgreSQL identifiers
+// cannot be bound as parameters.
+func ProvisionCatalogMaintenancePrivileges(ctx context.Context, db DBTX, metadataSchema, maintenanceRole string) error {
+	if db == nil || !isSQLIdentifier(metadataSchema) || !isSQLIdentifier(maintenanceRole) {
+		return ErrInvalid
+	}
+	schema := quoteSQLIdentifier(metadataSchema)
+	role := quoteSQLIdentifier(maintenanceRole)
+	for _, statement := range []string{
+		fmt.Sprintf("GRANT USAGE ON SCHEMA %s TO %s", schema, role),
+		fmt.Sprintf("GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA %s TO %s", schema, role),
+		fmt.Sprintf("GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA %s TO %s", schema, role),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO %s", schema, role),
+		fmt.Sprintf("ALTER DEFAULT PRIVILEGES IN SCHEMA %s GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO %s", schema, role),
+		fmt.Sprintf("REVOKE CREATE ON SCHEMA %s FROM %s", schema, role),
+	} {
+		// sqlc-exception:schema-ddl -- validated dynamic schema/role identifiers.
+		if _, err := db.Exec(ctx, statement); err != nil {
+			return fmt.Errorf("provision DuckLake maintenance schema privileges: %w", err)
 		}
 	}
 	return nil

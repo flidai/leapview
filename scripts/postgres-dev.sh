@@ -13,6 +13,7 @@ CONTROL_MIGRATOR_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD:-leapvi
 CONTROL_UPGRADE_COORDINATOR_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD:-leapview-local-control-upgrade-coordinator}"
 CONTROL_MAINTENANCE_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:-leapview-local-control-maintenance}"
 DUCKLAKE_MIGRATOR_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}"
+DUCKLAKE_MAINTENANCE_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:-leapview-local-ducklake-maintenance}"
 ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$ROOT/.tmp/postgres-dev.env}"
 
 # Keep worktrees isolated while retaining a stable project name for each path.
@@ -37,7 +38,7 @@ compose() {
 write_runtime_env() {
   # Passwords are accepted in this local-only helper only when URL-safe. This
   # avoids emitting or constructing malformed URLs while never printing them.
-  if [[ ! "$CONTROL_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_READONLY_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_MIGRATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_UPGRADE_COORDINATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_MAINTENANCE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_MIGRATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]]; then
+  if [[ ! "$CONTROL_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_READONLY_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_MIGRATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_UPGRADE_COORDINATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$CONTROL_MAINTENANCE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_MIGRATOR_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ || ! "$DUCKLAKE_MAINTENANCE_PASSWORD" =~ ^[A-Za-z0-9._~-]+$ ]]; then
     echo "PostgreSQL development runtime passwords must contain only URL-safe characters" >&2
     return 1
   fi
@@ -51,6 +52,7 @@ write_runtime_env() {
     printf 'LEAPVIEW_POSTGRES_CONTROL_READONLY_URL=postgres://leapview_control_readonly:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_READONLY_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://leapview_ducklake_runtime:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=postgres://leapview_ducklake_migrator:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_MIGRATOR_PASSWORD" "$PORT"
+    printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://leapview_ducklake_maintenance:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_MAINTENANCE_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_EXPECTED_MAJOR=18\n'
     printf 'LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime\n'
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=leapview_ducklake_runtime\n'
@@ -95,6 +97,10 @@ check_isolation() {
     echo "DuckLake migrator cannot connect to leapview_ducklake" >&2
     return 1
   }
+  [[ "$(runtime_psql leapview_ducklake_maintenance "$DUCKLAKE_MAINTENANCE_PASSWORD" leapview_ducklake 'SELECT current_database()')" == "leapview_ducklake" ]] || {
+    echo "DuckLake maintenance cannot connect to leapview_ducklake" >&2
+    return 1
+  }
   if runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
     echo "control runtime unexpectedly connected to leapview_ducklake" >&2
     return 1
@@ -117,6 +123,10 @@ check_isolation() {
   fi
   if runtime_psql leapview_ducklake_migrator "$DUCKLAKE_MIGRATOR_PASSWORD" leapview_control 'SELECT 1' >/dev/null 2>&1; then
     echo "DuckLake migrator unexpectedly connected to leapview_control" >&2
+    return 1
+  fi
+  if runtime_psql leapview_ducklake_maintenance "$DUCKLAKE_MAINTENANCE_PASSWORD" leapview_control 'SELECT 1' >/dev/null 2>&1; then
+    echo "DuckLake maintenance unexpectedly connected to leapview_control" >&2
     return 1
   fi
   [[ "$(runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake "SELECT has_schema_privilege(current_user, 'ducklake', 'CREATE')")" == "f" ]] || {
@@ -157,6 +167,10 @@ check_isolation() {
   fi
   if runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake 'CREATE SCHEMA postgres_isolation_probe' >/dev/null 2>&1; then
     echo "DuckLake runtime unexpectedly created a schema" >&2
+    return 1
+  fi
+  if runtime_psql leapview_ducklake_maintenance "$DUCKLAKE_MAINTENANCE_PASSWORD" leapview_ducklake 'CREATE SCHEMA postgres_maintenance_isolation_probe' >/dev/null 2>&1; then
+    echo "DuckLake maintenance unexpectedly created a schema" >&2
     return 1
   fi
   if runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_control 'CREATE SCHEMA postgres_isolation_probe' >/dev/null 2>&1; then
