@@ -82,6 +82,7 @@ type DashboardRefreshProgress = {
 
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
+  @property({ type: Boolean, reflect: true, attribute: 'read-only' }) readOnly = false
   @state() private unsupportedKinds = new Set<string>()
   @state() private optimisticSelections: CanonicalInteractionSelection[] | null = null
   @state() private optimisticSpatialSelections: VisualizationSpatialSelectionState[] | null = null
@@ -1000,6 +1001,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (!anchor?.href) return
     const target = this.page?.pages.find((item) => new URL(item.href, window.location.href).href === anchor.href)
     if (!target) return
+    // Exact draft previews deliberately have no mutation bridge. Let their
+    // revision-pinned page links perform normal document navigation instead
+    // of dispatching an authoring command that nothing can handle.
+    if (this.readOnly) return
     if (target.active) {
       event.preventDefault()
       return
@@ -1263,6 +1268,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<OptimisticInteractionCommand>
     if (typeof candidate.sourceId !== 'string') return
@@ -1288,6 +1294,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     if (!event.detail?.bindingKey || !event.detail.expression) return
     event.stopPropagation()
     // Clearing is a first-class mutation so textbox and drawer clears share
@@ -1302,6 +1312,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterClear = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.clear(binding.key)
@@ -1310,6 +1321,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterResetBinding = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.resetBinding(binding.key)
@@ -1321,6 +1333,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     bindingKeys: string[]
   }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (event.detail?.scope !== 'page' && event.detail?.scope !== 'dashboard') return
     const pageID = (this.renderSnapshot?.page ?? this.page)?.pageId
     const allowed = Object.values(this.filterContract.bindings)
@@ -1336,6 +1349,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterApply = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.apply()
     this.requestUpdate()
@@ -1343,12 +1357,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterCancel = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.cancel()
     this.requestUpdate()
   }
 
   private handleFilterOptionsNeeded = (event: CustomEvent<FilterOptionsNeededDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     const detail = event.detail
     if (!detail?.bindingKey) return
     event.stopPropagation()
@@ -1401,6 +1420,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticSpatialInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<VisualizationSpatialSelectionCommand>
     if (typeof candidate.visualID !== 'string') return
