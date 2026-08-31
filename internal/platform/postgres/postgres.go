@@ -498,7 +498,7 @@ func Open(ctx context.Context, cfg Config) (*Pool, error) {
 	}
 	poolConfig, err := pgxpool.ParseConfig(cfg.URL)
 	if err != nil {
-		return nil, fmt.Errorf("parse PostgreSQL URL: %w", err)
+		return nil, errors.New("PostgreSQL URL is malformed")
 	}
 	if err := ConfigurePool(poolConfig, cfg); err != nil {
 		return nil, err
@@ -615,7 +615,7 @@ func (c Config) Validate() error {
 	if c.RequireTLS {
 		parsed, err := url.Parse(c.URL)
 		if err != nil {
-			return fmt.Errorf("parse PostgreSQL URL for TLS validation: %w", err)
+			return errors.New("PostgreSQL URL is malformed")
 		}
 		switch strings.ToLower(strings.TrimSpace(parsed.Query().Get("sslmode"))) {
 		case "require", "verify-ca", "verify-full":

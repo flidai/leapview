@@ -111,9 +111,13 @@ func (h *health) runtimeReady(ctx context.Context, checks map[string]string) boo
 		checks["runtime"] = "failed"
 		return false
 	}
-	if err := projectID.Validate(); err != nil {
+	if projectID == "" {
 		checks["runtime"] = "no_active_deployments"
 		return !h.config.RequireActiveDeployment
+	}
+	if err := projectID.Validate(); err != nil {
+		checks["runtime"] = "failed"
+		return false
 	}
 	if err := h.config.RuntimeReady(ctx); err != nil {
 		if errors.Is(err, errNoActiveDeployment) {

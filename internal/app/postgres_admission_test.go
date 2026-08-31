@@ -77,6 +77,9 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	cfg.QueryCacheNodeMaxBytes = 16 << 20
 	cfg.CSRFKey = strings.Repeat("c", 32)
 	cfg.TokenHashKey = strings.Repeat("t", 32)
+	cfg.MetricsBearerToken = strings.Repeat("m", 32)
+	cfg.APITokenOnlyAuth = true
+	cfg.PublicURL = "https://localhost"
 	cfg.AllowedHosts = "localhost"
 	cfg.Environment = "prod"
 	cfg.DeliveryPhysicalPoolID = "sha256:" + strings.Repeat("b", 64)

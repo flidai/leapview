@@ -178,6 +178,30 @@ func TestBuildProductionFailsClosedBeforeLegacySQLiteComposition(t *testing.T) {
 	}
 }
 
+func TestBuildProductionRejectsSecurityBypassBeforeConnecting(t *testing.T) {
+	cfg := config.Config{
+		Production:                              true,
+		DevAuthBypass:                           true,
+		PostgresRequireTLS:                      true,
+		PostgresControlURL:                      "postgres://runtime:secret@localhost/control?sslmode=require",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@localhost/control?sslmode=require",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@localhost/control?sslmode=require",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@localhost/ducklake?sslmode=require",
+		PostgresDuckLakeMaintenanceURL:          "postgres://ducklake-maintenance:secret@localhost/ducklake?sslmode=require",
+		PostgresControlRuntimeRole:              "runtime",
+		PostgresControlMigratorRole:             "migrator",
+		PostgresControlMaintenanceRole:          "maintenance",
+		PostgresDuckLakeRuntimeRole:             "ducklake",
+		PostgresDuckLakeMaintenanceRole:         "ducklake-maintenance",
+		DeliveryPhysicalPoolID:                  "pool-prod",
+		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	_, err := BuildProduction(context.Background(), cfg)
+	if err == nil || !strings.Contains(err.Error(), "LEAPVIEW_DEV_AUTH_BYPASS") {
+		t.Fatalf("BuildProduction security validation error = %v", err)
+	}
+}
+
 func TestBuildCannotBypassProductionPostgreSQLGate(t *testing.T) {
 	_, err := Build(context.Background(), config.Config{Production: true})
 	if err == nil || !strings.Contains(err.Error(), "LEAPVIEW_POSTGRES_CONTROL_URL") {

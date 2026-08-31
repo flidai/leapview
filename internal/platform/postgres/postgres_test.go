@@ -149,6 +149,20 @@ func TestConfigValidateTLSIntent(t *testing.T) {
 	}
 }
 
+func TestConfigValidateDoesNotExposeMalformedURLCredentials(t *testing.T) {
+	const secret = "super-secret"
+	cfg := testConfig()
+	cfg.RequireTLS = true
+	cfg.URL = "postgres://runtime:" + secret + "%gh@db/control?sslmode=require"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("malformed PostgreSQL URL unexpectedly validated")
+	}
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), cfg.URL) {
+		t.Fatalf("validation exposed PostgreSQL credentials: %v", err)
+	}
+}
+
 func TestConfigurePoolAppliesIndependentBoundsAndSessionTimeouts(t *testing.T) {
 	parsed, err := pgxpool.ParseConfig("postgres://leapview@localhost/leapview_control")
 	if err != nil {
