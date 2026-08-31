@@ -116,6 +116,17 @@ var _ queryaudit.Repository = (*Repository)(nil)
 func New(db DBTX) *Repository           { return &Repository{db: db} }
 func NewRepository(db DBTX) *Repository { return New(db) }
 
+// PostgreSQLAuthority marks this repository as the native query-audit
+// authority.  Production analytics composition uses the marker together with
+// Configured so a generic queryaudit.Store cannot silently select a SQLite or
+// other non-PostgreSQL implementation.
+func (*Repository) PostgreSQLAuthority() {}
+
+// Configured reports whether the repository has a native PostgreSQL handle.
+// Pool readiness and schema revision remain owned by the application
+// lifecycle, so this is intentionally a shallow composition check.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 // NewMaintenance constructs the bounded query-audit retention facade for a
 // separately authenticated maintenance connection pool.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }

@@ -68,6 +68,17 @@ func NewWithOptions(db DBTX, options Options) (*Repository, error) {
 	return &Repository{db: db, audit: options.Audit}, nil
 }
 
+// PostgreSQLAuthority marks this repository as the native product identity
+// authority.  Native admin composition uses the marker together with
+// Configured so a generic product.Storage cannot silently select SQLite or
+// another non-PostgreSQL implementation.
+func (*Repository) PostgreSQLAuthority() {}
+
+// Configured reports whether the repository has a native PostgreSQL handle.
+// Pool readiness and schema revision remain owned by the application
+// lifecycle, so this is intentionally a shallow composition check.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 func (r *Repository) Ping(ctx context.Context) error {
 	if r == nil || r.db == nil {
 		return ErrInvalid

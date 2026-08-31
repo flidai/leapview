@@ -88,6 +88,16 @@ type postgresConnectionBindingAuthority interface {
 	AuditCapable() bool
 }
 
+// postgresQueryAuditAuthority is the production query-audit seam. The
+// storage-neutral queryaudit.Store remains available to SQLite fixtures, but
+// native analytics composition must prove that its implementation is the
+// configured PostgreSQL authority.
+type postgresQueryAuditAuthority interface {
+	queryaudit.Store
+	PostgreSQLAuthority()
+	Configured() bool
+}
+
 func NewSurface(environment *analyticsducklake.Environment, cache *resultcache.Pool) *Module {
 	return &Module{environment: environment, cache: cache}
 }
@@ -159,6 +169,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			if !authority.AuditCapable() {
 				return nil, errors.New("production analytics build requires an audit-capable PostgreSQL connection binding authority")
 			}
+		}
+		queryAudit, ok := config.QueryAuditStore.(postgresQueryAuditAuthority)
+		if !ok || !queryAudit.Configured() {
+			return nil, errors.New("production analytics build requires configured native PostgreSQL query-audit authority")
 		}
 	}
 	if config.Database != nil && config.ConnectionBindings == nil && !config.LegacySQLite {

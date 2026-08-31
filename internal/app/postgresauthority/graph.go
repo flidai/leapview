@@ -179,6 +179,16 @@ type PostgresAuthorityGraphOptions struct {
 	FingerprintKey []byte
 }
 
+// postgresConfiguredAuthority is the minimum admission marker shared by
+// native repositories whose storage-neutral contracts cross a module
+// boundary. Keeping the marker check structural makes graph validation fail
+// closed if one of those fields is ever widened from its concrete repository
+// type.
+type postgresConfiguredAuthority interface {
+	PostgreSQLAuthority()
+	Configured() bool
+}
+
 // NewPostgresAuthorityGraph composes the native authorities over the pools
 // retained by postgresControlPlaneLifecycle. It performs no network I/O and
 // does not change lifecycle ownership. Callers should invoke Validate before
@@ -491,6 +501,12 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	if g.Access.DB() == nil {
 		return errors.New("PostgreSQL authority graph access authority is not configured")
 	}
+	if err := validateConfiguredAuthority("product authority", g.Product); err != nil {
+		return err
+	}
+	if err := validateConfiguredAuthority("query-audit authority", g.QueryAudit); err != nil {
+		return err
+	}
 	if !g.ProductAudit.Matches(g.AccessAudit) {
 		return errors.New("PostgreSQL authority graph product audit adapter does not preserve access audit identity")
 	}
@@ -612,4 +628,15 @@ func isNilAuthority(value any) bool {
 	default:
 		return false
 	}
+}
+
+func validateConfiguredAuthority(name string, value any) error {
+	authority, ok := value.(postgresConfiguredAuthority)
+	if !ok {
+		return fmt.Errorf("PostgreSQL authority graph %s is not marked as native PostgreSQL", name)
+	}
+	if !authority.Configured() {
+		return fmt.Errorf("PostgreSQL authority graph %s is not configured", name)
+	}
+	return nil
 }

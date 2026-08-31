@@ -7,7 +7,9 @@ import (
 	"testing"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	productpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	"github.com/flidai/leapview/internal/app/connectionbindingaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceaudit"
 	"github.com/flidai/leapview/internal/app/dashboardappearanceevents"
@@ -98,6 +100,38 @@ func TestPostgresAuthorityGraphValidateRejectsNilAndPartialGraphs(t *testing.T) 
 	if err := partial.Validate(); err == nil || !strings.Contains(err.Error(), "operation authority") {
 		t.Fatalf("bootstrap/settings graph error = %v, want operation rejection", err)
 	}
+}
+
+func TestValidateConfiguredAuthorityRequiresNativeMarkerAndConfiguration(t *testing.T) {
+	if err := validateConfiguredAuthority("query-audit authority", graphUnmarkedAuthority{}); err == nil || !strings.Contains(err.Error(), "not marked as native PostgreSQL") {
+		t.Fatalf("unmarked authority error = %v, want marker rejection", err)
+	}
+	if err := validateConfiguredAuthority("query-audit authority", graphMarkedAuthority{}); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("unconfigured authority error = %v, want configured rejection", err)
+	}
+	if err := validateConfiguredAuthority("query-audit authority", queryauditpostgres.New(graphDBStub{})); err != nil {
+		t.Fatalf("configured query-audit repository rejected: %v", err)
+	}
+	product, err := productpostgres.NewWithOptions(graphDBStub{}, productpostgres.Options{Audit: graphProductAuditStub{}})
+	if err != nil {
+		t.Fatalf("construct product repository: %v", err)
+	}
+	if err := validateConfiguredAuthority("product authority", product); err != nil {
+		t.Fatalf("configured product repository rejected: %v", err)
+	}
+}
+
+type graphUnmarkedAuthority struct{}
+
+type graphMarkedAuthority struct{}
+
+func (graphMarkedAuthority) PostgreSQLAuthority() {}
+func (graphMarkedAuthority) Configured() bool     { return false }
+
+type graphProductAuditStub struct{}
+
+func (graphProductAuditStub) RecordAuditEvent(context.Context, pgx.Tx, productpostgres.AuditInput) error {
+	return nil
 }
 
 func TestNewPostgresAuthorityGraphRejectsMissingPoolsAndOptions(t *testing.T) {
