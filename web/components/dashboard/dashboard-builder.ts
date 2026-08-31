@@ -1488,6 +1488,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-reference-link {
+      margin-left: auto;
       color: var(--lv-fg-accent);
       font: var(--lv-type-caption);
       text-decoration: none;
@@ -1521,35 +1522,60 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .inspector-panel {
       display: grid;
-      gap: var(--base-size-12);
+      gap: var(--base-size-8);
       padding: var(--base-size-12);
     }
 
     .field-wells {
       display: grid;
-      gap: var(--base-size-12);
+      gap: var(--base-size-8);
     }
 
     .visual-requirements {
-      display: grid;
-      gap: var(--base-size-4);
       margin: 0;
-      padding: var(--base-size-8);
-      border: var(--lv-border-muted);
+      padding: var(--base-size-6) var(--base-size-8);
       border-radius: var(--lv-radius-default);
       color: var(--lv-fg-muted);
       background: var(--lv-bg-panel-muted);
       font: var(--lv-type-caption);
     }
 
-    .visual-requirements[data-ready='false'] {
-      border-color: var(--lv-data-4, var(--lv-line-default));
+    .property-heading {
+      display: flex;
+      min-width: 0;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--base-size-8);
     }
 
-    .retained-fields {
-      display: grid;
-      gap: var(--base-size-6);
-      padding-top: var(--base-size-4);
+    .builder-disclosure {
+      border-top: var(--lv-border-muted);
+      padding-top: var(--base-size-8);
+    }
+
+    .builder-disclosure summary {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
+      cursor: pointer;
+    }
+
+    .builder-disclosure summary:has(.disclosure-count) {
+      display: list-item;
+    }
+
+    .disclosure-count {
+      float: right;
+      min-width: 1.25rem;
+      border-radius: var(--lv-radius-full);
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel-muted);
+      font-weight: var(--base-text-weight-normal);
+      text-align: center;
+    }
+
+    .builder-disclosure-content {
+      padding-top: var(--base-size-8);
     }
 
     .retained-field-list {
@@ -1567,24 +1593,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
-    .interaction-editor {
-      padding-top: var(--base-size-12);
-      border-top: var(--lv-border-muted);
-    }
-
     .interaction-targets {
       display: grid;
       gap: var(--base-size-8);
       margin: 0;
       padding: 0;
       border: 0;
-    }
-
-    .interaction-targets > legend {
-      margin-bottom: var(--base-size-6);
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
     }
 
     .interaction-target {
@@ -3083,8 +3097,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
-          <div class="pane-header-details" ?hidden=${collapsed}>
-            <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : formattingPage ? 'Configure this page in dashboard code.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
+          <div class="pane-header-details" ?hidden=${collapsed || Boolean(visual)}>
+            <p class="pane-hint">${formattingPage ? 'Configure this page in dashboard code.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
           </div>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
@@ -3119,8 +3133,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const selectedEntry = visual ? this.visualCatalogEntry(currentType ?? '', builder) : undefined
     return html`
       <section class="property-group" aria-label=${visual ? 'Edit visual type' : 'Add visual'}>
-        <span class="property-label">${visual ? 'Visual type' : 'Add a visual'}</span>
-        <p id=${pickerHelpID} class="pane-hint">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
+        <div class="property-heading">
+          <span class="property-label">${visual ? 'Visual type' : 'Add a visual'}</span>
+          ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Reference</a>` : nothing}
+        </div>
+        <p id=${pickerHelpID} class=${visual ? 'sr-only' : 'pane-hint'}>${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
         <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
           <div class="visual-picker">
             ${catalog.map((entry) => html`
@@ -3131,7 +3148,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             `)}
           </div>
         </div>
-        ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Open ${selectedEntry.label} visual reference</a>` : nothing}
       </section>
     `
   }
@@ -3160,20 +3176,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const ready = requirements.length === 0 && !previewIssue
     return html`
       <section class="property-group" aria-label="Field wells">
-        <span class="property-label">Fields</span>
-        <p class="pane-hint">Drag fields into a role, or click a compatible field below.</p>
-        <div class="visual-requirements" data-ready=${ready} role="status">
-          ${ready
-            ? html`<span>Data requirements met.</span>`
-            : requirements.map((message) => html`<span>${message}</span>`)}
-          ${previewIssue && requirements.length === 0 ? html`<span>${previewIssue}</span>` : nothing}
-        </div>
+        <div class="property-heading"><span class="property-label">Fields</span></div>
+        ${ready ? nothing : html`<div class="visual-requirements" role="status"><span>${requirements.length > 0 ? this.visualRequirementSummary(requirements) : previewIssue}</span></div>`}
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
         ${retained.length > 0 ? html`
-          <div class="retained-fields" role="note">
-            <span class="pane-hint">Retained for switching back</span>
-            <div class="retained-field-list">${retained.map((slot) => html`<span class="retained-field" title=${`${this.fieldWellLabel(visual, this.slotRole(slot))} field`}>${this.fieldLabel(slot.fieldId ?? '', slot.label)}</span>`)}</div>
-          </div>
+          <details class="builder-disclosure retained-fields">
+            <summary>${retained.length} ${retained.length === 1 ? 'field' : 'fields'} retained for switching back</summary>
+            <div class="builder-disclosure-content retained-field-list" role="note">${retained.map((slot) => html`<span class="retained-field" title=${`${this.fieldWellLabel(visual, this.slotRole(slot))} field`}>${this.fieldLabel(slot.fieldId ?? '', slot.label)}</span>`)}</div>
+          </details>
         ` : nothing}
       </section>
     `
@@ -3191,9 +3201,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const helpID = `interaction-help-${visual.id}`
     const editable = Boolean(builder.capabilities.canEdit && interaction?.editable && interaction.mappings.length > 0 && !this.commandPending)
     return html`
-      <section class="property-group interaction-editor" aria-label="Visual interactions">
-        <span class="property-label">Interactions</span>
-        <p id=${helpID} class="pane-hint">When users select data in this visual, choose what happens to each visual on this page.</p>
+      <details class="builder-disclosure interaction-editor" aria-label="Visual interactions">
+        <summary><span>Interactions</span>${targets.length > 0 ? html`<span class="disclosure-count">${targets.length}</span>` : nothing}</summary>
+        <div class="builder-disclosure-content">
+        <p id=${helpID} class="sr-only">Choose what happens to other visuals when users select data in this visual.</p>
         ${!interaction
           ? html`<p class="pane-hint">Interaction settings are unavailable until this visual has a valid preview.</p>`
           : !interaction.editable
@@ -3202,11 +3213,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ? html`<p class="pane-hint">Add another visual to configure an interaction.</p>`
               : html`
                 <fieldset class="interaction-targets" aria-describedby=${helpID}>
-                  <legend>Target visuals</legend>
+                  <legend class="sr-only">Target visuals</legend>
                   ${targets.map((target) => this.renderInteractionTarget(page, visual, target, interaction, editable))}
                 </fieldset>
               `}
-      </section>
+        </div>
+      </details>
     `
   }
 
@@ -3286,10 +3298,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const fieldDrop = draggedField ? (this.fieldCompatibleWithRole(draggedField, role) && this.roleHasCapacity(visual, role) ? 'compatible' : 'incompatible') : ''
     return html`
       <section class="field-well">
-        <div class="field-well-label"><span>${label}</span><span>${slots.length}</span></div>
+        <div class="field-well-label"><span>${label}</span>${slots.length > 0 ? html`<span>${slots.length}</span>` : nothing}</div>
         <div class="field-well-target" data-drop-well=${role} data-field-drop=${fieldDrop || nothing} tabindex="0" aria-label=${`Drop ${role} field in ${label}`} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnRole(event, role)}>
           ${slots.length === 0
-            ? html`<span class="empty-well">Drop a ${role} field here</span>`
+            ? html`<span class="empty-well">Drop ${role === 'metric' ? 'a measure' : role === 'detail' ? 'a column' : 'a dimension'}</span>`
             : slots.map((slot, index) => this.renderFieldToken(visual, role, slot, index, slots.length))}
         </div>
       </section>
@@ -3651,6 +3663,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return messages
   }
 
+  private visualRequirementSummary(messages: string[]): string {
+    const additions = messages.map((message) => message.match(/^Add (.+) to preview\.$/)?.[1])
+    if (additions.every((item): item is string => Boolean(item))) return `Needs ${additions.join(' · ')}.`
+    return messages.join(' ')
+  }
+
   private visualPreviewErrorMessage(visual: DashboardBuilderVisualSignal): string {
     const message = visual.previewError?.trim() ?? ''
     if (!message) return ''
@@ -3686,8 +3704,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldWellLabel(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole): string {
     if (role === 'detail') return 'Columns'
-    if (this.visualTypeForRender(visual) === 'kpi') return 'Value'
-    const horizontal = this.visualTypeForRender(visual) === 'bar'
+    const type = this.visualTypeForRender(visual)
+    if (type === 'kpi') return 'Value'
+    if (['pie', 'donut', 'funnel', 'treemap', 'sunburst'].includes(type)) return role === 'dimension' ? 'Category' : 'Values'
+    const horizontal = type === 'bar'
     if (role === 'dimension') return horizontal ? 'Y-axis' : 'X-axis'
     return horizontal ? 'X-axis' : 'Y-axis'
   }
