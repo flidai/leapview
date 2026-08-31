@@ -41,13 +41,33 @@ func rowPlanWithTotal(plan semanticquery.Plan) (semanticquery.Plan, error) {
 }
 
 func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dataquery.Query, transform dataquery.ResultTransformer) (dataquery.Result, error) {
+	cacheStarted := cacheObservationStarted(ctx, time.Now())
 	cacheable := dashboardQueryResultCacheable(request)
 	var planned plannedArrowQuery
 	var planErr error
+	admissionReason := dataquery.CacheAdmissionReasonQueryNotCacheable
+	if !cacheable {
+		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
+	}
 	if cacheable {
 		planned, planErr = r.planOwnedArrowQuery(request)
 		if planErr == nil {
 			planned.dependency, planned.reusable = r.dependencyForPlan(planned.plan)
+		}
+		switch {
+		case planErr != nil:
+			admissionReason = dataquery.CacheAdmissionReasonPlanningFailed
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionRejected, admissionReason)
+		case !planned.reusable:
+			admissionReason = dataquery.CacheAdmissionReasonDependencyUnavailable
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
+		default:
+			admissionReason = queryCacheIdentityReason(request, r.resultPartition, planned.dependency)
+			decision := dataquery.CacheAdmissionBypassed
+			if admissionReason == dataquery.CacheAdmissionReasonEligible {
+				decision = dataquery.CacheAdmissionEligible
+			}
+			observeQueryCacheAdmission(ctx, decision, admissionReason)
 		}
 	}
 	execute := func(executionCtx context.Context) (arrowQueryExecution, error) {
@@ -125,8 +145,8 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		// unsuccessful attempt as an execution failure. Preserve that public
 		// classification even though planning now precedes cache eligibility.
 		result = dataquery.Result{PlanningMS: planned.planningMS, ExecutionState: dataquery.ExecutionFailed}
-	} else if cacheable && planned.reusable && queryCacheIdentityAvailable(request, r.resultPartition, planned.dependency) {
-		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, execute)
+	} else if cacheable && admissionReason == dataquery.CacheAdmissionReasonEligible {
+		result, err = r.queryCache.executeArrow(ctx, request, r.resultPartition, planned.dependency, planned.plan.SQL, cacheStarted, execute)
 		observeQueryCacheOutcome(ctx, result, err)
 	} else {
 		execution, executeErr := execute(ctx)
@@ -147,10 +167,16 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		if cacheable {
 			result.CacheOutcome = dataquery.CacheMiss
 			observeQueryCacheOutcome(ctx, result, err)
+			outcome := dataquery.CacheObservationMiss
+			if err != nil {
+				outcome = dataquery.CacheObservationError
+			}
+			observeTypedCacheFinal(ctx, outcome, time.Since(cacheStarted))
 		}
 	}
 	if planErr != nil && cacheable {
 		observeQueryCacheOutcome(ctx, result, err)
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
 	}
 	if _, ok := dataquery.ResultLimitReasonOf(err); ok {
 		return dataquery.Result{Status: dataquery.StatusError, ExecutionState: dataquery.ExecutionFailed, Error: err.Error()}, err

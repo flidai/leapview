@@ -204,3 +204,59 @@ func TestAnalyticalCollectorExportsZeroProcessConnectionsWithoutProcessEnvironme
 	}
 	t.Fatal("leapview_duckdb_connections_open metric missing")
 }
+
+func TestAnalyticalCollectorExportsCacheLifecycleWithoutScopeIdentity(t *testing.T) {
+	cache, err := resultcache.New(resultcache.Limits{RuntimeEntries: 2, RuntimeBytes: 1024, NodeEntries: 4, NodeBytes: 4096})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cache.Close()
+	secret := "project-principal-query-secret"
+	stable, err := cache.OpenSharedScope(resultcache.ScopeID{RuntimeID: secret})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stable.Close()
+	generation, err := cache.OpenScope(resultcache.ScopeID{RuntimeID: secret + "-generation"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer generation.Close()
+	if outcome := generation.StoreBytes(secret, generation.Generation(), []byte("tile")); outcome != resultcache.StoreStored {
+		t.Fatalf("store bytes = %q", outcome)
+	}
+	stable.Invalidate()
+
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(NewCollector(nil, cache))
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]bool{
+		"leapview_query_result_cache_scopes":                  false,
+		"leapview_query_result_cache_entries":                 false,
+		"leapview_query_result_cache_bytes":                   false,
+		"leapview_query_result_cache_arrow_holds":             false,
+		"leapview_generation_cache_scopes":                    false,
+		"leapview_generation_byte_cache_entries":              false,
+		"leapview_generation_byte_cache_bytes":                false,
+		"leapview_cache_invalidations_total":                  false,
+		"leapview_cache_invalidated_entries_total":            false,
+		"leapview_cache_evicted_entries_total":                false,
+		"leapview_query_result_cache_scope_transitions_total": false,
+	}
+	for _, family := range families {
+		if strings.Contains(family.String(), secret) {
+			t.Fatalf("metric %s exposed scope or cache identity", family.GetName())
+		}
+		if _, ok := want[family.GetName()]; ok {
+			want[family.GetName()] = true
+		}
+	}
+	for name, found := range want {
+		if !found {
+			t.Fatalf("metric %s missing", name)
+		}
+	}
+}

@@ -217,7 +217,7 @@ func (s *ExecutionScope) CoalesceArrow(ctx context.Context, key string, execute 
 		if acquireErr != nil {
 			return nil, ArrowFlightStatus{Owner: owner, Shared: shared}, acquireErr
 		}
-		return &ArrowFlightLease{data: lease, metadata: cloneMetadata(value.Metadata), cached: value.Cached}, ArrowFlightStatus{Owner: owner, Shared: shared}, nil
+		return &ArrowFlightLease{data: lease, metadata: cloneMetadata(value.Metadata), cached: value.Cached, hitSource: value.HitSource}, ArrowFlightStatus{Owner: owner, Shared: shared}, nil
 	}
 }
 

@@ -214,6 +214,26 @@ func TestQueryResultCacheKeyUsesStableCompositeIdentity(t *testing.T) {
 	require.NotEqual(t, first, candidateKey)
 }
 
+func TestQueryCacheIdentityReasonClassifiesValidatedEvidence(t *testing.T) {
+	partition := materializeTestPartition(t, resultidentity.PartitionProduction, "")
+	dependency := materializeTestDependency(t, '2')
+	request := dataquery.Query{ProjectID: "project:test", EffectivePolicyFingerprint: materializeTestDigest('9')}
+	if got := queryCacheIdentityReason(request, partition, dependency); got != dataquery.CacheAdmissionReasonEligible {
+		t.Fatalf("valid identity reason = %q", got)
+	}
+	invalidPolicy := request
+	invalidPolicy.EffectivePolicyFingerprint = "malformed"
+	if got := queryCacheIdentityReason(invalidPolicy, partition, dependency); got != dataquery.CacheAdmissionReasonPolicyInvalid {
+		t.Fatalf("invalid policy reason = %q", got)
+	}
+	if got := queryCacheIdentityReason(request, resultidentity.Partition{}, dependency); got != dataquery.CacheAdmissionReasonPartitionInvalid {
+		t.Fatalf("invalid partition reason = %q", got)
+	}
+	if got := queryCacheIdentityReason(request, partition, resultidentity.Dependency{}); got != dataquery.CacheAdmissionReasonDependencyInvalid {
+		t.Fatalf("invalid dependency reason = %q", got)
+	}
+}
+
 // The row-shaped helpers below exist only to preserve cache-policy tests while
 // production cache storage is Arrow-only.
 func (c *queryResultCache) execute(ctx context.Context, request dataquery.Query, execute func() (dataquery.Result, error)) (dataquery.Result, error) {
@@ -415,13 +435,20 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 	})
 	defer second.queryCache.close()
 	bindPlanner(second, "snapshot_two")
-	secondResult, err := second.ExecuteDataQuery(context.Background(), request)
+	cutoverObservations := []dataquery.CacheObservation{}
+	cutoverCtx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		cutoverObservations = append(cutoverObservations, observation)
+	})
+	secondResult, err := second.ExecuteDataQuery(cutoverCtx, request)
 	require.NoError(t, err)
 	require.Equal(t, dataquery.CacheHit, secondResult.CacheOutcome)
 	require.Contains(t, secondResult.SQL, "snapshot_two")
 	require.NotContains(t, secondResult.SQL, "snapshot_one")
 	require.Equal(t, int32(1), firstDB.queries.Load())
 	require.Zero(t, secondDB.queries.Load())
+	require.Equal(t, 1, countCacheObservations(cutoverObservations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup && observation.HitSource == dataquery.CacheHitCutoverRetained
+	}))
 	changedEvidence, err := resultidentity.NewEvidence(resultidentity.EvidenceInput{
 		SemanticModelID: "sales", SemanticModelDigest: materializeTestDigest('a'),
 		DatasetRelations: []resultidentity.DatasetRelation{{
@@ -733,8 +760,10 @@ func TestRuntimeInvalidDependencyEvidenceBypassesResultReuseAndRetainsCurrentPla
 		ModelID:                    "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
 	}
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) { observations = append(observations, observation) })
 	for range 2 {
-		result, err := runtime.ExecuteDataQuery(context.Background(), request)
+		result, err := runtime.ExecuteDataQuery(ctx, request)
 		require.NoError(t, err)
 		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
 		require.NotEmpty(t, result.SQL)
@@ -742,6 +771,12 @@ func TestRuntimeInvalidDependencyEvidenceBypassesResultReuseAndRetainsCurrentPla
 	}
 	require.Equal(t, int32(2), database.queries.Load())
 	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.Decision == dataquery.CacheAdmissionBypassed && observation.AdmissionReason == dataquery.CacheAdmissionReasonDependencyUnavailable
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup
+	}))
 }
 
 func TestRuntimeNonCacheableQueryRetainsCurrentPlanSQL(t *testing.T) {
@@ -757,10 +792,18 @@ func TestRuntimeNonCacheableQueryRetainsCurrentPlanSQL(t *testing.T) {
 		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
 	}
-	result, err := runtime.ExecuteDataQuery(context.Background(), request)
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) { observations = append(observations, observation) })
+	result, err := runtime.ExecuteDataQuery(ctx, request)
 	require.NoError(t, err)
 	require.NotEmpty(t, result.SQL)
 	require.Contains(t, result.SQL, "orders")
+	require.Equal(t, 1, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.AdmissionReason == dataquery.CacheAdmissionReasonQueryNotCacheable
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup
+	}))
 }
 
 func TestRuntimeInvalidPolicyEvidenceBypassesResultReuse(t *testing.T) {
@@ -778,13 +821,87 @@ func TestRuntimeInvalidPolicyEvidenceBypassesResultReuse(t *testing.T) {
 		Kind: dataquery.KindSemanticRows, Target: "orders",
 		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
 	}
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) { observations = append(observations, observation) })
 	for range 2 {
-		result, err := runtime.ExecuteDataQuery(context.Background(), request)
+		result, err := runtime.ExecuteDataQuery(ctx, request)
 		require.NoError(t, err)
 		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
 	}
 	require.Equal(t, int32(2), database.queries.Load())
 	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.AdmissionReason == dataquery.CacheAdmissionReasonPolicyInvalid
+	}))
+}
+
+func TestRuntimeCacheFinalLatencyUsesLogicalAttemptOriginForHitMissAndBypass(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: &countingCacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'),
+		ModelID:                    "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	require.NoError(t, primeBundleBranch(runtime, dataquery.BundleRequest{Query: request}))
+
+	observe := func() []dataquery.CacheObservation {
+		observations := []dataquery.CacheObservation{}
+		ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+			observations = append(observations, observation)
+		})
+		ctx = withCacheObservationStarted(ctx, time.Now().Add(-2*time.Second))
+		_, err := runtime.ExecuteDataQuery(ctx, request)
+		require.NoError(t, err)
+		return observations
+	}
+
+	hit := observe()
+	runtime.ClearQueryCache()
+	miss := observe()
+	runtime.dependencyEvidence = resultidentity.Evidence{}
+	bypass := observe()
+
+	hitFinal := cacheObservationByPhase(t, hit, dataquery.CacheObservationFinal)
+	missFinal := cacheObservationByPhase(t, miss, dataquery.CacheObservationFinal)
+	bypassFinal := cacheObservationByPhase(t, bypass, dataquery.CacheObservationFinal)
+	require.Equal(t, dataquery.CacheObservationHit, hitFinal.Outcome)
+	require.Equal(t, dataquery.CacheObservationMiss, missFinal.Outcome)
+	require.Equal(t, dataquery.CacheObservationMiss, bypassFinal.Outcome)
+	finals := []dataquery.CacheObservation{hitFinal, missFinal, bypassFinal}
+	for _, final := range finals {
+		require.GreaterOrEqual(t, final.Duration, 1500*time.Millisecond)
+	}
+	minimum, maximum := finals[0].Duration, finals[0].Duration
+	for _, final := range finals[1:] {
+		if final.Duration < minimum {
+			minimum = final.Duration
+		}
+		if final.Duration > maximum {
+			maximum = final.Duration
+		}
+	}
+	require.Less(t, maximum-minimum, time.Second)
+	lookup := cacheObservationByPhase(t, hit, dataquery.CacheObservationLookup)
+	require.Less(t, lookup.Duration, hitFinal.Duration, "lookup latency must remain narrower than logical cache-attempt latency")
+}
+
+func cacheObservationByPhase(t testing.TB, observations []dataquery.CacheObservation, phase dataquery.CacheObservationPhase) dataquery.CacheObservation {
+	t.Helper()
+	var matches []dataquery.CacheObservation
+	for _, observation := range observations {
+		if observation.Phase == phase {
+			matches = append(matches, observation)
+		}
+	}
+	require.Len(t, matches, 1)
+	return matches[0]
 }
 
 func TestRuntimePlanningFailureRetainsExecutionFailureClassification(t *testing.T) {
@@ -803,7 +920,9 @@ func TestRuntimePlanningFailureRetainsExecutionFailureClassification(t *testing.
 		},
 	})
 	require.NoError(t, err)
+	observations := []dataquery.CacheObservation{}
 	ctx := workload.WithAdmitter(context.Background(), admission)
+	ctx = dataquery.WithCacheObserver(ctx, func(observation dataquery.CacheObservation) { observations = append(observations, observation) })
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
 		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
@@ -822,6 +941,12 @@ func TestRuntimePlanningFailureRetainsExecutionFailureClassification(t *testing.
 	require.Empty(t, result.Error)
 	require.Equal(t, int32(0), database.queries.Load())
 	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+	require.Equal(t, 1, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.Decision == dataquery.CacheAdmissionRejected && observation.AdmissionReason == dataquery.CacheAdmissionReasonPlanningFailed
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup
+	}))
 }
 
 type rejectingQueryAdmitter struct{ calls int }
@@ -1313,10 +1438,14 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 	})
 	physicalQueries := 0
 	cacheOutcomes := []string{}
+	typedObservations := []dataquery.CacheObservation{}
 	ctx := dataquery.WithPhysicalQueryObserver(context.Background(), func(observation dataquery.PhysicalQueryObservation) {
 		physicalQueries += observation.Count
 	})
 	ctx = dataquery.WithCacheOutcomeObserver(ctx, func(outcome string) { cacheOutcomes = append(cacheOutcomes, outcome) })
+	ctx = dataquery.WithCacheObserver(ctx, func(observation dataquery.CacheObservation) {
+		typedObservations = append(typedObservations, observation)
+	})
 	request := dataquery.Query{
 		Surface:                    dataquery.SurfaceDashboard,
 		EffectivePolicyFingerprint: materializeTestDigest('9'),
@@ -1340,6 +1469,15 @@ func TestRuntimeCountsFilterOptionCacheMissAsPhysicalAndHitAsZero(t *testing.T) 
 	if len(cacheOutcomes) != len(wantOutcomes) || cacheOutcomes[0] != wantOutcomes[0] || cacheOutcomes[1] != wantOutcomes[1] {
 		t.Fatalf("cache outcomes = %#v, want %#v", cacheOutcomes, wantOutcomes)
 	}
+	lookups := make([]dataquery.CacheObservation, 0, 2)
+	for _, observation := range typedObservations {
+		if observation.Phase == dataquery.CacheObservationLookup {
+			lookups = append(lookups, observation)
+		}
+	}
+	require.Len(t, lookups, 2, "execution-flight second chance must not count as a logical lookup")
+	require.Equal(t, dataquery.CacheLookupMissColdStart, lookups[0].MissReason)
+	require.Equal(t, dataquery.CacheHitCurrentGeneration, lookups[1].HitSource)
 }
 
 func TestRuntimeCachesGovernedDashboardQueriesAndToggleBackExecutesZeroSQL(t *testing.T) {
@@ -1523,7 +1661,9 @@ func TestRuntimeBundleCacheMixedHitExecutesOnlyLoneMiss(t *testing.T) {
 	if _, err := runtime.ExecuteDataQuery(context.Background(), requests[0].Query); err != nil {
 		t.Fatal(err)
 	}
-	result, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) { observations = append(observations, observation) })
+	result, err := runtime.ExecuteDataQueryBundle(ctx, requests)
 	require.NoError(t, err)
 	if got := database.queries.Load(); got != 2 {
 		t.Fatalf("physical executions = %d, want prime plus lone miss", got)
@@ -1531,6 +1671,70 @@ func TestRuntimeBundleCacheMixedHitExecutesOnlyLoneMiss(t *testing.T) {
 	if result.Results[requests[0].ID].CacheOutcome != dataquery.CacheHit {
 		t.Fatalf("first branch outcome = %q", result.Results[requests[0].ID].CacheOutcome)
 	}
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission
+	}))
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup
+	}))
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationFinal
+	}))
+}
+
+func TestRuntimeDegenerateBundleObservesFirstLogicalLookupReason(t *testing.T) {
+	database := &bundleCountingDatabase{}
+	runtime := bundleCacheRuntime(t, database)
+	requests := bundleCacheRequests()
+	for _, request := range requests {
+		require.NoError(t, primeBundleBranch(runtime, request))
+	}
+
+	planned, err := runtime.planOwnedArrowQuery(requests[1].Query)
+	require.NoError(t, err)
+	dependency, reusable := runtime.dependencyForPlan(planned.plan)
+	require.True(t, reusable)
+	address, err := runtime.queryCache.cacheAddress(requests[1].Query, runtime.resultPartition, dependency)
+	require.NoError(t, err)
+	runtime.queryCache.scope.Delete(address.key)
+
+	observations := []dataquery.CacheObservation{}
+	restored := false
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+		if !restored && observation.Phase == dataquery.CacheObservationLookup && observation.MissReason != "" {
+			restored = true
+			runtime.queryCache.store(address.key, address.generation, dataquery.Result{
+				Columns: dataquery.ColumnsFromNames([]string{"value"}),
+				Rows:    []dataquery.Row{{"value": int64(1)}},
+			})
+		}
+	})
+	result, err := runtime.ExecuteDataQueryBundle(ctx, requests)
+	require.NoError(t, err)
+	require.True(t, restored)
+	require.Equal(t, int32(2), database.queries.Load(), "the internal safety lookup should see the restored entry")
+	require.Equal(t, dataquery.CacheHit, result.Results[requests[1].ID].CacheOutcome)
+
+	lookups := make([]dataquery.CacheObservation, 0, len(requests))
+	for _, observation := range observations {
+		if observation.Phase == dataquery.CacheObservationLookup {
+			lookups = append(lookups, observation)
+		}
+	}
+	require.Len(t, lookups, len(requests), "each bundle branch must emit one logical lookup")
+	require.Equal(t, dataquery.CacheHitCurrentGeneration, lookups[0].HitSource)
+	require.Equal(t, dataquery.CacheLookupMissAbsentEntry, lookups[1].MissReason, "the recorded miss must come from the first bundle lookup")
+}
+
+func countCacheObservations(observations []dataquery.CacheObservation, match func(dataquery.CacheObservation) bool) int {
+	count := 0
+	for _, observation := range observations {
+		if match(observation) {
+			count++
+		}
+	}
+	return count
 }
 
 func TestRuntimeBundleCanceledExecutionDoesNotCacheOrAuditSuccess(t *testing.T) {

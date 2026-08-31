@@ -21,6 +21,49 @@ func TestCacheOutcomeObserverUsesRequestContext(t *testing.T) {
 	}
 }
 
+func TestTypedCacheObserverUsesFixedContract(t *testing.T) {
+	observed := []CacheObservation{}
+	ctx := WithCacheObserver(context.Background(), func(observation CacheObservation) {
+		observed = append(observed, observation)
+	})
+	input := CacheObservation{
+		Phase: CacheObservationAdmission, Decision: CacheAdmissionBypassed,
+		AdmissionReason: CacheAdmissionReasonDependencyUnavailable,
+	}
+	ObserveCache(ctx, input)
+	ObserveCache(ctx, CacheObservation{})
+	ObserveCache(context.Background(), input)
+	if len(observed) != 1 || observed[0] != input {
+		t.Fatalf("typed cache observations = %#v, want %#v", observed, []CacheObservation{input})
+	}
+
+	assertUniqueCacheLabels(t, []string{
+		string(CacheAdmissionReasonEligible), string(CacheAdmissionReasonQueryNotCacheable),
+		string(CacheAdmissionReasonPlanningFailed), string(CacheAdmissionReasonCanceled),
+		string(CacheAdmissionReasonDependencyUnavailable),
+		string(CacheAdmissionReasonDependencyInvalid), string(CacheAdmissionReasonPolicyInvalid),
+		string(CacheAdmissionReasonPartitionInvalid),
+	})
+	assertUniqueCacheLabels(t, []string{
+		string(CacheLookupMissColdStart), string(CacheLookupMissAbsentEntry), string(CacheLookupMissQueryMismatch),
+		string(CacheLookupMissInvalidated), string(CacheLookupMissEvicted),
+	})
+}
+
+func assertUniqueCacheLabels(t *testing.T, values []string) {
+	t.Helper()
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		if value == "" {
+			t.Fatal("cache observation label must not be empty")
+		}
+		if _, ok := seen[value]; ok {
+			t.Fatalf("duplicate cache observation label %q", value)
+		}
+		seen[value] = struct{}{}
+	}
+}
+
 func TestConnectionWaitCounterAccumulatesAndPreservesOuterObserver(t *testing.T) {
 	var observed time.Duration
 	ctx := WithConnectionWaitObserver(context.Background(), func(wait time.Duration) { observed += wait })

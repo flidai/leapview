@@ -8,14 +8,17 @@ import (
 )
 
 type Collector struct {
-	database                                                   *analyticsducklake.Environment
-	cache                                                      *resultcache.Pool
-	connectionsOpen, connectionsActive, connectionsIdle        *prometheus.Desc
-	cacheEntries, cacheBytes, cacheEvictions, cacheStores      *prometheus.Desc
-	arrowResults, arrowLeases, arrowBytes, arrowTransientBytes *prometheus.Desc
-	connectionAcquisitions, extensionInitializations           *prometheus.Desc
-	sourceAcquisitions, scopeContention, commitRetries         *prometheus.Desc
-	refreshCleanup, fatalHealth                                *prometheus.Desc
+	database                                                                                *analyticsducklake.Environment
+	cache                                                                                   *resultcache.Pool
+	connectionsOpen, connectionsActive, connectionsIdle                                     *prometheus.Desc
+	cacheEntries, cacheBytes, cacheEvictions, cacheStores                                   *prometheus.Desc
+	stableScopes, stableEntries, stableBytes, stableArrowHolds                              *prometheus.Desc
+	generationScopes, generationByteEntries, generationByteBytes                            *prometheus.Desc
+	cacheInvalidations, cacheInvalidatedEntries, cacheClassEvictions, cacheScopeTransitions *prometheus.Desc
+	arrowResults, arrowLeases, arrowBytes, arrowTransientBytes                              *prometheus.Desc
+	connectionAcquisitions, extensionInitializations                                        *prometheus.Desc
+	sourceAcquisitions, scopeContention, commitRetries                                      *prometheus.Desc
+	refreshCleanup, fatalHealth                                                             *prometheus.Desc
 }
 
 func NewCollector(database *analyticsducklake.Environment, cache *resultcache.Pool) *Collector {
@@ -33,6 +36,17 @@ func NewCollector(database *analyticsducklake.Environment, cache *resultcache.Po
 		arrowTransientBytes:      prometheus.NewDesc("leapview_arrow_transient_bytes", "Transient bytes retained while materializing owned Arrow analytical results.", nil, nil),
 		cacheEvictions:           prometheus.NewDesc("leapview_query_cache_evictions_total", "Query-result cache evictions by limiting constraint.", []string{"constraint"}, nil),
 		cacheStores:              prometheus.NewDesc("leapview_query_cache_store_total", "Query-result cache store outcomes.", []string{"outcome"}, nil),
+		stableScopes:             prometheus.NewDesc("leapview_query_result_cache_scopes", "Stable partition result-cache scopes by lifecycle state.", []string{"state"}, nil),
+		stableEntries:            prometheus.NewDesc("leapview_query_result_cache_entries", "Arrow entries retained in stable partition result-cache scopes.", nil, nil),
+		stableBytes:              prometheus.NewDesc("leapview_query_result_cache_bytes", "Conservatively retained bytes in stable partition result-cache scopes.", nil, nil),
+		stableArrowHolds:         prometheus.NewDesc("leapview_query_result_cache_arrow_holds", "Cache-owned Arrow holds retained in stable partition result-cache scopes.", nil, nil),
+		generationScopes:         prometheus.NewDesc("leapview_generation_cache_scopes", "Generation-owned immutable-byte cache scopes.", nil, nil),
+		generationByteEntries:    prometheus.NewDesc("leapview_generation_byte_cache_entries", "Immutable-byte entries retained in generation-owned scopes.", nil, nil),
+		generationByteBytes:      prometheus.NewDesc("leapview_generation_byte_cache_bytes", "Bytes retained by immutable-byte entries in generation-owned scopes.", nil, nil),
+		cacheInvalidations:       prometheus.NewDesc("leapview_cache_invalidations_total", "Cache invalidation operations by fixed cache class.", []string{"cache"}, nil),
+		cacheInvalidatedEntries:  prometheus.NewDesc("leapview_cache_invalidated_entries_total", "Entries removed by cache invalidation by fixed cache class.", []string{"cache"}, nil),
+		cacheClassEvictions:      prometheus.NewDesc("leapview_cache_evicted_entries_total", "Cache evictions by fixed cache class and limiting constraint.", []string{"cache", "constraint"}, nil),
+		cacheScopeTransitions:    prometheus.NewDesc("leapview_query_result_cache_scope_transitions_total", "Stable result-cache scope lifecycle transitions.", []string{"transition"}, nil),
 		connectionAcquisitions:   prometheus.NewDesc("leapview_duckdb_connection_acquisitions_total", "Admitted analytical connection acquisitions.", nil, nil),
 		extensionInitializations: prometheus.NewDesc("leapview_duckdb_extension_initializations_total", "Approved extension initialization outcomes.", []string{"outcome"}, nil),
 		sourceAcquisitions:       prometheus.NewDesc("leapview_duckdb_source_acquisitions_total", "Refresh-only source acquisition outcomes.", []string{"connector", "outcome"}, nil),
@@ -44,7 +58,7 @@ func NewCollector(database *analyticsducklake.Environment, cache *resultcache.Po
 }
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
-	for _, description := range []*prometheus.Desc{c.connectionsOpen, c.connectionsActive, c.connectionsIdle, c.cacheEntries, c.cacheBytes, c.cacheEvictions, c.cacheStores, c.arrowResults, c.arrowLeases, c.arrowBytes, c.arrowTransientBytes, c.connectionAcquisitions, c.extensionInitializations, c.sourceAcquisitions, c.scopeContention, c.commitRetries, c.refreshCleanup, c.fatalHealth} {
+	for _, description := range []*prometheus.Desc{c.connectionsOpen, c.connectionsActive, c.connectionsIdle, c.cacheEntries, c.cacheBytes, c.cacheEvictions, c.cacheStores, c.stableScopes, c.stableEntries, c.stableBytes, c.stableArrowHolds, c.generationScopes, c.generationByteEntries, c.generationByteBytes, c.cacheInvalidations, c.cacheInvalidatedEntries, c.cacheClassEvictions, c.cacheScopeTransitions, c.arrowResults, c.arrowLeases, c.arrowBytes, c.arrowTransientBytes, c.connectionAcquisitions, c.extensionInitializations, c.sourceAcquisitions, c.scopeContention, c.commitRetries, c.refreshCleanup, c.fatalHealth} {
 		ch <- description
 	}
 }
@@ -97,6 +111,24 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		for _, outcome := range []resultcache.StoreOutcome{resultcache.StoreStored, resultcache.StoreOversized, resultcache.StoreStale, resultcache.StoreClosed} {
 			ch <- prometheus.MustNewConstMetric(c.cacheStores, prometheus.CounterValue, float64(stats.Stores[outcome]), string(outcome))
+		}
+		ch <- prometheus.MustNewConstMetric(c.stableScopes, prometheus.GaugeValue, float64(stats.Stable.ActiveScopes), "active")
+		ch <- prometheus.MustNewConstMetric(c.stableScopes, prometheus.GaugeValue, float64(stats.Stable.DormantScopes), "dormant")
+		ch <- prometheus.MustNewConstMetric(c.stableEntries, prometheus.GaugeValue, float64(stats.Stable.Entries))
+		ch <- prometheus.MustNewConstMetric(c.stableBytes, prometheus.GaugeValue, float64(stats.Stable.Bytes))
+		ch <- prometheus.MustNewConstMetric(c.stableArrowHolds, prometheus.GaugeValue, float64(stats.Stable.ArrowHolds))
+		ch <- prometheus.MustNewConstMetric(c.generationScopes, prometheus.GaugeValue, float64(stats.Generation.Scopes))
+		ch <- prometheus.MustNewConstMetric(c.generationByteEntries, prometheus.GaugeValue, float64(stats.Generation.ByteEntries))
+		ch <- prometheus.MustNewConstMetric(c.generationByteBytes, prometheus.GaugeValue, float64(stats.Generation.ByteBytes))
+		for _, class := range []resultcache.CacheClass{resultcache.CacheClassStableResult, resultcache.CacheClassGenerationByte} {
+			ch <- prometheus.MustNewConstMetric(c.cacheInvalidations, prometheus.CounterValue, float64(stats.Invalidations[class]), string(class))
+			ch <- prometheus.MustNewConstMetric(c.cacheInvalidatedEntries, prometheus.CounterValue, float64(stats.InvalidatedEntries[class]), string(class))
+			for _, constraint := range []resultcache.Constraint{resultcache.ConstraintRuntime, resultcache.ConstraintNode} {
+				ch <- prometheus.MustNewConstMetric(c.cacheClassEvictions, prometheus.CounterValue, float64(stats.ClassEvictions[class][constraint]), string(class), string(constraint))
+			}
+		}
+		for _, transition := range []resultcache.ScopeTransition{resultcache.ScopeTransitionCreated, resultcache.ScopeTransitionDormant, resultcache.ScopeTransitionReactivated, resultcache.ScopeTransitionRemoved} {
+			ch <- prometheus.MustNewConstMetric(c.cacheScopeTransitions, prometheus.CounterValue, float64(stats.ScopeTransitions[transition]), string(transition))
 		}
 	}
 }

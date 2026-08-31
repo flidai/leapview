@@ -116,13 +116,14 @@ func (h Handler) handleCommandWithBefore(w nethttp.ResponseWriter, r *nethttp.Re
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
 		workRequest := dashboardstream.WorkRequest{
-			DashboardID:   dashboardID,
-			PageID:        pageID,
-			ModelID:       modelID,
-			Filters:       preparation.Filters,
-			Plan:          plan,
-			EventObserved: h.RefreshEventObserved,
-			CacheObserved: h.CacheObserved,
+			DashboardID:              dashboardID,
+			PageID:                   pageID,
+			ModelID:                  modelID,
+			Filters:                  preparation.Filters,
+			Plan:                     plan,
+			EventObserved:            h.RefreshEventObserved,
+			CacheObserved:            h.CacheObserved,
+			CacheObservationObserved: h.CacheObservationObserved,
 		}
 		if before != nil {
 			workRequest.Before = before(metrics, request)

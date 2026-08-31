@@ -79,9 +79,11 @@ func TestTargetWorkScopesConsumerFailuresAndSuppressesCancellation(t *testing.T)
 func TestTargetWorkPublishesAcceptedCacheOutcomes(t *testing.T) {
 	executor := &consumerExecutorStub{execute: func(ctx context.Context, _ consumer.Request, _ consumer.Publisher) error {
 		dataquery.ObserveCacheOutcome(ctx, dataquery.CacheHit)
+		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationLookup, HitSource: dataquery.CacheHitCurrentGeneration})
 		return nil
 	}}
 	observed := ""
+	typed := dataquery.CacheObservation{}
 	events := []RefreshEvent{}
 	TargetWork(executor, WorkRequest{
 		DashboardID: "commerce",
@@ -89,12 +91,16 @@ func TestTargetWorkPublishesAcceptedCacheOutcomes(t *testing.T) {
 		CacheObserved: func(outcome string) {
 			observed = outcome
 		},
+		CacheObservationObserved: func(observation dataquery.CacheObservation) { typed = observation },
 	})(context.Background(), func(event RefreshEvent) bool {
 		events = append(events, event)
 		return true
 	})
 	if observed != dataquery.CacheHit || len(events) != 1 || events[0].CacheOutcome != dataquery.CacheHit {
 		t.Fatalf("observed=%q events=%#v", observed, events)
+	}
+	if typed.Phase != dataquery.CacheObservationLookup || typed.HitSource != dataquery.CacheHitCurrentGeneration {
+		t.Fatalf("typed cache observation = %#v", typed)
 	}
 }
 
