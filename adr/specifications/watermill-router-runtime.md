@@ -1,0 +1,126 @@
+# FAI-593 canonical Watermill Router/subscriber runtime
+
+Status: accepted mutable companion specification
+
+Last updated: 2026-08-31
+
+Governing decision: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture.md)
+
+Related: [FAI-592 canonical Watermill envelope](watermill-canonical-envelope.md)
+and [FAI-591 PostgreSQL qualification](watermill-postgresql-proof.md)
+
+Implementation status and delivery evidence are tracked in the FAI-593 Linear
+work; this specification records the runtime contract, not project progress.
+
+## Purpose and authority
+
+This specification fixes the boundary between LeapView's durable event
+authority and Watermill's in-process router. The PostgreSQL `event_log`,
+`event_delivery`, and persisted consumers (including their aggregate filters,
+enrollment/replay roots, attempts, leases, fences, terminal state, and
+retention decisions) are the sole authority for delivery, retry, dead-letter,
+replay, and retention. Watermill-owned SQL transport tables, offsets, or a
+second mutable delivery authority are not allowed in production.
+
+The four current Watermill topics are the allowlisted capability topics
+`agent`, `dashboard`, `delivery`, and `release`. They are not conceptual
+control-, lineage-, or cache-topics. No concrete lineage or cache consumer is
+implied by this specification.
+
+`message.UUID`, the canonical envelope, and the strict metadata contract are
+defined by FAI-592. Metadata is exactly `{topic}`; handlers and middleware
+must not add, rewrite, or derive metadata (including correlation or delay
+metadata).
+
+## Subscriber and claim protocol
+
+The production adapter is a custom Watermill `message.Subscriber` over the
+canonical tables. It must satisfy all of the following:
+
+- Registry-fenced append, enrollment, backfill, and retirement transactions
+  use PostgreSQL `READ COMMITTED`. The canonical repository rejects stronger
+  isolation before doing event work because their transaction-wide snapshots
+  cannot observe the post-fence consumer boundary.
+- A claim transaction atomically selects one consumer-specific
+  `event_delivery` row, records the attempt and lease, and binds the exact
+  worker identity and claim-generation fence. The transaction commits before
+  the message is emitted to Watermill and is closed before any handler runs.
+- Every claimed-state completion or retry transition matches both the worker
+  and claim-generation fences. A stale worker, generation, or lease cannot
+  complete or retry a delivery. Authorized replay and waiver use their own
+  explicit terminal-state preconditions and evidence.
+- `Nack` records a replayable failure in a short transaction. The next attempt
+  performs a fresh claim (and therefore a fresh fence and lease); it never
+  re-emits a message under the old claim.
+- A successful handler commits its idempotent domain effect and terminal
+  `Complete` transition before the subscriber permits Router `Ack`. If that
+  commit fails, the message is nacked and never acknowledged.
+- Process loss, disconnect, or an expired lease is recovered by the successor's
+  durable claim transaction. That claim fences the old owner, advances the
+  claim generation, and makes no use of an in-memory cursor or Watermill
+  offset.
+
+The subscriber may use polling and a PostgreSQL notification as a wake-up hint,
+but correctness always comes from reconciling `event_log` and
+`event_delivery`. A transaction is never held across message emission,
+handler execution, or Router middleware.
+
+## Router and middleware boundary
+
+Use the Watermill core `Router` and only the mature, explicitly configured
+`Retry`, `Recoverer`, `Timeout`, `Prometheus`, and `slog` middleware. Their
+bounded in-process behavior must not become a second attempt, poison, replay,
+or retention authority; durable attempt and terminal decisions remain in
+`event_delivery`.
+
+The following are prohibited in the canonical path:
+
+- stock `watermill-sql` production publisher/subscriber transport, transport
+  offsets, or schema initialization;
+- `PoisonQueue` or a second poison topic;
+- `InstantAck` and `IgnoreErrors`;
+- metadata-mutating `CorrelationID` or `Delay` middleware (canonical
+  correlation is envelope data, and delay/retry state is PostgreSQL state);
+- a second product-owned router or an unbounded translation queue.
+
+## Bounded operation and failure semantics
+
+`max_in_flight` is a positive, bounded per-subscriber/router limit. Poll,
+retry/backoff, handler, acknowledgement, claim-lease, recovery, and shutdown
+deadlines are explicit and positive, with bounded batch/resend values. The
+configuration records an inequality such as
+
+`0 < handler_deadline < acknowledgement_deadline < claim_lease - recovery_margin`,
+
+where `recovery_margin` covers commit, scheduling, and clock-skew grace. A
+claim lease that cannot outlive the acknowledgement and recovery window is
+invalid. No zero-value deadline may silently disable these protections.
+
+At-least-once delivery is expected. Bounded attempts that cannot succeed enter
+a visible dead-letter terminal state in `event_delivery`; that state remains
+retention-blocking until an authorized resolution or audited waiver. Replay is
+by canonical event identity and a persisted replay root, with the same fences
+and fresh claims. Pruning `event_log` or `event_delivery` is forbidden while
+any applicable delivery, replay root, or unresolved dead letter remains.
+
+Handlers keep transactions short. Work that may exceed the handler deadline is
+admitted as a River job and acknowledged only after that admission transaction
+commits; it is not executed as a long-running Watermill handler.
+
+Pagestream remains the browser SSE transport. Watermill events may wake or
+reconcile application state, but per-client Pagestream patches never travel
+through PostgreSQL event delivery or the Router.
+
+## Observability and conformance
+
+Watermill Prometheus and `slog` instrumentation covers Router, subscriber,
+handler, Ack/Nack, failure, timeout, and latency. LeapView metrics additionally
+expose backlog, in-flight count, claim/lease age, fence rejects, lease
+recoveries, attempts, dead letters, replay roots, and retention-floor blockers.
+
+Conformance must demonstrate claim-before-emit and no transaction-through-handler,
+exact worker/generation fencing, fresh claim after Nack, Complete-commit-before-
+Ack, lost-process lease recovery, bounded in-flight/deadlines, dead-letter
+retention blocking, replay identity, shutdown drain, and absence of every
+prohibited Watermill transport/middleware path. A lane not run is unsupported;
+implementation status belongs in Linear.

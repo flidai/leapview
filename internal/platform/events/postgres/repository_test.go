@@ -3,12 +3,14 @@ package postgres
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -291,7 +293,7 @@ func TestPostgreSQL18ConcurrentEnrollmentProducerHistoricalEvent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0)})
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"order"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -350,7 +352,7 @@ func TestPostgreSQL18RetirementFenceClosesProducerFanoutRace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "retiring-sink", ReplayFrom: time.Unix(0, 0)})
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "retiring-sink", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"retirement"}})
 	if err != nil {
 		_ = enrollTx.Rollback(ctx)
 		t.Fatal(err)
@@ -448,7 +450,7 @@ func TestPostgreSQL18DuplicateSafeBackfillAndPoisonRetention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := New().EnrollConsumer(ctx, tx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0)})
+	consumer, err := New().EnrollConsumer(ctx, tx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"batch"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -567,7 +569,7 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0)})
+	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{ConsumerKey: "sink", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"claim"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -886,7 +888,7 @@ func TestPostgreSQL18CommittedClaimSurvivesConnectionLossAndIsLeaseReclaimed(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "connection-loss", ReplayFrom: time.Unix(0, 0)})
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "connection-loss", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"connection-loss"}})
 	if err != nil {
 		_ = enrollTx.Rollback(ctx)
 		t.Fatal(err)
@@ -1052,6 +1054,356 @@ func TestPostgreSQL18CommittedClaimSurvivesConnectionLossAndIsLeaseReclaimed(t *
 	}
 	if currentGeneration != second[0].ClaimGeneration {
 		t.Fatalf("delivery generation after stale completion = %d, want %d", currentGeneration, second[0].ClaimGeneration)
+	}
+}
+
+func TestCanonicalConsumerAggregateTypes(t *testing.T) {
+	got, err := canonicalAggregateTypes([]string{"z-order", "order", "z-order"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"order", "z-order"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("canonical aggregate types = %#v, want %#v", got, want)
+	}
+	for _, values := range [][]string{nil, {}, {" "}, {strings.Repeat("x", 256)}} {
+		if _, err := canonicalAggregateTypes(values); err == nil {
+			t.Fatalf("canonical aggregate types %#v unexpectedly succeeded", values)
+		}
+	}
+	tooMany := make([]string, MaxConsumerAggregateTypes+1)
+	for i := range tooMany {
+		tooMany[i] = strings.Repeat("x", i+1)
+	}
+	if _, err := canonicalAggregateTypes(tooMany); err == nil {
+		t.Fatalf("aggregate filter with %d values unexpectedly succeeded", len(tooMany))
+	}
+}
+
+func TestPostgreSQL18RegistryFenceRejectsStrongerIsolationWithoutWrites(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	const eventID = "01900000-0000-7000-8000-000000000131"
+
+	// AppendEvent must reject before its identity lock, aggregate allocation, or
+	// event insert can leave a durable row behind.
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.AppendEvent(ctx, tx, EventInput{
+		EventID: eventID, ScopeID: "scope", AggregateType: "orders", AggregateID: "1",
+		EventType: "created", SchemaVersion: 1, Payload: []byte(`{"ok":true}`),
+	})
+	if !errors.Is(err, ErrUnsupportedTransactionIsolation) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("repeatable-read append error = %v, want ErrUnsupportedTransactionIsolation", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_log WHERE event_id = $1::uuid`, eventID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("repeatable-read append left %d event rows", count)
+	}
+
+	// Enrollment must reject before creating either its consumer row or its
+	// aggregate filter rows.
+	tx, err = db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{
+		ConsumerKey: "strong-isolation", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"orders"},
+	})
+	if !errors.Is(err, ErrUnsupportedTransactionIsolation) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("serializable enrollment error = %v, want ErrUnsupportedTransactionIsolation", err)
+	}
+	if consumer.ConsumerID != "" {
+		t.Fatalf("rejected enrollment returned consumer %q", consumer.ConsumerID)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_consumer WHERE consumer_key = 'strong-isolation'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("serializable enrollment left %d consumer rows", count)
+	}
+
+	// Establish a valid backfilling consumer, then verify Backfill's stronger
+	// isolation guard leaves lifecycle, retention, and delivery state untouched.
+	enrollTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backfillConsumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{
+		ConsumerKey: "backfill-strong-isolation", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"orders"},
+	})
+	if err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enrollTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	backfillTx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.Backfill(ctx, backfillTx, backfillConsumer.ConsumerID, 100)
+	if !errors.Is(err, ErrUnsupportedTransactionIsolation) {
+		_ = backfillTx.Rollback(ctx)
+		t.Fatalf("repeatable-read backfill error = %v, want ErrUnsupportedTransactionIsolation", err)
+	}
+	if err := backfillTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle string
+	if err := db.QueryRow(ctx, `SELECT lifecycle FROM event.event_consumer WHERE consumer_id = $1::uuid`, backfillConsumer.ConsumerID).Scan(&lifecycle); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "backfilling" {
+		t.Fatalf("rejected backfill lifecycle = %q, want backfilling", lifecycle)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_consumer_aggregate WHERE consumer_id = $1::uuid`, backfillConsumer.ConsumerID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("backfill consumer filter count = %d, want 1", count)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_delivery WHERE consumer_id = $1::uuid`, backfillConsumer.ConsumerID).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected backfill left %d deliveries", count)
+	}
+
+	retireTx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = r.RetireConsumer(ctx, retireTx, RetireOptions{ConsumerID: backfillConsumer.ConsumerID})
+	if !errors.Is(err, ErrUnsupportedTransactionIsolation) {
+		_ = retireTx.Rollback(ctx)
+		t.Fatalf("serializable retirement error = %v, want ErrUnsupportedTransactionIsolation", err)
+	}
+	if err := retireTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT lifecycle FROM event.event_consumer WHERE consumer_id = $1::uuid`, backfillConsumer.ConsumerID).Scan(&lifecycle); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "backfilling" {
+		t.Fatalf("rejected retirement lifecycle = %q, want backfilling", lifecycle)
+	}
+}
+
+func TestPostgreSQL18FilteredFanoutAndBackfill(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	appendEvent := func(eventID, aggregateType string) {
+		t.Helper()
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, err = r.AppendEvent(ctx, tx, EventInput{
+			EventID: eventID, ScopeID: "scope", AggregateType: aggregateType, AggregateID: eventID,
+			EventType: "changed", SchemaVersion: 1, Payload: []byte(`{"ok":true}`),
+		})
+		if err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	appendEvent("01900000-0000-7000-8000-000000000101", "orders")
+	appendEvent("01900000-0000-7000-8000-000000000102", "users")
+
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{
+		ConsumerKey: "filtered", ReplayFrom: time.Unix(0, 0),
+		AggregateTypes: []string{"orders", "orders"},
+	})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if want := []string{"orders"}; !reflect.DeepEqual(consumer.AggregateTypes, want) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("consumer aggregate types = %#v, want %#v", consumer.AggregateTypes, want)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backfill, err := r.Backfill(ctx, tx, consumer.ConsumerID, 100)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if !backfill.Done || backfill.Scanned != 1 || backfill.Inserted != 1 {
+		t.Fatalf("filtered backfill = %#v, want one admitted event", backfill)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	appendEvent("01900000-0000-7000-8000-000000000103", "users")
+	appendEvent("01900000-0000-7000-8000-000000000104", "orders")
+	var deliveries int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_delivery WHERE consumer_id = $1::uuid`, consumer.ConsumerID).Scan(&deliveries); err != nil {
+		t.Fatal(err)
+	}
+	if deliveries != 2 {
+		t.Fatalf("filtered delivery count = %d, want 2", deliveries)
+	}
+	var users int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*)
+		FROM event.event_delivery d
+		JOIN event.event_log e ON e.event_id = d.event_id
+		WHERE d.consumer_id = $1::uuid AND e.aggregate_type = 'users'`, consumer.ConsumerID).Scan(&users); err != nil {
+		t.Fatal(err)
+	}
+	if users != 0 {
+		t.Fatalf("filtered users delivery count = %d, want 0", users)
+	}
+}
+
+func TestPostgreSQL18FilteredConsumerDoesNotPinUnadmittedRetention(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	eventID := "01900000-0000-7000-8000-000000000111"
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.AppendEvent(ctx, tx, EventInput{
+		EventID: eventID, ScopeID: "scope", AggregateType: "ignored", AggregateID: "1",
+		EventType: "changed", SchemaVersion: 1, Payload: []byte(`{"ignored":true}`),
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{
+		ConsumerKey: "retention-filter", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"admitted"},
+	})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backfill, err := r.Backfill(ctx, tx, consumer.ConsumerID, 100)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if !backfill.Done || backfill.Scanned != 0 || backfill.Inserted != 0 {
+		t.Fatalf("filtered ignored backfill = %#v, want empty completion", backfill)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := r.Prune(ctx, tx, time.Now().Add(time.Hour))
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if removed != 1 {
+		t.Fatalf("filtered retention prune removed %d events, want 1", removed)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgreSQL18ConsumerEnrollmentConflictLeavesAllowlistUnchanged(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	consumerID := "01900000-0000-7000-8000-000000000121"
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnrollConsumer(ctx, tx, ConsumerInput{
+		ConsumerID: consumerID, ConsumerKey: "enrollment-conflict", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"orders"},
+	}); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.EnrollConsumer(ctx, tx, ConsumerInput{
+		ConsumerID: consumerID, ConsumerKey: "enrollment-conflict-retry", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"users"},
+	})
+	if err == nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal("duplicate consumer enrollment unexpectedly succeeded")
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var aggregateTypes []string
+	rows, err := db.Query(ctx, `SELECT aggregate_type FROM event.event_consumer_aggregate WHERE consumer_id = $1::uuid ORDER BY aggregate_type`, consumerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for rows.Next() {
+		var aggregateType string
+		if err := rows.Scan(&aggregateType); err != nil {
+			rows.Close()
+			t.Fatal(err)
+		}
+		aggregateTypes = append(aggregateTypes, aggregateType)
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		t.Fatal(err)
+	}
+	rows.Close()
+	if want := []string{"orders"}; !reflect.DeepEqual(aggregateTypes, want) {
+		t.Fatalf("allowlist after enrollment conflict = %#v, want %#v", aggregateTypes, want)
 	}
 }
 

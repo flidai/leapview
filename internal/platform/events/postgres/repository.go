@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,6 +51,15 @@ func New() *Repository { return &Repository{} }
 // ErrDeliveryClaimLost reports that a delivery transition no longer owns the
 // exact worker/generation fence supplied by the caller.
 var ErrDeliveryClaimLost = errors.New("event delivery is not claimed by worker")
+
+// ErrUnsupportedTransactionIsolation reports that a registry-fenced event
+// operation was attempted outside PostgreSQL READ COMMITTED. The fan-out
+// protocol relies on each SQL command receiving a fresh snapshot after the
+// registry lock completes; stronger isolation levels retain the transaction's
+// initial snapshot and can therefore produce a mixed enrollment/retirement
+// view. Callers must begin a READ COMMITTED transaction instead of retrying
+// under a stronger isolation level.
+var ErrUnsupportedTransactionIsolation = errors.New("event protocol requires READ COMMITTED transaction isolation")
 
 // EventInput describes one domain event. EventID is optional; when omitted a
 // UUIDv7 is generated.
@@ -92,12 +102,14 @@ func (e *EventConflictError) Error() string {
 // ConsumerInput enrolls one durable broadcast consumer.  ReplayFrom must be
 // at or after the current retention floor.  A consumer is initially
 // backfilling; callers invoke Backfill until it reports Done, at which point it
-// is enabled by the repository.
+// is enabled by the repository. AggregateTypes is a required, fail-closed
+// allowlist; enrollment canonicalizes it to sorted unique values.
 type ConsumerInput struct {
-	ConsumerID  string
-	ConsumerKey string
-	ReplayFrom  time.Time
-	Metadata    json.RawMessage
+	ConsumerID     string
+	ConsumerKey    string
+	ReplayFrom     time.Time
+	Metadata       json.RawMessage
+	AggregateTypes []string
 }
 
 // Consumer is the persisted lifecycle record.
@@ -109,6 +121,7 @@ type Consumer struct {
 	FrontierEventID  string
 	FrontierOccurred time.Time
 	Metadata         json.RawMessage
+	AggregateTypes   []string
 	CreatedAt        time.Time
 	UpdatedAt        time.Time
 }
@@ -192,6 +205,9 @@ type RetryOptions struct {
 // retirement boundary.
 func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Event, error) {
 	if err := validateTxContext(ctx, tx); err != nil {
+		return Event{}, err
+	}
+	if err := requireReadCommitted(ctx, tx); err != nil {
 		return Event{}, err
 	}
 	payload, err := canonicalObject(in.Payload, 65536)
@@ -319,7 +335,7 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 	if !registry {
 		return Event{}, errors.New("event fan-out registry row is invalid")
 	}
-	consumerIDs, err := eventsdb.New(tx).ListFanoutConsumers(ctx)
+	consumerIDs, err := eventsdb.New(tx).ListFanoutConsumers(ctx, aggregateType)
 	if err != nil {
 		return Event{}, fmt.Errorf("scan event consumers: %w", err)
 	}
@@ -345,7 +361,14 @@ func (r *Repository) EnrollConsumer(ctx context.Context, tx Tx, in ConsumerInput
 	if err := validateTxContext(ctx, tx); err != nil {
 		return Consumer{}, err
 	}
+	if err := requireReadCommitted(ctx, tx); err != nil {
+		return Consumer{}, err
+	}
 	key, err := boundedID("consumer key", in.ConsumerKey, 255)
+	if err != nil {
+		return Consumer{}, err
+	}
+	aggregateTypes, err := canonicalAggregateTypes(in.AggregateTypes)
 	if err != nil {
 		return Consumer{}, err
 	}
@@ -419,11 +442,17 @@ func (r *Repository) EnrollConsumer(ctx context.Context, tx Tx, in ConsumerInput
 	if err := eventsdb.New(tx).InsertConsumer(ctx, eventsdb.InsertConsumerParams{ConsumerID: uuidParam(consumerID), ConsumerKey: key, ReplayFrom: timestampParam(replayFrom), Metadata: metadata}); err != nil {
 		return Consumer{}, fmt.Errorf("enroll event consumer: %w", err)
 	}
+	for _, aggregateType := range aggregateTypes {
+		if err := eventsdb.New(tx).InsertConsumerAggregate(ctx, eventsdb.InsertConsumerAggregateParams{ConsumerID: uuidParam(consumerID), AggregateType: aggregateType}); err != nil {
+			return Consumer{}, fmt.Errorf("persist event consumer aggregate filter: %w", err)
+		}
+	}
 	if err := eventsdb.New(tx).InsertRetentionRoot(ctx, eventsdb.InsertRetentionRootParams{RootID: uuidParam(rootID), ConsumerID: uuidParam(consumerID), ReplayFrom: timestampParam(replayFrom), ReplayUntil: timestampParam(replayUntil), ReplayUntilEventID: uuidParam(replayUntilID), Evidence: []byte(`{"kind":"event_backfill"}`)}); err != nil {
 		return Consumer{}, fmt.Errorf("create event retention root: %w", err)
 	}
 	return Consumer{ConsumerID: consumerID, ConsumerKey: key,
-		Lifecycle: "backfilling", ReplayFrom: replayFrom, Metadata: metadata}, nil
+		Lifecycle: "backfilling", ReplayFrom: replayFrom, Metadata: metadata,
+		AggregateTypes: append([]string(nil), aggregateTypes...)}, nil
 }
 
 // Backfill copies at most limit events into one consumer's delivery set.  It
@@ -433,6 +462,9 @@ func (r *Repository) EnrollConsumer(ctx context.Context, tx Tx, in ConsumerInput
 // replay root.
 func (r *Repository) Backfill(ctx context.Context, tx Tx, consumerID string, limit int) (BackfillResult, error) {
 	if err := validateTxContext(ctx, tx); err != nil {
+		return BackfillResult{}, err
+	}
+	if err := requireReadCommitted(ctx, tx); err != nil {
 		return BackfillResult{}, err
 	}
 	if consumerID != strings.TrimSpace(consumerID) {
@@ -479,7 +511,7 @@ func (r *Repository) Backfill(ctx context.Context, tx Tx, consumerID string, lim
 		frontierAt = cursor.FrontierOccurredAt.Time.UTC()
 	}
 	hasUntil, hasFrontier := cursor.ReplayUntil.Valid, cursor.FrontierOccurredAt.Valid && frontierID != ""
-	rows, err := eventsdb.New(tx).ListBackfillEvents(ctx, eventsdb.ListBackfillEventsParams{ReplayFrom: timestampParam(replayFrom), HasUntil: hasUntil, ReplayUntil: timestampParam(replayUntil), ReplayUntilEventID: uuidParam(replayUntilID), HasFrontier: hasFrontier, FrontierAt: timestampParam(frontierAt), FrontierEventID: uuidParam(frontierID), PLimit: int32(limit)})
+	rows, err := eventsdb.New(tx).ListBackfillEvents(ctx, eventsdb.ListBackfillEventsParams{ConsumerID: uuidParam(consumerID), ReplayFrom: timestampParam(replayFrom), HasUntil: hasUntil, ReplayUntil: timestampParam(replayUntil), ReplayUntilEventID: uuidParam(replayUntilID), HasFrontier: hasFrontier, FrontierAt: timestampParam(frontierAt), FrontierEventID: uuidParam(frontierID), PLimit: int32(limit)})
 	if err != nil {
 		return BackfillResult{}, fmt.Errorf("scan event backfill batch: %w", err)
 	}
@@ -517,6 +549,9 @@ func (r *Repository) Backfill(ctx context.Context, tx Tx, consumerID string, lim
 // all unresolved rows become audited waived rows in this same transaction.
 func (r *Repository) RetireConsumer(ctx context.Context, tx Tx, opts RetireOptions) error {
 	if err := validateTxContext(ctx, tx); err != nil {
+		return err
+	}
+	if err := requireReadCommitted(ctx, tx); err != nil {
 		return err
 	}
 	consumerID := opts.ConsumerID
@@ -917,6 +952,21 @@ func validateTxContext(ctx context.Context, tx Tx) error {
 	return nil
 }
 
+// requireReadCommitted verifies the caller-owned transaction before any
+// protocol query or mutation. This guard intentionally rejects repeatable
+// read and serializable transactions rather than attempting to compensate for
+// their transaction-wide snapshot semantics.
+func requireReadCommitted(ctx context.Context, tx Tx) error {
+	isolation, err := eventsdb.New(tx).CurrentTransactionIsolation(ctx)
+	if err != nil {
+		return fmt.Errorf("%w: read transaction isolation: %v", ErrUnsupportedTransactionIsolation, err)
+	}
+	if strings.ToLower(strings.TrimSpace(isolation)) != "read committed" {
+		return fmt.Errorf("%w: got %q", ErrUnsupportedTransactionIsolation, isolation)
+	}
+	return nil
+}
+
 func boundedID(label, value string, max int) (string, error) {
 	trimmed := strings.TrimSpace(value)
 	if value != trimmed {
@@ -929,6 +979,38 @@ func boundedID(label, value string, max int) (string, error) {
 		return "", fmt.Errorf("%s exceeds %d bytes", label, max)
 	}
 	return value, nil
+}
+
+// MaxConsumerAggregateTypes bounds per-consumer fan-out filter cardinality.
+// It exceeds the largest currently allowlisted topic family (five aggregate
+// types) while preventing unbounded filter rows and duplicate-input work.
+const MaxConsumerAggregateTypes = 16
+
+// canonicalAggregateTypes validates, deduplicates, and sorts a consumer's
+// aggregate-family allowlist. Empty filters are rejected deliberately: an
+// omitted or empty policy must never silently become an all-events consumer.
+func canonicalAggregateTypes(values []string) ([]string, error) {
+	if len(values) == 0 {
+		return nil, errors.New("consumer aggregate types are required")
+	}
+	if len(values) > MaxConsumerAggregateTypes {
+		return nil, fmt.Errorf("consumer aggregate types exceed %d", MaxConsumerAggregateTypes)
+	}
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for i, value := range values {
+		aggregateType, err := boundedID(fmt.Sprintf("consumer aggregate type %d", i), value, 255)
+		if err != nil {
+			return nil, err
+		}
+		if _, exists := seen[aggregateType]; exists {
+			continue
+		}
+		seen[aggregateType] = struct{}{}
+		result = append(result, aggregateType)
+	}
+	sort.Strings(result)
+	return result, nil
 }
 
 func validateUUID(label, value string) error {

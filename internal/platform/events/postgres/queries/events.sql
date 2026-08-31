@@ -1,6 +1,9 @@
 -- Durable event-log leaf queries. Repository code retains validation,
 -- domain mapping, caller-owned transactions, and replay orchestration.
 
+-- name: CurrentTransactionIsolation :one
+SELECT current_setting('transaction_isolation')::text AS transaction_isolation;
+
 -- name: LockEventIdentity :exec
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(event_id), 0));
 
@@ -47,10 +50,16 @@ SELECT registry_id FROM event.event_fanout_registry
 WHERE registry_id = true FOR UPDATE;
 
 -- name: ListFanoutConsumers :many
-SELECT consumer_id::text
-FROM event.event_consumer
-WHERE lifecycle IN ('backfilling', 'enabled', 'paused')
-ORDER BY consumer_id;
+SELECT c.consumer_id::text
+FROM event.event_consumer AS c
+WHERE c.lifecycle IN ('backfilling', 'enabled', 'paused')
+  AND EXISTS (
+      SELECT 1
+      FROM event.event_consumer_aggregate AS a
+      WHERE a.consumer_id = c.consumer_id
+        AND a.aggregate_type = sqlc.arg(aggregate_type)
+  )
+ORDER BY c.consumer_id;
 
 -- name: InsertEventDelivery :exec
 INSERT INTO event.event_delivery (consumer_id, event_id, status, available_at)
@@ -77,6 +86,10 @@ INSERT INTO event.event_consumer
     (consumer_id, consumer_key, lifecycle, replay_from, metadata)
 VALUES (sqlc.arg(consumer_id)::uuid, sqlc.arg(consumer_key), 'backfilling',
         sqlc.arg(replay_from), sqlc.arg(metadata)::jsonb);
+
+-- name: InsertConsumerAggregate :exec
+INSERT INTO event.event_consumer_aggregate (consumer_id, aggregate_type)
+VALUES (sqlc.arg(consumer_id)::uuid, sqlc.arg(aggregate_type));
 
 -- name: InsertRetentionRoot :exec
 INSERT INTO event.event_retention_root
@@ -113,6 +126,12 @@ WHERE occurred_at >= sqlc.arg(replay_from)
        OR occurred_at > sqlc.arg(frontier_at)
        OR (occurred_at = sqlc.arg(frontier_at)
            AND event_id > sqlc.narg(frontier_event_id)::uuid))
+  AND EXISTS (
+      SELECT 1
+      FROM event.event_consumer_aggregate AS a
+      WHERE a.consumer_id = sqlc.arg(consumer_id)::uuid
+        AND a.aggregate_type = event.event_log.aggregate_type
+  )
 ORDER BY occurred_at, event_id
 LIMIT sqlc.arg(p_limit);
 

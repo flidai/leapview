@@ -73,6 +73,16 @@ CREATE TABLE IF NOT EXISTS event.event_consumer (
     CHECK (octet_length(consumer_key) BETWEEN 1 AND 255)
 );
 
+-- Consumers declare the aggregate families they are admitted to receive.
+-- Keeping the allowlist relational makes fan-out and replay filtering
+-- transactionally authoritative and avoids encoding policy in event payloads.
+CREATE TABLE IF NOT EXISTS event.event_consumer_aggregate (
+    consumer_id uuid NOT NULL REFERENCES event.event_consumer(consumer_id) ON DELETE CASCADE,
+    aggregate_type text NOT NULL,
+    CHECK (octet_length(aggregate_type) BETWEEN 1 AND 255),
+    PRIMARY KEY (consumer_id, aggregate_type)
+);
+
 CREATE TABLE IF NOT EXISTS event.event_delivery (
     consumer_id uuid NOT NULL REFERENCES event.event_consumer(consumer_id) ON DELETE CASCADE,
     event_id uuid NOT NULL REFERENCES event.event_log(event_id) ON DELETE CASCADE,
@@ -114,6 +124,8 @@ CREATE INDEX IF NOT EXISTS event_delivery_claim_idx
 -- the claim-oriented index above intentionally starts with consumer_id.
 CREATE INDEX IF NOT EXISTS event_delivery_event_idx
     ON event.event_delivery (event_id, status);
+CREATE INDEX IF NOT EXISTS event_consumer_aggregate_type_idx
+    ON event.event_consumer_aggregate (aggregate_type, consumer_id);
 CREATE INDEX IF NOT EXISTS event_retention_root_live_idx
     ON event.event_retention_root (replay_from, replay_until)
     WHERE state <> 'expired';

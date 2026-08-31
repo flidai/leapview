@@ -97,13 +97,15 @@ var ErrNotConfigured = errors.New("watermill event adapter is not configured")
 // Typed validation sentinels permit callers to classify malformed messages
 // without parsing human-readable error text.
 var (
-	ErrInvalid       = errors.New("invalid watermill event message")
-	ErrUnknownTopic  = errors.New("unknown watermill topic")
-	ErrTopicMismatch = errors.New("watermill topic and aggregate type mismatch")
-	ErrEnvelope      = errors.New("invalid watermill event envelope")
-	ErrUUIDMismatch  = errors.New("watermill message UUID and envelope event ID differ")
-	ErrMetadata      = errors.New("invalid watermill event metadata")
-	ErrSizeLimit     = errors.New("watermill event size limit exceeded")
+	ErrInvalid            = errors.New("invalid watermill event message")
+	ErrUnknownTopic       = errors.New("unknown watermill topic")
+	ErrUnknownAggregate   = errors.New("unknown watermill aggregate type")
+	ErrAmbiguousAggregate = errors.New("ambiguous watermill aggregate type")
+	ErrTopicMismatch      = errors.New("watermill topic and aggregate type mismatch")
+	ErrEnvelope           = errors.New("invalid watermill event envelope")
+	ErrUUIDMismatch       = errors.New("watermill message UUID and envelope event ID differ")
+	ErrMetadata           = errors.New("invalid watermill event metadata")
+	ErrSizeLimit          = errors.New("watermill event size limit exceeded")
 )
 
 // ValidationError identifies the field rejected by the strict boundary.
@@ -204,8 +206,8 @@ func MessageForEvent(topic string, event eventspostgres.Event) (*message.Message
 	if err := validateTopic(topic); err != nil {
 		return nil, err
 	}
-	if !aggregateAllowed(topic, event.AggregateType) {
-		return nil, validation("aggregateType", "is not accepted by topic", ErrTopicMismatch)
+	if err := validateAggregateTopic(topic, event.AggregateType); err != nil {
+		return nil, err
 	}
 	if err := validateIdentity("eventId", event.EventID, 36); err != nil {
 		return nil, err
@@ -320,8 +322,8 @@ func DecodeMessage(topic string, msg *message.Message) (Envelope, error) {
 	if envelope.EnvelopeVersion != EnvelopeVersion {
 		return Envelope{}, validation("envelopeVersion", fmt.Sprintf("must equal %d", EnvelopeVersion), ErrEnvelope)
 	}
-	if !aggregateAllowed(topic, envelope.AggregateType) {
-		return Envelope{}, validation("aggregateType", "is not accepted by topic", ErrTopicMismatch)
+	if err := validateAggregateTopic(topic, envelope.AggregateType); err != nil {
+		return Envelope{}, err
 	}
 	if err := validateEnvelopeFields(envelope); err != nil {
 		return Envelope{}, err
@@ -410,8 +412,8 @@ func validateTopic(topic string) error {
 }
 
 func validateInput(topic string, input EventInput) error {
-	if !aggregateAllowed(topic, input.AggregateType) {
-		return validation("aggregateType", "is not accepted by topic", ErrTopicMismatch)
+	if err := validateAggregateTopic(topic, input.AggregateType); err != nil {
+		return err
 	}
 	if err := validateIdentity("scopeId", input.ScopeID, 255); err != nil {
 		return err
@@ -451,29 +453,19 @@ func validateInput(topic string, input EventInput) error {
 	return nil
 }
 
-var topicAggregates = map[string]map[string]struct{}{
-	TopicAgent: {
-		"agent_conversation": {}, "agent_run": {},
-	},
-	TopicDashboard: {
-		"dashboard_appearance": {}, "dashboard_authoring": {}, "dashboard_publication": {},
-	},
-	TopicDelivery: {
-		"delivery_approval": {}, "delivery_build": {}, "delivery_plan": {},
-		"delivery_publication": {}, "delivery_target": {},
-	},
-	TopicRelease: {
-		"release": {},
-	},
-}
-
-func aggregateAllowed(topic, aggregate string) bool {
-	aggregates, ok := topicAggregates[topic]
-	if !ok {
-		return false
+// validateAggregateTopic preserves the distinction between an aggregate that
+// is not allowlisted, one that is ambiguously routed, and a known aggregate
+// presented on the wrong known topic. Callers use these typed errors for
+// policy diagnostics.
+func validateAggregateTopic(topic, aggregate string) error {
+	canonical, err := TopicForAggregate(aggregate)
+	if err != nil {
+		return err
 	}
-	_, ok = aggregates[aggregate]
-	return ok
+	if canonical != topic {
+		return validation("aggregateType", fmt.Sprintf("is admitted by topic %q, not %q", canonical, topic), ErrTopicMismatch)
+	}
+	return nil
 }
 
 func validateIdentity(field, value string, max int) error {

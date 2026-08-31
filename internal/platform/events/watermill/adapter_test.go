@@ -103,6 +103,17 @@ func TestMessageForEventRejectsUnknownTopicAndMismatch(t *testing.T) {
 	require.ErrorIs(t, err, ErrUnknownTopic)
 	_, err = MessageForEvent(TopicRelease, event)
 	require.ErrorIs(t, err, ErrTopicMismatch)
+	event.AggregateType = "unknown_aggregate"
+	_, err = MessageForEvent(TopicAgent, event)
+	require.ErrorIs(t, err, ErrUnknownAggregate)
+}
+
+func TestDecodeMessagePreservesUnknownAggregateClassification(t *testing.T) {
+	msg, err := MessageForEvent(TopicAgent, testEvent())
+	require.NoError(t, err)
+	msg.Payload = []byte(strings.Replace(string(msg.Payload), `"aggregateType":"agent_run"`, `"aggregateType":"unknown_aggregate"`, 1))
+	_, err = DecodeMessage(TopicAgent, msg)
+	require.ErrorIs(t, err, ErrUnknownAggregate)
 }
 
 func TestTopicAggregateAllowlist(t *testing.T) {
@@ -175,6 +186,18 @@ func TestAppendEventPreflightsInvalidExplicitEventID(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Equal(t, 0, appender.calls, "invalid input must not reach the canonical authority")
+}
+
+func TestAppendEventPreflightsUnknownAggregate(t *testing.T) {
+	appender := &countingAppender{event: testEvent()}
+	adapter, err := newAdapter(appender)
+	require.NoError(t, err)
+	_, err = adapter.AppendEvent(context.Background(), nil, TopicAgent, EventInput{
+		ScopeID: "scope", AggregateType: "unknown_aggregate", AggregateID: "run-1",
+		EventType: "agent_run.completed", SchemaVersion: 1, Payload: []byte(`{"ok":true}`),
+	})
+	require.ErrorIs(t, err, ErrUnknownAggregate)
+	require.Equal(t, 0, appender.calls, "unknown aggregate must not reach the canonical authority")
 }
 
 func TestAppendEventRejectsMismatchedFinalizedProjection(t *testing.T) {

@@ -53,7 +53,7 @@ func TestPostgreSQL18AdapterTransactionIdentityAndNoWatermillTables(t *testing.T
 	enrollTx, err := db.Begin(t.Context())
 	require.NoError(t, err)
 	consumer, err := authority.EnrollConsumer(t.Context(), enrollTx, eventspostgres.ConsumerInput{
-		ConsumerKey: "watermill-router", ReplayFrom: time.Unix(0, 0),
+		ConsumerKey: "watermill-router", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"agent_run"},
 	})
 	require.NoError(t, err)
 	require.NoError(t, enrollTx.Commit(t.Context()))
