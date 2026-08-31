@@ -90,6 +90,10 @@ would keep the superseded SQLite or file-catalog architecture alive.
   operational observability for durable application state.
 - Avoid adding a dedicated broker, graph database, or distributed cache before
   its semantics are required independently of PostgreSQL.
+- Prefer mature framework machinery for message routing and generic background
+  execution where it preserves LeapView's transactional, fencing, replay, and
+  retention contracts; product-owned code should express product invariants,
+  not rebuild generic routers and worker runtimes.
 
 ## Considered options
 
@@ -292,7 +296,8 @@ delivery_candidate
 delivery_generation
 delivery_publication
 delivery_active_pointer
-delivery_approval
+delivery_approval_request
+delivery_approval_decision
 delivery_lease
 delivery_retention_root
 ```
@@ -307,6 +312,20 @@ competing active pointer.
 Publication locks the exact target row, verifies its expected revision, and
 advances the pointer and transactional event in one control transaction.
 Compare-and-swap revisions remain explicit external API evidence, but
+approval is never candidate-wide authority. Whether approval is required and
+the positive approval-policy revision are explicit governance inputs to the
+canonical delivery plan and therefore participate in its digest. An immutable
+approval request binds one pending publication, target, candidate, generation,
+request digest, expected target revision, policy revision, requester
+credential, and bounded database-clock expiry. Approval, denial, and revocation
+are append-only, monotonically revised decisions with reviewer credential
+evidence and enforced separation of duty. Activation accepts only the latest
+effective decision for that exact publication scope; expired, revoked,
+mismatched, or superseded
+evidence fails closed. Approval request, decision, operation outcome, domain
+event, and audit evidence commit through the same caller-owned PostgreSQL
+transaction.
+
 PostgreSQL row locks and constraints replace SQLite writer-reservation and
 busy-snapshot protocols inside the transaction.
 
@@ -364,7 +383,8 @@ digest for verification and explanation, but DuckLake remains authoritative
 for schema, table, file, delete-file, statistics, and snapshot membership.
 
 Control-plane roots and active-query leases bind exact DuckLake snapshots. A
-snapshot-retention record has `live`, `retiring`, and `expired` states. Every
+snapshot-retention record has `live`, `retiring`, `expiring`, `expired`,
+`quarantined`, and `cleanup-complete` states. Every
 transaction that creates or extends a candidate root, generation root, rollback
 root, recovery hold, or active-query lease locks that retention record and
 requires `live` in the same control transaction.
@@ -374,10 +394,16 @@ candidate, generation, rollback, recovery, and other durable retention roots
 are absent. In that transaction it verifies their absence and changes `live` to
 `retiring`, atomically preventing every new root or lease. Query leases acquired
 while the snapshot was `live` may remain and drain. External expiration begins
-only after those query leases and the reader/failure grace have cleared; it
-expires the explicit snapshot, verifies the result, and records `expired`. An
-indeterminate expiration is reconciled against exact snapshot identity before
-it is retried.
+only after those query leases and the reader/failure grace have cleared. One
+fenced control transaction freezes the exact maintenance set, claims every row
+as `expiring`, and persists the set digest and per-snapshot children before any
+DuckLake call. Replay uses only that frozen set and cannot absorb snapshots
+that became eligible later. The maintenance session expires those explicit
+snapshots, verifies their absence, and records `expired`. An indeterminate
+expiration is reconciled against exact snapshot identity before it is retried.
+Cleanup first persists the `quarantined` handoff, runs catalog-wide old-file
+and orphan maintenance after the configured grace, and finally records
+`cleanup-complete` for every claimed snapshot.
 
 New DuckLake snapshots not yet bound to a control retention record remain in
 reconciliation quarantine for the build/orphan grace while their persistent
@@ -543,6 +569,77 @@ An external broker may later consume the same event log through a dispatcher or
 logical decoding when independent retention, throughput, stream processing,
 or cross-region consumers justify it. It does not replace the transactional
 event write.
+
+### Framework boundary: Watermill for messages, River for eligible jobs
+
+The target is framework-first above the PostgreSQL authority, but framework
+tables and defaults do not redefine LeapView's durable contracts.
+
+[Watermill](https://watermill.io/docs/) is the standard application-level
+message router, handler, middleware, acknowledgement, and redelivery boundary.
+Domain code consumes typed LeapView events through Watermill rather than a
+second product-owned router. The canonical event row, aggregate version,
+consumer enrollment fence, replay root, delivery attempt, dead-letter state,
+and retention decision remain in LeapView-owned PostgreSQL schemas.
+
+`watermill-sql/v4` is the preferred PostgreSQL transport candidate because it
+supports caller-supplied schema and offset adapters, consumer groups,
+at-least-once delivery, and PostgreSQL transaction integration, including pgx
+handles. Its [SQL Pub/Sub contract](https://watermill.io/pubsubs/sql/) also
+documents an important boundary: the default adapter is an ordered integer
+offset log with transaction-ID caveats. That default is not evidence for
+LeapView's UUIDv7 event identities, aggregate-scoped order, per-consumer fenced
+deliveries, backfill roots, poison resolution, or retention floor. The target
+therefore uses either a proven adapter over the canonical LeapView tables or a
+small Watermill `Publisher`/`Subscriber` implementation over those tables; it
+does not create a second Watermill-owned event authority.
+
+Watermill publication may participate in a caller-owned PostgreSQL transaction
+only when source mutation and the canonical event row still commit atomically.
+Watermill acknowledgement occurs only after the handler's idempotent domain
+effect commits. `Nack` and process loss may redeliver, consistent with
+Watermill's documented
+[at-least-once model](https://watermill.io/docs/pub-sub/#at-least-once-delivery).
+The existing consumer lifecycle, replay, poison, and pruning invariants remain
+the acceptance contract for the adapter. If the adapter requires dual writes,
+generic offsets as a second checkpoint, unbounded translation state, or weaker
+fencing, it fails confirmation and the purpose-built PostgreSQL event adapter
+remains behind Watermill's router interfaces.
+
+[River](https://github.com/riverqueue/river) is the target worker runtime for
+generic command jobs whose domain completion can be expressed through River's
+transactional enqueue, bounded attempts, scheduled execution, uniqueness,
+queue isolation, cancellation, and retry model. A job may be inserted in the
+same pgx transaction as its source mutation. River owns generic worker
+mechanics for admitted job kinds; the relevant capability still owns request
+identity, authorization, immutable publication or refresh evidence, fencing,
+and the domain terminal state.
+
+River is not an event bus and does not replace broadcast consumer state. It
+also does not become the authority for refresh occurrences, refresh active
+pointers, deployment approvals, delivery publications, DuckLake build
+attempts, or retention roots. Those records may enqueue or be reconciled by a
+River job, but their capability schema remains authoritative. Job kinds whose
+correctness depends on a caller-owned multi-capability transaction, exact
+attempt evidence, fairness/admission semantics, or recovery behavior that the
+River adapter cannot prove remain on the purpose-built PostgreSQL runner.
+
+Framework admission is a pass/fail confirmation gate, not an invitation to
+maintain two systems. The proof must cover transaction atomicity; stable IDs
+and canonical digests; leases, cancellation, and stale-worker fencing;
+fairness and workload admission; retries, poison and terminal evidence;
+event replay, enrollment and retention; refresh scheduling and recovery;
+multi-node behavior, observability, migrations, rollback, and licensing. The
+outcome is one authority and one runtime path per event consumer or job kind:
+
+- a passing Watermill adapter becomes the single message-delivery path over the
+  canonical event authority;
+- a passing River adapter replaces the generic queue/runner for the explicitly
+  admitted job kinds;
+- a failed invariant keeps the current purpose-built PostgreSQL component;
+  and
+- any result that requires durable dual-write authorities or more translation
+  code than the machinery it replaces is rejected.
 
 ### Versioned resource and lineage graph
 
@@ -796,6 +893,13 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
 ### Prohibited shortcuts
 
 - Do not use `LISTEN`/`NOTIFY` as the only record of a domain event.
+- Do not treat Watermill's default integer offset or consumer group as proof of
+  LeapView's aggregate ordering, consumer enrollment, replay, poison, fencing,
+  or event-retention contracts.
+- Do not dual-write events or jobs into both framework-owned and LeapView-owned
+  mutable authorities during steady state.
+- Do not use River as an event bus or move refresh occurrence, active-pointer,
+  publication, approval, or retention-root authority into generic job rows.
 - Do not enroll or retire a durable event consumer without the transactional
   fan-out registry fence.
 - Do not combine fan-out fence acquisition and consumer scanning in one
@@ -915,6 +1019,13 @@ Linear; this ADR records the destination and its invariants.
 - Multi-node tests prove that durable workers do not execute one lease
   concurrently, stale owners cannot publish, and active serving transitions
   converge after a missed notification or node restart.
+- Framework conformance runs the same event and job invariants through the
+  proposed Watermill and River adapters. It proves caller-owned transaction
+  rollback, lost-ack redelivery, poison and replay retention, retry exhaustion,
+  cancellation and stale-worker fencing, queue admission, restart, and
+  multi-node takeover before either adapter becomes authoritative for a
+  consumer or job kind. The test also proves that no legacy authority is
+  written after cutover.
 - Lineage conformance reconstructs the canonical `ProjectGraph` from persisted
   nodes and edges, verifies its digest, tests upstream and downstream closure,
   rejects cycles where the resource contract requires a DAG, and binds the
