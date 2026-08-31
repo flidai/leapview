@@ -32,7 +32,11 @@ services:
       - leapview-postgres-dev:/var/lib/postgresql
       - ./init.sh:/docker-entrypoint-initdb.d/10-leapview-roles.sh:ro
     healthcheck:
-      test: [CMD-SHELL, "pg_isready -U leapview_bootstrap -d postgres"]
+      # pg_isready can report the temporary bootstrap server as available
+      # before docker-entrypoint-initdb.d has created the product databases
+      # and roles. Authenticate as the control runtime against its final
+      # database so `compose up --wait` cannot release callers early.
+      test: [CMD-SHELL, "PGPASSWORD=$${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD} psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --command 'SELECT 1' >/dev/null"]
       interval: 2s
       timeout: 5s
       retries: 30
