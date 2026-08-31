@@ -310,12 +310,12 @@ func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	patches := ssetest.PatchSignals(t, recorder.Body.String())
-	if len(patches) != 1 {
+	if len(patches) != 2 || patches[0]["builderVisuals"] != nil {
 		t.Fatalf("patches = %#v", patches)
 	}
-	runtime, ok := patches[0]["runtime"].(map[string]any)
+	runtime, ok := patches[1]["runtime"].(map[string]any)
 	if !ok {
-		t.Fatalf("runtime patch = %#v", patches[0]["runtime"])
+		t.Fatalf("runtime patch = %#v", patches[1]["runtime"])
 	}
 	for key, want := range map[string]string{"clientId": "client_1", "streamInstanceId": "stream_1", "projectId": "sales", "dashboardId": "revenue", "pageId": page} {
 		if runtime[key] != want {
@@ -347,12 +347,12 @@ func TestDashboardBuilderCommandFallsBackFromDeletedRequestedPage(t *testing.T) 
 		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
 	}
 	patches := ssetest.PatchSignals(t, recorder.Body.String())
-	if len(patches) != 1 {
+	if len(patches) != 2 || patches[0]["builderVisuals"] != nil {
 		t.Fatalf("patches = %#v", patches)
 	}
-	runtime, ok := patches[0]["runtime"].(map[string]any)
+	runtime, ok := patches[1]["runtime"].(map[string]any)
 	if !ok || runtime["pageId"] != selected {
-		t.Fatalf("runtime page = %#v, want %q", patches[0]["runtime"], selected)
+		t.Fatalf("runtime page = %#v, want %q", patches[1]["runtime"], selected)
 	}
 }
 

@@ -328,7 +328,17 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
 	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
-	_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+	// Datastar applies JSON merge-patch semantics. A complete visualization
+	// envelope is a discriminated union, so merging a Table envelope into a Pie
+	// envelope would retain stale mark/category/value keys and make the result
+	// invalid until reload. Clear the preview map first, then publish the
+	// authoritative replacement as a second patch in the same response. This
+	// also removes previews for visuals deleted by the command.
+	updates := pagestream.NewSignalStream(w, r)
+	if err := updates.Patch(pagestream.SignalPatch{"builderVisuals": nil}); err != nil {
+		return
+	}
+	_ = updates.Patch(pagestream.SignalPatch{
 		"builder":                  envelope.Builder,
 		"builderVisuals":           envelope.BuilderVisuals,
 		"runtime":                  envelope.Runtime,
