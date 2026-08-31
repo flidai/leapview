@@ -1,6 +1,6 @@
 # Operational troubleshooting
 
-Start at the first boundary that reports failure and preserve the last active state. Capture timestamps, request or job IDs, application image digest, environment, deployment ID, revision digest, and relevant logs before restarting or retrying.
+Start at the first boundary that reports failure and preserve the last active state. Capture timestamps, request or job IDs, application image digest, environment, deployment ID, revision digest, and relevant logs before restarting or retrying. For repository-owned Prometheus alerts, use the alert-specific procedure below together with the [correlated incident investigation workflow](#correlated-incident-investigation-workflow).
 
 ## Process does not start
 
@@ -119,10 +119,44 @@ For a ledger scrape failure, check the application logs for ledger read errors o
 
 Correct the underlying scheduler, worker, ledger, or publication dependency and let normal reconciliation or persisted publication backoff recover the current state. Do not delete ledger rows or rerun a destructive recovery scenario merely to clear an alert. Preserve occurrence and evidence identities in the restricted incident record, then confirm `leapview_recovery_qualification_scrape_error`, `leapview_recovery_qualification_overdue`, or `leapview_recovery_qualification_evidence{state="failed"}` returns to zero and the alert resolves on the next rule evaluation.
 
-## Gather a useful incident record
+## Correlated incident investigation workflow
 
-Record impact, start time, last known good deployment/image/revision, failing identities, relevant metrics and logs, attempted actions, and whether active state changed. Redact secrets but keep stable digests and IDs.
+Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [dashboard refresh fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [recovery qualification freshness](#recovery-qualification-freshness-alerts-fire). It defines evidence pivots and recovery records; it does not authorize remediation.
 
-Correct configuration, data, or project candidates through normal workflows. Repeated restarts, manual pointer edits, and deleting active state destroy evidence and can turn a contained failure into data loss.
+### 1. Record alert intake
+
+Preserve the alert name, first observed firing time, current evaluation time, `job`, `instance`, severity, summary, and affected component before changing the service or monitoring configuration. The alert firing time follows any configured hold duration and Prometheus evaluation interval, so record the earliest independently observed symptom separately rather than treating the firing time as the incident start. Keep the original labels and annotations with the incident record and confirm which deployed rule revision produced them.
+
+Use the alert-specific procedure to identify the first reported boundary: scrape path for target unavailability, application HTTP handling for sustained 5xx responses, the process-owned analytical runtime for fatal DuckDB health, dashboard refresh reliability for burn alerts, or recovery scheduling, execution, ledger collection, and evidence publication for recovery alerts. `job` and `instance` identify the bounded alert target; they do not identify a user, project, request, or root cause.
+
+### 2. Inspect metrics and reliability context
+
+Read the active alert expression and compare it with the repository-owned rule. Evaluate its source metrics for the same `job`, `instance`, and a time range that begins before the first symptom. Inspect raw inputs before derived recordings so missing source series, scrape gaps, counter resets, and aggregation are not mistaken for recovery or healthy traffic. Preserve the expression, evaluation range, observed values, and relevant scrape health in the incident record.
+
+For dashboard refresh burn alerts, inspect the matching short- and long-window burn rates, eligible-event floor, eligible and bad event volumes, five-minute and 30-day reliability ratios, and rolling error-budget state. Use the completed-refresh latency ratios only as separate evidence of successful-but-slow work; they do not redefine outcome reliability. Missing ratios or budget recordings mean the population was absent or unevaluable, not that reliability was perfect.
+
+### 3. Correlate HTTP requests
+
+For an application HTTP symptom, first narrow the bounded HTTP metric by method, route pattern, and status, then find structured `http request` records on the affected instance and time range. The request log contains the concrete path rather than the bounded route label, so keep paths with project or resource identities in restricted evidence. Preserve `request_id` as the identity of one LeapView request and use `correlation_id` to group records only when the caller supplied a meaningful grouping; when no correlation ID was supplied it equals the request ID. The same canonical values are returned as `X-Request-ID` and `X-Correlation-ID`, including early middleware failures, so an observed response can be matched to the application request record.
+
+Client-provided request and correlation IDs are untrusted evidence metadata. Treat them as opaque exact-match values, quote or escape them in operator tooling, and never use them as proof of a principal, authorization, tenancy, project access, or causality. Do not copy authorization, cookies, query values, request bodies, bearer tokens, or other secrets into searches or unrestricted incident records. If a request panicked, correlate the `http handler panic` record with the resulting request record by the same instance, time, method, and path; do not assume the panic record itself contains request or correlation IDs.
+
+### 4. Use inbound trace identity when present
+
+A valid remote W3C context adds `trace_id` and `upstream_span_id` to request and panic logs. Use those parsed values as an optional pivot into evidence retained by the upstream system, and record which system supplied that evidence. If the fields are absent, do not generate or infer them; malformed or missing inbound context is intentionally ignored.
+
+LeapView currently creates no local spans, performs no sampling, and exports no trace telemetry. The upstream IDs prove only that valid remote context reached the HTTP boundary: they do not provide an end-to-end trace chain through LeapView or its background work. Never preserve raw `traceparent`, `tracestate`, or baggage headers in the incident record.
+
+### 5. Correlate dashboard and domain evidence
+
+For a dashboard incident, inspect structured `dashboard refresh` records in the affected instance and time range. Pivot within the refresh lifecycle using `refreshId`, `generation`, and `servingStateId`, then compare the outcome and target evidence with the active deployment, image and revision digests, managed-data revisions, query or audit events, DuckDB health, and workload saturation. Keep dashboard, page, project, principal, and resource identifiers only in the restricted incident record when they are necessary to explain impact.
+
+Request and correlation IDs are not currently propagated through every refresh or background-work boundary. Do not claim a causal HTTP-to-refresh join unless another retained domain record establishes it. Otherwise describe the relationship as an inference based on the bounded instance and time range plus refresh, generation, or serving-state evidence, and record competing explanations.
+
+### 6. Preserve the incident and recovery record
+
+Record impact, UTC timestamps and time-zone source, alert details, last known good deployment, image and revision, Prometheus expressions and values, observed symptoms, relevant request, correlation, upstream trace, refresh, generation, and serving-state identifiers, evidence locations, actions taken, and whether active state changed. Separate observed facts from inferences. Redact secrets and sensitive payloads, retain only the minimum principal, project, or resource metadata required, and store restricted evidence according to its sensitivity and retention policy.
+
+Use the objective recovery criteria in the alert-specific procedure. Record the time source metrics returned to their expected state, the alert resolved, and representative liveness, readiness, request, analytical, or qualification checks succeeded as applicable. Alert resolution alone does not prove user-visible recovery, and repeated restarts, manual pointer edits, deleted active state, relaxed thresholds, or reclassified outcomes are not recovery evidence.
 
 Use the generated [environment variable reference](/docs/configuration), [`config` CLI reference](/docs/cli/config), [`admin` CLI reference](/docs/cli/admin), and [API reference](/docs/api) when confirming exact names, flags, and operations during diagnosis.
