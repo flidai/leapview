@@ -594,9 +594,16 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	requirements, _, authored, err := candidateConnectionRequirements(activations)
+	requirements, managedConnections, authored, err := candidateConnectionRequirements(activations)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	// Managed-data pins are not embedded in the serving bundle and cannot be
+	// inferred from its compiled connection activations. Recovery therefore
+	// rejects managed activations until an exact persisted pin ledger is added
+	// to this recovery request.
+	if len(managedConnections) != 0 {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact requires unavailable managed-data pins"))
 	}
 
 	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
@@ -649,6 +656,10 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 func validateNativeRecoveryRequest(request release.CandidateArtifactRecoveryRequest, environment servingstate.Environment) error {
 	if request.CandidateID == "" || request.CandidateID != strings.TrimSpace(request.CandidateID) || len(request.CandidateID) > maxNativeRecoveryIDBytes || strings.ContainsAny(request.CandidateID, "\x00\r\n") {
 		return errors.New("native recovered candidate ID is invalid")
+	}
+	candidateID, err := uuid.Parse(request.CandidateID)
+	if err != nil || candidateID == uuid.Nil || candidateID.String() != request.CandidateID || candidateID.Version() != 7 || candidateID.Variant() != uuid.RFC4122 {
+		return errors.New("native recovered candidate ID must be a canonical UUIDv7")
 	}
 	if err := request.ServingIdentity.Validate(); err != nil {
 		return fmt.Errorf("native recovered serving identity: %w", err)

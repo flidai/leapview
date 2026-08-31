@@ -342,15 +342,23 @@ type nativeRecoveryFixtureValue struct {
 }
 
 func nativeRecoveryFixture(t *testing.T) nativeRecoveryFixtureValue {
+	return nativeRecoveryFixtureForConnector(t, "s3")
+}
+
+func nativeRecoveryFixtureForConnector(t *testing.T, connectorKind string) nativeRecoveryFixtureValue {
 	t.Helper()
 	fixture := nativeInspectFixture(t)
-	compiled, err := projectartifact.Decode(fixture.artifact)
-	if err != nil {
-		t.Fatal(err)
-	}
 	files := make(map[string][]byte, len(fixture.refs))
 	for _, ref := range fixture.refs {
 		files[ref.Path] = fixture.objects[ref.ObjectKey]
+	}
+	files["connections/warehouse.yaml"] = []byte(fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: %s}\n", connectorKind))
+	if connectorKind != "managed" {
+		files["sources/orders.yaml"] = []byte("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: 's3://recovery/orders.csv', format: csv}}\n")
+	}
+	compiled, err := projectcompiler.CompileProjectFiles(files, fixture.request.Source.ProjectFile)
+	if err != nil {
+		t.Fatal(err)
 	}
 	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, fixture.request.Source.ProjectFile, compiled.Graph())
 	if err != nil {
@@ -375,7 +383,7 @@ func nativeRecoveryFixture(t *testing.T) nativeRecoveryFixtureValue {
 	}
 	return nativeRecoveryFixtureValue{
 		request: release.CandidateArtifactRecoveryRequest{
-			CandidateID: fixture.request.CandidateID, ServingIdentity: identity, SourceDigest: fixture.request.ArtifactDigest,
+			CandidateID: "018f0e4e-6f2a-7abc-8def-0123456789aa", ServingIdentity: identity, SourceDigest: fixture.request.ArtifactDigest,
 			Artifact: release.CandidateArtifactIdentity{ServingArtifactID: nativeServingArtifactID(digest), ServingArtifactDigest: digest, ServingStateID: identity.GenerationID},
 		},
 		store: store, body: body.Bytes(),
@@ -384,7 +392,8 @@ func nativeRecoveryFixture(t *testing.T) nativeRecoveryFixtureValue {
 
 func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing.T) {
 	fixture := nativeRecoveryFixture(t)
-	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	store := &nativeForgedArtifactStore{ImmutableStore: fixture.store}
+	service := &nativeCandidateArtifactPhases{artifacts: store, storageDomain: "runtime", environment: "dev"}
 	set, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request)
 	if err != nil {
 		t.Fatal(err)
@@ -400,6 +409,17 @@ func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing
 	}
 	if set.Compiler.Graph.Validate() != nil || set.Compiler.Graph.ProjectID() != fixture.request.ServingIdentity.ProjectID || set.Compiler.Manifest.ID != fixture.request.ServingIdentity.ProjectID.String() || set.Compiler.Plan.Project != fixture.request.ServingIdentity.ProjectID.String() {
 		t.Fatalf("recovered compiler evidence = %#v", set.Compiler)
+	}
+	if store.opens != 1 || store.puts != 0 {
+		t.Fatalf("recovery object calls = opens %d puts %d, want one read and no writes", store.opens, store.puts)
+	}
+}
+
+func TestNativeCandidateRecoverRejectsManagedBundleWithoutPins(t *testing.T) {
+	fixture := nativeRecoveryFixtureForConnector(t, "managed")
+	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("managed recovery error = %v, want invalid", err)
 	}
 }
 
@@ -719,6 +739,8 @@ type nativeForgedArtifactStore struct {
 	openErr error
 	body    []byte
 	nilBody bool
+	opens   int
+	puts    int
 }
 
 type nativeAmbiguousReplayStore struct {
@@ -737,6 +759,7 @@ func (s *nativeAmbiguousReplayStore) Open(_ context.Context, _ string) (platform
 }
 
 func (s *nativeForgedArtifactStore) Open(ctx context.Context, key string) (platformobjectstore.Object, error) {
+	s.opens++
 	if s.openErr != nil {
 		return platformobjectstore.Object{}, s.openErr
 	}
@@ -753,6 +776,11 @@ func (s *nativeForgedArtifactStore) Open(ctx context.Context, key string) (platf
 		object.Body = nil
 	}
 	return object, err
+}
+
+func (s *nativeForgedArtifactStore) PutImmutable(ctx context.Context, key string, body io.Reader, metadata platformobjectstore.ObjectMetadata) (platformobjectstore.ObjectInfo, error) {
+	s.puts++
+	return s.ImmutableStore.PutImmutable(ctx, key, body, metadata)
 }
 
 func TestReadNativeInspectBodyEnforcesEmptyObjectSize(t *testing.T) {
