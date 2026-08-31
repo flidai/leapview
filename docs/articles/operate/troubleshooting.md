@@ -67,6 +67,14 @@ leapview admin storage cleanup
 
 Review protected serving states and query leases, then use `--apply` only under the approved maintenance procedure. Do not delete catalog rows or Parquet objects manually.
 
+## Dashboard refresh fast-burn alert fires
+
+Confirm that `leapview:dashboard_refresh_reliability:burn_rate_5m` and `leapview:dashboard_refresh_reliability:burn_rate_1h` are both at least `14.4` for the affected `job` and `instance`, and that `leapview:dashboard_refresh_reliability:eligible_events_1h` is at least `10`. The critical alert has no additional hold duration: its five-minute and one-hour agreement is the persistence check. Missing, canceled-only, or lower-volume traffic cannot fire it.
+
+Inspect the bounded dashboard refresh outcome metric and application logs to determine whether `partial`, `error`, or `other` outcomes dominate. Correlate the incident with the latest deployment, active serving state, managed-data revisions, DuckDB health, executor saturation, queue depth, and dependency errors. Keep command, outcome, request, trace, principal, project, and resource dimensions in restricted diagnostic evidence; they are intentionally absent from alert identity.
+
+Mitigate the underlying refresh failure through the normal deployment, data, or runtime recovery path. Do not change the 99% objective, reclassify outcomes, or exclude eligible traffic merely to silence the alert. Confirm recovery when the five-minute burn rate falls below `14.4` and the alert resolves on the next rule evaluation. Continue to inspect the rolling 30-day error-budget recordings because alert recovery does not restore budget already consumed.
+
 ## Recovery qualification freshness alerts fire
 
 Inspect the bounded ledger projection with the service stopped or from the same controlled maintenance environment used for other offline Admin commands:

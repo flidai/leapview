@@ -69,3 +69,18 @@ groups:
           summary: "LeapView recovery evidence publication on {{ $labels.instance }} is failing"
           description: "At least one recovery qualification on {{ $labels.instance }} has remained in failed evidence publication state for more than 15 minutes."
           runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
+
+      - alert: LeapViewDashboardRefreshFastBurn
+        expr: |
+          (leapview:dashboard_refresh_reliability:burn_rate_5m >= 14.4)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:burn_rate_1h >= 14.4)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_1h >= 10)
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView dashboard refresh reliability on {{ $labels.instance }} is burning error budget rapidly"
+          description: "Dashboard refresh failures on {{ $labels.instance }} meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 eligible refreshes in the 1-hour window."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-fast-burn-alert-fires"
