@@ -592,13 +592,16 @@ control.
 ### Qualification methodology
 
 The fixture creates a deterministic `model.orders` table in DuckDB and serves
-both lanes through a real loopback HTTP server and client. The 32-column table
-cycles through `BIGINT`, `DOUBLE`, `BOOLEAN`, `VARCHAR`, `BLOB`,
+both lanes through one test-only loopback HTTP route and client. The 32-column
+table cycles through `BIGINT`, `DOUBLE`, `BOOLEAN`, `VARCHAR`, `BLOB`,
 `TIMESTAMP`, `TIMESTAMPTZ`, `DECIMAL(38,3)`, and `DATE`, with high- and
 low-cardinality strings, empty non-null strings, mixed SQL `NULL`/`NOT NULL`
 declarations, and nulls at deterministic positions. Workloads include:
 
 - 8- and 32-column detail pages containing 999 rows;
+- a four-column real-DuckDB detail page whose requested order is interleaved as
+  dimension, metric, dimension, metric and whose nullable decimal values are
+  checked at every row;
 - a 32-column, 10,000-row result that must arrive in multiple borrowed DuckDB
   batches;
 - an empty result that retains its complete physical schema;
@@ -609,15 +612,35 @@ declarations, and nulls at deterministic positions. Workloads include:
 - normal, 100 ms delayed, disconnected, and concurrent slow/normal HTTP
   consumers with a bounded 1 KiB server socket write buffer.
 
-Every timed control/candidate pair uses the same resolved visual, governed
-query, filters, stable order, offset, physical `LIMIT`, principal/policy
-context, admission path, result budgets, real DuckDB table, and HTTP response
-buffering. The control enters the current dashboard `api_direct` handler. The
-candidate enters a test-only HTTP route that builds the same governed query and
-calls the existing `ExecuteDataQueryArrow` API plus the existing native-v1 IPC
-sink. Each measured request must record exactly one physical query, one
-governor/admission decision, zero retained-cache outcomes, no retained Arrow
-ownership change, and no active database connection after completion.
+The timed comparison no longer mixes a full production handler with a custom
+candidate route. One shared setup resolves the visualization, parses the
+request limit and cursor, parses the deterministic `field_00 >= 0` filter,
+normalizes the filter into the data-query contract, establishes stable sort,
+offset and physical `limit + 1`, and attaches the same principal, policy,
+admission, budget, audit, and observer context. It creates one query definition
+before the lane split. Both lanes execute that definition against the same real
+DuckDB table and buffer the HTTP response through the same test server/client:
+
+- the control obtains an owned Arrow result, decodes to Go maps, crosses the
+  current two map-ownership/normalization boundaries, creates the dashboard
+  frame/window, and calls the existing all-string IPC response writer; and
+- the candidate gives borrowed DuckDB batches synchronously to the existing
+  native-v1 IPC sink.
+
+The parity test also invokes the actual current `api_direct` handler outside
+the measured pair and requires the control adapter to match its field order,
+aliases, row values, and legacy string projection. This isolates the differing
+post-query transformations without pretending the benchmark is production
+end-to-end latency. Handler routing, body decoding, dashboard filter-control
+translation, and the current exact-count pagination query are excluded from
+both timed lanes. Those fixed costs must be measured separately before any
+production design claim.
+
+Every measured request must record exactly one physical query, one identical
+governor/admission/audit decision, one identical governed query, zero retained
+cache outcomes, no retained Arrow ownership change, and no active database
+connection after completion. The harness rejects a comparison if the control
+and candidate physical schemas differ.
 
 The reproducible commands are:
 
@@ -628,62 +651,69 @@ task bench:arrow:direct-streaming-qualification
 ```
 
 The comparison-grade command uses ten one-second samples for both benchmark
-groups at one and four logical CPUs. The run was captured on 2026-08-31 at
-commit `ea59be318617d4e4a07b6421d671355ae8628b46`, Go 1.25.14, Linux amd64
-7.0.0-29-generic, and a 16-vCPU AMD EPYC-Rome host with one thread per core.
-The raw samples, complete per-metric summaries, paired benchstat comparisons,
-and focused CPU-profile summaries are retained under
+groups at one and four logical CPUs. The corrected-boundary run was captured
+on 2026-08-31 at commit `6449d6ae3bbdfa1ce0e4810e04a005a8073bb100`, Go
+1.25.14, Linux amd64 7.0.0-29-generic, and a 16-vCPU AMD EPYC-Rome host with
+one thread per core. Its exact command was
+`task bench:arrow:direct-streaming-qualification`. The raw samples, complete
+per-metric summaries, and paired benchstat comparisons are retained under
 `docs/articles/architecture/benchmark-data/`:
 
-- `fai-544-ea59be31-qualification.txt`
-- `fai-544-ea59be31-benchstat.txt`
-- `fai-544-ea59be31-control-vs-candidate.txt`
-- `fai-544-ea59be31-concurrency-comparison.txt`
-- `fai-544-ea59be31-control-cpu.txt`
-- `fai-544-ea59be31-candidate-cpu.txt`
-- `fai-544-ea59be31-control-alloc.txt`
-- `fai-544-ea59be31-candidate-alloc.txt`
+- `fai-544-6449d6ae-qualification.txt`
+- `fai-544-6449d6ae-benchstat.txt`
+- `fai-544-6449d6ae-control-vs-candidate.txt`
+- `fai-544-6449d6ae-concurrency-comparison.txt`
+
+The earlier `ea59be31` artifacts are retained as provenance for the original
+review input, but their control used the full handler while the candidate used
+a custom route. They are superseded for numerical comparisons. Their focused
+profiles remain useful only as mechanism hints and are not evidence for an
+equivalent-boundary performance claim.
 
 Benchstat reports medians with 95% confidence intervals at alpha 0.05. The
 following table is the single-request comparison; all latency differences have
 `p=0.000`, with ten samples per lane.
 
-| Workload / CPU | Lane | Median latency | B/op | Allocs/op | IPC bytes | Requests/s |
-| --- | --- | ---: | ---: | ---: | ---: | ---: |
-| 8 × 999 / 1 | Current `api_direct` | 8.545 ms | 2.742 MiB | 35,160 | 94,376 | 117.0 |
-| 8 × 999 / 1 | Candidate native-v1 | 2.055 ms | 350.8 KiB | 826 | 71,992 | 487.1 |
-| 8 × 999 / 4 | Current `api_direct` | 12.791 ms | 2.782 MiB | 35,210 | 94,376 | 78.18 |
-| 8 × 999 / 4 | Candidate native-v1 | 3.424 ms | 352.0 KiB | 830 | 71,992 | 292.1 |
-| 32 × 999 / 1 | Current `api_direct` | 41.639 ms | 18.28 MiB | 117,100 | 377,768 | 24.02 |
-| 32 × 999 / 1 | Candidate native-v1 | 5.537 ms | 1.785 MiB | 2,205 | 301,344 | 180.6 |
-| 32 × 999 / 4 | Current `api_direct` | 59.365 ms | 18.30 MiB | 117,200 | 377,768 | 16.84 |
-| 32 × 999 / 4 | Candidate native-v1 | 7.910 ms | 1.788 MiB | 2,218 | 301,344 | 126.5 |
+| Workload / CPU | Lane | Median latency | B/op | Allocs/op | IPC bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8 × 999 / 1 | `api_direct` post-query control | 8.955 ms | 2,804.0 KiB | 35,153 | 94,376 |
+| 8 × 999 / 1 | Candidate native-v1 | 2.570 ms | 374.2 KiB | 1,104 | 71,992 |
+| 8 × 999 / 4 | `api_direct` post-query control | 12.339 ms | 2,812.8 KiB | 35,189 | 94,376 |
+| 8 × 999 / 4 | Candidate native-v1 | 3.521 ms | 375.7 KiB | 1,108 | 71,992 |
+| 32 × 999 / 1 | `api_direct` post-query control | 33.210 ms | 14.269 MiB | 107,156 | 377,768 |
+| 32 × 999 / 1 | Candidate native-v1 | 6.362 ms | 1.876 MiB | 3,042 | 301,344 |
+| 32 × 999 / 4 | `api_direct` post-query control | 36.834 ms | 14.285 MiB | 107,192 | 377,768 |
+| 32 × 999 / 4 | Candidate native-v1 | 7.306 ms | 1.880 MiB | 3,057 | 301,344 |
+| mixed 4 × 999 / 1 | `api_direct` post-query control | 7.476 ms | 2,208.6 KiB | 37,004 | 45,192 |
+| mixed 4 × 999 / 1 | Candidate native-v1 | 1.829 ms | 274.3 KiB | 840 | 49,656 |
+| mixed 4 × 999 / 4 | `api_direct` post-query control | 9.410 ms | 2,216.7 KiB | 37,037 | 45,192 |
+| mixed 4 × 999 / 4 | Candidate native-v1 | 2.700 ms | 274.8 KiB | 843 | 49,656 |
 
-For the representative wide workload, the candidate reduced median request
-latency by 86.7%, allocated bytes by 90.2%, allocation count by 98.1%, and IPC
-payload by 20.2% at one CPU. At four CPUs, concurrency throughput was 367.6
-versus 55.74 requests/s for four users and 420.6 versus 61.60 requests/s for
-eight users. The eight-user p95 medians were 20.94 ms candidate versus 132.9
-ms control at four CPUs. The concurrency candidate intervals are wider at one
-CPU (up to 22% for aggregate time and 37% for an observed p95), so the raw tail
-measurements are supporting evidence rather than production SLO estimates.
+For the representative wide workload at one CPU, the candidate reduced median
+latency by 80.8%, allocated bytes by 86.9%, allocation count by 97.2%, and IPC
+payload by 20.2% at the equivalent boundary. The mixed workload also retained
+a 75.5% latency and 87.6% allocated-byte signal, but native IPC was 9.9% larger
+than the legacy string projection. Native payload reduction is therefore not a
+general conclusion.
 
-Focused three-second profiles use a retained benchmark binary for complete Go
-symbolization. The control's allocation profile is dominated by
-`reportRowsFromDataQuery`, `tableRowsFromAnalytics`, `arrowdecode.DecodeRows`,
-and the buffered HTTP read. Its CPU profile includes map construction and GC
-scanning. The candidate's allocation profile is dominated by the qualification
-client's `io.ReadAll`, while CPU time is dominated by DuckDB/cgo and transport
-work. These profiles support the measured mechanism; they are not production
-CPU-capacity projections.
+At four CPUs, eight-user throughput was 352.0 requests/s candidate versus
+76.41 control. Several concurrency intervals are wide: the four-user candidate
+aggregate interval reached 129%, while the eight-user control interval reached
+93%. Tail and concurrency results remain directional supporting evidence, not
+production SLO or capacity estimates. The equivalent single-request samples,
+exact values, and allocation counts are the stronger result of this rerun.
 
 ### Correctness, pagination, and lifetime result
 
 The real-DuckDB candidate preserves projection order, aliases, physical types,
 decimal scale and exact value, timestamp unit and timezone distinction, binary
-bytes, dates, values, and exact null positions. The current control and
-candidate produce equivalent values after applying the documented legacy
-null-to-empty string projection. The existing FAI-541 oracle and the
+bytes, dates, values, and exact null positions. The interleaved mixed workload
+executes real planned dimensions and aggregate metrics; the test checks every
+integer, float, decimal, and nullable-decimal value, as well as the native-v1
+schema and field metadata. The shared control and candidate produce equivalent
+values after applying the documented legacy null-to-empty string projection,
+and the shared governed queries, admission requests, audit identities, and
+physical schemas must be identical. The existing FAI-541 oracle and the
 producer-released two-batch fixture continue to prove mixed nullable and
 non-nullable Arrow fields, exact dictionary values/indices, metadata
 allowlists, empty schema, governance, cancellation, and post-commit failure
@@ -716,21 +746,21 @@ was added. One verbose validation run observed a 512.5 ms connection hold and
 a 45,056-byte process RSS increase while blocked. That is a bounded scenario
 observation, not a production network or peak-memory distribution.
 
-The candidate's wide one-CPU connection hold median was 4.707 ms versus 3.768
-ms for the control (`+24.9%`, `p=0.000`): the control releases DuckDB after its
+The corrected comparison still exposes the shifted lifetime cost. The
+candidate's wide one-CPU connection-hold median was 5.405 ms versus 4.310 ms
+for the control (`+25.4%`, `p=0.000`): the control releases DuckDB after its
 owned copy, whereas the candidate keeps the lease through IPC emission. At
-four CPUs the difference was 6.377 versus 6.163 ms (`+3.5%`, `p=0.019`). This
-shifted lifetime cost is operationally material even though total response
-latency is lower.
+four CPUs the difference was 5.827 versus 5.206 ms (`+11.9%`, `p=0.001`). This
+cost is operationally material even though total response latency is lower.
 
 ### Resource limitations and decision
 
 Go allocation and GC signals are consistently lower for the candidate, but
 the in-process absolute RSS metric is not comparison-grade. Subbenchmarks share
 one process and execute sequentially, so later candidate samples inherit the
-process high-water/heap state; reported median absolute RSS was 142.7 MiB
-candidate versus 129.1 MiB control at one CPU and 159.9 versus 135.2 MiB at
-four CPUs. This conflicts with the allocation profile and must be resolved by
+process high-water/heap state; the corrected wide samples report 146.1 MiB
+candidate versus 130.1 MiB control at one CPU and 170.9 versus 141.6 MiB at
+four CPUs. This conflicts with the allocation evidence and must be resolved by
 isolated-process peak/steady-state RSS measurement rather than interpreted as
 either a regression or a win.
 
@@ -742,9 +772,11 @@ does not add one because doing so would expand this experiment into a client
 migration.
 
 **Decision: B — narrow the scope and revise/re-measure.** The performance
-signal remains large outside the synthetic FAI-543 fixture, and cancellation
-and bounded slow-client cleanup work. However, the current candidate does not
-clear the correctness and operational gates because real DuckDB loses
+signal remains large across narrow, wide, and real mixed dimension/metric
+workloads, and cancellation and bounded slow-client cleanup work. The mixed
+payload regression and corrected-boundary concurrency variance also reinforce
+the narrow decision. The current candidate does not clear the correctness and
+operational gates because real DuckDB loses
 `NOT NULL` declarations, native pagination differs from current exact-count
 behavior, a slow client pins a database connection, browser compatibility is
 unknown, and RSS evidence is inconclusive. FAI-544 therefore does not provide
