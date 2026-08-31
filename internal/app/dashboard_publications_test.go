@@ -20,10 +20,8 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
-	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	"github.com/flidai/leapview/internal/platform"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
-	"github.com/flidai/leapview/pkg/pagestream"
 )
 
 type spatialTileAcceptanceMetrics struct {
@@ -303,28 +301,6 @@ func TestPublicCommandsRequireMatchingLiveStreamAndSuspensionCancelsIt(t *testin
 	signals.Runtime.StreamInstanceID = instanceID
 	if err := guard(httptest.NewRequest(http.MethodPost, "/", nil), resolved.Metrics, request, signals); err == nil {
 		t.Fatal("suspended publication command was accepted")
-	}
-}
-
-func TestPublicationBrokerRelaysEventsAcrossReplicas(t *testing.T) {
-	store := testStore(t)
-	first := publicationsqlite.NewBroker(store.SQLDB(), nil)
-	second := publicationsqlite.NewBroker(store.SQLDB(), nil)
-	updates, unsubscribe := first.Subscribe("shared-public-stream")
-	defer unsubscribe()
-
-	second.PublishEnvelope("shared-public-stream", dashboardstream.Envelope{
-		Signals:  pagestream.SignalPatch{"status": map[string]any{"generation": 2}},
-		Delivery: dashboardstream.DeliveryMetadata{Generation: 2, Boundary: true},
-	})
-	select {
-	case patch := <-updates:
-		status, ok := patch["status"].(map[string]any)
-		if !ok || status["generation"] != float64(2) {
-			t.Fatalf("relayed patch = %#v", patch)
-		}
-	case <-time.After(2 * time.Second):
-		t.Fatal("publication event was not relayed across replicas")
 	}
 }
 

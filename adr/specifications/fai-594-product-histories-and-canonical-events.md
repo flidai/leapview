@@ -150,14 +150,14 @@ case. This is the required activation lost-ack boundary demonstrated by
 and the native dashboard projection reconciler
 ([activation.go](../../internal/app/dashboardpublication/activation.go)).
 
-## FAI-596 exact deletion inventory
+## FAI-596 exact deletion boundary
 
-FAI-596 is intentionally narrow. Its only candidate deletion is the legacy
-SQLite short-lived relay backed by
+FAI-596 is intentionally narrow. It removes only the legacy SQLite short-lived
+relay backed by
 `dashboard_publication_stream_events`:
 
 - remove the SQLite relay implementation in
-  [`internal/dashboard/publication/sqlite/broker.go`](../../internal/dashboard/publication/sqlite/broker.go),
+  `internal/dashboard/publication/sqlite/broker.go`,
   including its polling relay and event encoding;
 - remove exactly these four generated SQL leaves from
   [`internal/dashboard/publication/sqlite/queries/publication.sql`](../../internal/dashboard/publication/sqlite/queries/publication.sql):
@@ -173,14 +173,15 @@ SQLite short-lived relay backed by
   and any now-unreachable SQLite relay wiring;
 - remove or rewrite only the cross-replica relay test
   [`TestPublicationBrokerRelaysEventsAcrossReplicas`](../../internal/app/dashboard_publications_test.go);
-- add the next forward Goose migration after migration 040 that drops only
-  `dashboard_publication_stream_events` and its
-  `dashboard_publication_stream_events_stream_idx` index. Do not rewrite
-  migration 040. Add fresh-install, reopen, predecessor-upgrade, and
-  migration-chain assertions proving the table/index are gone and all
-  retained publication/stream tables remain.
+- apply forward Goose
+  [migration 094](../../internal/platform/migrations/094_dashboard_publication_stream_relay_removal.sql),
+  which drops only `dashboard_publication_stream_events` and its
+  `dashboard_publication_stream_events_stream_idx` index without rewriting
+  migration 040. Fresh-install, reopen, predecessor-upgrade, and
+  migration-chain assertions prove the table/index are gone while retained
+  publication history and stream-registration rows survive.
 
-The FAI-596 candidate must preserve `dashboard_publication_streams`, its
+The FAI-596 implementation preserves `dashboard_publication_streams`, its
 registration/heartbeat/expiry lifecycle, command-state compare-and-swap,
 `StreamRegistry`, and all PostgreSQL publication stream functions and tests.
 It must also preserve `dashboard_publication_events`, dashboard authoring and

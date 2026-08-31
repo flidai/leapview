@@ -259,9 +259,6 @@ func newSQLitePublicationRepository(db *sql.DB, audit access.AuditIntentRecorder
 func newSQLitePublicationStreams(db *sql.DB) publication.StreamRegistry {
 	return publicationsqlite.NewStreamRegistry(db)
 }
-func newSQLitePublicationBroker(db *sql.DB, logger *slog.Logger) SignalBroker {
-	return publicationsqlite.NewBroker(db, logger)
-}
 
 func NewDeliveryBroker() *DeliveryBroker {
 	return dashboardstream.NewDeliveryBroker()
@@ -349,6 +346,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if config.RequireNativePersistence && config.RequireAuthoring && (config.NativePersistence.authoring == nil || !config.NativePersistence.authoring.IsNative()) {
 		return nil, fmt.Errorf("dashboard native authoring authority is required")
+	}
+	// Keep one process-local broker for the legacy/memory path when callers do
+	// not supply an application-owned broker. The same instance is installed on
+	// the handler and module so SSE and command refreshes share delivery state.
+	if config.HTTP.Broker == nil {
+		config.HTTP.Broker = dashboardstream.NewDeliveryBroker()
 	}
 	coordinators := dashboardstream.NewRegistry()
 	optionCursorSecret := make([]byte, 32)
@@ -508,7 +511,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		// Legacy SQLite remains explicit and test/development-only.
 		module.publications = newSQLitePublicationRepository(config.Database, config.AuditIntentRecorder)
 		module.streams = newSQLitePublicationStreams(config.Database)
-		module.publicBroker = newSQLitePublicationBroker(config.Database, config.Logger)
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
 	}
 	return module, nil

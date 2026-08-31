@@ -28,4 +28,10 @@ func TestBuildWiresProgressiveObservers(t *testing.T) {
 	if handler.CacheObserved == nil {
 		t.Fatal("dashboard cache observer is not configured")
 	}
+	if handler.Broker == nil || module.publicBroker == nil {
+		t.Fatal("dashboard build did not configure a local broker")
+	}
+	if handler.Broker != module.publicBroker {
+		t.Fatal("dashboard handler and module use different local brokers")
+	}
 }

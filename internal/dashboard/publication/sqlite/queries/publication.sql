@@ -191,10 +191,6 @@ SELECT EXISTS(
 DELETE FROM dashboard_publication_streams
 WHERE expires_at <= sqlc.arg(now);
 
--- name: DeleteExpiredDashboardPublicationStreamEvents :exec
-DELETE FROM dashboard_publication_stream_events
-WHERE created_at <= sqlc.arg(cutoff);
-
 -- name: ListActiveDashboardPublicationStreamRegistrations :many
 SELECT publication_id, stream_id, registration_id
 FROM dashboard_publication_streams
@@ -211,21 +207,3 @@ SET expires_at = sqlc.arg(expires_at),
 WHERE publication_id = sqlc.arg(publication_id)
   AND stream_id = sqlc.arg(stream_id)
   AND registration_id = sqlc.arg(registration_id);
-
--- name: InsertDashboardPublicationStreamEvent :exec
-INSERT INTO dashboard_publication_stream_events
-  (stream_id, envelope_json, created_at)
-VALUES
-  (sqlc.arg(stream_id), sqlc.arg(envelope_json), sqlc.arg(created_at));
-
--- name: GetLatestDashboardPublicationStreamEventID :one
-SELECT CAST(COALESCE(MAX(id), 0) AS INTEGER)
-FROM dashboard_publication_stream_events
-WHERE stream_id = sqlc.arg(stream_id);
-
--- name: ListDashboardPublicationStreamEventsAfter :many
-SELECT id, envelope_json
-FROM dashboard_publication_stream_events
-WHERE stream_id = sqlc.arg(stream_id)
-  AND id > sqlc.arg(cursor)
-ORDER BY id;

@@ -153,7 +153,6 @@ func (r *StreamRegistry) Active(publicationID, streamID string, version publicat
 func (r *StreamRegistry) Reconcile(ctx context.Context, active map[string]publication.StreamVersion) {
 	now := time.Now().UTC()
 	_ = r.q.DeleteExpiredDashboardPublicationStreams(ctx, now.Format(time.RFC3339Nano))
-	_ = r.q.DeleteExpiredDashboardPublicationStreamEvents(ctx, now.Add(-10*time.Minute).Format(time.RFC3339Nano))
 	durableRegistrations, durableRegistrationsLoaded := r.loadDurableRegistrations(ctx)
 	r.mu.Lock()
 	stale := []context.CancelFunc{}
